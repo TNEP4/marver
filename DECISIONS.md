@@ -51,3 +51,11 @@ Light glass = white translucency over the paper canvas; the earlier always-dark 
 only made sense on dark boards. Frame header strips joined the glass language
 (translucent + backdrop blur) in both themes. `spawn()` now toasts - the + shortcut was
 silent while agent-added frames toasted, which read as breakage.
+
+## Rename: showhome -> Marver (2026-08-10)
+
+Brand is Marver (marver.dev + marver.design owned). Package name, bin, plugin name,
+log prefixes, and the internal route prefix (/__sh -> /__mv) all renamed; sh- CSS class
+prefixes and sh:* postMessage types stay (internal, zero user surface, huge diff for no
+gain). KNOWN: bare `marver` is squatted on npm (marver@1.0.0) - registry publishing will
+need a scope (@marver/marver) or a variant; git/tarball installs are unaffected.

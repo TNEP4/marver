@@ -40,7 +40,7 @@ export async function loadConfig(root: string): Promise<ShConfig> {
     }
     return cfg
   } catch (err) {
-    console.error(`[showhome] design/config.ts failed to load, using defaults:\n  ${(err as Error).message}`)
+    console.error(`[marver] design/config.ts failed to load, using defaults:\n  ${(err as Error).message}`)
     return { ...DEFAULTS }
   }
 }

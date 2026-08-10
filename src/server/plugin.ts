@@ -17,7 +17,7 @@ export interface PluginCtx {
   detectedThemeCss: string | null
 }
 
-export function showhomePlugin(ctx: PluginCtx): Plugin {
+export function marverPlugin(ctx: PluginCtx): Plugin {
   const { root, clientDir, config } = ctx
 
   /** Theme resolution: design/theme.css wrapper > configured > detected > empty (spec §5.4). */
@@ -30,7 +30,7 @@ export function showhomePlugin(ctx: PluginCtx): Plugin {
   }
 
   return {
-    name: 'showhome',
+    name: 'marver',
 
     resolveId(id) {
       if (id === VIRTUAL_THEME) {
@@ -42,8 +42,8 @@ export function showhomePlugin(ctx: PluginCtx): Plugin {
 
     load(id) {
       if (id === '\0' + VIRTUAL_THEME + '.css') {
-        console.warn('[showhome] no theme detected - frames render unstyled. Set `theme` in design/config.ts.')
-        return '/* showhome: no theme configured */'
+        console.warn('[marver] no theme detected - frames render unstyled. Set `theme` in design/config.ts.')
+        return '/* marver: no theme configured */'
       }
       if (id === '\0' + VIRTUAL_CONFIG) {
         return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, noTheme: themeFile() == null })}`
@@ -142,7 +142,7 @@ export async function tailwind3Css(root: string): Promise<Record<string, unknown
         },
       }
     } catch (err) {
-      console.warn(`[showhome] could not extend Tailwind v3 config (${(err as Error).message}). Add './design/**/*.{ts,tsx,html}' to its content globs manually.`)
+      console.warn(`[marver] could not extend Tailwind v3 config (${(err as Error).message}). Add './design/**/*.{ts,tsx,html}' to its content globs manually.`)
       return null
     }
   }

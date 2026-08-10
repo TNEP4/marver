@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { NAME } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
-import { showhomePlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
+import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 
-/** packageDir = the installed showhome package root (dist/cli.js lives one level down). */
+/** packageDir = the installed marver package root (dist/cli.js lives one level down). */
 function packageDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), '..')
 }
@@ -22,12 +22,12 @@ export async function dev(root: string, portFlag?: number) {
   if (host.tailwind === 4) {
     const tw = await tailwind4Plugin(root)
     if (tw) plugins.push(...tw)
-    else console.warn('[showhome] tailwindcss v4 detected but @tailwindcss/vite not found in the host - theme classes may be missing.')
+    else console.warn('[marver] tailwindcss v4 detected but @tailwindcss/vite not found in the host - theme classes may be missing.')
   }
   let css: Record<string, unknown> | undefined
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
 
-  plugins.push(showhomePlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }))
+  plugins.push(marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }))
 
   const server = await createServer({
     configFile: false,

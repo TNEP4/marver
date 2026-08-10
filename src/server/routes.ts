@@ -34,7 +34,7 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string): Conn
       res.end(html)
     } catch (err) {
       res.statusCode = 500
-      res.end(`showhome route error: ${(err as Error).message}`)
+      res.end(`marver route error: ${(err as Error).message}`)
     }
   }
 }

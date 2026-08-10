@@ -42,13 +42,13 @@ execSync(`npm install --no-audit --no-fund ${join(pkgRoot, tarball)}`, { cwd: ap
 ok('tarball installed into clean app')
 
 // 3. init
-execSync('npx showhome init --mode studio', { cwd: app, stdio: 'pipe' })
+execSync('npx marver init --mode studio', { cwd: app, stdio: 'pipe' })
 if (!existsSync(join(app, 'design/AGENTS.md'))) fail('init did not scaffold AGENTS.md')
 if (!existsSync(join(app, 'design/scenes/demo/welcome.tsx'))) fail('init did not scaffold demo scene')
 ok('init scaffolded design/')
 
 // 4. dev server
-server = spawn('npx', ['showhome', 'dev', '--port', String(PORT)], { cwd: app, stdio: 'pipe' })
+server = spawn('npx', ['marver', 'dev', '--port', String(PORT)], { cwd: app, stdio: 'pipe' })
 const get = async (path) => {
   const res = await fetch(`http://localhost:${PORT}${path}`)
   return { status: res.status, text: await res.text() }
@@ -65,21 +65,21 @@ ok('dev server up')
 const shell = await get('/')
 if (shell.status !== 200 || !shell.text.includes('id="root"')) fail(`shell route: ${shell.status}`)
 ok('shell served at /')
-const frame = await get('/__sh/frame/?id=demo/welcome&theme=light')
+const frame = await get('/__mv/frame/?id=demo/welcome&theme=light')
 if (frame.status !== 200 || !frame.text.includes('main.tsx')) fail(`frame route: ${frame.status}`)
 ok('frame host served')
 const manifest = JSON.parse((await get('/design/manifest.json')).text)
 if (!manifest.frames.some((f) => f.id === 'demo/welcome')) fail('manifest missing demo frames')
 ok(`manifest lists ${manifest.frames.length} frames`)
 // glob-from-node_modules: the frame-host module must contain the expanded glob map
-const reg = await get('/@fs/' + join(app, 'node_modules/showhome/src/client/frame-host/registry.ts').replaceAll('\\', '/'))
+const reg = await get('/@fs/' + join(app, 'node_modules/marver/src/client/frame-host/registry.ts').replaceAll('\\', '/'))
 if (!reg.text.includes('/design/scenes/demo/welcome.tsx')) fail('import.meta.glob did not expand from node_modules (optimizeDeps.exclude broken?)')
 ok('glob expanded from node_modules (exclude verified)')
 // shell module GRAPH must resolve from the packed layout - this is the check that catches
 // imports reaching outside the shipped `files` (e.g. src/cli from src/client)
 const shellRoots = ['shell/main.tsx', 'shell/store.ts', 'shell/App.tsx', 'frame-host/main.tsx']
 for (const mod of shellRoots) {
-  const r = await get('/@fs/' + join(app, `node_modules/showhome/src/client/${mod}`).replaceAll('\\', '/'))
+  const r = await get('/@fs/' + join(app, `node_modules/marver/src/client/${mod}`).replaceAll('\\', '/'))
   if (r.status !== 200) fail(`shell graph: ${mod} → ${r.status} (import escaping the packed files?)`)
   if (/Failed to resolve import/.test(r.text)) fail(`shell graph: ${mod} has unresolved imports`)
 }

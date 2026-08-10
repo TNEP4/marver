@@ -65,7 +65,7 @@ export function scanFrames(root: string): Manifest {
       const id = toFrameId(rel)
       const scene = id.includes('/') ? id.split('/')[0] : ''
       if (base === 'scenes' && RESERVED_SCENES.has(scene)) {
-        console.error(`[showhome] scene "${scene}" is a reserved name - "${rel}" skipped. Rename the scene.`)
+        console.error(`[marver] scene "${scene}" is a reserved name - "${rel}" skipped. Rename the scene.`)
         continue
       }
       const kind = name.endsWith('.html') ? 'html' as const : 'tsx' as const
@@ -83,7 +83,7 @@ export function scanFrames(root: string): Manifest {
   const seen = new Map<string, string>()
   for (const f of frames) {
     const prev = seen.get(f.id)
-    if (prev) console.error(`[showhome] duplicate frame id "${f.id}" (${prev} vs ${f.file}) - keep one.`)
+    if (prev) console.error(`[marver] duplicate frame id "${f.id}" (${prev} vs ${f.file}) - keep one.`)
     seen.set(f.id, f.file)
   }
 
