@@ -3,7 +3,7 @@
    chrome over a dark canvas. Frames are cards; chrome is glass. */
 
 .sh-app {
-  --ground: #f0f1f5; --dot: #d6d6dd;
+  --ground: #e7e9ef; --dot: #c9cbd5;
   --accent: #2440c4; --accent-ring: rgba(36, 64, 196, .18);
 
   --glass: rgba(255, 255, 255, .64);
@@ -18,8 +18,10 @@
   --glass-warn: #7a4a00;
   --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .06), 0 16px 40px -18px rgba(24, 24, 27, .3);
 
-  --node-bg: #fff; --node-brd: #e5e5ea;
-  --head-bg: rgba(255, 255, 255, .62);
+  --node-bg: #fff; --node-brd: #dddee5;
+  --head-bg: rgba(255, 255, 255, .55);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .85), rgba(255, 255, 255, .1) 45%, rgba(255, 255, 255, .45));
+  --edge-light: linear-gradient(155deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .2) 30%, rgba(24, 24, 27, .04) 65%, rgba(255, 255, 255, .55));
   --head-ink: #18181b; --head-dim: rgba(24, 24, 27, .4);
   --card-err-ink: #b3261e; --card-err-bg: #fceceb;
   --card-warn-ink: #7a4a00; --card-warn-bg: #fdf3e1;
@@ -31,7 +33,7 @@
   --morph: .26s cubic-bezier(.32, .72, .35, 1);
 }
 .sh-app.dark {
-  --ground: #0e0f13; --dot: #26272f;
+  --ground: #1b1c23; --dot: #35363f;
   --accent: #5b76f7; --accent-ring: rgba(91, 118, 247, .28);
 
   --glass: rgba(12, 12, 17, .72);
@@ -46,8 +48,10 @@
   --glass-warn: #ffd9a0;
   --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .2), 0 16px 44px -16px rgba(10, 10, 16, .55);
 
-  --node-bg: #101116; --node-brd: #262630;
-  --head-bg: rgba(16, 17, 22, .66);
+  --node-bg: #0f1015; --node-brd: #2c2d38;
+  --head-bg: rgba(22, 23, 30, .6);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .015) 45%, rgba(255, 255, 255, .06));
+  --edge-light: linear-gradient(155deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .02) 65%, rgba(255, 255, 255, .16));
   --head-ink: #ececf1; --head-dim: rgba(236, 236, 241, .42);
   --card-err-ink: #ff9d94; --card-err-bg: #2a1512;
   --card-warn-ink: #ffd9a0; --card-warn-bg: #2a2113;
@@ -88,7 +92,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--head-dim);
   border-bottom: 1px solid var(--node-brd); cursor: default; user-select: none;
   border-radius: var(--r-node) var(--r-node) 0 0;
-  background: var(--head-bg); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
+  background-color: var(--head-bg); background-image: var(--head-sheen);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
 .sh-node-head .id { font-weight: 600; color: var(--head-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none }
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
@@ -104,7 +109,19 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* glass surfaces share one recipe */
 .sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-menu, .sh-banner, .sh-toast {
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass) }
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative }
+
+/* edge light: a 1px gradient ring over the border, so glass reads as glass even
+   with nothing behind it to blur (masked-border technique) */
+.sh-ctx::after, .sh-panel::after, .sh-fab::after, .sh-pill::after, .sh-menu::after,
+.sh-banner::after, .sh-toast::after, .sh-node::after {
+  content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
+  background: var(--edge-light); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude }
+.sh-node.sel::after { display: none }   /* the accent ring owns the selected edge */
 
 /* per-frame context bar */
 .sh-ctx { position: absolute; top: -42px; left: 0; display: flex; align-items: center; gap: 1px;
