@@ -201,7 +201,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .it .tw { color: var(--glass-ink-3); flex: none; transition: transform .15s ease }
 .sh-panel .it span { flex: 1 }
 .sh-panel .it small { color: var(--glass-ink-3); font-weight: 500; font-variant-numeric: tabular-nums }
-.sh-panel .sub { padding: 3.5px 9px 3.5px 22px; color: var(--glass-ink-2); font-size: 12px; border-radius: 9px; cursor: pointer }
+.sh-panel .sub { padding: 3px 9px 3px 22px; margin-bottom: 2px; color: var(--glass-ink-2); font-size: 12px; border-radius: 9px; cursor: pointer }
 .sh-panel .sub:hover { background: var(--glass-hover); color: var(--glass-ink) }
 .sh-panel .sub.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
 .sh-panel .sub.dim { color: var(--glass-ink-3); cursor: default; line-height: 1.5 }
