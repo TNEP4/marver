@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { CaretIcon, CheckIcon, GridIcon, MoonIcon, PlayIcon, SidebarIcon, SunIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
 
 /** A shell bug shows a banner, never a white screen. */
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -120,13 +120,13 @@ export function App() {
     <div className="sh-app">
       <Canvas />
 
-      {/* floating pill panel (no top bar - spec) */}
-      {panelOpen ? (
-        <aside className="sh-panel">
+      {/* floating pill panel (no top bar - spec); panel and fab are both always
+          mounted so collapse/expand can crossfade-morph between them */}
+      <aside className={`sh-panel${panelOpen ? '' : ' closed'}`} aria-hidden={!panelOpen}>
           <div className="sh-panel-top">
             <i className="mark" />
             <span className="name">showhome</span>
-            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel"><SidebarIcon size={15} /></button>
+            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={15} /></button>
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Scenes</div>
@@ -143,10 +143,9 @@ export function App() {
             ))}
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}
           </div>
-        </aside>
-      ) : (
-        <button className="sh-fab" onClick={togglePanel} title="open panel"><SidebarIcon size={16} /></button>
-      )}
+      </aside>
+      <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel} title="open panel"
+        aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelOpenIcon size={16} /></button>
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">

@@ -21,6 +21,8 @@ const icon = (children: ReactNode) =>
   }
 
 export const SidebarIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9.5 4v16" /></>)
+export const PanelCloseIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9.5 4v16" /><path d="m16.5 9.5-2.5 2.5 2.5 2.5" /></>)
+export const PanelOpenIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9.5 4v16" /><path d="m14 9.5 2.5 2.5L14 14.5" /></>)
 export const SunIcon = icon(<><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></>)
 export const MoonIcon = icon(<path d="M20.9 13.1A8.6 8.6 0 1 1 10.9 3.1a6.9 6.9 0 0 0 10 10Z" />)
 export const CaretIcon = icon(<path d="m6.5 9.5 5.5 5.5 5.5-5.5" />)
