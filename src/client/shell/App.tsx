@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
+import { BoundingBoxIcon, CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
 
 /** A shell bug shows a banner, never a white screen. */
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -142,8 +142,8 @@ export function App() {
           mounted so collapse/expand can crossfade-morph between them */}
       <aside className={`sh-panel${panelOpen ? '' : ' closed'}`} aria-hidden={!panelOpen}>
           <div className="sh-panel-top">
-            <i className="mark" />
-            <span className="name">showhome</span>
+            <BoundingBoxIcon size={16} className="mark" />
+            <span className="name">Marver</span>
             <button className="sh-ibtn" onClick={togglePanel} title="collapse panel" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={15} /></button>
           </div>
           <div className="sh-panel-scroll">

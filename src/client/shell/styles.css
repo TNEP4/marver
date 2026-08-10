@@ -164,8 +164,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
 .sh-panel.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 .sh-panel-top { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px 8px }
-.sh-panel-top .mark { width: 16px; height: 16px; border-radius: 6px; flex: none;
-  background: linear-gradient(135deg, #5b76f7, #8d7bf5) }
+.sh-panel-top .mark { flex: none; color: var(--glass-accent) }
 .sh-panel-top .name { font-weight: 650; font-size: 13px; flex: 1; letter-spacing: .01em }
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
