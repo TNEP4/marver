@@ -302,6 +302,20 @@ export function App() {
 
   useEffect(() => { boot() }, [])
 
+  // browser pinch-zoom is disabled inside the app: a pinch over the chrome (or anywhere
+  // off-canvas) was scaling the PAGE and wrecking the layout. Canvas zoom is unaffected
+  // (rzpp handles its own events), and keyboard cmd +/- is never intercepted.
+  useEffect(() => {
+    const block = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }
+    const blockGesture = (e: Event) => e.preventDefault()
+    window.addEventListener('wheel', block, { passive: false })
+    document.addEventListener('gesturestart', blockGesture)
+    return () => {
+      window.removeEventListener('wheel', block)
+      document.removeEventListener('gesturestart', blockGesture)
+    }
+  }, [])
+
   // live updates from the dev server (source-served shell has import.meta.hot)
   useEffect(() => {
     if (import.meta.hot) import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))

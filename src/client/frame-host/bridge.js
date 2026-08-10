@@ -30,3 +30,8 @@ if (isHtmlFrame) {
   const ready = () => post({ type: 'sh:ready', id })
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
 }
+
+// pinch inside a frame must not zoom the parent PAGE (wheel events here belong to the
+// iframe's document, so the shell's blocker cannot see them). Keyboard cmd +/- untouched.
+window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }, { passive: false })
+document.addEventListener('gesturestart', (e) => e.preventDefault())
