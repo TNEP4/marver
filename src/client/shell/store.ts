@@ -47,7 +47,7 @@ interface State {
   boardHash: string | null            // sha256 of everything.json on disk, when materialized
   dirty: boolean
 
-  boot(): Promise<void>
+  boot(): Promise<boolean>
   applyManifest(m: Manifest): void
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
@@ -68,15 +68,17 @@ interface State {
   runTidy(): void
   toast(text: string): void
   spawn(frameId: string): Node | null
-  save(): Promise<void>
+  save(): Promise<boolean>
 }
 
 export const useStore = create<State>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
-  let saveChain: Promise<void> = Promise.resolve()   // saves are serialized; responses only commit if the board is still active
+  let saveChain: Promise<boolean> = Promise.resolve(true)   // saves are serialized; responses only commit if the board is still active
+  let editRev = 0                                    // bumps per edit; a stale save response may never clear dirty over a newer edit
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
-  const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
-  const flushSave = async () => { clearTimeout(saveTimer); if (get().dirty) get().save(); await saveChain }
+  let switchSeq = 0                                  // last click wins when board switches race
+  const scheduleSave = () => { editRev++; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+  const flushSave = (): Promise<boolean> => { clearTimeout(saveTimer); return get().dirty ? get().save() : saveChain }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'everything', boardAuto: true, deviceView: null, baseLayout: null,
@@ -104,19 +106,24 @@ export const useStore = create<State>((set, get) => {
           boardHash = sha256
           if (typeof board?.auto === 'boolean') boardAuto = board.auto
           // Agent-authored boards may be just a frame list - fill sizes/keys, tidy on first load.
+          // Keys are load-bearing (iframe identity, selection) - dupes/blanks get reminted.
           // Board nodes whose file is gone stay, flagged - deletion is surfaced, never silent (spec §7).
+          const seenKeys = new Set<string>()
           nodes = (Array.isArray(board?.nodes) ? board.nodes : [])
             .filter((n: any) => n && typeof n.frame === 'string')
             .map((n: any) => {
               const f = manifest.frames.find((x) => x.id === n.frame)
               const d = f ? defaultSize(f) : { w: 390, h: 844 }
               if (typeof n.x !== 'number' || typeof n.y !== 'number') needTidy = true
+              let key = typeof n.key === 'string' && n.key ? n.key : nodeKey()
+              if (seenKeys.has(key)) key = nodeKey()
+              seenKeys.add(key)
               return {
-                key: typeof n.key === 'string' ? n.key : nodeKey(),
+                key,
                 frame: n.frame,
                 x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
                 w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
-                theme: typeof n.theme === 'string' ? n.theme : (CONFIG.themes[0] ?? 'light'),
+                theme: typeof n.theme === 'string' ? n.theme : defaultTheme(f),
                 status: 'loading' as const,
                 missing: !manifest.frames.some((f2) => f2.id === n.frame),
               }
@@ -125,8 +132,15 @@ export const useStore = create<State>((set, get) => {
           // a scoped "exception" clears deviceView but the snapshot must keep restoring
           if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
           if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
+        } else if (res.status !== 404) {
+          // only 404 means "fresh board"; anything else must not commit an empty canvas
+          if (seq === loadSeq) get().toast(`board "${boardName}" failed to load`)
+          return false
         }
-      } catch { /* virtual board */ }
+      } catch {
+        if (seq === loadSeq) get().toast(`board "${boardName}" failed to load - server unreachable`)
+        return false
+      }
       // frames not on the board yet → auto boards only (a curated board shows exactly its list)
       if (boardAuto) {
         const placed = new Set(nodes.map((n) => n.frame))
@@ -143,12 +157,14 @@ export const useStore = create<State>((set, get) => {
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
         for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
       }
-      if (seq !== loadSeq) return   // a newer board load superseded this one
+      if (seq !== loadSeq) return false   // a newer board load superseded this one
       set({ manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [] })
+      return true
     },
 
     async switchBoard(name) {
       if (name === get().board) return
+      const mySwitch = ++switchSeq                  // last click wins across every await below
       // validate the target BEFORE leaving the current board - a malformed agent file
       // must not strand the user on an empty canvas (404 = fresh board, that is fine)
       try {
@@ -159,9 +175,21 @@ export const useStore = create<State>((set, get) => {
           return
         }
       } catch { get().toast(`cannot open "${name}" - server unreachable`); return }
-      await flushSave()                             // pending layout belongs to the old board
+      if (mySwitch !== switchSeq) return
+      const saved = await flushSave()               // pending layout belongs to the old board
+      if (mySwitch !== switchSeq) return
+      if (!saved) { get().toast('current board could not be saved - staying here'); return }
+      const prev = {
+        board: get().board, nodes: get().nodes, boardHash: get().boardHash,
+        boardAuto: get().boardAuto, deviceView: get().deviceView, baseLayout: get().baseLayout,
+      }
       set({ board: name, selection: [], interact: null, deviceView: null, baseLayout: null, boardHash: null, nodes: [] })
-      await get().boot()
+      const ok = await get().boot()
+      if (mySwitch !== switchSeq) return
+      if (!ok) {
+        set({ ...prev, selection: [], interact: null })   // transient failure: return home intact
+        get().toast(`could not load "${name}" - restored ${prev.board}`)
+      }
     },
 
     applyManifest(m) {
@@ -349,7 +377,8 @@ export const useStore = create<State>((set, get) => {
     },
 
     save() {
-      saveChain = saveChain.then(async () => {
+      const p = saveChain.then(async () => {
+        const rev = editRev
         const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()
         // Missing nodes persist too - only the explicit remove button drops them (spec §7).
         const board = {
@@ -365,18 +394,25 @@ export const useStore = create<State>((set, get) => {
             method: 'PUT', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ board, baseHash: boardHash }),
           })
-          if (get().board !== boardName) return   // switched boards mid-flight; stale response must not touch state
+          if (get().board !== boardName) return true   // switched boards mid-flight; stale response must not touch state
           if (res.status === 409) {
             const { sha256 } = await res.json()
             set({ boardHash: sha256 })
             get().toast('board changed on disk - canvas layout reloaded')
             await get().boot()
-            return
+            return true
           }
-          if (res.ok) set({ boardHash: (await res.json()).sha256, dirty: false })
-        } catch { /* dev server gone; keep local */ }
+          if (res.ok) {
+            const { sha256 } = await res.json()
+            // an edit that landed after this save started keeps dirty set for the next save
+            set({ boardHash: sha256, ...(editRev === rev ? { dirty: false } : {}) })
+            return true
+          }
+          return false
+        } catch { return false /* dev server gone; edits stay local and dirty */ }
       })
-      return saveChain
+      saveChain = p
+      return p
     },
   }
 })

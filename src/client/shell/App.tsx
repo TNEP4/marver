@@ -157,11 +157,7 @@ function SelectionBar() {
     resizeSelected(name)
     setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
   }
-  const setNodeTheme = (t: string) =>
-    useStore.setState((s) => {
-      const sel = new Set(s.selection)
-      return { nodes: s.nodes.map((n) => (sel.has(n.key) ? { ...n, theme: t } : n)) }
-    })
+  const setNodeTheme = (t: string) => useStore.getState().setSelectedTheme(t)
   const selectedFrames = () => {
     const st = useStore.getState()
     return st.selection

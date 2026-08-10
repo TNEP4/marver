@@ -79,7 +79,10 @@ export function scanFrames(root: string): Manifest {
       frames.push(entry)
     }
   }
-  frames.sort((a, b) => a.id.localeCompare(b.id))
+  // sort: id, then extension rank matching frame-host resolution (tsx > jsx > html),
+  // then path - so the dedup winner below is fully deterministic and loadable
+  const extRank = (file: string) => (file.endsWith('.tsx') ? 0 : file.endsWith('.jsx') ? 1 : 2)
+  frames.sort((a, b) => a.id.localeCompare(b.id) || extRank(a.file) - extRank(b.file) || a.file.localeCompare(b.file))
   // duplicate ids (e.g. foo.tsx + foo.html): keep the first (deterministic after sort),
   // drop the rest - duplicate React keys downstream are worse than a hidden file
   const seen = new Map<string, string>()
