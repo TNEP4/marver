@@ -1,8 +1,32 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Component, cloneElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, CopyIcon, DevicesIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, PlusIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
+
+/** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
+ *  Portaled to the app root - glass never nests, and neither do overlays. */
+function Tip({ label, children }: { label: string; children: ReactElement }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const timer = useRef<number | undefined>(undefined)
+  const show = (e: React.MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    timer.current = window.setTimeout(() => setPos({ x: r.left + r.width / 2, y: r.top - 7 }), 150)
+  }
+  const hide = () => { window.clearTimeout(timer.current); setPos(null) }
+  const app = document.querySelector('.sh-app')
+  const child = children as ReactElement<any>
+  return (
+    <>
+      {cloneElement(child, {
+        onMouseEnter: (e: React.MouseEvent) => { child.props.onMouseEnter?.(e); show(e) },
+        onMouseLeave: (e: React.MouseEvent) => { child.props.onMouseLeave?.(e); hide() },
+        onClick: (e: React.MouseEvent) => { child.props.onClick?.(e); hide() },
+      })}
+      {pos && app && createPortal(<div className="sh-tip" style={{ left: pos.x, top: pos.y }}>{label}</div>, app)}
+    </>
+  )
+}
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
@@ -58,22 +82,29 @@ function SelectionBar() {
       }}
     >
       {Object.entries(CONFIG.viewports).map(([name, vp]) => (
-        <button key={name} className={node.w === vp.width ? 'on' : ''} title={`${vp.width} × ${vp.height}`}
-          onClick={() => resizeNode(node.key, vp.width, vp.height)}>
-          {deviceIcon(name, 15)}<span>{cap(name)}</span>
-        </button>
+        <Tip key={name} label={`${vp.width} × ${vp.height}`}>
+          <button className={node.w === vp.width ? 'on' : ''}
+            onClick={() => resizeNode(node.key, vp.width, vp.height)}>
+            {deviceIcon(name, 15)}<span>{cap(name)}</span>
+          </button>
+        </Tip>
       ))}
       <i className="sep" />
       {CONFIG.themes.map((t) => (
-        <button key={t} className={`icon${node.theme === t ? ' on' : ''}`} title={`${t} theme`} onClick={() => setNodeTheme(t)}>
-          {t === 'dark' ? <MoonIcon size={15} /> : t === 'light' ? <SunIcon size={15} /> : t}
-        </button>
+        <Tip key={t} label={`${cap(t)} theme`}>
+          <button className={`icon${node.theme === t ? ' on' : ''}`} onClick={() => setNodeTheme(t)}>
+            {t === 'dark' ? <MoonIcon size={15} /> : t === 'light' ? <SunIcon size={15} /> : t}
+          </button>
+        </Tip>
       ))}
       <i className="sep" />
-      <button className="icon" title="copy file path"
-        onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><CopyIcon size={15} /></button>
-      <button className="icon" title="second instance of this frame (e.g. another width)"
-        onClick={() => spawn(frame.id)}><PlusIcon size={15} /></button>
+      <Tip label="Copy file path">
+        <button className="icon"
+          onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><SignpostIcon size={15} /></button>
+      </Tip>
+      <Tip label="Duplicate frame">
+        <button className="icon" onClick={() => spawn(frame.id)}><PlusIcon size={15} /></button>
+      </Tip>
     </div>
   )
 }

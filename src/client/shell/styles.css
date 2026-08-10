@@ -4,7 +4,7 @@
 
 .sh-app {
   --ground: #e7e9ef; --dot: #c9cbd5;
-  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2); --beam: rgba(0, 136, 255, .42); --beam-blur: 6px; --beam-bottom: -13px; --beam-h: 12px; --beam-inset: 12%; --edge-accent: rgba(0, 136, 255, .8); --inner-tint: rgba(0, 136, 255, .13);
+  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2); --beam: rgba(0, 136, 255, .42); --beam-blur: 6px; --beam-bottom: -13px; --beam-h: 12px; --beam-inset: 12%; --edge-accent: rgba(0, 136, 255, .8); --inner-tint: rgba(0, 136, 255, .13); --tip-bg: #18181b; --tip-ink: #fafafa;
 
   --glass: rgba(255, 255, 255, .64);
   --glass-brd: rgba(24, 24, 27, .1);
@@ -34,7 +34,7 @@
 }
 .sh-app.dark {
   --ground: #1b1c23; --dot: #35363f;
-  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .32); --beam: rgba(0, 136, 255, .5); --beam-blur: 3px; --beam-bottom: -13px; --beam-h: 16px; --beam-inset: 20%; --edge-accent: rgba(92, 179, 255, .85); --inner-tint: rgba(92, 179, 255, .16);
+  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .32); --beam: rgba(0, 136, 255, .5); --beam-blur: 3px; --beam-bottom: -13px; --beam-h: 16px; --beam-inset: 20%; --edge-accent: rgba(92, 179, 255, .85); --inner-tint: rgba(92, 179, 255, .16); --tip-bg: #f4f4f5; --tip-ink: #18181b;
 
   --glass: rgba(12, 12, 17, .72);
   --glass-brd: rgba(255, 255, 255, .16);
@@ -237,6 +237,14 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-menu .chk { color: var(--glass-accent) }
 .sh-menu kbd { font: 500 10.5px system-ui; color: var(--glass-ink-3); background: none; border: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
+
+/* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
+.sh-tip { position: absolute; z-index: 40; pointer-events: none; padding: 5px 10px; border-radius: 8px;
+  font: 500 11.5px system-ui; white-space: nowrap; transform: translate(-50%, -100%);
+  background: var(--tip-bg); color: var(--tip-ink);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .25);
+  animation: sh-tip-pop .12s ease }
+@keyframes sh-tip-pop { from { opacity: 0; transform: translate(-50%, -100%) scale(.95) } }
 
 .sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
