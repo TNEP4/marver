@@ -135,7 +135,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
-  border-radius: 999px; padding: 4px; z-index: 15; white-space: nowrap;
+  border-radius: 999px; padding: 4px; z-index: 9; white-space: nowrap;
   /* a teeny inner glow hugging the bottom edge - 8px tall, cannot climb into the body */
   background-image: radial-gradient(46% 8px at 50% calc(100% + 1px), var(--inner-tint), transparent 80%) }
 /* the accent lives ON the border line, not in the body: layered into the masked 1px
@@ -241,10 +241,13 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
 .sh-tip { position: absolute; z-index: 40; pointer-events: none; padding: 5px 10px; border-radius: 8px;
   font: 500 11.5px system-ui; white-space: nowrap; transform: translate(-50%, -100%);
+  display: flex; flex-direction: column; gap: 1px; text-align: center;
   background: var(--tip-bg); color: var(--tip-ink);
   box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .25);
   animation: sh-tip-pop .12s ease }
 @keyframes sh-tip-pop { from { opacity: 0; transform: translate(-50%, -100%) scale(.95) } }
+.sh-tip b { font-weight: 600 }
+.sh-tip span { opacity: .65; font-size: 10.5px }
 
 .sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }

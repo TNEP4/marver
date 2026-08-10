@@ -6,7 +6,7 @@ import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIc
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. */
-function Tip({ label, children }: { label: string; children: ReactElement }) {
+function Tip({ label, children }: { label: ReactNode; children: ReactElement }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const timer = useRef<number | undefined>(undefined)
   const show = (e: React.MouseEvent) => {
@@ -81,14 +81,17 @@ function SelectionBar() {
         transform: 'translateX(-50%)',
       }}
     >
-      {Object.entries(CONFIG.viewports).map(([name, vp]) => (
-        <Tip key={name} label={`${vp.width} × ${vp.height}`}>
-          <button className={node.w === vp.width ? 'on' : ''}
-            onClick={() => resizeNode(node.key, vp.width, vp.height)}>
-            {deviceIcon(name, 15)}<span>{cap(name)}</span>
-          </button>
-        </Tip>
-      ))}
+      {Object.entries(CONFIG.viewports).map(([name, vp]) => {
+        const active = node.w === vp.width
+        return (
+          <Tip key={name} label={<><b>{cap(name)}</b><span>{vp.width} × {vp.height}</span></>}>
+            <button className={active ? 'on' : 'icon'}
+              onClick={() => resizeNode(node.key, vp.width, vp.height)}>
+              {deviceIcon(name, 15)}{active && <span>{cap(name)}</span>}
+            </button>
+          </Tip>
+        )
+      })}
       <i className="sep" />
       {CONFIG.themes.map((t) => (
         <Tip key={t} label={`${cap(t)} theme`}>
