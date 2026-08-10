@@ -52,7 +52,7 @@ function SelectionBar() {
       className="sh-ctx"
       style={{
         left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${node.x}px)`,
-        top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${node.y}px - 46px)`,
+        top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${node.y}px - 52px)`,
       }}
     >
       {Object.entries(CONFIG.viewports).map(([name, vp]) => (
