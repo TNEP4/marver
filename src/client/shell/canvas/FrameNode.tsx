@@ -1,19 +1,32 @@
 import { memo, useEffect, useRef } from 'react'
 import { frameUrl, useStore, CONFIG, type Node } from '../store.ts'
+import { CopyIcon, MoonIcon, PlusIcon, ReloadIcon, SunIcon, XIcon } from '../icons.tsx'
 
-const HEADER = 28
+export const HEADER = 28
 const SNAP = 12
+
+/** Theme chip: sun/moon for the conventional names, text for custom themes. */
+function ThemeGlyph({ theme }: { theme: string }) {
+  if (theme === 'light') return <SunIcon size={13} />
+  if (theme === 'dark') return <MoonIcon size={13} />
+  return <>{theme}</>
+}
 
 /**
  * One frame on the canvas. Iframe laws (spec §7): the iframe element is created once per node key
  * and never remounted - theme changes go through sh:set-theme, size changes are CSS only.
+ *
+ * Every interactive element carries `sh-no-pan` (rzpp's panning.excluded checks the event
+ * TARGET's classList, nothing else), and drags additionally raise the store gesture flag,
+ * which hard-disables canvas panning for the duration. Both are needed: the class stops the
+ * pan before it starts, the flag covers targets we missed.
  */
 export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const frame = useStore((s) => s.frameFor(node))
   const selected = useStore((s) => s.selection === node.key)
   const interact = useStore((s) => s.interact === node.key)
   const scale = useStore((s) => s.scale)
-  const { select, setInteract, moveNode, resizeNode, setStatus } = useStore.getState()
+  const { select, setInteract, moveNode, resizeNode, setStatus, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const themeRef = useRef(node.theme)
 
@@ -43,6 +56,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     const gestureScale = world.getBoundingClientRect().width || scale || 1
     const start = { x: e.clientX, y: e.clientY, nx: node.x, ny: node.y, nw: node.w, nh: node.h }
     world.classList.add('sh-gesturing')
+    setGesture(true)
 
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - start.x) / gestureScale
@@ -62,13 +76,14 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       finished = true
       try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
       world.classList.remove('sh-gesturing')
+      setGesture(false)
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', done)
       el.removeEventListener('pointercancel', done)
       el.removeEventListener('lostpointercapture', done)
       window.removeEventListener('blur', done)
     }
-    try { el.setPointerCapture(e.pointerId) } catch { return }
+    try { el.setPointerCapture(e.pointerId) } catch { setGesture(false); world.classList.remove('sh-gesturing'); return }
     el.addEventListener('pointermove', onMove)
     el.addEventListener('pointerup', done)
     el.addEventListener('pointercancel', done)
@@ -83,14 +98,18 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       <div className={`sh-node${selected ? ' sel' : ''}`}
         style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER }}
         data-node={node.key}>
-        <div className="sh-node-head" onPointerDown={(e) => drag(e, 'move')}>
-          <span className="id">{node.frame}</span><span className="dim">deleted</span>
+        <div className="sh-node-head sh-no-pan" onPointerDown={(e) => drag(e, 'move')}>
+          <span className="id sh-no-pan">{node.frame}</span><span className="dim sh-no-pan">deleted</span>
         </div>
         <div className="sh-node-body" style={{ height: node.h }}>
-          <div className="sh-card warn">
+          <div className="sh-card warn sh-no-pan">
             <b>file deleted</b>
             <span className="dim">{node.frame}</span>
-            <span className="row"><button onClick={() => useStore.getState().removeNode(node.key)}>remove from board</button></span>
+            <span className="row">
+              <button className="sh-no-pan" onClick={() => useStore.getState().removeNode(node.key)}>
+                <XIcon size={12} /> remove from board
+              </button>
+            </span>
           </div>
         </div>
       </div>
@@ -103,20 +122,24 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER }}
       data-node={node.key}
     >
-      <div className="sh-node-head" onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
-        <span className="id">{frame.title ?? frame.id}</span>
-        <span className="dim">{Math.round(node.w)} · {node.theme}</span>
+      <div className="sh-node-head sh-no-pan" onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
+        <span className="id sh-no-pan">{frame.title ?? frame.id}</span>
+        <span className="dim sh-no-pan">{Math.round(node.w)} · {node.theme}</span>
       </div>
 
       <div className="sh-node-body" style={{ height: node.h }}>
         {node.status === 'error' ? (
-          <div className="sh-card err">
+          <div className="sh-card err sh-no-pan">
             <b>frame failed</b>
             <span className="msg">{node.error}</span>
             <span className="dim">{frame.file}</span>
             <span className="row">
-              <button onClick={() => { setStatus(node.key, 'loading'); iframeRef.current && (iframeRef.current.src = frameUrl(frame, node.theme)) }}>reload</button>
-              <button onClick={() => navigator.clipboard.writeText(`${frame.file}: ${node.error}`)}>copy for agent</button>
+              <button className="sh-no-pan" onClick={() => { setStatus(node.key, 'loading'); iframeRef.current && (iframeRef.current.src = frameUrl(frame, node.theme)) }}>
+                <ReloadIcon size={12} /> reload
+              </button>
+              <button className="sh-no-pan" onClick={() => { navigator.clipboard.writeText(`${frame.file}: ${node.error}`); toast('error copied for agent') }}>
+                <CopyIcon size={12} /> copy for agent
+              </button>
             </span>
           </div>
         ) : null}
@@ -128,7 +151,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         />
         {!interact && (
           <div
-            className="sh-overlay"
+            className="sh-overlay sh-no-pan"
             onPointerDown={(e) => drag(e, 'move')}
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
           />
@@ -137,18 +160,26 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
 
       {selected && (
         <>
-          <div className="sh-handle e" onPointerDown={(e) => drag(e, 'e')} />
-          <div className="sh-handle s" onPointerDown={(e) => drag(e, 's')} />
-          <div className="sh-handle se" onPointerDown={(e) => drag(e, 'se')} />
-          <div className="sh-ctx" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="sh-handle e sh-no-pan" onPointerDown={(e) => drag(e, 'e')} />
+          <div className="sh-handle s sh-no-pan" onPointerDown={(e) => drag(e, 's')} />
+          <div className="sh-handle se sh-no-pan" onPointerDown={(e) => drag(e, 'se')} />
+          <div className="sh-ctx sh-no-pan" onPointerDown={(e) => e.stopPropagation()}>
             {Object.entries(CONFIG.viewports).map(([name, vp]) => (
-              <button key={name} className={node.w === vp.width ? 'on' : ''} onClick={() => resizeNode(node.key, vp.width, vp.height)}>{vp.width}</button>
+              <button key={name} className={`sh-no-pan${node.w === vp.width ? ' on' : ''}`} title={name}
+                onClick={() => resizeNode(node.key, vp.width, vp.height)}>{vp.width}</button>
             ))}
+            <i className="sep" />
             {CONFIG.themes.map((t) => (
-              <button key={t} className={node.theme === t ? 'on' : ''} onClick={() => useStore.setState((s) => ({ nodes: s.nodes.map((n) => n.key === node.key ? { ...n, theme: t } : n) }))}>{t}</button>
+              <button key={t} className={`sh-no-pan icon${node.theme === t ? ' on' : ''}`} title={`${t} theme`}
+                onClick={() => useStore.setState((s) => ({ nodes: s.nodes.map((n) => n.key === node.key ? { ...n, theme: t } : n) }))}>
+                <ThemeGlyph theme={t} />
+              </button>
             ))}
-            <button onClick={() => navigator.clipboard.writeText(frame.file)} title="copy file path">⧉</button>
-            <button onClick={() => useStore.getState().spawn(frame.id)} title="second instance of this frame (e.g. another width)">+</button>
+            <i className="sep" />
+            <button className="sh-no-pan icon" title="copy file path"
+              onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><CopyIcon size={13} /></button>
+            <button className="sh-no-pan icon" title="second instance of this frame (e.g. another width)"
+              onClick={() => useStore.getState().spawn(frame.id)}><PlusIcon size={13} /></button>
           </div>
         </>
       )}

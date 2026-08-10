@@ -12,3 +12,32 @@ Deviations and judgment calls the spec allows, newest first. One line each, with
 - 2026-08-10 · react/react-dom removed from devDependencies - a second copy under the package's node_modules shadows dedupe when running from a linked checkout and produces the invalid-hook crash. Types-only deps remain.
 - 2026-08-10 · rzpp gesture events are onPanningStart/Stop + onZoomStart/Stop (no onTransformStart/Stop in v3.7); ref type is ReactZoomPanPinchContentRef.
 - 2026-08-10 · Post-Codex-review: client constants live in `src/client/const.ts` (packed `files` never included `src/cli` - the shell could not resolve in real installs; smoke now loads the full module graph from the tarball). Bridge html-mode via `?html=1` on its own URL (no globals racing module order). Missing nodes persist through save/boot; removal is the explicit button. `--mode` stays flag-only (no interactive prompt) - recorded deviation. `sh:dblclick` dropped from the bridge until focus mode (M1) consumes it.
+
+## M1-UX: the interaction model pass (2026-08-10)
+
+**The both-move drag bug.** React `stopPropagation` cannot stop react-zoom-pan-pinch:
+rzpp binds native listeners on its wrapper, which sits BELOW React's delegation root in
+the bubble path, so rzpp starts panning before any React handler runs. Fix is layered:
+`panning.excluded` classes (`sh-no-pan`) on every interactive element - rzpp checks only
+the event TARGET's classList, so buttons need `button svg { pointer-events: none }` to
+keep targets on the button - plus a store `gesture` flag that hard-disables panning for
+the duration of a frame drag (covers any target the classes miss).
+
+**Scroll-pan was dead code.** rzpp's `onWheelPanning` early-returns unless
+`wheel.wheelDisabled === true`; our old config left wheel zoom enabled, so
+`wheelPanning: true` did nothing. Now: `wheelDisabled: true` frees plain scroll for
+two-axis panning while ctrlKey wheels (trackpad pinch) still zoom. cmd+scroll on mac
+arrives as metaKey, not ctrlKey - a capture-phase listener rewrites it before rzpp sees it.
+
+**Fit replaces zoomToElement.** rzpp's `zoomToElement` fills the viewport edge-to-edge,
+hiding the context bar. Custom fit computes scale/position from store coordinates with
+asymmetric padding (116 top for the context bar, 72 bottom, 96 sides), capped at 100%.
+
+**Icons are inline SVG, not a package.** The shell ships as source into unknown hosts;
+an icon dependency would have to resolve through whatever package-manager layout the host
+uses (pnpm does not hoist, npm does). Eleven lucide-style icons in icons.tsx cost less
+than that risk. Same reason the shell stays vanilla CSS instead of Tailwind: the shell
+must render identically in Tailwind-less hosts, and shadcn look is a palette, not a dep.
+
+**Space-pan.** Hold space = grab cursor + nodes drop pointer-events, so the drag lands on
+the canvas. Matches Figma; also the escape hatch when a frame covers the whole viewport.

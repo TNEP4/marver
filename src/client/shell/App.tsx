@@ -1,6 +1,7 @@
-import { Component, useEffect, type ReactNode } from 'react'
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useStore, CONFIG } from './store.ts'
-import { Canvas, panTo } from './canvas/Canvas.tsx'
+import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
+import { CaretIcon, CheckIcon, GridIcon, MoonIcon, PlayIcon, SidebarIcon, SunIcon } from './icons.tsx'
 
 /** A shell bug shows a banner, never a white screen. */
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -18,9 +19,46 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
   }
 }
 
+/** Global theme dropdown: sets every frame at once; the trigger reflects the board when uniform. */
+function ThemeMenu() {
+  const nodes = useStore((s) => s.nodes)
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      if (!boxRef.current?.contains(e.target as globalThis.Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [open])
+
+  return (
+    <div className="sh-theme" ref={boxRef}>
+      <button className="sh-pill-btn" onClick={() => setOpen(!open)} title="theme for all frames">
+        {uniform === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
+        <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+      </button>
+      {open && (
+        <div className="sh-menu">
+          {CONFIG.themes.map((t) => (
+            <button key={t} onClick={() => { useStore.getState().setTheme(t); setOpen(false) }}>
+              {t === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
+              <span>{t}</span>
+              {uniform === t && <CheckIcon size={13} className="chk" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function App() {
   const { manifest, nodes, panelOpen, scale, toasts } = useStore()
-  const { boot, applyManifest, togglePanel, select, setInteract, setStatus, setTheme, runTidy, toast, spawn } = useStore.getState()
+  const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
 
   useEffect(() => { boot() }, [])
 
@@ -53,20 +91,23 @@ export function App() {
         const node = existing ?? spawn(target)
         if (!node) return toast(`unknown goto target "${target}"`)
         select(node.key)
-        setTimeout(() => panTo.current(node.key), 50)
+        setTimeout(() => canvasCtl.fitNode(node.key), 50)
       }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  // keyboard: t tidy · Escape exits interact/selection
+  // keyboard: t tidy · Escape exit · shift+0 100% · shift+1 fit all · shift+2 fit selection
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       const s = useStore.getState()
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
       if (e.key === 't' && !e.metaKey && !e.ctrlKey) runTidy()
+      if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
+      if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
+      if (e.shiftKey && e.code === 'Digit2' && s.selection) canvasCtl.fitNode(s.selection)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -79,11 +120,15 @@ export function App() {
     <div className="sh-app">
       <Canvas />
 
-      {/* floating side panel (no top bar - spec) */}
-      <aside className={`sh-panel${panelOpen ? '' : ' closed'}`}>
-        {panelOpen ? (
-          <>
-            <div className="sh-logo"><i /> showhome</div>
+      {/* floating pill panel (no top bar - spec) */}
+      {panelOpen ? (
+        <aside className="sh-panel">
+          <div className="sh-panel-top">
+            <i className="mark" />
+            <span className="name">showhome</span>
+            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel"><SidebarIcon size={15} /></button>
+          </div>
+          <div className="sh-panel-scroll">
             <div className="hd">Scenes</div>
             {scenes.map((sc) => (
               <div key={sc.name}>
@@ -91,31 +136,34 @@ export function App() {
                 {frames.filter((f) => f.scene === sc.name).map((f) => (
                   <div key={f.id} className="sub" onClick={() => {
                     const n = useStore.getState().nodes.find((x) => x.frame === f.id)
-                    if (n) { select(n.key); panTo.current(n.key) }
+                    if (n) { select(n.key); canvasCtl.fitNode(n.key) }
                   }}>{f.id.split('/').slice(1).join('/') || f.id}</div>
                 ))}
               </div>
             ))}
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}
-            <div className="foot" onClick={togglePanel}>⟨ collapse</div>
-          </>
-        ) : (
-          <div className="sh-rail" onClick={togglePanel}>⟩</div>
-        )}
-      </aside>
+          </div>
+        </aside>
+      ) : (
+        <button className="sh-fab" onClick={togglePanel} title="open panel"><SidebarIcon size={16} /></button>
+      )}
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">
-        {CONFIG.themes.map((t) => <button key={t} onClick={() => setTheme(t)}>{t === 'dark' ? '◐' : '◑'} {t}</button>)}
-        <span className="pct">{Math.round(scale * 100)}%</span>
-        <button onClick={runTidy} title="tidy (t)">t tidy</button>
-        <button className="off" title="play mode ships in M2">▶</button>
+        <ThemeMenu />
+        <i className="sep" />
+        <button className="sh-pill-btn pct" onClick={() => canvasCtl.zoom100()} title="zoom to 100% (shift+0)">
+          {Math.round(scale * 100)}%
+        </button>
+        <button className="sh-pill-btn" onClick={runTidy} title="tidy layout (t)"><GridIcon size={14} /></button>
+        <i className="sep" />
+        <button className="sh-pill-btn off" title="play mode ships in M2"><PlayIcon size={13} /></button>
       </nav>
 
       {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled (design/config.ts → theme)</div>}
 
       <div className="sh-toasts">
-        {toasts.map((t) => <div key={t.id} className="sh-toast">✓ {t.text}</div>)}
+        {toasts.map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
       </div>
     </div>
   )

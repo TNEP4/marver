@@ -34,6 +34,7 @@ interface State {
   nodes: Node[]                       // append-only order; NEVER sorted or reordered (iframe law G-1)
   selection: string | null
   interact: string | null
+  gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -49,6 +50,7 @@ interface State {
   removeNode(key: string): void
   select(key: string | null): void
   setInteract(key: string | null): void
+  setGesture(g: boolean): void
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -63,7 +65,7 @@ export const useStore = create<State>((set, get) => {
   const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   return {
-    manifest: null, nodes: [], selection: null, interact: null,
+    manifest: null, nodes: [], selection: null, interact: null, gesture: false,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -144,6 +146,7 @@ export const useStore = create<State>((set, get) => {
     },
     select(key) { set({ selection: key, interact: null }) },
     setInteract(key) { set({ interact: key }) },
+    setGesture(gesture) { set({ gesture }) },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
     setTheme(theme) {
