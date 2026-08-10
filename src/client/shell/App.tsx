@@ -68,7 +68,13 @@ function SelectionBar() {
   const selection = useStore((s) => s.selection)
   const node = useStore((s) => s.nodes.find((n) => n.key === s.selection[s.selection.length - 1]))
   const frame = useStore((s) => (node ? s.frameFor(node) : undefined))
+  const nodes = useStore((s) => s.nodes)
   if (!node || !frame || node.missing) return null
+  // anchor: centered over the bounding box of ALL selected frames, above the topmost
+  const selNodes = nodes.filter((n) => selection.includes(n.key))
+  const bx0 = Math.min(...selNodes.map((n) => n.x))
+  const bx1 = Math.max(...selNodes.map((n) => n.x + n.w))
+  const by0 = Math.min(...selNodes.map((n) => n.y))
   const { resizeSelected, spawn, toast } = useStore.getState()
   const multi = selection.length > 1
   const applyDevice = (name: string) => {
@@ -90,9 +96,9 @@ function SelectionBar() {
     <div
       className="sh-ctx"
       style={{
-        // centered over the frame; translateX keeps it centered whatever the bar's width
-        left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${node.x + node.w / 2}px)`,
-        top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${node.y}px - 52px)`,
+        // centered over the selection's bounding box; translateX keeps it centered at any width
+        left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${(bx0 + bx1) / 2}px)`,
+        top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`,
         transform: 'translateX(-50%)',
       }}
     >
