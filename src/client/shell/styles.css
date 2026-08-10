@@ -116,10 +116,11 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-handle.s { bottom: -5px; left: 50%; width: 26px; height: 9px; margin-left: -13px; cursor: ns-resize }
 .sh-handle.se { right: -5px; bottom: -5px; width: 11px; height: 11px; cursor: nwse-resize }
 
-/* glass surfaces share one recipe */
+/* glass surfaces share one recipe; chrome text is never selectable (shift-click = multi-select) */
 .sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-menu, .sh-banner, .sh-toast {
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative }
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
+  user-select: none; -webkit-user-select: none }
 
 /* edge light: a 1px gradient ring over the border, so glass reads as glass even
    with nothing behind it to blur (masked-border technique) */

@@ -1,7 +1,7 @@
 export interface TidyNode { key: string; scene: string; w: number; h: number }
 export interface Placed { key: string; x: number; y: number }
 
-const GUTTER = 48
+const GUTTER = 72
 const SCENE_GAP = 96
 
 /** Pure: rows per scene (scenes alphabetical, node order preserved within a scene). Spec §7. */
