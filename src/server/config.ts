@@ -38,7 +38,7 @@ export async function loadConfig(root: string): Promise<ShConfig> {
       ...user,
       viewports: validViewports(user.viewports) ?? DEFAULTS.viewports,
       themes: Array.isArray(user.themes) && user.themes.length ? user.themes.map(String) : DEFAULTS.themes,
-      port: typeof user.port === 'number' ? user.port : DEFAULTS.port,
+      port: validPort(user.port) ?? DEFAULTS.port,
     }
     return cfg
   } catch (err) {
@@ -47,12 +47,18 @@ export async function loadConfig(root: string): Promise<ShConfig> {
   }
 }
 
+const validDim = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 1 && n <= 20000
+
+function validPort(n: unknown): number | null {
+  return typeof n === 'number' && Number.isInteger(n) && n > 0 && n < 65536 ? n : null
+}
+
 function validViewports(v: unknown): Record<string, Viewport> | null {
   if (!v || typeof v !== 'object') return null
   const out: Record<string, Viewport> = {}
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     const vp = val as Partial<Viewport>
-    if (typeof vp?.width === 'number' && typeof vp?.height === 'number') out[k] = { width: vp.width, height: vp.height }
+    if (validDim(vp?.width) && validDim(vp?.height)) out[k] = { width: Math.round(vp.width), height: Math.round(vp.height) }
   }
   return Object.keys(out).length ? out : null
 }

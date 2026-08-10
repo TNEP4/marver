@@ -27,7 +27,13 @@ cli
   .option('--port <port>', 'Port (default 5199)')
   .action(async (opts) => {
     const { dev } = await import('../server/dev.ts')
-    await dev(resolve(opts.root), opts.port ? Number(opts.port) : undefined)
+    let port: number | undefined
+    if (opts.port !== undefined) {
+      const n = Number(opts.port)
+      if (Number.isInteger(n) && n > 0 && n < 65536) port = n
+      else console.warn(`[${NAME}] ignoring invalid --port "${opts.port}"`)
+    }
+    await dev(resolve(opts.root), port)
   })
 
 cli

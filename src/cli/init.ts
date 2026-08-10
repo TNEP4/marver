@@ -72,13 +72,11 @@ function patchTsconfigExclude(root: string) {
   const raw = readFileSync(file, 'utf8')
   try {
     // Surgical string edit to preserve host formatting/comments as much as possible.
-    if (/"exclude"\s*:/.test(raw)) {
-      const next = raw.replace(/("exclude"\s*:\s*\[)/, '$1"design", ')
-      writeFileSync(file, next)
-    } else {
-      const next = raw.replace(/^\{/, '{\n  "exclude": ["design"],')
-      writeFileSync(file, next)
-    }
+    const next = /"exclude"\s*:/.test(raw)
+      ? raw.replace(/("exclude"\s*:\s*\[)/, '$1"design", ')
+      : raw.replace(/\{/, '{\n  "exclude": ["design"],')   // first brace, tolerant of BOM/leading comments
+    if (next === raw) throw new Error('no anchor matched')
+    writeFileSync(file, next)
     console.log(`\n  patched tsconfig.json (the only host file touched):`)
     console.log(`    + "design" added to "exclude"  (revert this line to fully uninstall)`)
   } catch {

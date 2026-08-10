@@ -25,6 +25,7 @@ export function frameUrl(frame: FrameEntry, theme: string): string {
 }
 
 const defaultTheme = (frame?: FrameEntry) => frame?.theme ?? CONFIG.themes[0] ?? 'light'
+const manifestIds = (m: Manifest) => m.frames.map((f) => f.id).sort().join('\n')
 
 function defaultSize(frame: FrameEntry) {
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
@@ -168,7 +169,9 @@ export const useStore = create<State>((set, get) => {
       if (!next) { get().toast(`board "${boardName}" failed to load`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
       if (get().board !== boardName || editRev !== revAtStart) return false
+      const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
+      if (live && manifestIds(live) !== manifestIds(next.manifest as Manifest)) get().applyManifest(live)
       return true
     },
 
@@ -191,7 +194,9 @@ export const useStore = create<State>((set, get) => {
       if (get().dirty) { get().toast('current board could not be saved - staying here'); return }
       clearTimeout(saveTimer)                  // a scheduled-but-clean timer must not fire against the new board
       ++loadSeq                                // invalidate any in-flight boot of the old board
+      const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
+      if (live && manifestIds(live) !== manifestIds(next.manifest as Manifest)) get().applyManifest(live)
     },
 
     applyManifest(m) {
