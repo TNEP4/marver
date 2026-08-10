@@ -29,7 +29,6 @@ export function Canvas() {
   const nodes = useStore((s) => s.nodes)
   const gesture = useStore((s) => s.gesture)
   const setScale = useStore((s) => s.setScale)
-  const select = useStore((s) => s.select)
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
 
   useEffect(() => {
@@ -63,6 +62,22 @@ export function Canvas() {
       const cx = el.clientWidth / 2, cy = el.clientHeight / 2
       inst.setTransform(cx - (cx - positionX) / scale, cy - (cy - positionY) / scale, 1, 250, 'easeOut')
     }
+  }, [])
+
+  // click on empty canvas = deselect + exit interact (Figma convention; also covers the
+  // double-click-outside exit). Bound on the wrapper, NOT #sh-world - the world element is
+  // 1px by design, so empty-canvas clicks never hit it.
+  useEffect(() => {
+    const el = document.querySelector('.sh-canvas') as HTMLElement | null
+    if (!el) return
+    const down = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t?.closest('.sh-node')) return
+      const s = useStore.getState()
+      if (s.selection || s.interact) s.select(null)
+    }
+    el.addEventListener('pointerdown', down)
+    return () => el.removeEventListener('pointerdown', down)
   }, [])
 
   // cmd+scroll = zoom on mac: rzpp only zooms on ctrlKey wheels (that is how trackpad pinch
@@ -133,7 +148,7 @@ export function Canvas() {
       onTransformed={(r) => setScale(r.state.scale)}
     >
       <TransformComponent wrapperClass="sh-canvas" contentClass="sh-content">
-        <div id="sh-world" onPointerDown={(e) => { if (e.target === e.currentTarget) select(null) }}>
+        <div id="sh-world">
           {nodes.map((n) => <FrameNode key={n.key} node={n} />)}
         </div>
       </TransformComponent>

@@ -144,7 +144,8 @@ export const useStore = create<State>((set, get) => {
     setStatus(key, status, error) {
       set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error } : n)) }))
     },
-    select(key) { set({ selection: key, interact: null }) },
+    // selecting the frame you are interacting with keeps interact; anything else exits it
+    select(key) { set((s) => ({ selection: key, interact: s.interact === key ? s.interact : null })) },
     setInteract(key) { set({ interact: key }) },
     setGesture(gesture) { set({ gesture }) },
     setScale(scale) { set({ scale }) },
