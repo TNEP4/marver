@@ -141,6 +141,12 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-ctx::before { content: ''; position: absolute; left: 20%; right: 20%; bottom: -13px; height: 16px;
   background: radial-gradient(50% 100% at 50% 0%, var(--beam), transparent 70%);
   filter: blur(var(--beam-blur, 4px)); pointer-events: none; z-index: -1 }
+/* light mode connector: a map-callout stem instead of a glow (emitted light needs a dark
+   ground to read; on paper it just stains) - dark mode keeps the beam */
+.sh-ctx .stem { position: absolute; left: 50%; bottom: -14px; width: 2px; height: 14px;
+  transform: translateX(-50%); background: var(--accent); border-radius: 2px; pointer-events: none }
+.sh-app:not(.dark) .sh-ctx::before { display: none }
+.sh-app.dark .sh-ctx .stem { display: none }
 .sh-ctx button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px;
   font: 600 12px system-ui; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 11px; border-radius: 999px; cursor: pointer }

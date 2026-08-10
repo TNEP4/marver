@@ -74,6 +74,7 @@ function SelectionBar() {
         onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><CopyIcon size={15} /></button>
       <button className="icon" title="second instance of this frame (e.g. another width)"
         onClick={() => spawn(frame.id)}><PlusIcon size={15} /></button>
+      <i className="stem" />
     </div>
   )
 }
