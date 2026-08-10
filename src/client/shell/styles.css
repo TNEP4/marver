@@ -188,9 +188,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-fab.hidden { transform: scale(.5); opacity: 0; pointer-events: none }
 
 /* pill nav */
+/* uniform 5px inset on every side: 34px buttons + 2*5px = 44px, same as the fab */
 .sh-pill { position: absolute; right: var(--edge); top: var(--edge); z-index: 10; display: flex; align-items: center; gap: 1px;
-  border-radius: 999px; padding: 4px; height: 44px }
-.sh-pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px;
+  border-radius: 999px; padding: 5px }
+.sh-pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 34px;
   min-width: 34px; font: 500 11.5px system-ui; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 10px; border-radius: 999px; cursor: pointer; white-space: nowrap }
 .sh-pill-btn:hover { background: var(--glass-hover); color: var(--glass-ink) }
@@ -199,11 +200,11 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-pill-btn.off:hover { background: none; color: var(--glass-ink-3) }
 .sh-pill .sep { width: 1px; height: 16px; background: var(--glass-brd); margin: 0 3px }
 
-/* dropdown menu (theme) - portaled to .sh-app (its own backdrop root), placed under the pill */
+/* dropdown menu (theme) - portaled to .sh-app (its own backdrop root), left-aligned to its trigger */
 .sh-theme { position: relative }
-.sh-menu { position: absolute; right: var(--edge); top: calc(var(--edge) + 54px); min-width: 136px; z-index: 20;
-  border-radius: 16px; padding: 4px; display: flex; flex-direction: column;
-  transform-origin: top right; animation: sh-pop .14s ease }
+.sh-menu { position: absolute; min-width: 136px; z-index: 20;
+  border-radius: 16px; padding: 5px; display: flex; flex-direction: column;
+  transform-origin: top left; animation: sh-pop .14s ease }
 @keyframes sh-pop { from { opacity: 0; transform: scale(.95) translateY(-4px) } }
 .sh-menu button { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px;
   font: 500 12px system-ui; color: var(--glass-ink); background: none; border: 0; border-radius: 12px;

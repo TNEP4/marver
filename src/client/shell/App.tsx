@@ -26,9 +26,18 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
   const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ left: 0, top: 0 })
   const boxRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
+
+  const toggle = () => {
+    if (!open && boxRef.current) {
+      const r = boxRef.current.getBoundingClientRect()
+      setPos({ left: r.left, top: r.bottom + 10 })   // left-aligned under the trigger
+    }
+    setOpen(!open)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -43,12 +52,12 @@ function ThemeMenu() {
   const app = document.querySelector('.sh-app')
   return (
     <div className="sh-theme" ref={boxRef}>
-      <button className="sh-pill-btn" onClick={() => setOpen(!open)} title="theme for all frames">
+      <button className="sh-pill-btn" onClick={toggle} title="theme for all frames">
         {uniform === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
         <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
       </button>
       {open && app && createPortal(
-        <div className="sh-menu" ref={menuRef}>
+        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
           {CONFIG.themes.map((t) => (
             <button key={t} onClick={() => { useStore.getState().setTheme(t); setOpen(false) }}>
               {t === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
