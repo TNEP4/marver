@@ -41,3 +41,13 @@ must render identically in Tailwind-less hosts, and shadcn look is a palette, no
 
 **Space-pan.** Hold space = grab cursor + nodes drop pointer-events, so the drag lands on
 the canvas. Matches Figma; also the escape hatch when a frame covers the whole viewport.
+
+## Theme-aware shell (2026-08-10, same day round 3)
+
+The shell follows the board, not the OS: when a majority of frames are dark, the whole
+chrome flips - dark canvas, dark glass, dark frame cards. Tokens live on `.sh-app` with a
+`.dark` override class, so both palettes are one CSS file and the flip is a single class.
+Light glass = white translucency over the paper canvas; the earlier always-dark chrome
+only made sense on dark boards. Frame header strips joined the glass language
+(translucent + backdrop blur) in both themes. `spawn()` now toasts - the + shortcut was
+silent while agent-added frames toasted, which read as breakage.

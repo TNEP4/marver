@@ -180,6 +180,7 @@ export const useStore = create<State>((set, get) => {
       const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' }
       set((s) => ({ nodes: [...s.nodes, node], dirty: true }))
       scheduleSave()
+      get().toast(`added ${f.id}`)
       return node
     },
 

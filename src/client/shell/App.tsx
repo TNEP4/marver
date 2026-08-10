@@ -115,9 +115,11 @@ export function App() {
 
   const scenes = manifest?.scenes ?? []
   const frames = manifest?.frames ?? []
+  // the shell follows the board: majority-dark frames flip the whole chrome + canvas dark
+  const dark = nodes.length > 0 && nodes.filter((n) => n.theme === 'dark').length > nodes.length / 2
 
   return (
-    <div className="sh-app">
+    <div className={`sh-app${dark ? ' dark' : ''}`}>
       <Canvas />
 
       {/* floating pill panel (no top bar - spec); panel and fab are both always
