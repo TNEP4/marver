@@ -22,3 +22,16 @@ Then, to your agent:
 The implementation contract is [SPEC.md](./SPEC.md). Deviations live in [DECISIONS.md](./DECISIONS.md).
 
 Working name; private; TNEP4.
+
+## Shortcuts
+
+**Canvas** - two-finger scroll pans · pinch or ctrl/cmd+scroll zooms · space+drag pans from anywhere · click empty canvas deselects / exits interact.
+
+**Zoom** - `⇧0` 100% · `⇧1` fit all · `⇧2` fit selection · click the % readout for presets (200-10%).
+
+**Device views** - plain digits, auto-tidy + refit every time. Scoped to the selection when frames are selected, board-wide otherwise.
+`0` default sizes (restores your free-form layout) · `1` mobile · `2` tablet · `3` laptop · `4` monitor · `5` tv (when enabled in design/config.ts).
+
+**Board & chrome** - `t` tidy · `d` toggle light/dark for the board · `⌘\` (ctrl+\) collapse/open sidebar.
+
+**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
