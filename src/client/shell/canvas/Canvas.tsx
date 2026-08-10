@@ -19,6 +19,26 @@ import { FrameNode, HEADER } from './FrameNode.tsx'
 // fit padding leaves the context bar above a frame and breathing room around it visible
 const PAD = { x: 96, top: 116, bottom: 72 }
 
+/**
+ * World-space dot grid (sense-of-scale, the Figma/tldraw recipe): the grid pans and
+ * zooms with the content, and its pitch re-quantizes in octaves so the on-screen
+ * spacing always lands in [14, 28)px - zooming out doubles the world spacing instead
+ * of dissolving into noise. Alpha fades across the octave so level switches don't pop.
+ * Painted via CSS vars on the wrapper - no React re-render per frame.
+ */
+const GRID = 20
+function paintGrid(positionX: number, positionY: number, scale: number) {
+  const el = document.querySelector('.sh-canvas') as HTMLElement | null
+  if (!el) return
+  let step = GRID * scale
+  while (step < 14) step *= 2
+  while (step >= 28) step /= 2
+  const t = (step - 14) / 14
+  el.style.setProperty('--grid-size', `${step}px ${step}px`)
+  el.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
+  el.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
+}
+
 export const canvasCtl = {
   fitNode(_key: string) {},
   fitAll() {},
@@ -145,7 +165,8 @@ export function Canvas() {
       onPanningStop={pan(false)}
       onZoomStart={zoom(true)}
       onZoomStop={zoom(false)}
-      onTransformed={(r) => setScale(r.state.scale)}
+      onTransformed={(r) => { setScale(r.state.scale); paintGrid(r.state.positionX, r.state.positionY, r.state.scale) }}
+      onInit={(r) => paintGrid(r.state.positionX, r.state.positionY, r.state.scale)}
     >
       <TransformComponent wrapperClass="sh-canvas" contentClass="sh-content">
         <div id="sh-world">

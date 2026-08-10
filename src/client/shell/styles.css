@@ -70,9 +70,13 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
 .sh-app { position: relative; height: 100%; color: var(--glass-ink) }
 .sh-canvas { width: 100% !important; height: 100% !important;
   background-color: var(--ground);
-  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
-  background-size: 20px 20px;
   transition: background-color .3s ease }
+/* world-space dot grid: size/position/alpha driven per-frame from the transform */
+.sh-canvas::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: var(--grid-size, 20px 20px);
+  background-position: var(--grid-pos, 0 0);
+  opacity: var(--grid-alpha, 1) }
 .sh-content { will-change: auto }
 #sh-world { position: relative; width: 1px; height: 1px }
 #sh-world.sh-gesturing iframe { pointer-events: none }            /* law G-4 */
