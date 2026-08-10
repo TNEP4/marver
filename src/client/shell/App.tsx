@@ -1,4 +1,5 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
@@ -19,30 +20,35 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
   }
 }
 
-/** Global theme dropdown: sets every frame at once; the trigger reflects the board when uniform. */
+/** Global theme dropdown: sets every frame at once; the trigger reflects the board when uniform.
+ *  The menu is PORTALED out of the pill: an element with backdrop-filter is a backdrop root,
+ *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
   const [open, setOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
 
   useEffect(() => {
     if (!open) return
     const close = (e: PointerEvent) => {
-      if (!boxRef.current?.contains(e.target as globalThis.Node)) setOpen(false)
+      const t = e.target as globalThis.Node
+      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
     }
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
   }, [open])
 
+  const app = document.querySelector('.sh-app')
   return (
     <div className="sh-theme" ref={boxRef}>
       <button className="sh-pill-btn" onClick={() => setOpen(!open)} title="theme for all frames">
         {uniform === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
         <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
       </button>
-      {open && (
-        <div className="sh-menu">
+      {open && app && createPortal(
+        <div className="sh-menu" ref={menuRef}>
           {CONFIG.themes.map((t) => (
             <button key={t} onClick={() => { useStore.getState().setTheme(t); setOpen(false) }}>
               {t === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
@@ -50,7 +56,8 @@ function ThemeMenu() {
               {uniform === t && <CheckIcon size={13} className="chk" />}
             </button>
           ))}
-        </div>
+        </div>,
+        app,
       )}
     </div>
   )
