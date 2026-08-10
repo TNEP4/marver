@@ -2,7 +2,7 @@ import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { NAME } from '../cli/name.ts'
+import { NAME, PKG } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
@@ -48,7 +48,7 @@ export async function dev(root: string, portFlag?: number) {
       tsconfigPaths: true,
     } as any,
     optimizeDeps: {
-      exclude: [NAME],
+      exclude: [PKG],
       include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
       entries: [join(clientDir, 'frame-host', 'index.html'), 'design/**/*.{tsx,jsx}'],
     },

@@ -3,6 +3,7 @@
 The agent-native design canvas. A `design/` folder in your repo, one command, and a canvas of live frames built from your app's real components and theme. Your coding agent designs by writing files; the tool ships no AI.
 
 ```bash
+pnpm add -D @marver/design
 npx marver init   # scaffolds design/ (detects shadcn, Tailwind, your router)
 npx marver dev    # canvas at localhost:5199
 ```

@@ -93,7 +93,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   transition: border-color .3s ease }
 .sh-node.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-node) }
 .sh-node-head { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 11px;
-  font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--head-dim);
+  font-size: 11px; color: var(--head-dim);
   border-bottom: 1px solid var(--node-brd); cursor: default; user-select: none;
   border-radius: var(--r-node) var(--r-node) 0 0;
   background-color: var(--head-bg); background-image: var(--head-sheen);
@@ -131,7 +131,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-ctx { position: absolute; top: -42px; left: 0; display: flex; align-items: center; gap: 1px;
   border-radius: 999px; padding: 3px; z-index: 4; white-space: nowrap }
 .sh-ctx button { display: inline-flex; align-items: center; justify-content: center; height: 24px; min-width: 30px;
-  font: 600 10.5px ui-monospace, monospace; color: var(--glass-ink-2); background: none; border: 0;
+  font: 600 11px system-ui; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 8px; border-radius: 999px; cursor: pointer }
 .sh-ctx button.icon { min-width: 24px; width: 26px; padding: 0 }
 .sh-ctx button.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
@@ -140,14 +140,14 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* error / missing cards (inside the frame body) */
 .sh-card { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 6px;
-  padding: 14px; font-family: ui-monospace, monospace; font-size: 11px; background: var(--node-bg) }
+  padding: 14px; font-size: 11.5px; background: var(--node-bg) }
 .sh-card.err { color: var(--card-err-ink); background: var(--card-err-bg) }
 .sh-card.warn { color: var(--card-warn-ink); background: var(--card-warn-bg) }
 .sh-card b { font-size: 12px }
 .sh-card .msg { white-space: pre-wrap; overflow: auto }
 .sh-card .dim { opacity: .55 }
 .sh-card .row { display: flex; gap: 6px; margin-top: auto }
-.sh-card button { display: inline-flex; align-items: center; gap: 5px; font: 600 10.5px ui-monospace, monospace;
+.sh-card button { display: inline-flex; align-items: center; gap: 5px; font: 600 11px system-ui;
   border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 999px;
   padding: 4px 10px; cursor: pointer }
 
@@ -165,14 +165,17 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 .sh-panel-top { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px 8px }
 .sh-panel-top .mark { flex: none; color: var(--glass-accent) }
-.sh-panel-top .name { font-weight: 650; font-size: 13px; flex: 1; letter-spacing: .01em }
+.sh-panel-top .name { font-weight: 700; font-size: 15px; flex: 1; letter-spacing: .01em }
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
-.sh-panel .hd { font: 600 9px ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase;
-  color: var(--glass-ink-3); margin: 4px 8px 4px }
-.sh-panel .it { padding: 4px 9px; border-radius: 9px; color: var(--glass-ink); font-weight: 600;
-  display: flex; justify-content: space-between; align-items: center }
-.sh-panel .it small { color: var(--glass-ink-3); font-variant-numeric: tabular-nums }
+.sh-panel .hd { font: 500 11px system-ui; color: var(--glass-ink-3); margin: 4px 9px 5px }
+.sh-panel .it { width: 100%; padding: 4px 9px 4px 6px; border-radius: 9px; color: var(--glass-ink);
+  font: 600 12.5px system-ui; background: none; border: 0; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 5px }
+.sh-panel .it:hover { background: var(--glass-hover) }
+.sh-panel .it .tw { color: var(--glass-ink-3); flex: none; transition: transform .15s ease }
+.sh-panel .it span { flex: 1 }
+.sh-panel .it small { color: var(--glass-ink-3); font-weight: 500; font-variant-numeric: tabular-nums }
 .sh-panel .sub { padding: 3.5px 9px 3.5px 22px; color: var(--glass-ink-2); font-size: 12px; border-radius: 9px; cursor: pointer }
 .sh-panel .sub:hover { background: var(--glass-hover); color: var(--glass-ink) }
 .sh-panel .sub.dim { color: var(--glass-ink-3); cursor: default; line-height: 1.5 }
@@ -212,7 +215,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-menu button span { flex: 1; text-transform: capitalize }
 .sh-menu .chk { color: var(--glass-accent) }
 
-.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11px ui-monospace, monospace;
+.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
 
 .sh-toasts { position: absolute; left: var(--edge); bottom: var(--edge); z-index: 12; display: flex; flex-direction: column; gap: 6px }

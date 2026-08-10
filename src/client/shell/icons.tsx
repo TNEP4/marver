@@ -34,3 +34,5 @@ export const XIcon = icon(<path d="m17.5 6.5-11 11M6.5 6.5l11 11" />)
 export const ReloadIcon = icon(<><path d="M20.5 12a8.5 8.5 0 1 1-2.7-6.2" /><path d="M21 3.5V8h-4.5" /></>)
 export const CheckIcon = icon(<path d="m5 12.5 4.5 4.5L19 7.5" />)
 export const BoundingBoxIcon = icon(<><rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="2.5" y="16" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="16" width="5.5" height="5.5" rx="1.2" /><path d="M8 5.3h8M8 18.8h8M5.3 8v8M18.8 8v8" /></>)
+/** Duotone variant (Phosphor-style): soft filled plane behind full-strength strokes. */
+export const BoundingBoxDuoIcon = icon(<><rect x="5.3" y="5.3" width="13.4" height="13.4" fill="currentColor" opacity=".22" stroke="none" /><rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="2.5" y="16" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="16" width="5.5" height="5.5" rx="1.2" /><path d="M8 5.3h8M8 18.8h8M5.3 8v8M18.8 8v8" /></>)

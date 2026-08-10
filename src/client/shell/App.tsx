@@ -2,7 +2,24 @@ import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { BoundingBoxIcon, CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
+import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
+/** One collapsible scene group in the sidebar. */
+function SceneGroup({ name, count, children }: { name: string; count: number; children: ReactNode }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div>
+      <button className="it" onClick={() => setOpen(!open)}>
+        <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
+        <span>{cap(name) || '(root)'}</span>
+        <small>{count}</small>
+      </button>
+      {open && children}
+    </div>
+  )
+}
 
 /** A shell bug shows a banner, never a white screen. */
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -142,22 +159,21 @@ export function App() {
           mounted so collapse/expand can crossfade-morph between them */}
       <aside className={`sh-panel${panelOpen ? '' : ' closed'}`} aria-hidden={!panelOpen}>
           <div className="sh-panel-top">
-            <BoundingBoxIcon size={16} className="mark" />
+            <BoundingBoxDuoIcon size={19} className="mark" />
             <span className="name">Marver</span>
             <button className="sh-ibtn" onClick={togglePanel} title="collapse panel" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={15} /></button>
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Scenes</div>
             {scenes.map((sc) => (
-              <div key={sc.name}>
-                <div className="it"><span>{sc.name || '(root)'}</span><small>{sc.frames}</small></div>
+              <SceneGroup key={sc.name} name={sc.name} count={sc.frames}>
                 {frames.filter((f) => f.scene === sc.name).map((f) => (
                   <div key={f.id} className="sub" onClick={() => {
                     const n = useStore.getState().nodes.find((x) => x.frame === f.id)
                     if (n) { select(n.key); canvasCtl.fitNode(n.key) }
-                  }}>{f.id.split('/').slice(1).join('/') || f.id}</div>
+                  }}>{cap(f.id.split('/').slice(1).join('/') || f.id)}</div>
                 ))}
-              </div>
+              </SceneGroup>
             ))}
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}
           </div>
