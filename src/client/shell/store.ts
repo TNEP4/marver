@@ -35,6 +35,8 @@ interface State {
   selection: string[]                 // ordered; last entry is the primary (bar anchor)
   interact: string | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
+  board: string                       // active board name; 'everything' is the auto board
+  boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
   baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
   panelOpen: boolean
@@ -55,6 +57,7 @@ interface State {
   setGesture(g: boolean): void
   setDeviceView(name: string | null): void
   resizeSelected(name: string | null): void
+  switchBoard(name: string): Promise<void>
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -69,7 +72,7 @@ export const useStore = create<State>((set, get) => {
   const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, gesture: false, deviceView: null, baseLayout: null,
+    manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'everything', boardAuto: true, deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -80,19 +83,37 @@ export const useStore = create<State>((set, get) => {
         scenes: Array.isArray(raw?.scenes) ? raw.scenes : [],
         boards: Array.isArray(raw?.boards) ? raw.boards : [],
       }
+      const boardName = get().board
       let nodes: Node[] = []
       let boardHash: string | null = null
+      let boardAuto = boardName === 'everything'
       let deviceView: string | null = null
       let baseLayout: State['baseLayout'] = null
+      let needTidy = false
       try {
-        const res = await fetch(`${ROUTE}/api/boards/everything`)
+        const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
         if (res.ok) {
           const { board, sha256 } = await res.json()
           boardHash = sha256
+          if (typeof board?.auto === 'boolean') boardAuto = board.auto
+          // Agent-authored boards may be just a frame list - fill sizes/keys, tidy on first load.
           // Board nodes whose file is gone stay, flagged - deletion is surfaced, never silent (spec §7).
           nodes = (Array.isArray(board?.nodes) ? board.nodes : [])
             .filter((n: any) => n && typeof n.frame === 'string')
-            .map((n: any) => ({ ...n, status: 'loading' as const, missing: !manifest.frames.some((f) => f.id === n.frame) }))
+            .map((n: any) => {
+              const f = manifest.frames.find((x) => x.id === n.frame)
+              const d = f ? defaultSize(f) : { w: 390, h: 844 }
+              if (typeof n.x !== 'number' || typeof n.y !== 'number') needTidy = true
+              return {
+                key: typeof n.key === 'string' ? n.key : nodeKey(),
+                frame: n.frame,
+                x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
+                w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
+                theme: typeof n.theme === 'string' ? n.theme : (CONFIG.themes[0] ?? 'light'),
+                status: 'loading' as const,
+                missing: !manifest.frames.some((f2) => f2.id === n.frame),
+              }
+            })
           // a device view in progress survives reloads - snapshot and all
           if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) {
             deviceView = board.deviceView
@@ -100,27 +121,38 @@ export const useStore = create<State>((set, get) => {
           }
         }
       } catch { /* virtual board */ }
-      // frames not on the board yet → append with default sizes, then tidy the fresh ones
-      const placed = new Set(nodes.map((n) => n.frame))
-      for (const f of manifest.frames) {
-        if (placed.has(f.id)) continue
-        const { w, h } = defaultSize(f)
-        nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
+      // frames not on the board yet → auto boards only (a curated board shows exactly its list)
+      if (boardAuto) {
+        const placed = new Set(nodes.map((n) => n.frame))
+        for (const f of manifest.frames) {
+          if (placed.has(f.id)) continue
+          const { w, h } = defaultSize(f)
+          nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
+        }
       }
-      if (!boardHash && nodes.length) {
+      if ((!boardHash || needTidy) && nodes.length) {
         const sceneOf = (id: string) => manifest.frames.find((f) => f.id === id)?.scene ?? ''
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
         for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
       }
-      set({ manifest, nodes, boardHash, deviceView, baseLayout, selection: [] })
+      set({ manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [] })
+    },
+
+    async switchBoard(name) {
+      const { dirty, save, board } = get()
+      if (name === board) return
+      if (dirty) await save()                       // flush pending layout to the old board first
+      set({ board: name, selection: [], interact: null, deviceView: null, baseLayout: null, boardHash: null, nodes: [] })
+      await get().boot()
     },
 
     applyManifest(m) {
-      const { nodes, toast } = get()
+      const { nodes, toast, boardAuto } = get()
       const known = new Set(nodes.map((n) => n.frame))
       const next = [...nodes]
       let changed = false
       for (const f of m.frames) {
+        if (!boardAuto) break                        // curated boards never auto-gain frames
         if (known.has(f.id)) continue
         const { w, h } = defaultSize(f)
         const maxY = next.reduce((a, n) => Math.max(a, n.y + n.h), 0)
@@ -268,16 +300,16 @@ export const useStore = create<State>((set, get) => {
     },
 
     async save() {
-      const { nodes, boardHash, deviceView, baseLayout } = get()
+      const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()
       // Missing nodes persist too - only the explicit remove button drops them (spec §7).
       const board = {
-        version: 1, name: 'everything', auto: true,
+        version: 1, name: boardName, auto: boardAuto,
         // while a device view is active the free-form snapshot rides along on disk
         ...(deviceView && baseLayout ? { deviceView, baseLayout } : {}),
         nodes: nodes.map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
       }
       try {
-        const res = await fetch(`${ROUTE}/api/boards/everything`, {
+        const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {
           method: 'PUT', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ board, baseHash: boardHash }),
         })

@@ -43,6 +43,7 @@ export const ParallelogramDuoIcon = icon(<><path d="M239.29,59.28l-64.8,144a8,8,
  *  pill filled while the sidebar is open, hollow while collapsed. */
 export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" /></>)
 export const PanelHollowIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" fill="none" stroke="currentColor" strokeWidth="14" /></>)
+export const StackIcon = icon(<path d="M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z" />)
 /** Viewport-name -> device glyph; unknown custom names fall back to the generic Devices. */
 export function deviceIcon(name: string | null, size = 14) {
   const Icon = ({ mobile: DeviceMobileIcon, tablet: DeviceTabletIcon, laptop: LaptopIcon, monitor: MonitorIcon, tv: TvIcon } as Record<string, typeof DevicesIcon>)[name ?? ''] ?? DevicesIcon

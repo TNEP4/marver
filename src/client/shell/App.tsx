@@ -1,8 +1,9 @@
 import { Component, cloneElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
+import { ROUTE } from '../const.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, StackIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. */
@@ -59,6 +60,66 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       </div>
     )
   }
+}
+
+/** Board switcher: one board on screen at a time. Boards are agent-authored files in
+ *  design/boards/ - the list is fetched fresh on every open so new files show instantly. */
+function BoardMenu() {
+  const board = useStore((s) => s.board)
+  const [open, setOpen] = useState(false)
+  const [names, setNames] = useState<string[]>([])
+  const [pos, setPos] = useState({ left: 0, top: 0 })
+  const boxRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const toggle = async () => {
+    if (!open && boxRef.current) {
+      const r = boxRef.current.getBoundingClientRect()
+      setPos({ left: r.left, top: r.bottom + 8 })
+      try {
+        const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
+        const fromDisk = list.map((b) => b.name)
+        setNames(['everything', ...fromDisk.filter((n) => n !== 'everything')])
+      } catch { setNames(['everything']) }
+    }
+    setOpen(!open)
+  }
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      const t = e.target as globalThis.Node
+      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [open])
+
+  const pick = async (name: string) => {
+    setOpen(false)
+    await useStore.getState().switchBoard(name)
+    setTimeout(() => canvasCtl.fitAll(), 60)
+  }
+  const app = document.querySelector('.sh-app')
+  return (
+    <div className="sh-board" ref={boxRef}>
+      <button className="it" onClick={toggle}>
+        <StackIcon size={14} className="tw" />
+        <span>{cap(board)}</span>
+        <CaretIcon size={11} style={{ transform: open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
+      </button>
+      {open && app && createPortal(
+        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
+          {names.map((n) => (
+            <button key={n} onClick={() => pick(n)}>
+              <StackIcon size={14} /><span>{cap(n)}</span>
+              {n === board && <CheckIcon size={13} className="chk" />}
+            </button>
+          ))}
+        </div>,
+        app,
+      )}
+    </div>
+  )
 }
 
 /** Selection toolbar: screen-space overlay above the selected frame - constant size at any
@@ -409,7 +470,9 @@ export function App() {
             <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button>
           </div>
           <div className="sh-panel-scroll">
-            <div className="hd">Scenes</div>
+            <div className="hd">Board</div>
+            <BoardMenu />
+            <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} count={sc.frames}>
                 {frames.filter((f) => f.scene === sc.name).map((f) => {

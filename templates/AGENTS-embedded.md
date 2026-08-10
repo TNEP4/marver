@@ -42,3 +42,21 @@ Never run or talk to the canvas tool; read and write files only.
 - The screen already lives in src/features/. Implementation wires routes, data, and handlers
   into the same component - fixtures are the only thing replaced. The frame stays, so the
   canvas remains living documentation of every screen and state.
+
+## Boards (curated canvases)
+
+A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
+The human switches boards in the sidebar; YOU create and manage them by writing files.
+Minimal file - just list the frames; the shell fills sizes from each frame's viewport,
+lays it out, and keeps it tidy:
+
+```json
+{ "version": 1, "name": "checkout-compare", "auto": false,
+  "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
+```
+
+- The same frame may appear on many boards, or twice on one board (e.g. two widths:
+  add `"w"`/`"h"` on a node to pin a size).
+- `auto: false` boards show exactly their list. The `everything` board is auto-managed -
+  never write it.
+- Use boards for comparisons: version A vs B vs C of a flow, side by side.
