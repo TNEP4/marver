@@ -86,7 +86,8 @@ export const useStore = create<State>((set, get) => {
     try {
       const mRes = await fetch('/design/manifest.json')
       if (!mRes.ok) return null
-      const raw = await mRes.json().catch(() => null)
+      const raw = await mRes.json().catch(() => undefined)
+      if (raw === undefined || raw === null || typeof raw !== 'object') return null
       const manifest: Manifest = {
         frames: (Array.isArray(raw?.frames) ? raw.frames : [])
           .filter((f: any) => f && typeof f.id === 'string' && typeof f.file === 'string'),
@@ -160,9 +161,13 @@ export const useStore = create<State>((set, get) => {
 
     async boot() {
       const seq = ++loadSeq
-      const next = await loadBoardState(get().board)
+      const boardName = get().board
+      const revAtStart = editRev
+      const next = await loadBoardState(boardName)
       if (seq !== loadSeq) return false        // a newer load superseded this one
-      if (!next) { get().toast(`board "${get().board}" failed to load`); return false }
+      if (!next) { get().toast(`board "${boardName}" failed to load`); return false }
+      // the user kept editing while we fetched - their newer state wins over the reload
+      if (get().board !== boardName || editRev !== revAtStart) return false
       set(next)
       return true
     },
@@ -180,6 +185,11 @@ export const useStore = create<State>((set, get) => {
       const next = await loadBoardState(name)
       if (mySwitch !== switchSeq) return
       if (!next) { get().toast(`could not load "${name}" - staying on ${get().board}`); return }
+      // edits may have landed on the still-mounted old board during the target load
+      for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
+      if (mySwitch !== switchSeq) return
+      if (get().dirty) { get().toast('current board could not be saved - staying here'); return }
+      clearTimeout(saveTimer)                  // a scheduled-but-clean timer must not fire against the new board
       ++loadSeq                                // invalidate any in-flight boot of the old board
       set({ board: name, interact: null, ...next })
     },
@@ -388,8 +398,9 @@ export const useStore = create<State>((set, get) => {
           })
           if (get().board !== boardName) return true   // switched boards mid-flight; stale response must not touch state
           if (res.status === 409) {
-            get().toast('board changed on disk - canvas layout reloaded')
-            return get().boot()   // hash advances only when the authoritative reload commits
+            const reloaded = await get().boot()   // hash advances only when the authoritative reload commits
+            if (reloaded) get().toast('board changed on disk - canvas layout reloaded')
+            return reloaded   // false keeps dirty set; the next debounce retries once edits settle
           }
           if (res.ok) {
             const { sha256 } = await res.json()
