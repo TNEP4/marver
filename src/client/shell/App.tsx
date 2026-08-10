@@ -1,6 +1,22 @@
-import { useEffect } from 'react'
+import { Component, useEffect, type ReactNode } from 'react'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, panTo } from './canvas/Canvas.tsx'
+
+/** A shell bug shows a banner, never a white screen. */
+export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
+  state = { err: null as Error | null }
+  static getDerivedStateFromError(err: Error) { return { err } }
+  render() {
+    if (!this.state.err) return this.props.children
+    return (
+      <div style={{ fontFamily: 'ui-monospace, monospace', padding: 32 }}>
+        <b style={{ color: '#a81f16' }}>shell crashed</b>
+        <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{this.state.err.message}</pre>
+        <button onClick={() => location.reload()}>reload</button>
+      </div>
+    )
+  }
+}
 
 export function App() {
   const { manifest, nodes, panelOpen, scale, toasts } = useStore()

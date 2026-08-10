@@ -6,10 +6,7 @@
 import { Component, createElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-declare global { interface Window { __SH_TSX__?: boolean } }
-window.__SH_TSX__ = true
 import './bridge.js'
-
 import { frames, layouts, providers } from './registry.ts'
 
 const params = new URLSearchParams(location.search)
@@ -82,7 +79,9 @@ async function boot() {
 
     const frameMod: any = await frames[fileKey]()
     const Frame = frameMod.default
-    if (typeof Frame !== 'function') return fail(`${fileKey} has no default-exported component`)
+    // No typeof gate: memo()/forwardRef() components are objects, not functions.
+    // React + the ErrorBoundary validate the element type better than we can.
+    if (Frame == null) return fail(`${fileKey} has no default export`)
 
     const wrappers: any[] = []
     const providerKey = Object.keys(providers)[0]
@@ -90,7 +89,7 @@ async function boot() {
     for (const lk of layoutChain(fileKey)) wrappers.push((await layouts[lk]() as any).default)
 
     let tree: ReactNode = createElement(Frame)
-    for (const W of wrappers.reverse()) if (typeof W === 'function') tree = createElement(W, null, tree)
+    for (const W of wrappers.reverse()) if (W != null) tree = createElement(W, null, tree)
 
     createRoot(document.getElementById('root')!).render(createElement(Boundary, null, tree))
     post({ type: 'sh:ready', id, meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined })

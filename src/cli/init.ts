@@ -25,7 +25,7 @@ export function init(root: string, opts: InitOpts) {
   }
 
   // config (commented defaults + native-TS sharp edges)
-  write('config.ts', configTemplate(host.themeCss))
+  write('config.ts', configTemplate(host.themeCss, opts.mode))
 
   // theme wrapper (spec §5.4) - the host CSS build stays byte-identical
   if (host.themeCss) {
@@ -36,7 +36,7 @@ export function init(root: string, opts: InitOpts) {
   }
 
   // providers (mock contexts by detection)
-  write('providers.tsx', providersTemplate(host.router, host.toaster))
+  write('providers.tsx', providersTemplate(host.router, host.toaster, host.routerPkg))
 
   // agent contract
   const agents = readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
@@ -46,7 +46,7 @@ export function init(root: string, opts: InitOpts) {
   write('tsconfig.json', readFileSync(join(templates, 'design-tsconfig.json'), 'utf8'))
   write('.gitignore', '.local/\n.dist/\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
-  if (!existsSync(join(design, 'boards'))) { mkdirSync(join(design, 'boards'), { recursive: true }); created.push('design/boards/') }
+  if (!existsSync(join(design, 'boards'))) { mkdirSync(join(design, 'boards'), { recursive: true }); writeFileSync(join(design, 'boards', '.gitkeep'), ''); created.push('design/boards/') }
 
   if (opts.demo && !existsSync(join(design, 'scenes', 'demo'))) {
     cpSync(join(templates, 'demo'), join(design, 'scenes', 'demo'), { recursive: true })
@@ -61,7 +61,7 @@ export function init(root: string, opts: InitOpts) {
   if (host.router === 'next') console.log(`\n  note: Next.js support is partial until M3 - HTML frames and next-free components work today.`)
   console.log(`\n  commit design/ - only .local/ is ignored`)
   console.log(`  uninstall = delete design/, remove the ${NAME} dependency${host.tsconfigSweepsDesign ? ', revert the "design" line in tsconfig exclude' : ''}`)
-  console.log(`\n  next: npx ${NAME} dev\n`)
+  console.log(`\n  next: npx ${NAME} dev   (canvas on http://localhost:${DEFAULTS.port} by default)\n`)
   console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
 }
 
@@ -85,11 +85,11 @@ function patchTsconfigExclude(root: string) {
   }
 }
 
-const configTemplate = (theme: string | null) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
+const configTemplate = (theme: string | null, mode: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
 // Sharp edges (native Node TS import): erasable syntax only (no enums/namespaces),
 // relative imports need extensions, tsconfig paths are ignored here.
 export default {
-  mode: "studio",${theme ? `\n  theme: ${JSON.stringify(theme)},` : ''}
+  mode: ${JSON.stringify(mode)},${theme ? `\n  theme: ${JSON.stringify(theme)},` : ''}
   viewports: ${JSON.stringify(DEFAULTS.viewports, null, 2).split('\n').join('\n  ')},
   themes: ["light", "dark"],
   port: ${DEFAULTS.port},
@@ -100,11 +100,11 @@ const themeWrapper = (relCss: string, v4: boolean) => `/* ${NAME} theme wrapper 
 @import "${relCss}";
 ${v4 ? `@source "./";\n` : ''}`
 
-function providersTemplate(router: string | null, toaster: string | null): string {
+function providersTemplate(router: string | null, toaster: string | null, routerPkg = 'react-router-dom'): string {
   const imports: string[] = [`import type { ReactNode } from 'react'`]
   let open = '', close = ''
   if (router === 'react-router') {
-    imports.push(`import { MemoryRouter } from 'react-router-dom'`)
+    imports.push(`import { MemoryRouter } from '${routerPkg}'`)
     open += '<MemoryRouter>'; close = '</MemoryRouter>' + close
   }
   let toasterEl = ''

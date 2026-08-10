@@ -52,3 +52,53 @@ describe('tidy (pure, spec §7)', () => {
     expect(placed[0].x).toBeLessThan(placed[1].x)
   })
 })
+
+describe('scanFrames on a real tree (spec §6, §9)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { scanFrames } = await import('../src/server/manifest.ts')
+
+  it('ids, kinds, meta, underscore rule, reserved scenes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-scan-'))
+    const mk = (p: string, c = 'export default () => null\n') => {
+      mkdirSync(join(root, p, '..'), { recursive: true })
+      writeFileSync(join(root, p), c)
+    }
+    mk('design/scenes/checkout/filled.tsx', `export const meta = { title: "Filled", viewport: "mobile" }\nexport default () => null\n`)
+    mk('design/scenes/checkout/_fixtures.ts')
+    mk('design/scenes/checkout/_layout.tsx')
+    mk('design/scenes/demo/plain.html', '<html></html>')
+    mk('design/scenes/screens/nope.tsx')          // reserved scene → skipped
+    mk('design/components/button/variants.tsx')
+    const m = scanFrames(root)
+    expect(m.frames.map((f) => f.id)).toEqual(['checkout/filled', 'components/button/variants', 'demo/plain'])
+    expect(m.frames.find((f) => f.id === 'checkout/filled')).toMatchObject({ kind: 'tsx', title: 'Filled', viewport: 'mobile', scene: 'checkout' })
+    expect(m.frames.find((f) => f.id === 'demo/plain')?.kind).toBe('html')
+    expect(m.boards).toContain('everything')
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('loadConfig (spec §4)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { loadConfig, DEFAULTS } = await import('../src/server/config.ts')
+
+  it('missing file → defaults', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-cfg-'))
+    expect(await loadConfig(root)).toEqual(DEFAULTS)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('partial config merges over defaults; bad fields fall back', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-cfg-'))
+    mkdirSync(join(root, 'design'))
+    writeFileSync(join(root, 'design/config.ts'), `export default { port: 6001, themes: [], viewports: { m: { width: 'x' } } }\n`)
+    const c = await loadConfig(root)
+    expect(c.port).toBe(6001)
+    expect(c.themes).toEqual(DEFAULTS.themes)        // empty → fallback
+    expect(c.viewports).toEqual(DEFAULTS.viewports)  // invalid → fallback
+    rmSync(root, { recursive: true, force: true })
+  })
+})

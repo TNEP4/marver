@@ -37,14 +37,16 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (e.button !== 0) return
     select(node.key)
     const el = e.currentTarget as HTMLElement
-    el.setPointerCapture(e.pointerId)
-    const start = { x: e.clientX, y: e.clientY, nx: node.x, ny: node.y, nw: node.w, nh: node.h }
     const world = document.getElementById('sh-world')!
+    // Law G-5: measured scale, never stored zoom state. #sh-world is 1px wide by design,
+    // so its rendered rect width IS the scale (survives browser page-zoom too).
+    const gestureScale = world.getBoundingClientRect().width || scale || 1
+    const start = { x: e.clientX, y: e.clientY, nx: node.x, ny: node.y, nw: node.w, nh: node.h }
     world.classList.add('sh-gesturing')
 
     const onMove = (ev: PointerEvent) => {
-      const dx = (ev.clientX - start.x) / scale
-      const dy = (ev.clientY - start.y) / scale
+      const dx = (ev.clientX - start.x) / gestureScale
+      const dy = (ev.clientY - start.y) / gestureScale
       if (mode === 'move') moveNode(node.key, start.nx + dx, start.ny + dy)
       else {
         let w = mode !== 's' ? start.nw + dx : start.nw
@@ -53,18 +55,25 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         resizeNode(node.key, w, h)
       }
     }
+    // One idempotent teardown for every exit path - stuck gestures are the acceptance test.
+    let finished = false
     const done = () => {
-      el.releasePointerCapture?.(e.pointerId)
+      if (finished) return
+      finished = true
+      try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
       world.classList.remove('sh-gesturing')
-      el.removeEventListener('pointermove', onMove as any)
-      el.removeEventListener('pointerup', done as any)
-      el.removeEventListener('pointercancel', done as any)
-      el.removeEventListener('lostpointercapture', done as any)
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', done)
+      el.removeEventListener('pointercancel', done)
+      el.removeEventListener('lostpointercapture', done)
+      window.removeEventListener('blur', done)
     }
-    el.addEventListener('pointermove', onMove as any)
-    el.addEventListener('pointerup', done as any)
-    el.addEventListener('pointercancel', done as any)
-    el.addEventListener('lostpointercapture', done as any)
+    try { el.setPointerCapture(e.pointerId) } catch { return }
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', done)
+    el.addEventListener('pointercancel', done)
+    el.addEventListener('lostpointercapture', done)
+    window.addEventListener('blur', done)
   }
 
   const gone = !frame || node.missing
@@ -81,7 +90,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           <div className="sh-card warn">
             <b>file deleted</b>
             <span className="dim">{node.frame}</span>
-            <span className="row"><button onClick={() => useStore.setState((s) => ({ nodes: s.nodes.filter((n) => n.key !== node.key) }))}>remove from board</button></span>
+            <span className="row"><button onClick={() => useStore.getState().removeNode(node.key)}>remove from board</button></span>
           </div>
         </div>
       </div>
@@ -139,6 +148,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
               <button key={t} className={node.theme === t ? 'on' : ''} onClick={() => useStore.setState((s) => ({ nodes: s.nodes.map((n) => n.key === node.key ? { ...n, theme: t } : n) }))}>{t}</button>
             ))}
             <button onClick={() => navigator.clipboard.writeText(frame.file)} title="copy file path">⧉</button>
+            <button onClick={() => useStore.getState().spawn(frame.id)} title="second instance of this frame (e.g. another width)">+</button>
           </div>
         </>
       )}

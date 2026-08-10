@@ -1,6 +1,7 @@
 import type { Connect } from 'vite'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, copyFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, copyFileSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash } from './manifest.ts'
 
@@ -26,16 +27,34 @@ function readBody(req: any): Promise<string | null> {
   })
 }
 
-/** Atomic write with Windows-friendly fallback (rename over existing can EPERM there). */
+/** Atomic write: random temp name (no predictable symlink target), rename, and a
+ *  copy-fallback only for the Windows rename errors - anything else rethrows. */
 function atomicWrite(file: string, content: string) {
-  const tmp = `${file}.tmp`
-  writeFileSync(tmp, content)
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  writeFileSync(tmp, content, { flag: 'wx' })
   try {
     renameSync(tmp, file)
-  } catch {
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== 'EEXIST' && code !== 'EPERM') { rmSync(tmp, { force: true }); throw err }
     copyFileSync(tmp, file)
     rmSync(tmp, { force: true })
   }
+}
+
+/** Containment beyond string prefixes: the realpath of the parent dir must stay inside base. */
+function contained(target: string, base: string): boolean {
+  try {
+    const realBase = realpathSync(base)
+    const parent = realpathSync(resolve(target, '..'))
+    if (parent !== realBase && !parent.startsWith(realBase + sep)) return false
+    // if the file itself exists, it must not be a symlink escaping base
+    if (existsSync(target)) {
+      const real = realpathSync(target)
+      return real === realBase || real.startsWith(realBase + sep)
+    }
+    return true
+  } catch { return false }
 }
 
 export function apiMiddleware(root: string): Connect.NextHandleFunction {
@@ -44,9 +63,15 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
 
   const boardPath = (name: string): string | null => {
     if (!BOARD_NAME.test(name)) return null
+    mkdirSync(boardsDir, { recursive: true })
     const p = resolve(boardsDir, `${name}.json`)
-    return p.startsWith(resolve(boardsDir)) ? p : null
+    return contained(p, boardsDir) ? p : null
   }
+
+  // boot: sweep temp files abandoned by a killed process
+  try {
+    for (const f of readdirSync(boardsDir)) if (f.endsWith('.tmp')) rmSync(join(boardsDir, f), { force: true })
+  } catch { /* boards dir may not exist yet */ }
 
   return async (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://x')

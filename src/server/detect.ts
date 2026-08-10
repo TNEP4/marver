@@ -4,6 +4,7 @@ import { join } from 'node:path'
 export interface HostInfo {
   tailwind: 3 | 4 | null
   router: 'react-router' | 'next' | null
+  routerPkg: string
   toaster: 'sonner' | 'react-hot-toast' | null
   shadcn: { themeCss: string; uiAlias: string } | null
   /** repo-relative path of the theme CSS entry, if we could find one */
@@ -27,6 +28,7 @@ export function detectHost(root: string): HostInfo {
   const tailwind = !twRange ? null : /(^|[^\d])4\./.test(twRange) || twRange.startsWith('^4') || twRange.startsWith('~4') ? 4 : 3
 
   const router = deps['next'] ? 'next' as const : deps['react-router'] || deps['react-router-dom'] ? 'react-router' as const : null
+  const routerPkg = deps['react-router-dom'] ? 'react-router-dom' : 'react-router'
   const toaster = deps['sonner'] ? 'sonner' as const : deps['react-hot-toast'] ? 'react-hot-toast' as const : null
 
   let shadcn: HostInfo['shadcn'] = null
@@ -44,7 +46,7 @@ export function detectHost(root: string): HostInfo {
   const sweeps = ts != null && !exclude.some((e: string) => e === 'design' || e.startsWith('design/'))
     && (!include || include.some((i: string) => i === '.' || i === '**/*' || i.startsWith('design')))
 
-  return { tailwind, router, toaster, shadcn, themeCss, tsconfigSweepsDesign: !!sweeps }
+  return { tailwind, router, routerPkg, toaster, shadcn, themeCss, tsconfigSweepsDesign: !!sweeps }
 }
 
 function firstExisting(root: string, candidates: string[]): string | null {

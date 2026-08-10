@@ -58,12 +58,14 @@ export function showhomePlugin(ctx: PluginCtx): Plugin {
       handler(html, hctx) {
         const path = (hctx.originalUrl ?? hctx.path ?? '').split('?')[0]
         if (!path.startsWith('/design/')) return
-        const bridge = '/@fs/' + join(clientDir, 'frame-host', 'bridge.js').split('\\').join('/')
+        const bridge = '/@fs/' + join(clientDir, 'frame-host', 'bridge.js').split('\\').join('/') + '?html=1'
+        // head-prepend: module scripts run in DOM order, so the bridge's error listener
+        // and theme init beat any authored script in the frame.
         return {
           html,
           tags: [
-            { tag: 'script', attrs: { type: 'module' }, children: `import '${VIRTUAL_THEME}'`, injectTo: 'head' },
-            { tag: 'script', attrs: { type: 'module', src: bridge }, injectTo: 'body' },
+            { tag: 'script', attrs: { type: 'module' }, children: `import '${VIRTUAL_THEME}'`, injectTo: 'head-prepend' },
+            { tag: 'script', attrs: { type: 'module', src: bridge }, injectTo: 'head-prepend' },
           ],
         }
       },
@@ -90,8 +92,8 @@ export function showhomePlugin(ctx: PluginCtx): Plugin {
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       const regen = debounce(() => {
         const manifest = scanFrames(root)
-        writeManifest(root, manifest)
-        server.ws.send('sh:manifest', manifest as any)
+        // Broadcast only real changes - plain content edits ride HMR alone (spec §5.6).
+        if (writeManifest(root, manifest)) server.ws.send('sh:manifest', manifest as any)
       }, 150)
 
       const watched = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]

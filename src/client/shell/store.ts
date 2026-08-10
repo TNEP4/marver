@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { ROUTE } from '../../cli/name.ts'
+import { ROUTE } from '../const.ts'
 import { tidy } from './tidy.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
@@ -46,6 +46,7 @@ interface State {
   moveNode(key: string, x: number, y: number): void
   resizeNode(key: string, w: number, h: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
+  removeNode(key: string): void
   select(key: string | null): void
   setInteract(key: string | null): void
   setScale(s: number): void
@@ -66,7 +67,13 @@ export const useStore = create<State>((set, get) => {
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
-      const manifest: Manifest = await fetch('/design/manifest.json').then((r) => r.json()).catch(() => ({ frames: [], scenes: [], boards: [] }))
+      const raw = await fetch('/design/manifest.json').then((r) => r.json()).catch(() => null)
+      // Malformed manifest fails soft: an empty canvas with a working shell beats a white screen.
+      const manifest: Manifest = {
+        frames: Array.isArray(raw?.frames) ? raw.frames : [],
+        scenes: Array.isArray(raw?.scenes) ? raw.scenes : [],
+        boards: Array.isArray(raw?.boards) ? raw.boards : [],
+      }
       let nodes: Node[] = []
       let boardHash: string | null = null
       try {
@@ -74,9 +81,10 @@ export const useStore = create<State>((set, get) => {
         if (res.ok) {
           const { board, sha256 } = await res.json()
           boardHash = sha256
-          nodes = (board.nodes ?? [])
-            .filter((n: any) => manifest.frames.some((f) => f.id === n.frame))
-            .map((n: any) => ({ ...n, status: 'loading' as const }))
+          // Board nodes whose file is gone stay, flagged - deletion is surfaced, never silent (spec §7).
+          nodes = (Array.isArray(board?.nodes) ? board.nodes : [])
+            .filter((n: any) => n && typeof n.frame === 'string')
+            .map((n: any) => ({ ...n, status: 'loading' as const, missing: !manifest.frames.some((f) => f.id === n.frame) }))
         }
       } catch { /* virtual board */ }
       // frames not on the board yet → append with default sizes, then tidy the fresh ones
@@ -98,16 +106,26 @@ export const useStore = create<State>((set, get) => {
       const { nodes, toast } = get()
       const known = new Set(nodes.map((n) => n.frame))
       const next = [...nodes]
+      let changed = false
       for (const f of m.frames) {
         if (known.has(f.id)) continue
         const { w, h } = defaultSize(f)
         const maxY = next.reduce((a, n) => Math.max(a, n.y + n.h), 0)
         next.push({ key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
         toast(`agent added ${f.id}`)
+        changed = true
       }
       const live = new Set(m.frames.map((f) => f.id))
-      for (const n of next) n.missing = !live.has(n.frame)
-      set({ manifest: m, nodes: next, dirty: true })
+      for (const n of next) {
+        const missing = !live.has(n.frame)
+        if (missing !== !!n.missing) { n.missing = missing; changed = true }
+      }
+      set({ manifest: m, nodes: next, ...(changed ? { dirty: true } : {}) })
+      if (changed) scheduleSave()
+    },
+
+    removeNode(key) {
+      set((s) => ({ nodes: s.nodes.filter((n) => n.key !== key), dirty: true }))
       scheduleSave()
     },
 
@@ -164,9 +182,10 @@ export const useStore = create<State>((set, get) => {
 
     async save() {
       const { nodes, boardHash } = get()
+      // Missing nodes persist too - only the explicit remove button drops them (spec §7).
       const board = {
         version: 1, name: 'everything', auto: true,
-        nodes: nodes.filter((n) => !n.missing).map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
+        nodes: nodes.map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
       }
       try {
         const res = await fetch(`${ROUTE}/api/boards/everything`, {

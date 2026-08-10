@@ -75,6 +75,15 @@ ok(`manifest lists ${manifest.frames.length} frames`)
 const reg = await get('/@fs/' + join(app, 'node_modules/showhome/src/client/frame-host/registry.ts').replaceAll('\\', '/'))
 if (!reg.text.includes('/design/scenes/demo/welcome.tsx')) fail('import.meta.glob did not expand from node_modules (optimizeDeps.exclude broken?)')
 ok('glob expanded from node_modules (exclude verified)')
+// shell module GRAPH must resolve from the packed layout - this is the check that catches
+// imports reaching outside the shipped `files` (e.g. src/cli from src/client)
+const shellRoots = ['shell/main.tsx', 'shell/store.ts', 'shell/App.tsx', 'frame-host/main.tsx']
+for (const mod of shellRoots) {
+  const r = await get('/@fs/' + join(app, `node_modules/showhome/src/client/${mod}`).replaceAll('\\', '/'))
+  if (r.status !== 200) fail(`shell graph: ${mod} → ${r.status} (import escaping the packed files?)`)
+  if (/Failed to resolve import/.test(r.text)) fail(`shell graph: ${mod} has unresolved imports`)
+}
+ok('shell + frame-host module graphs resolve from the tarball')
 // live add
 writeFileSync(join(app, 'design/scenes/demo/added.tsx'), 'export default () => <div>added</div>\n')
 let seen = false

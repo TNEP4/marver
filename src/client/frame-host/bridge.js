@@ -1,7 +1,13 @@
-// Shared frame bridge (plain JS: imported by the TSX host, injected into HTML frames).
-// data-goto clicks, error forwarding, theme switching, interact-exit keys. Spec §6.
+// Shared frame bridge. TSX frames import it plainly; the plugin injects it into HTML frames
+// with ?html=1, which turns on theme-from-query and auto-ready (TSX posts its own ready after boot).
+const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
 const id = new URLSearchParams(location.search).get('id') ?? location.pathname
+
+if (isHtmlFrame) {
+  const theme = new URLSearchParams(location.search).get('theme')
+  if (theme) document.documentElement.dataset.theme = theme
+}
 
 document.addEventListener('click', (e) => {
   const el = e.target instanceof Element ? e.target.closest('[data-goto]') : null
@@ -12,7 +18,6 @@ document.addEventListener('click', (e) => {
 }, true)
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') post({ type: 'sh:exit-interact' }) })
-document.addEventListener('dblclick', () => post({ type: 'sh:dblclick' }))
 
 window.addEventListener('error', (e) => post({ type: 'sh:error', id, message: String(e.message || e.error) }))
 window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:error', id, message: `unhandled rejection: ${e.reason}` }))
@@ -21,8 +26,7 @@ window.addEventListener('message', (e) => {
   if (e?.data?.type === 'sh:set-theme') document.documentElement.dataset.theme = e.data.theme
 })
 
-// HTML frames have no TSX host to announce them; the host sets __SH_TSX__ before importing this.
-if (!window.__SH_TSX__) {
+if (isHtmlFrame) {
   const ready = () => post({ type: 'sh:ready', id })
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
 }
