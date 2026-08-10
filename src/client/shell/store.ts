@@ -78,68 +78,60 @@ export const useStore = create<State>((set, get) => {
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
   const scheduleSave = () => { editRev++; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
-  const flushSave = (): Promise<boolean> => { clearTimeout(saveTimer); return get().dirty ? get().save() : saveChain }
 
-  return {
-    manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'everything', boardAuto: true, deviceView: null, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
-
-    async boot() {
-      const seq = ++loadSeq
-      const raw = await fetch('/design/manifest.json').then((r) => r.json()).catch(() => null)
-      // Malformed manifest fails soft: an empty canvas with a working shell beats a white screen.
+  /** Fetch + normalize a board into ready-to-commit state, WITHOUT touching the store.
+   *  null = failure (transport, malformed manifest, non-404 board error) - the caller
+   *  keeps whatever board is currently mounted. */
+  const loadBoardState = async (boardName: string): Promise<Partial<State> | null> => {
+    try {
+      const mRes = await fetch('/design/manifest.json')
+      if (!mRes.ok) return null
+      const raw = await mRes.json().catch(() => null)
       const manifest: Manifest = {
-        frames: Array.isArray(raw?.frames) ? raw.frames : [],
+        frames: (Array.isArray(raw?.frames) ? raw.frames : [])
+          .filter((f: any) => f && typeof f.id === 'string' && typeof f.file === 'string'),
         scenes: Array.isArray(raw?.scenes) ? raw.scenes : [],
       }
-      const boardName = get().board
       let nodes: Node[] = []
       let boardHash: string | null = null
       let boardAuto = boardName === 'everything'
       let deviceView: string | null = null
       let baseLayout: State['baseLayout'] = null
       let needTidy = false
-      try {
-        const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
-        if (res.ok) {
-          const { board, sha256 } = await res.json()
-          boardHash = sha256
-          if (typeof board?.auto === 'boolean') boardAuto = board.auto
-          // Agent-authored boards may be just a frame list - fill sizes/keys, tidy on first load.
-          // Keys are load-bearing (iframe identity, selection) - dupes/blanks get reminted.
-          // Board nodes whose file is gone stay, flagged - deletion is surfaced, never silent (spec §7).
-          const seenKeys = new Set<string>()
-          nodes = (Array.isArray(board?.nodes) ? board.nodes : [])
-            .filter((n: any) => n && typeof n.frame === 'string')
-            .map((n: any) => {
-              const f = manifest.frames.find((x) => x.id === n.frame)
-              const d = f ? defaultSize(f) : { w: 390, h: 844 }
-              if (typeof n.x !== 'number' || typeof n.y !== 'number') needTidy = true
-              let key = typeof n.key === 'string' && n.key ? n.key : nodeKey()
-              if (seenKeys.has(key)) key = nodeKey()
-              seenKeys.add(key)
-              return {
-                key,
-                frame: n.frame,
-                x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
-                w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
-                theme: typeof n.theme === 'string' ? n.theme : defaultTheme(f),
-                status: 'loading' as const,
-                missing: !manifest.frames.some((f2) => f2.id === n.frame),
-              }
-            })
-          // device view and the free-form snapshot survive reloads - independently:
-          // a scoped "exception" clears deviceView but the snapshot must keep restoring
-          if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
-          if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
-        } else if (res.status !== 404) {
-          // only 404 means "fresh board"; anything else must not commit an empty canvas
-          if (seq === loadSeq) get().toast(`board "${boardName}" failed to load`)
-          return false
-        }
-      } catch {
-        if (seq === loadSeq) get().toast(`board "${boardName}" failed to load - server unreachable`)
-        return false
+      const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
+      if (res.ok) {
+        const { board, sha256 } = await res.json()
+        boardHash = sha256
+        if (typeof board?.auto === 'boolean') boardAuto = board.auto
+        // Agent-authored boards may be just a frame list - fill sizes/keys, tidy on first load.
+        // Keys are load-bearing (iframe identity, selection) - dupes/blanks get reminted.
+        // Board nodes whose file is gone stay, flagged - deletion is surfaced, never silent (spec §7).
+        const seenKeys = new Set<string>()
+        nodes = (Array.isArray(board?.nodes) ? board.nodes : [])
+          .filter((n: any) => n && typeof n.frame === 'string')
+          .map((n: any) => {
+            const f = manifest.frames.find((x) => x.id === n.frame)
+            const d = f ? defaultSize(f) : { w: 390, h: 844 }
+            if (typeof n.x !== 'number' || typeof n.y !== 'number') needTidy = true
+            let key = typeof n.key === 'string' && n.key ? n.key : nodeKey()
+            if (seenKeys.has(key)) key = nodeKey()
+            seenKeys.add(key)
+            return {
+              key,
+              frame: n.frame,
+              x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
+              w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
+              theme: typeof n.theme === 'string' ? n.theme : defaultTheme(f),
+              status: 'loading' as const,
+              missing: !manifest.frames.some((f2) => f2.id === n.frame),
+            }
+          })
+        // device view and the free-form snapshot survive reloads - independently:
+        // a scoped "exception" clears deviceView but the snapshot must keep restoring
+        if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
+        if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
+      } else if (res.status !== 404) {
+        return null   // only 404 means "fresh board"; anything else must not commit an empty canvas
       }
       // frames not on the board yet → auto boards only (a curated board shows exactly its list)
       if (boardAuto) {
@@ -155,41 +147,41 @@ export const useStore = create<State>((set, get) => {
       if ((!boardHash || needTidy) && nodes.length) {
         const sceneOf = (id: string) => manifest.frames.find((f) => f.id === id)?.scene ?? ''
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
-        for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
+        for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
       }
-      if (seq !== loadSeq) return false   // a newer board load superseded this one
-      set({ manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [] })
+      // dirty: false - the committed state matches disk by construction
+      return { manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [], dirty: false }
+    } catch { return null }
+  }
+
+  return {
+    manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'everything', boardAuto: true, deviceView: null, baseLayout: null,
+    panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
+
+    async boot() {
+      const seq = ++loadSeq
+      const next = await loadBoardState(get().board)
+      if (seq !== loadSeq) return false        // a newer load superseded this one
+      if (!next) { get().toast(`board "${get().board}" failed to load`); return false }
+      set(next)
       return true
     },
 
     async switchBoard(name) {
+      const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
       if (name === get().board) return
-      const mySwitch = ++switchSeq                  // last click wins across every await below
-      // validate the target BEFORE leaving the current board - a malformed agent file
-      // must not strand the user on an empty canvas (404 = fresh board, that is fine)
-      try {
-        const res = await fetch(`${ROUTE}/api/boards/${name}`)
-        if (!res.ok && res.status !== 404) {
-          const { error } = await res.json().catch(() => ({ error: res.statusText }))
-          get().toast(`cannot open "${name}": ${error}`)
-          return
-        }
-      } catch { get().toast(`cannot open "${name}" - server unreachable`); return }
+      // flush loop: an edit landing mid-save keeps dirty set and gets its own pass
+      let ok = true
+      for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
       if (mySwitch !== switchSeq) return
-      const saved = await flushSave()               // pending layout belongs to the old board
+      if (get().dirty) { get().toast('current board could not be saved - staying here'); return }
+      // load the target while the current board stays mounted; commit atomically on success -
+      // there is never an empty intermediate state and nothing to roll back
+      const next = await loadBoardState(name)
       if (mySwitch !== switchSeq) return
-      if (!saved) { get().toast('current board could not be saved - staying here'); return }
-      const prev = {
-        board: get().board, nodes: get().nodes, boardHash: get().boardHash,
-        boardAuto: get().boardAuto, deviceView: get().deviceView, baseLayout: get().baseLayout,
-      }
-      set({ board: name, selection: [], interact: null, deviceView: null, baseLayout: null, boardHash: null, nodes: [] })
-      const ok = await get().boot()
-      if (mySwitch !== switchSeq) return
-      if (!ok) {
-        set({ ...prev, selection: [], interact: null })   // transient failure: return home intact
-        get().toast(`could not load "${name}" - restored ${prev.board}`)
-      }
+      if (!next) { get().toast(`could not load "${name}" - staying on ${get().board}`); return }
+      ++loadSeq                                // invalidate any in-flight boot of the old board
+      set({ board: name, interact: null, ...next })
     },
 
     applyManifest(m) {
@@ -396,11 +388,8 @@ export const useStore = create<State>((set, get) => {
           })
           if (get().board !== boardName) return true   // switched boards mid-flight; stale response must not touch state
           if (res.status === 409) {
-            const { sha256 } = await res.json()
-            set({ boardHash: sha256 })
             get().toast('board changed on disk - canvas layout reloaded')
-            await get().boot()
-            return true
+            return get().boot()   // hash advances only when the authoritative reload commits
           }
           if (res.ok) {
             const { sha256 } = await res.json()
