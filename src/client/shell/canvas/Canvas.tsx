@@ -42,7 +42,8 @@ function paintGrid(positionX: number, positionY: number, scale: number) {
 export const canvasCtl = {
   fitNode(_key: string) {},
   fitAll() {},
-  zoom100() {},
+  zoomTo(_scale: number) {},
+  zoom100() { canvasCtl.zoomTo(1) },
 }
 
 export function Canvas() {
@@ -75,12 +76,13 @@ export function Canvas() {
       const x1 = Math.max(...ns.map((n) => n.x + n.w)), y1 = Math.max(...ns.map((n) => n.y + n.h + HEADER))
       fitRect(x0, y0, x1 - x0, y1 - y0)
     }
-    canvasCtl.zoom100 = () => {
+    canvasCtl.zoomTo = (target: number) => {
       const el = wrap(), inst = ref.current
       if (!el || !inst) return
       const { positionX, positionY, scale } = inst.instance.transformState
       const cx = el.clientWidth / 2, cy = el.clientHeight / 2
-      inst.setTransform(cx - (cx - positionX) / scale, cy - (cy - positionY) / scale, 1, 250, 'easeOut')
+      const k = target / scale   // zoom about the viewport center
+      inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
     }
   }, [])
 

@@ -214,6 +214,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-menu button:hover { background: var(--glass-hover) }
 .sh-menu button span { flex: 1; text-transform: capitalize }
 .sh-menu .chk { color: var(--glass-accent) }
+.sh-menu kbd { font: 500 10.5px system-ui; color: var(--glass-ink-3); background: none; border: 0 }
+.sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
 
 .sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }

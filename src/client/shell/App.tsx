@@ -37,6 +37,59 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
   }
 }
 
+const ZOOMS = [2, 1.5, 1, 0.5, 0.25, 0.1]
+
+/** Zoom preset dropdown on the percentage readout. */
+function ZoomMenu() {
+  const scale = useStore((s) => s.scale)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ left: 0, top: 0 })
+  const boxRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const toggle = () => {
+    if (!open && boxRef.current) {
+      const r = boxRef.current.getBoundingClientRect()
+      setPos({ left: r.left, top: r.bottom + 10 })
+    }
+    setOpen(!open)
+  }
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      const t = e.target as globalThis.Node
+      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [open])
+
+  const go = (fn: () => void) => { fn(); setOpen(false) }
+  const app = document.querySelector('.sh-app')
+  return (
+    <div className="sh-theme" ref={boxRef}>
+      <button className="sh-pill-btn pct" onClick={toggle} title="zoom presets">{Math.round(scale * 100)}%</button>
+      {open && app && createPortal(
+        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
+          {ZOOMS.map((z) => (
+            <button key={z} onClick={() => go(() => canvasCtl.zoomTo(z))}>
+              <span>{z * 100}%</span>
+              {z === 1 && <kbd>⇧0</kbd>}
+              {Math.abs(scale - z) < 0.03 && <CheckIcon size={13} className="chk" />}
+            </button>
+          ))}
+          <i className="div" />
+          <button onClick={() => go(canvasCtl.fitAll)}><span>Fit all</span><kbd>⇧1</kbd></button>
+          <button onClick={() => go(() => { const k = useStore.getState().selection; if (k) canvasCtl.fitNode(k) })}>
+            <span>Fit selection</span><kbd>⇧2</kbd>
+          </button>
+        </div>,
+        app,
+      )}
+    </div>
+  )
+}
+
 /** Global theme dropdown: sets every frame at once; the trigger reflects the board when uniform.
  *  The menu is PORTALED out of the pill: an element with backdrop-filter is a backdrop root,
  *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
@@ -69,7 +122,7 @@ function ThemeMenu() {
   const app = document.querySelector('.sh-app')
   return (
     <div className="sh-theme" ref={boxRef}>
-      <button className="sh-pill-btn" onClick={toggle} title="theme for all frames">
+      <button className="sh-pill-btn" onClick={toggle} title="theme for all frames (d)">
         {uniform === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
         <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
       </button>
@@ -90,7 +143,7 @@ function ThemeMenu() {
 }
 
 export function App() {
-  const { manifest, nodes, panelOpen, scale, toasts } = useStore()
+  const { manifest, nodes, panelOpen, toasts } = useStore()
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
 
   useEffect(() => { boot() }, [])
@@ -131,13 +184,21 @@ export function App() {
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  // keyboard: t tidy · Escape exit · shift+0 100% · shift+1 fit all · shift+2 fit selection
+  // keyboard: t tidy · d theme · ⌘\ panel · Escape exit · shift+0/1/2 zoom
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       const s = useStore.getState()
+      if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
+      if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
-      if (e.key === 't' && !e.metaKey && !e.ctrlKey) runTidy()
+      if (e.key === 't') runTidy()
+      if (e.key === 'd' && CONFIG.themes.length > 1) {
+        // cycle themes from the board's current (uniform or first)
+        const cur = s.nodes.length && s.nodes.every((n) => n.theme === s.nodes[0].theme) ? s.nodes[0].theme : CONFIG.themes[0]
+        const next = CONFIG.themes[(CONFIG.themes.indexOf(cur) + 1) % CONFIG.themes.length]
+        s.setTheme(next)
+      }
       if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
       if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
       if (e.shiftKey && e.code === 'Digit2' && s.selection) canvasCtl.fitNode(s.selection)
@@ -161,7 +222,7 @@ export function App() {
           <div className="sh-panel-top">
             <BoundingBoxDuoIcon size={19} className="mark" />
             <span className="name">Marver</span>
-            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={15} /></button>
+            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={15} /></button>
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Scenes</div>
@@ -178,16 +239,14 @@ export function App() {
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}
           </div>
       </aside>
-      <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel} title="open panel"
+      <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel} title="open panel (⌘\\)"
         aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelOpenIcon size={16} /></button>
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">
         <ThemeMenu />
         <i className="sep" />
-        <button className="sh-pill-btn pct" onClick={() => canvasCtl.zoom100()} title="zoom to 100% (shift+0)">
-          {Math.round(scale * 100)}%
-        </button>
+        <ZoomMenu />
         <button className="sh-pill-btn" onClick={runTidy} title="tidy layout (t)"><GridIcon size={14} /></button>
         <i className="sep" />
         <button className="sh-pill-btn off" title="play mode ships in M2"><PlayIcon size={13} /></button>
