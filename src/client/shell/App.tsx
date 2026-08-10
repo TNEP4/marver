@@ -96,7 +96,10 @@ function SelectionBar() {
         transform: 'translateX(-50%)',
       }}
     >
-      {multi && <Tip label={`${selection.length} frames selected`}><span className="cnt">{selection.length}</span></Tip>}
+      {multi && <>
+        <Tip label={`${selection.length} frames selected`}><span className="cnt">{selection.length}</span></Tip>
+        <i className="sep" />
+      </>}
       {Object.entries(CONFIG.viewports).map(([name, vp]) => {
         const active = node.w === vp.width
         return (
