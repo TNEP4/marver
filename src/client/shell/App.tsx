@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, CopyIcon, DevicesIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, PlusIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
@@ -37,6 +37,45 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
   }
 }
 
+/** Selection toolbar: screen-space overlay above the selected frame - constant size at any
+ *  zoom. Position derives from --sh-s/tx/ty (written per transform frame in Canvas), so
+ *  pan/zoom tracking is pure CSS with zero React re-renders. */
+function SelectionBar() {
+  const node = useStore((s) => s.nodes.find((n) => n.key === s.selection))
+  const frame = useStore((s) => (node ? s.frameFor(node) : undefined))
+  if (!node || !frame || node.missing) return null
+  const { resizeNode, spawn, toast } = useStore.getState()
+  const setNodeTheme = (t: string) =>
+    useStore.setState((s) => ({ nodes: s.nodes.map((n) => (n.key === node.key ? { ...n, theme: t } : n)) }))
+  return (
+    <div
+      className="sh-ctx"
+      style={{
+        left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${node.x}px)`,
+        top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${node.y}px - 46px)`,
+      }}
+    >
+      {Object.entries(CONFIG.viewports).map(([name, vp]) => (
+        <button key={name} className={node.w === vp.width ? 'on' : ''} title={`${vp.width} × ${vp.height}`}
+          onClick={() => resizeNode(node.key, vp.width, vp.height)}>
+          {deviceIcon(name, 15)}<span>{cap(name)}</span>
+        </button>
+      ))}
+      <i className="sep" />
+      {CONFIG.themes.map((t) => (
+        <button key={t} className={`icon${node.theme === t ? ' on' : ''}`} title={`${t} theme`} onClick={() => setNodeTheme(t)}>
+          {t === 'dark' ? <MoonIcon size={15} /> : t === 'light' ? <SunIcon size={15} /> : t}
+        </button>
+      ))}
+      <i className="sep" />
+      <button className="icon" title="copy file path"
+        onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><CopyIcon size={15} /></button>
+      <button className="icon" title="second instance of this frame (e.g. another width)"
+        onClick={() => spawn(frame.id)}><PlusIcon size={15} /></button>
+    </div>
+  )
+}
+
 /** Devices view: one click sizes every frame to a device width, tidies, and fits. */
 function DeviceMenu() {
   const deviceView = useStore((s) => s.deviceView)
@@ -69,13 +108,13 @@ function DeviceMenu() {
     <div className="sh-theme" ref={boxRef}>
       <button className="sh-pill-btn" onClick={toggle}
         title={deviceView ? `device view: ${deviceView} (0 resets)` : 'device view (keys 1-' + entries.length + ')'}>
-        {deviceIcon(deviceView)}
-        <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+        {deviceIcon(deviceView, 16)}
+        <CaretIcon size={11} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
       </button>
       {open && app && createPortal(
         <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
           <button onClick={() => pick(null)} title="every frame at its own default size">
-            <DevicesIcon size={14} /><span>Default</span><kbd>0</kbd>
+            <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
             {deviceView === null && <CheckIcon size={13} className="chk" />}
           </button>
           <i className="div" />
@@ -178,14 +217,14 @@ function ThemeMenu() {
   return (
     <div className="sh-theme" ref={boxRef}>
       <button className="sh-pill-btn" onClick={toggle} title="theme for all frames (d)">
-        {uniform === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
-        <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+        {uniform === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
+        <CaretIcon size={11} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
       </button>
       {open && app && createPortal(
         <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
           {CONFIG.themes.map((t) => (
             <button key={t} onClick={() => { useStore.getState().setTheme(t); setOpen(false) }}>
-              {t === 'dark' ? <MoonIcon size={14} /> : <SunIcon size={14} />}
+              {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
               <span>{t}</span>
               {uniform === t && <CheckIcon size={13} className="chk" />}
             </button>
@@ -279,14 +318,15 @@ export function App() {
   return (
     <div className={`sh-app${dark ? ' dark' : ''}`}>
       <Canvas />
+      <SelectionBar />
 
       {/* floating pill panel (no top bar - spec); panel and fab are both always
           mounted so collapse/expand can crossfade-morph between them */}
       <aside className={`sh-panel${panelOpen ? '' : ' closed'}`} aria-hidden={!panelOpen}>
           <div className="sh-panel-top">
-            <BoundingBoxDuoIcon size={19} className="mark" />
+            <BoundingBoxDuoIcon size={21} className="mark" />
             <span className="name">Marver</span>
-            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={15} /></button>
+            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={17} /></button>
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Scenes</div>
@@ -304,7 +344,7 @@ export function App() {
           </div>
       </aside>
       <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel} title="open panel (⌘\\)"
-        aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelOpenIcon size={16} /></button>
+        aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelOpenIcon size={18} /></button>
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">
@@ -312,9 +352,9 @@ export function App() {
         <ThemeMenu />
         <i className="sep" />
         <ZoomMenu />
-        <button className="sh-pill-btn" onClick={runTidy} title="tidy layout (t)"><GridIcon size={14} /></button>
+        <button className="sh-pill-btn" onClick={runTidy} title="tidy layout (t)"><GridIcon size={16} /></button>
         <i className="sep" />
-        <button className="sh-pill-btn off" title="play mode ships in M2"><PlayIcon size={13} /></button>
+        <button className="sh-pill-btn off" title="play mode ships in M2"><PlayIcon size={15} /></button>
       </nav>
 
       {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled (design/config.ts → theme)</div>}

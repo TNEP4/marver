@@ -1,16 +1,9 @@
 import { memo, useEffect, useRef } from 'react'
 import { frameUrl, useStore, CONFIG, type Node } from '../store.ts'
-import { CopyIcon, MoonIcon, PlusIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from '../icons.tsx'
+import { CopyIcon, ReloadIcon, XIcon } from '../icons.tsx'
 
 export const HEADER = 28
 const SNAP = 12
-
-/** Theme chip: sun/moon for the conventional names, text for custom themes. */
-function ThemeGlyph({ theme }: { theme: string }) {
-  if (theme === 'light') return <SunIcon size={13} />
-  if (theme === 'dark') return <MoonIcon size={13} />
-  return <>{theme}</>
-}
 
 /**
  * One frame on the canvas. Iframe laws (spec §7): the iframe element is created once per node key
@@ -163,24 +156,6 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           <div className="sh-handle e sh-no-pan" onPointerDown={(e) => drag(e, 'e')} />
           <div className="sh-handle s sh-no-pan" onPointerDown={(e) => drag(e, 's')} />
           <div className="sh-handle se sh-no-pan" onPointerDown={(e) => drag(e, 'se')} />
-          <div className="sh-ctx sh-no-pan" onPointerDown={(e) => e.stopPropagation()}>
-            {Object.entries(CONFIG.viewports).map(([name, vp]) => (
-              <button key={name} className={`sh-no-pan icon${node.w === vp.width ? ' on' : ''}`} title={`${name} · ${vp.width} × ${vp.height}`}
-                onClick={() => resizeNode(node.key, vp.width, vp.height)}>{deviceIcon(name, 13)}</button>
-            ))}
-            <i className="sep" />
-            {CONFIG.themes.map((t) => (
-              <button key={t} className={`sh-no-pan icon${node.theme === t ? ' on' : ''}`} title={`${t} theme`}
-                onClick={() => useStore.setState((s) => ({ nodes: s.nodes.map((n) => n.key === node.key ? { ...n, theme: t } : n) }))}>
-                <ThemeGlyph theme={t} />
-              </button>
-            ))}
-            <i className="sep" />
-            <button className="sh-no-pan icon" title="copy file path"
-              onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><CopyIcon size={13} /></button>
-            <button className="sh-no-pan icon" title="second instance of this frame (e.g. another width)"
-              onClick={() => useStore.getState().spawn(frame.id)}><PlusIcon size={13} /></button>
-          </div>
         </>
       )}
     </div>

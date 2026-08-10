@@ -37,6 +37,13 @@ function paintGrid(positionX: number, positionY: number, scale: number) {
   el.style.setProperty('--grid-size', `${step}px ${step}px`)
   el.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
   el.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
+  // screen-space overlays (selection bar) position themselves from these - no re-render per frame
+  const app = document.querySelector('.sh-app') as HTMLElement | null
+  if (app) {
+    app.style.setProperty('--sh-s', String(scale))
+    app.style.setProperty('--sh-tx', `${positionX}px`)
+    app.style.setProperty('--sh-ty', `${positionY}px`)
+  }
 }
 
 export const canvasCtl = {
