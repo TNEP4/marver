@@ -4,7 +4,7 @@
 
 .sh-app {
   --ground: #e7e9ef; --dot: #c9cbd5;
-  --accent: #2440c4; --accent-ring: rgba(36, 64, 196, .18);
+  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2);
 
   --glass: rgba(255, 255, 255, .64);
   --glass-brd: rgba(24, 24, 27, .1);
@@ -12,8 +12,8 @@
   --glass-ink-2: rgba(24, 24, 27, .66);
   --glass-ink-3: rgba(24, 24, 27, .4);
   --glass-hover: rgba(24, 24, 27, .06);
-  --glass-accent: #2440c4;
-  --glass-accent-bg: rgba(36, 64, 196, .12);
+  --glass-accent: #0077e6;
+  --glass-accent-bg: rgba(0, 136, 255, .13);
   --glass-good: #0e6b57;
   --glass-warn: #7a4a00;
   --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .06), 0 16px 40px -18px rgba(24, 24, 27, .3);
@@ -34,7 +34,7 @@
 }
 .sh-app.dark {
   --ground: #1b1c23; --dot: #35363f;
-  --accent: #5b76f7; --accent-ring: rgba(91, 118, 247, .28);
+  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .32);
 
   --glass: rgba(12, 12, 17, .72);
   --glass-brd: rgba(255, 255, 255, .16);
@@ -42,8 +42,8 @@
   --glass-ink-2: rgba(245, 245, 247, .64);
   --glass-ink-3: rgba(245, 245, 247, .4);
   --glass-hover: rgba(255, 255, 255, .1);
-  --glass-accent: #b3c1ff;
-  --glass-accent-bg: rgba(104, 126, 255, .3);
+  --glass-accent: #5cb3ff;
+  --glass-accent-bg: rgba(0, 136, 255, .28);
   --glass-good: #7fe0c3;
   --glass-warn: #ffd9a0;
   --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .2), 0 16px 44px -16px rgba(10, 10, 16, .55);
@@ -170,7 +170,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
 .sh-panel.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 .sh-panel-top { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px 8px }
-.sh-panel-top .mark { flex: none; color: var(--glass-accent) }
+.sh-panel-top .mark { flex: none; color: var(--accent) }
 .sh-panel-top .name { font-weight: 700; font-size: 15px; flex: 1; letter-spacing: .01em }
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
