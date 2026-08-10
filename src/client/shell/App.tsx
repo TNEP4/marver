@@ -51,8 +51,10 @@ function SelectionBar() {
     <div
       className="sh-ctx"
       style={{
-        left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${node.x}px)`,
+        // centered over the frame; translateX keeps it centered whatever the bar's width
+        left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${node.x + node.w / 2}px)`,
         top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${node.y}px - 52px)`,
+        transform: 'translateX(-50%)',
       }}
     >
       {Object.entries(CONFIG.viewports).map(([name, vp]) => (
