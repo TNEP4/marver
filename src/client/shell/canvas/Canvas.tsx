@@ -49,6 +49,7 @@ function paintGrid(positionX: number, positionY: number, scale: number) {
 
 export const canvasCtl = {
   fitNode(_key: string) {},
+  fitNodes(_keys: string[]) {},
   fitAll() {},
   zoomTo(_scale: number) {},
   zoom100() { canvasCtl.zoomTo(1) },
@@ -77,13 +78,15 @@ export function Canvas() {
       const n = useStore.getState().nodes.find((x) => x.key === key)
       if (n) fitRect(n.x, n.y, n.w, n.h + HEADER)
     }
-    canvasCtl.fitAll = () => {
-      const ns = useStore.getState().nodes
+    canvasCtl.fitNodes = (keys: string[]) => {
+      const sel = new Set(keys)
+      const ns = useStore.getState().nodes.filter((n) => sel.has(n.key))
       if (!ns.length) return
       const x0 = Math.min(...ns.map((n) => n.x)), y0 = Math.min(...ns.map((n) => n.y))
       const x1 = Math.max(...ns.map((n) => n.x + n.w)), y1 = Math.max(...ns.map((n) => n.y + n.h + HEADER))
       fitRect(x0, y0, x1 - x0, y1 - y0)
     }
+    canvasCtl.fitAll = () => canvasCtl.fitNodes(useStore.getState().nodes.map((n) => n.key))
     canvasCtl.zoomTo = (target: number) => {
       const el = wrap(), inst = ref.current
       if (!el || !inst) return
@@ -104,7 +107,7 @@ export function Canvas() {
       const t = e.target as HTMLElement | null
       if (t?.closest('.sh-node')) return
       const s = useStore.getState()
-      if (s.selection || s.interact) s.select(null)
+      if (s.selection.length || s.interact) s.select(null)
     }
     el.addEventListener('pointerdown', down)
     return () => el.removeEventListener('pointerdown', down)

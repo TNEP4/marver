@@ -16,7 +16,7 @@ const SNAP = 12
  */
 export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const frame = useStore((s) => s.frameFor(node))
-  const selected = useStore((s) => s.selection === node.key)
+  const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
   const scale = useStore((s) => s.scale)
   const { select, setInteract, moveNode, resizeNode, setStatus, setGesture, toast } = useStore.getState()
@@ -41,7 +41,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const drag = (e: React.PointerEvent, mode: 'move' | 'e' | 's' | 'se') => {
     e.stopPropagation()
     if (e.button !== 0) return
-    select(node.key)
+    // shift-click toggles multi-selection instead of dragging (Figma convention)
+    if (e.shiftKey && mode === 'move') { select(node.key, true); return }
+    if (!(selected && useStore.getState().selection.length > 1)) select(node.key)
     const el = e.currentTarget as HTMLElement
     const world = document.getElementById('sh-world')!
     // Law G-5: measured scale, never stored zoom state. #sh-world is 1px wide by design,

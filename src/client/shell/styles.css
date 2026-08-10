@@ -155,6 +155,9 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   font: 600 12px system-ui; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 11px; border-radius: 999px; cursor: pointer }
 .sh-ctx button.icon { min-width: 28px; width: 30px; padding: 0 }
+.sh-ctx .cnt { font: 600 11px system-ui; color: var(--glass-accent); background: var(--glass-accent-bg);
+  border-radius: 999px; min-width: 22px; height: 22px; display: inline-flex; align-items: center;
+  justify-content: center; padding: 0 6px; margin: 0 3px }
 .sh-ctx button.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
 .sh-ctx button:hover:not(.on) { background: var(--glass-hover); color: var(--glass-ink) }
 .sh-ctx .sep { width: 1px; height: 14px; background: var(--glass-brd); margin: 0 3px }
@@ -199,6 +202,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .it small { color: var(--glass-ink-3); font-weight: 500; font-variant-numeric: tabular-nums }
 .sh-panel .sub { padding: 3.5px 9px 3.5px 22px; color: var(--glass-ink-2); font-size: 12px; border-radius: 9px; cursor: pointer }
 .sh-panel .sub:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-panel .sub.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
 .sh-panel .sub.dim { color: var(--glass-ink-3); cursor: default; line-height: 1.5 }
 .sh-panel .sub.dim:hover { background: none; color: var(--glass-ink-3) }
 

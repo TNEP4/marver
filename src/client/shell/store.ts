@@ -32,7 +32,7 @@ function defaultSize(frame: FrameEntry) {
 interface State {
   manifest: Manifest | null
   nodes: Node[]                       // append-only order; NEVER sorted or reordered (iframe law G-1)
-  selection: string | null
+  selection: string[]                 // ordered; last entry is the primary (bar anchor)
   interact: string | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
@@ -50,10 +50,11 @@ interface State {
   resizeNode(key: string, w: number, h: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
   removeNode(key: string): void
-  select(key: string | null): void
+  select(key: string | null, additive?: boolean): void
   setInteract(key: string | null): void
   setGesture(g: boolean): void
   setDeviceView(name: string | null): void
+  resizeSelected(name: string | null): void
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -68,7 +69,7 @@ export const useStore = create<State>((set, get) => {
   const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   return {
-    manifest: null, nodes: [], selection: null, interact: null, gesture: false, deviceView: null, baseLayout: null,
+    manifest: null, nodes: [], selection: [], interact: null, gesture: false, deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -111,7 +112,7 @@ export const useStore = create<State>((set, get) => {
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
         for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
       }
-      set({ manifest, nodes, boardHash, deviceView, baseLayout })
+      set({ manifest, nodes, boardHash, deviceView, baseLayout, selection: [] })
     },
 
     applyManifest(m) {
@@ -191,8 +192,42 @@ export const useStore = create<State>((set, get) => {
     setStatus(key, status, error) {
       set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error } : n)) }))
     },
-    // selecting the frame you are interacting with keeps interact; anything else exits it
-    select(key) { set((s) => ({ selection: key, interact: s.interact === key ? s.interact : null })) },
+    // plain select replaces; additive toggles membership. Interact survives only while its
+    // frame stays selected.
+    select(key, additive = false) {
+      set((s) => {
+        const selection = key == null
+          ? []
+          : additive
+            ? (s.selection.includes(key) ? s.selection.filter((k) => k !== key) : [...s.selection, key])
+            : [key]
+        return { selection, interact: s.interact && selection.includes(s.interact) ? s.interact : null }
+      })
+    },
+    // scoped device sizing: only the selected frames change; null restores their defaults.
+    // Always followed by a tidy - a preset change must never scramble the layout.
+    resizeSelected(name) {
+      const vp = name ? CONFIG.viewports[name] : null
+      if (name && !vp) return
+      set((s) => {
+        const sel = new Set(s.selection)
+        const nodes = s.nodes.map((n) => {
+          if (!sel.has(n.key)) return n
+          if (vp) return { ...n, w: vp.width, h: vp.height }
+          const f = s.manifest?.frames.find((x) => x.id === n.frame)
+          if (!f) return n
+          const d = defaultSize(f)
+          return { ...n, w: d.w, h: d.h }
+        })
+        const baseLayout = s.baseLayout ? { ...s.baseLayout } : null
+        if (baseLayout) for (const k of s.selection) {
+          const n = nodes.find((x) => x.key === k)
+          if (n) baseLayout[k] = { ...(baseLayout[k] ?? { x: n.x, y: n.y }), w: n.w, h: n.h }
+        }
+        return { nodes, dirty: true, deviceView: null, baseLayout }
+      })
+      get().runTidy()
+    },
     setInteract(key) { set({ interact: key }) },
     setGesture(gesture) { set({ gesture }) },
     setScale(scale) { set({ scale }) },

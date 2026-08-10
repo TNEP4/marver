@@ -65,12 +65,27 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
  *  zoom. Position derives from --sh-s/tx/ty (written per transform frame in Canvas), so
  *  pan/zoom tracking is pure CSS with zero React re-renders. */
 function SelectionBar() {
-  const node = useStore((s) => s.nodes.find((n) => n.key === s.selection))
+  const selection = useStore((s) => s.selection)
+  const node = useStore((s) => s.nodes.find((n) => n.key === s.selection[s.selection.length - 1]))
   const frame = useStore((s) => (node ? s.frameFor(node) : undefined))
   if (!node || !frame || node.missing) return null
-  const { resizeNode, spawn, toast } = useStore.getState()
+  const { resizeSelected, spawn, toast } = useStore.getState()
+  const multi = selection.length > 1
+  const applyDevice = (name: string) => {
+    resizeSelected(name)
+    setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
+  }
   const setNodeTheme = (t: string) =>
-    useStore.setState((s) => ({ nodes: s.nodes.map((n) => (n.key === node.key ? { ...n, theme: t } : n)) }))
+    useStore.setState((s) => {
+      const sel = new Set(s.selection)
+      return { nodes: s.nodes.map((n) => (sel.has(n.key) ? { ...n, theme: t } : n)) }
+    })
+  const selectedFrames = () => {
+    const st = useStore.getState()
+    return st.selection
+      .map((k) => { const n = st.nodes.find((x) => x.key === k); return n ? st.frameFor(n) : undefined })
+      .filter((f): f is NonNullable<typeof f> => !!f)
+  }
   return (
     <div
       className="sh-ctx"
@@ -81,12 +96,12 @@ function SelectionBar() {
         transform: 'translateX(-50%)',
       }}
     >
+      {multi && <Tip label={`${selection.length} frames selected`}><span className="cnt">{selection.length}</span></Tip>}
       {Object.entries(CONFIG.viewports).map(([name, vp]) => {
         const active = node.w === vp.width
         return (
           <Tip key={name} label={<><b>{cap(name)}</b><span>{vp.width} × {vp.height}</span></>}>
-            <button className={active ? 'on' : 'icon'}
-              onClick={() => resizeNode(node.key, vp.width, vp.height)}>
+            <button className={active ? 'on' : 'icon'} onClick={() => applyDevice(name)}>
               {deviceIcon(name, 15)}{active && <span>{cap(name)}</span>}
             </button>
           </Tip>
@@ -101,12 +116,12 @@ function SelectionBar() {
         </Tip>
       ))}
       <i className="sep" />
-      <Tip label="Copy file path">
+      <Tip label={multi ? `Copy ${selection.length} file paths` : 'Copy file path'}>
         <button className="icon"
-          onClick={() => { navigator.clipboard.writeText(frame.file); toast('file path copied') }}><SignpostIcon size={15} /></button>
+          onClick={() => { navigator.clipboard.writeText(selectedFrames().map((f) => f.file).join('\n')); toast(multi ? `${selection.length} file paths copied` : 'file path copied') }}><SignpostIcon size={15} /></button>
       </Tip>
-      <Tip label="Duplicate frame">
-        <button className="icon" onClick={() => spawn(frame.id)}><PlusIcon size={15} /></button>
+      <Tip label={multi ? 'Duplicate frames' : 'Duplicate frame'}>
+        <button className="icon" onClick={() => selectedFrames().forEach((f) => spawn(f.id))}><PlusIcon size={15} /></button>
       </Tip>
     </div>
   )
@@ -210,7 +225,7 @@ function ZoomMenu() {
           ))}
           <i className="div" />
           <button onClick={() => go(canvasCtl.fitAll)}><span>Fit all</span><kbd>⇧1</kbd></button>
-          <button onClick={() => go(() => { const k = useStore.getState().selection; if (k) canvasCtl.fitNode(k) })}>
+          <button onClick={() => go(() => { const k = useStore.getState().selection; if (k.length) canvasCtl.fitNodes(k) })}>
             <span>Fit selection</span><kbd>⇧2</kbd>
           </button>
         </div>,
@@ -273,7 +288,7 @@ function ThemeMenu() {
 }
 
 export function App() {
-  const { manifest, nodes, panelOpen, toasts } = useStore()
+  const { manifest, nodes, panelOpen, toasts, selection } = useStore()
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
 
   useEffect(() => { boot() }, [])
@@ -331,13 +346,19 @@ export function App() {
       }
       if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
       if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
-      if (e.shiftKey && e.code === 'Digit2' && s.selection) canvasCtl.fitNode(s.selection)
-      // plain digits: device views (0 = default, 1..n = configured viewports in order)
+      if (e.shiftKey && e.code === 'Digit2' && s.selection.length) canvasCtl.fitNodes(s.selection)
+      // plain digits: 0 = default, 1..n = devices. Scoped to the selection when one
+      // exists, board-wide otherwise. Every path tidies - presets never scramble layout.
       if (!e.shiftKey && /^Digit[0-9]$/.test(e.code)) {
         const idx = Number(e.code.slice(5))
         const names = Object.keys(CONFIG.viewports)
-        if (idx === 0 || names[idx - 1]) {
-          s.setDeviceView(idx === 0 ? null : names[idx - 1])
+        if (idx !== 0 && !names[idx - 1]) return
+        const name = idx === 0 ? null : names[idx - 1]
+        if (s.selection.length) {
+          s.resizeSelected(name)
+          setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
+        } else {
+          s.setDeviceView(name)
           setTimeout(() => canvasCtl.fitAll(), 30)
         }
       }
@@ -368,12 +389,17 @@ export function App() {
             <div className="hd">Scenes</div>
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} count={sc.frames}>
-                {frames.filter((f) => f.scene === sc.name).map((f) => (
-                  <div key={f.id} className="sub" onClick={() => {
-                    const n = useStore.getState().nodes.find((x) => x.frame === f.id)
-                    if (n) { select(n.key); canvasCtl.fitNode(n.key) }
-                  }}>{cap(f.id.split('/').slice(1).join('/') || f.id)}</div>
-                ))}
+                {frames.filter((f) => f.scene === sc.name).map((f) => {
+                  const n = nodes.find((x) => x.frame === f.id && !x.missing) ?? nodes.find((x) => x.frame === f.id)
+                  const on = !!n && selection.includes(n.key)
+                  return (
+                    <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => {
+                      if (!n) return
+                      select(n.key, e.shiftKey)
+                      if (!e.shiftKey) canvasCtl.fitNode(n.key)
+                    }}>{cap(f.id.split('/').slice(1).join('/') || f.id)}</div>
+                  )
+                })}
               </SceneGroup>
             ))}
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}
