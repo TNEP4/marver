@@ -1,4 +1,20 @@
 # Build spec v3 - the agent-native design canvas
+> **REALITY DELTA (2026-08-10, post-M1).** This spec was written pre-build and several
+> facts have moved. Where this document disagrees with the list below, the LIST wins:
+> - Name: **Marver**, package **@marver/design**, bin `marver`. Route prefix is **`/__mv`**
+>   (spec says `/__sh`; internal `sh-` CSS/message prefixes intentionally remain).
+> - Viewports: `mobile/tablet/laptop/monitor` (+ optional `tv`) - `desktop` no longer exists.
+> - Tidy gutter is **72px** (was 48). Tidy runs automatically after every device-preset action.
+> - Selection is a multi-select (ordered array); digit hotkeys scope to it. The per-frame
+>   context bar is a **screen-space overlay** (constant size at any zoom), not a world-space child.
+> - Boards v0.1: agent-authored `design/boards/*.json` + sidebar switcher; sidebar scenes are
+>   board-scoped. `manifest.boards` was removed - the boards API is authoritative.
+> - `.local` view-state API was removed (unbuilt feature, no caller).
+> - `sh:dblclick` never shipped; interact enters via shell overlay dblclick, exits via
+>   Escape (bridge) or click-outside.
+> - Devices views, scoped hotkeys, theme-aware glass shell, and the connector treatments
+>   are post-spec features; DECISIONS.md is their record.
+
 
 > **Audience: the coding agent building this.** This is the implementation contract; product rationale lives in the pitch (v2.1). Working package name: **`showhome`** - one constant (`src/cli/name.ts`) plus a documented grep list (§2) for the places a bare constant cannot reach.
 >

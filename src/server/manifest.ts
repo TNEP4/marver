@@ -10,11 +10,11 @@ export interface FrameEntry {
   scene: string
   title?: string
   viewport?: string
+  theme?: string
 }
 export interface Manifest {
   frames: FrameEntry[]
   scenes: { name: string; frames: number }[]
-  boards: string[]
 }
 
 const FRAME_EXT = /\.(tsx|jsx|html)$/
@@ -74,30 +74,32 @@ export function scanFrames(root: string): Manifest {
         const meta = extractMeta(readFileSync(abs, 'utf8'))
         if (meta.title) entry.title = meta.title
         if (meta.viewport) entry.viewport = meta.viewport
+        if (meta.theme) entry.theme = meta.theme
       }
       frames.push(entry)
     }
   }
   frames.sort((a, b) => a.id.localeCompare(b.id))
-  // duplicate id check (e.g. foo.tsx + foo.html)
+  // duplicate ids (e.g. foo.tsx + foo.html): keep the first (deterministic after sort),
+  // drop the rest - duplicate React keys downstream are worse than a hidden file
   const seen = new Map<string, string>()
-  for (const f of frames) {
+  const deduped = frames.filter((f) => {
     const prev = seen.get(f.id)
-    if (prev) console.error(`[marver] duplicate frame id "${f.id}" (${prev} vs ${f.file}) - keep one.`)
+    if (prev) {
+      console.error(`[marver] duplicate frame id "${f.id}" (${prev} vs ${f.file}) - keeping ${prev}.`)
+      return false
+    }
     seen.set(f.id, f.file)
-  }
+    return true
+  })
+  frames.length = 0
+  frames.push(...deduped)
 
   const sceneCounts = new Map<string, number>()
   for (const f of frames) sceneCounts.set(f.scene, (sceneCounts.get(f.scene) ?? 0) + 1)
   const scenes = [...sceneCounts.entries()].map(([name, n]) => ({ name, frames: n })).sort((a, b) => a.name.localeCompare(b.name))
 
-  const boardsDir = join(design, 'boards')
-  const boards = existsSync(boardsDir)
-    ? readdirSync(boardsDir).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, '')).sort()
-    : []
-  if (!boards.includes('everything')) boards.unshift('everything')
-
-  return { frames, scenes, boards }
+  return { frames, scenes }
 }
 
 /** Write design/manifest.json only when content changed. Returns the manifest either way. */

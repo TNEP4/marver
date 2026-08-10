@@ -62,25 +62,17 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
   }
 }
 
-/** Board switcher: one board on screen at a time. Boards are agent-authored files in
- *  design/boards/ - the list is fetched fresh on every open so new files show instantly. */
-function BoardMenu() {
-  const board = useStore((s) => s.board)
+/** Shared popover machinery: trigger position, outside-click close, portal to the app
+ *  root (glass never nests - a nested backdrop-filter cannot sample the page). */
+function usePopover() {
   const [open, setOpen] = useState(false)
-  const [names, setNames] = useState<string[]>([])
   const [pos, setPos] = useState({ left: 0, top: 0 })
   const boxRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-
-  const toggle = async () => {
+  const toggle = () => {
     if (!open && boxRef.current) {
       const r = boxRef.current.getBoundingClientRect()
-      setPos({ left: r.left, top: r.bottom + 8 })
-      try {
-        const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-        const fromDisk = list.map((b) => b.name)
-        setNames(['everything', ...fromDisk.filter((n) => n !== 'everything')])
-      } catch { setNames(['everything']) }
+      setPos({ left: r.left, top: r.bottom + 10 })
     }
     setOpen(!open)
   }
@@ -93,31 +85,54 @@ function BoardMenu() {
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
   }, [open])
+  return { open, setOpen, pos, boxRef, menuRef, toggle }
+}
 
+function Popover({ pop, children }: { pop: ReturnType<typeof usePopover>; children: ReactNode }) {
+  const app = document.querySelector('.sh-app')
+  if (!pop.open || !app) return null
+  return createPortal(
+    <div className="sh-menu" ref={pop.menuRef} style={{ left: pop.pos.left, top: pop.pos.top }}>{children}</div>,
+    app,
+  )
+}
+
+/** Board switcher: one board on screen at a time. Boards are agent-authored files in
+ *  design/boards/ - the list is fetched fresh on every open so new files show instantly. */
+function BoardMenu() {
+  const board = useStore((s) => s.board)
+  const [names, setNames] = useState<string[]>([])
+  const pop = usePopover()
+
+  const toggle = async () => {
+    if (!pop.open) {
+      try {
+        const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
+        setNames(['everything', ...list.map((b) => b.name).filter((n) => n !== 'everything')])
+      } catch { setNames(['everything']) }
+    }
+    pop.toggle()
+  }
   const pick = async (name: string) => {
-    setOpen(false)
+    pop.setOpen(false)
     await useStore.getState().switchBoard(name)
     setTimeout(() => canvasCtl.fitAll(), 60)
   }
-  const app = document.querySelector('.sh-app')
   return (
-    <div className="sh-board" ref={boxRef}>
+    <div className="sh-board" ref={pop.boxRef}>
       <button className="it" onClick={toggle}>
         <StackIcon size={14} className="tw" />
         <span>{cap(board)}</span>
-        <CaretIcon size={11} style={{ transform: open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
+        <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
       </button>
-      {open && app && createPortal(
-        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
-          {names.map((n) => (
-            <button key={n} onClick={() => pick(n)}>
-              <StackIcon size={14} /><span>{cap(n)}</span>
-              {n === board && <CheckIcon size={13} className="chk" />}
-            </button>
-          ))}
-        </div>,
-        app,
-      )}
+      <Popover pop={pop}>
+        {names.map((n) => (
+          <button key={n} onClick={() => pick(n)}>
+            <StackIcon size={14} /><span>{cap(n)}</span>
+            {n === board && <CheckIcon size={13} className="chk" />}
+          </button>
+        ))}
+      </Popover>
     </div>
   )
 }
@@ -200,54 +215,33 @@ function SelectionBar() {
 /** Devices view: one click sizes every frame to a device width, tidies, and fits. */
 function DeviceMenu() {
   const deviceView = useStore((s) => s.deviceView)
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ left: 0, top: 0 })
-  const boxRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  const toggle = () => {
-    if (!open && boxRef.current) {
-      const r = boxRef.current.getBoundingClientRect()
-      setPos({ left: r.left, top: r.bottom + 10 })
-    }
-    setOpen(!open)
+  const pop = usePopover()
+  const pick = (name: string | null) => {
+    useStore.getState().setDeviceView(name)
+    pop.setOpen(false)
+    setTimeout(() => canvasCtl.fitAll(), 30)
   }
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => {
-      const t = e.target as globalThis.Node
-      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-
-  const pick = (name: string | null) => { useStore.getState().setDeviceView(name); setOpen(false); setTimeout(() => canvasCtl.fitAll(), 30) }
   const entries = Object.entries(CONFIG.viewports)
-  const app = document.querySelector('.sh-app')
   return (
-    <div className="sh-theme" ref={boxRef}>
-      <button className="sh-pill-btn" onClick={toggle}
+    <div className="sh-theme" ref={pop.boxRef}>
+      <button className="sh-pill-btn" onClick={pop.toggle}
         title={deviceView ? `device view: ${deviceView} (0 resets)` : 'device view (keys 1-' + entries.length + ')'}>
         {deviceIcon(deviceView, 16)}
-        <CaretIcon size={11} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+        <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
       </button>
-      {open && app && createPortal(
-        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
-          <button onClick={() => pick(null)} title="every frame at its own default size">
-            <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
-            {deviceView === null && <CheckIcon size={13} className="chk" />}
+      <Popover pop={pop}>
+        <button onClick={() => pick(null)} title="every frame at its own default size">
+          <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
+          {deviceView === null && <CheckIcon size={13} className="chk" />}
+        </button>
+        <i className="div" />
+        {entries.map(([name, vp], i) => (
+          <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
+            {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
+            {deviceView === name && <CheckIcon size={13} className="chk" />}
           </button>
-          <i className="div" />
-          {entries.map(([name, vp], i) => (
-            <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
-              {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
-              {deviceView === name && <CheckIcon size={13} className="chk" />}
-            </button>
-          ))}
-        </div>,
-        app,
-      )}
+        ))}
+      </Popover>
     </div>
   )
 }
@@ -257,50 +251,25 @@ const ZOOMS = [2, 1.5, 1, 0.5, 0.25, 0.1]
 /** Zoom preset dropdown on the percentage readout. */
 function ZoomMenu() {
   const scale = useStore((s) => s.scale)
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ left: 0, top: 0 })
-  const boxRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  const toggle = () => {
-    if (!open && boxRef.current) {
-      const r = boxRef.current.getBoundingClientRect()
-      setPos({ left: r.left, top: r.bottom + 10 })
-    }
-    setOpen(!open)
-  }
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => {
-      const t = e.target as globalThis.Node
-      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-
-  const go = (fn: () => void) => { fn(); setOpen(false) }
-  const app = document.querySelector('.sh-app')
+  const pop = usePopover()
+  const go = (fn: () => void) => { fn(); pop.setOpen(false) }
   return (
-    <div className="sh-theme" ref={boxRef}>
-      <button className="sh-pill-btn pct" onClick={toggle} title="zoom presets">{Math.round(scale * 100)}%</button>
-      {open && app && createPortal(
-        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
-          {ZOOMS.map((z) => (
-            <button key={z} onClick={() => go(() => canvasCtl.zoomTo(z))}>
-              <span>{z * 100}%</span>
-              {z === 1 && <kbd>⇧0</kbd>}
-              {Math.abs(scale - z) < 0.03 && <CheckIcon size={13} className="chk" />}
-            </button>
-          ))}
-          <i className="div" />
-          <button onClick={() => go(canvasCtl.fitAll)}><span>Fit all</span><kbd>⇧1</kbd></button>
-          <button onClick={() => go(() => { const k = useStore.getState().selection; if (k.length) canvasCtl.fitNodes(k) })}>
-            <span>Fit selection</span><kbd>⇧2</kbd>
+    <div className="sh-theme" ref={pop.boxRef}>
+      <button className="sh-pill-btn pct" onClick={pop.toggle} title="zoom presets">{Math.round(scale * 100)}%</button>
+      <Popover pop={pop}>
+        {ZOOMS.map((z) => (
+          <button key={z} onClick={() => go(() => canvasCtl.zoomTo(z))}>
+            <span>{z * 100}%</span>
+            {z === 1 && <kbd>⇧0</kbd>}
+            {Math.abs(scale - z) < 0.03 && <CheckIcon size={13} className="chk" />}
           </button>
-        </div>,
-        app,
-      )}
+        ))}
+        <i className="div" />
+        <button onClick={() => go(canvasCtl.fitAll)}><span>Fit all</span><kbd>⇧1</kbd></button>
+        <button onClick={() => go(() => { const k = useStore.getState().selection; if (k.length) canvasCtl.fitNodes(k) })}>
+          <span>Fit selection</span><kbd>⇧2</kbd>
+        </button>
+      </Popover>
     </div>
   )
 }
@@ -310,49 +279,23 @@ function ZoomMenu() {
  *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ left: 0, top: 0 })
-  const boxRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const pop = usePopover()
   const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
-
-  const toggle = () => {
-    if (!open && boxRef.current) {
-      const r = boxRef.current.getBoundingClientRect()
-      setPos({ left: r.left, top: r.bottom + 10 })   // left-aligned under the trigger
-    }
-    setOpen(!open)
-  }
-
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => {
-      const t = e.target as globalThis.Node
-      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-
-  const app = document.querySelector('.sh-app')
   return (
-    <div className="sh-theme" ref={boxRef}>
-      <button className="sh-pill-btn" onClick={toggle} title="theme for all frames (d)">
+    <div className="sh-theme" ref={pop.boxRef}>
+      <button className="sh-pill-btn" onClick={pop.toggle} title="theme for all frames (d)">
         {uniform === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
-        <CaretIcon size={11} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+        <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
       </button>
-      {open && app && createPortal(
-        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
-          {CONFIG.themes.map((t) => (
-            <button key={t} onClick={() => { useStore.getState().setTheme(t); setOpen(false) }}>
-              {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
-              <span>{t}</span>
-              {uniform === t && <CheckIcon size={13} className="chk" />}
-            </button>
-          ))}
-        </div>,
-        app,
-      )}
+      <Popover pop={pop}>
+        {CONFIG.themes.map((t) => (
+          <button key={t} onClick={() => { useStore.getState().setTheme(t); pop.setOpen(false) }}>
+            {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
+            <span>{t}</span>
+            {uniform === t && <CheckIcon size={13} className="chk" />}
+          </button>
+        ))}
+      </Popover>
     </div>
   )
 }

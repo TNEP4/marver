@@ -22,7 +22,7 @@ Then, to your agent:
 
 The implementation contract is [SPEC.md](./SPEC.md). Deviations live in [DECISIONS.md](./DECISIONS.md).
 
-Working name; private; TNEP4.
+; private; TNEP4.
 
 ## Shortcuts
 

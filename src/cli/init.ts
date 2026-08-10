@@ -24,8 +24,9 @@ export function init(root: string, opts: InitOpts) {
     created.push(`design/${rel}`)
   }
 
-  // config (commented defaults + native-TS sharp edges)
-  write('config.ts', configTemplate(host.themeCss, opts.mode))
+  // config (commented defaults + native-TS sharp edges). Theme is deliberately absent:
+  // design/theme.css (the wrapper) is the source of truth and always wins over config.
+  write('config.ts', configTemplate(opts.mode))
 
   // theme wrapper (spec §5.4) - the host CSS build stays byte-identical
   if (host.themeCss) {
@@ -85,11 +86,12 @@ function patchTsconfigExclude(root: string) {
   }
 }
 
-const configTemplate = (theme: string | null, mode: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
+const configTemplate = (mode: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
+// Theme lives in design/theme.css (it imports your app's real stylesheet) - not here.
 // Sharp edges (native Node TS import): erasable syntax only (no enums/namespaces),
 // relative imports need extensions, tsconfig paths are ignored here.
 export default {
-  mode: ${JSON.stringify(mode)},${theme ? `\n  theme: ${JSON.stringify(theme)},` : ''}
+  mode: ${JSON.stringify(mode)},
   // Device widths for frames and the Devices view. Rename, retune, or uncomment tv.
   viewports: {
     mobile: { width: 390, height: 844 },

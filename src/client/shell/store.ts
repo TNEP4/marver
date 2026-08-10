@@ -4,8 +4,8 @@ import { tidy } from './tidy.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 
-export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string }
-export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[]; boards: string[] }
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string }
+export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number; theme: string
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
@@ -23,6 +23,8 @@ export function frameUrl(frame: FrameEntry, theme: string): string {
     ? `/${frame.file}?theme=${theme}`
     : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}`
 }
+
+const defaultTheme = (frame?: FrameEntry) => frame?.theme ?? CONFIG.themes[0] ?? 'light'
 
 function defaultSize(frame: FrameEntry) {
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
@@ -55,6 +57,8 @@ interface State {
   select(key: string | null, additive?: boolean): void
   setInteract(key: string | null): void
   setGesture(g: boolean): void
+  moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
+  setSelectedTheme(theme: string): void
   setDeviceView(name: string | null): void
   resizeSelected(name: string | null): void
   switchBoard(name: string): Promise<void>
@@ -64,24 +68,27 @@ interface State {
   runTidy(): void
   toast(text: string): void
   spawn(frameId: string): Node | null
-  save(): void
+  save(): Promise<void>
 }
 
 export const useStore = create<State>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
+  let saveChain: Promise<void> = Promise.resolve()   // saves are serialized; responses only commit if the board is still active
+  let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+  const flushSave = async () => { clearTimeout(saveTimer); if (get().dirty) get().save(); await saveChain }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'everything', boardAuto: true, deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
+      const seq = ++loadSeq
       const raw = await fetch('/design/manifest.json').then((r) => r.json()).catch(() => null)
       // Malformed manifest fails soft: an empty canvas with a working shell beats a white screen.
       const manifest: Manifest = {
         frames: Array.isArray(raw?.frames) ? raw.frames : [],
         scenes: Array.isArray(raw?.scenes) ? raw.scenes : [],
-        boards: Array.isArray(raw?.boards) ? raw.boards : [],
       }
       const boardName = get().board
       let nodes: Node[] = []
@@ -114,11 +121,10 @@ export const useStore = create<State>((set, get) => {
                 missing: !manifest.frames.some((f2) => f2.id === n.frame),
               }
             })
-          // a device view in progress survives reloads - snapshot and all
-          if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) {
-            deviceView = board.deviceView
-            if (board.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
-          }
+          // device view and the free-form snapshot survive reloads - independently:
+          // a scoped "exception" clears deviceView but the snapshot must keep restoring
+          if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
+          if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
         }
       } catch { /* virtual board */ }
       // frames not on the board yet → auto boards only (a curated board shows exactly its list)
@@ -126,8 +132,10 @@ export const useStore = create<State>((set, get) => {
         const placed = new Set(nodes.map((n) => n.frame))
         for (const f of manifest.frames) {
           if (placed.has(f.id)) continue
-          const { w, h } = defaultSize(f)
-          nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
+          placed.add(f.id)
+          const d = defaultSize(f)
+          const vp = deviceView ? CONFIG.viewports[deviceView] : null
+          nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: defaultTheme(f), status: 'loading' })
         }
       }
       if ((!boardHash || needTidy) && nodes.length) {
@@ -135,13 +143,23 @@ export const useStore = create<State>((set, get) => {
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
         for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
       }
+      if (seq !== loadSeq) return   // a newer board load superseded this one
       set({ manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [] })
     },
 
     async switchBoard(name) {
-      const { dirty, save, board } = get()
-      if (name === board) return
-      if (dirty) await save()                       // flush pending layout to the old board first
+      if (name === get().board) return
+      // validate the target BEFORE leaving the current board - a malformed agent file
+      // must not strand the user on an empty canvas (404 = fresh board, that is fine)
+      try {
+        const res = await fetch(`${ROUTE}/api/boards/${name}`)
+        if (!res.ok && res.status !== 404) {
+          const { error } = await res.json().catch(() => ({ error: res.statusText }))
+          get().toast(`cannot open "${name}": ${error}`)
+          return
+        }
+      } catch { get().toast(`cannot open "${name}" - server unreachable`); return }
+      await flushSave()                             // pending layout belongs to the old board
       set({ board: name, selection: [], interact: null, deviceView: null, baseLayout: null, boardHash: null, nodes: [] })
       await get().boot()
     },
@@ -151,12 +169,18 @@ export const useStore = create<State>((set, get) => {
       const known = new Set(nodes.map((n) => n.frame))
       const next = [...nodes]
       let changed = false
+      const { deviceView, baseLayout } = get()
+      const vp = deviceView ? CONFIG.viewports[deviceView] : null
+      let nextBase = baseLayout
       for (const f of m.frames) {
         if (!boardAuto) break                        // curated boards never auto-gain frames
         if (known.has(f.id)) continue
-        const { w, h } = defaultSize(f)
+        const d = defaultSize(f)
         const maxY = next.reduce((a, n) => Math.max(a, n.y + n.h), 0)
-        next.push({ key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
+        const node = { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: defaultTheme(f), status: 'loading' as const }
+        next.push(node)
+        // in a device view, the snapshot learns the newcomer's DEFAULT size so 0 restores it sanely
+        if (vp && nextBase) nextBase = { ...nextBase, [node.key]: { x: node.x, y: node.y, w: d.w, h: d.h } }
         toast(`agent added ${f.id}`)
         changed = true
       }
@@ -165,12 +189,17 @@ export const useStore = create<State>((set, get) => {
         const missing = !live.has(n.frame)
         if (missing !== !!n.missing) { n.missing = missing; changed = true }
       }
-      set({ manifest: m, nodes: next, ...(changed ? { dirty: true } : {}) })
+      set({ manifest: m, nodes: next, ...(changed ? { dirty: true, baseLayout: nextBase } : {}) })
       if (changed) scheduleSave()
     },
 
     removeNode(key) {
-      set((s) => ({ nodes: s.nodes.filter((n) => n.key !== key), dirty: true }))
+      set((s) => ({
+        nodes: s.nodes.filter((n) => n.key !== key),
+        selection: s.selection.filter((k) => k !== key),
+        interact: s.interact === key ? null : s.interact,
+        dirty: true,
+      }))
       scheduleSave()
     },
 
@@ -178,6 +207,21 @@ export const useStore = create<State>((set, get) => {
 
     moveNode(key, x, y) {
       set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, x, y } : n)), dirty: true }))
+      scheduleSave()
+    },
+    // group drag: every selected node moves by the same delta from its gesture-start position
+    moveSelectedBy(dx, dy, starts) {
+      set((s) => ({
+        nodes: s.nodes.map((n) => (starts[n.key] ? { ...n, x: starts[n.key].x + dx, y: starts[n.key].y + dy } : n)),
+        dirty: true,
+      }))
+      scheduleSave()
+    },
+    setSelectedTheme(theme) {
+      set((s) => {
+        const sel = new Set(s.selection)
+        return { nodes: s.nodes.map((n) => (sel.has(n.key) ? { ...n, theme } : n)), dirty: true }
+      })
       scheduleSave()
     },
     resizeNode(key, w, h) {
@@ -287,41 +331,52 @@ export const useStore = create<State>((set, get) => {
       setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4000)
     },
     spawn(frameId) {
-      const { manifest, nodes } = get()
+      const { manifest, nodes, deviceView, baseLayout } = get()
       const f = manifest?.frames.find((x) => x.id === frameId)
       if (!f) return null
-      const { w, h } = defaultSize(f)
+      const d = defaultSize(f)
+      const vp = deviceView ? CONFIG.viewports[deviceView] : null
       const maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
-      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' }
-      set((s) => ({ nodes: [...s.nodes, node], dirty: true }))
+      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: defaultTheme(f), status: 'loading' }
+      set((s) => ({
+        nodes: [...s.nodes, node],
+        dirty: true,
+        ...(vp && baseLayout ? { baseLayout: { ...baseLayout, [node.key]: { x: node.x, y: node.y, w: d.w, h: d.h } } } : {}),
+      }))
       scheduleSave()
       get().toast(`added ${f.id}`)
       return node
     },
 
-    async save() {
-      const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()
-      // Missing nodes persist too - only the explicit remove button drops them (spec §7).
-      const board = {
-        version: 1, name: boardName, auto: boardAuto,
-        // while a device view is active the free-form snapshot rides along on disk
-        ...(deviceView && baseLayout ? { deviceView, baseLayout } : {}),
-        nodes: nodes.map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
-      }
-      try {
-        const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {
-          method: 'PUT', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ board, baseHash: boardHash }),
-        })
-        if (res.status === 409) {
-          const { sha256 } = await res.json()
-          set({ boardHash: sha256 })
-          get().toast('board changed on disk - canvas layout reloaded')
-          await get().boot()
-          return
+    save() {
+      saveChain = saveChain.then(async () => {
+        const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()
+        // Missing nodes persist too - only the explicit remove button drops them (spec §7).
+        const board = {
+          version: 1, name: boardName, auto: boardAuto,
+          // deviceView and the free-form snapshot persist independently: a scoped
+          // exception clears the view but 0 must still restore the snapshot after reload
+          ...(deviceView ? { deviceView } : {}),
+          ...(baseLayout ? { baseLayout } : {}),
+          nodes: nodes.map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
         }
-        if (res.ok) set({ boardHash: (await res.json()).sha256, dirty: false })
-      } catch { /* dev server gone; keep local */ }
+        try {
+          const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ board, baseHash: boardHash }),
+          })
+          if (get().board !== boardName) return   // switched boards mid-flight; stale response must not touch state
+          if (res.status === 409) {
+            const { sha256 } = await res.json()
+            set({ boardHash: sha256 })
+            get().toast('board changed on disk - canvas layout reloaded')
+            await get().boot()
+            return
+          }
+          if (res.ok) set({ boardHash: (await res.json()).sha256, dirty: false })
+        } catch { /* dev server gone; keep local */ }
+      })
+      return saveChain
     },
   }
 })

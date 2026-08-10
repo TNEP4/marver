@@ -19,7 +19,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
   const scale = useStore((s) => s.scale)
-  const { select, setInteract, moveNode, resizeNode, setStatus, setGesture, toast } = useStore.getState()
+  const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const themeRef = useRef(node.theme)
 
@@ -50,13 +50,25 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // so its rendered rect width IS the scale (survives browser page-zoom too).
     const gestureScale = world.getBoundingClientRect().width || scale || 1
     const start = { x: e.clientX, y: e.clientY, nx: node.x, ny: node.y, nw: node.w, nh: node.h }
+    // group drag: moving any member moves the whole selection by the same delta
+    const st = useStore.getState()
+    const groupStarts: Record<string, { x: number; y: number }> = {}
+    if (mode === 'move' && st.selection.includes(node.key)) {
+      for (const k of st.selection) {
+        const n = st.nodes.find((x) => x.key === k)
+        if (n) groupStarts[k] = { x: n.x, y: n.y }
+      }
+    }
     world.classList.add('sh-gesturing')
     setGesture(true)
 
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - start.x) / gestureScale
       const dy = (ev.clientY - start.y) / gestureScale
-      if (mode === 'move') moveNode(node.key, start.nx + dx, start.ny + dy)
+      if (mode === 'move') {
+        if (Object.keys(groupStarts).length > 1) moveSelectedBy(dx, dy, groupStarts)
+        else moveNode(node.key, start.nx + dx, start.ny + dy)
+      }
       else {
         let w = mode !== 's' ? start.nw + dx : start.nw
         const h = mode !== 'e' ? start.nh + dy : start.nh

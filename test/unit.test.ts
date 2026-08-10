@@ -75,7 +75,6 @@ describe('scanFrames on a real tree (spec §6, §9)', async () => {
     expect(m.frames.map((f) => f.id)).toEqual(['checkout/filled', 'components/button/variants', 'demo/plain'])
     expect(m.frames.find((f) => f.id === 'checkout/filled')).toMatchObject({ kind: 'tsx', title: 'Filled', viewport: 'mobile', scene: 'checkout' })
     expect(m.frames.find((f) => f.id === 'demo/plain')?.kind).toBe('html')
-    expect(m.boards).toContain('everything')
     rmSync(root, { recursive: true, force: true })
   })
 })

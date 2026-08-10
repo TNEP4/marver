@@ -59,7 +59,6 @@ function contained(target: string, base: string): boolean {
 
 export function apiMiddleware(root: string): Connect.NextHandleFunction {
   const boardsDir = join(root, 'design', 'boards')
-  const localDir = join(root, 'design', '.local')
 
   const boardPath = (name: string): string | null => {
     if (!BOARD_NAME.test(name)) return null
@@ -97,7 +96,11 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         if (req.method === 'GET') {
           if (!existsSync(p)) return json(res, 404, { error: 'not found' })
           const content = readFileSync(p, 'utf8')
-          return json(res, 200, { board: JSON.parse(content), sha256: hash(content) })
+          try {
+            return json(res, 200, { board: JSON.parse(content), sha256: hash(content) })
+          } catch {
+            return json(res, 422, { error: `board "${boardMatch[1]}" is not valid JSON - fix the file` })
+          }
         }
         if (req.method === 'PUT') {
           const raw = await readBody(req)
@@ -106,27 +109,14 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           try { body = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
           const current = existsSync(p) ? readFileSync(p, 'utf8') : ''
           if (current && body.baseHash !== hash(current)) {
-            return json(res, 409, { error: 'board changed on disk', board: JSON.parse(current), sha256: hash(current) })
+            let disk: unknown = null
+            try { disk = JSON.parse(current) } catch { /* malformed on disk; hash still tells the truth */ }
+            return json(res, 409, { error: 'board changed on disk', board: disk, sha256: hash(current) })
           }
           mkdirSync(boardsDir, { recursive: true })
           const next2 = JSON.stringify(body.board, null, 2) + '\n'
           atomicWrite(p, next2)
           return json(res, 200, { sha256: hash(next2) })
-        }
-      }
-
-      if (path === 'local') {
-        const p = join(localDir, 'view.json')
-        if (req.method === 'GET') {
-          return json(res, 200, existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : {})
-        }
-        if (req.method === 'PUT') {
-          const raw = await readBody(req)
-          if (raw == null) return json(res, 400, { error: 'body too large' })
-          try { JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
-          mkdirSync(localDir, { recursive: true })
-          atomicWrite(p, raw)
-          return json(res, 200, { ok: true })
         }
       }
 
