@@ -1,4 +1,4 @@
-import { createServer } from 'vite'
+import { createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,7 +37,8 @@ export async function dev(root: string, portFlag?: number) {
     server: {
       port: portFlag ?? config.port,
       strictPort: false,
-      fs: { allow: [root, pkgDir] },
+      // keep Vite's workspace-root allowance: monorepo hosts import sibling packages
+      fs: { allow: [...new Set([root, pkgDir, searchForWorkspaceRoot(root)])] },
       // Spec §5.6: our own writes must never bounce off the watcher - an out-of-graph
       // .json change makes Vite full-reload every client, shell included (measured).
       watch: { ignored: ['**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**'] },
