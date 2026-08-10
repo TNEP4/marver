@@ -1,0 +1,187 @@
+import { create } from 'zustand'
+import { ROUTE } from '../../cli/name.ts'
+import { tidy } from './tidy.ts'
+// @ts-expect-error virtual module provided by the plugin
+import shConfig from 'virtual:sh-config'
+
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string }
+export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[]; boards: string[] }
+export interface Node {
+  key: string; frame: string; x: number; y: number; w: number; h: number; theme: string
+  status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
+}
+export interface Toast { id: number; text: string }
+
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; noTheme: boolean } = shConfig
+
+const HEADER = 28
+let toastSeq = 0
+const nodeKey = () => 'n_' + Math.random().toString(36).slice(2, 8)
+
+export function frameUrl(frame: FrameEntry, theme: string): string {
+  return frame.kind === 'html'
+    ? `/${frame.file}?theme=${theme}`
+    : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}`
+}
+
+function defaultSize(frame: FrameEntry) {
+  const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
+  return { w: vp.width, h: vp.height }
+}
+
+interface State {
+  manifest: Manifest | null
+  nodes: Node[]                       // append-only order; NEVER sorted or reordered (iframe law G-1)
+  selection: string | null
+  interact: string | null
+  panelOpen: boolean
+  scale: number
+  toasts: Toast[]
+  boardHash: string | null            // sha256 of everything.json on disk, when materialized
+  dirty: boolean
+
+  boot(): Promise<void>
+  applyManifest(m: Manifest): void
+  frameFor(node: Node): FrameEntry | undefined
+  moveNode(key: string, x: number, y: number): void
+  resizeNode(key: string, w: number, h: number): void
+  setStatus(key: string, status: Node['status'], error?: string): void
+  select(key: string | null): void
+  setInteract(key: string | null): void
+  setScale(s: number): void
+  togglePanel(): void
+  setTheme(theme: string): void
+  runTidy(): void
+  toast(text: string): void
+  spawn(frameId: string): Node | null
+  save(): void
+}
+
+export const useStore = create<State>((set, get) => {
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+
+  return {
+    manifest: null, nodes: [], selection: null, interact: null,
+    panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
+
+    async boot() {
+      const manifest: Manifest = await fetch('/design/manifest.json').then((r) => r.json()).catch(() => ({ frames: [], scenes: [], boards: [] }))
+      let nodes: Node[] = []
+      let boardHash: string | null = null
+      try {
+        const res = await fetch(`${ROUTE}/api/boards/everything`)
+        if (res.ok) {
+          const { board, sha256 } = await res.json()
+          boardHash = sha256
+          nodes = (board.nodes ?? [])
+            .filter((n: any) => manifest.frames.some((f) => f.id === n.frame))
+            .map((n: any) => ({ ...n, status: 'loading' as const }))
+        }
+      } catch { /* virtual board */ }
+      // frames not on the board yet → append with default sizes, then tidy the fresh ones
+      const placed = new Set(nodes.map((n) => n.frame))
+      for (const f of manifest.frames) {
+        if (placed.has(f.id)) continue
+        const { w, h } = defaultSize(f)
+        nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
+      }
+      if (!boardHash && nodes.length) {
+        const sceneOf = (id: string) => manifest.frames.find((f) => f.id === id)?.scene ?? ''
+        const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
+        for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
+      }
+      set({ manifest, nodes, boardHash })
+    },
+
+    applyManifest(m) {
+      const { nodes, toast } = get()
+      const known = new Set(nodes.map((n) => n.frame))
+      const next = [...nodes]
+      for (const f of m.frames) {
+        if (known.has(f.id)) continue
+        const { w, h } = defaultSize(f)
+        const maxY = next.reduce((a, n) => Math.max(a, n.y + n.h), 0)
+        next.push({ key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' })
+        toast(`agent added ${f.id}`)
+      }
+      const live = new Set(m.frames.map((f) => f.id))
+      for (const n of next) n.missing = !live.has(n.frame)
+      set({ manifest: m, nodes: next, dirty: true })
+      scheduleSave()
+    },
+
+    frameFor(node) { return get().manifest?.frames.find((f) => f.id === node.frame) },
+
+    moveNode(key, x, y) {
+      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, x, y } : n)), dirty: true }))
+      scheduleSave()
+    },
+    resizeNode(key, w, h) {
+      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: Math.max(120, w), h: Math.max(80, h) } : n)), dirty: true }))
+      scheduleSave()
+    },
+    setStatus(key, status, error) {
+      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error } : n)) }))
+    },
+    select(key) { set({ selection: key, interact: null }) },
+    setInteract(key) { set({ interact: key }) },
+    setScale(scale) { set({ scale }) },
+    togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
+    setTheme(theme) {
+      set((s) => ({ nodes: s.nodes.map((n) => ({ ...n, theme })), dirty: true }))
+      scheduleSave()
+    },
+    runTidy() {
+      const { nodes, manifest } = get()
+      const sceneOf = (id: string) => manifest?.frames.find((f) => f.id === id)?.scene ?? ''
+      const placed = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
+      set((s) => ({
+        nodes: s.nodes.map((n) => {
+          const p = placed.find((x) => x.key === n.key)
+          return p ? { ...n, x: p.x, y: p.y } : n
+        }),
+        dirty: true,
+      }))
+      scheduleSave()
+    },
+    toast(text) {
+      const id = ++toastSeq
+      set((s) => ({ toasts: [...s.toasts, { id, text }] }))
+      setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4000)
+    },
+    spawn(frameId) {
+      const { manifest, nodes } = get()
+      const f = manifest?.frames.find((x) => x.id === frameId)
+      if (!f) return null
+      const { w, h } = defaultSize(f)
+      const maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
+      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w, h, theme: CONFIG.themes[0] ?? 'light', status: 'loading' }
+      set((s) => ({ nodes: [...s.nodes, node], dirty: true }))
+      scheduleSave()
+      return node
+    },
+
+    async save() {
+      const { nodes, boardHash } = get()
+      const board = {
+        version: 1, name: 'everything', auto: true,
+        nodes: nodes.filter((n) => !n.missing).map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
+      }
+      try {
+        const res = await fetch(`${ROUTE}/api/boards/everything`, {
+          method: 'PUT', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ board, baseHash: boardHash }),
+        })
+        if (res.status === 409) {
+          const { sha256 } = await res.json()
+          set({ boardHash: sha256 })
+          get().toast('board changed on disk - canvas layout reloaded')
+          await get().boot()
+          return
+        }
+        if (res.ok) set({ boardHash: (await res.json()).sha256, dirty: false })
+      } catch { /* dev server gone; keep local */ }
+    },
+  }
+})

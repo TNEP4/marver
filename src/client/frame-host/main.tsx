@@ -1,0 +1,102 @@
+/**
+ * The frame host - runs inside every iframe. Spec §6.
+ * Boot failures (theme, providers, layouts, the frame itself) render a plain-DOM error card
+ * and post sh:error; an ErrorBoundary catches render-time throws the same way.
+ */
+import { Component, createElement, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
+
+declare global { interface Window { __SH_TSX__?: boolean } }
+window.__SH_TSX__ = true
+import './bridge.js'
+
+import { frames, layouts, providers } from './registry.ts'
+
+const params = new URLSearchParams(location.search)
+const id = params.get('id') ?? ''
+const theme = params.get('theme') ?? 'light'
+document.documentElement.dataset.theme = theme
+
+const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
+
+function fail(message: string) {
+  post({ type: 'sh:error', id, message })
+  document.getElementById('root')!.innerHTML =
+    `<div style="font-family:ui-monospace,monospace;font-size:12px;padding:16px;color:#b42318">
+       <div style="font-weight:700;margin-bottom:8px">frame failed</div>
+       <div style="white-space:pre-wrap">${escapeHtml(message)}</div>
+       <div style="margin-top:8px;color:#7c859a">${escapeHtml(frameFile(id) ?? id)}</div>
+     </div>`
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+
+/** id -> glob key. scenes/ ids lost their prefix; components/ ids kept it. */
+function frameFile(frameId: string): string | null {
+  for (const ext of ['tsx', 'jsx']) {
+    for (const prefix of ['/design/scenes/', '/design/']) {
+      const key = `${prefix}${frameId}.${ext}`
+      if (key in frames) return key
+    }
+  }
+  return null
+}
+
+/** Layout chain for a frame file: every _layout on the path from the glob base down, outermost = shallowest. */
+function layoutChain(fileKey: string): string[] {
+  const dir = fileKey.slice(0, fileKey.lastIndexOf('/'))
+  const chain: string[] = []
+  const base = fileKey.startsWith('/design/scenes/') ? '/design/scenes' : '/design/components'
+  let cur = dir
+  while (cur.length >= base.length) {
+    for (const ext of ['tsx', 'jsx']) {
+      const key = `${cur}/_layout.${ext}`
+      if (key in layouts) { chain.unshift(key); break }
+    }
+    if (cur === base) break
+    cur = cur.slice(0, cur.lastIndexOf('/'))
+  }
+  return chain
+}
+
+class Boundary extends Component<{ children: ReactNode }, { err: Error | null }> {
+  state = { err: null as Error | null }
+  static getDerivedStateFromError(err: Error) { return { err } }
+  componentDidCatch(err: Error) { post({ type: 'sh:error', id, message: err.message }) }
+  render() {
+    if (!this.state.err) return this.props.children
+    return createElement('div', { style: { fontFamily: 'ui-monospace,monospace', fontSize: 12, padding: 16, color: '#b42318' } },
+      createElement('div', { style: { fontWeight: 700, marginBottom: 8 } }, 'frame crashed'),
+      createElement('div', { style: { whiteSpace: 'pre-wrap' } }, this.state.err.message),
+      createElement('div', { style: { marginTop: 8, color: '#7c859a' } }, frameFile(id) ?? id),
+    )
+  }
+}
+
+async function boot() {
+  try {
+    await import('virtual:sh-theme' as string)
+
+    const fileKey = frameFile(id)
+    if (!fileKey) return fail(`unknown frame id "${id}"`)
+
+    const frameMod: any = await frames[fileKey]()
+    const Frame = frameMod.default
+    if (typeof Frame !== 'function') return fail(`${fileKey} has no default-exported component`)
+
+    const wrappers: any[] = []
+    const providerKey = Object.keys(providers)[0]
+    if (providerKey) wrappers.push((await providers[providerKey]() as any).default)
+    for (const lk of layoutChain(fileKey)) wrappers.push((await layouts[lk]() as any).default)
+
+    let tree: ReactNode = createElement(Frame)
+    for (const W of wrappers.reverse()) if (typeof W === 'function') tree = createElement(W, null, tree)
+
+    createRoot(document.getElementById('root')!).render(createElement(Boundary, null, tree))
+    post({ type: 'sh:ready', id, meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined })
+  } catch (err) {
+    fail((err as Error).message)
+  }
+}
+
+boot()
