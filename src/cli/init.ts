@@ -72,9 +72,14 @@ function patchTsconfigExclude(root: string) {
   const raw = readFileSync(file, 'utf8')
   try {
     // Surgical string edit to preserve host formatting/comments as much as possible.
-    const next = /"exclude"\s*:/.test(raw)
-      ? raw.replace(/("exclude"\s*:\s*\[)/, '$1"design", ')
-      : raw.replace(/\{/, '{\n  "exclude": ["design"],')   // first brace, tolerant of BOM/leading comments
+    let next: string
+    if (/"exclude"\s*:/.test(raw)) {
+      next = raw.replace(/("exclude"\s*:\s*\[)/, '$1"design", ')
+    } else {
+      const at = firstJsonBrace(raw)   // never a brace inside a leading comment
+      if (at < 0) throw new Error('no object brace found')
+      next = raw.slice(0, at + 1) + '\n  "exclude": ["design"],' + raw.slice(at + 1)
+    }
     if (next === raw) throw new Error('no anchor matched')
     writeFileSync(file, next)
     console.log(`\n  patched tsconfig.json (the only host file touched):`)
@@ -82,6 +87,22 @@ function patchTsconfigExclude(root: string) {
   } catch {
     console.warn(`  could not patch tsconfig.json - add "design" to its "exclude" yourself.`)
   }
+}
+
+/** Index of the first `{` outside //, /* *\/ comments and strings (tsconfig is JSONC). */
+function firstJsonBrace(src: string): number {
+  let inLine = false, inBlock = false, inStr = false
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], n = src[i + 1]
+    if (inLine) { if (c === '\n') inLine = false; continue }
+    if (inBlock) { if (c === '*' && n === '/') { inBlock = false; i++ }; continue }
+    if (inStr) { if (c === '\\') i++; else if (c === '"') inStr = false; continue }
+    if (c === '/' && n === '/') { inLine = true; i++; continue }
+    if (c === '/' && n === '*') { inBlock = true; i++; continue }
+    if (c === '"') { inStr = true; continue }
+    if (c === '{') return i
+  }
+  return -1
 }
 
 const configTemplate = (mode: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.

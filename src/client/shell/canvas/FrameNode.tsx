@@ -22,6 +22,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const themeRef = useRef(node.theme)
+  // src is frozen at mount: theme changes ride sh:set-theme (never navigation), so
+  // frame state (forms, scroll, dialogs) survives a theme flip. Real file changes below.
+  const initialSrc = useRef<string | null>(null)
+  if (frame && initialSrc.current === null) initialSrc.current = frameUrl(frame, node.theme)
+  const fileRef = useRef(frame ? `${frame.kind}:${frame.file}` : null)
 
   // theme switch without remount
   useEffect(() => {
@@ -30,6 +35,17 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme: node.theme }, '*')
     }
   }, [node.theme])
+
+  // a frame whose FILE actually changed (e.g. tsx -> html swap, same id) must renavigate
+  useEffect(() => {
+    if (!frame) return
+    const sig = `${frame.kind}:${frame.file}`
+    if (fileRef.current !== null && fileRef.current !== sig && iframeRef.current) {
+      setStatus(node.key, 'loading')
+      iframeRef.current.src = frameUrl(frame, node.theme)
+    }
+    fileRef.current = sig
+  }, [frame?.kind, frame?.file])
 
   // ready timeout (spec §7): 10s without sh:ready -> error card with reload
   useEffect(() => {
@@ -152,7 +168,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         ) : null}
         <iframe
           ref={iframeRef}
-          src={frameUrl(frame, node.theme)}
+          src={initialSrc.current ?? frameUrl(frame, node.theme)}
           title={frame.id}
           style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />

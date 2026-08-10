@@ -25,7 +25,7 @@ export function frameUrl(frame: FrameEntry, theme: string): string {
 }
 
 const defaultTheme = (frame?: FrameEntry) => frame?.theme ?? CONFIG.themes[0] ?? 'light'
-const manifestIds = (m: Manifest) => m.frames.map((f) => f.id).sort().join('\n')
+const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change counts, not just added/removed ids
 
 function defaultSize(frame: FrameEntry) {
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
@@ -171,7 +171,7 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
-      if (live && manifestIds(live) !== manifestIds(next.manifest as Manifest)) get().applyManifest(live)
+      if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       return true
     },
 
@@ -196,7 +196,7 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
-      if (live && manifestIds(live) !== manifestIds(next.manifest as Manifest)) get().applyManifest(live)
+      if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
     },
 
     applyManifest(m) {
