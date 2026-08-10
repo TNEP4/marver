@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon } from './icons.tsx'
+import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
@@ -35,6 +35,61 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       </div>
     )
   }
+}
+
+/** Devices view: one click sizes every frame to a device width, tidies, and fits. */
+function DeviceMenu() {
+  const deviceView = useStore((s) => s.deviceView)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ left: 0, top: 0 })
+  const boxRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const toggle = () => {
+    if (!open && boxRef.current) {
+      const r = boxRef.current.getBoundingClientRect()
+      setPos({ left: r.left, top: r.bottom + 10 })
+    }
+    setOpen(!open)
+  }
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => {
+      const t = e.target as globalThis.Node
+      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [open])
+
+  const pick = (name: string | null) => { useStore.getState().setDeviceView(name); setOpen(false); setTimeout(() => canvasCtl.fitAll(), 30) }
+  const entries = Object.entries(CONFIG.viewports)
+  const app = document.querySelector('.sh-app')
+  return (
+    <div className="sh-theme" ref={boxRef}>
+      <button className="sh-pill-btn" onClick={toggle}
+        title={deviceView ? `device view: ${deviceView} (0 resets)` : 'device view (keys 1-' + entries.length + ')'}>
+        {deviceIcon(deviceView)}
+        <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+      </button>
+      {open && app && createPortal(
+        <div className="sh-menu" ref={menuRef} style={{ left: pos.left, top: pos.top }}>
+          <button onClick={() => pick(null)} title="every frame at its own default size">
+            <DevicesIcon size={14} /><span>Default</span><kbd>0</kbd>
+            {deviceView === null && <CheckIcon size={13} className="chk" />}
+          </button>
+          <i className="div" />
+          {entries.map(([name, vp], i) => (
+            <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
+              {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
+              {deviceView === name && <CheckIcon size={13} className="chk" />}
+            </button>
+          ))}
+        </div>,
+        app,
+      )}
+    </div>
+  )
 }
 
 const ZOOMS = [2, 1.5, 1, 0.5, 0.25, 0.1]
@@ -202,6 +257,15 @@ export function App() {
       if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
       if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
       if (e.shiftKey && e.code === 'Digit2' && s.selection) canvasCtl.fitNode(s.selection)
+      // plain digits: device views (0 = default, 1..n = configured viewports in order)
+      if (!e.shiftKey && /^Digit[0-9]$/.test(e.code)) {
+        const idx = Number(e.code.slice(5))
+        const names = Object.keys(CONFIG.viewports)
+        if (idx === 0 || names[idx - 1]) {
+          s.setDeviceView(idx === 0 ? null : names[idx - 1])
+          setTimeout(() => canvasCtl.fitAll(), 30)
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -244,6 +308,7 @@ export function App() {
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">
+        <DeviceMenu />
         <ThemeMenu />
         <i className="sep" />
         <ZoomMenu />

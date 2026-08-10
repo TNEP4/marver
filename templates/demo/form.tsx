@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import { fx } from './_fixtures.ts'
 
-export const meta = { title: 'Demo - form', viewport: 'desktop' }
+export const meta = { title: 'Demo - form', viewport: 'laptop' }
 
 export default function Form() {
   const dlg = useRef<HTMLDialogElement>(null)

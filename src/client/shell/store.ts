@@ -35,6 +35,7 @@ interface State {
   selection: string | null
   interact: string | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
+  deviceView: string | null           // board-wide device preview (viewport name), null = each frame's own default
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -51,6 +52,7 @@ interface State {
   select(key: string | null): void
   setInteract(key: string | null): void
   setGesture(g: boolean): void
+  setDeviceView(name: string | null): void
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -65,7 +67,7 @@ export const useStore = create<State>((set, get) => {
   const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   return {
-    manifest: null, nodes: [], selection: null, interact: null, gesture: false,
+    manifest: null, nodes: [], selection: null, interact: null, gesture: false, deviceView: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -138,8 +140,25 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
     },
     resizeNode(key, w, h) {
-      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: Math.max(120, w), h: Math.max(80, h) } : n)), dirty: true }))
+      // a manual resize means the board no longer uniformly shows one device
+      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: Math.max(120, w), h: Math.max(80, h) } : n)), dirty: true, deviceView: null }))
       scheduleSave()
+    },
+    setDeviceView(name) {
+      const vp = name ? CONFIG.viewports[name] : null
+      if (name && !vp) return
+      set((s) => ({
+        deviceView: name,
+        dirty: true,
+        nodes: s.nodes.map((n) => {
+          if (vp) return { ...n, w: vp.width, h: vp.height }
+          const f = s.manifest?.frames.find((x) => x.id === n.frame)
+          if (!f) return n
+          const d = defaultSize(f)   // null device view = every frame back to its own default
+          return { ...n, w: d.w, h: d.h }
+        }),
+      }))
+      get().runTidy()
     },
     setStatus(key, status, error) {
       set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error } : n)) }))

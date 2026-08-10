@@ -1,38 +1,48 @@
 import type { ReactNode, SVGProps } from 'react'
 
 /**
- * Inline icon set, lucide/shadcn-style strokes. Deliberately NOT an icon package:
- * the shell ships as source into unknown hosts, and every runtime dep must resolve
- * through the host's package manager layout (see DECISIONS.md).
+ * Phosphor icons (regular weight), path data inlined from @phosphor-icons/core
+ * (MIT (c) Phosphor Icons - phosphoricons.com). Deliberately NOT an icon package
+ * dependency: the shell ships as source into unknown hosts, and every runtime dep
+ * must resolve through the host's package-manager layout (see DECISIONS.md).
  */
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
 const icon = (children: ReactNode) =>
   function Icon({ size = 16, ...rest }: IconProps) {
     return (
-      <svg
-        width={size} height={size} viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
-        aria-hidden {...rest}
-      >
+      <svg width={size} height={size} viewBox="0 0 256 256" fill="currentColor" aria-hidden {...rest}>
         {children}
       </svg>
     )
   }
 
-export const SidebarIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9.5 4v16" /></>)
-export const PanelCloseIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9.5 4v16" /><path d="m16.5 9.5-2.5 2.5 2.5 2.5" /></>)
-export const PanelOpenIcon = icon(<><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9.5 4v16" /><path d="m14 9.5 2.5 2.5L14 14.5" /></>)
-export const SunIcon = icon(<><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></>)
-export const MoonIcon = icon(<path d="M20.9 13.1A8.6 8.6 0 1 1 10.9 3.1a6.9 6.9 0 0 0 10 10Z" />)
-export const CaretIcon = icon(<path d="m6.5 9.5 5.5 5.5 5.5-5.5" />)
-export const PlayIcon = icon(<path d="M7.5 5.2v13.6a.7.7 0 0 0 1.1.6l10.8-6.8a.7.7 0 0 0 0-1.2L8.6 4.6a.7.7 0 0 0-1.1.6Z" />)
-export const GridIcon = icon(<><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></>)
-export const CopyIcon = icon(<><rect x="8" y="8" width="13" height="13" rx="2.5" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></>)
-export const PlusIcon = icon(<path d="M12 5.5v13M5.5 12h13" />)
-export const XIcon = icon(<path d="m17.5 6.5-11 11M6.5 6.5l11 11" />)
-export const ReloadIcon = icon(<><path d="M20.5 12a8.5 8.5 0 1 1-2.7-6.2" /><path d="M21 3.5V8h-4.5" /></>)
-export const CheckIcon = icon(<path d="m5 12.5 4.5 4.5L19 7.5" />)
-export const BoundingBoxIcon = icon(<><rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="2.5" y="16" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="16" width="5.5" height="5.5" rx="1.2" /><path d="M8 5.3h8M8 18.8h8M5.3 8v8M18.8 8v8" /></>)
-/** Duotone variant (Phosphor-style): soft filled plane behind full-strength strokes. */
-export const BoundingBoxDuoIcon = icon(<><rect x="5.3" y="5.3" width="13.4" height="13.4" fill="currentColor" opacity=".22" stroke="none" /><rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="2.5" width="5.5" height="5.5" rx="1.2" /><rect x="2.5" y="16" width="5.5" height="5.5" rx="1.2" /><rect x="16" y="16" width="5.5" height="5.5" rx="1.2" /><path d="M8 5.3h8M8 18.8h8M5.3 8v8M18.8 8v8" /></>)
+export const SidebarIcon = icon(<path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z" />)
+export const SunIcon = icon(<path d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z" />)
+export const MoonIcon = icon(<path d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.34Z" />)
+export const CaretIcon = icon(<path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z" />)
+export const PlayIcon = icon(<path d="M232.4,114.49,88.32,26.35a16,16,0,0,0-16.2-.3A15.86,15.86,0,0,0,64,39.87V216.13A15.94,15.94,0,0,0,80,232a16.07,16.07,0,0,0,8.36-2.35L232.4,141.51a15.81,15.81,0,0,0,0-27ZM80,215.94V40l143.83,88Z" />)
+export const GridIcon = icon(<path d="M104,40H56A16,16,0,0,0,40,56v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,104,40Zm0,64H56V56h48v48Zm96-64H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V56A16,16,0,0,0,200,40Zm0,64H152V56h48v48Zm-96,32H56a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,104,136Zm0,64H56V152h48v48Zm96-64H152a16,16,0,0,0-16,16v48a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V152A16,16,0,0,0,200,136Zm0,64H152V152h48v48Z" />)
+export const CopyIcon = icon(<path d="M216,32H88a8,8,0,0,0-8,8V80H40a8,8,0,0,0-8,8V216a8,8,0,0,0,8,8H168a8,8,0,0,0,8-8V176h40a8,8,0,0,0,8-8V40A8,8,0,0,0,216,32ZM160,208H48V96H160Zm48-48H176V88a8,8,0,0,0-8-8H96V48H208Z" />)
+export const PlusIcon = icon(<path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z" />)
+export const XIcon = icon(<path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" />)
+export const ReloadIcon = icon(<path d="M240,56v48a8,8,0,0,1-8,8H184a8,8,0,0,1,0-16H211.4L184.81,71.64l-.25-.24a80,80,0,1,0-1.67,114.78,8,8,0,0,1,11,11.63A95.44,95.44,0,0,1,128,224h-1.32A96,96,0,1,1,195.75,60L224,85.8V56a8,8,0,1,1,16,0Z" />)
+export const CheckIcon = icon(<path d="M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z" />)
+export const BoundingBoxIcon = icon(<path d="M208,96a16,16,0,0,0,16-16V48a16,16,0,0,0-16-16H176a16,16,0,0,0-16,16v8H96V48A16,16,0,0,0,80,32H48A16,16,0,0,0,32,48V80A16,16,0,0,0,48,96h8v64H48a16,16,0,0,0-16,16v32a16,16,0,0,0,16,16H80a16,16,0,0,0,16-16v-8h64v8a16,16,0,0,0,16,16h32a16,16,0,0,0,16-16V176a16,16,0,0,0-16-16h-8V96ZM176,48h32V80H176ZM48,48H80V63.9a.51.51,0,0,0,0,.2V80H48ZM80,208H48V176H80v15.9a.51.51,0,0,0,0,.2V208Zm128,0H176V176h32Zm-24-48h-8a16,16,0,0,0-16,16v8H96v-8a16,16,0,0,0-16-16H72V96h8A16,16,0,0,0,96,80V72h64v8a16,16,0,0,0,16,16h8Z" />)
+export const DevicesIcon = icon(<path d="M224,72H208V64a24,24,0,0,0-24-24H40A24,24,0,0,0,16,64v96a24,24,0,0,0,24,24H152v8a24,24,0,0,0,24,24h48a24,24,0,0,0,24-24V96A24,24,0,0,0,224,72ZM40,168a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H184a8,8,0,0,1,8,8v8H176a24,24,0,0,0-24,24v72Zm192,24a8,8,0,0,1-8,8H176a8,8,0,0,1-8-8V96a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8Zm-96,16a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h40A8,8,0,0,1,136,208Zm80-96a8,8,0,0,1-8,8H192a8,8,0,0,1,0-16h16A8,8,0,0,1,216,112Z" />)
+export const DeviceMobileIcon = icon(<path d="M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM72,64H184V192H72Zm8-32h96a8,8,0,0,1,8,8v8H72V40A8,8,0,0,1,80,32Zm96,192H80a8,8,0,0,1-8-8v-8H184v8A8,8,0,0,1,176,224Z" />)
+export const DeviceTabletIcon = icon(<path d="M192,24H64A24,24,0,0,0,40,48V208a24,24,0,0,0,24,24H192a24,24,0,0,0,24-24V48A24,24,0,0,0,192,24ZM56,72H200V184H56Zm8-32H192a8,8,0,0,1,8,8v8H56V48A8,8,0,0,1,64,40ZM192,216H64a8,8,0,0,1-8-8v-8H200v8A8,8,0,0,1,192,216Z" />)
+export const LaptopIcon = icon(<path d="M232,168h-8V72a24,24,0,0,0-24-24H56A24,24,0,0,0,32,72v96H24a8,8,0,0,0-8,8v16a24,24,0,0,0,24,24H216a24,24,0,0,0,24-24V176A8,8,0,0,0,232,168ZM48,72a8,8,0,0,1,8-8H200a8,8,0,0,1,8,8v96H48ZM224,192a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8v-8H224ZM152,88a8,8,0,0,1-8,8H112a8,8,0,0,1,0-16h32A8,8,0,0,1,152,88Z" />)
+export const MonitorIcon = icon(<path d="M208,40H48A24,24,0,0,0,24,64V176a24,24,0,0,0,24,24H208a24,24,0,0,0,24-24V64A24,24,0,0,0,208,40Zm8,136a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H208a8,8,0,0,1,8,8Zm-48,48a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,224Z" />)
+export const TvIcon = icon(<path d="M216,64H147.31l34.35-34.34a8,8,0,1,0-11.32-11.32L128,60.69,85.66,18.34A8,8,0,0,0,74.34,29.66L108.69,64H40A16,16,0,0,0,24,80V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V80A16,16,0,0,0,216,64Zm0,136H40V80H216V200Z" />)
+/** Duotone variant for the brand mark. */
+export const BoundingBoxDuoIcon = icon(<><path d="M216,48V80a8,8,0,0,1-8,8H176a8,8,0,0,1-8-8V48a8,8,0,0,1,8-8h32A8,8,0,0,1,216,48ZM80,40H48a8,8,0,0,0-8,8V80a8,8,0,0,0,8,8H80a8,8,0,0,0,8-8V48A8,8,0,0,0,80,40ZM208,168H176a8,8,0,0,0-8,8v32a8,8,0,0,0,8,8h32a8,8,0,0,0,8-8V176A8,8,0,0,0,208,168ZM80,168H48a8,8,0,0,0-8,8v32a8,8,0,0,0,8,8H80a8,8,0,0,0,8-8V176A8,8,0,0,0,80,168Z" opacity=".2" /><path d="M208,96a16,16,0,0,0,16-16V48a16,16,0,0,0-16-16H176a16,16,0,0,0-16,16v8H96V48A16,16,0,0,0,80,32H48A16,16,0,0,0,32,48V80A16,16,0,0,0,48,96h8v64H48a16,16,0,0,0-16,16v32a16,16,0,0,0,16,16H80a16,16,0,0,0,16-16v-8h64v8a16,16,0,0,0,16,16h32a16,16,0,0,0,16-16V176a16,16,0,0,0-16-16h-8V96ZM176,48h32V80H176ZM48,48H80V63.9a.51.51,0,0,0,0,.2V80H48ZM80,208H48V176H80v15.9a.51.51,0,0,0,0,.2V208Zm128,0H176V176h32Zm-24-48h-8a16,16,0,0,0-16,16v8H96v-8a16,16,0,0,0-16-16H72V96h8A16,16,0,0,0,96,80V72h64v8a16,16,0,0,0,16,16h8Z" /></>)
+/** Viewport-name -> device glyph; unknown custom names fall back to the generic Devices. */
+export function deviceIcon(name: string | null, size = 14) {
+  const Icon = ({ mobile: DeviceMobileIcon, tablet: DeviceTabletIcon, laptop: LaptopIcon, monitor: MonitorIcon, tv: TvIcon } as Record<string, typeof DevicesIcon>)[name ?? ''] ?? DevicesIcon
+  return <Icon size={size} />
+}
+
+/** Sidebar with a chevron: composed in Phosphor 256-space (no upstream equivalent). */
+export const PanelCloseIcon = icon(<><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z" /><path d="M172 100 L144 128 L172 156" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" /></>)
+export const PanelOpenIcon = icon(<><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,56H80V200H40ZM216,200H96V56H216V200Z" /><path d="M148 100 L176 128 L148 156" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" /></>)

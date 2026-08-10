@@ -17,7 +17,9 @@ export const DEFAULTS: ShConfig = {
   viewports: {
     mobile: { width: 390, height: 844 },
     tablet: { width: 768, height: 1024 },
-    desktop: { width: 1280, height: 800 },
+    laptop: { width: 1280, height: 800 },
+    monitor: { width: 1920, height: 1080 },
+    // tv intentionally not a default - the scaffolded config ships it commented out
   },
   themes: ['light', 'dark'],
   port: 5199,

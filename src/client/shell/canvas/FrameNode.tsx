@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import { frameUrl, useStore, CONFIG, type Node } from '../store.ts'
-import { CopyIcon, MoonIcon, PlusIcon, ReloadIcon, SunIcon, XIcon } from '../icons.tsx'
+import { CopyIcon, MoonIcon, PlusIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from '../icons.tsx'
 
 export const HEADER = 28
 const SNAP = 12
@@ -165,8 +165,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           <div className="sh-handle se sh-no-pan" onPointerDown={(e) => drag(e, 'se')} />
           <div className="sh-ctx sh-no-pan" onPointerDown={(e) => e.stopPropagation()}>
             {Object.entries(CONFIG.viewports).map(([name, vp]) => (
-              <button key={name} className={`sh-no-pan${node.w === vp.width ? ' on' : ''}`} title={name}
-                onClick={() => resizeNode(node.key, vp.width, vp.height)}>{vp.width}</button>
+              <button key={name} className={`sh-no-pan icon${node.w === vp.width ? ' on' : ''}`} title={`${name} · ${vp.width} × ${vp.height}`}
+                onClick={() => resizeNode(node.key, vp.width, vp.height)}>{deviceIcon(name, 13)}</button>
             ))}
             <i className="sep" />
             {CONFIG.themes.map((t) => (

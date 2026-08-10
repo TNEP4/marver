@@ -90,7 +90,14 @@ const configTemplate = (theme: string | null, mode: string) => `// ${NAME} confi
 // relative imports need extensions, tsconfig paths are ignored here.
 export default {
   mode: ${JSON.stringify(mode)},${theme ? `\n  theme: ${JSON.stringify(theme)},` : ''}
-  viewports: ${JSON.stringify(DEFAULTS.viewports, null, 2).split('\n').join('\n  ')},
+  // Device widths for frames and the Devices view. Rename, retune, or uncomment tv.
+  viewports: {
+    mobile: { width: 390, height: 844 },
+    tablet: { width: 768, height: 1024 },
+    laptop: { width: 1280, height: 800 },
+    monitor: { width: 1920, height: 1080 },
+    // tv: { width: 3840, height: 2160 },
+  },
   themes: ["light", "dark"],
   port: ${DEFAULTS.port},
 }
