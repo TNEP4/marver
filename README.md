@@ -15,6 +15,7 @@ Then, to your agent:
 - **Frames** are plain TSX/HTML files - zero imports from this package required.
 - **Everything hot-reloads**; frames appear on the canvas the moment the file lands.
 - Drag a frame's edge and the real breakpoints fire - each frame is a true iframe viewport.
+- **Devices view**: the Devices menu (or hotkeys `1`-`5`) sizes every frame to mobile / tablet / laptop / monitor / tv to sweep your breakpoints; `0` restores your own layout exactly. Widths live in `design/config.ts`.
 - `data-goto="scene/frame"` on any element links frames into a walkable prototype.
 - Uninstall: delete `design/`, remove the dependency. (If `init` patched your tsconfig `exclude`, revert that one line.)
 

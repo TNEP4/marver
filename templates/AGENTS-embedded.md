@@ -7,6 +7,9 @@ Never run or talk to the canvas tool; read and write files only.
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
 - It default-exports a React component. No imports from the tool are needed. Optional:
   export const meta = { title: "...", viewport: "mobile" }   // literal values only
+  // viewport names come from design/config.ts (default: mobile, tablet, laptop, monitor;
+  // tv available commented-out). Pick the one the screen is designed for - the human can
+  // flip the whole board to any device (Devices menu, hotkeys 0-5) to check responsiveness.
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
 - Use the app's UI: import from {{UI_ALIAS}}; style with the app's Tailwind classes.
 - Navigation: put data-goto="scene/frame" on any element. That is the whole prototype system.

@@ -35,7 +35,8 @@ interface State {
   selection: string | null
   interact: string | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
-  deviceView: string | null           // board-wide device preview (viewport name), null = each frame's own default
+  deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
+  baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -67,7 +68,7 @@ export const useStore = create<State>((set, get) => {
   const scheduleSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   return {
-    manifest: null, nodes: [], selection: null, interact: null, gesture: false, deviceView: null,
+    manifest: null, nodes: [], selection: null, interact: null, gesture: false, deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -80,6 +81,8 @@ export const useStore = create<State>((set, get) => {
       }
       let nodes: Node[] = []
       let boardHash: string | null = null
+      let deviceView: string | null = null
+      let baseLayout: State['baseLayout'] = null
       try {
         const res = await fetch(`${ROUTE}/api/boards/everything`)
         if (res.ok) {
@@ -89,6 +92,11 @@ export const useStore = create<State>((set, get) => {
           nodes = (Array.isArray(board?.nodes) ? board.nodes : [])
             .filter((n: any) => n && typeof n.frame === 'string')
             .map((n: any) => ({ ...n, status: 'loading' as const, missing: !manifest.frames.some((f) => f.id === n.frame) }))
+          // a device view in progress survives reloads - snapshot and all
+          if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) {
+            deviceView = board.deviceView
+            if (board.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
+          }
         }
       } catch { /* virtual board */ }
       // frames not on the board yet → append with default sizes, then tidy the fresh ones
@@ -103,7 +111,7 @@ export const useStore = create<State>((set, get) => {
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
         for (const p of placedAll) { const n = nodes.find((x) => x.key === p.key)!; n.x = p.x; n.y = p.y }
       }
-      set({ manifest, nodes, boardHash })
+      set({ manifest, nodes, boardHash, deviceView, baseLayout })
     },
 
     applyManifest(m) {
@@ -140,25 +148,45 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
     },
     resizeNode(key, w, h) {
-      // a manual resize means the board no longer uniformly shows one device
-      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: Math.max(120, w), h: Math.max(80, h) } : n)), dirty: true, deviceView: null }))
+      // a manual resize means the board no longer uniformly shows one device; the resized
+      // frame's snapshot entry follows the user's new size so Default will not undo it
+      set((s) => {
+        const W = Math.max(120, w), H = Math.max(80, h)
+        const cur = s.nodes.find((n) => n.key === key)
+        return {
+          nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: W, h: H } : n)),
+          dirty: true,
+          deviceView: null,
+          baseLayout: s.baseLayout && cur
+            ? { ...s.baseLayout, [key]: { ...(s.baseLayout[key] ?? { x: cur.x, y: cur.y }), w: W, h: H } }
+            : s.baseLayout,
+        }
+      })
       scheduleSave()
     },
     setDeviceView(name) {
       const vp = name ? CONFIG.viewports[name] : null
       if (name && !vp) return
-      set((s) => ({
-        deviceView: name,
-        dirty: true,
-        nodes: s.nodes.map((n) => {
+      set((s) => {
+        // entering a device view from free-form: snapshot the layout so Default restores it
+        const baseLayout = name
+          ? (s.deviceView === null
+              ? Object.fromEntries(s.nodes.map((n) => [n.key, { x: n.x, y: n.y, w: n.w, h: n.h }]))
+              : s.baseLayout)
+          : null
+        const nodes = s.nodes.map((n) => {
           if (vp) return { ...n, w: vp.width, h: vp.height }
+          const b = s.baseLayout?.[n.key]
+          if (b) return { ...n, ...b }               // exact free-form layout, positions included
           const f = s.manifest?.frames.find((x) => x.id === n.frame)
           if (!f) return n
-          const d = defaultSize(f)   // null device view = every frame back to its own default
+          const d = defaultSize(f)                   // frames added mid-device-view get their default
           return { ...n, w: d.w, h: d.h }
-        }),
-      }))
-      get().runTidy()
+        })
+        return { deviceView: name, dirty: true, baseLayout, nodes }
+      })
+      if (name) get().runTidy()                      // restore must NOT tidy - it would destroy positions
+      else scheduleSave()
     },
     setStatus(key, status, error) {
       set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error } : n)) }))
@@ -205,10 +233,12 @@ export const useStore = create<State>((set, get) => {
     },
 
     async save() {
-      const { nodes, boardHash } = get()
+      const { nodes, boardHash, deviceView, baseLayout } = get()
       // Missing nodes persist too - only the explicit remove button drops them (spec §7).
       const board = {
         version: 1, name: 'everything', auto: true,
+        // while a device view is active the free-form snapshot rides along on disk
+        ...(deviceView && baseLayout ? { deviceView, baseLayout } : {}),
         nodes: nodes.map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
       }
       try {
