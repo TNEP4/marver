@@ -91,7 +91,12 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node { position: absolute; top: 0; left: 0; border-radius: var(--r-node); background: transparent;
   border: 1px solid var(--node-brd); box-shadow: var(--shadow-node); display: flex; flex-direction: column;
   transition: border-color .3s ease }
-.sh-node.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-node) }
+/* selection + interact indicators live in world space but keep constant SCREEN width
+   via --sh-inv (1/zoom): 2 screen px at every zoom level */
+.sh-node.sel { border-color: var(--accent);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--accent);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--accent-ring), var(--shadow-node) }
 .sh-node-head { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 11px;
   font-size: 11px; color: var(--head-dim);
   border-bottom: 1px solid var(--node-brd); cursor: default; user-select: none;
@@ -103,9 +108,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }
 .sh-overlay { position: absolute; inset: 0; cursor: default }
-.sh-node.interact { outline: 2px dashed var(--interact); outline-offset: 2px }
+.sh-node.interact { outline: calc(2px * var(--sh-inv, 1)) dashed var(--interact); outline-offset: calc(3px * var(--sh-inv, 1)) }
 
-.sh-handle { position: absolute; background: var(--node-bg); border: 1.5px solid var(--accent); border-radius: 4px; z-index: 3 }
+.sh-handle { position: absolute; background: var(--node-bg); border: 1.5px solid var(--accent); border-radius: 4px; z-index: 3;
+  transform: scale(var(--sh-inv, 1)) }   /* constant screen size; hit target grows as you zoom out */
 .sh-handle.e { right: -5px; top: 50%; width: 9px; height: 26px; margin-top: -13px; cursor: ew-resize }
 .sh-handle.s { bottom: -5px; left: 50%; width: 26px; height: 9px; margin-left: -13px; cursor: ns-resize }
 .sh-handle.se { right: -5px; bottom: -5px; width: 11px; height: 11px; cursor: nwse-resize }

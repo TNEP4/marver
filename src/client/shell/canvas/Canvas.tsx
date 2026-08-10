@@ -41,6 +41,7 @@ function paintGrid(positionX: number, positionY: number, scale: number) {
   const app = document.querySelector('.sh-app') as HTMLElement | null
   if (app) {
     app.style.setProperty('--sh-s', String(scale))
+    app.style.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
     app.style.setProperty('--sh-tx', `${positionX}px`)
     app.style.setProperty('--sh-ty', `${positionY}px`)
   }
