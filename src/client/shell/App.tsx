@@ -451,8 +451,11 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const scenes = manifest?.scenes ?? []
-  const frames = manifest?.frames ?? []
+  // the sidebar reflects the ACTIVE BOARD: only scenes/frames with a node on this board
+  const onBoard = new Set(nodes.map((n) => n.frame))
+  const frames = (manifest?.frames ?? []).filter((f) => onBoard.has(f.id))
+  const scenes = [...new Set(frames.map((f) => f.scene))].sort()
+    .map((name) => ({ name, frames: frames.filter((f) => f.scene === name).length }))
   // the shell follows the board: majority-dark frames flip the whole chrome + canvas dark
   const dark = nodes.length > 0 && nodes.filter((n) => n.theme === 'dark').length > nodes.length / 2
 
