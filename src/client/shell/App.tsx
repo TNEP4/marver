@@ -2,7 +2,7 @@ import { Component, cloneElement, useEffect, useRef, useState, type ReactElement
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { BoundingBoxDuoIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelCloseIcon, PanelOpenIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. */
@@ -360,9 +360,9 @@ export function App() {
           mounted so collapse/expand can crossfade-morph between them */}
       <aside className={`sh-panel${panelOpen ? '' : ' closed'}`} aria-hidden={!panelOpen}>
           <div className="sh-panel-top">
-            <BoundingBoxDuoIcon size={21} className="mark" />
+            <ParallelogramDuoIcon size={21} className="mark" />
             <span className="name">Marver</span>
-            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelCloseIcon size={17} /></button>
+            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button>
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Scenes</div>
@@ -380,7 +380,7 @@ export function App() {
           </div>
       </aside>
       <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel} title="open panel (⌘\\)"
-        aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelOpenIcon size={18} /></button>
+        aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelHollowIcon size={18} /></button>
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">
