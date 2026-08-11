@@ -124,12 +124,29 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
   const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
   // the app's own logo when the build found one; Marver's mark as the backup
   const appMark = meta.logo ? `<img src="${esc(meta.logo)}" alt="" width="24" height="24" />` : MARK_LG
+  // The self-promotion balance: the tab truncates to the app's name, so the title's
+  // tail only shows where it earns its keep - link previews and full-title surfaces.
+  // The description explains what the link IS (app first, Marver second); noindex
+  // because a private canvas spreads by people sharing it, not by crawlers.
+  // Once through the gate, the shell's own titles take over (`<board> - Marver`).
+  const title = meta.branding ? `${name} | Marver - Visualize your software` : name
+  const desc = meta.branding
+    ? `${name}, shared as a live Marver canvas - real screens and prototypes, built from the codebase. Marver is the agent-native design canvas.`
+    : `${name} - a private design canvas.`
   res.statusCode = 200
   res.setHeader('content-type', 'text/html; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
   res.end(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(name)}</title>
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}" />
+<meta name="robots" content="noindex" />
+<meta name="theme-color" content="#e7e9ef" />
+<meta property="og:title" content="${esc(title)}" />
+<meta property="og:description" content="${esc(desc)}" />
+${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
 <link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
 <link rel="icon" type="image/png" sizes="32x32" href="/__mv/favicon/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/__mv/favicon/favicon-16x16.png" />
