@@ -110,44 +110,59 @@ export function serve(root: string, portFlag?: number) {
   return server
 }
 
-/** The gate: one card on a near-black stage, in the shell's glass language. */
+/** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */
+const MARK = `<svg viewBox="0 0 256 256" width="16" height="16" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
+
+/** The gate: the canvas's own antechamber - light ground, dot grid, glass card in the
+ *  shell's exact token language. The visitor is one password away from stepping in. */
 function gate(res: any, meta: { name: string; branding: boolean }, error?: string) {
+  const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
   res.statusCode = 200
   res.setHeader('content-type', 'text/html; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
   res.end(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(meta.name)}</title>
+<title>${esc(name)}</title>
 <style>
   * { box-sizing: border-box; margin: 0 }
   body { min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #0a0a0b; font: 500 14px -apple-system, system-ui, sans-serif; color: #f5f5f7 }
-  main { display: flex; flex-direction: column; align-items: center; gap: 24px }
-  form { width: 320px; padding: 28px; border-radius: 18px; display: flex; flex-direction: column; gap: 14px;
-    background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12) }
-  h1 { font-size: 15px; font-weight: 600 }
-  p { font-size: 12px; color: rgba(245, 245, 247, .55) }
-  input { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, .16);
-    background: rgba(255, 255, 255, .06); color: #f5f5f7; font: inherit; outline: none }
-  input:focus { border-color: rgba(255, 255, 255, .4) }
-  button { height: 38px; border: 0; border-radius: 10px; background: #f5f5f7; color: #18181b;
-    font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer }
-  button:hover { background: #fff }
-  .err { color: #ff8a80; font-size: 12px }
-  footer a { color: rgba(245, 245, 247, .4); font-size: 12px; text-decoration: none }
-  footer a:hover { color: rgba(245, 245, 247, .7) }
+    background-color: #e7e9ef;
+    background-image: radial-gradient(#c9cbd5 1px, transparent 1px); background-size: 20px 20px;
+    font: 500 14px -apple-system, system-ui, sans-serif; color: #18181b;
+    -webkit-font-smoothing: antialiased }
+  main { display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 16px }
+  form { width: 340px; padding: 24px; border-radius: 24px; display: flex; flex-direction: column; gap: 14px;
+    background: rgba(255, 255, 255, .64); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(24, 24, 27, .1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 4px 12px -6px rgba(24, 24, 27, .12) }
+  header { display: flex; align-items: center; gap: 8px; padding: 2px 2px 2px 4px }
+  header svg { color: #0088ff; flex: none }
+  h1 { font-size: 14px; font-weight: 600 }
+  p { font-size: 12.5px; line-height: 1.5; color: rgba(24, 24, 27, .66); padding: 0 4px }
+  input { height: 40px; padding: 0 13px; border-radius: 12px; border: 1px solid rgba(24, 24, 27, .14);
+    background: #fff; color: #18181b; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s }
+  input::placeholder { color: rgba(24, 24, 27, .35) }
+  input:focus { border-color: #0088ff; box-shadow: 0 0 0 3px rgba(0, 136, 255, .18) }
+  button { height: 40px; border: 0; border-radius: 12px; background: #18181b; color: #fafafa;
+    font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer; transition: background .15s }
+  button:hover { background: #000 }
+  .err { font-size: 12px; color: #b42318; padding: 0 4px }
+  footer a { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+    color: rgba(24, 24, 27, .45); text-decoration: none; transition: color .15s }
+  footer a:hover { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
+  footer .up { opacity: .6 }
 </style></head>
 <body><main>
   <form method="post" action="/__mv/auth">
-    <h1>${esc(meta.name)}</h1>
-    <p>This canvas is password-protected.</p>
+    <header>${MARK}<h1>${esc(name)}</h1></header>
+    <p>You're one step from the canvas. This space is private - enter the password to step inside.</p>
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
     <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" />
     <input type="hidden" name="next" />
-    <button type="submit">Open canvas</button>
+    <button type="submit">Open the canvas</button>
   </form>
   <script>document.querySelector('[name=next]').value = location.hash</script>
-  ${meta.branding ? '<footer><a href="https://marver.design">Powered by Marver</a></footer>' : ''}
+  ${meta.branding ? `<footer><a href="https://marver.design" target="_blank" rel="noopener">${MARK} Powered by Marver.design <svg class="up" viewBox="0 0 256 256" width="10" height="10" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
 </main></body></html>`)
 }
 
