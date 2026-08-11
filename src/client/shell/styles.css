@@ -106,7 +106,8 @@
 
 * { box-sizing: border-box }
 html, body, #root { height: 100%; margin: 0 }
-body { font-family: system-ui, -apple-system, sans-serif; overflow: hidden }
+body { font-family: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; overflow: hidden }
 button { font-family: inherit }
 button svg { pointer-events: none }   /* event targets stay on the button - pan exclusion depends on it */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important } }
@@ -177,7 +178,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   background-color: var(--head-bg); background-image: var(--head-sheen);
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
 .sh-node-head .id { font-weight: 600; color: var(--head-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none }
+.sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none; font-variant-numeric: tabular-nums }
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }
 .sh-overlay { position: absolute; inset: 0; cursor: default }
@@ -266,10 +267,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   background: radial-gradient(50% 100% at 50% 0%, var(--beam), transparent 70%);
   filter: blur(var(--beam-blur, 4px)); pointer-events: none; z-index: -1 }
 .sh-ctx button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px;
-  font: 600 12px system-ui; color: var(--glass-ink-2); background: none; border: 0;
+  font: 600 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 11px; border-radius: 999px; cursor: pointer }
 .sh-ctx button.icon { min-width: 28px; width: 30px; padding: 0 }
-.sh-ctx .cnt { font: 600 11px system-ui; color: var(--glass-ink-2); background: var(--glass-hover);
+.sh-ctx .cnt { font: 600 11px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--glass-ink-2); background: var(--glass-hover);
   border-radius: 999px; min-width: 22px; height: 22px; display: inline-flex; align-items: center;
   justify-content: center; padding: 0 6px; margin: 0 2px 0 3px }
 .sh-ctx button.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
@@ -278,14 +279,14 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* error / missing cards (inside the frame body) */
 .sh-card { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 6px;
-  padding: 14px; font-size: 11.5px; background: var(--node-bg) }
+  padding: 14px; font-size: 12px; background: var(--node-bg) }
 .sh-card.err { color: var(--card-err-ink); background: var(--card-err-bg) }
 .sh-card.warn { color: var(--card-warn-ink); background: var(--card-warn-bg) }
 .sh-card b { font-size: 12px }
 .sh-card .msg { white-space: pre-wrap; overflow: auto }
 .sh-card .dim { opacity: .55 }
 .sh-card .row { display: flex; gap: 6px; margin-top: auto }
-.sh-card button { display: inline-flex; align-items: center; gap: 5px; font: 600 11px system-ui;
+.sh-card button { display: inline-flex; align-items: center; gap: 5px; font: 600 11px -apple-system, system-ui, sans-serif;
   border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 999px;
   padding: 4px 10px; cursor: pointer }
 
@@ -298,18 +299,18 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel { position: absolute; left: var(--edge); top: var(--edge); width: 236px;
   max-height: calc(100% - 2 * var(--edge)); z-index: 10;
   border-radius: var(--r-panel); padding: 10px; display: flex; flex-direction: column;
-  font-size: 12.5px; color: var(--glass-ink);
+  font-size: 13px; color: var(--glass-ink);
   transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
 .sh-panel.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 .sh-panel-top { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px 8px }
 .sh-panel-top .mark { flex: none; color: var(--accent) }
-.sh-panel-top .name { font-weight: 700; font-size: 15px; flex: 1; letter-spacing: .01em }
+.sh-panel-top .name { font-weight: 700; font-size: 15px; flex: 1; letter-spacing: -0.01em }
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
-.sh-panel .hd { font: 500 11px system-ui; color: var(--glass-ink-3); margin: 4px 9px 5px }
+.sh-panel .hd { font: 500 11px -apple-system, system-ui, sans-serif; letter-spacing: .01em; color: var(--glass-ink-3); margin: 4px 9px 5px }
 .sh-board .it .tw { transition: none }
 .sh-panel .it { width: 100%; padding: 4px 9px 4px 6px; border-radius: 9px; color: var(--glass-ink);
-  font: 600 12.5px system-ui; background: none; border: 0; cursor: pointer; text-align: left;
+  font: 600 13px -apple-system, system-ui, sans-serif; background: none; border: 0; cursor: pointer; text-align: left;
   display: flex; align-items: center; gap: 5px }
 .sh-panel .it:hover { background: var(--glass-hover) }
 .sh-panel .it .tw { color: var(--glass-ink-3); flex: none; transition: transform .15s ease }
@@ -334,7 +335,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-pill { position: absolute; right: var(--edge); top: var(--edge); z-index: 10; display: flex; align-items: center; gap: 1px;
   border-radius: 999px; padding: 5px }
 .sh-pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 34px;
-  min-width: 34px; font: 500 11.5px system-ui; color: var(--glass-ink-2); background: none; border: 0;
+  min-width: 34px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 10px; border-radius: 999px; cursor: pointer; white-space: nowrap }
 .sh-pill-btn:hover { background: var(--glass-hover); color: var(--glass-ink) }
 .sh-pill-btn.pct { font-variant-numeric: tabular-nums; min-width: 46px }
@@ -349,17 +350,17 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   transform-origin: top left; animation: sh-pop .14s ease }
 @keyframes sh-pop { from { opacity: 0; transform: scale(.95) translateY(-4px) } }
 .sh-menu button { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px;
-  font: 500 12px system-ui; color: var(--glass-ink); background: none; border: 0; border-radius: 12px;
+  font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink); background: none; border: 0; border-radius: 12px;
   cursor: pointer; text-align: left }
 .sh-menu button:hover { background: var(--glass-hover) }
 .sh-menu button span { flex: 1; text-transform: capitalize }
 .sh-menu .chk { color: var(--glass-accent) }
-.sh-menu kbd { font: 500 10.5px system-ui; color: var(--glass-ink-3); background: none; border: 0 }
+.sh-menu kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
 
 /* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
 .sh-tip { position: absolute; z-index: 40; pointer-events: none; padding: 5px 10px; border-radius: 8px;
-  font: 500 11.5px system-ui; white-space: nowrap; transform: translate(-50%, -100%);
+  font: 500 12px -apple-system, system-ui, sans-serif; white-space: nowrap; transform: translate(-50%, -100%);
   display: flex; flex-direction: row; align-items: center; gap: 10px;
   background: var(--tip-bg); color: var(--tip-ink);
   box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .25);
@@ -372,10 +373,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-tip span { opacity: .55; font-size: 11px; margin-left: auto }
 .sh-tip span.k { opacity: .4; margin-left: 0; font-weight: 600 }
 
-.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
+.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
 
 .sh-toasts { position: absolute; left: var(--edge); bottom: var(--edge); z-index: 12; display: flex; flex-direction: column; gap: 6px }
-.sh-toast { display: flex; align-items: center; gap: 6px; font: 500 11.5px system-ui;
+.sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
 .sh-toast svg { color: var(--glass-good); flex: none }
