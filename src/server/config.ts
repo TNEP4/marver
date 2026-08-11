@@ -9,6 +9,8 @@ export interface ShConfig {
   viewports: Record<string, Viewport>
   themes: string[]
   port: number
+  /** Canvas zoom multiplier: 1 = default feel, 1.2 = 20% faster, 0.8 = 20% slower. */
+  zoomSpeed: number
 }
 
 export const DEFAULTS: ShConfig = {
@@ -23,6 +25,7 @@ export const DEFAULTS: ShConfig = {
   },
   themes: ['light', 'dark'],
   port: 5199,
+  zoomSpeed: 1,
 }
 
 /** Load design/config.ts via native TS import (Node >= 22.18). Missing or broken fields fall back to defaults. */
@@ -39,6 +42,7 @@ export async function loadConfig(root: string): Promise<ShConfig> {
       viewports: validViewports(user.viewports) ?? DEFAULTS.viewports,
       themes: Array.isArray(user.themes) && user.themes.length ? user.themes.map(String) : DEFAULTS.themes,
       port: validPort(user.port) ?? DEFAULTS.port,
+      zoomSpeed: validZoom(user.zoomSpeed) ?? DEFAULTS.zoomSpeed,
     }
     return cfg
   } catch (err) {
@@ -51,6 +55,10 @@ const validDim = (n: unknown): n is number => typeof n === 'number' && Number.is
 
 function validPort(n: unknown): number | null {
   return typeof n === 'number' && Number.isInteger(n) && n > 0 && n < 65536 ? n : null
+}
+
+function validZoom(n: unknown): number | null {
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0.1 && n <= 10 ? n : null
 }
 
 function validViewports(v: unknown): Record<string, Viewport> | null {

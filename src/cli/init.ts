@@ -121,6 +121,8 @@ export default {
   },
   themes: ["light", "dark"],
   port: ${DEFAULTS.port},
+  // Canvas zoom feel: 1 = default, 1.2 = 20% faster, 0.8 = 20% slower.
+  // zoomSpeed: 1,
 }
 `
 

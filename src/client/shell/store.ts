@@ -12,7 +12,7 @@ export interface Node {
 }
 export interface Toast { id: number; text: string }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; noTheme: boolean } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean } = shConfig
 
 const HEADER = 28
 let toastSeq = 0

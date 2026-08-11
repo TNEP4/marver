@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch'
-import { useStore } from '../store.ts'
+import { CONFIG, useStore } from '../store.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 
 /**
@@ -201,9 +201,10 @@ export function Canvas() {
       doubleClick={{ disabled: true }}
       // wheelDisabled is load-bearing: rzpp's onWheelPanning is a no-op without it, and
       // ctrlKey wheels (pinch, ctrl/cmd+scroll via the rewrite above) still zoom
-      wheel={{ wheelDisabled: true, step: 0.15 }}
+      // base steps are 1.5x rzpp defaults (snappier traverse); zoomSpeed personalizes on top
+      wheel={{ wheelDisabled: true, step: 0.225 * (CONFIG.zoomSpeed ?? 1) }}
       panning={{ wheelPanning: true, velocityDisabled: true, excluded: ['sh-no-pan'], disabled: gesture }}
-      pinch={{ step: 5 }}
+      pinch={{ step: 7.5 * (CONFIG.zoomSpeed ?? 1) }}
       onPanningStart={pan(true)}
       onPanningStop={pan(false)}
       onZoomStart={zoom(true)}

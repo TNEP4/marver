@@ -46,7 +46,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         return '/* marver: no theme configured */'
       }
       if (id === '\0' + VIRTUAL_CONFIG) {
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, noTheme: themeFile() == null })}`
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null })}`
       }
     },
 
