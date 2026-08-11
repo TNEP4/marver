@@ -1,6 +1,6 @@
 {
   "name": "@marver/design",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "The agent-native design canvas. A design/ folder, one command, a canvas of live frames built from your repo's real components. The tool ships no AI - your coding agent is the designer.",
   "type": "module",
   "private": false,

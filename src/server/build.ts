@@ -165,9 +165,12 @@ export async function buildSite(root: string, boardsFlag?: string) {
       outDir,
       emptyOutDir: true,
       cssCodeSplit: true,
-      // NOT lightningcss: with its default (ancient) targets it strips the standard
-      // backdrop-filter keeping only -webkit-, and the whole glass language goes flat
-      cssMinify: 'esbuild',
+      // CSS ships unminified: lightningcss (even with modern cssTarget) strips the
+      // standard backdrop-filter keeping only -webkit-, which Chromium computes to
+      // none with a var() value - the whole glass language goes flat. esbuild minify
+      // is not an option either (vite 8/rolldown does not ship esbuild, CI lacks it).
+      // The stylesheet is ~30KB; correctness beats the few KB.
+      cssMinify: false,
       rollupOptions: {
         input: {
           shell: join(clientDir, 'shell', 'main.tsx'),
