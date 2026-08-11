@@ -13,6 +13,10 @@ Never run or talk to the canvas tool; read and write files only.
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
 - Use the app's UI: import from {{UI_ALIAS}}; style with the app's Tailwind classes.
 - Navigation: put data-goto="scene/frame" on any element. That is the whole prototype system.
+  In play mode (the human presses P) frames swap in place inside one device - design flows
+  as complete graphs: every screen a data-goto points at should itself link somewhere or be
+  a terminal state; play mode makes dead ends visible. Give an element the same
+  view-transition-name CSS in two frames and play mode morphs it between screens.
 - Files starting with _ are infrastructure (never frames): _layout.tsx, _fixtures.ts.
 
 ## Structure ladder (embedded mode: screens live in src/)
@@ -26,6 +30,8 @@ Never run or talk to the canvas tool; read and write files only.
 ## Fixtures
 - design/scenes/<scene>/_fixtures.ts - typed plain objects shaped like the future API.
 - Fixture shapes should match the component's props so tsc catches drift.
+- Loading states are fixtures too: export const slowOrders = () => new Promise(r =>
+  setTimeout(() => r(orders), 800)) and let the frame render its skeleton while awaiting.
 
 ## Orientation
 - design/manifest.json lists every frame (id, file, scene, title) - read it before exploring.

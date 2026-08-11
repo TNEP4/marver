@@ -59,3 +59,22 @@ log prefixes, and the internal route prefix (/__sh -> /__mv) all renamed; sh- CS
 prefixes and sh:* postMessage types stay (internal, zero user surface, huge diff for no
 gain). KNOWN: bare `marver` is squatted on npm (marver@1.0.0) - registry publishing will
 need a scope (@marver/marver) or a variant; git/tarball installs are unaffected.
+
+## M2a: play mode + deep links (2026-08-11)
+
+**Stage owns navigation; the shell owns chrome and the URL.** The stage (one iframe,
+`/__mv/stage/`) handles data-goto in place and walks arrow-order internally; the shell's
+overlay handles device sizing, theme, exit, and history. New sh:stage-* message family -
+the sh:go path stays canvas-only, so nothing about design mode changed.
+
+**Play is tsx-only.** HTML frames are separate documents and cannot mount into the
+persistent providers+layout chain; the walk list filters them out. A data-goto to an html
+frame shows the stage's unknown-frame card. Documented limit, not a bug.
+
+**Wrapper identity is module identity.** Vite caches dynamic imports, so re-resolving a
+chain yields the same component references and React keeps layout instances mounted
+across swaps - persistence comes free, no memo machinery needed.
+
+**Selection deep links on an unmaterialized all-scenes board are per-session.** Node keys
+are minted at load until first edit materializes the board. Curated boards (the sharing
+unit) have stable keys. Recorded, not fixed - materialize to share.
