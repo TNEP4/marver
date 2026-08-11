@@ -318,6 +318,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .it { width: 100%; height: 28px; padding: 0 8px; border-radius: 8px; color: var(--glass-ink);
   font: 500 13px -apple-system, system-ui, sans-serif; background: none; border: 0; cursor: pointer; text-align: left;
   display: flex; align-items: center; gap: 7px; margin-bottom: 1px }
+/* a scene holding a selected frame keeps a half-strength wash (Xcode-style ancestor
+   highlight) so the selection's home stays visible even with the group collapsed;
+   same specificity as :hover but declared first, so hover still wins under pointer */
+.sh-panel .it.held { background: color-mix(in srgb, var(--glass-hover) 55%, transparent) }
 .sh-panel .it:hover { background: var(--glass-hover) }
 .sh-panel .it .tw { color: var(--glass-ink-3); flex: none; margin: 0 2.5px; transition: transform .15s ease }
 .sh-panel .it span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }

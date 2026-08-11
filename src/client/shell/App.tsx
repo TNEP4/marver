@@ -45,12 +45,13 @@ const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
 
-/** One collapsible scene group in the sidebar. */
-function SceneGroup({ name, count, children }: { name: string; count: number; children: ReactNode }) {
+/** One collapsible scene group in the sidebar. `held` marks a scene that contains a
+ *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */
+function SceneGroup({ name, count, held, children }: { name: string; count: number; held: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(true)
   return (
     <div>
-      <button className="it" onClick={() => setOpen(!open)}>
+      <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)}>
         <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
         <span>{cap(name) || '(root)'}</span>
         <small>{count}</small>
@@ -457,6 +458,8 @@ export function App() {
   const frames = (manifest?.frames ?? []).filter((f) => onBoard.has(f.id))
   const scenes = [...new Set(frames.map((f) => f.scene))].sort()
     .map((name) => ({ name, frames: frames.filter((f) => f.scene === name).length }))
+  // frame ids currently selected, for marking their parent scenes as `held`
+  const selFrames = new Set(nodes.filter((n) => selection.includes(n.key)).map((n) => n.frame))
   // the shell follows the board: majority-dark frames flip the whole chrome + canvas dark
   const dark = nodes.length > 0 && nodes.filter((n) => n.theme === 'dark').length > nodes.length / 2
   // interact mode re-accents the ENTIRE shell purple - one token override class,
@@ -489,7 +492,8 @@ export function App() {
             <BoardList />
             <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
-              <SceneGroup key={sc.name} name={sc.name} count={sc.frames}>
+              <SceneGroup key={sc.name} name={sc.name} count={sc.frames}
+                held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}>
                 {frames.filter((f) => f.scene === sc.name).map((f) => {
                   const n = nodes.find((x) => x.frame === f.id && !x.missing) ?? nodes.find((x) => x.frame === f.id)
                   const on = !!n && selection.includes(n.key)
