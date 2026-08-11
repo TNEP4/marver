@@ -136,6 +136,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node iframe { border: 0; display: block }
 .sh-overlay { position: absolute; inset: 0; cursor: default }
 .sh-node.interact { border-color: var(--interact);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
   box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--interact-ring), var(--shadow-node) }
 
 .sh-handle { position: absolute; background: var(--node-bg); border: 1.5px solid var(--accent); border-radius: 4px; z-index: 3;
@@ -162,8 +164,12 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   mask-composite: exclude }
 .sh-node.sel::after { display: none }   /* the accent ring owns the selected edge */
 @property --sh-rot { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
-.sh-node.interact::before, .sh-node.interact::after {
-  content: ''; position: absolute; border-radius: inherit; pointer-events: none;
+/* the halo: purple ring with two white glints (the edge-light language, orbiting),
+   blurred into a soft glow floating outside the still border */
+.sh-node.interact::after {
+  inset: calc(-9px * var(--sh-inv, 1));
+  padding: calc(5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
   background: conic-gradient(from var(--sh-rot),
     var(--interact-strong) 0deg,
     var(--interact-spark) 80deg,
@@ -171,29 +177,12 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
     var(--interact-deep) 200deg,
     var(--interact-spark) 262deg,
     var(--interact-strong) 360deg);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  animation: sh-orbit 2.6s linear infinite;
-}
-/* crisp gradient border ring, sitting exactly on the frame edge */
-.sh-node.interact::before {
-  inset: calc(-2.5px * var(--sh-inv, 1));
-  padding: calc(2.5px * var(--sh-inv, 1));
-  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
-}
-/* soft glow halo: the same spinning light, blurred outward */
-.sh-node.interact::after {
-  inset: calc(-9px * var(--sh-inv, 1));
-  padding: calc(5px * var(--sh-inv, 1));
-  border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
   filter: blur(calc(4px * var(--sh-inv, 1)));
   opacity: .8;
+  animation: sh-orbit 5.5s linear infinite;
 }
 @keyframes sh-orbit { to { --sh-rot: 360deg } }
-@media (prefers-reduced-motion: reduce) {
-  .sh-node.interact::before, .sh-node.interact::after { animation: none } }
+@media (prefers-reduced-motion: reduce) { .sh-node.interact::after { animation: none } }
 
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
