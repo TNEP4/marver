@@ -1,6 +1,7 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, watch } from 'node:fs'
 import { join } from 'node:path'
+import { hash } from './manifest.ts'
 // ROUTE unused here since bridge rides /@fs/
 import type { ShConfig } from './config.ts'
 import { scanFrames, writeManifest } from './manifest.ts'
@@ -105,6 +106,28 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       server.watcher.on('change', (f) => inScope(f) && /\.(tsx|jsx)$/.test(f) && regen())
 
       writeManifest(root, scanFrames(root))
+
+      // Multi-viewer board sync: Vite's watcher deliberately ignores boards/ (write-loop
+      // guard, spec §5.6), so a plain fs.watch broadcasts saves instead. Every viewer
+      // whose board is CLEAN re-boots on a foreign sha; the dirty one keeps its edits and
+      // converges through the 409 path on its next save. Self-echo is filtered client-side
+      // (own save already advanced boardHash to the broadcast sha).
+      const boardsDir = join(root, 'design', 'boards')
+      if (existsSync(boardsDir)) {
+        const timers = new Map<string, ReturnType<typeof setTimeout>>()
+        const watcher = watch(boardsDir, (_event, file) => {
+          if (!file || !file.endsWith('.json')) return
+          clearTimeout(timers.get(file))
+          timers.set(file, setTimeout(() => {
+            timers.delete(file)
+            try {
+              const content = readFileSync(join(boardsDir, file), 'utf8')
+              server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
+            } catch { /* deleted or mid-write; the next event settles it */ }
+          }, 120))
+        })
+        server.httpServer?.once('close', () => watcher.close())
+      }
     },
   }
 }

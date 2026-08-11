@@ -414,7 +414,21 @@ export function App() {
 
   // live updates from the dev server (source-served shell has import.meta.hot)
   useEffect(() => {
-    if (import.meta.hot) import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    if (!import.meta.hot) return
+    import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // multi-viewer sync: another viewer (or an agent) saved this board. A clean canvas
+    // re-boots silently, keeping whatever selection survives; a dirty one keeps its
+    // edits and converges through the 409 path on its next save (disk wins, spec §8).
+    import.meta.hot.on('sh:board', (m: any) => {
+      const s = useStore.getState()
+      if (m?.name !== s.board || m?.sha256 === s.boardHash || s.dirty) return
+      const sel = s.selection
+      s.boot().then((ok) => {
+        if (!ok) return
+        const nodes = useStore.getState().nodes
+        useStore.setState({ selection: sel.filter((k) => nodes.some((n) => n.key === k)) })
+      })
+    })
   }, [])
 
   // frame -> shell messages (spec §6 protocol); source validated against known iframes
