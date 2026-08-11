@@ -339,7 +339,10 @@ export const useStore = create<State>((set, get) => {
       })
       get().runTidy()
     },
-    setInteract(key) { set({ interact: key }) },
+    // interact is a ONE-frame mode: entering it collapses any multi-selection to the
+    // interacted frame (a 4-frame selection double-clicked otherwise leaves all four
+    // painted as "interactive"). Exiting keeps the frame selected for continuity.
+    setInteract(key) { set((s) => ({ interact: key, selection: key ? [key] : s.selection })) },
     setGesture(gesture) { set({ gesture }) },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
