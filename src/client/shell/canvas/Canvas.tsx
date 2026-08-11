@@ -142,6 +142,16 @@ export function Canvas() {
     }
   }, [])
 
+  // first load opens on the whole board (same as ⇧1) - the default 100% transform is an
+  // arbitrary top-left crop. Runs once, on the first frame batch; board switches refit
+  // through their own path.
+  const booted = useRef(false)
+  useEffect(() => {
+    if (booted.current || nodes.length === 0) return
+    booted.current = true
+    requestAnimationFrame(() => canvasCtl.fitAll())
+  }, [nodes])
+
   // click on empty canvas = deselect + exit interact (Figma convention; also covers the
   // double-click-outside exit). Bound on the wrapper, NOT #sh-world - the world element is
   // 1px by design, so empty-canvas clicks never hit it.
