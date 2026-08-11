@@ -36,3 +36,10 @@ Small items that are not milestone work. One line each; delete when done.
 - **Distribution**: claim @marver npm scope (bare name squatted); pick a license (MIT
   fits) + repo visibility before any "open source" claim; connect Railway service to
   GitHub for push-to-deploy.
+- **Interact-mode goto silently grows the board, with no way back.** In interact mode,
+  clicking a data-goto whose target frame is not on the current board spawns a node for
+  it (App's sh:go handler). Problems: the UI has no node-remove control (deliberate -
+  only agents edit boards), so the addition is irreversible from the canvas; and the
+  sidebar reportedly does not render these board-added frames. Decide the right model:
+  goto-to-off-board could pan/spawn as a TRANSIENT (unsaved) node, or prompt, or follow
+  without adding. Discuss before building. (Reported 2026-08-11, parked for publishing.)
