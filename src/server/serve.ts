@@ -6,9 +6,9 @@
  * instances agree, nothing stored server-side).
  */
 import { createServer } from 'node:http'
-import { createHmac, scryptSync, timingSafeEqual } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { extname, join, resolve } from 'node:path'
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { NAME } from '../cli/name.ts'
 
 const MIME: Record<string, string> = {
@@ -27,12 +27,18 @@ export function serve(root: string, portFlag?: number) {
     console.error(`[${NAME}] design/.dist not found - run \`npx ${NAME} build\` first.`)
     process.exit(1)
   }
+  const realDist = realpathSync(dist)
   let meta = { name: 'Marver', branding: true }
   try { meta = { ...meta, ...JSON.parse(readFileSync(join(dist, 'meta.json'), 'utf8')) } } catch { /* defaults */ }
 
   const password = process.env.MARVER_PASSWORD ?? ''
-  const key = password ? scryptSync(password, 'marver-gate', 32) : null
-  const sign = (exp: number) => createHmac('sha256', key!).update(`v1.${exp}`).digest('hex')
+  // verifier: scrypt-derived, fixed length - each guess pays the scrypt cost (a natural
+  // throttle) and the compare never leaks password length. Cookies are signed with a
+  // RANDOM per-boot secret, so a captured cookie is not offline brute-force material
+  // for the password; a restart just re-prompts.
+  const verifier = password ? scryptSync(password, 'marver-gate', 32) : null
+  const cookieKey = randomBytes(32)
+  const sign = (exp: number) => createHmac('sha256', cookieKey).update(`v1.${exp}`).digest('hex')
   const authed = (req: any): boolean => {
     const m = /(?:^|;\s*)mv_a=(\d+)\.([0-9a-f]+)/.exec(String(req.headers.cookie ?? ''))
     if (!m) return false
@@ -45,14 +51,13 @@ export function serve(root: string, portFlag?: number) {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
 
-    if (key) {
+    if (verifier) {
       if (req.method === 'POST' && url.pathname === '/__mv/auth') {
         let body = ''
         req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
         req.on('end', () => {
           const given = new URLSearchParams(body).get('password') ?? ''
-          const a = Buffer.from(given), b = Buffer.from(password)
-          if (a.length === b.length && timingSafeEqual(a, b)) {
+          if (timingSafeEqual(scryptSync(given, 'marver-gate', 32), verifier)) {
             const exp = Math.floor(Date.now() / 1000) + MONTH
             const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''
             res.setHeader('set-cookie', `${COOKIE}=${exp}.${sign(exp)}; Path=/; Max-Age=${MONTH}; HttpOnly; SameSite=Lax${secure}`)
@@ -68,16 +73,27 @@ export function serve(root: string, portFlag?: number) {
       if (!authed(req)) return gate(res, meta)
     }
 
-    // static: sanitized path under dist; extensionless → index.html (hash routing)
-    let path = decodeURIComponent(url.pathname)
+    // static: sanitized path under dist; extensionless → index.html (hash routing).
+    // Containment is realpath-based: encoded separators and symlinks cannot escape.
+    let path: string
+    try { path = decodeURIComponent(url.pathname) } catch { res.statusCode = 400; return res.end('bad request') }
     if (path.endsWith('/')) path += 'index.html'
     let file = resolve(dist, path.slice(1))
-    if (!file.startsWith(dist)) { res.statusCode = 403; return res.end('forbidden') }
-    if (!existsSync(file) || !extname(file)) file = join(dist, 'index.html')
+    try {
+      const real = realpathSync(file)
+      const rel = relative(realDist, real)
+      if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('outside dist')
+      file = real
+    } catch { file = join(dist, 'index.html') }   // missing or escaping → the shell (hash routing)
+    if (!extname(file)) file = join(dist, 'index.html')
     try {
       const content = readFileSync(file)
       res.setHeader('content-type', MIME[extname(file)] ?? 'application/octet-stream')
-      res.setHeader('cache-control', file.includes(`${join(dist, 'assets')}`) ? 'public, max-age=31536000, immutable' : 'no-store')
+      // gated responses are never publicly cacheable - a CDN would serve the bundle
+      // (inlined boards included) to unauthenticated clients from its cache
+      const cache = verifier ? 'private, no-store'
+        : file.startsWith(join(dist, 'assets')) ? 'public, max-age=31536000, immutable' : 'no-store'
+      res.setHeader('cache-control', cache)
       res.end(content)
     } catch { res.statusCode = 404; res.end('not found') }
   })
@@ -85,7 +101,7 @@ export function serve(root: string, portFlag?: number) {
   const port = portFlag ?? (Number(process.env.PORT) || 4199)
   server.listen(port, () => {
     console.log(`\n  ${NAME} serving design/.dist → http://localhost:${port}/`)
-    console.log(key ? '  gate: ON (MARVER_PASSWORD set)\n' : '  gate: off - set MARVER_PASSWORD to require a password\n')
+    console.log(verifier ? '  gate: ON (MARVER_PASSWORD set)\n' : '  gate: off - set MARVER_PASSWORD to require a password\n')
   })
   return server
 }

@@ -66,3 +66,6 @@ lays it out, and keeps it tidy:
 - `auto: false` boards show exactly their list. The `all-scenes` board is auto-managed -
   never write it.
 - Use boards for comparisons: version A vs B vs C of a flow, side by side.
+- Boards are also the unit of PUBLISHING (`marver build --boards <name>`): a flow being
+  published must have every frame it data-gotos on that board - unlisted frames are
+  excluded from the bundle at build time.

@@ -111,3 +111,18 @@ zone; fill: crossing the frame corner en route to the toolbar). H now hides ever
 period; the coach pill on entering hidden is the recovery path (OK = 15-min snooze via
 mv-play-hint-snooze, "Don't show again" = mv-play-hint-off); a fresh session always
 opens with controls visible. ⌘/ collapse is unrelated and untouched.
+
+## M2b: publish + sync, codex-reviewed (2026-08-11)
+
+Build generates its pages from the vite output instead of using html entries (the html
+templates live outside the host root, which vite html inputs cannot express) - dev's
+routes middleware has no static twin to keep in sync. The --boards privacy boundary is
+two-layered: filtered manifest in virtual:sh-data AND a generated registry whose only
+imports are published frames. Codex review (11 findings, 9 fixed): gated responses are
+private/no-store (CDN cache leak); path containment is realpath+relative (encoded
+separators, symlinks); auth compares scrypt verifiers (fixed length, cost per guess)
+and cookies sign with a per-boot random secret (captured cookie ≠ offline material);
+empty --boards fails closed (cac yields `true` for a bare flag - CLI normalizes);
+published saves clear dirty (switchBoard wedged); filtered builds open on their first
+published board (no synthesized all-scenes); boards watcher mkdirs + JSON-validates
+before broadcasting. Deferred to BACKLOG: --base, per-IP throttling, public/ filtering.

@@ -6,8 +6,10 @@ import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
 import shData from 'virtual:sh-data'
 
-/** Published-build data. Non-null = static site: no API, no saves, no live events. */
-const DATA: { manifest: Manifest; boards: Record<string, unknown> } | null = shData
+/** Published-build data. Non-null = static site: no API, no saves, no live events.
+ *  `names` is the switcher list (all-scenes only when actually published); `default`
+ *  is where `/` opens - never a synthesized aggregate of a filtered build. */
+const DATA: { manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string } | null = shData
 
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
@@ -24,10 +26,9 @@ export const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 /** Board names for switchers: all-scenes first, the rest sorted. Throws on transport
  *  failure - callers keep their last known list. */
 export async function fetchBoardNames(): Promise<string[]> {
-  const names = DATA
-    ? Object.keys(DATA.boards)
-    : (await (await fetch(`${ROUTE}/api/boards`)).json() as { name: string }[]).map((b) => b.name)
-  return ['all-scenes', ...names.filter((n) => n !== 'all-scenes').sort()]
+  if (DATA) return DATA.names
+  const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
+  return ['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes').sort()]
 }
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 export const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
@@ -189,7 +190,8 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, play: null, gesture: false, board: 'all-scenes', boardAuto: true, deviceView: null, baseLayout: null,
+    manifest: null, nodes: [], selection: [], interact: null, play: null, gesture: false,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -423,7 +425,9 @@ export const useStore = create<State>((set, get) => {
     },
 
     save() {
-      if (DATA) return Promise.resolve(true)   // a published canvas is read-only by design (spec §12)
+      // a published canvas is read-only by design (spec §12): edits are ephemeral, and
+      // dirty must clear or switchBoard's save-flush loop wedges forever
+      if (DATA) { set({ dirty: false }); return Promise.resolve(true) }
       const p = saveChain.then(async () => {
         const rev = editRev
         const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()

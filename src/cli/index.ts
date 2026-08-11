@@ -43,7 +43,10 @@ cli
   .action(async (opts) => {
     const { buildSite } = await import('../server/build.ts')
     try {
-      await buildSite(resolve(opts.root), typeof opts.boards === 'string' ? opts.boards : undefined)
+      // cac yields `true` for a valueless/empty --boards; any presence of the flag
+      // must reach buildSite so an empty filter fails CLOSED, never publishes all
+      const boards = opts.boards === undefined ? undefined : typeof opts.boards === 'string' ? opts.boards : ''
+      await buildSite(resolve(opts.root), boards)
     } catch (err) {
       console.error(`[${NAME}] build failed: ${(err as Error).message}`)
       process.exit(1)

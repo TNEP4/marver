@@ -102,8 +102,10 @@ export async function buildSite(root: string, boardsFlag?: string) {
   const manifest = scanFrames(root)
   const allBoards = readBoards(root)
   let publishedNames: string[]
-  if (boardsFlag) {
+  if (boardsFlag !== undefined) {
     publishedNames = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
+    // an empty filter fails CLOSED - `--boards "$UNSET_VAR"` must never publish everything
+    if (!publishedNames.length) throw new Error('--boards was given but named no boards')
     const missing = publishedNames.filter((n) => n !== 'all-scenes' && !allBoards[n])
     if (missing.length) throw new Error(`--boards names not found in design/boards/: ${missing.join(', ')}`)
   } else {
@@ -127,7 +129,9 @@ export async function buildSite(root: string, boardsFlag?: string) {
     scenes: [...new Set(frames.map((f) => f.scene))].sort()
       .map((name) => ({ name, frames: frames.filter((f) => f.scene === name).length })),
   }
-  const data = { manifest: pubManifest, boards }
+  // names drives the published board switcher (all-scenes only when actually published);
+  // default is where `/` opens - the first published board, never a synthesized aggregate
+  const data = { manifest: pubManifest, boards, names: publishedNames, default: publishedNames[0] }
 
   // ---- build overrides: real sh-data + (when filtering) the generated registry ----
   const registryFile = posix(join(clientDir, 'frame-host', 'registry.ts'))
@@ -228,5 +232,7 @@ export async function buildSite(root: string, boardsFlag?: string) {
   console.log(`\n  ${NAME} build → design/.dist`)
   console.log(`  boards: ${publishedNames.join(', ')}`)
   console.log(`  frames: ${frames.length}${includeAll ? '' : ` of ${manifest.frames.length} (build-time filter)`}`)
+  if (!includeAll && existsSync(join(root, 'public')))
+    console.log(`  note: the host public/ directory ships in full - the --boards filter covers frames, not public assets`)
   console.log(`\n  serve it:  npx ${NAME} serve   (set MARVER_PASSWORD to gate it)\n`)
 }

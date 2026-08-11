@@ -1,5 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { existsSync, readFileSync, watch } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs'
 import { join } from 'node:path'
 import { hash } from './manifest.ts'
 // ROUTE unused here since bridge rides /@fs/
@@ -117,7 +117,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       // converges through the 409 path on its next save. Self-echo is filtered client-side
       // (own save already advanced boardHash to the broadcast sha).
       const boardsDir = join(root, 'design', 'boards')
-      if (existsSync(boardsDir)) {
+      try {
+        mkdirSync(boardsDir, { recursive: true })   // watch needs it to exist; the API creates it lazily
         const timers = new Map<string, ReturnType<typeof setTimeout>>()
         const watcher = watch(boardsDir, (_event, file) => {
           if (!file || !file.endsWith('.json')) return
@@ -126,12 +127,13 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
             timers.delete(file)
             try {
               const content = readFileSync(join(boardsDir, file), 'utf8')
+              JSON.parse(content)                   // a mid-write partial must not broadcast - viewers would reload onto garbage
               server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
-            } catch { /* deleted or mid-write; the next event settles it */ }
+            } catch { /* deleted, partial, or invalid; the next settled write broadcasts */ }
           }, 120))
         })
         server.httpServer?.once('close', () => watcher.close())
-      }
+      } catch { /* watch unsupported here - sync degrades to the 409 path */ }
     },
   }
 }
