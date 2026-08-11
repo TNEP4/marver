@@ -414,6 +414,7 @@ export function App() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       const s = useStore.getState()
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
       if (e.key === 't') { animateLayout(); runTidy() }

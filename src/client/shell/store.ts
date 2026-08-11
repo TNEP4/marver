@@ -56,6 +56,7 @@ interface State {
   setStatus(key: string, status: Node['status'], error?: string): void
   removeNode(key: string): void
   select(key: string | null, additive?: boolean): void
+  selectAll(): void
   setInteract(key: string | null): void
   setGesture(g: boolean): void
   moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
@@ -338,6 +339,9 @@ export const useStore = create<State>((set, get) => {
         return { nodes, dirty: true, deviceView: null, baseLayout }
       })
       get().runTidy()
+    },
+    selectAll() {
+      set((s) => ({ selection: s.nodes.map((n) => n.key) }))
     },
     // interact is a ONE-frame mode: entering it collapses any multi-selection to the
     // interacted frame (a 4-frame selection double-clicked otherwise leaves all four

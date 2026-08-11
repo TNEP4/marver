@@ -35,4 +35,4 @@ The implementation contract is [SPEC.md](./SPEC.md). Deviations live in [DECISIO
 
 **Board & chrome** - `t` tidy · `d` toggle light/dark for the board · `⌘\` (ctrl+\) collapse/open sidebar.
 
-**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · `c` copies the selected frames' file paths · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
+**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · `⌘A` selects every frame on the board · `c` copies the selected frames' file paths · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
