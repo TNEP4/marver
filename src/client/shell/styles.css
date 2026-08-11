@@ -345,7 +345,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
 .sh-tip { position: absolute; z-index: 40; pointer-events: none; padding: 5px 10px; border-radius: 8px;
   font: 500 11.5px system-ui; white-space: nowrap; transform: translate(-50%, -100%);
-  display: flex; flex-direction: column; gap: 1px; text-align: center;
+  display: flex; flex-direction: row; align-items: center; gap: 10px;
   background: var(--tip-bg); color: var(--tip-ink);
   box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .25);
   animation: sh-tip-pop .12s ease }
@@ -354,7 +354,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-tip.below { transform: translate(-50%, 0); animation-name: sh-tip-pop-b }
 @keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
 .sh-tip b { font-weight: 600 }
-.sh-tip span { opacity: .65; font-size: 10.5px }
+.sh-tip span { opacity: .55; font-size: 11px; margin-left: auto }
 
 .sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }

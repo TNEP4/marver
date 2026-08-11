@@ -1,4 +1,4 @@
-import { Component, cloneElement, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { Component, cloneElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { ROUTE } from '../const.ts'
@@ -18,6 +18,17 @@ function Tip({ label, side = 'top', children }: { label: ReactNode; side?: 'top'
   const hide = () => { window.clearTimeout(timer.current); setPos(null) }
   const app = document.querySelector('.sh-app')
   const child = children as ReactElement<any>
+  // clamp into the viewport: edge-of-screen triggers (play button) otherwise clip
+  const tipRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = tipRef.current
+    if (!el) return
+    el.style.marginLeft = '0px'
+    const r = el.getBoundingClientRect()
+    const over = r.right - (window.innerWidth - 8)
+    if (over > 0) el.style.marginLeft = `${-over}px`
+    else if (r.left < 8) el.style.marginLeft = `${8 - r.left}px`
+  }, [pos])
   return (
     <>
       {cloneElement(child, {
@@ -25,12 +36,14 @@ function Tip({ label, side = 'top', children }: { label: ReactNode; side?: 'top'
         onMouseLeave: (e: React.MouseEvent) => { child.props.onMouseLeave?.(e); hide() },
         onClick: (e: React.MouseEvent) => { child.props.onClick?.(e); hide() },
       })}
-      {pos && app && createPortal(<div className={`sh-tip${side === 'bottom' ? ' below' : ''}`} style={{ left: pos.x, top: pos.y }}>{label}</div>, app)}
+      {pos && app && createPortal(<div ref={tipRef} className={`sh-tip${side === 'bottom' ? ' below' : ''}`} style={{ left: pos.x, top: pos.y }}>{label}</div>, app)}
     </>
   )
 }
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+/** Display name for a board: the reserved 'everything' key reads as "All scenes". */
+const boardLabel = (n: string) => (n === 'everything' ? 'All scenes' : cap(n))
 
 /** One collapsible scene group in the sidebar. */
 function SceneGroup({ name, count, children }: { name: string; count: number; children: ReactNode }) {
@@ -123,13 +136,13 @@ function BoardMenu() {
     <div className="sh-board" ref={pop.boxRef}>
       <button className="it" onClick={toggle}>
         {board === 'everything' ? <CardsThreeIcon size={14} className="tw" /> : <CardsIcon size={14} className="tw" />}
-        <span>{cap(board)}</span>
+        <span>{boardLabel(board)}</span>
         <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
       </button>
       <Popover pop={pop}>
         {names.map((n) => (
           <button key={n} onClick={() => pick(n)}>
-            {n === 'everything' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}<span>{cap(n)}</span>
+            {n === 'everything' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}<span>{boardLabel(n)}</span>
             {n === board && <CheckIcon size={13} className="chk" />}
           </button>
         ))}
@@ -314,7 +327,7 @@ export function App() {
 
   // page title follows the open board
   const board = useStore((s) => s.board)
-  useEffect(() => { document.title = board ? `${cap(board)} - Marver` : 'Marver' }, [board])
+  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board])
 
   // favicon follows the mode: blue pack in design mode, purple pack in interact.
   // The links are rebuilt (not toggled) so the set stays deterministic; the .ico is
