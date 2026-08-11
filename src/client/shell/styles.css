@@ -308,7 +308,12 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
 .sh-panel .hd { font: 500 11px -apple-system, system-ui, sans-serif; letter-spacing: .01em; color: var(--glass-ink-3); margin: 4px 9px 5px }
-.sh-board .it .tw { transition: none }
+/* board rows: default = gray icon + secondary ink; active = accent icon, wash, heavier
+   text - same active language as scene frames, one step stronger */
+.sh-panel .it.board { font-weight: 500; color: var(--glass-ink-2); padding-left: 8px; margin-bottom: 2px }
+.sh-panel .it.board svg { color: var(--glass-ink-3); flex: none; transition: color .2s ease }
+.sh-panel .it.board.cur { background: var(--accent-wash); color: var(--glass-accent); font-weight: 600 }
+.sh-panel .it.board.cur svg { color: var(--glass-accent) }
 .sh-panel .it { width: 100%; padding: 4px 9px 4px 6px; border-radius: 9px; color: var(--glass-ink);
   font: 600 13px -apple-system, system-ui, sans-serif; background: none; border: 0; cursor: pointer; text-align: left;
   display: flex; align-items: center; gap: 5px }

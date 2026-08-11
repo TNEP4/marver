@@ -111,43 +111,38 @@ function Popover({ pop, children }: { pop: ReturnType<typeof usePopover>; childr
   )
 }
 
-/** Board switcher: one board on screen at a time. Boards are agent-authored files in
- *  design/boards/ - the list is fetched fresh on every open so new files show instantly. */
-function BoardMenu() {
+/** Boards live flat in the sidebar - always visible, one click to switch. The list
+ *  refreshes on mount, window focus, and a slow poll so agent-created board files
+ *  appear without a reload. Active board = accent icon + wash, same language as scenes. */
+function BoardList() {
   const board = useStore((s) => s.board)
-  const [names, setNames] = useState<string[]>([])
-  const pop = usePopover()
-
-  const toggle = async () => {
-    if (!pop.open) {
+  const [names, setNames] = useState<string[]>(['all-scenes'])
+  useEffect(() => {
+    const refresh = async () => {
       try {
         const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-        setNames(['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes')])
-      } catch { setNames(['all-scenes']) }
+        setNames(['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes').sort()])
+      } catch { /* keep the last known list */ }
     }
-    pop.toggle()
-  }
+    refresh()
+    const t = setInterval(refresh, 8000)
+    window.addEventListener('focus', refresh)
+    return () => { clearInterval(t); window.removeEventListener('focus', refresh) }
+  }, [])
   const pick = async (name: string) => {
-    pop.setOpen(false)
+    if (name === useStore.getState().board) return
     await useStore.getState().switchBoard(name)
     setTimeout(() => canvasCtl.fitAll(), 60)
   }
   return (
-    <div className="sh-board" ref={pop.boxRef}>
-      <button className="it" onClick={toggle}>
-        {board === 'all-scenes' ? <CardsThreeIcon size={14} className="tw" /> : <CardsIcon size={14} className="tw" />}
-        <span>{boardLabel(board)}</span>
-        <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
-      </button>
-      <Popover pop={pop}>
-        {names.map((n) => (
-          <button key={n} onClick={() => pick(n)}>
-            {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}<span>{boardLabel(n)}</span>
-            {n === board && <CheckIcon size={13} className="chk" />}
-          </button>
-        ))}
-      </Popover>
-    </div>
+    <>
+      {names.map((n) => (
+        <button key={n} className={`it board${n === board ? ' cur' : ''}`} onClick={() => pick(n)}>
+          {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
+          <span>{boardLabel(n)}</span>
+        </button>
+      ))}
+    </>
   )
 }
 
@@ -490,8 +485,8 @@ export function App() {
             <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={togglePanel} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">
-            <div className="hd">Board</div>
-            <BoardMenu />
+            <div className="hd">Boards</div>
+            <BoardList />
             <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} count={sc.frames}>
