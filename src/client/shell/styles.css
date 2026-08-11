@@ -421,10 +421,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
    The ring is an inside overlay, not a border: border-box would clip a pixel of content. */
 .sh-play .dev { position: relative; overflow: hidden; border-radius: 14px;
   --pdev-bg: #fff; --pdev-brd: #cfd2db;
-  /* the dark device's edge, mirrored: the same 155° gradient and alpha ladder in INK
-     instead of white - the ring catches shadow where the dark one catches light, so it
-     reads against the white body the way the glint reads against the dark one */
-  --pdev-edge: linear-gradient(155deg, rgba(24, 24, 27, .32), rgba(24, 24, 27, .06) 30%, rgba(24, 24, 27, .03) 65%, rgba(24, 24, 27, .18));
+  /* the dark device's edge, mirrored: the same 155° gradient in INK, strong enough to
+     survive Retina gamma - the inset ring catches shadow where the dark one catches
+     light, so it reads against the white body the way the glint reads against the dark */
+  --pdev-edge: linear-gradient(155deg, rgba(24, 24, 27, .5), rgba(24, 24, 27, .14) 30%, rgba(24, 24, 27, .08) 65%, rgba(24, 24, 27, .3));
   background: var(--pdev-bg);
   /* a light frame on the black stage also gets a faint luminous halo lifting it off
      the backdrop (the dark variant below doesn't need one) */

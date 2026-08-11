@@ -356,7 +356,7 @@ export function App() {
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
       }
       if (h.play) {
-        if (s.play && h.play.at) { if (s.play.at !== h.play.at) playCtl.setAt(h.play.at) }
+        if (s.play) playCtl.sync(h.play)
         else enterPlay(h.play)
       } else {
         if (s.play) s.setPlay(null)

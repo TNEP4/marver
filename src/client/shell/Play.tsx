@@ -69,7 +69,11 @@ async function switchPlayBoard(name: string) {
 
 /** Control channel for history restores: the popstate handler steers the mounted stage
  *  without a remount. Assigned by PlayInner; a no-op while play is closed. */
-export const playCtl = { setAt: (_at: string) => {} }
+export const playCtl = {
+  setAt: (_at: string) => {},
+  /** Apply a parsed play hash to the OPEN session - at, device, and theme alike. */
+  sync: (_p: { at?: string; device?: string; theme?: string }) => {},
+}
 
 export function PlayOverlay() {
   const play = useStore((s) => s.play)
@@ -127,7 +131,14 @@ function PlayInner() {
   const [chrome, setChrome] = useState<'open' | 'collapsed' | 'hidden'>('open')
   const chromeRef = useRef(chrome)             // handleKey lives in a mount-time closure
   chromeRef.current = chrome
-  const [corner, setCorner] = useState(false)      // pointer in a reveal corner
+  // corner-hover has two sources that must never mix: the shell's own pointermove, and
+  // the stage's sh:stage-edge reports. In fill the iframe swallows every shell move, so
+  // the shell reading goes stale the moment the pointer enters the frame - trusting it
+  // there left chrome stuck revealed. Fill listens to the stage alone.
+  const [cornerShell, setCornerShell] = useState(false)
+  const [cornerStage, setCornerStage] = useState(false)
+  const fill = play?.device === 'fill'
+  const corner = fill ? cornerStage : cornerShell
   const [over, setOver] = useState(false)          // pointer ON a chrome piece - never hide under the cursor
   // the H coach bubble: shown on entering hidden until dismissed forever (localStorage).
   // OK only snoozes it for the CURRENT hover session - while the pointer sits on the
@@ -177,7 +188,14 @@ function PlayInner() {
       const p = useStore.getState().play
       if (p && p.at !== at) useStore.getState().setPlay({ ...p, at })
     }
-    return () => { playCtl.setAt = () => {} }
+    playCtl.sync = (p) => {
+      const cur = useStore.getState().play
+      if (!cur) return
+      if (p.device && p.device !== cur.device) setDevice(p.device)
+      if (p.theme && p.theme !== cur.theme) setTheme(p.theme)
+      if (p.at && p.at !== cur.at) playCtl.setAt(p.at)
+    }
+    return () => { playCtl.setAt = () => {}; playCtl.sync = () => {} }
   }, [])
 
   // messages from the stage; source-validated against our one iframe
@@ -206,8 +224,7 @@ function PlayInner() {
         if (data.meta && data.key === '/') toggleCollapse()
         else handleKey(String(data.key), String(data.code))
       } else if (data.type === 'sh:stage-edge') {
-        // corner hovers inside the iframe matter only in fill, where it covers the window
-        if (s.play?.device === 'fill') setCorner(!!data.hot)
+        setCornerStage(!!data.hot)
       }
     }
     window.addEventListener('message', onMsg)
@@ -283,7 +300,7 @@ function PlayInner() {
     const onMove = (e: PointerEvent) => {
       const hot = (e.clientX > window.innerWidth - 220 && e.clientY < 90)
         || (e.clientX < 220 && e.clientY > window.innerHeight - 90)
-      setCorner(hot)
+      setCornerShell(hot)
     }
     window.addEventListener('pointermove', onMove)
     return () => window.removeEventListener('pointermove', onMove)
@@ -299,7 +316,6 @@ function PlayInner() {
 
   if (!play) return null                       // parent gates on play; belt to its braces
 
-  const fill = play.device === 'fill'
   const vp = fill ? { width: win.w, height: win.h } : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
   const scale = fill ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   // awake beats the idle fade; a pointer ON a chrome piece always keeps it (the corner
