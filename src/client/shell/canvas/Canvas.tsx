@@ -16,8 +16,27 @@ import { FrameNode, HEADER } from './FrameNode.tsx'
  * gestures (G-3); iframes lose pointer-events during any gesture (G-4).
  */
 
-// fit padding leaves the context bar above a frame and breathing room around it visible
-const PAD = { x: 96, top: 116, bottom: 72 }
+/**
+ * Fit centers content in the space the chrome leaves free, measured live at fit time:
+ * the open sidebar (or its collapsed FAB) claims a left column, the pill row claims a
+ * top band, and the screen-space selection bar needs headroom above the fitted content.
+ * Measuring instead of hardcoding keeps every fit trigger (shift+1/2, device presets,
+ * board switch) correct whether the sidebar is open or collapsed.
+ */
+const GAP = 32
+const BAR = 56
+function insets(el: HTMLElement) {
+  const c = el.getBoundingClientRect()
+  const rect = (q: string) => document.querySelector(q)?.getBoundingClientRect()
+  const side = rect('.sh-panel:not(.closed)') ?? rect('.sh-fab')
+  const pill = rect('.sh-pill')
+  return {
+    left: (side ? Math.max(0, side.right - c.left) : 0) + GAP,
+    right: GAP + 16,
+    top: (pill ? Math.max(0, pill.bottom - c.top) : 0) + 12 + BAR,
+    bottom: GAP + 16,
+  }
+}
 
 /**
  * World-space dot grid (sense-of-scale, the Figma/tldraw recipe): the grid pans and
@@ -66,11 +85,13 @@ export function Canvas() {
     const fitRect = (x: number, y: number, w: number, h: number) => {
       const el = wrap()
       if (!el || !ref.current) return
-      const vw = el.clientWidth, vh = el.clientHeight
-      const scale = Math.max(0.05, Math.min(1, (vw - PAD.x * 2) / w, (vh - PAD.top - PAD.bottom) / h))
+      const p = insets(el)
+      const aw = el.clientWidth - p.left - p.right
+      const ah = el.clientHeight - p.top - p.bottom
+      const scale = Math.max(0.05, Math.min(1, aw / w, ah / h))
       ref.current.setTransform(
-        (vw - w * scale) / 2 - x * scale,
-        PAD.top + (vh - PAD.top - PAD.bottom - h * scale) / 2 - y * scale,
+        p.left + (aw - w * scale) / 2 - x * scale,
+        p.top + (ah - h * scale) / 2 - y * scale,
         scale, 320, 'easeOut',
       )
     }
