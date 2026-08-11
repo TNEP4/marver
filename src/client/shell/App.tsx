@@ -193,10 +193,10 @@ function SelectionBar() {
         <Tip label={`${selection.length} frames selected`}><span className="cnt">{selection.length}</span></Tip>
         <i className="sep" />
       </>}
-      {Object.entries(CONFIG.viewports).map(([name, vp]) => {
+      {Object.entries(CONFIG.viewports).map(([name, vp], vi) => {
         const active = node.w === vp.width
         return (
-          <Tip key={name} label={<><b>{cap(name)}</b><span>{vp.width} × {vp.height}</span></>}>
+          <Tip key={name} label={<><b>{cap(name)}</b><span>{vp.width} × {vp.height}</span><span className="k">{vi + 1}</span></>}>
             <button className={active ? 'on' : 'icon'} onClick={() => applyDevice(name)}>
               {deviceIcon(name, 15)}{active && <span>{cap(name)}</span>}
             </button>
@@ -212,7 +212,7 @@ function SelectionBar() {
         </Tip>
       ))}
       <i className="sep" />
-      <Tip label={multi ? `Copy ${selection.length} file paths` : 'Copy file path'}>
+      <Tip label={<><b>{multi ? `Copy ${selection.length} file paths` : 'Copy file path'}</b><span className="k">C</span></>}>
         <button className="icon"
           onClick={() => { navigator.clipboard.writeText(selectedFrames().map((f) => f.file).join('\n')); toast(multi ? `${selection.length} file paths copied` : 'file path copied') }}><SignpostIcon size={15} /></button>
       </Tip>
@@ -417,6 +417,15 @@ export function App() {
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
       if (e.key === 't') { animateLayout(); runTidy() }
+      if (e.key === 'c' && s.selection.length) {
+        const files = s.selection
+          .map((k) => { const n = s.nodes.find((x) => x.key === k); return n ? s.frameFor(n)?.file : undefined })
+          .filter((f): f is string => !!f)
+        if (files.length) {
+          navigator.clipboard.writeText(files.join('\n'))
+          toast(files.length > 1 ? `${files.length} file paths copied` : 'file path copied')
+        }
+      }
       if (e.key === 'd' && CONFIG.themes.length > 1) {
         // cycle themes from the board's current (uniform or first)
         const cur = s.nodes.length && s.nodes.every((n) => n.theme === s.nodes[0].theme) ? s.nodes[0].theme : CONFIG.themes[0]

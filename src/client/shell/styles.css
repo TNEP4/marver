@@ -370,6 +370,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 @keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
 .sh-tip b { font-weight: 600 }
 .sh-tip span { opacity: .55; font-size: 11px; margin-left: auto }
+.sh-tip span.k { opacity: .4; margin-left: 0; font-weight: 600 }
 
 .sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 11.5px system-ui;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
