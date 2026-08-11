@@ -11,6 +11,8 @@ export interface ShConfig {
   port: number
   /** Canvas zoom multiplier: 1 = default feel, 1.2 = 20% faster, 0.8 = 20% slower. */
   zoomSpeed: number
+  /** Publish options (SPEC-M2 §4): branding=false removes the gate page footer. */
+  share: { branding: boolean }
 }
 
 export const DEFAULTS: ShConfig = {
@@ -26,6 +28,7 @@ export const DEFAULTS: ShConfig = {
   themes: ['light', 'dark'],
   port: 5199,
   zoomSpeed: 1,
+  share: { branding: true },
 }
 
 /** Load design/config.ts via native TS import (Node >= 22.18). Missing or broken fields fall back to defaults. */
@@ -43,6 +46,7 @@ export async function loadConfig(root: string): Promise<ShConfig> {
       themes: Array.isArray(user.themes) && user.themes.length ? user.themes.map(String) : DEFAULTS.themes,
       port: validPort(user.port) ?? DEFAULTS.port,
       zoomSpeed: validZoom(user.zoomSpeed) ?? DEFAULTS.zoomSpeed,
+      share: { branding: (user.share as { branding?: unknown } | undefined)?.branding !== false },
     }
     return cfg
   } catch (err) {

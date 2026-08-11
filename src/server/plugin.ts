@@ -10,6 +10,7 @@ import { routesMiddleware } from './routes.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
 const VIRTUAL_CONFIG = 'virtual:sh-config'
+const VIRTUAL_DATA = 'virtual:sh-data'
 
 export interface PluginCtx {
   root: string
@@ -39,6 +40,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         return f ?? '\0' + VIRTUAL_THEME + '.css'
       }
       if (id === VIRTUAL_CONFIG) return '\0' + VIRTUAL_CONFIG
+      if (id === VIRTUAL_DATA) return '\0' + VIRTUAL_DATA
     },
 
     load(id) {
@@ -49,6 +51,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       if (id === '\0' + VIRTUAL_CONFIG) {
         return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null })}`
       }
+      // null in dev - the shell fetches live. Builds provide the real module (build.ts).
+      if (id === '\0' + VIRTUAL_DATA) return 'export default null'
     },
 
     /** HTML frames: inject theme + bridge into any design/**.html Vite serves.

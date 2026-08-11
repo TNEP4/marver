@@ -3,6 +3,11 @@ import { ROUTE } from '../const.ts'
 import { tidy } from './tidy.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
+// @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
+import shData from 'virtual:sh-data'
+
+/** Published-build data. Non-null = static site: no API, no saves, no live events. */
+const DATA: { manifest: Manifest; boards: Record<string, unknown> } | null = shData
 
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
@@ -19,8 +24,10 @@ export const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 /** Board names for switchers: all-scenes first, the rest sorted. Throws on transport
  *  failure - callers keep their last known list. */
 export async function fetchBoardNames(): Promise<string[]> {
-  const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-  return ['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes').sort()]
+  const names = DATA
+    ? Object.keys(DATA.boards)
+    : (await (await fetch(`${ROUTE}/api/boards`)).json() as { name: string }[]).map((b) => b.name)
+  return ['all-scenes', ...names.filter((n) => n !== 'all-scenes').sort()]
 }
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 export const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
@@ -99,9 +106,13 @@ export const useStore = create<State>((set, get) => {
    *  keeps whatever board is currently mounted. */
   const loadBoardState = async (boardName: string): Promise<Partial<State> | null> => {
     try {
-      const mRes = await fetch('/design/manifest.json')
-      if (!mRes.ok) return null
-      const raw = await mRes.json().catch(() => undefined)
+      let raw: any
+      if (DATA) raw = DATA.manifest
+      else {
+        const mRes = await fetch('/design/manifest.json')
+        if (!mRes.ok) return null
+        raw = await mRes.json().catch(() => undefined)
+      }
       if (raw === undefined || raw === null || typeof raw !== 'object') return null
       const manifest: Manifest = {
         frames: (Array.isArray(raw?.frames) ? raw.frames : [])
@@ -114,9 +125,18 @@ export const useStore = create<State>((set, get) => {
       let deviceView: string | null = null
       let baseLayout: State['baseLayout'] = null
       let needTidy = false
-      const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
-      if (res.ok) {
-        const { board, sha256 } = await res.json()
+      // published build: boards come from the inlined data; absent = fresh (the 404 path)
+      let loaded: { board: any; sha256: string } | 'fresh' | null
+      if (DATA) loaded = DATA.boards[boardName] ? { board: DATA.boards[boardName], sha256: 'published' } : 'fresh'
+      else {
+        const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
+        if (res.ok) loaded = await res.json()
+        else if (res.status === 404) loaded = 'fresh'
+        else loaded = null                     // only 404 means "fresh board"; anything else must not commit an empty canvas
+      }
+      if (loaded === null) return null
+      if (loaded !== 'fresh') {
+        const { board, sha256 } = loaded
         boardHash = sha256
         if (typeof board?.auto === 'boolean') boardAuto = board.auto
         // Agent-authored boards may be just a frame list - fill sizes/keys, tidy on first load.
@@ -146,8 +166,6 @@ export const useStore = create<State>((set, get) => {
         // a scoped "exception" clears deviceView but the snapshot must keep restoring
         if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
-      } else if (res.status !== 404) {
-        return null   // only 404 means "fresh board"; anything else must not commit an empty canvas
       }
       // frames not on the board yet → auto boards only (a curated board shows exactly its list)
       if (boardAuto) {
@@ -405,6 +423,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     save() {
+      if (DATA) return Promise.resolve(true)   // a published canvas is read-only by design (spec §12)
       const p = saveChain.then(async () => {
         const rev = editRev
         const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()

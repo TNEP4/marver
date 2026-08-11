@@ -37,10 +37,31 @@ cli
   })
 
 cli
-  .command('build', 'Static export (M2)')
-  .action(() => {
-    console.log(`${NAME} build ships in M2 - see SPEC.md §12.`)
-    process.exit(1)
+  .command('build', 'Static export → design/.dist')
+  .option('--boards <names>', 'Publish only these boards (comma-separated); the frame filter is applied at build time')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .action(async (opts) => {
+    const { buildSite } = await import('../server/build.ts')
+    try {
+      await buildSite(resolve(opts.root), typeof opts.boards === 'string' ? opts.boards : undefined)
+    } catch (err) {
+      console.error(`[${NAME}] build failed: ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
+  .command('serve', 'Serve design/.dist (set MARVER_PASSWORD to gate it)')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--port <port>', 'Port (default $PORT or 4199)')
+  .action(async (opts) => {
+    const { serve } = await import('../server/serve.ts')
+    let port: number | undefined
+    if (opts.port !== undefined) {
+      const n = Number(opts.port)
+      if (Number.isInteger(n) && n > 0 && n < 65536) port = n
+    }
+    serve(resolve(opts.root), port)
   })
 
 cli.help()
