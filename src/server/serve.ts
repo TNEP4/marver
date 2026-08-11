@@ -115,7 +115,7 @@ export function serve(root: string, portFlag?: number) {
 
 /** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */
 const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
-const MARK = MARK_AT(14)
+const MARK = MARK_AT(17)
 const MARK_LG = MARK_AT(24)
 
 /** The gate: the canvas's own antechamber - light ground, dot grid, glass card in the
@@ -159,9 +159,11 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
   button:hover { background: #000 }
   .err { font-size: 12px; color: #b42318; padding: 0 4px }
   footer a { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px -apple-system, system-ui, sans-serif;
-    color: #0077e6; text-decoration: none; transition: color .15s }
-  footer a:hover { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
-  footer .up { opacity: .7 }
+    color: rgba(24, 24, 27, .55); text-decoration: none }
+  footer .md, footer .up { transition: color .15s, opacity .15s }
+  footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
+  footer .up { opacity: .45 }
+  footer a:hover .up { opacity: 1; color: #0088ff }
 </style></head>
 <body><main>
   <form method="post" action="/__mv/auth">
@@ -173,7 +175,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
     <button type="submit">Open the canvas</button>
   </form>
   <script>document.querySelector('[name=next]').value = location.hash</script>
-  ${meta.branding ? `<footer><a href="https://marver.design" target="_blank" rel="noopener">${MARK} Powered by Marver.design <svg class="up" viewBox="0 0 256 256" width="10" height="10" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
+  ${meta.branding ? `<footer><a href="https://marver.design" target="_blank" rel="noopener">${MARK} <span>Powered by</span> <span class="md">Marver.design</span> <svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
 </main></body></html>`)
 }
 
