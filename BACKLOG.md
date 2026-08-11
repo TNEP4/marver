@@ -33,9 +33,15 @@ Small items that are not milestone work. One line each; delete when done.
   publish), install instructions, the cookbooks, live demo link (the pilot deploy).
 - **Stress test pass**: big boards (50+ frames), rapid board switching, multi-tab sync
   under sustained edits, published build on slow connections, play mode long flows.
-- **Distribution**: claim @marver npm scope (bare name squatted); pick a license (MIT
-  fits) + repo visibility before any "open source" claim; connect Railway service to
-  GitHub for push-to-deploy.
+- **Distribution (DECIDED 2026-08-11)**: Apache-2.0 (patent grant + trademark carve-out
+  protects the Marver name; delta-harness precedent reviewed). Personal open-source:
+  Nic's personal npm account creates the free `marver` ORG (not user scope) and
+  publishes @marver/design from it - brand-aligned, transferable, still 100% personally
+  owned. Steps: npm login + create org (Nic, before it's squatted) -> LICENSE + NOTICE +
+  license field Apache-2.0 -> repo public -> trusted-publishing workflow (OIDC, tag-
+  triggered) -> pilot switches tarball -> registry dep. Also: move the marver-pilot
+  Railway project from the Carrara Labs workspace to a personal one (personal project,
+  personal infra - the vault's Personal/Carrara boundary applied).
 - **Interact-mode goto silently grows the board, with no way back.** In interact mode,
   clicking a data-goto whose target frame is not on the current board spawns a node for
   it (App's sh:go handler). Problems: the UI has no node-remove control (deliberate -
