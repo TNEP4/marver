@@ -171,13 +171,12 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   content: ''; position: absolute; border-radius: inherit; pointer-events: none;
   background: conic-gradient(from var(--sh-rot),
     var(--interact-strong) 0deg,
-    var(--interact-strong) 45deg,
-    var(--interact-spark) 80deg,
-    var(--interact-strong) 115deg,
-    var(--interact-deep) 195deg,
-    var(--interact-strong) 230deg,
-    var(--interact-spark) 262deg,
-    var(--interact-strong) 295deg,
+    var(--interact-strong) 105deg,
+    var(--interact-spark) 135deg,
+    var(--interact-strong) 165deg,
+    var(--interact-strong) 285deg,
+    var(--interact-spark) 315deg,
+    var(--interact-strong) 345deg,
     var(--interact-strong) 360deg);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
@@ -189,7 +188,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   inset: calc(-2.5px * var(--sh-inv, 1));
   padding: calc(2.5px * var(--sh-inv, 1));
   border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
-  opacity: .45;
+  opacity: .6;
 }
 .sh-node.interact::after {
   inset: calc(-9px * var(--sh-inv, 1));
