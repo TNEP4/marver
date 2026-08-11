@@ -42,8 +42,8 @@ function Tip({ label, side = 'top', children }: { label: ReactNode; side?: 'top'
 }
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
-/** Display name for a board: the reserved 'everything' key reads as "All scenes". */
-const boardLabel = (n: string) => (n === 'everything' ? 'All scenes' : cap(n))
+/** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
+const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
 
 /** One collapsible scene group in the sidebar. */
 function SceneGroup({ name, count, children }: { name: string; count: number; children: ReactNode }) {
@@ -122,8 +122,8 @@ function BoardMenu() {
     if (!pop.open) {
       try {
         const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-        setNames(['everything', ...list.map((b) => b.name).filter((n) => n !== 'everything')])
-      } catch { setNames(['everything']) }
+        setNames(['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes')])
+      } catch { setNames(['all-scenes']) }
     }
     pop.toggle()
   }
@@ -135,14 +135,14 @@ function BoardMenu() {
   return (
     <div className="sh-board" ref={pop.boxRef}>
       <button className="it" onClick={toggle}>
-        {board === 'everything' ? <CardsThreeIcon size={14} className="tw" /> : <CardsIcon size={14} className="tw" />}
+        {board === 'all-scenes' ? <CardsThreeIcon size={14} className="tw" /> : <CardsIcon size={14} className="tw" />}
         <span>{boardLabel(board)}</span>
         <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
       </button>
       <Popover pop={pop}>
         {names.map((n) => (
           <button key={n} onClick={() => pick(n)}>
-            {n === 'everything' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}<span>{boardLabel(n)}</span>
+            {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}<span>{boardLabel(n)}</span>
             {n === board && <CheckIcon size={13} className="chk" />}
           </button>
         ))}

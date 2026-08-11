@@ -57,6 +57,6 @@ lays it out, and keeps it tidy:
 
 - The same frame may appear on many boards, or twice on one board (e.g. two widths:
   add `"w"`/`"h"` on a node to pin a size).
-- `auto: false` boards show exactly their list. The `everything` board is auto-managed -
+- `auto: false` boards show exactly their list. The `all-scenes` board is auto-managed -
   never write it.
 - Use boards for comparisons: version A vs B vs C of a flow, side by side.

@@ -38,14 +38,14 @@ interface State {
   selection: string[]                 // ordered; last entry is the primary (bar anchor)
   interact: string | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
-  board: string                       // active board name; 'everything' is the auto board
+  board: string                       // active board name; 'all-scenes' is the auto board
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
   baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
   panelOpen: boolean
   scale: number
   toasts: Toast[]
-  boardHash: string | null            // sha256 of everything.json on disk, when materialized
+  boardHash: string | null            // sha256 of the board file on disk, when materialized
   dirty: boolean
 
   boot(): Promise<boolean>
@@ -96,7 +96,7 @@ export const useStore = create<State>((set, get) => {
       }
       let nodes: Node[] = []
       let boardHash: string | null = null
-      let boardAuto = boardName === 'everything'
+      let boardAuto = boardName === 'all-scenes'
       let deviceView: string | null = null
       let baseLayout: State['baseLayout'] = null
       let needTidy = false
@@ -157,7 +157,7 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'everything', boardAuto: true, deviceView: null, baseLayout: null,
+    manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'all-scenes', boardAuto: true, deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
