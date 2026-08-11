@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, StackIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. */
@@ -121,14 +121,14 @@ function BoardMenu() {
   return (
     <div className="sh-board" ref={pop.boxRef}>
       <button className="it" onClick={toggle}>
-        <StackIcon size={14} className="tw" />
+        {board === 'everything' ? <CardsThreeIcon size={14} className="tw" /> : <CardsIcon size={14} className="tw" />}
         <span>{cap(board)}</span>
         <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined, color: 'var(--glass-ink-3)' }} />
       </button>
       <Popover pop={pop}>
         {names.map((n) => (
           <button key={n} onClick={() => pick(n)}>
-            <StackIcon size={14} /><span>{cap(n)}</span>
+            {n === 'everything' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}<span>{cap(n)}</span>
             {n === board && <CheckIcon size={13} className="chk" />}
           </button>
         ))}
