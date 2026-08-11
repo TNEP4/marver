@@ -5,12 +5,10 @@
  * close), sizing, and exit; the stage owns navigation and posts sh:stage-* messages.
  */
 import { useEffect, useRef, useState } from 'react'
-import { useStore, CONFIG, type Node } from './store.ts'
+import { useStore, CONFIG, boardLabel, cap, type Node } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { MoonIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
-
-const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
 /** Board-order frame ids playable on the stage (tsx only - html frames are their own
  *  documents and cannot mount into the persistent chain), deduped. */
@@ -58,12 +56,12 @@ export function PlayOverlay() {
 }
 
 function PlayInner() {
-  const play = useStore((s) => s.play)!
+  const play = useStore((s) => s.play)
   const board = useStore((s) => s.board)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // the src is frozen at mount - navigation happens INSIDE the stage; device and theme
   // changes must never reload it (a phone does not remount when you flip dark mode)
-  const src = useRef(`${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}`)
+  const src = useRef(play ? `${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}` : '')
   const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
   const [idle, setIdle] = useState(false)
 
@@ -158,6 +156,8 @@ function PlayInner() {
     return () => { window.clearTimeout(t); window.removeEventListener('mousemove', wake) }
   }, [])
 
+  if (!play) return null                       // parent gates on play; belt to its braces
+
   const vp = CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
   const scale = Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
 
@@ -172,7 +172,7 @@ function PlayInner() {
         />
       </div>
       <div className={`sh-play-bar${idle ? ' idle' : ''}`}>
-        <span className="bd">{board === 'all-scenes' ? 'All scenes' : cap(board)}</span>
+        <span className="bd">{boardLabel(board)}</span>
         <i className="sep" />
         {Object.entries(CONFIG.viewports).map(([name, v], i) => (
           <button key={name} className={play.device === name ? 'on' : undefined}

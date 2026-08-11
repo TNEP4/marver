@@ -1,6 +1,6 @@
 import { Component, cloneElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG } from './store.ts'
+import { useStore, CONFIG, boardLabel, cap } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
@@ -42,10 +42,6 @@ function Tip({ label, side = 'top', children }: { label: ReactNode; side?: 'top'
     </>
   )
 }
-
-const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
-/** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
-const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
 
 /** One collapsible scene group in the sidebar. `held` marks a scene that contains a
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */

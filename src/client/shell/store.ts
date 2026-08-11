@@ -14,6 +14,10 @@ export interface Toast { id: number; text: string }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean } = shConfig
 
+export const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+/** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
+export const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
+
 const HEADER = 28
 let toastSeq = 0
 const nodeKey = () => 'n_' + Math.random().toString(36).slice(2, 8)

@@ -109,8 +109,10 @@ function Stage() {
     document.addEventListener('click', onClick, true)
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // Escape always exits, even mid-typing (matches the canvas bridge)
       if (e.key === 'Escape') { post({ type: 'sh:stage-exit' }); return }
+      if (e.metaKey || e.ctrlKey) return       // ⌘D is the browser's bookmark, not our theme
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         const list = walk.current
         if (list.length < 2) return
