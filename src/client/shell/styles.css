@@ -349,7 +349,15 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* pill nav */
 /* uniform 5px inset on every side: 34px buttons + 2*5px = 44px, same as the fab */
 .sh-pill { position: absolute; right: var(--edge); top: var(--edge); z-index: 10; display: flex; align-items: center; gap: 1px;
-  border-radius: 999px; padding: 5px }
+  border-radius: 999px; padding: 5px; transition: transform var(--morph), opacity .2s ease }
+.sh-pill.closed { transform: translateY(-6px) scale(.96); opacity: 0; pointer-events: none }
+/* the pill's expand chip - same ladder as the sidebar's panel/fab pair, mirrored top-right */
+.sh-pill-fab { position: absolute; right: var(--edge); top: var(--edge); z-index: 11; width: 44px; height: 44px;
+  display: grid; place-items: center; border-radius: 999px; border: 0; background: none;
+  color: var(--glass-ink-2); cursor: pointer;
+  transition: transform var(--morph), opacity .2s ease }
+.sh-pill-fab:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.sh-pill-fab.hidden { transform: scale(.5); opacity: 0; pointer-events: none }
 .sh-pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 34px;
   min-width: 34px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); background: none; border: 0;
   padding: 0 10px; border-radius: 999px; cursor: pointer; white-space: nowrap }
@@ -442,3 +450,27 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* walk position readout */
 .sh-play-nav .pos { padding: 0 8px; color: rgba(245, 245, 247, .64); font-variant-numeric: tabular-nums; white-space: nowrap }
 .sh-play-nav .pos em { font-style: normal; opacity: .45; margin: 0 2px }
+
+/* collapsed chip - the bar's fab. Always mounted so collapse/expand crossfades. */
+.sh-play-chip { position: absolute; top: 14px; right: 16px; width: 38px; height: 38px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  color: rgba(245, 245, 247, .64); cursor: pointer; transition: opacity .35s ease }
+.sh-play-chip:hover { color: #f5f5f7 }
+.sh-play-chip.idle { opacity: 0; pointer-events: none }
+
+/* the H coach bubble: hairline, translucent, teaches the way back from immersive mode */
+.sh-play-hint { position: absolute; top: 14px; right: 16px; display: flex; align-items: center; gap: 10px;
+  padding: 8px 8px 8px 14px; border-radius: 12px;
+  background: rgba(18, 18, 24, .6); border: 1px solid rgba(255, 255, 255, .14);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .85);
+  animation: sh-play-in .3s ease-out }
+.sh-play-hint kbd { font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 6px; border-radius: 5px;
+  background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16) }
+.sh-play-hint button { height: 26px; padding: 0 10px; border: 0; border-radius: 999px; cursor: pointer;
+  font: 600 11px -apple-system, system-ui, sans-serif; background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+.sh-play-hint button:hover { background: rgba(255, 255, 255, .22) }
+.sh-play-hint button.dim { background: transparent; color: rgba(245, 245, 247, .5); font-weight: 500 }
+.sh-play-hint button.dim:hover { color: rgba(245, 245, 247, .8); background: rgba(255, 255, 255, .08) }

@@ -282,6 +282,7 @@ function ThemeMenu() {
 export function App() {
   const { manifest, nodes, panelOpen, toasts, selection } = useStore()
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
+  const [pillOpen, setPillOpen] = useState(true)
 
   // boot honors the deep link (SPEC-M2 §3): board before load, play mode after it.
   // Selection + camera intent are restored by the Canvas boot effect.
@@ -528,8 +529,8 @@ export function App() {
           aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelHollowIcon size={18} /></button>
       </Tip>
 
-      {/* floating pill nav, top right */}
-      <nav className="sh-pill">
+      {/* floating pill nav, top right; collapses to a chip (same ladder as panel/fab) */}
+      <nav className={`sh-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
         <DeviceMenu />
         <ThemeMenu />
         <i className="sep" />
@@ -541,7 +542,16 @@ export function App() {
         <Tip side="bottom" label={<><b>Play</b><span>P</span></>}>
           <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
+        <Tip side="bottom" label="Collapse toolbar">
+          <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
+            <CaretIcon size={12} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+        </Tip>
       </nav>
+      <Tip side="bottom" label="Show toolbar">
+        <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
+          aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><CaretIcon size={14} /></button>
+      </Tip>
 
       <PlayOverlay />
 

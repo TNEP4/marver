@@ -90,3 +90,14 @@ chrome wakes on pointer events and never idles on coarse pointers; malformed has
 parse to the default view instead of throwing at module init. DECLINED: promoting stage
 async errors from toast to error card - render errors already get the Boundary card, and
 killing a live demo over a stray rejection is worse than a toast. Judgment call, recorded.
+
+## Play chrome ladder (2026-08-11)
+
+Chrome states mirror the sidebar's panel/fab ladder: open / collapsed (chip) / hidden
+(immersive). `C` collapses, `H` hides everything, corners reveal. The reported
+hide-under-cursor bug: the reveal corners are narrower than the bar, so crossing
+x = innerWidth-220 hid it mid-hover - fixed by `over` state (pointer on any chrome piece
+always keeps it shown). The H coach bubble is the first localStorage use in the shell
+(`mv-play-hint-off`); until dismissed forever, hidden-mode corners surface the bubble
+(teaching H) rather than the chrome - after dismissal they reveal the chrome directly.
+The design pill gained the same collapse/expand pair (.sh-pill-fab).

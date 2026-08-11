@@ -122,8 +122,17 @@ function PlayInner() {
   const src = useRef(play ? `${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}` : '')
   const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
   const [idle, setIdle] = useState(false)
-  const [hidden, setHidden] = useState(false)      // H - sticky until toggled back
-  const [corner, setCorner] = useState(false)      // hovering a reveal corner always shows chrome
+  // chrome has three states, like the sidebar's panel/fab ladder: open (full bar + nav),
+  // collapsed (a single chip to expand back, nav stays), hidden (immersive - nothing).
+  const [chrome, setChrome] = useState<'open' | 'collapsed' | 'hidden'>('open')
+  const chromeRef = useRef(chrome)             // handleKey lives in a mount-time closure
+  chromeRef.current = chrome
+  const [corner, setCorner] = useState(false)      // pointer in a reveal corner
+  const [over, setOver] = useState(false)          // pointer ON a chrome piece - never hide under the cursor
+  // the H coach bubble: shown on entering hidden until dismissed forever (localStorage)
+  const [neverHint, setNeverHint] = useState(() => !!localStorage.getItem('mv-play-hint-off'))
+  const [hint, setHint] = useState(false)
+  const hintTimer = useRef<number | undefined>(undefined)
 
   const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
 
@@ -201,13 +210,28 @@ function PlayInner() {
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
+  /** Enter immersive mode; the coach bubble teaches the way back until dismissed forever. */
+  const hideAll = () => {
+    setChrome('hidden')
+    if (localStorage.getItem('mv-play-hint-off')) return   // not `neverHint`: this runs in a mount-time closure
+    setHint(true)
+    window.clearTimeout(hintTimer.current)
+    hintTimer.current = window.setTimeout(() => setHint(false), 6000)
+  }
+  const dismissHintForever = () => {
+    localStorage.setItem('mv-play-hint-off', '1')
+    setNeverHint(true)
+    setHint(false)
+  }
+
   // shared handler: keys arrive directly (focus in shell) or forwarded by the stage
   const handleKey = (key: string, code: string) => {
     if (key === 'Escape') { exit(); return }
     if (key === 'ArrowRight') { step(1); return }
     if (key === 'ArrowLeft') { step(-1); return }
     if (key === 'r') { restart(); return }
-    if (key === 'h') { setHidden((h) => !h); return }
+    if (key === 'h') { chromeRef.current === 'hidden' ? setChrome('open') : hideAll(); return }
+    if (key === 'c') { setChrome(chromeRef.current === 'collapsed' ? 'open' : 'collapsed'); return }
     if (/^Digit[1-9]$/.test(code)) {
       const names = Object.keys(CONFIG.viewports)
       const idx = Number(code.slice(5))
@@ -262,7 +286,17 @@ function PlayInner() {
   const fill = play.device === 'fill'
   const vp = fill ? { width: win.w, height: win.h } : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
   const scale = fill ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
-  const chromeOff = (idle || hidden) && !corner
+  // awake beats the idle fade; a pointer ON a chrome piece always keeps it (the corner
+  // zones are narrower than the bar - without `over`, crossing them hid it mid-hover).
+  // In hidden mode the corners reveal real chrome only once the coach bubble is retired;
+  // before that they surface the bubble, which is what teaches H in the first place.
+  const awake = !idle || over || corner
+  const reveal = chrome === 'hidden' && (corner || over) && neverHint
+  const barOn = (chrome === 'open' && awake) || reveal
+  const chipOn = chrome === 'collapsed' && awake
+  const navOn = (chrome !== 'hidden' && awake) || reveal
+  const hintOn = chrome === 'hidden' && !neverHint && (hint || corner || over)
+  const chromeProps = { onPointerEnter: () => setOver(true), onPointerLeave: () => setOver(false) }
   const names = Object.keys(CONFIG.viewports)
   const list = playList()
   const pos = list.indexOf(play.at)
@@ -278,7 +312,7 @@ function PlayInner() {
         />
       </div>
 
-      <div className={`sh-play-bar${chromeOff ? ' idle' : ''}`}>
+      <div className={`sh-play-bar${barOn ? '' : ' idle'}`} {...chromeProps}>
         <BoardMenu current={board} />
         <i className="sep" />
         {Object.entries(CONFIG.viewports).map(([name, v], i) => (
@@ -302,8 +336,8 @@ function PlayInner() {
           </Tip>
         ))}
         <i className="sep" />
-        <Tip inv side="bottom" label={<><b>{hidden ? 'Show' : 'Hide'} controls</b><span className="k">H</span></>}>
-          <button onClick={() => setHidden(!hidden)}>
+        <Tip inv side="bottom" label={<><b>Collapse</b><span>H hides everything</span><span className="k">C</span></>}>
+          <button onClick={() => setChrome('collapsed')}>
             <CaretIcon size={13} style={{ transform: 'rotate(180deg)' }} />
           </button>
         </Tip>
@@ -312,7 +346,21 @@ function PlayInner() {
         </Tip>
       </div>
 
-      <div className={`sh-play-nav${chromeOff ? ' idle' : ''}`}>
+      <Tip inv side="bottom" label={<><b>Show controls</b><span>H hides everything</span><span className="k">C</span></>}>
+        <button className={`sh-play-chip${chipOn ? '' : ' idle'}`} onClick={() => setChrome('open')} {...chromeProps}>
+          <CaretIcon size={13} />
+        </button>
+      </Tip>
+
+      {hintOn && (
+        <div className="sh-play-hint" {...chromeProps}>
+          <span>Press <kbd>H</kbd> to show controls</span>
+          <button onClick={() => setHint(false)}>OK</button>
+          <button className="dim" onClick={dismissHintForever}>Don't show again</button>
+        </div>
+      )}
+
+      <div className={`sh-play-nav${navOn ? '' : ' idle'}`} {...chromeProps}>
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
           <button onClick={restart}><ReloadIcon size={14} /></button>
         </Tip>

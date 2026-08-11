@@ -116,7 +116,7 @@ function Stage() {
       if (e.metaKey || e.ctrlKey) return       // ⌘D is the browser's bookmark, not our theme
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       // every play shortcut belongs to the shell (it owns walk order + chrome) - forward
-      if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'ArrowRight', 'ArrowLeft'].includes(e.key))
+      if (/^Digit[0-9]$/.test(e.code) || ['c', 'd', 'h', 'r', 'ArrowRight', 'ArrowLeft'].includes(e.key))
         post({ type: 'sh:stage-key', key: e.key, code: e.code })
     }
     window.addEventListener('keydown', onKey)
