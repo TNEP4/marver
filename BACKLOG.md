@@ -54,3 +54,10 @@ Small items that are not milestone work. One line each; delete when done.
   bare `marver` and deprecate @marver-design/marver with a pointer.
 - **CLI version banner is hardcoded** (`cli.version('0.1.0')` in src/cli/index.ts) -
   read from package.json at next release.
+- **DOGFOOD: marver.design website (NEXT, 2026-08-11)** - fresh repo `~/marver-site`,
+  fresh Claude session, official registry install, README-and-AGENTS.md-only onboarding,
+  FRICTION.md kept by the dogfooding session. Supersedes the earlier "marver.design"
+  bullet's open questions about approach. Friction log gets triaged here for 0.3.0.
+- **Distribution: DONE 2026-08-11** (see DECISIONS.md) except user actions: send
+  dispute email, flip repo public + register trusted publisher, carrara-labs npm org
+  transfer, move Railway project to personal workspace.

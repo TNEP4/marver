@@ -151,3 +151,27 @@ re-resolves surviving nodes when meta.theme changes (derived, never dirties). Th
 earlier "themes switch randomly" reports were part model-surprise, part my stale test
 tabs saving against the same board (writer hygiene: park test browsers on the published
 site when done).
+
+## Distribution executed (2026-08-11)
+
+@marver-design/marver@0.2.0 is live on the public npm registry (Apache-2.0, LICENSE +
+NOTICE in the tarball, homepage marver.design). The bare `marver` name is squatted by a
+2015 placeholder, which also blocks the `marver` org - so the org is `marver-design`
+under Nic's personal `nictouron` account; a dispute email is drafted (Nic to send,
+4-week clock). Trusted-publishing workflow (.github/workflows/release.yml, OIDC,
+tag-triggered) is committed but inert until the repo goes public and is registered as a
+trusted publisher; until then releases are `npm version` + `npm publish` from Nic's
+terminal (passkey 2FA needs a real TTY - harness sessions can't publish). The pilot now
+installs from the registry (`^0.2.0`, tarball retired) and the Railway production
+deploy was rebuilt from that registry install and verified live - the exact path a
+stranger's repo takes.
+
+## Next milestone: dogfood marver.design (decided 2026-08-11)
+
+The website is built in a SEPARATE fresh repo by a SEPARATE Claude session that gets
+only what a stranger gets: the README install line and whatever `npx marver init`
+scaffolds. No specs, no source knowledge, no help from this session. It keeps a
+FRICTION.md of every confusion, doc gap, and workaround (including every time it had to
+read package source in node_modules to answer something AGENTS.md should have). That
+log flows back to this session and becomes the 0.3.0 backlog. This tests studio mode
+end to end (the pilot covers embedded mode) and doubles as the stress test.
