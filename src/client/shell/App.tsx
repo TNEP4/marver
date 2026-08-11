@@ -404,9 +404,12 @@ export function App() {
     .map((name) => ({ name, frames: frames.filter((f) => f.scene === name).length }))
   // the shell follows the board: majority-dark frames flip the whole chrome + canvas dark
   const dark = nodes.length > 0 && nodes.filter((n) => n.theme === 'dark').length > nodes.length / 2
+  // interact mode re-accents the ENTIRE shell purple - one token override class,
+  // everything derived from --accent follows (mark, sidebar, bars, handles, beams)
+  const interacting = useStore((s) => s.interact !== null)
 
   return (
-    <div className={`sh-app${dark ? ' dark' : ''}`}>
+    <div className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}`}>
       <Canvas />
       <SelectionBar />
 

@@ -26,7 +26,8 @@
   --card-err-ink: #b3261e; --card-err-bg: #fceceb;
   --card-warn-ink: #7a4a00; --card-warn-bg: #fdf3e1;
   --interact: #db35f2; --interact-ring: rgba(219, 53, 242, .16);
-  --interact-soft: rgba(234, 141, 255, .85); --interact-deep: rgba(176, 47, 194, .55); --interact-spark: rgba(255, 255, 255, .6);
+  --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
+  --interact-deep: rgba(176, 47, 194, .85); --interact-spark: rgba(255, 255, 255, .95);
 
   --r-node: 10px; --r-panel: 24px; --edge: 10px;
   --blur: blur(20px) saturate(150%);
@@ -57,9 +58,26 @@
   --card-err-ink: #ff9d94; --card-err-bg: #2a1512;
   --card-warn-ink: #ffd9a0; --card-warn-bg: #2a2113;
   --interact: #ea8dff; --interact-ring: rgba(219, 53, 242, .3);
-  --interact-soft: rgba(234, 141, 255, .9); --interact-deep: rgba(203, 48, 224, .6); --interact-spark: rgba(255, 255, 255, .75);
+  --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
+  --interact-deep: rgba(203, 48, 224, .8); --interact-spark: rgba(255, 255, 255, .9);
 
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
+}
+
+/* interact mode: the whole shell shifts to the interactive purple - one token override,
+   and every accent-derived surface (mark, sidebar actives, selection bar, beams, rings,
+   handles, device chips) follows without knowing the mode exists */
+.sh-app.interacting {
+  --accent: #db35f2; --accent-ring: rgba(219, 53, 242, .2); --beam: rgba(219, 53, 242, .42);
+  --edge-accent: rgba(219, 53, 242, .8); --inner-tint: rgba(219, 53, 242, .13);
+  --accent-wash: rgba(219, 53, 242, .07);
+  --glass-accent: #b02fc2; --glass-accent-bg: rgba(219, 53, 242, .13);
+}
+.sh-app.dark.interacting {
+  --accent: #db35f2; --accent-ring: rgba(219, 53, 242, .32); --beam: rgba(219, 53, 242, .5);
+  --edge-accent: rgba(234, 141, 255, .85); --inner-tint: rgba(234, 141, 255, .16);
+  --accent-wash: rgba(219, 53, 242, .14);
+  --glass-accent: #ea8dff; --glass-accent-bg: rgba(219, 53, 242, .28);
 }
 
 * { box-sizing: border-box }
@@ -147,19 +165,19 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node.sel::after { display: none }   /* the accent ring owns the selected edge */
 @property --sh-rot { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
 .sh-node.interact::after {
-  inset: calc(-7px * var(--sh-inv, 1));
-  padding: calc(3px * var(--sh-inv, 1));
-  border-radius: calc(var(--r-node) + 6px * var(--sh-inv, 1));
+  inset: calc(-9px * var(--sh-inv, 1));
+  padding: calc(4.5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
   background: conic-gradient(from var(--sh-rot),
-    transparent 0deg,
-    var(--interact-soft) 55deg,
-    var(--interact) 100deg,
+    rgba(219, 53, 242, .18) 0deg,
+    var(--interact-soft) 45deg,
+    var(--interact-strong) 95deg,
     var(--interact-deep) 145deg,
-    transparent 205deg,
+    rgba(219, 53, 242, .18) 200deg,
     var(--interact-spark) 245deg,
-    var(--interact-soft) 280deg,
-    transparent 335deg);
-  animation: sh-orbit 3s linear infinite;
+    var(--interact-soft) 285deg,
+    rgba(219, 53, 242, .18) 360deg);
+  animation: sh-orbit 2.2s linear infinite;
 }
 @keyframes sh-orbit { to { --sh-rot: 360deg } }
 @media (prefers-reduced-motion: reduce) { .sh-node.interact::after { animation: none } }
