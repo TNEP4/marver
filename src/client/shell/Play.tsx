@@ -301,14 +301,19 @@ function PlayInner() {
   const list = playList()
   const pos = list.indexOf(play.at)
 
+  // whole-pixel wrapper + per-axis scale so the iframe lands exactly on its edges -
+  // fractional sizes left subpixel seams glowing at the corners on dark frames
+  const dw = Math.round(vp.width * scale)
+  const dh = Math.round(vp.height * scale)
+
   return (
     <div className={`sh-play${fill ? ' fill' : ''}`}>
-      <div className="dev" style={{ width: vp.width * scale, height: vp.height * scale }}>
+      <div className="dev" data-theme={play.theme} style={{ width: dw, height: dh }}>
         <iframe
           ref={iframeRef}
           src={src.current}
           title="play"
-          style={{ width: vp.width, height: vp.height, transform: `scale(${scale})` }}
+          style={{ width: vp.width, height: vp.height, transform: `scale(${dw / vp.width}, ${dh / vp.height})` }}
         />
       </div>
 
@@ -355,6 +360,7 @@ function PlayInner() {
       {hintOn && (
         <div className="sh-play-hint" {...chromeProps}>
           <span>Press <kbd>H</kbd> to show controls</span>
+          <i className="sep" />
           <button onClick={() => setHint(false)}>OK</button>
           <button className="dim" onClick={dismissHintForever}>Don't show again</button>
         </div>

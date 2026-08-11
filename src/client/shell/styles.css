@@ -412,12 +412,18 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex;
   align-items: center; justify-content: center; animation: sh-play-in .28s ease-out }
 @keyframes sh-play-in { from { opacity: 0 } }
-.sh-play .dev { position: relative; transition: width .28s ease, height .28s ease }
-.sh-play .dev iframe { border: 0; background: #fff; transform-origin: 0 0; border-radius: 14px;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 32px 90px rgba(0, 0, 0, .6);
-  transition: border-radius .28s ease }
-.sh-play.fill .dev { transition: none }
-.sh-play.fill .dev iframe { border-radius: 0; box-shadow: none }
+/* the device wears the frame-node card language (same theme border tokens), which also
+   kills the corner seams: radius + clipping live on the WRAPPER at whole pixels, the
+   iframe is transparent and scaled to land exactly on the wrapper's edges. The ring is
+   an outside box-shadow, not a border - border-box would clip a pixel of content. */
+.sh-play .dev { position: relative; overflow: hidden; border-radius: 14px;
+  --pdev-bg: #fff; --pdev-brd: #dddee5;
+  background: var(--pdev-bg);
+  box-shadow: 0 0 0 1px var(--pdev-brd), 0 32px 90px rgba(0, 0, 0, .6);
+  transition: width .28s ease, height .28s ease }
+.sh-play .dev[data-theme="dark"] { --pdev-bg: #0f1015; --pdev-brd: #2c2d38 }
+.sh-play .dev iframe { display: block; border: 0; background: transparent; transform-origin: 0 0 }
+.sh-play.fill .dev { border-radius: 0; box-shadow: none; transition: none }
 
 /* the two floating chrome pieces share one glass language and one idle behavior */
 .sh-play-bar, .sh-play-nav { position: absolute; display: flex; align-items: center; gap: 1px;
@@ -460,16 +466,18 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play-chip:hover { color: #f5f5f7 }
 .sh-play-chip.idle { opacity: 0; pointer-events: none }
 
-/* the H coach bubble: hairline, translucent, teaches the way back from immersive mode */
-.sh-play-hint { position: absolute; top: 14px; right: 16px; display: flex; align-items: center; gap: 10px;
-  padding: 8px 8px 8px 14px; border-radius: 12px;
+/* the H coach bubble: hairline, translucent, teaches the way back from immersive mode.
+   Same pill geometry and separators as the bar it stands in for. */
+.sh-play-hint { position: absolute; top: 14px; right: 16px; display: flex; align-items: center; gap: 3px;
+  padding: 4px 4px 4px 14px; border-radius: 999px;
   background: rgba(18, 18, 24, .6); border: 1px solid rgba(255, 255, 255, .14);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .85);
   animation: sh-play-in .3s ease-out }
+.sh-play-hint .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 8px }
 .sh-play-hint kbd { font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 6px; border-radius: 5px;
   background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16) }
-.sh-play-hint button { height: 26px; padding: 0 10px; border: 0; border-radius: 999px; cursor: pointer;
+.sh-play-hint button { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer;
   font: 600 11px -apple-system, system-ui, sans-serif; background: rgba(255, 255, 255, .14); color: #f5f5f7 }
 .sh-play-hint button:hover { background: rgba(255, 255, 255, .22) }
 .sh-play-hint button.dim { background: transparent; color: rgba(245, 245, 247, .5); font-weight: 500 }

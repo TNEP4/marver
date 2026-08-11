@@ -8,6 +8,8 @@ import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
 
+let booted = false                             // survives Fast Refresh; see the boot effect
+
 /** One collapsible scene group in the sidebar. `held` marks a scene that contains a
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */
 function SceneGroup({ name, count, held, children }: { name: string; count: number; held: boolean; children: ReactNode }) {
@@ -285,8 +287,12 @@ export function App() {
   const [pillOpen, setPillOpen] = useState(true)
 
   // boot honors the deep link (SPEC-M2 §3): board before load, play mode after it.
-  // Selection + camera intent are restored by the Canvas boot effect.
+  // Selection + camera intent are restored by the Canvas boot effect. The module-level
+  // guard makes boot single-shot: Fast Refresh re-runs mount effects on every App edit,
+  // and a re-boot would revert live state to the long-consumed deep link.
   useEffect(() => {
+    if (booted) return
+    booted = true
     if (bootHash.board && bootHash.board !== useStore.getState().board)
       useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
     boot().then((ok) => {
@@ -335,8 +341,13 @@ export function App() {
         setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
       }
     }
+    // hashchange too: pasting a link into the same tab or editing the URL bar changes
+    // the hash WITHOUT a popstate - ignoring it let the projection rewrite the URL back.
+    // Our own writeHash never fires either event (history API), so there is no echo;
+    // back/forward fires both, and the handler is idempotent under the double call.
     window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
+    window.addEventListener('hashchange', onPop)
+    return () => { window.removeEventListener('popstate', onPop); window.removeEventListener('hashchange', onPop) }
   }, [])
 
   // page title follows the open board
