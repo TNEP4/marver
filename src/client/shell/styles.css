@@ -421,11 +421,14 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
    The ring is an inside overlay, not a border: border-box would clip a pixel of content. */
 .sh-play .dev { position: relative; overflow: hidden; border-radius: 14px;
   --pdev-bg: #fff; --pdev-brd: #cfd2db;
-  --pdev-edge: linear-gradient(155deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .2) 30%, rgba(24, 24, 27, .08) 65%, rgba(255, 255, 255, .55));
+  /* the dark device's edge, mirrored: the same 155° gradient and alpha ladder in INK
+     instead of white - the ring catches shadow where the dark one catches light, so it
+     reads against the white body the way the glint reads against the dark one */
+  --pdev-edge: linear-gradient(155deg, rgba(24, 24, 27, .32), rgba(24, 24, 27, .06) 30%, rgba(24, 24, 27, .03) 65%, rgba(24, 24, 27, .18));
   background: var(--pdev-bg);
-  /* a light frame on the black stage gets no definition from a hairline alone - a faint
-     luminous halo lifts it off the backdrop (the dark variant below doesn't need one) */
-  box-shadow: 0 0 54px rgba(255, 255, 255, .1), 0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45);
+  /* a light frame on the black stage also gets a faint luminous halo lifting it off
+     the backdrop (the dark variant below doesn't need one) */
+  box-shadow: 0 0 54px rgba(255, 255, 255, .12), 0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45);
   transition: width .28s ease, height .28s ease }
 .sh-play .dev[data-theme="dark"] { --pdev-bg: #0f1015; --pdev-brd: #2c2d38;
   --pdev-edge: linear-gradient(155deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .02) 65%, rgba(255, 255, 255, .16));
