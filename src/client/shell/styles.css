@@ -25,7 +25,8 @@
   --head-ink: #18181b; --head-dim: rgba(24, 24, 27, .4);
   --card-err-ink: #b3261e; --card-err-bg: #fceceb;
   --card-warn-ink: #7a4a00; --card-warn-bg: #fdf3e1;
-  --interact: #0e6b57;
+  --interact: #db35f2; --interact-ring: rgba(219, 53, 242, .16);
+  --interact-soft: rgba(234, 141, 255, .85); --interact-deep: rgba(176, 47, 194, .55); --interact-spark: rgba(255, 255, 255, .6);
 
   --r-node: 10px; --r-panel: 24px; --edge: 10px;
   --blur: blur(20px) saturate(150%);
@@ -55,7 +56,8 @@
   --head-ink: #ececf1; --head-dim: rgba(236, 236, 241, .42);
   --card-err-ink: #ff9d94; --card-err-bg: #2a1512;
   --card-warn-ink: #ffd9a0; --card-warn-bg: #2a2113;
-  --interact: #7fe0c3;
+  --interact: #ea8dff; --interact-ring: rgba(219, 53, 242, .3);
+  --interact-soft: rgba(234, 141, 255, .9); --interact-deep: rgba(203, 48, 224, .6); --interact-spark: rgba(255, 255, 255, .75);
 
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
 }
@@ -115,7 +117,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }
 .sh-overlay { position: absolute; inset: 0; cursor: default }
-.sh-node.interact { outline: calc(2px * var(--sh-inv, 1)) dashed var(--interact); outline-offset: calc(3px * var(--sh-inv, 1)) }
+.sh-node.interact { border-color: var(--interact);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--interact-ring), var(--shadow-node) }
 
 .sh-handle { position: absolute; background: var(--node-bg); border: 1.5px solid var(--accent); border-radius: 4px; z-index: 3;
   transform: scale(var(--sh-inv, 1)) }   /* constant screen size; hit target grows as you zoom out */
@@ -140,6 +145,24 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude }
 .sh-node.sel::after { display: none }   /* the accent ring owns the selected edge */
+@property --sh-rot { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.sh-node.interact::after {
+  inset: calc(-7px * var(--sh-inv, 1));
+  padding: calc(3px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 6px * var(--sh-inv, 1));
+  background: conic-gradient(from var(--sh-rot),
+    transparent 0deg,
+    var(--interact-soft) 55deg,
+    var(--interact) 100deg,
+    var(--interact-deep) 145deg,
+    transparent 205deg,
+    var(--interact-spark) 245deg,
+    var(--interact-soft) 280deg,
+    transparent 335deg);
+  animation: sh-orbit 3s linear infinite;
+}
+@keyframes sh-orbit { to { --sh-rot: 360deg } }
+@media (prefers-reduced-motion: reduce) { .sh-node.interact::after { animation: none } }
 
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
