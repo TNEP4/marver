@@ -129,9 +129,12 @@ function PlayInner() {
   chromeRef.current = chrome
   const [corner, setCorner] = useState(false)      // pointer in a reveal corner
   const [over, setOver] = useState(false)          // pointer ON a chrome piece - never hide under the cursor
-  // the H coach bubble: shown on entering hidden until dismissed forever (localStorage)
+  // the H coach bubble: shown on entering hidden until dismissed forever (localStorage).
+  // OK only snoozes it for the CURRENT hover session - while the pointer sits on the
+  // bubble, `over`/`corner` would otherwise keep it mounted and OK would look dead.
   const [neverHint, setNeverHint] = useState(() => !!localStorage.getItem('mv-play-hint-off'))
   const [hint, setHint] = useState(false)
+  const [hintSnooze, setHintSnooze] = useState(false)
   const hintTimer = useRef<number | undefined>(undefined)
 
   const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
@@ -215,14 +218,18 @@ function PlayInner() {
   const hideAll = () => {
     setChrome('hidden')
     if (localStorage.getItem('mv-play-hint-off')) return   // not `neverHint`: this runs in a mount-time closure
+    setHintSnooze(false)                       // every new hidden session teaches again
     setHint(true)
     window.clearTimeout(hintTimer.current)
     hintTimer.current = window.setTimeout(() => setHint(false), 6000)
   }
+  // Both dismissals unmount the bubble UNDER the pointer - its pointerleave never fires,
+  // so `over` must be cleared by hand or it sticks true and idle/snooze never recover.
   const dismissHintForever = () => {
     localStorage.setItem('mv-play-hint-off', '1')
     setNeverHint(true)
     setHint(false)
+    setOver(false)
   }
 
   // shared handler: keys arrive directly (focus in shell) or forwarded by the stage
@@ -255,6 +262,12 @@ function PlayInner() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // an OK'd bubble stays gone only for the current visit: leaving the corner rearms it,
+  // so the next deliberate hover teaches again (the way back must stay discoverable)
+  useEffect(() => {
+    if (!corner && !over) setHintSnooze(false)
+  }, [corner, over])
 
   useEffect(() => {
     const onResize = () => setWin({ w: window.innerWidth, h: window.innerHeight })
@@ -298,7 +311,7 @@ function PlayInner() {
   const barOn = (chrome === 'open' && awake) || reveal
   const chipOn = chrome === 'collapsed' && awake
   const navOn = (chrome !== 'hidden' && awake) || reveal
-  const hintOn = chrome === 'hidden' && !neverHint && (hint || corner || over)
+  const hintOn = chrome === 'hidden' && !neverHint && !hintSnooze && (hint || corner || over)
   const chromeProps = { onPointerEnter: () => setOver(true), onPointerLeave: () => setOver(false) }
   const names = Object.keys(CONFIG.viewports)
   const list = playList()
@@ -364,7 +377,7 @@ function PlayInner() {
         <div className="sh-play-hint" {...chromeProps}>
           <span>Press <kbd>H</kbd> to show controls</span>
           <i className="sep" />
-          <button onClick={() => setHint(false)}>OK</button>
+          <button onClick={() => { setHint(false); setHintSnooze(true); setOver(false) }}>OK</button>
           <button className="dim" onClick={dismissHintForever}>Don't show again</button>
         </div>
       )}
