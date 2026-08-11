@@ -1,18 +1,20 @@
 {
-  "name": "@marver/design",
-  "version": "0.1.12",
+  "name": "@marver-design/marver",
+  "version": "0.2.0",
   "description": "The agent-native design canvas. A design/ folder, one command, a canvas of live frames built from your repo's real components. The tool ships no AI - your coding agent is the designer.",
   "type": "module",
   "private": false,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "bin": {
-    "marver": "./dist/cli.mjs"
+    "marver": "dist/cli.mjs"
   },
   "files": [
     "dist",
     "src/client",
     "templates",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "exports": {
     "./runtime": "./src/client/runtime/index.ts",
@@ -45,5 +47,13 @@
   },
   "engines": {
     "node": ">=22.18.0"
+  },
+  "homepage": "https://marver.design",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TNEP4/marver.git"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
