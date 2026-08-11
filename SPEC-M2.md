@@ -24,9 +24,17 @@ board's first node.
 
 **Surface.** Full-window, near-black backdrop (`#0a0a0b` both themes). One device shell
 centered, sized to the chosen viewport's exact CSS pixels, scaled to fit the window
-(capped at 100%). Chrome is a minimal auto-hiding strip mirroring the canvas pill: device
-chips (digit hotkeys as on canvas), theme toggle, board name, close. Esc exits back to the
-canvas, landing on the frame you ended at.
+(capped at 100%) - or **fill** (frame-corners chip, digit after the last device): the
+frame IS the window, no backdrop, no device shell. Esc exits back to the canvas, landing
+on the frame you ended at.
+
+**Chrome.** Two floating pieces, same glass. Top-right bar: board switcher dropdown
+(switching stays in play, keeps the chosen device, restarts at the new board's start) ·
+device chips + fill · theme · hide · close. Bottom-left navigator: restart (`R`) · prev
+(`←`) · position `i/N` · next (`→`) - the manual back arrow is the escape hatch when a
+flow dead-ends. Chrome auto-hides when idle and hides outright with `H`; hovering the
+top-right or bottom-left corner always reveals it (in fill the stage reports those
+hovers, since the iframe covers the window). Coarse pointers never auto-hide.
 
 **One mount - this is the whole trick.** Unlike the canvas (one iframe per frame), play
 mode mounts ONE frame host: `providers → memoized layout chain → <Frame/>`. `data-goto`

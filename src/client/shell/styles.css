@@ -404,16 +404,39 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 @keyframes sh-play-in { from { opacity: 0 } }
 .sh-play .dev { position: relative; transition: width .28s ease, height .28s ease }
 .sh-play .dev iframe { border: 0; background: #fff; transform-origin: 0 0; border-radius: 14px;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 32px 90px rgba(0, 0, 0, .6) }
-.sh-play-bar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex;
-  align-items: center; gap: 1px; padding: 4px; border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 32px 90px rgba(0, 0, 0, .6);
+  transition: border-radius .28s ease }
+.sh-play.fill .dev { transition: none }
+.sh-play.fill .dev iframe { border-radius: 0; box-shadow: none }
+
+/* the two floating chrome pieces share one glass language and one idle behavior */
+.sh-play-bar, .sh-play-nav { position: absolute; display: flex; align-items: center; gap: 1px;
+  padding: 4px; border-radius: 999px;
   background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   transition: opacity .35s ease; font: 500 12px -apple-system, system-ui, sans-serif; color: #f5f5f7 }
-.sh-play-bar.idle { opacity: 0; pointer-events: none }
-.sh-play-bar .bd { padding: 0 10px 0 12px; color: rgba(245, 245, 247, .64); white-space: nowrap }
-.sh-play-bar .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 4px }
-.sh-play-bar button { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
-  border: 0; border-radius: 999px; background: transparent; color: rgba(245, 245, 247, .64); cursor: pointer }
-.sh-play-bar button:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
+.sh-play-bar { top: 14px; right: 16px }
+.sh-play-nav { bottom: 16px; left: 16px }
+.sh-play-bar.idle, .sh-play-nav.idle { opacity: 0; pointer-events: none }
+.sh-play-bar .sep, .sh-play-nav .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 4px }
+.sh-play-bar button, .sh-play-nav button { display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 0; border-radius: 999px; background: transparent;
+  color: rgba(245, 245, 247, .64); cursor: pointer }
+.sh-play-bar button:hover, .sh-play-nav button:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
 .sh-play-bar button.on { background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+
+/* board switcher */
+.sh-play-bar .bd-wrap { position: relative }
+.sh-play-bar .bd { width: auto; gap: 6px; padding: 0 10px 0 12px; white-space: nowrap; font: inherit }
+/* no backdrop-filter here: the menu nests inside the blurred bar, and glass never nests
+   (a nested backdrop-filter samples the bar, not the page) - near-opaque ink instead */
+.sh-play-menu { position: absolute; top: calc(100% + 10px); left: 0; min-width: 150px; padding: 4px;
+  border-radius: 12px; background: rgba(20, 20, 26, .97); border: 1px solid rgba(255, 255, 255, .12);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5); display: flex; flex-direction: column; gap: 1px }
+.sh-play-menu button { width: 100%; height: 28px; justify-content: flex-start; gap: 8px; padding: 0 10px;
+  border-radius: 8px; font: inherit }
+.sh-play-menu button span { flex: 1; text-align: left; white-space: nowrap }
+
+/* walk position readout */
+.sh-play-nav .pos { padding: 0 8px; color: rgba(245, 245, 247, .64); font-variant-numeric: tabular-nums; white-space: nowrap }
+.sh-play-nav .pos em { font-style: normal; opacity: .45; margin: 0 2px }

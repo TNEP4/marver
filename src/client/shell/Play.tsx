@@ -1,14 +1,19 @@
 /**
  * Play mode (SPEC-M2 §1): full-window near-black backdrop, ONE device shell centered at
- * the chosen viewport's exact CSS pixels, scaled to fit. The device hosts a single stage
- * iframe that swaps frames in place - the shell here owns chrome (device chips, theme,
- * close), sizing, and exit; the stage owns navigation and posts sh:stage-* messages.
+ * the chosen viewport's exact CSS pixels, scaled to fit - or `fill`, where the frame IS
+ * the window. The device hosts a single stage iframe that swaps frames in place.
+ *
+ * The shell owns everything except data-goto: chrome (top-right bar: board switcher,
+ * devices + fill, theme, hide, exit), the bottom-left navigator (restart · prev · i/N ·
+ * next), walk order, sizing, and the URL. Chrome auto-hides when idle and can be hidden
+ * outright (H); hovering the top-right or bottom-left corner always reveals it - in fill
+ * mode the stage reports those hovers, since the iframe covers the window.
  */
 import { useEffect, useRef, useState } from 'react'
-import { useStore, CONFIG, boardLabel, cap, type Node } from './store.ts'
+import { useStore, CONFIG, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
-import { MoonIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
+import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, FrameCornersIcon, MoonIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
 
 /** Board-order frame ids playable on the stage (tsx only - html frames are their own
  *  documents and cannot mount into the persistent chain), deduped. */
@@ -43,12 +48,22 @@ export function enterPlay(over?: { at?: string; device?: string; theme?: string 
   const frame = s.manifest?.frames.find((f) => f.id === at)
   // device: the link's; else the node's width names it; else the frame's declared viewport
   const names = Object.keys(CONFIG.viewports)
-  const device = (over?.device && CONFIG.viewports[over.device] ? over.device : undefined)
+  const device = (over?.device && (CONFIG.viewports[over.device] || over.device === 'fill') ? over.device : undefined)
     ?? (node ? names.find((v) => CONFIG.viewports[v].width === node.w) : undefined)
     ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
     ?? node?.theme ?? frame?.theme ?? CONFIG.themes[0] ?? 'light'
   s.setPlay({ at, device, theme })
+}
+
+/** Switch boards WITHOUT leaving play: the overlay stays up over the canvas churn, then
+ *  a fresh stage mounts at the new board's start (PlayInner is keyed by board). */
+async function switchPlayBoard(name: string) {
+  const s = useStore.getState()
+  if (name === s.board) return
+  const device = s.play?.device               // the device is the viewer's choice - it survives the switch
+  await s.switchBoard(name)
+  if (useStore.getState().board === name) enterPlay(device ? { device } : undefined)
 }
 
 /** Control channel for history restores: the popstate handler steers the mounted stage
@@ -57,8 +72,42 @@ export const playCtl = { setAt: (_at: string) => {} }
 
 export function PlayOverlay() {
   const play = useStore((s) => s.play)
+  const board = useStore((s) => s.board)
   if (!play) return null
-  return <PlayInner key="play" />
+  return <PlayInner key={board} />
+}
+
+/** Board switcher dropdown in the play bar. */
+function BoardMenu({ current }: { current: string }) {
+  const [open, setOpen] = useState(false)
+  const [names, setNames] = useState<string[]>([current])
+  const boxRef = useRef<HTMLDivElement>(null)
+  // refreshed on every open - agents create boards while you present
+  useEffect(() => { if (open) fetchBoardNames().then(setNames).catch(() => {}) }, [open])
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => { if (!boxRef.current?.contains(e.target as globalThis.Node)) setOpen(false) }
+    window.addEventListener('pointerdown', close)
+    return () => window.removeEventListener('pointerdown', close)
+  }, [open])
+  return (
+    <div className="bd-wrap" ref={boxRef}>
+      <button className="bd" title="Switch board" onClick={() => setOpen(!open)}>
+        {boardLabel(current)}
+        <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+      </button>
+      {open && (
+        <div className="sh-play-menu">
+          {names.map((n) => (
+            <button key={n} onClick={() => { setOpen(false); switchPlayBoard(n) }}>
+              <span>{boardLabel(n)}</span>
+              {n === current && <CheckIcon size={12} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function PlayInner() {
@@ -70,6 +119,8 @@ function PlayInner() {
   const src = useRef(play ? `${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}` : '')
   const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
   const [idle, setIdle] = useState(false)
+  const [hidden, setHidden] = useState(false)      // H - sticky until toggled back
+  const [corner, setCorner] = useState(false)      // hovering a reveal corner always shows chrome
 
   const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
 
@@ -83,7 +134,7 @@ function PlayInner() {
 
   const setDevice = (name: string) => {
     const p = useStore.getState().play
-    if (p && CONFIG.viewports[name]) useStore.getState().setPlay({ ...p, device: name })
+    if (p && (CONFIG.viewports[name] || name === 'fill')) useStore.getState().setPlay({ ...p, device: name })
   }
   const setTheme = (t: string) => {
     const p = useStore.getState().play
@@ -91,8 +142,20 @@ function PlayInner() {
     useStore.getState().setPlay({ ...p, theme: t })
     postStage({ type: 'sh:set-theme', theme: t })
   }
+  /** Walk to a frame: the stage swaps silently; state + URL follow via the projection. */
+  const goTo = (at: string) => playCtl.setAt(at)
+  const step = (dir: 1 | -1) => {
+    const p = useStore.getState().play
+    if (!p) return
+    const list = playList()
+    if (!list.length) return
+    const i = list.indexOf(p.at)
+    // an off-board frame has no position: → restarts, ← goes to the last board frame
+    goTo(i === -1 ? (dir === 1 ? list[0] : list[list.length - 1]) : list[(i + dir + list.length) % list.length])
+  }
+  const restart = () => { const list = playList(); if (list.length) goTo(list[0]) }
 
-  // history restores: swap the stage silently (no sh:stage-at back) and track it here
+  // history restores + walk: swap the stage silently (no sh:stage-at back) and track here
   useEffect(() => {
     playCtl.setAt = (at: string) => {
       postStage({ type: 'sh:stage-set', at })
@@ -110,7 +173,6 @@ function PlayInner() {
       if (!data || typeof data.type !== 'string') return
       const s = useStore.getState()
       if (data.type === 'sh:stage-ready') {
-        postStage({ type: 'sh:stage-list', frames: playList() })
         // an iframe reload (registry HMR invalidation) boots at the frozen initial src -
         // resync it to the shell's current truth so navigation and theme survive reloads
         const p = s.play
@@ -127,6 +189,9 @@ function PlayInner() {
         s.toast(`play: ${String(data.message ?? 'frame error')}`)
       } else if (data.type === 'sh:stage-key') {
         handleKey(String(data.key), String(data.code))
+      } else if (data.type === 'sh:stage-edge') {
+        // corner hovers inside the iframe matter only in fill, where it covers the window
+        if (s.play?.device === 'fill') setCorner(!!data.hot)
       }
     }
     window.addEventListener('message', onMsg)
@@ -136,9 +201,15 @@ function PlayInner() {
   // shared handler: keys arrive directly (focus in shell) or forwarded by the stage
   const handleKey = (key: string, code: string) => {
     if (key === 'Escape') { exit(); return }
+    if (key === 'ArrowRight') { step(1); return }
+    if (key === 'ArrowLeft') { step(-1); return }
+    if (key === 'r') { restart(); return }
+    if (key === 'h') { setHidden((h) => !h); return }
     if (/^Digit[1-9]$/.test(code)) {
-      const name = Object.keys(CONFIG.viewports)[Number(code.slice(5)) - 1]
-      if (name) setDevice(name)
+      const names = Object.keys(CONFIG.viewports)
+      const idx = Number(code.slice(5))
+      if (idx <= names.length) setDevice(names[idx - 1])
+      else if (idx === names.length + 1) setDevice('fill')
     }
     if (key === 'd' && CONFIG.themes.length > 1) {
       const p = useStore.getState().play!
@@ -161,9 +232,19 @@ function PlayInner() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // chrome auto-hides after 2.5 s of stillness; movement or a tap brings it back.
+  // chrome auto-hides after 2.5 s of stillness; movement or a tap brings it back, and
+  // hovering the top-right / bottom-left corner reveals it even when hidden with H.
   // Coarse pointers (touch) never idle - there is no hover to wake a hidden bar with,
   // and an unreachable close button would trap the viewer in play mode.
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const hot = (e.clientX > window.innerWidth - 220 && e.clientY < 90)
+        || (e.clientX < 220 && e.clientY > window.innerHeight - 90)
+      setCorner(hot)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [])
   useEffect(() => {
     if (window.matchMedia('(pointer: coarse)').matches) return
     let t = window.setTimeout(() => setIdle(true), 2500)
@@ -175,11 +256,16 @@ function PlayInner() {
 
   if (!play) return null                       // parent gates on play; belt to its braces
 
-  const vp = CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
-  const scale = Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
+  const fill = play.device === 'fill'
+  const vp = fill ? { width: win.w, height: win.h } : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
+  const scale = fill ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
+  const chromeOff = (idle || hidden) && !corner
+  const names = Object.keys(CONFIG.viewports)
+  const list = playList()
+  const pos = list.indexOf(play.at)
 
   return (
-    <div className="sh-play">
+    <div className={`sh-play${fill ? ' fill' : ''}`}>
       <div className="dev" style={{ width: vp.width * scale, height: vp.height * scale }}>
         <iframe
           ref={iframeRef}
@@ -188,8 +274,9 @@ function PlayInner() {
           style={{ width: vp.width, height: vp.height, transform: `scale(${scale})` }}
         />
       </div>
-      <div className={`sh-play-bar${idle ? ' idle' : ''}`}>
-        <span className="bd">{boardLabel(board)}</span>
+
+      <div className={`sh-play-bar${chromeOff ? ' idle' : ''}`}>
+        <BoardMenu current={board} />
         <i className="sep" />
         {Object.entries(CONFIG.viewports).map(([name, v], i) => (
           <button key={name} className={play.device === name ? 'on' : undefined}
@@ -197,6 +284,9 @@ function PlayInner() {
             {deviceIcon(name, 15)}
           </button>
         ))}
+        <button className={fill ? 'on' : undefined} title={`Fill window · ${names.length + 1}`} onClick={() => setDevice('fill')}>
+          <FrameCornersIcon size={15} />
+        </button>
         <i className="sep" />
         {CONFIG.themes.map((t) => (
           <button key={t} className={play.theme === t ? 'on' : undefined} title={`${cap(t)} theme · D`} onClick={() => setTheme(t)}>
@@ -204,7 +294,18 @@ function PlayInner() {
           </button>
         ))}
         <i className="sep" />
+        <button title={hidden ? 'Show controls · H' : 'Hide controls · H'} onClick={() => setHidden(!hidden)}>
+          <CaretIcon size={13} style={{ transform: 'rotate(180deg)' }} />
+        </button>
         <button title="Exit play · Esc" onClick={exit}><XIcon size={14} /></button>
+      </div>
+
+      <div className={`sh-play-nav${chromeOff ? ' idle' : ''}`}>
+        <button title="Restart · R" onClick={restart}><ReloadIcon size={14} /></button>
+        <i className="sep" />
+        <button title="Previous frame · ←" onClick={() => step(-1)}><ArrowLeftIcon size={14} /></button>
+        <span className="pos">{pos === -1 ? '·' : pos + 1}<em>/</em>{list.length}</span>
+        <button title="Next frame · →" onClick={() => step(1)}><ArrowRightIcon size={14} /></button>
       </div>
     </div>
   )

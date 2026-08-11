@@ -1,6 +1,6 @@
 import { Component, cloneElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, boardLabel, cap } from './store.ts'
+import { useStore, CONFIG, boardLabel, cap, fetchBoardNames } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
@@ -117,12 +117,7 @@ function BoardList() {
   const board = useStore((s) => s.board)
   const [names, setNames] = useState<string[]>(['all-scenes'])
   useEffect(() => {
-    const refresh = async () => {
-      try {
-        const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-        setNames(['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes').sort()])
-      } catch { /* keep the last known list */ }
-    }
+    const refresh = () => fetchBoardNames().then(setNames).catch(() => { /* keep the last known list */ })
     refresh()
     const t = setInterval(refresh, 8000)
     window.addEventListener('focus', refresh)

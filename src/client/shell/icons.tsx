@@ -41,6 +41,9 @@ export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="16
 export const PanelHollowIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" fill="none" stroke="currentColor" strokeWidth="14" /></>)
 /** Board glyphs: CardsThree = the built-in `all-scenes` board; Cards = curated boards. */
 export const CardsThreeIcon = icon(<path d="M208,88H48a16,16,0,0,0-16,16v96a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,112H48V104H208v96ZM48,64a8,8,0,0,1,8-8H200a8,8,0,0,1,0,16H56A8,8,0,0,1,48,64ZM64,32a8,8,0,0,1,8-8H184a8,8,0,0,1,0,16H72A8,8,0,0,1,64,32Z" />)
+export const FrameCornersIcon = icon(<path d="M160 48h40a8 8 0 0 1 8 8v40M208 160v40a8 8 0 0 1-8 8h-40M96 208H56a8 8 0 0 1-8-8v-40M48 96V56a8 8 0 0 1 8-8h40" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" />)
+export const ArrowLeftIcon = icon(<path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z" />)
+export const ArrowRightIcon = icon(<path d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z" />)
 export const CardsIcon = icon(<path d="M184,72H40A16,16,0,0,0,24,88V200a16,16,0,0,0,16,16H184a16,16,0,0,0,16-16V88A16,16,0,0,0,184,72Zm0,128H40V88H184V200ZM232,56V176a8,8,0,0,1-16,0V56H64a8,8,0,0,1,0-16H216A16,16,0,0,1,232,56Z" />)
 /** Viewport-name -> device glyph; unknown custom names fall back to the generic Devices. */
 export function deviceIcon(name: string | null, size = 14) {

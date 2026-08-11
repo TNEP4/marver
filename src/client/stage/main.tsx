@@ -5,9 +5,10 @@
  * navigation like a real app. Swaps ride document.startViewTransition when available;
  * agents opt into shared-element morphs with plain view-transition-name CSS.
  *
- * The shell owns chrome, device sizing, and the URL; the stage owns navigation:
- *   stage -> shell:  sh:stage-ready · sh:stage-at {at} · sh:stage-exit · sh:stage-error · sh:stage-key
- *   shell -> stage:  sh:stage-list {frames} (arrow-walk order) · sh:stage-set {at} (history) · sh:set-theme
+ * The shell owns chrome, device sizing, walk order, and the URL; the stage owns data-goto:
+ *   stage -> shell:  sh:stage-ready · sh:stage-at {at} · sh:stage-exit · sh:stage-error
+ *                    sh:stage-key {key, code} (forwarded shortcuts) · sh:stage-edge {hot} (fill-mode corner hover)
+ *   shell -> stage:  sh:stage-set {at} (history / walk / restart) · sh:set-theme
  */
 import { Component, createElement, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
@@ -67,7 +68,6 @@ function ErrorCard({ title, message, detail }: { title: string; message: string;
 function Stage() {
   const [mounted, setMounted] = useState<Mounted | null>(null)
   const [err, setErr] = useState<{ id: string; message: string } | null>(null)
-  const walk = useRef<string[]>([])            // arrow-walk order, sent by the shell
   const current = useRef(startId)
   const swapSeq = useRef(0)
 
@@ -115,26 +115,25 @@ function Stage() {
       if (e.key === 'Escape') { post({ type: 'sh:stage-exit' }); return }
       if (e.metaKey || e.ctrlKey) return       // ⌘D is the browser's bookmark, not our theme
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        const list = walk.current
-        if (list.length < 2) return
-        const i = list.indexOf(current.current)
-        const next = e.key === 'ArrowRight'
-          ? list[(i + 1 + list.length) % list.length]
-          : list[(i - 1 + list.length) % list.length]
-        goto(next, true)
-        return
-      }
-      // device digits + theme cycle belong to the shell's chrome - forward them
-      if (/^Digit[0-9]$/.test(e.code) || e.key === 'd') post({ type: 'sh:stage-key', key: e.key, code: e.code })
+      // every play shortcut belongs to the shell (it owns walk order + chrome) - forward
+      if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'ArrowRight', 'ArrowLeft'].includes(e.key))
+        post({ type: 'sh:stage-key', key: e.key, code: e.code })
     }
     window.addEventListener('keydown', onKey)
+
+    // fill mode covers the window with this iframe, so the shell cannot see corner
+    // hovers - report enter/leave of the reveal corners (top-right, bottom-left)
+    let edgeHot = false
+    const onMove = (e: PointerEvent) => {
+      const hot = (e.clientX > innerWidth - 220 && e.clientY < 90) || (e.clientX < 220 && e.clientY > innerHeight - 90)
+      if (hot !== edgeHot) { edgeHot = hot; post({ type: 'sh:stage-edge', hot }) }
+    }
+    window.addEventListener('pointermove', onMove)
 
     const onMsg = (e: MessageEvent) => {
       if (e.source !== window.parent) return
       const data = e.data
       if (data?.type === 'sh:set-theme') document.documentElement.dataset.theme = data.theme
-      else if (data?.type === 'sh:stage-list' && Array.isArray(data.frames)) walk.current = data.frames.filter((f: unknown) => typeof f === 'string')
       else if (data?.type === 'sh:stage-set' && typeof data.at === 'string') goto(data.at, false)
     }
     window.addEventListener('message', onMsg)
@@ -142,6 +141,7 @@ function Stage() {
     return () => {
       document.removeEventListener('click', onClick, true)
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointermove', onMove)
       window.removeEventListener('message', onMsg)
     }
   }, [])
