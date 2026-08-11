@@ -396,3 +396,24 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
 .sh-toast svg { color: var(--glass-good); flex: none }
+
+/* ---- Play mode (SPEC-M2 §1): near-black stage, one centered device, auto-hiding bar.
+   Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
+.sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex;
+  align-items: center; justify-content: center; animation: sh-play-in .28s ease-out }
+@keyframes sh-play-in { from { opacity: 0 } }
+.sh-play .dev { position: relative; transition: width .28s ease, height .28s ease }
+.sh-play .dev iframe { border: 0; background: #fff; transform-origin: 0 0; border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 32px 90px rgba(0, 0, 0, .6) }
+.sh-play-bar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex;
+  align-items: center; gap: 1px; padding: 4px; border-radius: 999px;
+  background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: opacity .35s ease; font: 500 12px -apple-system, system-ui, sans-serif; color: #f5f5f7 }
+.sh-play-bar.idle { opacity: 0; pointer-events: none }
+.sh-play-bar .bd { padding: 0 10px 0 12px; color: rgba(245, 245, 247, .64); white-space: nowrap }
+.sh-play-bar .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 4px }
+.sh-play-bar button { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+  border: 0; border-radius: 999px; background: transparent; color: rgba(245, 245, 247, .64); cursor: pointer }
+.sh-play-bar button:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
+.sh-play-bar button.on { background: rgba(255, 255, 255, .14); color: #f5f5f7 }

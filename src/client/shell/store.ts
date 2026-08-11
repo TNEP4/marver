@@ -37,6 +37,7 @@ interface State {
   nodes: Node[]                       // append-only order; NEVER sorted or reordered (iframe law G-1)
   selection: string[]                 // ordered; last entry is the primary (bar anchor)
   interact: string | null
+  play: { at: string; device: string; theme: string } | null   // play mode (SPEC-M2 §1); at = current frame id
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   board: string                       // active board name; 'all-scenes' is the auto board
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
@@ -58,6 +59,7 @@ interface State {
   select(key: string | null, additive?: boolean): void
   selectAll(): void
   setInteract(key: string | null): void
+  setPlay(p: State['play']): void
   setGesture(g: boolean): void
   moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
   setSelectedTheme(theme: string): void
@@ -158,7 +160,7 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, gesture: false, board: 'all-scenes', boardAuto: true, deviceView: null, baseLayout: null,
+    manifest: null, nodes: [], selection: [], interact: null, play: null, gesture: false, board: 'all-scenes', boardAuto: true, deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -347,6 +349,7 @@ export const useStore = create<State>((set, get) => {
     // interacted frame (a 4-frame selection double-clicked otherwise leaves all four
     // painted as "interactive"). Exiting keeps the frame selected for continuity.
     setInteract(key) { set((s) => ({ interact: key, selection: key ? [key] : s.selection })) },
+    setPlay(play) { set({ play }) },
     setGesture(gesture) { set({ gesture }) },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },

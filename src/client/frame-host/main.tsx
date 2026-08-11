@@ -7,7 +7,7 @@ import { Component, createElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import './bridge.js'
-import { frames, layouts, providers } from './registry.ts'
+import { frameFile, frames, layoutChain, layouts, providers } from './registry.ts'
 
 const params = new URLSearchParams(location.search)
 const id = params.get('id') ?? ''
@@ -27,34 +27,6 @@ function fail(message: string) {
 }
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
-
-/** id -> glob key. scenes/ ids lost their prefix; components/ ids kept it. */
-function frameFile(frameId: string): string | null {
-  for (const ext of ['tsx', 'jsx']) {
-    for (const prefix of ['/design/scenes/', '/design/']) {
-      const key = `${prefix}${frameId}.${ext}`
-      if (key in frames) return key
-    }
-  }
-  return null
-}
-
-/** Layout chain for a frame file: every _layout on the path from the glob base down, outermost = shallowest. */
-function layoutChain(fileKey: string): string[] {
-  const dir = fileKey.slice(0, fileKey.lastIndexOf('/'))
-  const chain: string[] = []
-  const base = fileKey.startsWith('/design/scenes/') ? '/design/scenes' : '/design/components'
-  let cur = dir
-  while (cur.length >= base.length) {
-    for (const ext of ['tsx', 'jsx']) {
-      const key = `${cur}/_layout.${ext}`
-      if (key in layouts) { chain.unshift(key); break }
-    }
-    if (cur === base) break
-    cur = cur.slice(0, cur.lastIndexOf('/'))
-  }
-  return chain
-}
 
 class Boundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }

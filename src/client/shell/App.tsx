@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
+import { enterPlay, PlayOverlay } from './Play.tsx'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
@@ -409,10 +410,12 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       const s = useStore.getState()
+      if (s.play) return                       // play mode owns the keyboard (Play.tsx)
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
+      if (e.key === 'p') enterPlay()
       if (e.key === 't') { animateLayout(); runTidy() }
       if (e.key === 'c' && s.selection.length) {
         const files = s.selection
@@ -525,10 +528,12 @@ export function App() {
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><GridIcon size={16} /></button>
         </Tip>
         <i className="sep" />
-        <Tip side="bottom" label="Play mode ships in M2">
-          <button className="sh-pill-btn off"><PlayIcon size={15} /></button>
+        <Tip side="bottom" label={<><b>Play</b><span>P</span></>}>
+          <button className="sh-pill-btn" onClick={enterPlay}><PlayIcon size={15} /></button>
         </Tip>
       </nav>
+
+      <PlayOverlay />
 
       {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled (design/config.ts → theme)</div>}
 

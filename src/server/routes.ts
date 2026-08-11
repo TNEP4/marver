@@ -26,6 +26,7 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string): Conn
     let dir: string | null = null
     if (path === '/' || path === '/index.html') dir = 'shell'
     else if (path === `${ROUTE}/frame/` || path === `${ROUTE}/frame/index.html`) dir = 'frame-host'
+    else if (path === `${ROUTE}/stage/` || path === `${ROUTE}/stage/index.html`) dir = 'stage'
     else if (path.startsWith(`${ROUTE}/favicon/`)) {
       // static icon pack from the shell dir; basename-only lookup, no traversal
       const name = path.slice(`${ROUTE}/favicon/`.length)
