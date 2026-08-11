@@ -56,13 +56,17 @@ export function serve(root: string, portFlag?: number) {
         let body = ''
         req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
         req.on('end', () => {
-          const given = new URLSearchParams(body).get('password') ?? ''
+          const form = new URLSearchParams(body)
+          const given = form.get('password') ?? ''
           if (timingSafeEqual(scryptSync(given, 'marver-gate', 32), verifier)) {
             const exp = Math.floor(Date.now() / 1000) + MONTH
             const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''
             res.setHeader('set-cookie', `${COOKIE}=${exp}.${sign(exp)}; Path=/; Max-Age=${MONTH}; HttpOnly; SameSite=Lax${secure}`)
+            // deep links survive the gate: the page posts its hash, redirects carry it
+            // back. Whitelisted charset - no CR/LF, no absolute URLs, no header games.
+            const next = form.get('next') ?? ''
             res.statusCode = 303
-            res.setHeader('location', '/')
+            res.setHeader('location', /^#\/[\w\/?&=%.,~-]*$/.test(next) ? `/${next}` : '/')
             return res.end()
           }
           return gate(res, meta, 'Wrong password - try again')
@@ -139,8 +143,10 @@ function gate(res: any, meta: { name: string; branding: boolean }, error?: strin
     <p>This canvas is password-protected.</p>
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
     <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" />
+    <input type="hidden" name="next" />
     <button type="submit">Open canvas</button>
   </form>
+  <script>document.querySelector('[name=next]').value = location.hash</script>
   ${meta.branding ? '<footer><a href="https://marver.design">Powered by Marver</a></footer>' : ''}
 </main></body></html>`)
 }
