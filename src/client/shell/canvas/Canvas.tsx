@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch'
 import { CONFIG, useStore } from '../store.ts'
+import { bootHash } from '../hash.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 
 /**
@@ -143,13 +144,20 @@ export function Canvas() {
   }, [])
 
   // first load opens on the whole board (same as ⇧1) - the default 100% transform is an
-  // arbitrary top-left crop. Runs once, on the first frame batch; board switches refit
-  // through their own path.
+  // arbitrary top-left crop. A deep link with a selection (#/b/x?n=...) restores it and
+  // fits the camera to it instead. Runs once, on the first frame batch; board switches
+  // refit through their own path.
   const booted = useRef(false)
   useEffect(() => {
     if (booted.current || nodes.length === 0) return
     booted.current = true
-    requestAnimationFrame(() => canvasCtl.fitAll())
+    requestAnimationFrame(() => {
+      const keys = (bootHash.n ?? []).filter((k) => useStore.getState().nodes.some((n) => n.key === k))
+      if (keys.length) {
+        useStore.setState({ selection: keys })
+        canvasCtl.fitNodes(keys)
+      } else canvasCtl.fitAll()
+    })
   }, [nodes])
 
   // click on empty canvas = deselect + exit interact (Figma convention; also covers the

@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { enterPlay, PlayOverlay } from './Play.tsx'
+import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
+import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
@@ -326,7 +327,55 @@ export function App() {
   const { manifest, nodes, panelOpen, toasts, selection } = useStore()
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
 
-  useEffect(() => { boot() }, [])
+  // boot honors the deep link (SPEC-M2 §3): board before load, play mode after it.
+  // Selection + camera intent are restored by the Canvas boot effect.
+  useEffect(() => {
+    if (bootHash.board && bootHash.board !== useStore.getState().board)
+      useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
+    boot().then((ok) => {
+      urlReady.current = true
+      if (ok && bootHash.play?.at) enterPlay(bootHash.play)
+    })
+  }, [])
+
+  // the URL is a projection of state: design views replace in place; entering play and
+  // every in-play navigation push, so browser back walks the flow
+  const playState = useStore((s) => s.play)
+  const prevPlay = useRef(playState)
+  const urlReady = useRef(false)               // never clobber a deep link before boot restores it
+  useEffect(() => {
+    if (!urlReady.current) return
+    const s = useStore.getState()
+    if (playState) {
+      const push = !prevPlay.current || prevPlay.current.at !== playState.at
+      writeHash({ board: s.board, play: playState }, push)
+    } else {
+      writeHash({ board: s.board, n: s.selection })
+    }
+    prevPlay.current = playState
+  })
+
+  // browser back/forward: re-apply the URL. writeHash skips identical hashes, so
+  // restores never echo back into history.
+  useEffect(() => {
+    const onPop = () => {
+      const h = parseHash()
+      const s = useStore.getState()
+      if (h.board && h.board !== s.board) { s.switchBoard(h.board).then(() => setTimeout(() => canvasCtl.fitAll(), 60)); return }
+      if (h.play?.at) {
+        if (s.play) { if (s.play.at !== h.play.at) playCtl.setAt(h.play.at) }
+        else enterPlay(h.play)
+      } else if (s.play) {
+        s.setPlay(null)
+      } else {
+        const keys = (h.n ?? []).filter((k) => s.nodes.some((n) => n.key === k))
+        useStore.setState({ selection: keys })
+        if (keys.length) canvasCtl.fitNodes(keys)
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   // page title follows the open board
   const board = useStore((s) => s.board)
@@ -529,7 +578,7 @@ export function App() {
         </Tip>
         <i className="sep" />
         <Tip side="bottom" label={<><b>Play</b><span>P</span></>}>
-          <button className="sh-pill-btn" onClick={enterPlay}><PlayIcon size={15} /></button>
+          <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
       </nav>
 

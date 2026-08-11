@@ -28,20 +28,28 @@ function playList(): string[] {
   return out
 }
 
-/** Enter play on the current board: first selected node starts, else the first node. */
-export function enterPlay() {
+/** Enter play on the current board: first selected node starts, else the first node.
+ *  `over` (deep links) can pin the start frame, device, and theme. */
+export function enterPlay(over?: { at?: string; device?: string; theme?: string }) {
   const s = useStore.getState()
   const list = playList()
   if (!list.length) { s.toast('nothing to play on this board'); return }
+  const overAt = over?.at && list.includes(over.at) ? over.at : undefined
   const selNode = s.selection.map((k) => s.nodes.find((n) => n.key === k)).find((n): n is Node => !!n && list.includes(n.frame))
-  const node = selNode ?? s.nodes.find((n) => list.includes(n.frame))!
+  const node = (overAt ? s.nodes.find((n) => n.frame === overAt) : undefined) ?? selNode ?? s.nodes.find((n) => list.includes(n.frame))!
   const frame = s.frameFor(node)
-  // device: the node's width names it; else the frame's declared viewport; else the first
+  // device: the link's; else the node's width names it; else the frame's declared viewport
   const names = Object.keys(CONFIG.viewports)
-  const device = names.find((v) => CONFIG.viewports[v].width === node.w)
+  const device = (over?.device && CONFIG.viewports[over.device] ? over.device : undefined)
+    ?? names.find((v) => CONFIG.viewports[v].width === node.w)
     ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
-  s.setPlay({ at: node.frame, device, theme: node.theme })
+  const theme = over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : node.theme
+  s.setPlay({ at: overAt ?? node.frame, device, theme })
 }
+
+/** Control channel for history restores: the popstate handler steers the mounted stage
+ *  without a remount. Assigned by PlayInner; a no-op while play is closed. */
+export const playCtl = { setAt: (_at: string) => {} }
 
 export function PlayOverlay() {
   const play = useStore((s) => s.play)
@@ -79,6 +87,16 @@ function PlayInner() {
     useStore.getState().setPlay({ ...p, theme: t })
     postStage({ type: 'sh:set-theme', theme: t })
   }
+
+  // history restores: swap the stage silently (no sh:stage-at back) and track it here
+  useEffect(() => {
+    playCtl.setAt = (at: string) => {
+      postStage({ type: 'sh:stage-set', at })
+      const p = useStore.getState().play
+      if (p && p.at !== at) useStore.getState().setPlay({ ...p, at })
+    }
+    return () => { playCtl.setAt = () => {} }
+  }, [])
 
   // messages from the stage; source-validated against our one iframe
   useEffect(() => {
