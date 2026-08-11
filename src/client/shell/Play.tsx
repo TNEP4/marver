@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore, CONFIG, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
+import { Tip } from './Tip.tsx'
 import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, FrameCornersIcon, MoonIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
 
 /** Board-order frame ids playable on the stage (tsx only - html frames are their own
@@ -92,10 +93,12 @@ function BoardMenu({ current }: { current: string }) {
   }, [open])
   return (
     <div className="bd-wrap" ref={boxRef}>
-      <button className="bd" title="Switch board" onClick={() => setOpen(!open)}>
-        {boardLabel(current)}
-        <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
-      </button>
+      <Tip inv side="bottom" label={<b>Switch board</b>}>
+        <button className="bd" onClick={() => setOpen(!open)}>
+          {boardLabel(current)}
+          <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+        </button>
+      </Tip>
       {open && (
         <div className="sh-play-menu">
           {names.map((n) => (
@@ -279,33 +282,48 @@ function PlayInner() {
         <BoardMenu current={board} />
         <i className="sep" />
         {Object.entries(CONFIG.viewports).map(([name, v], i) => (
-          <button key={name} className={play.device === name ? 'on' : undefined}
-            title={`${cap(name)} · ${v.width} × ${v.height} · ${i + 1}`} onClick={() => setDevice(name)}>
-            {deviceIcon(name, 15)}
-          </button>
+          <Tip key={name} inv side="bottom" label={<><b>{cap(name)}</b><span>{v.width} × {v.height}</span><span className="k">{i + 1}</span></>}>
+            <button className={play.device === name ? 'on' : undefined} onClick={() => setDevice(name)}>
+              {deviceIcon(name, 15)}
+            </button>
+          </Tip>
         ))}
-        <button className={fill ? 'on' : undefined} title={`Fill window · ${names.length + 1}`} onClick={() => setDevice('fill')}>
-          <FrameCornersIcon size={15} />
-        </button>
+        <Tip inv side="bottom" label={<><b>Fill window</b><span className="k">{names.length + 1}</span></>}>
+          <button className={fill ? 'on' : undefined} onClick={() => setDevice('fill')}>
+            <FrameCornersIcon size={15} />
+          </button>
+        </Tip>
         <i className="sep" />
         {CONFIG.themes.map((t) => (
-          <button key={t} className={play.theme === t ? 'on' : undefined} title={`${cap(t)} theme · D`} onClick={() => setTheme(t)}>
-            {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
-          </button>
+          <Tip key={t} inv side="bottom" label={<><b>{cap(t)} theme</b><span className="k">D</span></>}>
+            <button className={play.theme === t ? 'on' : undefined} onClick={() => setTheme(t)}>
+              {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
+            </button>
+          </Tip>
         ))}
         <i className="sep" />
-        <button title={hidden ? 'Show controls · H' : 'Hide controls · H'} onClick={() => setHidden(!hidden)}>
-          <CaretIcon size={13} style={{ transform: 'rotate(180deg)' }} />
-        </button>
-        <button title="Exit play · Esc" onClick={exit}><XIcon size={14} /></button>
+        <Tip inv side="bottom" label={<><b>{hidden ? 'Show' : 'Hide'} controls</b><span className="k">H</span></>}>
+          <button onClick={() => setHidden(!hidden)}>
+            <CaretIcon size={13} style={{ transform: 'rotate(180deg)' }} />
+          </button>
+        </Tip>
+        <Tip inv side="bottom" label={<><b>Exit play</b><span className="k">Esc</span></>}>
+          <button onClick={exit}><XIcon size={14} /></button>
+        </Tip>
       </div>
 
       <div className={`sh-play-nav${chromeOff ? ' idle' : ''}`}>
-        <button title="Restart · R" onClick={restart}><ReloadIcon size={14} /></button>
+        <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
+          <button onClick={restart}><ReloadIcon size={14} /></button>
+        </Tip>
         <i className="sep" />
-        <button title="Previous frame · ←" onClick={() => step(-1)}><ArrowLeftIcon size={14} /></button>
+        <Tip inv label={<><b>Previous frame</b><span className="k">←</span></>}>
+          <button onClick={() => step(-1)}><ArrowLeftIcon size={14} /></button>
+        </Tip>
         <span className="pos">{pos === -1 ? '·' : pos + 1}<em>/</em>{list.length}</span>
-        <button title="Next frame · →" onClick={() => step(1)}><ArrowRightIcon size={14} /></button>
+        <Tip inv label={<><b>Next frame</b><span className="k">→</span></>}>
+          <button onClick={() => step(1)}><ArrowRightIcon size={14} /></button>
+        </Tip>
       </div>
     </div>
   )

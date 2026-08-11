@@ -1,47 +1,12 @@
-import { Component, cloneElement, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG, boardLabel, cap, fetchBoardNames } from './store.ts'
+import { Tip } from './Tip.tsx'
 import { ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
-
-/** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
- *  Portaled to the app root - glass never nests, and neither do overlays. */
-function Tip({ label, side = 'top', children }: { label: ReactNode; side?: 'top' | 'bottom'; children: ReactElement }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-  const timer = useRef<number | undefined>(undefined)
-  const show = (e: React.MouseEvent) => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const y = side === 'top' ? r.top - 7 : r.bottom + 7
-    timer.current = window.setTimeout(() => setPos({ x: r.left + r.width / 2, y }), 150)
-  }
-  const hide = () => { window.clearTimeout(timer.current); setPos(null) }
-  const app = document.querySelector('.sh-app')
-  const child = children as ReactElement<any>
-  // clamp into the viewport: edge-of-screen triggers (play button) otherwise clip
-  const tipRef = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const el = tipRef.current
-    if (!el) return
-    el.style.marginLeft = '0px'
-    const r = el.getBoundingClientRect()
-    const over = r.right - (window.innerWidth - 8)
-    if (over > 0) el.style.marginLeft = `${-over}px`
-    else if (r.left < 8) el.style.marginLeft = `${8 - r.left}px`
-  }, [pos])
-  return (
-    <>
-      {cloneElement(child, {
-        onMouseEnter: (e: React.MouseEvent) => { child.props.onMouseEnter?.(e); show(e) },
-        onMouseLeave: (e: React.MouseEvent) => { child.props.onMouseLeave?.(e); hide() },
-        onClick: (e: React.MouseEvent) => { child.props.onClick?.(e); hide() },
-      })}
-      {pos && app && createPortal(<div ref={tipRef} className={`sh-tip${side === 'bottom' ? ' below' : ''}`} style={{ left: pos.x, top: pos.y }}>{label}</div>, app)}
-    </>
-  )
-}
 
 /** One collapsible scene group in the sidebar. `held` marks a scene that contains a
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */

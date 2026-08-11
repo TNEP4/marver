@@ -385,6 +385,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* top-of-screen chrome flips its tooltip below the trigger */
 .sh-tip.below { transform: translate(-50%, 0); animation-name: sh-tip-pop-b }
 @keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
+/* play chrome is fixed dark glass regardless of board theme - its tips pin the light bubble */
+.sh-tip.inv { background: #f4f4f5; color: #18181b }
 .sh-tip b { font-weight: 600 }
 .sh-tip span { opacity: .55; font-size: 11px; margin-left: auto }
 .sh-tip span.k { opacity: .4; margin-left: 0; font-weight: 600 }
