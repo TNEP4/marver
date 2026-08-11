@@ -68,4 +68,6 @@ lays it out, and keeps it tidy:
 - Use boards for comparisons: version A vs B vs C of a flow, side by side.
 - Boards are also the unit of PUBLISHING (`marver build --boards <name>`): a flow being
   published must have every frame it data-gotos on that board - unlisted frames are
-  excluded from the bundle at build time.
+  excluded from the bundle at build time. The published gate page shows the app's
+  identity: design/logo.svg + the host package name (overridable via config `share`).
+  If the app has no logo asset yet, create a simple design/logo.svg for it.

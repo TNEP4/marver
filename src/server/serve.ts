@@ -163,7 +163,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
   footer a > svg:first-of-type { width: 20px; height: 20px; color: #0088ff }
   footer .md, footer .up { transition: color .15s, opacity .15s }
   footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
-  footer .up { opacity: .45 }
+  footer .up { opacity: .45; margin-left: -3px }
   footer a:hover .up { opacity: 1; color: #0088ff }
 </style></head>
 <body><main>
@@ -176,7 +176,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
     <button type="submit">Open the canvas</button>
   </form>
   <script>document.querySelector('[name=next]').value = location.hash</script>
-  ${meta.branding ? `<footer><a href="https://marver.design" target="_blank" rel="noopener">${MARK} <span>Powered by</span> <span class="md">Marver.design</span> <svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
+  ${meta.branding ? `<footer><a href="https://marver.design" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> <svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
 </main></body></html>`)
 }
 

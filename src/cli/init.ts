@@ -123,6 +123,9 @@ export default {
   port: ${DEFAULTS.port},
   // Canvas zoom feel: 1 = default, 1.2 = 20% faster, 0.8 = 20% slower.
   // zoomSpeed: 1,
+  // Publishing (\`${NAME} build\` + \`${NAME} serve\`): gate identity + branding footer.
+  // name/logo default to the host package.json name and design/logo.svg (then public/).
+  // share: { name: "My App", logo: "design/logo.svg", branding: true },
 }
 `
 

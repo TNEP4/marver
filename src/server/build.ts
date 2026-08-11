@@ -228,8 +228,13 @@ export async function buildSite(root: string, boardsFlag?: string) {
   // exists (agent-native convention: design/logo.svg|png; host public/ as fallback)
   let name = basename(root)
   try { name = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name ?? name } catch { /* keep basename */ }
+  if (config.share.name) name = config.share.name
   let logo: string | undefined
-  for (const cand of ['design/logo.svg', 'design/logo.png', 'public/logo.svg', 'public/logo.png', 'public/favicon.svg']) {
+  const logoLadder = [
+    ...(config.share.logo ? [config.share.logo] : []),
+    'design/logo.svg', 'design/logo.png', 'public/logo.svg', 'public/logo.png', 'public/favicon.svg',
+  ]
+  for (const cand of logoLadder) {
     if (!existsSync(join(root, cand))) continue
     const ext = cand.endsWith('.png') ? 'png' : 'svg'
     cpSync(join(root, cand), join(outDir, ROUTE.slice(1), `logo.${ext}`))
