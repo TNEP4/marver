@@ -64,6 +64,15 @@
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
 }
 
+@property --accent { syntax: '<color>'; inherits: true; initial-value: #0088ff; }
+@property --accent-ring { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .2); }
+@property --beam { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .42); }
+@property --edge-accent { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .8); }
+@property --inner-tint { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .13); }
+@property --accent-wash { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .07); }
+@property --glass-accent { syntax: '<color>'; inherits: true; initial-value: #0077e6; }
+@property --glass-accent-bg { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .13); }
+
 /* interact mode: the whole shell shifts to the interactive purple - one token override,
    and every accent-derived surface (mark, sidebar actives, selection bar, beams, rings,
    handles, device chips) follows without knowing the mode exists */
@@ -87,7 +96,10 @@ button { font-family: inherit }
 button svg { pointer-events: none }   /* event targets stay on the button - pan exclusion depends on it */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important } }
 
-.sh-app { position: relative; height: 100%; color: var(--glass-ink) }
+.sh-app { position: relative; height: 100%; color: var(--glass-ink);
+  transition: --accent .4s ease, --accent-ring .4s ease, --beam .4s ease,
+    --edge-accent .4s ease, --inner-tint .4s ease, --accent-wash .4s ease,
+    --glass-accent .4s ease, --glass-accent-bg .4s ease }
 .sh-canvas { width: 100% !important; height: 100% !important;
   background-color: var(--ground);
   transition: background-color .3s ease }
