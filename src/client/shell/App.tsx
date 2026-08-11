@@ -179,37 +179,52 @@ function SelectionBar() {
   )
 }
 
-/** Devices view: one click sizes every frame to a device width, tidies, and fits. */
+/** Devices view: one click sizes frames to a device width, tidies, and fits. Scoped
+ *  like the digit keys: the selection when one exists, the whole board otherwise. */
 function DeviceMenu() {
   const deviceView = useStore((s) => s.deviceView)
+  const selection = useStore((s) => s.selection)
+  const nodes = useStore((s) => s.nodes)
   const pop = usePopover()
+  const scoped = selection.length > 0
   const pick = (name: string | null) => {
     animateLayout()
-    useStore.getState().setDeviceView(name)
+    const st = useStore.getState()
+    if (scoped) {
+      st.resizeSelected(name)
+      setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
+    } else {
+      st.setDeviceView(name)
+      setTimeout(() => canvasCtl.fitAll(), 30)
+    }
     pop.setOpen(false)
-    setTimeout(() => canvasCtl.fitAll(), 30)
   }
   const entries = Object.entries(CONFIG.viewports)
+  // active check: board-wide it is the device view; scoped, the device every selected frame wears
+  const selNodes = scoped ? nodes.filter((n) => selection.includes(n.key)) : []
+  const active = scoped
+    ? entries.find(([, vp]) => selNodes.length > 0 && selNodes.every((n) => n.w === vp.width))?.[0] ?? null
+    : deviceView
   return (
     <div className="sh-theme" ref={pop.boxRef}>
-      <Tip side="bottom" label={<><b>Device view</b><span>{deviceView ? `${cap(deviceView)} · 0 resets` : `keys 1-${entries.length}`}</span></>}>
+      <Tip side="bottom" label={<><b>Device view</b><span>{scoped ? `${selection.length} selected` : deviceView ? `${cap(deviceView)} · 0 resets` : `keys 1-${entries.length}`}</span></>}>
         <button className="sh-pill-btn" onClick={pop.toggle}>
-          {deviceIcon(deviceView, 16)}
+          {deviceIcon(active, 16)}
           <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
         </button>
       </Tip>
       <Popover pop={pop}>
-        <Tip side="bottom" label="Every frame at its own default size">
+        <Tip side="bottom" label={scoped ? 'Selected frames at their default sizes' : 'Every frame at its own default size'}>
           <button onClick={() => pick(null)}>
             <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
-            {deviceView === null && <CheckIcon size={13} className="chk" />}
+            {!scoped && deviceView === null && <CheckIcon size={13} className="chk" />}
           </button>
         </Tip>
         <i className="div" />
         {entries.map(([name, vp], i) => (
           <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
             {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
-            {deviceView === name && <CheckIcon size={13} className="chk" />}
+            {active === name && <CheckIcon size={13} className="chk" />}
           </button>
         ))}
       </Popover>
@@ -247,22 +262,31 @@ function ZoomMenu() {
   )
 }
 
-/** Global theme dropdown: sets every frame at once; the trigger reflects the board MAJORITY
- *  (per-frame overrides never flip it - it reports the canvas level, same rule as the shell).
+/** Theme dropdown, scoped like the device digits: the selection when one exists, every
+ *  frame otherwise. The trigger reflects the scope's MAJORITY (per-frame overrides never
+ *  flip a board-level trigger - it reports the level it acts on, same rule as the shell).
  *  The menu is PORTALED out of the pill: an element with backdrop-filter is a backdrop root,
  *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
+  const selection = useStore((s) => s.selection)
   const pop = usePopover()
-  const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
+  const scoped = selection.length > 0
+  const scope = scoped ? nodes.filter((n) => selection.includes(n.key)) : nodes
+  const uniform = scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null
   const counts = new Map<string, number>()
-  for (const n of nodes) counts.set(n.theme, (counts.get(n.theme) ?? 0) + 1)
-  const majority = nodes.length
+  for (const n of scope) counts.set(n.theme, (counts.get(n.theme) ?? 0) + 1)
+  const majority = scope.length
     ? [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
     : CONFIG.themes[0] ?? 'light'
+  const pick = (t: string) => {
+    const st = useStore.getState()
+    scoped ? st.setSelectedTheme(t) : st.setTheme(t)
+    pop.setOpen(false)
+  }
   return (
     <div className="sh-theme" ref={pop.boxRef}>
-      <Tip side="bottom" label={<><b>Theme</b><span>all frames · D</span></>}>
+      <Tip side="bottom" label={<><b>Theme</b><span>{scoped ? `${selection.length} selected · D` : 'all frames · D'}</span></>}>
         <button className="sh-pill-btn" onClick={pop.toggle}>
           {majority === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
           <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
@@ -270,7 +294,7 @@ function ThemeMenu() {
       </Tip>
       <Popover pop={pop}>
         {CONFIG.themes.map((t) => (
-          <button key={t} onClick={() => { useStore.getState().setTheme(t); pop.setOpen(false) }}>
+          <button key={t} onClick={() => pick(t)}>
             {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
             <span>{t}</span>
             {uniform === t && <CheckIcon size={13} className="chk" />}
@@ -450,10 +474,12 @@ export function App() {
         }
       }
       if (e.key === 'd' && CONFIG.themes.length > 1) {
-        // cycle themes from the board's current (uniform or first)
-        const cur = s.nodes.length && s.nodes.every((n) => n.theme === s.nodes[0].theme) ? s.nodes[0].theme : CONFIG.themes[0]
+        // scoped like the device digits: selection when one exists, board-wide otherwise.
+        // Cycle from the scope's current theme (uniform or first member's).
+        const scope = s.selection.length ? s.nodes.filter((n) => s.selection.includes(n.key)) : s.nodes
+        const cur = scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : CONFIG.themes[0]
         const next = CONFIG.themes[(CONFIG.themes.indexOf(cur) + 1) % CONFIG.themes.length]
-        s.setTheme(next)
+        s.selection.length ? s.setSelectedTheme(next) : s.setTheme(next)
       }
       if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
       if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
