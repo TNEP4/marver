@@ -194,15 +194,15 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-handle.se { right: -5px; bottom: -5px; width: 11px; height: 11px; cursor: nwse-resize }
 
 /* glass surfaces share one recipe; chrome text is never selectable (shift-click = multi-select) */
-.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-menu, .sh-banner, .sh-toast {
+.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast {
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
   user-select: none; -webkit-user-select: none }
 
 /* edge light: a 1px gradient ring over the border, so glass reads as glass even
    with nothing behind it to blur (masked-border technique) */
-.sh-ctx::after, .sh-panel::after, .sh-fab::after, .sh-pill::after, .sh-menu::after,
-.sh-banner::after, .sh-toast::after, .sh-node::after {
+.sh-ctx::after, .sh-panel::after, .sh-fab::after, .sh-pill::after, .sh-pill-fab::after,
+.sh-menu::after, .sh-banner::after, .sh-toast::after, .sh-node::after {
   content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
   background: var(--edge-light); pointer-events: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -349,11 +349,13 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* pill nav */
 /* uniform 5px inset on every side: 34px buttons + 2*5px = 44px, same as the fab */
 .sh-pill { position: absolute; right: var(--edge); top: var(--edge); z-index: 10; display: flex; align-items: center; gap: 1px;
-  border-radius: 999px; padding: 5px; transition: transform var(--morph), opacity .2s ease }
-.sh-pill.closed { transform: translateY(-6px) scale(.96); opacity: 0; pointer-events: none }
-/* the pill's expand chip - same ladder as the sidebar's panel/fab pair, mirrored top-right */
+  border-radius: 999px; padding: 5px;
+  transform-origin: calc(100% - 22px) 22px; transition: transform var(--morph), opacity .2s ease }
+.sh-pill.closed { transform: scale(.16); opacity: 0; pointer-events: none }
+/* the pill's expand chip - the sidebar fab, mirrored top-right: same glass (shared
+   surface rule above), same morph, the bar shrinking into the chip's spot */
 .sh-pill-fab { position: absolute; right: var(--edge); top: var(--edge); z-index: 11; width: 44px; height: 44px;
-  display: grid; place-items: center; border-radius: 999px; border: 0; background: none;
+  display: grid; place-items: center; border-radius: 999px;
   color: var(--glass-ink-2); cursor: pointer;
   transition: transform var(--morph), opacity .2s ease }
 .sh-pill-fab:hover { color: var(--glass-ink); background: var(--glass-hover) }

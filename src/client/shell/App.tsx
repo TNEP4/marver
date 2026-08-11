@@ -560,7 +560,7 @@ export function App() {
           </button>
         </Tip>
       </nav>
-      <Tip side="bottom" label={<><b>Show toolbar</b><span>⌘/</span></>}>
+      <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
         <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
           aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
