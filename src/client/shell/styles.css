@@ -307,24 +307,31 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel-top .name { font-weight: 700; font-size: 15px; flex: 1; letter-spacing: -0.01em }
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
-.sh-panel .hd { font: 500 11px -apple-system, system-ui, sans-serif; letter-spacing: .01em; color: var(--glass-ink-3); margin: 4px 9px 5px }
-/* board rows: default = gray icon + secondary ink; active = accent icon, wash, heavier
-   text - same active language as scene frames, one step stronger */
-.sh-panel .it.board { font-weight: 500; color: var(--glass-ink-2); padding-left: 8px; margin-bottom: 2px }
-.sh-panel .it.board svg { color: var(--glass-ink-3); flex: none; transition: color .2s ease }
+/* Sidebar list system (macOS-sidebar conventions): every row is 28px tall with an
+   8px radius and a fixed 16px icon column, so all labels share one vertical line.
+   Hierarchy is carried by section labels + indent + ink - never bold-on-bold:
+   boards and scene folders read at 500/primary, frames at 400/secondary one indent
+   in, counts and idle icons tertiary. Actives use the accent wash + accent ink. */
+.sh-panel .hd { font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .02em;
+  color: var(--glass-ink-3); margin: 16px 10px 5px }
+.sh-panel .hd:first-child { margin-top: 2px }
+.sh-panel .it { width: 100%; height: 28px; padding: 0 8px; border-radius: 8px; color: var(--glass-ink);
+  font: 500 13px -apple-system, system-ui, sans-serif; background: none; border: 0; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 7px; margin-bottom: 1px }
+.sh-panel .it:hover { background: var(--glass-hover) }
+.sh-panel .it .tw { color: var(--glass-ink-3); flex: none; margin: 0 2.5px; transition: transform .15s ease }
+.sh-panel .it span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-panel .it small { color: var(--glass-ink-3); font: 500 11px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
+/* board rows: places, not folders - icon idles tertiary, lights accent when active */
+.sh-panel .it.board svg { color: var(--glass-ink-3); flex: none; margin: 0 1px; transition: color .2s ease }
 .sh-panel .it.board.cur { background: var(--accent-wash); color: var(--glass-accent); font-weight: 600 }
 .sh-panel .it.board.cur svg { color: var(--glass-accent) }
-.sh-panel .it { width: 100%; padding: 4px 9px 4px 6px; border-radius: 9px; color: var(--glass-ink);
-  font: 600 13px -apple-system, system-ui, sans-serif; background: none; border: 0; cursor: pointer; text-align: left;
-  display: flex; align-items: center; gap: 5px }
-.sh-panel .it:hover { background: var(--glass-hover) }
-.sh-panel .it .tw { color: var(--glass-ink-3); flex: none; transition: transform .15s ease }
-.sh-panel .it span { flex: 1 }
-.sh-panel .it small { color: var(--glass-ink-3); font-weight: 500; font-variant-numeric: tabular-nums }
-.sh-panel .sub { padding: 3px 9px 3px 22px; margin-bottom: 2px; color: var(--glass-ink-2); font-size: 12px; border-radius: 9px; cursor: pointer }
+/* frame rows: one indent in (aligned to the label line), quieter ink */
+.sh-panel .sub { display: flex; align-items: center; height: 28px; padding: 0 8px 0 31px; margin-bottom: 1px;
+  color: var(--glass-ink-2); font-size: 13px; font-weight: 400; border-radius: 8px; cursor: pointer }
 .sh-panel .sub:hover { background: var(--glass-hover); color: var(--glass-ink) }
-.sh-panel .sub.on { background: var(--accent-wash); color: var(--glass-accent) }
-.sh-panel .sub.dim { color: var(--glass-ink-3); cursor: default; line-height: 1.5 }
+.sh-panel .sub.on { background: var(--accent-wash); color: var(--glass-accent); font-weight: 500 }
+.sh-panel .sub.dim { color: var(--glass-ink-3); cursor: default; line-height: 1.4; height: auto; padding-top: 4px; padding-bottom: 4px }
 .sh-panel .sub.dim:hover { background: none; color: var(--glass-ink-3) }
 
 /* collapsed panel: a round glass button; morphs against the panel */
