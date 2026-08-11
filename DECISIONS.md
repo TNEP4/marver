@@ -137,3 +137,17 @@ dark-and-scattered published all-scenes was DATA, not code - automated test sess
 pressed D and resized on all-scenes, materializing it with dark themes and churned
 layout, and it got committed and published. Lesson: automated canvas tests mutate real
 board files; reset design/boards/ before committing a pilot.
+
+## Theme model v2: viewTheme + pins (2026-08-11, codex-reviewed)
+
+node.theme is now the RESOLVED value; resolution = themeUser (explicit per-frame pin) >
+frame meta.theme (author-declared one-mode frames) > viewTheme (the user's global
+preference, localStorage, sticky across boards and reloads). Global toggle sets
+viewTheme and clears pins; scoped toggle pins. The chrome follows viewTheme - per-frame
+toggles can never flip the whole app. Pins persist as their own `themeUser` board field
+(codex: a pin equal to the static default round-tripped to nothing under the legacy
+heuristic); legacy `theme` values migrate by differ-from-static-default. applyManifest
+re-resolves surviving nodes when meta.theme changes (derived, never dirties). The
+earlier "themes switch randomly" reports were part model-surprise, part my stale test
+tabs saving against the same board (writer hygiene: park test browsers on the published
+site when done).

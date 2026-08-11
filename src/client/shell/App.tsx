@@ -270,15 +270,17 @@ function ZoomMenu() {
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
   const selection = useStore((s) => s.selection)
+  const viewTheme = useStore((s) => s.viewTheme)
   const pop = usePopover()
   const scoped = selection.length > 0
-  const scope = scoped ? nodes.filter((n) => selection.includes(n.key)) : nodes
-  const uniform = scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null
-  const counts = new Map<string, number>()
-  for (const n of scope) counts.set(n.theme, (counts.get(n.theme) ?? 0) + 1)
-  const majority = scope.length
-    ? [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
-    : CONFIG.themes[0] ?? 'light'
+  // scoped: the trigger + check reflect the selection; global: the VIEW preference
+  const scope = scoped ? nodes.filter((n) => selection.includes(n.key)) : []
+  const uniform = scoped
+    ? (scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null)
+    : viewTheme
+  const majority = scoped
+    ? (scope.length ? [...scope.reduce((m, n) => m.set(n.theme, (m.get(n.theme) ?? 0) + 1), new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])[0][0] : viewTheme)
+    : viewTheme
   const pick = (t: string) => {
     const st = useStore.getState()
     scoped ? st.setSelectedTheme(t) : st.setTheme(t)
@@ -499,12 +501,15 @@ export function App() {
         }
       }
       if (e.key === 'd' && CONFIG.themes.length > 1) {
-        // scoped like the device digits: selection when one exists, board-wide otherwise.
-        // Cycle from the scope's current theme (uniform or first member's).
-        const scope = s.selection.length ? s.nodes.filter((n) => s.selection.includes(n.key)) : s.nodes
-        const cur = scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : CONFIG.themes[0]
-        const next = CONFIG.themes[(CONFIG.themes.indexOf(cur) + 1) % CONFIG.themes.length]
-        s.selection.length ? s.setSelectedTheme(next) : s.setTheme(next)
+        // scoped like the device digits: selection pins those frames; no selection cycles
+        // the global VIEW theme (sticky across boards - the user's preference)
+        if (s.selection.length) {
+          const scope = s.nodes.filter((n) => s.selection.includes(n.key))
+          const cur = scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : CONFIG.themes[0]
+          s.setSelectedTheme(CONFIG.themes[(CONFIG.themes.indexOf(cur) + 1) % CONFIG.themes.length])
+        } else {
+          s.setTheme(CONFIG.themes[(CONFIG.themes.indexOf(s.viewTheme) + 1) % CONFIG.themes.length])
+        }
       }
       if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
       if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
@@ -537,8 +542,8 @@ export function App() {
     .map((name) => ({ name, frames: frames.filter((f) => f.scene === name).length }))
   // frame ids currently selected, for marking their parent scenes as `held`
   const selFrames = new Set(nodes.filter((n) => selection.includes(n.key)).map((n) => n.frame))
-  // the shell follows the board: majority-dark frames flip the whole chrome + canvas dark
-  const dark = nodes.length > 0 && nodes.filter((n) => n.theme === 'dark').length > nodes.length / 2
+  // the shell follows the user's VIEW theme - per-frame pins never flip the chrome
+  const dark = useStore((s) => s.viewTheme) === 'dark'
   // interact mode re-accents the ENTIRE shell purple - one token override class,
   // everything derived from --accent follows (mark, sidebar, bars, handles, beams)
   const interacting = useStore((s) => s.interact !== null)

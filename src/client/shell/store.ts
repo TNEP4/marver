@@ -14,7 +14,12 @@ const DATA: { manifest: Manifest; boards: Record<string, unknown>; names: string
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
 export interface Node {
-  key: string; frame: string; x: number; y: number; w: number; h: number; theme: string
+  key: string; frame: string; x: number; y: number; w: number; h: number
+  /** RESOLVED theme (what renders): themeUser ?? frame meta.theme ?? viewTheme. */
+  theme: string
+  /** Explicit per-frame override, set by scoped theme actions; cleared by a global set.
+   *  The only theme value that persists into the board file. */
+  themeUser?: string
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
 }
 export interface Toast { id: number; text: string }
@@ -43,7 +48,15 @@ export function frameUrl(frame: FrameEntry, theme: string): string {
     : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}`
 }
 
-const defaultTheme = (frame?: FrameEntry) => frame?.theme ?? CONFIG.themes[0] ?? 'light'
+/** The global view theme: the user's sticky preference, applied across boards and
+ *  reloads. Frames resolve to it unless they declare meta.theme or carry a user pin. */
+const initialViewTheme = () => {
+  try {
+    const t = localStorage.getItem('mv-view-theme')
+    if (t && CONFIG.themes.includes(t)) return t
+  } catch { /* storage unavailable */ }
+  return CONFIG.themes[0] ?? 'light'
+}
 const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change counts, not just added/removed ids
 
 function defaultSize(frame: FrameEntry) {
@@ -56,6 +69,7 @@ interface State {
   nodes: Node[]                       // append-only order; NEVER sorted or reordered (iframe law G-1)
   selection: string[]                 // ordered; last entry is the primary (bar anchor)
   interact: string | null
+  viewTheme: string                   // the global theme preference; sticky across boards and reloads
   play: { at: string; device: string; theme: string } | null   // play mode (SPEC-M2 §1); at = current frame id
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   board: string                       // active board name; 'all-scenes' is the auto board
@@ -101,6 +115,9 @@ export const useStore = create<State>((set, get) => {
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
   const scheduleSave = () => { editRev++; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+
+  /** Theme resolution ladder: user pin > the frame's declared meta.theme > viewTheme. */
+  const resolveTheme = (frame?: FrameEntry, user?: string) => user ?? frame?.theme ?? get().viewTheme
 
   /** Fetch + normalize a board into ready-to-commit state, WITHOUT touching the store.
    *  null = failure (transport, malformed manifest, non-404 board error) - the caller
@@ -158,7 +175,16 @@ export const useStore = create<State>((set, get) => {
               frame: n.frame,
               x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
               w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
-              theme: typeof n.theme === 'string' ? n.theme : defaultTheme(f),
+              // pins persist as their own field (exact round-trip). Legacy boards stored a
+              // theme on EVERY node: only values differing from the frame's static default
+              // were deliberate - the rest follow viewTheme
+              ...(() => {
+                const stored = typeof n.theme === 'string' ? n.theme : undefined
+                const themeUser = typeof n.themeUser === 'string' && CONFIG.themes.includes(n.themeUser)
+                  ? n.themeUser
+                  : stored && stored !== (f?.theme ?? CONFIG.themes[0] ?? 'light') ? stored : undefined
+                return { theme: resolveTheme(f, themeUser), themeUser }
+              })(),
               status: 'loading' as const,
               missing: !manifest.frames.some((f2) => f2.id === n.frame),
             }
@@ -176,7 +202,7 @@ export const useStore = create<State>((set, get) => {
           placed.add(f.id)
           const d = defaultSize(f)
           const vp = deviceView ? CONFIG.viewports[deviceView] : null
-          nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: defaultTheme(f), status: 'loading' })
+          nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' })
         }
       }
       if ((!boardHash || needTidy) && nodes.length) {
@@ -190,7 +216,7 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, play: null, gesture: false,
+    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
@@ -246,7 +272,7 @@ export const useStore = create<State>((set, get) => {
         if (known.has(f.id)) continue
         const d = defaultSize(f)
         const maxY = next.reduce((a, n) => Math.max(a, n.y + n.h), 0)
-        const node = { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: defaultTheme(f), status: 'loading' as const }
+        const node = { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
         next.push(node)
         // in a device view, the snapshot learns the newcomer's DEFAULT size so 0 restores it sanely
         if (vp && nextBase) nextBase = { ...nextBase, [node.key]: { x: node.x, y: node.y, w: d.w, h: d.h } }
@@ -254,11 +280,17 @@ export const useStore = create<State>((set, get) => {
         changed = true
       }
       const live = new Set(m.frames.map((f) => f.id))
+      let retinted = false
       for (const n of next) {
         const missing = !live.has(n.frame)
         if (missing !== !!n.missing) { n.missing = missing; changed = true }
+        // a frame's declared meta.theme may have changed - re-resolve unpinned nodes
+        // (derived value: re-render yes, dirty/save no)
+        const f = m.frames.find((x) => x.id === n.frame)
+        const want = n.themeUser ?? f?.theme ?? get().viewTheme
+        if (n.theme !== want) { n.theme = want; retinted = true }
       }
-      set({ manifest: m, nodes: next, ...(changed ? { dirty: true, baseLayout: nextBase } : {}) })
+      set({ manifest: m, nodes: changed || retinted ? [...next] : next, ...(changed ? { dirty: true, baseLayout: nextBase } : {}) })
       if (changed) scheduleSave()
     },
 
@@ -286,10 +318,12 @@ export const useStore = create<State>((set, get) => {
       }))
       scheduleSave()
     },
+    // scoped theme = an explicit per-frame PIN; it survives board reloads and yields
+    // only to the next global set
     setSelectedTheme(theme) {
       set((s) => {
         const sel = new Set(s.selection)
-        return { nodes: s.nodes.map((n) => (sel.has(n.key) ? { ...n, theme } : n)), dirty: true }
+        return { nodes: s.nodes.map((n) => (sel.has(n.key) ? { ...n, theme, themeUser: theme } : n)), dirty: true }
       })
       scheduleSave()
     },
@@ -384,8 +418,18 @@ export const useStore = create<State>((set, get) => {
     setGesture(gesture) { set({ gesture }) },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
+    // global theme = the VIEW preference: persists across boards + reloads, clears
+    // per-frame pins. Frames declaring meta.theme keep their mode (they only work there).
     setTheme(theme) {
-      set((s) => ({ nodes: s.nodes.map((n) => ({ ...n, theme })), dirty: true }))
+      try { localStorage.setItem('mv-view-theme', theme) } catch { /* storage unavailable */ }
+      set((s) => ({
+        viewTheme: theme,
+        nodes: s.nodes.map((n) => {
+          const f = s.manifest?.frames.find((x) => x.id === n.frame)
+          return { ...n, themeUser: undefined, theme: f?.theme ?? theme }
+        }),
+        dirty: true,
+      }))
       scheduleSave()
     },
     runTidy() {
@@ -413,7 +457,7 @@ export const useStore = create<State>((set, get) => {
       const d = defaultSize(f)
       const vp = deviceView ? CONFIG.viewports[deviceView] : null
       const maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
-      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: defaultTheme(f), status: 'loading' }
+      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' }
       set((s) => ({
         nodes: [...s.nodes, node],
         dirty: true,
@@ -438,7 +482,8 @@ export const useStore = create<State>((set, get) => {
           // exception clears the view but 0 must still restore the snapshot after reload
           ...(deviceView ? { deviceView } : {}),
           ...(baseLayout ? { baseLayout } : {}),
-          nodes: nodes.map(({ key, frame, x, y, w, h, theme }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), theme })),
+          // only PINNED themes persist - inherited values follow viewTheme at load time
+          nodes: nodes.map(({ key, frame, x, y, w, h, themeUser }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), ...(themeUser ? { themeUser } : {}) })),
         }
         try {
           const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {

@@ -53,7 +53,7 @@ export function enterPlay(over?: { at?: string; device?: string; theme?: string 
     ?? (node ? names.find((v) => CONFIG.viewports[v].width === node.w) : undefined)
     ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
-    ?? node?.theme ?? frame?.theme ?? CONFIG.themes[0] ?? 'light'
+    ?? node?.theme ?? frame?.theme ?? s.viewTheme
   s.setPlay({ at, device, theme })
 }
 
