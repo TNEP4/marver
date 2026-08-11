@@ -428,8 +428,16 @@ export function App() {
   // everything derived from --accent follows (mark, sidebar, bars, handles, beams)
   const interacting = useStore((s) => s.interact !== null)
 
+  // leaving interact returns keyboard focus to the shell: while a frame held focus its
+  // document swallowed every shortcut (the bridge only forwards Escape), so d/t/digits
+  // appeared dead after an interact session
+  const appRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!interacting) appRef.current?.focus({ preventScroll: true })
+  }, [interacting])
+
   return (
-    <div className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}`}>
+    <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}`}>
       <Canvas />
       <SelectionBar />
 

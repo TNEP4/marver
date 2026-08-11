@@ -96,7 +96,7 @@ button { font-family: inherit }
 button svg { pointer-events: none }   /* event targets stay on the button - pan exclusion depends on it */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important } }
 
-.sh-app { position: relative; height: 100%; color: var(--glass-ink);
+.sh-app { position: relative; height: 100%; color: var(--glass-ink); outline: none;
   transition: --accent .4s ease, --accent-ring .4s ease, --beam .4s ease,
     --edge-accent .4s ease, --inner-tint .4s ease, --accent-wash .4s ease,
     --glass-accent .4s ease, --glass-accent-bg .4s ease }
