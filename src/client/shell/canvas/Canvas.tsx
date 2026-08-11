@@ -143,23 +143,41 @@ export function Canvas() {
     return () => el.removeEventListener('pointerdown', down)
   }, [])
 
-  // cmd+scroll = zoom on mac: rzpp only zooms on ctrlKey wheels (that is how trackpad pinch
-  // arrives), so meta-wheels are rewritten into ctrl-wheels before rzpp sees them
+  // Zoom curve: rzpp's wheel zoom is ADDITIVE in scale - a constant scale amount per
+  // pinch, which reads as sluggish when zoomed in and runaway when zoomed out (zoom is
+  // perceptually logarithmic). So ctrl/meta wheels (trackpad pinch arrives as ctrl-wheel
+  // in Chrome; cmd+scroll folds in too) are intercepted on an ANCESTOR of the wrapper -
+  // guaranteed to run before rzpp's own listener - and applied as an exponential step:
+  // constant ratio per finger distance, uniform feel at every zoom level.
   useEffect(() => {
+    const app = document.querySelector('.sh-app') as HTMLElement | null
     const el = document.querySelector('.sh-canvas') as HTMLElement | null
-    if (!el) return
-    const rewrite = (e: WheelEvent) => {
-      if (!e.metaKey || e.ctrlKey) return
+    if (!app || !el) return
+    let settle = 0
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      if (!(e.target as HTMLElement | null)?.closest?.('.sh-canvas')) return
       e.preventDefault()
       e.stopImmediatePropagation()
-      el.dispatchEvent(new WheelEvent('wheel', {
-        bubbles: true, cancelable: true, ctrlKey: true,
-        deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
-        clientX: e.clientX, clientY: e.clientY,
-      }))
+      const inst = ref.current
+      if (!inst) return
+      const { positionX, positionY, scale } = inst.instance.transformState
+      // exponent scales with input; per-event ratio capped so a discrete mouse-wheel
+      // notch (|deltaY| ~100) stays controllable while trackpad streams pass through
+      const f = Math.min(1.4, Math.max(1 / 1.4, Math.exp(-e.deltaY * 0.0075 * (CONFIG.zoomSpeed ?? 1))))
+      const next = Math.min(2, Math.max(0.05, scale * f))
+      if (next === scale) return
+      const k = next / scale
+      const r = el.getBoundingClientRect()
+      const cx = e.clientX - r.left, cy = e.clientY - r.top
+      // rzpp's zoom callbacks never fire on setTransform - manage the gesture class here
+      document.getElementById('sh-world')?.classList.add('sh-gesturing')
+      clearTimeout(settle)
+      settle = window.setTimeout(() => document.getElementById('sh-world')?.classList.remove('sh-gesturing'), 160)
+      inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, next, 0, 'linear')
     }
-    el.addEventListener('wheel', rewrite, { capture: true, passive: false })
-    return () => el.removeEventListener('wheel', rewrite, { capture: true })
+    app.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => { app.removeEventListener('wheel', onWheel, { capture: true }); clearTimeout(settle) }
   }, [])
 
   // space-pan: hold space, drag anywhere - nodes drop pointer-events so the canvas takes the drag
@@ -201,7 +219,9 @@ export function Canvas() {
       doubleClick={{ disabled: true }}
       // wheelDisabled is load-bearing: rzpp's onWheelPanning is a no-op without it, and
       // ctrlKey wheels (pinch, ctrl/cmd+scroll via the rewrite above) still zoom
-      // base steps are 1.5x rzpp defaults (snappier traverse); zoomSpeed personalizes on top
+      // wheelDisabled is load-bearing: rzpp's onWheelPanning is a no-op without it.
+      // ctrl/meta wheel zoom never reaches rzpp (exponential curve above); pinch.step
+      // only serves real touch-screen pinch.
       wheel={{ wheelDisabled: true, step: 0.225 * (CONFIG.zoomSpeed ?? 1) }}
       panning={{ wheelPanning: true, velocityDisabled: true, excluded: ['sh-no-pan'], disabled: gesture }}
       pinch={{ step: 7.5 * (CONFIG.zoomSpeed ?? 1) }}
