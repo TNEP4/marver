@@ -32,9 +32,11 @@ on the frame you ended at.
 (switching stays in play, keeps the chosen device, restarts at the new board's start) ·
 device chips + fill · theme · hide · close. Bottom-left navigator: restart (`R`) · prev
 (`←`) · position `i/N` · next (`→`) - the manual back arrow is the escape hatch when a
-flow dead-ends. Chrome collapses to a chip with `⌘/` (same shortcut collapses the design pill; ⌘\\ stays the sidebar's), auto-hides when idle, and hides outright with `H`; hovering the
-top-right or bottom-left corner always reveals it (in fill the stage reports those
-hovers, since the iframe covers the window). Coarse pointers never auto-hide.
+flow dead-ends. Chrome collapses to a chip with `⌘/` (same shortcut collapses the design pill; ⌘\\ stays the sidebar's) and auto-fades when idle. `H` hides EVERYTHING, absolutely - no
+hover-reveal (two mutually blind pointer sources made it stick); the coach pill on
+entering hidden is the recovery path (OK snoozes it 15 min, "Don't show again" retires
+it), H is the only way back, and a fresh session always opens with controls visible.
+Coarse pointers never auto-fade.
 
 **One mount - this is the whole trick.** Unlike the canvas (one iframe per frame), play
 mode mounts ONE frame host: `providers → memoized layout chain → <Frame/>`. `data-goto`

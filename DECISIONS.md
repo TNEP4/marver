@@ -101,3 +101,13 @@ always keeps it shown). The H coach bubble is the first localStorage use in the 
 (`mv-play-hint-off`); until dismissed forever, hidden-mode corners surface the bubble
 (teaching H) rather than the chrome - after dismissal they reveal the chrome directly.
 The design pill gained the same collapse/expand pair (.sh-pill-fab).
+
+## Hidden mode is absolute (2026-08-11, closing the corner-reveal saga)
+
+The corner-hover reveal is DELETED. Its two pointer sources (shell pointermove, stage
+sh:stage-edge) are mutually blind - each goes stale the moment the pointer crosses into
+the other's territory, and it stuck in both directions (windowed: bar wider than the
+zone; fill: crossing the frame corner en route to the toolbar). H now hides everything,
+period; the coach pill on entering hidden is the recovery path (OK = 15-min snooze via
+mv-play-hint-snooze, "Don't show again" = mv-play-hint-off); a fresh session always
+opens with controls visible. ⌘/ collapse is unrelated and untouched.

@@ -7,7 +7,7 @@
  *
  * The shell owns chrome, device sizing, walk order, and the URL; the stage owns data-goto:
  *   stage -> shell:  sh:stage-ready · sh:stage-at {at} · sh:stage-exit · sh:stage-error
- *                    sh:stage-key {key, code} (forwarded shortcuts) · sh:stage-edge {hot} (fill-mode corner hover)
+ *                    sh:stage-key {key, code} (forwarded shortcuts)
  *   shell -> stage:  sh:stage-set {at} (history / walk / restart) · sh:set-theme
  */
 import { Component, createElement, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
@@ -122,15 +122,6 @@ function Stage() {
     }
     window.addEventListener('keydown', onKey)
 
-    // fill mode covers the window with this iframe, so the shell cannot see corner
-    // hovers - report enter/leave of the reveal corners (top-right, bottom-left)
-    let edgeHot = false
-    const onMove = (e: PointerEvent) => {
-      const hot = (e.clientX > innerWidth - 220 && e.clientY < 90) || (e.clientX < 220 && e.clientY > innerHeight - 90)
-      if (hot !== edgeHot) { edgeHot = hot; post({ type: 'sh:stage-edge', hot }) }
-    }
-    window.addEventListener('pointermove', onMove)
-
     const onMsg = (e: MessageEvent) => {
       if (e.source !== window.parent) return
       const data = e.data
@@ -142,7 +133,6 @@ function Stage() {
     return () => {
       document.removeEventListener('click', onClick, true)
       window.removeEventListener('keydown', onKey)
-      window.removeEventListener('pointermove', onMove)
       window.removeEventListener('message', onMsg)
     }
   }, [])

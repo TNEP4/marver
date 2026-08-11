@@ -131,21 +131,14 @@ function PlayInner() {
   const [chrome, setChrome] = useState<'open' | 'collapsed' | 'hidden'>('open')
   const chromeRef = useRef(chrome)             // handleKey lives in a mount-time closure
   chromeRef.current = chrome
-  // corner-hover has two sources that must never mix: the shell's own pointermove, and
-  // the stage's sh:stage-edge reports. In fill the iframe swallows every shell move, so
-  // the shell reading goes stale the moment the pointer enters the frame - trusting it
-  // there left chrome stuck revealed. Fill listens to the stage alone.
-  const [cornerShell, setCornerShell] = useState(false)
-  const [cornerStage, setCornerStage] = useState(false)
   const fill = play?.device === 'fill'
-  const corner = fill ? cornerStage : cornerShell
   const [over, setOver] = useState(false)          // pointer ON a chrome piece - never hide under the cursor
-  // the H coach bubble: shown on entering hidden until dismissed forever (localStorage).
-  // OK only snoozes it for the CURRENT hover session - while the pointer sits on the
-  // bubble, `over`/`corner` would otherwise keep it mounted and OK would look dead.
+  // The H coach pill: hidden mode is ABSOLUTE (no corner-hover reveal - two mutually
+  // blind pointer sources made it stick in both directions). The pill on entering hidden
+  // is the recovery path: OK snoozes it 15 minutes, "Don't show again" retires it for
+  // good; either way H is the only way back, and a fresh session opens with controls on.
   const [neverHint, setNeverHint] = useState(() => !!localStorage.getItem('mv-play-hint-off'))
   const [hint, setHint] = useState(false)
-  const [hintSnooze, setHintSnooze] = useState(false)
   const hintTimer = useRef<number | undefined>(undefined)
 
   const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
@@ -223,25 +216,29 @@ function PlayInner() {
       } else if (data.type === 'sh:stage-key') {
         if (data.meta && data.key === '/') toggleCollapse()
         else handleKey(String(data.key), String(data.code))
-      } else if (data.type === 'sh:stage-edge') {
-        setCornerStage(!!data.hot)
       }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  /** Enter immersive mode; the coach bubble teaches the way back until dismissed forever. */
+  /** Enter immersive mode; the coach pill teaches the way back unless snoozed/retired.
+   *  localStorage is read here, not via state - this runs in a mount-time closure. */
   const hideAll = () => {
     setChrome('hidden')
-    if (localStorage.getItem('mv-play-hint-off')) return   // not `neverHint`: this runs in a mount-time closure
-    setHintSnooze(false)                       // every new hidden session teaches again
+    if (localStorage.getItem('mv-play-hint-off')) return
+    if (Number(localStorage.getItem('mv-play-hint-snooze') ?? 0) > Date.now()) return
     setHint(true)
     window.clearTimeout(hintTimer.current)
     hintTimer.current = window.setTimeout(() => setHint(false), 6000)
   }
-  // Both dismissals unmount the bubble UNDER the pointer - its pointerleave never fires,
-  // so `over` must be cleared by hand or it sticks true and idle/snooze never recover.
+  // Both dismissals unmount the pill UNDER the pointer - its pointerleave never fires,
+  // so `over` must be cleared by hand or it sticks true and the idle fade never recovers.
+  const snoozeHint = () => {
+    localStorage.setItem('mv-play-hint-snooze', String(Date.now() + 15 * 60_000))
+    setHint(false)
+    setOver(false)
+  }
   const dismissHintForever = () => {
     localStorage.setItem('mv-play-hint-off', '1')
     setNeverHint(true)
@@ -280,31 +277,15 @@ function PlayInner() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // an OK'd bubble stays gone only for the current visit: leaving the corner rearms it,
-  // so the next deliberate hover teaches again (the way back must stay discoverable)
-  useEffect(() => {
-    if (!corner && !over) setHintSnooze(false)
-  }, [corner, over])
-
   useEffect(() => {
     const onResize = () => setWin({ w: window.innerWidth, h: window.innerHeight })
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // chrome auto-hides after 2.5 s of stillness; movement or a tap brings it back, and
-  // hovering the top-right / bottom-left corner reveals it even when hidden with H.
-  // Coarse pointers (touch) never idle - there is no hover to wake a hidden bar with,
+  // chrome auto-fades after 2.5 s of stillness; movement or a tap brings it back.
+  // Coarse pointers (touch) never idle - there is no hover to wake a faded bar with,
   // and an unreachable close button would trap the viewer in play mode.
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const hot = (e.clientX > window.innerWidth - 220 && e.clientY < 90)
-        || (e.clientX < 220 && e.clientY > window.innerHeight - 90)
-      setCornerShell(hot)
-    }
-    window.addEventListener('pointermove', onMove)
-    return () => window.removeEventListener('pointermove', onMove)
-  }, [])
   useEffect(() => {
     if (window.matchMedia('(pointer: coarse)').matches) return
     let t = window.setTimeout(() => setIdle(true), 2500)
@@ -318,16 +299,13 @@ function PlayInner() {
 
   const vp = fill ? { width: win.w, height: win.h } : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
   const scale = fill ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
-  // awake beats the idle fade; a pointer ON a chrome piece always keeps it (the corner
-  // zones are narrower than the bar - without `over`, crossing them hid it mid-hover).
-  // In hidden mode the corners reveal real chrome only once the coach bubble is retired;
-  // before that they surface the bubble, which is what teaches H in the first place.
-  const awake = !idle || over || corner
-  const reveal = chrome === 'hidden' && (corner || over) && neverHint
-  const barOn = (chrome === 'open' && awake) || reveal
+  // awake beats the idle fade; a pointer ON a chrome piece always keeps it. Hidden is
+  // absolute: nothing shows but the coach pill, and H is the only way back.
+  const awake = !idle || over
+  const barOn = chrome === 'open' && awake
   const chipOn = chrome === 'collapsed' && awake
-  const navOn = (chrome !== 'hidden' && awake) || reveal
-  const hintOn = chrome === 'hidden' && !neverHint && !hintSnooze && (hint || corner || over)
+  const navOn = chrome !== 'hidden' && awake
+  const hintOn = chrome === 'hidden' && !neverHint && (hint || over)
   const chromeProps = { onPointerEnter: () => setOver(true), onPointerLeave: () => setOver(false) }
   const names = Object.keys(CONFIG.viewports)
   const list = playList()
@@ -391,9 +369,11 @@ function PlayInner() {
 
       {hintOn && (
         <div className="sh-play-hint" {...chromeProps}>
-          <span>Press <kbd>H</kbd> to show controls</span>
+          <span>Controls hidden - press <kbd>H</kbd> to bring them back</span>
           <i className="sep" />
-          <button onClick={() => { setHint(false); setHintSnooze(true); setOver(false) }}>OK</button>
+          <Tip inv side="bottom" label="Snooze for 15 minutes">
+            <button onClick={snoozeHint}>OK</button>
+          </Tip>
           <button className="dim" onClick={dismissHintForever}>Don't show again</button>
         </div>
       )}
