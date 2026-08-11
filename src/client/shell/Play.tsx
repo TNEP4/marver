@@ -359,7 +359,7 @@ function PlayInner() {
             <PanelFilledIcon size={16} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
-        <Tip inv side="bottom" label={<><b>Exit play</b><span className="k">Esc</span></>}>
+        <Tip inv side="bottom" label={<><b>Exit Prototype view</b><span className="k">Esc</span></>}>
           <button onClick={exit}><XIcon size={14} /></button>
         </Tip>
       </div>
