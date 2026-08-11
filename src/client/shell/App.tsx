@@ -371,6 +371,9 @@ export function App() {
         const node = existing ?? spawn(target)
         if (!node) return toast(`unknown goto target "${target}"`)
         select(node.key)
+        // a goto from inside an interacting frame CARRIES interact mode to the target -
+        // walking a flow must not eject you to design mode at every hop
+        if (s.interact === nodeKey) setInteract(node.key)
         setTimeout(() => canvasCtl.fitNode(node.key), 50)
       }
     }
