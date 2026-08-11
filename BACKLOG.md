@@ -16,3 +16,23 @@ Small items that are not milestone work. One line each; delete when done.
   canvases ever face real brute-force pressure.
 - **`--boards` and the host `public/` directory**: the filter covers frames only; public
   assets ship in full (build prints a note). Revisit if a real leak case appears.
+
+## Next phase (2026-08-11 evening - the stabilize-then-launch arc)
+
+- **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,
+  serve locally, verify: glass blur computed on .sh-panel, boot opens fit-all light,
+  theme matrix (global sticky / scoped pin / pin round-trip), gate + deep link through
+  it, play walk. The dev-vs-published divergences (lightningcss, rzpp race, read-only
+  pins) all ship silently without this. Candidate: script it as `marver smoke`.
+- **Verify & close GitHub issues #1/#2** (cold-boot double-boot) - the module-level
+  boot guard likely fixed both.
+- **M1 leftovers**: focus mode (#/f/ reserved in the URL scheme), ⌘K jump, built-in
+  theme frame, culling with hysteresis, pan perf gate (p95 < 16ms @ 30 frames).
+- **marver.design - the actual website**: the gate footer and metadata already point
+  there. Landing page telling the story (agent-native canvas, design → prototype →
+  publish), install instructions, the cookbooks, live demo link (the pilot deploy).
+- **Stress test pass**: big boards (50+ frames), rapid board switching, multi-tab sync
+  under sustained edits, published build on slow connections, play mode long flows.
+- **Distribution**: claim @marver npm scope (bare name squatted); pick a license (MIT
+  fits) + repo visibility before any "open source" claim; connect Railway service to
+  GitHub for push-to-deploy.

@@ -119,6 +119,22 @@ export const useStore = create<State>((set, get) => {
   /** Theme resolution ladder: user pin > the frame's declared meta.theme > viewTheme. */
   const resolveTheme = (frame?: FrameEntry, user?: string) => user ?? frame?.theme ?? get().viewTheme
 
+  /** Published builds are read-only on disk, so pins persist to sessionStorage instead -
+   *  parity with dev within a visit (keyed by frame id: virtual boards mint node keys
+   *  per load, frame ids are stable). */
+  const sessionPins = {
+    read(board: string): Record<string, string> {
+      try { return JSON.parse(sessionStorage.getItem(`mv-pins-${board}`) ?? '{}') } catch { return {} }
+    },
+    write(board: string, nodes: Node[]) {
+      try {
+        const pins: Record<string, string> = {}
+        for (const n of nodes) if (n.themeUser) pins[n.frame] = n.themeUser
+        sessionStorage.setItem(`mv-pins-${board}`, JSON.stringify(pins))
+      } catch { /* storage unavailable */ }
+    },
+  }
+
   /** Fetch + normalize a board into ready-to-commit state, WITHOUT touching the store.
    *  null = failure (transport, malformed manifest, non-404 board error) - the caller
    *  keeps whatever board is currently mounted. */
@@ -203,6 +219,14 @@ export const useStore = create<State>((set, get) => {
           const d = defaultSize(f)
           const vp = deviceView ? CONFIG.viewports[deviceView] : null
           nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' })
+        }
+      }
+      // published: re-apply this visit's pins over the inlined data
+      if (DATA && nodes.length) {
+        const pins = sessionPins.read(boardName)
+        for (const n of nodes) {
+          const pin = pins[n.frame]
+          if (pin && CONFIG.themes.includes(pin)) { n.themeUser = pin; n.theme = pin }
         }
       }
       if ((!boardHash || needTidy) && nodes.length) {
@@ -469,9 +493,13 @@ export const useStore = create<State>((set, get) => {
     },
 
     save() {
-      // a published canvas is read-only by design (spec §12): edits are ephemeral, and
-      // dirty must clear or switchBoard's save-flush loop wedges forever
-      if (DATA) { set({ dirty: false }); return Promise.resolve(true) }
+      // a published canvas is read-only ON DISK (spec §12): theme pins persist to the
+      // session instead, and dirty must clear or switchBoard's save-flush loop wedges
+      if (DATA) {
+        sessionPins.write(get().board, get().nodes)
+        set({ dirty: false })
+        return Promise.resolve(true)
+      }
       const p = saveChain.then(async () => {
         const rev = editRev
         const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()
