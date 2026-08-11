@@ -49,3 +49,8 @@ Small items that are not milestone work. One line each; delete when done.
   sidebar reportedly does not render these board-added frames. Decide the right model:
   goto-to-off-board could pan/spawn as a TRANSIENT (unsaved) node, or prompt, or follow
   without adding. Discuss before building. (Reported 2026-08-11, parked for publishing.)
+- **npm dispute email for bare `marver`**: drafted (to hhutton@spurpose.com, cc
+  support@npmjs.com) - Nic to send; 4-week clock, then npm adjudicates. If won, publish
+  bare `marver` and deprecate @marver-design/marver with a pointer.
+- **CLI version banner is hardcoded** (`cli.version('0.1.0')` in src/cli/index.ts) -
+  read from package.json at next release.
