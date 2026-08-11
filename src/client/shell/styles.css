@@ -419,20 +419,20 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
    below. Radius + clipping live on the WRAPPER at whole pixels - the iframe is
    transparent and scaled to land exactly on its edges, which killed the corner seams.
    The ring is an inside overlay, not a border: border-box would clip a pixel of content. */
+/* LIGHT device: its own treatment, fully separate from dark - no masked border, just a
+   soft gray RING hugging the outside edge plus the luminous halo lifting it off black */
 .sh-play .dev { position: relative; overflow: hidden; border-radius: 14px;
   --pdev-bg: #fff;
   background: var(--pdev-bg);
-  /* a light frame on the black stage also gets a faint luminous halo lifting it off
-     the backdrop (the dark variant below doesn't need one) */
-  box-shadow: 0 0 54px rgba(255, 255, 255, .12), 0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45);
+  box-shadow: 0 0 0 1px rgba(148, 152, 164, .6), 0 0 54px rgba(255, 255, 255, .12),
+    0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45);
   transition: width .28s ease, height .28s ease }
+/* DARK device: the original glint recipe, verbatim - do not touch */
 .sh-play .dev[data-theme="dark"] { --pdev-bg: #0f1015;
   box-shadow: 0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45) }
-/* ONE ring for both themes - the gray reads as a hairline against a white body and
-   against the black stage alike, and the glint stays brighter at the top-left */
-.sh-play .dev::after { content: ''; position: absolute; inset: 0; padding: 1px; border-radius: inherit;
-  background-color: #40434e;
-  background-image: linear-gradient(155deg, rgba(255, 255, 255, .45), rgba(255, 255, 255, .08) 30%, rgba(255, 255, 255, .03) 65%, rgba(255, 255, 255, .22));
+.sh-play .dev[data-theme="dark"]::after { content: ''; position: absolute; inset: 0; padding: 1px; border-radius: inherit;
+  background-color: #2c2d38;
+  background-image: linear-gradient(155deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .02) 65%, rgba(255, 255, 255, .16));
   pointer-events: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
