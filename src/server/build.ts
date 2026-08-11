@@ -165,6 +165,9 @@ export async function buildSite(root: string, boardsFlag?: string) {
       outDir,
       emptyOutDir: true,
       cssCodeSplit: true,
+      // NOT lightningcss: with its default (ancient) targets it strips the standard
+      // backdrop-filter keeping only -webkit-, and the whole glass language goes flat
+      cssMinify: 'esbuild',
       rollupOptions: {
         input: {
           shell: join(clientDir, 'shell', 'main.tsx'),
