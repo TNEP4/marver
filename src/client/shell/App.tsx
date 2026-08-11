@@ -7,12 +7,13 @@ import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon,
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. */
-function Tip({ label, children }: { label: ReactNode; children: ReactElement }) {
+function Tip({ label, side = 'top', children }: { label: ReactNode; side?: 'top' | 'bottom'; children: ReactElement }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const timer = useRef<number | undefined>(undefined)
   const show = (e: React.MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    timer.current = window.setTimeout(() => setPos({ x: r.left + r.width / 2, y: r.top - 7 }), 150)
+    const y = side === 'top' ? r.top - 7 : r.bottom + 7
+    timer.current = window.setTimeout(() => setPos({ x: r.left + r.width / 2, y }), 150)
   }
   const hide = () => { window.clearTimeout(timer.current); setPos(null) }
   const app = document.querySelector('.sh-app')
@@ -24,7 +25,7 @@ function Tip({ label, children }: { label: ReactNode; children: ReactElement }) 
         onMouseLeave: (e: React.MouseEvent) => { child.props.onMouseLeave?.(e); hide() },
         onClick: (e: React.MouseEvent) => { child.props.onClick?.(e); hide() },
       })}
-      {pos && app && createPortal(<div className="sh-tip" style={{ left: pos.x, top: pos.y }}>{label}</div>, app)}
+      {pos && app && createPortal(<div className={`sh-tip${side === 'bottom' ? ' below' : ''}`} style={{ left: pos.x, top: pos.y }}>{label}</div>, app)}
     </>
   )
 }
@@ -222,16 +223,19 @@ function DeviceMenu() {
   const entries = Object.entries(CONFIG.viewports)
   return (
     <div className="sh-theme" ref={pop.boxRef}>
-      <button className="sh-pill-btn" onClick={pop.toggle}
-        title={deviceView ? `device view: ${deviceView} (0 resets)` : 'device view (keys 1-' + entries.length + ')'}>
-        {deviceIcon(deviceView, 16)}
-        <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
-      </button>
-      <Popover pop={pop}>
-        <button onClick={() => pick(null)} title="every frame at its own default size">
-          <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
-          {deviceView === null && <CheckIcon size={13} className="chk" />}
+      <Tip side="bottom" label={<><b>Device view</b><span>{deviceView ? `${cap(deviceView)} · 0 resets` : `keys 1-${entries.length}`}</span></>}>
+        <button className="sh-pill-btn" onClick={pop.toggle}>
+          {deviceIcon(deviceView, 16)}
+          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
         </button>
+      </Tip>
+      <Popover pop={pop}>
+        <Tip side="bottom" label="Every frame at its own default size">
+          <button onClick={() => pick(null)}>
+            <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
+            {deviceView === null && <CheckIcon size={13} className="chk" />}
+          </button>
+        </Tip>
         <i className="div" />
         {entries.map(([name, vp], i) => (
           <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
@@ -253,7 +257,9 @@ function ZoomMenu() {
   const go = (fn: () => void) => { fn(); pop.setOpen(false) }
   return (
     <div className="sh-theme" ref={pop.boxRef}>
-      <button className="sh-pill-btn pct" onClick={pop.toggle} title="zoom presets">{Math.round(scale * 100)}%</button>
+      <Tip side="bottom" label="Zoom presets">
+        <button className="sh-pill-btn pct" onClick={pop.toggle}>{Math.round(scale * 100)}%</button>
+      </Tip>
       <Popover pop={pop}>
         {ZOOMS.map((z) => (
           <button key={z} onClick={() => go(() => canvasCtl.zoomTo(z))}>
@@ -281,10 +287,12 @@ function ThemeMenu() {
   const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
   return (
     <div className="sh-theme" ref={pop.boxRef}>
-      <button className="sh-pill-btn" onClick={pop.toggle} title="theme for all frames (d)">
-        {uniform === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
-        <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
-      </button>
+      <Tip side="bottom" label={<><b>Theme</b><span>all frames · D</span></>}>
+        <button className="sh-pill-btn" onClick={pop.toggle}>
+          {uniform === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
+          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
+        </button>
+      </Tip>
       <Popover pop={pop}>
         {CONFIG.themes.map((t) => (
           <button key={t} onClick={() => { useStore.getState().setTheme(t); pop.setOpen(false) }}>
@@ -450,7 +458,7 @@ export function App() {
           <div className="sh-panel-top">
             <ParallelogramDuoIcon size={21} className="mark" />
             <span className="name">Marver</span>
-            <button className="sh-ibtn" onClick={togglePanel} title="collapse panel (⌘\\)" tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button>
+            <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={togglePanel} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Board</div>
@@ -474,8 +482,10 @@ export function App() {
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}
           </div>
       </aside>
-      <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel} title="open panel (⌘\\)"
-        aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelHollowIcon size={18} /></button>
+      <Tip side="bottom" label={<><b>Open panel</b><span>⌘\</span></>}>
+        <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel}
+          aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelHollowIcon size={18} /></button>
+      </Tip>
 
       {/* floating pill nav, top right */}
       <nav className="sh-pill">
@@ -483,9 +493,13 @@ export function App() {
         <ThemeMenu />
         <i className="sep" />
         <ZoomMenu />
-        <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }} title="tidy layout (t)"><GridIcon size={16} /></button>
+        <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
+          <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><GridIcon size={16} /></button>
+        </Tip>
         <i className="sep" />
-        <button className="sh-pill-btn off" title="play mode ships in M2"><PlayIcon size={15} /></button>
+        <Tip side="bottom" label="Play mode ships in M2">
+          <button className="sh-pill-btn off"><PlayIcon size={15} /></button>
+        </Tip>
       </nav>
 
       {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled (design/config.ts → theme)</div>}

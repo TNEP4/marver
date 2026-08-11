@@ -350,6 +350,9 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .25);
   animation: sh-tip-pop .12s ease }
 @keyframes sh-tip-pop { from { opacity: 0; transform: translate(-50%, -100%) scale(.95) } }
+/* top-of-screen chrome flips its tooltip below the trigger */
+.sh-tip.below { transform: translate(-50%, 0); animation-name: sh-tip-pop-b }
+@keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
 .sh-tip b { font-weight: 600 }
 .sh-tip span { opacity: .65; font-size: 10.5px }
 
