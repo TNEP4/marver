@@ -148,18 +148,19 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 4px 12px -6px rgba(24, 24, 27, .12) }
   header { display: flex; align-items: center; gap: 10px; padding: 4px 2px 4px 4px }
   header svg, header img { color: #0088ff; flex: none; border-radius: 6px }
-  h1 { font-size: 17px; font-weight: 650; letter-spacing: -.01em }
+  h1 { font-size: 17px; font-weight: 600; letter-spacing: -.01em }
   p { font-size: 12.5px; line-height: 1.5; color: rgba(24, 24, 27, .66); padding: 0 4px }
-  input { height: 40px; padding: 0 13px; border-radius: 12px; border: 1px solid rgba(24, 24, 27, .14);
+  input { height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(24, 24, 27, .14);
     background: #fff; color: #18181b; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s }
   input::placeholder { color: rgba(24, 24, 27, .35) }
   input:focus { border-color: #0088ff; box-shadow: 0 0 0 3px rgba(0, 136, 255, .18) }
-  button { height: 40px; border: 0; border-radius: 12px; background: #18181b; color: #fafafa;
+  button { height: 40px; border: 0; border-radius: 999px; background: #18181b; color: #fafafa;
     font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer; transition: background .15s }
   button:hover { background: #000 }
   .err { font-size: 12px; color: #b42318; padding: 0 4px }
   footer a { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px -apple-system, system-ui, sans-serif;
     color: rgba(24, 24, 27, .55); text-decoration: none }
+  footer a > svg:first-of-type { width: 20px; height: 20px; color: #0088ff }
   footer .md, footer .up { transition: color .15s, opacity .15s }
   footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
   footer .up { opacity: .45 }
