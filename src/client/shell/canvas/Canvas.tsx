@@ -66,6 +66,21 @@ function paintGrid(positionX: number, positionY: number, scale: number) {
   }
 }
 
+/**
+ * Preset transitions: device resizes and tidy moves are store mutations that commit in
+ * one React render - instant, jarring jumps. Arming this class right before the mutation
+ * lets the nodes ease to their new size/position on the same duration+curve the camera
+ * fit uses, so frames and viewport travel together. Drags stay direct (class absent).
+ */
+let presetTimer = 0
+export function animateLayout(ms = 360) {
+  const w = document.getElementById('sh-world')
+  if (!w) return
+  w.classList.add('sh-preset')
+  clearTimeout(presetTimer)
+  presetTimer = window.setTimeout(() => w.classList.remove('sh-preset'), ms)
+}
+
 export const canvasCtl = {
   fitNode(_key: string) {},
   fitNodes(_keys: string[]) {},

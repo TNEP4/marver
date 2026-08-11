@@ -81,6 +81,13 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
 #sh-world { position: relative; width: 1px; height: 1px }
 #sh-world.sh-gesturing iframe { pointer-events: none }            /* law G-4 */
 .sh-gesturing .sh-content { will-change: transform }              /* law G-3: gesture-scoped only */
+/* preset transitions: armed by animateLayout() around device/tidy mutations - nodes ease
+   to their new frame on the same 320ms ease-out the camera fit animates with */
+#sh-world.sh-preset .sh-node { transition: transform .32s cubic-bezier(.25,.46,.45,.94),
+  width .32s cubic-bezier(.25,.46,.45,.94), height .32s cubic-bezier(.25,.46,.45,.94) }
+#sh-world.sh-preset .sh-node-body,
+#sh-world.sh-preset .sh-node iframe { transition: width .32s cubic-bezier(.25,.46,.45,.94),
+  height .32s cubic-bezier(.25,.46,.45,.94) }
 
 /* cursor conventions (Figma): arrow everywhere; grab only while space is held */
 body.sh-space .sh-canvas { cursor: grab }

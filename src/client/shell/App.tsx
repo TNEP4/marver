@@ -2,7 +2,7 @@ import { Component, cloneElement, useEffect, useRef, useState, type ReactElement
 import { createPortal } from 'react-dom'
 import { useStore, CONFIG } from './store.ts'
 import { ROUTE } from '../const.ts'
-import { Canvas, canvasCtl } from './canvas/Canvas.tsx'
+import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, StackIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
@@ -154,6 +154,7 @@ function SelectionBar() {
   const { resizeSelected, spawn, toast } = useStore.getState()
   const multi = selection.length > 1
   const applyDevice = (name: string) => {
+    animateLayout()
     resizeSelected(name)
     setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
   }
@@ -213,6 +214,7 @@ function DeviceMenu() {
   const deviceView = useStore((s) => s.deviceView)
   const pop = usePopover()
   const pick = (name: string | null) => {
+    animateLayout()
     useStore.getState().setDeviceView(name)
     pop.setOpen(false)
     setTimeout(() => canvasCtl.fitAll(), 30)
@@ -364,7 +366,7 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
-      if (e.key === 't') runTidy()
+      if (e.key === 't') { animateLayout(); runTidy() }
       if (e.key === 'd' && CONFIG.themes.length > 1) {
         // cycle themes from the board's current (uniform or first)
         const cur = s.nodes.length && s.nodes.every((n) => n.theme === s.nodes[0].theme) ? s.nodes[0].theme : CONFIG.themes[0]
@@ -381,6 +383,7 @@ export function App() {
         const names = Object.keys(CONFIG.viewports)
         if (idx !== 0 && !names[idx - 1]) return
         const name = idx === 0 ? null : names[idx - 1]
+        animateLayout()
         if (s.selection.length) {
           s.resizeSelected(name)
           setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
@@ -446,7 +449,7 @@ export function App() {
         <ThemeMenu />
         <i className="sep" />
         <ZoomMenu />
-        <button className="sh-pill-btn" onClick={runTidy} title="tidy layout (t)"><GridIcon size={16} /></button>
+        <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }} title="tidy layout (t)"><GridIcon size={16} /></button>
         <i className="sep" />
         <button className="sh-pill-btn off" title="play mode ships in M2"><PlayIcon size={15} /></button>
       </nav>
