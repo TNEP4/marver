@@ -125,6 +125,9 @@ export default {
   // zoomSpeed: 1,
   // Publishing (\`${NAME} build\` + \`${NAME} serve\`): gate identity + branding footer.
   // name/logo default to the host package.json name and design/logo.svg (then public/).
+  // branding is the small "Powered by Marver.design" line under the gate. Marver is
+  // free, and that line is how it spreads - we'd love it if you leave it on, but it
+  // is yours to remove, no strings: share: { branding: false }.
   // share: { name: "My App", logo: "design/logo.svg", branding: true },
 }
 `

@@ -21,8 +21,11 @@ publish must have all its `data-goto` targets on a published board.
 **The gate**: with `MARVER_PASSWORD` set, every unauthenticated request gets the gate
 page - the bundle is never sent pre-auth. Auth is an HMAC-signed 30-day cookie with a
 per-boot secret (a server restart re-prompts). Each password attempt pays an scrypt
-cost. `share: { branding: false }` in `design/config.ts` removes the
-"Powered by Marver" footer.
+cost. The gate footer ("Powered by Marver.design") is the honor system, not
+enforcement: Marver is free, the gate is fully personalized to your app, and that one
+line is how the tool spreads - we'd love it if you keep it. It's yours to remove, no
+strings: `share: { branding: false }` in `design/config.ts` (this also strips every
+Marver mention from the page metadata).
 
 ## Railway (the one-pager)
 
