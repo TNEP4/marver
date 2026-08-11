@@ -151,12 +151,21 @@ export function Canvas() {
   useEffect(() => {
     if (booted.current || nodes.length === 0) return
     booted.current = true
-    requestAnimationFrame(() => {
+    const fit = () => {
       const keys = (bootHash.n ?? []).filter((k) => useStore.getState().nodes.some((n) => n.key === k))
       if (keys.length) {
         useStore.setState({ selection: keys })
         canvasCtl.fitNodes(keys)
       } else canvasCtl.fitAll()
+    }
+    requestAnimationFrame(() => {
+      fit()
+      // published builds boot fast enough that rzpp's own init can land AFTER this fit
+      // and stomp it back to the identity transform - one verification pass re-fits
+      setTimeout(() => {
+        const st = ref.current?.instance.transformState
+        if (st && st.scale === 1 && st.positionX === 0 && st.positionY === 0) fit()
+      }, 150)
     })
   }, [nodes])
 
@@ -241,13 +250,14 @@ export function Canvas() {
   const zoom = (on: boolean) => () =>
     document.getElementById('sh-world')?.classList[on ? 'add' : 'remove']('sh-gesturing')
 
+  // no initialPosition props on the wrapper: rzpp applies them ASYNC after mount and
+  // stomps the boot fit when data is inlined (published builds) - the boot fit owns
+  // the first camera, and until it lands the default (0,0,1) is a known sentinel
   return (
     <TransformWrapper
       ref={ref}
       minScale={0.05}
       maxScale={2}
-      initialPositionX={290}
-      initialPositionY={90}
       limitToBounds={false}
       doubleClick={{ disabled: true }}
       // wheelDisabled is load-bearing: rzpp's onWheelPanning is a no-op without it, and

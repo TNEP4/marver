@@ -126,3 +126,14 @@ empty --boards fails closed (cac yields `true` for a bare flag - CLI normalizes)
 published saves clear dirty (switchBoard wedged); filtered builds open on their first
 published board (no synthesized all-scenes); boards watcher mkdirs + JSON-validates
 before broadcasting. Deferred to BACKLOG: --base, per-IP throttling, public/ filtering.
+
+## Boot-fit race + test pollution (2026-08-11, evening)
+
+Published builds boot from inlined data fast enough that rzpp's async initial-transform
+application landed AFTER the boot fit and stomped it back to identity - dev's fetch
+latency had always hidden the race. Fix: the vestigial initialPositionX/Y props are gone
+(the boot fit owns the first camera) plus a one-shot 150ms verify-refit. Separately: the
+dark-and-scattered published all-scenes was DATA, not code - automated test sessions
+pressed D and resized on all-scenes, materializing it with dark themes and churned
+layout, and it got committed and published. Lesson: automated canvas tests mutate real
+board files; reset design/boards/ before committing a pilot.
