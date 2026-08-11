@@ -577,7 +577,7 @@ export function App() {
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><GridIcon size={16} /></button>
         </Tip>
         <i className="sep" />
-        <Tip side="bottom" label={<><b>Play</b><span>P</span></>}>
+        <Tip side="bottom" label={<><b>Prototype mode</b><span>P</span></>}>
           <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>
