@@ -12,7 +12,11 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string): Conn
   const page = (dir: string) => {
     const html = readFileSync(join(clientDir, dir, 'index.html'), 'utf8')
     const entry = '/@fs/' + join(clientDir, dir, 'main.tsx').split('\\').join('/')
-    return html.replaceAll('{{ENTRY}}', entry)
+    return html.replaceAll('{{ENTRY}}', entry).replaceAll('{{ROUTE}}', ROUTE)
+  }
+
+  const ICON_TYPES: Record<string, string> = {
+    png: 'image/png', ico: 'image/x-icon', webmanifest: 'application/manifest+json',
   }
 
   return async (req, res, next) => {
@@ -22,6 +26,17 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string): Conn
     let dir: string | null = null
     if (path === '/' || path === '/index.html') dir = 'shell'
     else if (path === `${ROUTE}/frame/` || path === `${ROUTE}/frame/index.html`) dir = 'frame-host'
+    else if (path.startsWith(`${ROUTE}/favicon/`)) {
+      // static icon pack from the shell dir; basename-only lookup, no traversal
+      const name = path.slice(`${ROUTE}/favicon/`.length)
+      const type = ICON_TYPES[name.split('.').pop() ?? '']
+      if (!/^[\w@-]+(\.[\w]+)+$/.test(name) || !type) return next()
+      try {
+        res.setHeader('content-type', type)
+        res.setHeader('cache-control', 'public, max-age=3600')
+        return res.end(readFileSync(join(clientDir, 'shell', 'favicon', name)))
+      } catch { return next() }
+    }
     else if (path === `${ROUTE}/bridge.js`) {
       res.setHeader('content-type', 'text/javascript')
       return res.end(readFileSync(join(clientDir, 'frame-host', 'bridge.js'), 'utf8'))

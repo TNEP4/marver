@@ -302,6 +302,10 @@ export function App() {
 
   useEffect(() => { boot() }, [])
 
+  // page title follows the open board
+  const board = useStore((s) => s.board)
+  useEffect(() => { document.title = board ? `${cap(board)} - Marver` : 'Marver' }, [board])
+
   // browser pinch-zoom is disabled inside the app: a pinch over the chrome (or anywhere
   // off-canvas) was scaling the PAGE and wrecking the layout. Canvas zoom is unaffected
   // (rzpp handles its own events), and keyboard cmd +/- is never intercepted.
