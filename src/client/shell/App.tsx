@@ -330,7 +330,7 @@ export function App() {
       useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
     boot().then((ok) => {
       urlReady.current = true
-      if (ok && bootHash.play?.at) enterPlay(bootHash.play)
+      if (ok && bootHash.play) enterPlay(bootHash.play)   // #/p/<board> alone = board start
     })
   }, [])
 
@@ -351,22 +351,27 @@ export function App() {
     prevPlay.current = playState
   })
 
-  // browser back/forward: re-apply the URL. writeHash skips identical hashes, so
+  // browser back/forward: re-apply the URL as a whole - board first, then play or
+  // selection against the newly loaded state. writeHash skips identical hashes, so
   // restores never echo back into history.
   useEffect(() => {
-    const onPop = () => {
+    const onPop = async () => {
       const h = parseHash()
-      const s = useStore.getState()
-      if (h.board && h.board !== s.board) { s.switchBoard(h.board).then(() => setTimeout(() => canvasCtl.fitAll(), 60)); return }
-      if (h.play?.at) {
-        if (s.play) { if (s.play.at !== h.play.at) playCtl.setAt(h.play.at) }
+      let s = useStore.getState()
+      if (h.board && h.board !== s.board) {
+        if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
+        await s.switchBoard(h.board)
+        s = useStore.getState()
+        if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
+      }
+      if (h.play) {
+        if (s.play && h.play.at) { if (s.play.at !== h.play.at) playCtl.setAt(h.play.at) }
         else enterPlay(h.play)
-      } else if (s.play) {
-        s.setPlay(null)
       } else {
+        if (s.play) s.setPlay(null)
         const keys = (h.n ?? []).filter((k) => s.nodes.some((n) => n.key === k))
         useStore.setState({ selection: keys })
-        if (keys.length) canvasCtl.fitNodes(keys)
+        setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
       }
     }
     window.addEventListener('popstate', onPop)

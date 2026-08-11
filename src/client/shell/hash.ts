@@ -19,27 +19,29 @@ export interface HashState {
 const BOARD_RE = /^[a-z0-9][a-z0-9-]*$/
 
 export function parseHash(hash: string = location.hash): HashState {
-  const raw = hash.replace(/^#/, '')
-  if (!raw || raw === '/') return {}
-  const q = raw.indexOf('?')
-  const path = q === -1 ? raw : raw.slice(0, q)
-  const params = new URLSearchParams(q === -1 ? '' : raw.slice(q + 1))
-  const m = path.match(/^\/(b|p)\/([^/?]+)$/)
-  if (!m) return {}
-  const board = decodeURIComponent(m[2])
-  if (!BOARD_RE.test(board)) return {}
-  if (m[1] === 'b') {
-    const n = (params.get('n') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
-    return { board, ...(n.length ? { n } : {}) }
-  }
-  return {
-    board,
-    play: {
-      at: params.get('at') ?? undefined,
-      device: params.get('device') ?? undefined,
-      theme: params.get('theme') ?? undefined,
-    },
-  }
+  try {
+    const raw = hash.replace(/^#/, '')
+    if (!raw || raw === '/') return {}
+    const q = raw.indexOf('?')
+    const path = q === -1 ? raw : raw.slice(0, q)
+    const params = new URLSearchParams(q === -1 ? '' : raw.slice(q + 1))
+    const m = path.match(/^\/(b|p)\/([^/?]+)$/)
+    if (!m) return {}
+    const board = decodeURIComponent(m[2])
+    if (!BOARD_RE.test(board)) return {}
+    if (m[1] === 'b') {
+      const n = (params.get('n') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+      return { board, ...(n.length ? { n } : {}) }
+    }
+    return {
+      board,
+      play: {
+        at: params.get('at') ?? undefined,
+        device: params.get('device') ?? undefined,
+        theme: params.get('theme') ?? undefined,
+      },
+    }
+  } catch { return {} }   // a malformed hash (#/b/%) is a default view, never a crash
 }
 
 export function buildHash(s: HashState): string {

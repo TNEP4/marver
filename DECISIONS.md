@@ -78,3 +78,15 @@ across swaps - persistence comes free, no memo machinery needed.
 **Selection deep links on an unmaterialized all-scenes board are per-session.** Node keys
 are minted at load until first edit materializes the board. Curated boards (the sharing
 unit) have stable keys. Recorded, not fixed - materialize to share.
+
+## Codex review of M2a (2026-08-11)
+
+8 findings, 7 fixed: cross-board popstate now re-applies the WHOLE hash after the switch
+(a stale play overlay from board A could corrupt board B's URL); off-board play links
+validate against the manifest, not the board list; `#/p/<board>` alone enters at board
+start; the stage swap seq is rechecked inside the startViewTransition callback; the
+ready handshake resends current at+theme so registry-HMR iframe reloads resync; play
+chrome wakes on pointer events and never idles on coarse pointers; malformed hashes
+parse to the default view instead of throwing at module init. DECLINED: promoting stage
+async errors from toast to error card - render errors already get the Boundary card, and
+killing a live demo over a stray rejection is worse than a toast. Judgment call, recorded.

@@ -27,22 +27,28 @@ function playList(): string[] {
 }
 
 /** Enter play on the current board: first selected node starts, else the first node.
- *  `over` (deep links) can pin the start frame, device, and theme. */
+ *  `over` (deep links) can pin the start frame, device, and theme - the start may be any
+ *  playable manifest frame, not just a board node: the stage itself allows data-goto to
+ *  off-board frames, so a link captured mid-flow must restore to the same screen. */
 export function enterPlay(over?: { at?: string; device?: string; theme?: string }) {
   const s = useStore.getState()
   const list = playList()
   if (!list.length) { s.toast('nothing to play on this board'); return }
-  const overAt = over?.at && list.includes(over.at) ? over.at : undefined
+  const overAt = over?.at && s.manifest?.frames.some((f) => f.id === over.at && f.kind === 'tsx') ? over.at : undefined
   const selNode = s.selection.map((k) => s.nodes.find((n) => n.key === k)).find((n): n is Node => !!n && list.includes(n.frame))
-  const node = (overAt ? s.nodes.find((n) => n.frame === overAt) : undefined) ?? selNode ?? s.nodes.find((n) => list.includes(n.frame))!
-  const frame = s.frameFor(node)
+  // node is undefined only for an off-board overAt - frame meta then carries the defaults
+  const node = (overAt ? s.nodes.find((n) => n.frame === overAt) : undefined)
+    ?? (overAt ? undefined : selNode ?? s.nodes.find((n) => list.includes(n.frame)))
+  const at = overAt ?? node!.frame
+  const frame = s.manifest?.frames.find((f) => f.id === at)
   // device: the link's; else the node's width names it; else the frame's declared viewport
   const names = Object.keys(CONFIG.viewports)
   const device = (over?.device && CONFIG.viewports[over.device] ? over.device : undefined)
-    ?? names.find((v) => CONFIG.viewports[v].width === node.w)
+    ?? (node ? names.find((v) => CONFIG.viewports[v].width === node.w) : undefined)
     ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
-  const theme = over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : node.theme
-  s.setPlay({ at: overAt ?? node.frame, device, theme })
+  const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
+    ?? node?.theme ?? frame?.theme ?? CONFIG.themes[0] ?? 'light'
+  s.setPlay({ at, device, theme })
 }
 
 /** Control channel for history restores: the popstate handler steers the mounted stage
@@ -105,6 +111,13 @@ function PlayInner() {
       const s = useStore.getState()
       if (data.type === 'sh:stage-ready') {
         postStage({ type: 'sh:stage-list', frames: playList() })
+        // an iframe reload (registry HMR invalidation) boots at the frozen initial src -
+        // resync it to the shell's current truth so navigation and theme survive reloads
+        const p = s.play
+        if (p) {
+          if (typeof data.at === 'string' && data.at !== p.at) postStage({ type: 'sh:stage-set', at: p.at })
+          postStage({ type: 'sh:set-theme', theme: p.theme })
+        }
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
         if (p && typeof data.at === 'string') s.setPlay({ ...p, at: data.at })
@@ -148,12 +161,16 @@ function PlayInner() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // chrome auto-hides after 2.5 s of stillness; any movement brings it back
+  // chrome auto-hides after 2.5 s of stillness; movement or a tap brings it back.
+  // Coarse pointers (touch) never idle - there is no hover to wake a hidden bar with,
+  // and an unreachable close button would trap the viewer in play mode.
   useEffect(() => {
+    if (window.matchMedia('(pointer: coarse)').matches) return
     let t = window.setTimeout(() => setIdle(true), 2500)
     const wake = () => { setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 2500) }
-    window.addEventListener('mousemove', wake)
-    return () => { window.clearTimeout(t); window.removeEventListener('mousemove', wake) }
+    window.addEventListener('pointermove', wake)
+    window.addEventListener('pointerdown', wake)
+    return () => { window.clearTimeout(t); window.removeEventListener('pointermove', wake); window.removeEventListener('pointerdown', wake) }
   }, [])
 
   if (!play) return null                       // parent gates on play; belt to its braces

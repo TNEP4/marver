@@ -79,7 +79,9 @@ function Stage() {
       const next = await resolve(id)
       if (seq !== swapSeq.current) return       // a newer swap superseded this one
       current.current = id
-      const apply = () => flushSync(() => { setErr(null); setMounted(next) })
+      // startViewTransition runs its callback async - recheck the seq there too, or an
+      // older pending transition could commit stale state over a newer navigation
+      const apply = () => { if (seq === swapSeq.current) flushSync(() => { setErr(null); setMounted(next) }) }
       if (document.startViewTransition) document.startViewTransition(apply)
       else { apply(); document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' }) }
       if (announce) post({ type: 'sh:stage-at', at: id })
