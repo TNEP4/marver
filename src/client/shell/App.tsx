@@ -434,6 +434,7 @@ export function App() {
       const s = useStore.getState()
       if (s.play) return                       // play mode owns the keyboard (Play.tsx)
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setPillOpen((o) => !o); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
@@ -553,15 +554,15 @@ export function App() {
         <Tip side="bottom" label={<><b>Play</b><span>P</span></>}>
           <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
-        <Tip side="bottom" label="Collapse toolbar">
+        <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>
           <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
-            <CaretIcon size={12} style={{ transform: 'rotate(180deg)' }} />
+            <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
       </nav>
-      <Tip side="bottom" label="Show toolbar">
+      <Tip side="bottom" label={<><b>Show toolbar</b><span>⌘/</span></>}>
         <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
-          aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><CaretIcon size={14} /></button>
+          aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
 
       <PlayOverlay />

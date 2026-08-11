@@ -14,7 +14,7 @@ import { useStore, CONFIG, boardLabel, cap, fetchBoardNames, type Node } from '.
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
-import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, FrameCornersIcon, MoonIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
+import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, FrameCornersIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
 
 /** Board-order frame ids playable on the stage (tsx only - html frames are their own
  *  documents and cannot mount into the persistent chain), deduped. */
@@ -200,7 +200,8 @@ function PlayInner() {
       } else if (data.type === 'sh:stage-error') {
         s.toast(`play: ${String(data.message ?? 'frame error')}`)
       } else if (data.type === 'sh:stage-key') {
-        handleKey(String(data.key), String(data.code))
+        if (data.meta && data.key === '/') toggleCollapse()
+        else handleKey(String(data.key), String(data.code))
       } else if (data.type === 'sh:stage-edge') {
         // corner hovers inside the iframe matter only in fill, where it covers the window
         if (s.play?.device === 'fill') setCorner(!!data.hot)
@@ -231,7 +232,6 @@ function PlayInner() {
     if (key === 'ArrowLeft') { step(-1); return }
     if (key === 'r') { restart(); return }
     if (key === 'h') { chromeRef.current === 'hidden' ? setChrome('open') : hideAll(); return }
-    if (key === 'c') { setChrome(chromeRef.current === 'collapsed' ? 'open' : 'collapsed'); return }
     if (/^Digit[1-9]$/.test(code)) {
       const names = Object.keys(CONFIG.viewports)
       const idx = Number(code.slice(5))
@@ -243,9 +243,12 @@ function PlayInner() {
       setTheme(CONFIG.themes[(CONFIG.themes.indexOf(p.theme) + 1) % CONFIG.themes.length])
     }
   }
+  /** ⌘/ toggles the toolbar - the same shortcut as design mode (⌘\ is the sidebar's). */
+  const toggleCollapse = () => setChrome(chromeRef.current === 'collapsed' ? 'open' : 'collapsed')
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); toggleCollapse(); return }
       if (e.metaKey || e.ctrlKey) return
       handleKey(e.key, e.code)
     }
@@ -341,9 +344,9 @@ function PlayInner() {
           </Tip>
         ))}
         <i className="sep" />
-        <Tip inv side="bottom" label={<><b>Collapse</b><span>H hides everything</span><span className="k">C</span></>}>
+        <Tip inv side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything</span><span className="k">⌘/</span></>}>
           <button onClick={() => setChrome('collapsed')}>
-            <CaretIcon size={13} style={{ transform: 'rotate(180deg)' }} />
+            <PanelFilledIcon size={16} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
         <Tip inv side="bottom" label={<><b>Exit play</b><span className="k">Esc</span></>}>
@@ -351,9 +354,9 @@ function PlayInner() {
         </Tip>
       </div>
 
-      <Tip inv side="bottom" label={<><b>Show controls</b><span>H hides everything</span><span className="k">C</span></>}>
+      <Tip inv side="bottom" label={<><b>Show toolbar</b><span>H hides everything</span><span className="k">⌘/</span></>}>
         <button className={`sh-play-chip${chipOn ? '' : ' idle'}`} onClick={() => setChrome('open')} {...chromeProps}>
-          <CaretIcon size={13} />
+          <PanelHollowIcon size={16} style={{ transform: 'rotate(90deg)' }} />
         </button>
       </Tip>
 

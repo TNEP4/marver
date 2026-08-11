@@ -32,7 +32,7 @@ on the frame you ended at.
 (switching stays in play, keeps the chosen device, restarts at the new board's start) ·
 device chips + fill · theme · hide · close. Bottom-left navigator: restart (`R`) · prev
 (`←`) · position `i/N` · next (`→`) - the manual back arrow is the escape hatch when a
-flow dead-ends. Chrome auto-hides when idle and hides outright with `H`; hovering the
+flow dead-ends. Chrome collapses to a chip with `⌘/` (same shortcut collapses the design pill; ⌘\\ stays the sidebar's), auto-hides when idle, and hides outright with `H`; hovering the
 top-right or bottom-left corner always reveals it (in fill the stage reports those
 hovers, since the iframe covers the window). Coarse pointers never auto-hide.
 

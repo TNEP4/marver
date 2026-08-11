@@ -412,18 +412,28 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex;
   align-items: center; justify-content: center; animation: sh-play-in .28s ease-out }
 @keyframes sh-play-in { from { opacity: 0 } }
-/* the device wears the frame-node card language (same theme border tokens), which also
-   kills the corner seams: radius + clipping live on the WRAPPER at whole pixels, the
-   iframe is transparent and scaled to land exactly on the wrapper's edges. The ring is
-   an outside box-shadow, not a border - border-box would clip a pixel of content. */
+/* the device wears the frame-node card language: same theme border tokens, the same
+   masked 1px edge-light gradient ring (glass catching light), and a real drop shadow
+   below. Radius + clipping live on the WRAPPER at whole pixels - the iframe is
+   transparent and scaled to land exactly on its edges, which killed the corner seams.
+   The ring is an inside overlay, not a border: border-box would clip a pixel of content. */
 .sh-play .dev { position: relative; overflow: hidden; border-radius: 14px;
   --pdev-bg: #fff; --pdev-brd: #dddee5;
+  --pdev-edge: linear-gradient(155deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .2) 30%, rgba(24, 24, 27, .04) 65%, rgba(255, 255, 255, .55));
   background: var(--pdev-bg);
-  box-shadow: 0 0 0 1px var(--pdev-brd), 0 32px 90px rgba(0, 0, 0, .6);
+  box-shadow: 0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45);
   transition: width .28s ease, height .28s ease }
-.sh-play .dev[data-theme="dark"] { --pdev-bg: #0f1015; --pdev-brd: #2c2d38 }
+.sh-play .dev[data-theme="dark"] { --pdev-bg: #0f1015; --pdev-brd: #2c2d38;
+  --pdev-edge: linear-gradient(155deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .02) 65%, rgba(255, 255, 255, .16)) }
+.sh-play .dev::after { content: ''; position: absolute; inset: 0; padding: 1px; border-radius: inherit;
+  background-color: var(--pdev-brd); background-image: var(--pdev-edge); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude }
 .sh-play .dev iframe { display: block; border: 0; background: transparent; transform-origin: 0 0 }
 .sh-play.fill .dev { border-radius: 0; box-shadow: none; transition: none }
+.sh-play.fill .dev::after { display: none }
 
 /* the two floating chrome pieces share one glass language and one idle behavior */
 .sh-play-bar, .sh-play-nav { position: absolute; display: flex; align-items: center; gap: 1px;
@@ -462,9 +472,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   display: grid; place-items: center; border-radius: 999px;
   background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  color: rgba(245, 245, 247, .64); cursor: pointer; transition: opacity .35s ease }
+  color: rgba(245, 245, 247, .64); cursor: pointer;
+  transition: opacity .35s ease, transform .35s ease }
 .sh-play-chip:hover { color: #f5f5f7 }
-.sh-play-chip.idle { opacity: 0; pointer-events: none }
+.sh-play-chip.idle { opacity: 0; pointer-events: none; transform: scale(.6) }
 
 /* the H coach bubble: hairline, translucent, teaches the way back from immersive mode.
    Same pill geometry and separators as the bar it stands in for. */
