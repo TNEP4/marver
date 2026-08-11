@@ -308,6 +308,26 @@ export function App() {
   const board = useStore((s) => s.board)
   useEffect(() => { document.title = board ? `${cap(board)} - Marver` : 'Marver' }, [board])
 
+  // favicon follows the mode: blue pack in design mode, purple pack in interact.
+  // The links are rebuilt (not toggled) so the set stays deterministic; the .ico is
+  // design-blue only, so interact mode omits it and the browser takes the purple PNGs.
+  const interactingIcon = useStore((s) => s.interact !== null)
+  useEffect(() => {
+    const sfx = interactingIcon ? '-interactive' : ''
+    document.head.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach((l) => l.remove())
+    const add = (rel: string, href: string, attrs: Record<string, string> = {}) => {
+      const l = document.createElement('link')
+      l.rel = rel
+      l.href = href
+      for (const [k, v] of Object.entries(attrs)) l.setAttribute(k, v)
+      document.head.appendChild(l)
+    }
+    if (!interactingIcon) add('icon', `${ROUTE}/favicon/favicon.ico`, { sizes: '48x48' })
+    add('icon', `${ROUTE}/favicon/favicon-32x32${sfx}.png`, { type: 'image/png', sizes: '32x32' })
+    add('icon', `${ROUTE}/favicon/favicon-16x16${sfx}.png`, { type: 'image/png', sizes: '16x16' })
+    add('apple-touch-icon', `${ROUTE}/favicon/apple-touch-icon${sfx}.png`)
+  }, [interactingIcon])
+
   // browser pinch-zoom is disabled inside the app: a pinch over the chrome (or anywhere
   // off-canvas) was scaling the PAGE and wrecking the layout. Canvas zoom is unaffected
   // (rzpp handles its own events), and keyboard cmd +/- is never intercepted.
