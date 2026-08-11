@@ -182,7 +182,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: sh-orbit 5.5s linear infinite;
+  animation: sh-orbit 4.2s linear infinite;
 }
 .sh-node.interact::before {
   inset: calc(-2.5px * var(--sh-inv, 1));
