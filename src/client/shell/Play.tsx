@@ -264,8 +264,11 @@ function PlayInner() {
       setTheme(CONFIG.themes[(CONFIG.themes.indexOf(p.theme) + 1) % CONFIG.themes.length])
     }
   }
-  /** ⌘/ toggles the toolbar - the same shortcut as design mode (⌘\ is the sidebar's). */
-  const toggleCollapse = () => setChrome(chromeRef.current === 'collapsed' ? 'open' : 'collapsed')
+  /** ⌘/ toggles the toolbar - same shortcut as design mode (⌘\ is the sidebar's).
+   *  From hidden it reveals EVERYTHING: collapsed is a state of visible chrome, so any
+   *  chrome shortcut pressed while hidden means "show me the controls", never a silent
+   *  hop into a half-revealed state. */
+  const toggleCollapse = () => setChrome(chromeRef.current === 'open' ? 'collapsed' : 'open')
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
