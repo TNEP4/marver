@@ -291,18 +291,24 @@ function ZoomMenu() {
   )
 }
 
-/** Global theme dropdown: sets every frame at once; the trigger reflects the board when uniform.
+/** Global theme dropdown: sets every frame at once; the trigger reflects the board MAJORITY
+ *  (per-frame overrides never flip it - it reports the canvas level, same rule as the shell).
  *  The menu is PORTALED out of the pill: an element with backdrop-filter is a backdrop root,
  *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
   const pop = usePopover()
   const uniform = nodes.length && nodes.every((n) => n.theme === nodes[0].theme) ? nodes[0].theme : null
+  const counts = new Map<string, number>()
+  for (const n of nodes) counts.set(n.theme, (counts.get(n.theme) ?? 0) + 1)
+  const majority = nodes.length
+    ? [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
+    : CONFIG.themes[0] ?? 'light'
   return (
     <div className="sh-theme" ref={pop.boxRef}>
       <Tip side="bottom" label={<><b>Theme</b><span>all frames · D</span></>}>
         <button className="sh-pill-btn" onClick={pop.toggle}>
-          {uniform === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
+          {majority === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
           <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
         </button>
       </Tip>

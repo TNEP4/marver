@@ -145,10 +145,25 @@ body.sh-space .sh-canvas { cursor: grab }
 body.sh-space.sh-panning .sh-canvas { cursor: grabbing }
 body.sh-space .sh-node { pointer-events: none }                   /* space-drag pans from anywhere */
 
-/* frame nodes: theme-aware cards with a glass header strip */
+/* frame nodes: theme-aware cards with a glass header strip. Each node re-declares its
+   card tokens from its OWN theme, so a dark frame on a light board wears a dark header
+   (easier on the eyes than light chrome over a dark page) - and vice versa. */
 .sh-node { position: absolute; top: 0; left: 0; border-radius: var(--r-node); background: transparent;
   border: 1px solid var(--node-brd); box-shadow: var(--shadow-node); display: flex; flex-direction: column;
-  transition: border-color .3s ease }
+  transition: border-color .3s ease, --node-bg .4s ease, --node-brd .4s ease,
+    --head-bg .4s ease, --head-ink .4s ease, --head-dim .4s ease }
+.sh-node[data-theme="light"] {
+  --node-bg: #fff; --node-brd: #dddee5;
+  --head-bg: rgba(255, 255, 255, .55);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .85), rgba(255, 255, 255, .1) 45%, rgba(255, 255, 255, .45));
+  --head-ink: #18181b; --head-dim: rgba(24, 24, 27, .4);
+}
+.sh-node[data-theme="dark"] {
+  --node-bg: #0f1015; --node-brd: #2c2d38;
+  --head-bg: rgba(22, 23, 30, .6);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .015) 45%, rgba(255, 255, 255, .06));
+  --head-ink: #ececf1; --head-dim: rgba(236, 236, 241, .42);
+}
 /* selection + interact indicators live in world space but keep constant SCREEN width
    via --sh-inv (1/zoom): 2 screen px at every zoom level */
 .sh-node.sel { border-color: var(--accent);

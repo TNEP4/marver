@@ -142,6 +142,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   return (
     <div
       className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}`}
+      data-theme={node.theme}
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER }}
       data-node={node.key}
     >
