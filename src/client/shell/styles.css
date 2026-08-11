@@ -64,6 +64,21 @@
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
 }
 
+@property --ground { syntax: '<color>'; inherits: true; initial-value: #e7e9ef; }
+@property --dot { syntax: '<color>'; inherits: true; initial-value: #c9cbd5; }
+@property --glass { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, .64); }
+@property --glass-brd { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .1); }
+@property --glass-ink { syntax: '<color>'; inherits: true; initial-value: #18181b; }
+@property --glass-ink-2 { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .66); }
+@property --glass-ink-3 { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .4); }
+@property --glass-hover { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .06); }
+@property --node-bg { syntax: '<color>'; inherits: true; initial-value: #ffffff; }
+@property --node-brd { syntax: '<color>'; inherits: true; initial-value: #dddee5; }
+@property --head-bg { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, .55); }
+@property --head-ink { syntax: '<color>'; inherits: true; initial-value: #18181b; }
+@property --head-dim { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .4); }
+@property --tip-bg { syntax: '<color>'; inherits: true; initial-value: #18181b; }
+@property --tip-ink { syntax: '<color>'; inherits: true; initial-value: #fafafa; }
 @property --accent { syntax: '<color>'; inherits: true; initial-value: #0088ff; }
 @property --accent-ring { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .2); }
 @property --beam { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .42); }
@@ -99,10 +114,14 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
 .sh-app { position: relative; height: 100%; color: var(--glass-ink); outline: none;
   transition: --accent .4s ease, --accent-ring .4s ease, --beam .4s ease,
     --edge-accent .4s ease, --inner-tint .4s ease, --accent-wash .4s ease,
-    --glass-accent .4s ease, --glass-accent-bg .4s ease }
+    --glass-accent .4s ease, --glass-accent-bg .4s ease,
+    --ground .4s ease, --dot .4s ease, --glass .4s ease, --glass-brd .4s ease,
+    --glass-ink .4s ease, --glass-ink-2 .4s ease, --glass-ink-3 .4s ease,
+    --glass-hover .4s ease, --node-bg .4s ease, --node-brd .4s ease,
+    --head-bg .4s ease, --head-ink .4s ease, --head-dim .4s ease,
+    --tip-bg .4s ease, --tip-ink .4s ease }
 .sh-canvas { width: 100% !important; height: 100% !important;
-  background-color: var(--ground);
-  transition: background-color .3s ease }
+  background-color: var(--ground) }
 /* world-space dot grid: size/position/alpha driven per-frame from the transform */
 .sh-canvas::before { content: ''; position: absolute; inset: 0; pointer-events: none;
   background-image: radial-gradient(var(--dot) 1px, transparent 1px);
