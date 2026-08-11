@@ -398,6 +398,17 @@ export function App() {
     add('apple-touch-icon', `${ROUTE}/favicon/apple-touch-icon${sfx}.png`)
   }, [interactingIcon])
 
+  // focus rings appear ONLY during real Tab navigation: the browser flips into keyboard
+  // modality on ANY keystroke, so a shortcut press painted the stock double ring on
+  // whatever was last clicked. Tab arms body.sh-kbd; any pointer use disarms it.
+  useEffect(() => {
+    const arm = (e: KeyboardEvent) => { if (e.key === 'Tab') document.body.classList.add('sh-kbd') }
+    const disarm = () => document.body.classList.remove('sh-kbd')
+    window.addEventListener('keydown', arm, true)
+    window.addEventListener('pointerdown', disarm, true)
+    return () => { window.removeEventListener('keydown', arm, true); window.removeEventListener('pointerdown', disarm, true) }
+  }, [])
+
   // browser pinch-zoom is disabled inside the app: a pinch over the chrome (or anywhere
   // off-canvas) was scaling the PAGE and wrecking the layout. Canvas zoom is unaffected
   // (rzpp handles its own events), and keyboard cmd +/- is never intercepted.

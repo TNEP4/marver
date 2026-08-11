@@ -500,3 +500,9 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play-hint button:hover { background: rgba(255, 255, 255, .22) }
 .sh-play-hint button.dim { background: transparent; color: rgba(245, 245, 247, .5); font-weight: 500 }
 .sh-play-hint button.dim:hover { color: rgba(245, 245, 247, .8); background: rgba(255, 255, 255, .08) }
+
+/* ---- Focus: silent for pointer + shortcut use; ONE branded inset ring, and only while
+   the user is actually Tab-navigating (body.sh-kbd, armed by Tab, disarmed by pointer).
+   Inset so scroll containers can never clip it; outline follows the border radius. */
+.sh-app :focus { outline: none }
+body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
