@@ -82,32 +82,41 @@ export function Canvas() {
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
-    const fitRect = (x: number, y: number, w: number, h: number) => {
+    // focus=true (selection fits): center on the TRUE viewport center for a proper focus
+    // state, then clamp back into the chrome-free band only if the content would slide
+    // under the sidebar or pill. Small frames land dead center; wide selections degrade
+    // to band-centering. fitAll stays band-centered - there everything must be visible.
+    const fitRect = (x: number, y: number, w: number, h: number, focus = false) => {
       const el = wrap()
       if (!el || !ref.current) return
       const p = insets(el)
-      const aw = el.clientWidth - p.left - p.right
-      const ah = el.clientHeight - p.top - p.bottom
+      const vw = el.clientWidth, vh = el.clientHeight
+      const aw = vw - p.left - p.right
+      const ah = vh - p.top - p.bottom
       const scale = Math.max(0.05, Math.min(1, aw / w, ah / h))
-      ref.current.setTransform(
-        p.left + (aw - w * scale) / 2 - x * scale,
-        p.top + (ah - h * scale) / 2 - y * scale,
-        scale, 320, 'easeOut',
-      )
+      let px = p.left + (aw - w * scale) / 2
+      let py = p.top + (ah - h * scale) / 2
+      if (focus) {
+        // clamp order matters: left/top win when the band is tighter than the content
+        px = Math.max(Math.min((vw - w * scale) / 2, vw - p.right - w * scale), p.left)
+        py = Math.max(Math.min((vh - h * scale) / 2, vh - p.bottom - h * scale), p.top)
+      }
+      ref.current.setTransform(px - x * scale, py - y * scale, scale, 320, 'easeOut')
     }
     canvasCtl.fitNode = (key: string) => {
       const n = useStore.getState().nodes.find((x) => x.key === key)
-      if (n) fitRect(n.x, n.y, n.w, n.h + HEADER)
+      if (n) fitRect(n.x, n.y, n.w, n.h + HEADER, true)
     }
-    canvasCtl.fitNodes = (keys: string[]) => {
+    const fitKeys = (keys: string[], focus: boolean) => {
       const sel = new Set(keys)
       const ns = useStore.getState().nodes.filter((n) => sel.has(n.key))
       if (!ns.length) return
       const x0 = Math.min(...ns.map((n) => n.x)), y0 = Math.min(...ns.map((n) => n.y))
       const x1 = Math.max(...ns.map((n) => n.x + n.w)), y1 = Math.max(...ns.map((n) => n.y + n.h + HEADER))
-      fitRect(x0, y0, x1 - x0, y1 - y0)
+      fitRect(x0, y0, x1 - x0, y1 - y0, focus)
     }
-    canvasCtl.fitAll = () => canvasCtl.fitNodes(useStore.getState().nodes.map((n) => n.key))
+    canvasCtl.fitNodes = (keys: string[]) => fitKeys(keys, true)
+    canvasCtl.fitAll = () => fitKeys(useStore.getState().nodes.map((n) => n.key), false)
     canvasCtl.zoomTo = (target: number) => {
       const el = wrap(), inst = ref.current
       if (!el || !inst) return
