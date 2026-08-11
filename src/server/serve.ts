@@ -28,7 +28,7 @@ export function serve(root: string, portFlag?: number) {
     process.exit(1)
   }
   const realDist = realpathSync(dist)
-  let meta = { name: 'Marver', branding: true }
+  let meta: { name: string; branding: boolean; logo?: string } = { name: 'Marver', branding: true }
   try { meta = { ...meta, ...JSON.parse(readFileSync(join(dist, 'meta.json'), 'utf8')) } } catch { /* defaults */ }
 
   const password = process.env.MARVER_PASSWORD ?? ''
@@ -73,8 +73,11 @@ export function serve(root: string, portFlag?: number) {
         })
         return
       }
-      // the bundle is never sent pre-auth - a client-side gate would be theater
-      if (!authed(req)) return gate(res, meta)
+      // the bundle is never sent pre-auth - a client-side gate would be theater.
+      // Favicons and the app logo are the one exemption: the gate page itself wears
+      // them, and they carry no design data.
+      const cosmetic = url.pathname.startsWith('/__mv/favicon/') || /^\/__mv\/logo\.(svg|png)$/.test(url.pathname)
+      if (!authed(req) && !cosmetic) return gate(res, meta)
     }
 
     // static: sanitized path under dist; extensionless → index.html (hash routing).
@@ -111,18 +114,26 @@ export function serve(root: string, portFlag?: number) {
 }
 
 /** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */
-const MARK = `<svg viewBox="0 0 256 256" width="16" height="16" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
+const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
+const MARK = MARK_AT(14)
+const MARK_LG = MARK_AT(24)
 
 /** The gate: the canvas's own antechamber - light ground, dot grid, glass card in the
  *  shell's exact token language. The visitor is one password away from stepping in. */
-function gate(res: any, meta: { name: string; branding: boolean }, error?: string) {
+function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, error?: string) {
   const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
+  // the app's own logo when the build found one; Marver's mark as the backup
+  const appMark = meta.logo ? `<img src="${esc(meta.logo)}" alt="" width="24" height="24" />` : MARK_LG
   res.statusCode = 200
   res.setHeader('content-type', 'text/html; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
   res.end(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(name)}</title>
+<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
+<link rel="icon" type="image/png" sizes="32x32" href="/__mv/favicon/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/__mv/favicon/favicon-16x16.png" />
+<link rel="apple-touch-icon" href="/__mv/favicon/apple-touch-icon.png" />
 <style>
   * { box-sizing: border-box; margin: 0 }
   body { min-height: 100vh; display: flex; align-items: center; justify-content: center;
@@ -135,9 +146,9 @@ function gate(res: any, meta: { name: string; branding: boolean }, error?: strin
     background: rgba(255, 255, 255, .64); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(24, 24, 27, .1);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 4px 12px -6px rgba(24, 24, 27, .12) }
-  header { display: flex; align-items: center; gap: 8px; padding: 2px 2px 2px 4px }
-  header svg { color: #0088ff; flex: none }
-  h1 { font-size: 14px; font-weight: 600 }
+  header { display: flex; align-items: center; gap: 10px; padding: 4px 2px 4px 4px }
+  header svg, header img { color: #0088ff; flex: none; border-radius: 6px }
+  h1 { font-size: 17px; font-weight: 650; letter-spacing: -.01em }
   p { font-size: 12.5px; line-height: 1.5; color: rgba(24, 24, 27, .66); padding: 0 4px }
   input { height: 40px; padding: 0 13px; border-radius: 12px; border: 1px solid rgba(24, 24, 27, .14);
     background: #fff; color: #18181b; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s }
@@ -147,14 +158,14 @@ function gate(res: any, meta: { name: string; branding: boolean }, error?: strin
     font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer; transition: background .15s }
   button:hover { background: #000 }
   .err { font-size: 12px; color: #b42318; padding: 0 4px }
-  footer a { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
-    color: rgba(24, 24, 27, .45); text-decoration: none; transition: color .15s }
+  footer a { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px -apple-system, system-ui, sans-serif;
+    color: #0077e6; text-decoration: none; transition: color .15s }
   footer a:hover { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
-  footer .up { opacity: .6 }
+  footer .up { opacity: .7 }
 </style></head>
 <body><main>
   <form method="post" action="/__mv/auth">
-    <header>${MARK}<h1>${esc(name)}</h1></header>
+    <header>${appMark}<h1>${esc(name)}</h1></header>
     <p>You're one step from the canvas. This space is private - enter the password to step inside.</p>
     ${error ? `<div class="err">${esc(error)}</div>` : ''}
     <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" />

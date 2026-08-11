@@ -224,10 +224,19 @@ export async function buildSite(root: string, boardsFlag?: string) {
     writeFileSync(join(outDir, f.file), html)
   }
 
-  // serve reads this: gate page title + branding footer
+  // serve reads this: gate page title, branding footer, and the app's own logo when one
+  // exists (agent-native convention: design/logo.svg|png; host public/ as fallback)
   let name = basename(root)
   try { name = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name ?? name } catch { /* keep basename */ }
-  writeFileSync(join(outDir, 'meta.json'), JSON.stringify({ name, branding: config.share.branding }))
+  let logo: string | undefined
+  for (const cand of ['design/logo.svg', 'design/logo.png', 'public/logo.svg', 'public/logo.png', 'public/favicon.svg']) {
+    if (!existsSync(join(root, cand))) continue
+    const ext = cand.endsWith('.png') ? 'png' : 'svg'
+    cpSync(join(root, cand), join(outDir, ROUTE.slice(1), `logo.${ext}`))
+    logo = `${ROUTE}/logo.${ext}`
+    break
+  }
+  writeFileSync(join(outDir, 'meta.json'), JSON.stringify({ name, branding: config.share.branding, logo }))
 
   console.log(`\n  ${NAME} build → design/.dist`)
   console.log(`  boards: ${publishedNames.join(', ')}`)
