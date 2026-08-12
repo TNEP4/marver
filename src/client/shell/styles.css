@@ -539,14 +539,14 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
   text-align: right; user-select: none; -webkit-user-select: none;
   font-family: -apple-system, system-ui, sans-serif }
-.sh-vbadge b { font-size: clamp(40px, calc(20px * var(--sh-inv, 1)), 120px); line-height: 1; font-weight: 750;
+.sh-vbadge b { font-size: min(clamp(40px, calc(20px * var(--sh-inv, 1)), 120px), calc(40px * var(--sh-inv, 1))); line-height: 1; font-weight: 750;
   /* world cap 120px: past ~17% zoom the letter stops growing (in world terms) and
      shrinks with the canvas instead of bleeding across the gutter onto the neighbor */
   letter-spacing: -0.02em; color: rgba(24, 24, 27, .55);
   /* the letter retires WITH the name below ~30% zoom (drive feedback 2026-08-12):
      at overview zooms the group caption is the identity - per-frame letters are noise */
   opacity: clamp(0, calc((var(--sh-s, 1) - 0.3) * 6), 1) }
-.sh-vbadge span { font-size: max(15px, calc(10px * var(--sh-inv, 1))); font-weight: 550;
+.sh-vbadge span { font-size: min(max(15px, calc(10px * var(--sh-inv, 1))), calc(15px * var(--sh-inv, 1))); font-weight: 550;
   color: rgba(24, 24, 27, .38); max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   /* the letter is the identity at overview zoom; the name earns pixels only close up */
   opacity: clamp(0, calc((var(--sh-s, 1) - 0.3) * 6), 1) }
@@ -554,7 +554,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sh-app.dark .sh-vbadge span { color: rgba(245, 245, 247, .4) }
 
 .sh-gcaption { position: absolute; top: 0; left: 0; user-select: none; -webkit-user-select: none;
-  font: 600 max(17px, calc(12px * var(--sh-inv, 1)))/1.2 -apple-system, system-ui, sans-serif;
+  /* screen-clamped both ways: 12px floor at overview, 18px ceiling zoomed in - world
+     text that keeps growing past 100% zoom dwarfs the fixed-size floating menu above */
+  font: 600 clamp(calc(12px * var(--sh-inv, 1)), 17px, calc(18px * var(--sh-inv, 1)))/1.2 -apple-system, system-ui, sans-serif;
   letter-spacing: .01em; color: rgba(24, 24, 27, .45); white-space: nowrap }
 .sh-app.dark .sh-gcaption { color: rgba(245, 245, 247, .45) }
 
