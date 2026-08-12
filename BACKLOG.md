@@ -19,6 +19,22 @@ Small items that are not milestone work. One line each; delete when done.
 
 ## Next phase (2026-08-11 evening - the stabilize-then-launch arc)
 
+- **NEXT (0.2.2, decided with Nic 2026-08-12) - init one-time-state polish, two items:**
+  1. **SETUP.md instead of contract machinery.** Empty-repo init writes
+     `design/SETUP.md` (the one-time instructions: what's missing, create-next-app +
+     shadcn commands, "then re-run init"); AGENTS.md carries exactly ONE line: "STOP -
+     this repo has no app yet. Read design/SETUP.md before designing anything." Re-run
+     init after scaffolding → detection finds the app → DELETE SETUP.md and regenerate
+     the line. File presence IS the state; replaces the marker+regeneration machinery
+     shipped in 0.2.1 (keep the marker mechanism only if needed for the one line).
+     `marver dev` shows a banner while SETUP.md exists. Principle going forward:
+     AGENTS.md is the lean every-session contract; one-time guidance gets a
+     presence-file, never contract tokens.
+  2. **design/ collision guard + --dir.** Folder name stays `design/` (decided - the
+     folder is the USER's design layer; vendor-naming contradicts the uninstall
+     promise). But init must detect an existing non-marver `design/` (has files, none
+     of ours) and STOP loudly instead of quietly merging, with `marver init --dir
+     <name>` as the escape hatch; dir then flows through config to dev/build/serve.
 - **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,
   serve locally, verify: glass blur computed on .sh-panel, boot opens fit-all light,
   theme matrix (global sticky / scoped pin / pin round-trip), gate + deep link through
