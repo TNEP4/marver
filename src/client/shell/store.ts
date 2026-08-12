@@ -89,14 +89,15 @@ const layoutWarn = (msg: string) => {
 
 /** Guarded parse of agent-authored board.layout (SPEC-024 §1). Returns null on any
  *  structurally hopeless input - malformed pieces degrade, they never blank the board. */
-function parseLayout(raw: unknown): BoardLayout | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+function parseLayout(raw: unknown, warn: (m: string) => void = layoutWarn): BoardLayout | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) { warn(`layout must be an object - ignored`); return null }
   const o = raw as Record<string, unknown>
-  const flow = parseFlow(o)
+  const flow = parseFlow(o, warn)
   const scenes: Record<string, Flow> = {}
   if (o.scenes && typeof o.scenes === 'object' && !Array.isArray(o.scenes)) {
     for (const [k, v] of Object.entries(o.scenes as Record<string, unknown>)) {
-      const f = v && typeof v === 'object' && !Array.isArray(v) ? parseFlow(v as Record<string, unknown>) : null
+      const f = v && typeof v === 'object' && !Array.isArray(v) ? parseFlow(v as Record<string, unknown>, warn) : null
       if (f) scenes[k] = f
     }
   }
@@ -104,19 +105,23 @@ function parseLayout(raw: unknown): BoardLayout | null {
   return { ...(flow ?? {}), ...(Object.keys(scenes).length ? { scenes } : {}) }
 }
 
-function parseFlow(o: Record<string, unknown>): Flow | null {
+function parseFlow(o: Record<string, unknown>, warn: (m: string) => void): Flow | null {
   const parseEntries = (v: unknown): Array<Lane | Space> | null => {
-    if (!Array.isArray(v)) return null
+    if (!Array.isArray(v)) { if (v !== undefined) warn(`layout rows/columns must be an array - ignored`); return null }
     const out: Array<Lane | Space> = []
     for (const e of v) {
       if (Array.isArray(e)) {
-        // pass atoms through loosely - the ENGINE warns with specifics (a junk atom
-        // must be visible, not silently normalized into an empty lane)
-        out.push(e.filter((a: unknown): a is string | Space =>
-          typeof a === 'string' || (!!a && typeof a === 'object' && !Array.isArray(a))))
+        // pass atoms through loosely - the ENGINE warns with placement specifics -
+        // but never SILENTLY strip junk (a dropped atom must be visible)
+        out.push(e.filter((a: unknown): a is string | Space => {
+          const ok = typeof a === 'string' || (!!a && typeof a === 'object' && !Array.isArray(a))
+          if (!ok) warn(`ignoring invalid layout atom ${JSON.stringify(a)}`)
+          return ok
+        }))
       } else if (e && typeof e === 'object' && !Array.isArray(e)) out.push(e as Space)
+      else warn(`ignoring invalid layout entry ${JSON.stringify(e)}`)
     }
-    return out.length ? out : null
+    return out                                   // an EMPTY array is still a layout
   }
   const rows = parseEntries(o.rows)
   const columns = parseEntries(o.columns)
@@ -286,7 +291,7 @@ export const useStore = create<State>((set, get) => {
           if (rows.length) sceneRows = rows
         }
         layoutRaw = board?.layout
-        layout = parseLayout(board?.layout)
+        layout = parseLayout(board?.layout, layoutWarn)
         if (layout && sceneRows) layoutWarn('board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
       }
@@ -366,7 +371,12 @@ export const useStore = create<State>((set, get) => {
     async switchBoard(name) {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
       if (name === get().board) return
-      resizedInGesture = false                 // a resize held across a board switch must not retidy the NEW board
+      // a resize held across a switch: settle THIS board (retidy if it has a recipe)
+      // before the flush, so the torn mid-gesture state is never what reaches disk
+      if (resizedInGesture) {
+        resizedInGesture = false
+        if (get().layout || get().sceneRows?.length) get().runTidy()
+      }
       // flush loop: an edit landing mid-save keeps dirty set and gets its own pass
       let ok = true
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
@@ -488,6 +498,7 @@ export const useStore = create<State>((set, get) => {
     },
     resizeNode(key, w, h) {
       resizedInGesture = true
+      const inGesture = get().gesture
       // a manual resize means the board no longer uniformly shows one device; the resized
       // frame's snapshot entry follows the user's new size so Default will not undo it
       set((s) => {
@@ -502,7 +513,9 @@ export const useStore = create<State>((set, get) => {
             : s.baseLayout,
         }
       })
-      scheduleSave()
+      // mid-gesture saves would persist torn state (new sizes, pre-recipe positions);
+      // the gesture-end hook saves once, after any retidy
+      if (!inGesture) scheduleSave()
     },
     setDeviceView(name) {
       const vp = name ? CONFIG.viewports[name] : null
@@ -588,7 +601,8 @@ export const useStore = create<State>((set, get) => {
       // gesture ends - sizes changed, so lanes and gaps must recompute
       if (!gesture && resizedInGesture) {
         resizedInGesture = false
-        if (get().layout || get().sceneRows?.length) get().runTidy()
+        if (get().layout || get().sceneRows?.length) get().runTidy()   // schedules the save
+        else scheduleSave()
       }
     },
     setScale(scale) { set({ scale }) },

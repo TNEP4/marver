@@ -115,7 +115,12 @@ function layoutFlow(
   if (pendingLane) warn('trailing lane spacer ignored')
   const extra = trailing()
   if (extra.length) {
-    if (trailingMode === 'append' && lanes.length) lanes[lanes.length - 1].items.push(...extra)
+    if (trailingMode === 'append') {
+      // scene scope: leftovers extend the FINAL lane (one shared row even when
+      // every authored lane was dropped - they must not scatter into lanes)
+      if (lanes.length) lanes[lanes.length - 1].items.push(...extra)
+      else lanes.push({ beforeUnits: 0, items: [...extra] })
+    }
     else for (const b of extra) lanes.push({ beforeUnits: lanes.length === 0 ? 0 : 1, items: [b] })
   }
 
@@ -203,6 +208,11 @@ function layoutScene(scene: string, members: TidyNode[], flow: Flow | undefined,
     if (!chosen.length) { warn(`unknown "${atom}" in scene "${scene}" layout - skipped`); return null }
     const fresh = chosen.filter((n) => !consumed.has(n.key))
     if (!fresh.length) { warn(`"${atom}" repeats already-placed content - skipped`); return null }
+    if (!frames.length && fresh.length !== chosen.length) {
+      // some members were placed individually; the run can no longer be indivisible
+      warn(`group "${atom}" already partially placed - skipped (remaining members append as unlisted)`)
+      return null
+    }
     for (const n of fresh) consumed.add(n.key)
     const b = runBox(atom, fresh)
     boxIndex.set(atom, b)

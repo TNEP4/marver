@@ -308,6 +308,36 @@ describe('lane flow (SPEC-024)', () => {
     expect(warnings.join(' ')).toMatch(/consecutive spacers/)
   })
 
+  it('a recipe whose every lane dropped still forms ONE leftover row (scene scope)', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy(
+      [N('a', 'shop/a', 'shop'), N('b', 'shop/b', 'shop')],
+      { scenes: { shop: { rows: [['ghost']] } } },
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.a).toMatchObject({ x: 0, y: 0 })
+    expect(p.b).toMatchObject({ x: 240, y: 0 })    // same row, not scattered into lanes
+  })
+
+  it('member-then-group: the group atom skips instead of tearing the run', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const placed = tidy(
+      [
+        N('va', 'shop/dir/a-x', 'shop', 100, 100, { group: 'shop/dir', variant: 'a' }),
+        N('vb', 'shop/dir/b-y', 'shop', 100, 100, { group: 'shop/dir', variant: 'b' }),
+        N('z', 'shop/z', 'shop'),
+      ],
+      { scenes: { shop: { rows: [['dir/a-x', { space: 3 }, 'dir', 'z']] } } },
+      (m) => warnings.push(m),
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(warnings.join(' ')).toMatch(/partially placed/)
+    expect(p.va.x).toBe(0)                         // the explicit member placement stands
+    expect(p.z.x).toBe(100 + 140 * 3)              // group atom skipped; z follows the spacer
+    expect(p.vb.x).toBeGreaterThan(p.z.x)          // remainder appends as unlisted
+  })
+
   it('lane boundaries size from BOTH neighbors', async () => {
     const { tidy } = await import('../src/client/shell/tidy.ts')
     const placed = tidy(
