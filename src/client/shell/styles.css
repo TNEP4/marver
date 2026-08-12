@@ -530,7 +530,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    Both live in WORLD space (scale with the canvas, per Nic's ask) with a screen-space
    minimum via --sh-inv, the resize-handle trick - legible at overview zoom, proportionate
    up close. Colors are on-canvas ink (the dot-grid's world), not chrome glass. */
-.sh-vbadge { position: absolute; right: 100%; top: 0; margin-right: max(20px, calc(10px * var(--sh-inv, 1)));
+/* gap to the frame is SCREEN-constant (~12px at every zoom): a world-px floor reads
+   ever wider as you zoom in, pushing the name away from the frame it labels */
+.sh-vbadge { position: absolute; right: 100%; top: 0; margin-right: max(6px, calc(12px * var(--sh-inv, 1)));
   display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
   text-align: right; user-select: none; -webkit-user-select: none;
   font-family: -apple-system, system-ui, sans-serif }

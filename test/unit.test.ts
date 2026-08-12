@@ -338,6 +338,22 @@ describe('lane flow (SPEC-024)', () => {
     expect(p.vb.x).toBeGreaterThan(p.z.x)          // remainder appends as unlisted
   })
 
+  it('parseLayout: junk warns, never silently vanishes; empty rows IS a layout', async () => {
+    const { parseLayout } = await import('../src/client/shell/tidy.ts')
+    const w1: string[] = []
+    expect(parseLayout({ scenes: { shop: 7, ok: { rows: [] } } }, (m) => w1.push(m))?.scenes)
+      .toEqual({ ok: { rows: [] } })
+    expect(w1.join(' ')).toMatch(/scenes\["shop"\]/)
+    const w2: string[] = []
+    expect(parseLayout({ scenes: [] }, (m) => w2.push(m))).toBeNull()
+    expect(w2.join(' ')).toMatch(/scenes must be an object map/)
+    const w3: string[] = []
+    const p3 = parseLayout({ rows: [[42], ['alpha']] }, (m) => w3.push(m))
+    expect(p3?.rows).toEqual([[], ['alpha']])
+    expect(w3.join(' ')).toMatch(/invalid layout atom 42/)
+    expect(parseLayout({ rows: [] }, () => {})).toEqual({ rows: [] })
+  })
+
   it('lane boundaries size from BOTH neighbors', async () => {
     const { tidy } = await import('../src/client/shell/tidy.ts')
     const placed = tidy(

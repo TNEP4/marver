@@ -306,3 +306,49 @@ export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () =>
   }
   return out
 }
+
+/** Guarded parse of agent-authored board.layout (SPEC-024 §1). Malformed pieces warn
+ *  and degrade - they never blank the board, and never vanish silently. */
+export function parseLayout(raw: unknown, warn: Warn): BoardLayout | null {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) { warn('layout must be an object - ignored'); return null }
+  const o = raw as Record<string, unknown>
+  const flow = parseFlow(o, warn)
+  const scenes: Record<string, Flow> = {}
+  if (o.scenes !== undefined) {
+    if (!o.scenes || typeof o.scenes !== 'object' || Array.isArray(o.scenes)) warn('layout.scenes must be an object map - ignored')
+    else {
+      for (const [k, v] of Object.entries(o.scenes as Record<string, unknown>)) {
+        const f = v && typeof v === 'object' && !Array.isArray(v) ? parseFlow(v as Record<string, unknown>, warn) : null
+        if (f) scenes[k] = f
+        else warn(`layout.scenes["${k}"] is not a rows/columns flow - ignored`)
+      }
+    }
+  }
+  if (!flow && !Object.keys(scenes).length) return null
+  return { ...(flow ?? {}), ...(Object.keys(scenes).length ? { scenes } : {}) }
+}
+
+function parseFlow(o: Record<string, unknown>, warn: Warn): Flow | null {
+  const parseEntries = (v: unknown): Array<Lane | Space> | null => {
+    if (!Array.isArray(v)) { if (v !== undefined) warn('layout rows/columns must be an array - ignored'); return null }
+    const out: Array<Lane | Space> = []
+    for (const e of v) {
+      if (Array.isArray(e)) {
+        // pass atoms through loosely - the ENGINE warns with placement specifics -
+        // but never SILENTLY strip junk (a dropped atom must be visible)
+        out.push(e.filter((a: unknown): a is string | Space => {
+          const ok = typeof a === 'string' || (!!a && typeof a === 'object' && !Array.isArray(a))
+          if (!ok) warn(`ignoring invalid layout atom ${JSON.stringify(a)}`)
+          return ok
+        }))
+      } else if (e && typeof e === 'object' && !Array.isArray(e)) out.push(e as Space)
+      else warn(`ignoring invalid layout entry ${JSON.stringify(e)}`)
+    }
+    return out                                   // an EMPTY array is still a layout
+  }
+  const rows = parseEntries(o.rows)
+  const columns = parseEntries(o.columns)
+  if (!rows && !columns) return null
+  return { ...(rows ? { rows } : {}), ...(columns ? { columns } : {}) }
+}
