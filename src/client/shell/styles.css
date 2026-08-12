@@ -583,8 +583,8 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sh-vbadge b, .sh-vbadge span { pointer-events: none }
 .sh-node.sel .sh-vbadge b, .sh-node.sel .sh-vbadge span { color: var(--accent) }
 .sh-node.interact .sh-vbadge b, .sh-node.interact .sh-vbadge span { color: var(--interact) }
-.sh-node.sel .sh-node-head .id { color: var(--accent) }
-.sh-node.interact .sh-node-head .id { color: var(--interact) }
+/* the frame header sits INSIDE the selection border - tinting its title too would
+   double-signal (drive feedback 2026-08-12); the badge/caption/sidebar carry state */
 .sh-gcaption { cursor: pointer }
 .sh-gcaption.on { color: var(--accent) }
 .sh-gcaption:hover { color: var(--glass-ink-2) }
