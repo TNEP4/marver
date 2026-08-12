@@ -1,96 +1,89 @@
-# 0.2.3 spec - variants, grouping, iteration (WIP, 2026-08-12)
+# 0.2.3 spec - variants + canvas control (CONTRACT, 2026-08-12)
 
-> **STATUS: WIP - design capture, not yet contract.** Promote (resolve the open
-> questions, record in DECISIONS.md, drop this banner) before writing 0.2.3 code.
+> Promoted from WIP after codex design review. Where this and convenience disagree,
+> this wins. Ships WITH the 0.2.2 field-test fix pack as one release.
 
-The thesis: diverge/converge is THE design-thinking loop, and the canvas currently
-punishes it - variants are just frames that happen to sort together, comparisons
-die on every tidy, and reviewing three directions across device sizes means manual
-re-layout. 0.2.3 makes the variant group a first-class canvas idea while keeping
-the file convention as the API.
+The thesis: diverge/converge is THE design loop. Variants exist for different
+reasons - style directions, feature A/B, copy tests - and the canvas must keep
+alternatives linked, visible, and comparable through every relayout, device sweep,
+and prototype walk.
 
-## 1. The model: infer groups from the existing convention
+## 1. The model: variant groups
 
-The 0.2.2 Method already teaches: scene = surface, variants = sibling frames with
-`a-`/`b-`/`c-` prefixes. 0.2.3's cleanest move is to make the shell UNDERSTAND that
-convention rather than add a parallel API:
+- **Inference (zero migration)**: a variant group = 2+ frames in the SAME directory
+  whose basenames match `^([a-z])-`. Group id = the directory's frame-id prefix
+  (`landing`, `checkout/payment`); variant key = the letter; display name = meta
+  title or the humanized rest of the filename.
+- **Scoped A/B inside a busy scene = a nested directory**:
+  `checkout/payment/a-card.tsx` + `b-wallet.tsx` group as `checkout/payment`,
+  sitting beside `checkout/cart.tsx`. States (`empty.tsx`, `error.tsx`) never
+  letter-prefix, so they never misgroup.
+- **Overrides, literal strings only** (extractor stays regex): `meta.of` (group id)
+  and `meta.variant` (key). No `meta.order` - variant order is the natural order of
+  the keys.
+- **Manifest emits exactly two new optional fields** per frame: `variantGroup`,
+  `variant`. Duplicate keys in one group: keep first, console warning.
+- Variants are LOCAL comparisons, never global A/B lanes - no cross-group "B mode".
 
-- A **variant group** = frames in one scene whose basenames match `^([a-z])-(.+)$`
-  with 2+ members: `landing/a-terminal`, `landing/b-editorial` → group "landing",
-  variants A/B/C with names Terminal/Editorial.
-- `meta.variant` / `meta.order` exist only as OVERRIDES for when filenames can't
-  carry it (renames mid-flight, >26 variants, display names with slashes).
-- Zero migration: every repo following the Method gets groups for free the moment
-  0.2.3 lands.
+## 2. Canvas control: sceneRows
 
-## 2. Canvas chrome: the variant badge
+Board JSON gains ONE optional field, `sceneRows: string[][]` - rows of scene ids,
+top to bottom, left to right: `[["landing","docs"],["pricing"]]` = landing and docs
+side by side, pricing below. Tidy consumes it; scenes not listed append as rows at
+the bottom (alphabetical). Backward compatible (version stays 1); agents author it
+in board files (boards.md documents it); the shell round-trips it through save.
+This is the "scenes next to / above / below each other" control.
 
-Nic's ask: a letter/name floating LEFT of the frame, scaling as you zoom.
+## 3. Layout: groups are indivisible
 
-- World-anchored badge left of each grouped frame: the letter large (readable at
-  overview zoom), the variant name under it, both in world coordinates so they
-  scale with the canvas - PLUS a screen-space minimum clamp so they never vanish
-  at extreme zoom-out (the toolbar/edge-light pattern: world position, bounded
-  screen size).
+Tidy treats a variant group as ONE unit inside its scene row: members contiguous,
+ordered by variant key, never split or interleaved - and the nodes array is NEVER
+reordered (iframe law G-1; tidy only assigns x/y). Device views resize members in
+place; the group survives keys 1-5. Free-form drag still allowed; tidy restores.
+
+## 4. Canvas UI: badge + caption
+
+- Each grouped frame gets a floating badge LEFT of the frame, outside the artwork:
+  the variant letter large, name beneath. World-anchored (scales with zoom) with a
+  screen-space minimum via the existing `--sh-inv` clamp (the resize-handle
+  pattern), so it stays legible at overview zoom and proportionate up close.
 - A group caption above the row: "Landing · 3 variants".
-- Badges live OUTSIDE the frame box (left gutter), so they never cover artwork and
-  never affect frame layout. Grouped frames get slightly wider tidy spacing on the
-  left to make room.
+- Curated boards showing a single member still show its badge, no caption.
 
-## 3. Group-aware layout (the durability fix, friction #19.2/#16)
+## 5. Sidebar
 
-- Tidy and device views treat a group as ONE unit: members share a row, same y,
-  ordered by variant letter, never split or interleaved with other frames.
-- Device sweep (keys 1-5): each member resizes to the device, the ROW survives -
-  groups stack as rows, comparison holds at every width. This is "shift through
-  device sizes without breaking the layout".
-- Free-form x/y still allowed; tidy restores the group row.
+Grouped frames render under one surface entry: group name + variant chips
+(A/B/C, active-selection aware) instead of three sibling rows.
 
-## 4. Play mode: variant switching (the killer review feature)
+## 6. Play mode: variant switching
 
-In play mode on a grouped frame: ←/→ (or a variant pill in the play chrome) swaps
-A→B→C IN PLACE, keeping the flow position and device. The review question is
-"which direction is better on THIS screen" - today that takes three separate walks.
-Mechanics: the stage already swaps frames in place; variant swap is the same rail
-with a different target list. data-goto targets resolve within the CURRENT variant's
-scene first, so walking a flow stays inside one direction.
+- A compact variant control in the play chrome (`A · Terminal · 1/3`), plus `[` and
+  `]` to switch. Switching swaps the stage to the SIBLING FRAME at this position,
+  in place - device, theme, and history preserved.
+- Only offered when the current frame HAS siblings on the active board (published
+  filtered builds exclude unlisted frames - privacy boundary respected).
+- `data-goto` is never rewritten: each variant authors its own flow; after a
+  switch, the mounted variant's own links drive.
 
-## 5. Iterations (versions over time) - convention only in 0.2.3
+## 7. Fix pack riding along (already in repo)
 
-Parallel = variants (this spec). Sequential = iterations: the Method's answer is
-that losing directions get DELETED (wireframe.md exit criteria) and git holds
-history. No new canvas machinery for iterations in 0.2.3; if real need emerges,
-`meta.iteration` + a board-level filter is the seam. UNDECIDED - see open questions.
+tsconfig self-exclusion + allowImportingTsExtensions + re-rooted `@/` paths (the
+day-zero P0); setup.md scaffold-collision dance; unattended-mode path in
+discover.md; init notes missing DESIGN.md; Method content fixes.
 
-## 6. The resize-shift bug (Nic's report)
+## 8. Investigate first
 
-"Depending on what's on the board, resizing frames could shift around the canvas."
-Investigate FIRST during 0.2.3 (it may constrain the layout work): suspects are
-rzpp recentering when content bounds change, and the device-view baseLayout
-restore interacting with manual resizes. Reproduce with big boards, file as its
-own fix regardless of the variants work.
+The resize-shift report (canvas shifting while resizing frames on some boards) -
+reproduce during build; fix if pinned, file precisely if not.
 
-## Open questions - resolve before promoting
+## Out of scope (recorded)
 
-1. **Badge scaling law**: pure world-space (Nic's literal ask) vs world-space with
-   a screen-min clamp (lean: clamp - pure world-space dies at 10% zoom on big
-   boards). Decide by prototype on the pilot.
-2. **Group detection strictness**: letter-prefix only (lean), or any shared-scene
-   siblings? Loose detection risks grouping states (empty/error) as variants -
-   states and variants are both sibling frames. Possible tell: states use nouns
-   (empty.tsx), variants use letter prefixes. Needs a decision and a Method note.
-3. **Caption + badge on curated boards**: groups render on all-scenes for sure;
-   do curated boards that cherry-pick one variant show its badge? (Lean: yes,
-   badge only, no caption.)
-4. **Play-mode swap scope**: swap only the current frame, or re-enter the flow at
-   the same POSITION in the sibling variant's flow (lean: same-position re-entry,
-   falling back to the variant's entry frame when the position has no sibling).
-5. **Iterations**: confirm "git + deletion is the iteration story" for 0.2.3, or
-   pull `meta.iteration` forward.
+`meta.order`; global experiment lanes; auto-including off-board siblings in
+published builds; scene arrangement UI (authoring stays in board files this
+release); comments (0.2.5).
 
-## Sequencing
+## Acceptance (test-drive protocol per Nic)
 
-After the 0.2.2 unattended test debrief (it may reshape priorities), and gated on
-the resize-shift investigation. Client-driven: this is the release the Carrara
-engagement needs; promote fast, build in vertical slices (badges → group tidy →
-device rows → play swap), pilot-verified per slice.
+Build → codex review of the diff → dev-mode test-drive on a fresh-stack repo with
+the local tarball (dogfood marver-in-marver where possible) → published-bundle test
+→ Nic approves → publish with the fix pack.
