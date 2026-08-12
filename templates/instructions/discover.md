@@ -41,6 +41,12 @@ Create `design/scenes/<scene>/_brief.md`: audience + scene, the one job, mode, t
 flow as a numbered list, content sources, out-of-scope. Ten lines, not a document.
 Show it. Get the nod.
 
+**Unattended?** When the human is away or has said "don't ask", the interview and
+the nod convert to obligations, not blockers: answer the five questions yourself
+from the repo and reasonable product judgment, mark the brief `UNCONFIRMED` at the
+top, proceed - and surface the brief FIRST when the human returns. Never stall on
+an absent human; never hide that the brief was self-answered.
+
 ## 4. Align on flow with a diagram frame
 
 When the flow has branches or more than four screens, draw it before wireframing:

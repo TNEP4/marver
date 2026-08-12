@@ -2,7 +2,12 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "noEmit": true
+    "noEmit": true,
+    // frames import _fixtures.ts with the extension (marver's native-TS convention)
+    "allowImportingTsExtensions": true
   },
-  "include": ["."]
+  "include": ["."],
+  // the host tsconfig excludes "design" (init adds it so the APP's typecheck skips
+  // frames); inherited here it would make this project exclude itself (TS18003)
+  "exclude": ["node_modules"]
 }

@@ -33,6 +33,17 @@ Small items that are not milestone work. One line each; delete when done.
   best-practice references, re-expressed entirely in our own words. Two codex rounds; deferred:
   legacy design/SETUP.md migration (no published version ever wrote it), --dir.
   After publish: unattended agent upgrade test on marver-site (0.2.1 -> 0.2.2).
+- **From the 0.2.2 upgrade test (2026-08-12) - triage results.** FIXED in repo:
+  design/tsconfig self-exclusion (TS18003 - host exclude inherited via extends; template
+  now overrides exclude + allowImportingTsExtensions), unattended-mode path in
+  discover.md, init notes the missing DESIGN.md. OPEN: (1) new npm import in a frame ->
+  blank white frame + 504 Outdated Optimize Dep, no error card (frame-host should catch
+  the failed import and card it; investigate optimizeDeps discovery); (2) two dev
+  canvases on one repo both own the auto board with no warning (lockfile or banner);
+  (3) host eslint sweeps design/.dist (document, or init hints an ignore); (4) cac
+  prints "(default: true)" on --no-demo regardless of description (suppress or restructure
+  flag); (5) consider making design/tsconfig.json a managed file so template fixes reach
+  existing workspaces (currently write-once; ours fixed by hand).
 - **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,
   serve locally, verify: glass blur computed on .sh-panel, boot opens fit-all light,
   theme matrix (global sticky / scoped pin / pin round-trip), gate + deep link through

@@ -209,6 +209,11 @@ export function init(root: string, opts: InitOpts) {
   }
   console.log(`\n  commit design/ - only .local/ is ignored`)
   console.log(`  uninstall = delete design/, remove the ${NAME} dependency${host.tsconfigSweepsDesign ? ', revert the "design" line in tsconfig exclude' : ''}`)
+  // idle-state completeness (instructions/configure.md item 3): the brand doc is the
+  // one piece init cannot generate - it takes reading the app. Say so instead of
+  // letting the first session discover the gap.
+  if (!noApp(host) && !existsSync(join(design, 'DESIGN.md')))
+    console.log(`\n  note: design/DESIGN.md (the brand doc) does not exist yet - have your agent create it from the app's tokens (instructions/brand.md, Path A) to reach the idle state.`)
   console.log(`\n  next: npx ${NAME} dev   (canvas on http://localhost:${DEFAULTS.port} by default)\n`)
   if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
 }
