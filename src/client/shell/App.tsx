@@ -267,7 +267,8 @@ function UpdatePill() {
       .catch(() => { /* dev server gone or endpoint absent - stay quiet */ })
   }, [])
   if (!latest || play) return null
-  const cmd = `npm i -D ${PKG}@latest`
+  // init rides along so managed files (AGENTS.md, instructions/) refresh with the code
+  const cmd = `npm i -D ${PKG}@latest && npx marver init`
   const dismiss = () => {
     try { localStorage.setItem('mv-update-seen', latest) } catch { /* storage unavailable */ }
     setLatest(null)

@@ -2,7 +2,7 @@ import type { Plugin, ViteDevServer } from 'vite'
 import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs'
 import { join } from 'node:path'
 import { hash } from './manifest.ts'
-import { PKG, ROUTE } from '../cli/name.ts'
+import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import type { ShConfig } from './config.ts'
 import { scanFrames, writeManifest } from './manifest.ts'
 import { apiMiddleware } from './api.ts'
@@ -125,7 +125,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       // apiMiddleware, whose unknown-endpoint 404 would eat the path.
       const update = checkUpdate(root).catch(() => null)
       update.then((latest) => {
-        if (latest) console.log(`\n  update: ${PKG} ${latest} is out (installed ${installedVersion() ?? '?'}) → npm i -D ${PKG}@latest\n`)
+        if (latest) console.log(`\n  update: ${PKG} ${latest} is out (installed ${installedVersion() ?? '?'}) → npm i -D ${PKG}@latest && npx ${NAME} init\n`)
       })
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://x')

@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
@@ -55,22 +56,57 @@ export function init(root: string, opts: InitOpts) {
     created.push(`design/${rel}`)
   }
 
-  // Managed files (AGENTS.md, instructions/) regenerate on re-init while they carry
-  // the marker - a stale contract is actively harmful, unlike a stale scaffold.
-  // Deleting the marker line hands the file to the user for good. The prefix check
-  // (not full equality) keeps files from older marker wordings regenerating too.
-  const writeManaged = (rel: string, content: string) => {
+  // Managed files (AGENTS.md, instructions/). The marker records a HASH of the body
+  // init generated, which makes three states distinguishable with no other stored state:
+  //   pristine  (body matches the hash)      -> updates flow through on upgrade
+  //   edited    (body differs from the hash) -> NEVER overwritten; when upstream also
+  //              moved, the fresh version is staged at design/.local/latest/<rel> and
+  //              one line tells the user/agent to merge - an agent merges semantically,
+  //              which is why no merge machinery ships here
+  //   detached  (marker line deleted)        -> never touched, never mentioned
+  const writeManaged = (rel: string, body: string) => {
     const file = join(design, rel)
-    if (!existsSync(file)) return write(rel, content)
+    const next = managedFile(body)
+    const latest = join(design, '.local', 'latest', rel)
+    if (!existsSync(file)) return write(rel, next)
     const current = readFileSync(file, 'utf8')
+    if (current === next) { rmSync(latest, { force: true }); return }
     if (current.startsWith(MANAGED_PREFIX)) {
-      if (current !== content) {
-        writeFileSync(file, content)
-        created.push(`design/${rel} (refreshed)`)
+      const recorded = current.slice(MANAGED_PREFIX.length).split(' ')[0]
+      const nl = current.indexOf('\n')
+      const currentBody = nl >= 0 ? current.slice(nl + 1) : ''
+      if (nl >= 0 && hashBody(currentBody) === recorded) {
+        writeFileSync(file, next)                 // pristine -> take the update
+        rmSync(latest, { force: true })
+        created.push(`design/${rel} (updated)`)
+      } else if (recorded !== hashBody(body)) {
+        // edited AND upstream moved: preserve their body verbatim, stage ours for a
+        // merge, and bump the marker's recorded base to the new upstream so this
+        // note fires ONCE per release, not on every init forever. The bump is
+        // ATOMIC (temp + rename) and skipped entirely for a malformed one-line
+        // file - user bytes are never on the losing side of a partial write.
+        mkdirSync(dirname(latest), { recursive: true })
+        writeFileSync(latest, body)
+        if (nl >= 0) {
+          const tmp = file + '.tmp'
+          writeFileSync(tmp, managedFile(body).split('\n')[0] + '\n' + currentBody)
+          renameSync(tmp, file)
+        }
+        console.warn(`  ~ design/${rel}: you customized it and a newer version exists - your edits are untouched. Merge what you want from design/.local/latest/${rel}`)
       }
-    } else if (current !== content.slice(MANAGED_MARKER.length + 1)) {
-      // an unmarked file under a managed path is either user-owned (fine) or a
-      // collision with foreign content that AGENTS.md now declares binding - say so
+      // edited, upstream unchanged since their base: silence. A previously staged
+      // copy stays put - it is the merge source the note pointed at, and it still
+      // matches the current upstream.
+    } else if (current.startsWith(LEGACY_PREFIX)) {
+      // hashless 0.2.2-dev marker: edits are undetectable; take the update (these
+      // files are hours old and ours) and move them onto hashed markers
+      writeFileSync(file, next)
+      rmSync(latest, { force: true })
+      created.push(`design/${rel} (updated)`)
+    } else if (current !== body) {
+      // no marker: user-owned (fine) or a collision with foreign content that
+      // AGENTS.md now declares binding - say so once per init, never touch it
+      rmSync(latest, { force: true })              // a detached file keeps no stale stage
       console.warn(`  note: design/${rel} exists without a marver marker - left untouched. If you did not author it, delete it and re-run init to restore the managed version.`)
     }
   }
@@ -95,24 +131,23 @@ export function init(root: string, opts: InitOpts) {
   // scaffolded file, a stale contract is actively harmful, so a marker-carrying
   // AGENTS.md regenerates when re-run detection disagrees with it ("set up the app,
   // then re-run init" has to actually work). Deleting the marker opts out for good.
-  const agents = MANAGED_MARKER + '\n' + readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
+  const agentsBody = readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
     .replaceAll('{{UI_GUIDANCE}}', uiGuidance(host, noApp(host)))
     .replace(/\{\{NEXT_NOTES\}\}\n?/, host.router === 'next' ? NEXT_NOTES : '')
-  writeManaged('AGENTS.md', agents)
+  writeManaged('AGENTS.md', agentsBody)
   // pre-marker contracts (0.2.0-era) look user-owned to writeManaged; when one still
   // carries our generated header but predates the method routing, it is stale, not
-  // owned - say so instead of silently leaving an outdated contract in charge.
-  // (writeManaged's generic note is suppressed by the more specific one reading well;
-  // both are single lines, so a double note on this rare path is acceptable.)
+  // owned - say so instead of silently leaving an outdated contract in charge
   const agentsNow = readFileSync(join(design, 'AGENTS.md'), 'utf8')
-  if (!agentsNow.startsWith(MANAGED_PREFIX) && agentsNow.includes('# Design canvas - agent contract') && !agentsNow.includes('## The method (binding)'))
+  if (!agentsNow.startsWith(MANAGED_PREFIX) && !agentsNow.startsWith(LEGACY_PREFIX)
+    && agentsNow.includes('# Design canvas - agent contract') && !agentsNow.includes('## The method (binding)'))
     console.warn(`  note: design/AGENTS.md predates managed regeneration - if you never edited it, delete it and re-run init to get the current contract (incl. the design/instructions routing).`)
 
   // The Method: short, strict, phase-scoped instruction files AGENTS.md routes into.
   // Managed like the contract itself - the method improves with the tool.
   for (const f of readdirSync(join(templates, 'instructions'))) {
     if (!f.endsWith('.md')) continue
-    writeManaged(`instructions/${f}`, MANAGED_MARKER + '\n' + readFileSync(join(templates, 'instructions', f), 'utf8'))
+    writeManaged(`instructions/${f}`, readFileSync(join(templates, 'instructions', f), 'utf8'))
   }
 
   // One-time setup state is a PRESENCE FILE, not contract tokens: setup.md exists
@@ -172,8 +207,14 @@ export function init(root: string, opts: InitOpts) {
   if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
 }
 
-const MANAGED_PREFIX = '<!-- generated by marver init'
-const MANAGED_MARKER = '<!-- generated by marver init; re-running init refreshes this file when the tool or detection changes. Made edits you want to keep? Delete this line and init will never touch the file again. -->'
+const MANAGED_PREFIX = '<!-- marver:managed '
+const LEGACY_PREFIX = '<!-- generated by marver init'
+const hashBody = (s: string) => createHash('sha256').update(s).digest('hex')
+/** The marker carries a hash of the generated body: edits are DETECTED, not assumed.
+ *  Edit freely - init preserves edits and stages upstream updates for merging.
+ *  Deleting the marker line detaches the file from updates entirely. */
+const managedFile = (body: string) =>
+  `${MANAGED_PREFIX}${hashBody(body)} - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->\n${body}`
 
 /** No framework, no theme, no component alias = nothing to build frames FROM. */
 const noApp = (host: HostInfo) =>
