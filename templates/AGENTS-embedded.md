@@ -22,6 +22,10 @@ Refining an existing screen: Configure must hold, then Build + Review. New work 
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a
 phase of wrong work.
 
+Stuck, or the human is unhappy with a result? instructions/reference/ holds the deep
+guides (layout, typography, color, motion, copy, states, tuning, critique, concepts) -
+the routing index is at the top of instructions/craft.md. Pull ONE file, apply, return.
+
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
 - It default-exports a React component. No imports from the tool are needed. Optional:

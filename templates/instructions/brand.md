@@ -18,6 +18,11 @@ it, never reinvent it:
 
 ## Path B - no brand exists: create one, deliberately
 
+For a whole new surface or site, read instructions/reference/concepts.md FIRST - it
+owns the discipline of deriving distinctive directions (naming the category rut,
+candidates from the audience's world, full commitment). This section covers the
+token-level work once a direction exists.
+
 1. **Name the world first.** The product's mechanism in one sentence; the audience's
    cultural home; three adjectives the interface should earn. Write these down before
    touching a color.

@@ -27,8 +27,10 @@ promotion mechanical instead of a rewrite.
 
 ## States are part of the component, not the page
 
-Every component ships knowing its states: default, hover, focus, active, disabled,
-loading, error, empty. Pages compose states; they never invent them per-use.
+Every component ships knowing the states that APPLY to it: an input has error and
+disabled; a list has loading and empty; a divider has neither. Screens own the
+orchestration states (page-level loading, empty, failure - see
+reference/states.md). Pages compose component states; they never invent them per-use.
 
 ## The gallery is the contract
 

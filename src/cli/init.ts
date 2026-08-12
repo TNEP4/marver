@@ -143,11 +143,17 @@ export function init(root: string, opts: InitOpts) {
     && agentsNow.includes('# Design canvas - agent contract') && !agentsNow.includes('## The method (binding)'))
     console.warn(`  note: design/AGENTS.md predates managed regeneration - if you never edited it, delete it and re-run init to get the current contract (incl. the design/instructions routing).`)
 
-  // The Method: short, strict, phase-scoped instruction files AGENTS.md routes into.
-  // Managed like the contract itself - the method improves with the tool.
-  for (const f of readdirSync(join(templates, 'instructions'))) {
-    if (!f.endsWith('.md')) continue
-    writeManaged(`instructions/${f}`, readFileSync(join(templates, 'instructions', f), 'utf8'))
+  // The Method: short, strict, phase-scoped instruction files AGENTS.md routes into,
+  // plus the reference/ shelf of deep guides pulled on demand (stuck, disappointed
+  // human, review pass, brand-new work). Managed like the contract itself.
+  const instrRoot = join(templates, 'instructions')
+  for (const e of readdirSync(instrRoot, { withFileTypes: true })) {
+    if (e.isDirectory()) {
+      for (const f of readdirSync(join(instrRoot, e.name)))
+        if (f.endsWith('.md')) writeManaged(`instructions/${e.name}/${f}`, readFileSync(join(instrRoot, e.name, f), 'utf8'))
+    } else if (e.name.endsWith('.md')) {
+      writeManaged(`instructions/${e.name}`, readFileSync(join(instrRoot, e.name), 'utf8'))
+    }
   }
 
   // One-time setup state is a PRESENCE FILE, not contract tokens: setup.md exists

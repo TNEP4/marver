@@ -4,6 +4,25 @@ Binding rules for every hi-fi frame. Read them before Build, then apply them sil
 never announce a checklist. The brief and the settled brand (DESIGN.md) override
 anything here; your own habits never do.
 
+## When you are stuck, or the human is unhappy: the reference shelf
+
+This file is the floor. Depth lives in instructions/reference/ - pull the ONE file
+that owns the problem, when the problem appears:
+
+| Symptom / task | Read |
+|---|---|
+| hierarchy unclear, spacing monotone, "layout feels off" | reference/layout.md |
+| type roles blur, reading uncomfortable, scale arbitrary | reference/typography.md |
+| palette aimless, contrast failing, dark mode wrong | reference/color.md |
+| adding any animation, or motion feels cheap | reference/motion.md |
+| labels/errors/empty-state text | reference/copy.md |
+| human says "bland" / "too much" / "too busy" | reference/tune.md |
+| loading/empty/error coverage, stress inputs, first-run | reference/states.md |
+| dense app UI, dashboards, settings, tables | reference/operate.md |
+| a personality moment, celebration, easter egg | reference/delight.md |
+| brand-new surface or visual world (with brand.md) | reference/concepts.md |
+| a full review pass was requested | reference/critique.md |
+
 These rules target content surfaces (marketing, docs, product pages). Dense Operate
 UI (dashboards, editors, admin) follows its platform's conventions where they
 conflict - a data table is allowed to be tight, and DESIGN.md's decisions always win.
@@ -15,7 +34,7 @@ conflict - a data table is allowed to be tight, and DESIGN.md's decisions always
   reads broken.
 - **Spacing rhythm**: elements inside a group sit close; groups sit far apart; a
   heading holds more air above it than below. All gaps come from the spacing scale.
-- **Type**: body columns 65-75ch; each level of hierarchy differs in BOTH size and
+- **Type**: prose columns in the 45-75ch range (65-75 ideal for long-form); each level of hierarchy differs in BOTH size and
   weight; letter-spacing never tighter than -0.04em; headings get `text-wrap:
   balance`; render the real copy at every device width and fix whatever overflows.
 - **Depth**: pick borders or shadows per element, never stack both on one card. A

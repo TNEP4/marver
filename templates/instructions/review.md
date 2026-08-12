@@ -37,6 +37,12 @@ however late it surfaced.
   polish never rescues a wrong concept, and hiding the diagnosis inside cosmetic
   fixes wastes the round.
 
+## When the human asks for a REVIEW (not just before presenting)
+
+The walk above is the self-check. When the human explicitly requests a review or
+critique of designs, run the structured pass in instructions/reference/critique.md
+instead - specificity verdict, ten scored heuristics, prioritized issues.
+
 ## Presenting
 
 Lead with what to look at: the board name, the frame to start on, the flow to walk,
