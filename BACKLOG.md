@@ -44,6 +44,18 @@ Small items that are not milestone work. One line each; delete when done.
   prints "(default: true)" on --no-demo regardless of description (suppress or restructure
   flag); (5) consider making design/tsconfig.json a managed file so template fixes reach
   existing workspaces (currently write-once; ours fixed by hand).
+- **From the day-zero TMS test (2026-08-12) - triage.** FIXED in repo: the @/ alias
+  P0 (init now re-roots host tsconfig paths into design/tsconfig.json - Vite resolves
+  against the nearest config, inherited paths point at the wrong dir); setup.md's
+  create-next-app collision (temp-dir + merge dance documented) and stale shadcn flags.
+  OPEN: (1) **`marver check` - strong feature candidate**: validate data-goto targets,
+  orphan frames, duplicate view-transition-names, frames that fail to render - all
+  answerable from manifest.json + a headless pass; the agent hand-rolled exactly this
+  (merge with the `marver smoke` bullet); (2) frames that 500 look identical to healthy
+  boards until a browser opens - dev could surface frame HTTP errors in the terminal;
+  (3) tsconfig edits need a Vite restart + node_modules/.vite delete to take - detect
+  and say so, or auto-bust; (4) three marver instances on one machine collided on ports
+  5199/5200 (relates to the dual-canvas contention item).
 - **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,
   serve locally, verify: glass blur computed on .sh-panel, boot opens fit-all light,
   theme matrix (global sticky / scoped pin / pin round-trip), gate + deep link through

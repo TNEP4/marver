@@ -4,7 +4,7 @@
     "jsx": "react-jsx",
     "noEmit": true,
     // frames import _fixtures.ts with the extension (marver's native-TS convention)
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true{{PATHS}}
   },
   "include": ["."],
   // the host tsconfig excludes "design" (init adds it so the APP's typecheck skips

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
-import { detectHost, type HostInfo } from '../server/detect.ts'
+import { detectHost, readJson, type HostInfo } from '../server/detect.ts'
 import { DEFAULTS } from '../server/config.ts'
 import { scanFrames, writeManifest } from '../server/manifest.ts'
 
@@ -173,10 +173,13 @@ export function init(root: string, opts: InitOpts) {
     console.log(`  - design/instructions/setup.md removed (app detected - setup complete)`)
   }
 
-  // design/tsconfig.json extends the root config only when one EXISTS (friction log #4)
+  // design/tsconfig.json extends the root config only when one EXISTS (friction log #4).
+  // Path aliases are RE-ROOTED into it: Vite resolves `@/` against the nearest tsconfig,
+  // which is this one - inherited paths resolve relative to the declaring config, so
+  // without an explicit copy every `@/components/ui` import 500s (scratch-test P0).
   const rootTsconfig = existsSync(join(root, 'tsconfig.json'))
   write('tsconfig.json', rootTsconfig
-    ? readFileSync(join(templates, 'design-tsconfig.json'), 'utf8')
+    ? readFileSync(join(templates, 'design-tsconfig.json'), 'utf8').replace('{{PATHS}}', designPaths(root))
     : STANDALONE_TSCONFIG)
   write('.gitignore', '.local/\n.dist/\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
@@ -227,6 +230,21 @@ const hashBody = (s: string) => createHash('sha256').update(s).digest('hex')
 const managedFile = (body: string) =>
   `${MANAGED_PREFIX}${hashBody(body)} - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->\n${body}`
 
+/** The host's path aliases, re-rooted one level down for design/tsconfig.json.
+ *  "./src/*" becomes "../src/*" so `@/` imports resolve from inside design/. */
+function designPaths(root: string): string {
+  const hostPaths = readJson(join(root, 'tsconfig.json'))?.compilerOptions?.paths
+  if (!hostPaths || typeof hostPaths !== 'object') return ''
+  const rerooted: Record<string, string[]> = {}
+  for (const [alias, targets] of Object.entries(hostPaths)) {
+    if (!Array.isArray(targets)) continue
+    rerooted[alias] = targets.map((t) =>
+      typeof t === 'string' ? (t.startsWith('./') ? `../${t.slice(2)}` : `../${t}`) : t)
+  }
+  if (!Object.keys(rerooted).length) return ''
+  return `,\n    // the host's aliases, re-rooted (inherited paths resolve against the WRONG dir)\n    "paths": ${JSON.stringify(rerooted)}`
+}
+
 /** No framework, no theme, no component alias = nothing to build frames FROM. */
 const noApp = (host: HostInfo) =>
   !host.router && !host.tailwind && !host.shadcn && !host.themeCss
@@ -257,14 +275,21 @@ it later - work that gets thrown away.
 
 ## Do this first
 
-For a web app or marketing site, the blessed stack:
+For a web app or marketing site, the blessed stack. NOTE: create-next-app refuses a
+non-empty directory (this repo already holds design/ and a package.json), so
+scaffold into a temp dir and merge:
 
 \`\`\`bash
-npx create-next-app@latest . --ts --tailwind --app --src-dir
+npx create-next-app@latest app-scaffold --ts --tailwind --app --src-dir --yes
+# move everything from app-scaffold/ up to the repo root EXCEPT its package.json;
+# merge app-scaffold/package.json's dependencies+scripts into the existing one,
+# then: rm -rf app-scaffold && npm install
 npx shadcn@latest init
 \`\`\`
 
-Any React + CSS setup works; the point is that components and a theme EXIST.
+shadcn's flags change between versions - if a flag errors or it prompts despite
+--yes, answer the prompts with its defaults. Any React + CSS setup works; the
+point is that components and a theme EXIST.
 
 ## Then
 

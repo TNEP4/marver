@@ -12,7 +12,7 @@ export interface HostInfo {
   tsconfigSweepsDesign: boolean
 }
 
-function readJson(file: string): any | null {
+export function readJson(file: string): any | null {
   try { return JSON.parse(stripJsonComments(readFileSync(file, 'utf8'))) } catch { return null }
 }
 // tsconfig/components.json allow comments and trailing commas; be forgiving.
