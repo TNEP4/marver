@@ -161,7 +161,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       data-node={node.key}
     >
       {frame.variantGroup && (
-        <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()}`}>
+        <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { select(node.key, e.shiftKey) }}>
           <b>{frame.variant?.toUpperCase()}</b>
           <span>{variantName}</span>
         </div>

@@ -96,24 +96,32 @@ export const canvasCtl = {
 function GroupCaptions() {
   const nodes = useStore((s) => s.nodes)
   const manifest = useStore((s) => s.manifest)
+  const selection = useStore((s) => s.selection)
   if (!manifest) return null
   const byId = new Map(manifest.frames.map((f) => [f.id, f]))   // O(F+N), not O(F*N) per drag
-  const groups = new Map<string, { x: number; y: number; ids: Set<string> }>()
+  const groups = new Map<string, { x: number; y: number; ids: Set<string>; keys: string[] }>()
   for (const n of nodes) {
     if (n.missing) continue
     const f = byId.get(n.frame)
     if (!f?.variantGroup) continue
     const g = groups.get(f.variantGroup)
-    if (!g) groups.set(f.variantGroup, { x: n.x, y: n.y, ids: new Set([n.frame]) })
-    else { g.x = Math.min(g.x, n.x); g.y = Math.min(g.y, n.y); g.ids.add(n.frame) }
+    if (!g) groups.set(f.variantGroup, { x: n.x, y: n.y, ids: new Set([n.frame]), keys: [n.key] })
+    else { g.x = Math.min(g.x, n.x); g.y = Math.min(g.y, n.y); g.ids.add(n.frame); g.keys.push(n.key) }
   }
   return (
     <>
-      {[...groups.entries()].filter(([, g]) => g.ids.size > 1).map(([id, g]) => (
-        <div key={id} className="sh-gcaption" style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - 18px))` }}>
-          {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.ids.size} variants
-        </div>
-      ))}
+      {[...groups.entries()].filter(([, g]) => g.ids.size > 1).map(([id, g]) => {
+        const allOn = g.keys.every((k) => selection.includes(k))
+        return (
+          <div key={id} className={`sh-gcaption sh-no-pan${allOn ? ' on' : ''}`}
+            style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - 18px))` }}
+            title="Select all variants"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => { useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
+            {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.ids.size} variants
+          </div>
+        )
+      })}
     </>
   )
 }
@@ -205,7 +213,7 @@ export function Canvas() {
     if (!el) return
     const down = (e: PointerEvent) => {
       const t = e.target as HTMLElement | null
-      if (t?.closest('.sh-node')) return
+      if (t?.closest('.sh-node') || t?.closest('.sh-gcaption')) return
       const s = useStore.getState()
       if (s.selection.length || s.interact) s.select(null)
     }

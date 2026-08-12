@@ -12,13 +12,14 @@ let booted = false                             // survives Fast Refresh; see the
 
 /** One collapsible scene group in the sidebar. `held` marks a scene that contains a
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */
-function SceneGroup({ name, count, held, children }: { name: string; count: number; held: boolean; children: ReactNode }) {
+function SceneGroup({ name, count, held, onPick, children }: { name: string; count: number; held: boolean; onPick?: () => void; children: ReactNode }) {
   const [open, setOpen] = useState(true)
   return (
     <div>
       <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)}>
         <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
-        <span>{cap(name) || '(root)'}</span>
+        {/* the NAME selects every frame in the scene; the caret/row still collapses */}
+        <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{cap(name) || '(root)'}</span>
         <small>{count}</small>
       </button>
       {open && children}
@@ -151,7 +152,10 @@ function SelectionBar() {
   // controls for a selected frame must stay reachable when its top edge is panned
   // off-screen, and must never drift off the sides (friction log #23)
   const centerX = `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${(bx0 + bx1) / 2}px)`
-  const rawTop = `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`
+  // a grouped frame carries a caption + badge above/left of it - anchor the bar higher
+  // so the floating menu never sits ON the variant text (drive feedback 2026-08-12)
+  const clearY = frame.variantGroup ? by0 - 96 : by0
+  const rawTop = `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${clearY}px - 52px)`
   return (
     <div
       className="sh-ctx"
@@ -633,7 +637,13 @@ export function App() {
             <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} count={sc.frames}
-                held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}>
+                held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}
+                onPick={() => {
+                  const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
+                  if (!keys.length) return
+                  useStore.getState().selectMany(keys)
+                  canvasCtl.fitNodes(keys)
+                }}>
                 {(() => {
                   // variant groups render as ONE surface row with A/B/C chips (SPEC-023 §5)
                   const sceneFrames = frames.filter((f) => f.scene === sc.name)
@@ -654,8 +664,12 @@ export function App() {
                       if (members.length > 1) {
                         const rel = f.variantGroup === sc.name ? 'Variants'
                           : cap(f.variantGroup.slice(sc.name.length + 1).replace(/-/g, ' '))
+                        const memberKeys = members.map((m) => nodeFor(m.id)?.key).filter((k): k is string => !!k)
+                        const allOn = memberKeys.length > 0 && memberKeys.every((k) => selection.includes(k))
+                        // group header: click selects EVERY variant (the quick compare-and-test grab)
                         rows.push(
-                          <div key={`g:${f.variantGroup}`} className="sub vgroup">
+                          <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}`}
+                            onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <span className="glabel">{rel}</span>
                             <span className="chips">
                               {members.map((m) => {
@@ -672,6 +686,17 @@ export function App() {
                             </span>
                           </div>,
                         )
+                        // one row per variant: letter + its name, individually selectable
+                        for (const m of members) {
+                          const n = nodeFor(m.id)
+                          const on = !!n && selection.includes(n.key)
+                          const nm = m.title ?? cap((m.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' '))
+                          rows.push(
+                            <div key={m.id} className={`sub vrow${on ? ' on' : ''}`} onClick={(e) => go(m.id, e.shiftKey)}>
+                              <b>{(m.variant ?? '?').toUpperCase()}</b><span>{nm}</span>
+                            </div>,
+                          )
+                        }
                         continue
                       }
                     } else if (f.variantGroup) continue

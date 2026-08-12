@@ -103,6 +103,7 @@ interface State {
   setStatus(key: string, status: Node['status'], error?: string): void
   removeNode(key: string): void
   select(key: string | null, additive?: boolean): void
+  selectMany(keys: string[]): void
   selectAll(): void
   setInteract(key: string | null): void
   setPlay(p: State['play']): void
@@ -502,6 +503,13 @@ export const useStore = create<State>((set, get) => {
     },
     selectAll() {
       set((s) => ({ selection: s.nodes.map((n) => n.key) }))
+    },
+    // group/scene selection from sidebar rows and canvas captions (SPEC-023 feedback)
+    selectMany(keys) {
+      set((s) => {
+        const valid = keys.filter((k) => s.nodes.some((n) => n.key === k))
+        return { selection: valid, interact: s.interact && valid.includes(s.interact) ? s.interact : null }
+      })
     },
     // interact is a ONE-frame mode: entering it collapses any multi-selection to the
     // interacted frame (a 4-frame selection double-clicked otherwise leaves all four
