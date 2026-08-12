@@ -174,6 +174,27 @@ function PlayInner() {
   }
   const restart = () => { const list = playList(); if (list.length) goTo(list[0]) }
 
+  /** Variant siblings of the CURRENT frame present on this board (SPEC-023 §6): the
+   *  review question is "which direction is better on THIS screen" - switch in place,
+   *  device and theme preserved, each variant's own data-goto links drive after. */
+  const variantList = () => {
+    const s = useStore.getState()
+    const cur = s.manifest?.frames.find((f) => f.id === s.play?.at)
+    if (!cur?.variantGroup) return []
+    const onBoard = new Set(s.nodes.filter((n) => !n.missing).map((n) => n.frame))
+    return (s.manifest?.frames ?? [])
+      .filter((f) => f.variantGroup === cur.variantGroup && f.kind === 'tsx' && onBoard.has(f.id))
+      .sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
+  }
+  const switchVariant = (dir: 1 | -1) => {
+    const p = useStore.getState().play
+    if (!p) return
+    const vs = variantList()
+    if (vs.length < 2) return
+    const i = vs.findIndex((f) => f.id === p.at)
+    goTo(vs[(i + dir + vs.length) % vs.length].id)
+  }
+
   // history restores + walk: swap the stage silently (no sh:stage-at back) and track here
   useEffect(() => {
     playCtl.setAt = (at: string) => {
@@ -251,6 +272,8 @@ function PlayInner() {
     if (key === 'Escape') { exit(); return }
     if (key === 'ArrowRight') { step(1); return }
     if (key === 'ArrowLeft') { step(-1); return }
+    if (key === '[') { switchVariant(-1); return }
+    if (key === ']') { switchVariant(1); return }
     if (key === 'r') { restart(); return }
     if (key === 'h') { chromeRef.current === 'hidden' ? setChrome('open') : hideAll(); return }
     if (/^Digit[1-9]$/.test(code)) {
@@ -313,6 +336,7 @@ function PlayInner() {
   const names = Object.keys(CONFIG.viewports)
   const list = playList()
   const pos = list.indexOf(play.at)
+  const variants = variantList()
 
   // whole-pixel wrapper + per-axis scale so the iframe lands exactly on its edges -
   // fractional sizes left subpixel seams glowing at the corners on dark frames
@@ -393,6 +417,16 @@ function PlayInner() {
         <Tip inv label={<><b>Next frame</b><span className="k">→</span></>}>
           <button onClick={() => step(1)}><ArrowRightIcon size={14} /></button>
         </Tip>
+        {variants.length > 1 && <>
+          <i className="sep" />
+          {variants.map((v) => (
+            <Tip inv key={v.id} label={<><b>{v.title ?? v.id}</b><span className="k">[ ]</span></>}>
+              <button className={`vchip${v.id === play.at ? ' on' : ''}`} onClick={() => goTo(v.id)}>
+                {(v.variant ?? '?').toUpperCase()}
+              </button>
+            </Tip>
+          ))}
+        </>}
       </div>
     </div>
   )

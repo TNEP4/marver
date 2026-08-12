@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef } from 'react'
-import { frameUrl, useStore, CONFIG, type Node } from '../store.ts'
+import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
 import { CopyIcon, ReloadIcon, XIcon } from '../icons.tsx'
 
 export const HEADER = 28
@@ -148,6 +148,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     )
   }
 
+  // variant badge (SPEC-023 §4): letter + name floating LEFT of the frame, outside the
+  // artwork, world-anchored (scales with zoom) with a screen-space minimum via --sh-inv
+  const variantName = frame.title
+    ?? cap((frame.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' '))
+
   return (
     <div
       className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}`}
@@ -155,6 +160,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER }}
       data-node={node.key}
     >
+      {frame.variantGroup && (
+        <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()}`}>
+          <b>{frame.variant?.toUpperCase()}</b>
+          <span>{variantName}</span>
+        </div>
+      )}
       <div className="sh-node-head sh-no-pan" onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
         <span className="id sh-no-pan">{frame.title ?? frame.id}</span>
         <span className="dim sh-no-pan">{Math.round(node.w)} · {node.theme}</span>

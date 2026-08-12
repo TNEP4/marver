@@ -34,12 +34,13 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
   // tv available commented-out). Pick the one the screen is designed for - the human can
   // flip the whole board to any device (Devices menu, hotkeys 0-5) to check responsiveness.
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
-- VERSIONS are sibling frames too - the scene is the surface, each frame one direction:
-  design/scenes/landing/a-terminal.tsx, landing/b-editorial.tsx, landing/c-product.tsx.
-  Layout and the sidebar follow frame-id order, so variants named under one scene with
-  a-/b-/c- prefixes stay adjacent and ordered through tidy and every device view.
-  Never spread versions across scenes (terminal/landing, editorial/landing) - they
-  interleave with everything else and the comparison falls apart.
+- VERSIONS are sibling frames with letter prefixes, and the canvas understands them:
+  design/scenes/landing/a-terminal.tsx + b-editorial.tsx form a VARIANT GROUP - kept
+  contiguous through tidy and device views, badged A/B on the canvas, one row with
+  chips in the sidebar, and switchable in place in play mode ([ and ]). Scope
+  alternatives inside a busy scene with a nested dir: checkout/payment/a-card.tsx vs
+  b-wallet.tsx groups beside checkout/cart.tsx. meta `of`/`variant` (literal strings)
+  override when filenames can't carry it. Never spread versions across scenes.
 - {{UI_GUIDANCE}}
 {{NEXT_NOTES}}
 - Navigation: put data-goto="scene/frame" on any element. That is the whole prototype system.

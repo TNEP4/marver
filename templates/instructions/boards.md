@@ -22,7 +22,12 @@ viewport and lays it out:
   never write it.
 - Do not edit board files while the canvas is open unless asked; the shell owns
   their layout fields.
-- Use boards for comparisons: version A vs B vs C of a flow, side by side.
+- **Scene arrangement**: add `"sceneRows": [["landing","docs"],["pricing"]]` to place
+  scenes side by side (one row) or above/below each other (successive rows). Tidy and
+  device views honor it; scenes not listed append below, alphabetical.
+- Use boards for comparisons: version A vs B vs C of a flow, side by side. Variant
+  groups (letter-prefixed siblings) stay contiguous through every relayout
+  automatically - sceneRows is for arranging SCENES, not variants.
 
 ## Publishing
 

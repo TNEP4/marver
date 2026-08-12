@@ -634,17 +634,57 @@ export function App() {
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} count={sc.frames}
                 held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}>
-                {frames.filter((f) => f.scene === sc.name).map((f) => {
-                  const n = nodes.find((x) => x.frame === f.id && !x.missing) ?? nodes.find((x) => x.frame === f.id)
-                  const on = !!n && selection.includes(n.key)
-                  return (
-                    <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => {
-                      if (!n) return
-                      select(n.key, e.shiftKey)
-                      if (!e.shiftKey) canvasCtl.fitNode(n.key)
-                    }}>{cap(f.id.split('/').slice(1).join('/') || f.id)}</div>
-                  )
-                })}
+                {(() => {
+                  // variant groups render as ONE surface row with A/B/C chips (SPEC-023 §5)
+                  const sceneFrames = frames.filter((f) => f.scene === sc.name)
+                  const nodeFor = (id: string) => nodes.find((x) => x.frame === id && !x.missing) ?? nodes.find((x) => x.frame === id)
+                  const go = (id: string, shift: boolean) => {
+                    const n = nodeFor(id)
+                    if (!n) return
+                    select(n.key, shift)
+                    if (!shift) canvasCtl.fitNode(n.key)
+                  }
+                  const seen = new Set<string>()
+                  const rows: ReactNode[] = []
+                  for (const f of sceneFrames) {
+                    if (f.variantGroup && !seen.has(f.variantGroup)) {
+                      seen.add(f.variantGroup)
+                      const members = sceneFrames.filter((m) => m.variantGroup === f.variantGroup)
+                        .sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
+                      if (members.length > 1) {
+                        const rel = f.variantGroup === sc.name ? 'Variants'
+                          : cap(f.variantGroup.slice(sc.name.length + 1).replace(/-/g, ' '))
+                        rows.push(
+                          <div key={`g:${f.variantGroup}`} className="sub vgroup">
+                            <span className="glabel">{rel}</span>
+                            <span className="chips">
+                              {members.map((m) => {
+                                const n = nodeFor(m.id)
+                                const on = !!n && selection.includes(n.key)
+                                return (
+                                  <button key={m.id} className={`chip${on ? ' on' : ''}`}
+                                    title={m.title ?? m.id}
+                                    onClick={(e) => { e.stopPropagation(); go(m.id, e.shiftKey) }}>
+                                    {(m.variant ?? '?').toUpperCase()}
+                                  </button>
+                                )
+                              })}
+                            </span>
+                          </div>,
+                        )
+                        continue
+                      }
+                    } else if (f.variantGroup) continue
+                    const n = nodeFor(f.id)
+                    const on = !!n && selection.includes(n.key)
+                    rows.push(
+                      <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)}>
+                        {cap(f.id.split('/').slice(1).join('/') || f.id)}
+                      </div>,
+                    )
+                  }
+                  return rows
+                })()}
               </SceneGroup>
             ))}
             {frames.length === 0 && <div className="sub dim">no frames yet - ask your agent<br />(design/AGENTS.md)</div>}

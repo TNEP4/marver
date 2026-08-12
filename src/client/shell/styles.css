@@ -525,3 +525,40 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
    Inset so scroll containers can never clip it; outline follows the border radius. */
 .sh-app :focus { outline: none }
 body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
+
+/* ---- Variant groups (SPEC-023 §4): badge left of grouped frames + group caption.
+   Both live in WORLD space (scale with the canvas, per Nic's ask) with a screen-space
+   minimum via --sh-inv, the resize-handle trick - legible at overview zoom, proportionate
+   up close. Colors are on-canvas ink (the dot-grid's world), not chrome glass. */
+.sh-vbadge { position: absolute; right: 100%; top: 0; margin-right: max(20px, calc(10px * var(--sh-inv, 1)));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  text-align: right; user-select: none; -webkit-user-select: none; pointer-events: none;
+  font-family: -apple-system, system-ui, sans-serif }
+.sh-vbadge b { font-size: max(40px, calc(20px * var(--sh-inv, 1))); line-height: 1; font-weight: 750;
+  letter-spacing: -0.02em; color: rgba(24, 24, 27, .55) }
+.sh-vbadge span { font-size: max(15px, calc(10px * var(--sh-inv, 1))); font-weight: 550;
+  color: rgba(24, 24, 27, .38); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* the letter is the identity at overview zoom; the name earns pixels only close up */
+  opacity: clamp(0, calc((var(--sh-s, 1) - 0.3) * 6), 1) }
+.sh-app.dark .sh-vbadge b { color: rgba(245, 245, 247, .6) }
+.sh-app.dark .sh-vbadge span { color: rgba(245, 245, 247, .4) }
+
+.sh-gcaption { position: absolute; top: 0; left: 0; pointer-events: none; user-select: none; -webkit-user-select: none;
+  font: 600 max(17px, calc(12px * var(--sh-inv, 1)))/1.2 -apple-system, system-ui, sans-serif;
+  letter-spacing: .01em; color: rgba(24, 24, 27, .45); white-space: nowrap }
+.sh-app.dark .sh-gcaption { color: rgba(245, 245, 247, .45) }
+
+/* sidebar variant rows: one surface, letter chips (SPEC-023 §5) */
+.sub.vgroup { display: flex; align-items: center; gap: 8px; cursor: default }
+.sub.vgroup .glabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sub.vgroup .chips { display: inline-flex; gap: 3px; margin-left: auto }
+.sub.vgroup .chip { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--glass-brd); border-radius: 6px; background: none; cursor: pointer;
+  font: 700 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3);
+  transition: color .15s, background .15s, border-color .15s }
+.sub.vgroup .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.sub.vgroup .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
+
+/* play-mode variant chips (SPEC-023 §6) */
+.sh-play-nav .vchip { min-width: 24px; font-weight: 700; font-size: 11px }
+.sh-play-nav .vchip.on { color: #fff; background: var(--accent); border-radius: 7px }

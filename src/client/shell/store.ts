@@ -14,7 +14,7 @@ const DATA: { manifest: Manifest; boards: Record<string, unknown>; names: string
 /** True on a published static canvas - no dev server, no API, no update checks. */
 export const PUBLISHED = DATA !== null
 
-export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string }
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number
@@ -87,6 +87,7 @@ interface State {
   board: string                       // active board name; 'all-scenes' is the auto board
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
+  sceneRows: string[][] | null        // agent-authored scene arrangement (SPEC-023 §2); round-trips through save
   baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
   panelOpen: boolean
   scale: number
@@ -170,6 +171,7 @@ export const useStore = create<State>((set, get) => {
       let boardHash: string | null = null
       let boardAuto = boardName === 'all-scenes'
       let deviceView: string | null = null
+      let sceneRows: string[][] | null = null
       let baseLayout: State['baseLayout'] = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
@@ -224,6 +226,12 @@ export const useStore = create<State>((set, get) => {
         // device view and the free-form snapshot survive reloads - independently:
         // a scoped "exception" clears deviceView but the snapshot must keep restoring
         if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
+        if (Array.isArray(board?.sceneRows)) {
+          const rows = board.sceneRows
+            .map((r: unknown) => (Array.isArray(r) ? r.filter((x: unknown) => typeof x === 'string') : []))
+            .filter((r: string[]) => r.length)
+          if (rows.length) sceneRows = rows
+        }
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
@@ -256,19 +264,22 @@ export const useStore = create<State>((set, get) => {
         }
       }
       if ((!boardHash || needTidy) && nodes.length) {
-        const sceneOf = (id: string) => manifest.frames.find((f) => f.id === id)?.scene ?? ''
-        const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
+        const entryOf = (id: string) => manifest.frames.find((f) => f.id === id)
+        const placedAll = tidy(nodes.map((n) => {
+          const f = entryOf(n.frame)
+          return { key: n.key, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
+        }), sceneRows ?? undefined)
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
       }
       // dirty matches disk by construction - except when load-time pruning changed the
       // node set; callers see dirty:true and schedule the save that persists the prune
-      return { manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [], dirty: prunedAtLoad }
+      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, baseLayout, selection: [], dirty: prunedAtLoad }
     } catch { return null }
   }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, baseLayout: null,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -507,9 +518,12 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
     },
     runTidy() {
-      const { nodes, manifest } = get()
-      const sceneOf = (id: string) => manifest?.frames.find((f) => f.id === id)?.scene ?? ''
-      const placed = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
+      const { nodes, manifest, sceneRows } = get()
+      const entryOf = (id: string) => manifest?.frames.find((f) => f.id === id)
+      const placed = tidy(nodes.map((n) => {
+        const f = entryOf(n.frame)
+        return { key: n.key, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
+      }), sceneRows ?? undefined)
       set((s) => ({
         nodes: s.nodes.map((n) => {
           const p = placed.find((x) => x.key === n.key)
@@ -559,6 +573,7 @@ export const useStore = create<State>((set, get) => {
           // deviceView and the free-form snapshot persist independently: a scoped
           // exception clears the view but 0 must still restore the snapshot after reload
           ...(deviceView ? { deviceView } : {}),
+          ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
           ...(baseLayout ? { baseLayout } : {}),
           // only PINNED themes persist - inherited values follow viewTheme at load time
           nodes: nodes.map(({ key, frame, x, y, w, h, themeUser }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), ...(themeUser ? { themeUser } : {}) })),

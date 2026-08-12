@@ -90,6 +90,33 @@ export const canvasCtl = {
   zoom100() { canvasCtl.zoomTo(1) },
 }
 
+/** Variant-group captions (SPEC-023 §4): "Landing · 3 variants" above each group with
+ *  2+ members on this board. World-space (scales with the canvas); min screen size via
+ *  --sh-inv. Groups with one lone member on a curated board keep the badge, no caption. */
+function GroupCaptions() {
+  const nodes = useStore((s) => s.nodes)
+  const manifest = useStore((s) => s.manifest)
+  if (!manifest) return null
+  const groups = new Map<string, { x: number; y: number; count: number }>()
+  for (const n of nodes) {
+    if (n.missing) continue
+    const f = manifest.frames.find((x) => x.id === n.frame)
+    if (!f?.variantGroup) continue
+    const g = groups.get(f.variantGroup)
+    if (!g) groups.set(f.variantGroup, { x: n.x, y: n.y, count: 1 })
+    else { g.x = Math.min(g.x, n.x); g.y = Math.min(g.y, n.y); g.count++ }
+  }
+  return (
+    <>
+      {[...groups.entries()].filter(([, g]) => g.count > 1).map(([id, g]) => (
+        <div key={id} className="sh-gcaption" style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - 18px))` }}>
+          {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.count} variants
+        </div>
+      ))}
+    </>
+  )
+}
+
 export function Canvas() {
   const nodes = useStore((s) => s.nodes)
   const gesture = useStore((s) => s.gesture)
@@ -277,6 +304,7 @@ export function Canvas() {
     >
       <TransformComponent wrapperClass="sh-canvas" contentClass="sh-content">
         <div id="sh-world">
+          <GroupCaptions />
           {nodes.map((n) => <FrameNode key={n.key} node={n} />)}
         </div>
       </TransformComponent>

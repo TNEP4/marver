@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
-export interface FrameMeta { title?: string; viewport?: string; theme?: string }
+export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string }
 export interface FrameEntry {
   id: string
   file: string
@@ -11,6 +11,11 @@ export interface FrameEntry {
   title?: string
   viewport?: string
   theme?: string
+  /** Variant group id (SPEC-023 §1): inferred from 2+ letter-prefixed siblings in one
+   *  directory, or declared via meta.of. Present only on grouped frames. */
+  variantGroup?: string
+  /** This frame's variant key within the group ("a", "b", ...). */
+  variant?: string
 }
 export interface Manifest {
   frames: FrameEntry[]
@@ -33,6 +38,8 @@ export function extractMeta(src: string): FrameMeta {
   const title = pick('title'); if (title) out.title = title
   const viewport = pick('viewport'); if (viewport) out.viewport = viewport
   const theme = pick('theme'); if (theme) out.theme = theme
+  const of = pick('of'); if (of) out.of = of
+  const variant = pick('variant'); if (variant) out.variant = variant
   return out
 }
 
@@ -75,6 +82,8 @@ export function scanFrames(root: string): Manifest {
         if (meta.title) entry.title = meta.title
         if (meta.viewport) entry.viewport = meta.viewport
         if (meta.theme) entry.theme = meta.theme
+        if (meta.of) entry.variantGroup = meta.of         // declared membership
+        if (meta.variant) entry.variant = meta.variant
       }
       frames.push(entry)
     }
@@ -98,11 +107,53 @@ export function scanFrames(root: string): Manifest {
   frames.length = 0
   frames.push(...deduped)
 
+  inferVariantGroups(frames)
+
   const sceneCounts = new Map<string, number>()
   for (const f of frames) sceneCounts.set(f.scene, (sceneCounts.get(f.scene) ?? 0) + 1)
   const scenes = [...sceneCounts.entries()].map(([name, n]) => ({ name, frames: n })).sort((a, b) => a.name.localeCompare(b.name))
 
   return { frames, scenes }
+}
+
+/** Variant groups (SPEC-023 §1). A group = 2+ frames in one DIRECTORY whose basenames
+ *  are letter-prefixed (`a-terminal`), or frames declaring `meta.of`. Group id = the
+ *  directory's id prefix (or meta.of); variant key = the letter (or meta.variant).
+ *  Nested directories scope alternatives inside a busy scene (checkout/payment/a-card).
+ *  States (empty.tsx, error.tsx) never letter-prefix, so they never misgroup.
+ *  Mutates entries in place: only frames whose group materializes keep the fields. */
+function inferVariantGroups(frames: FrameEntry[]) {
+  const candidates = new Map<string, FrameEntry[]>()
+  for (const f of frames) {
+    let group = f.variantGroup                        // meta.of, already copied
+    let key = f.variant
+    if (!group) {
+      const slash = f.id.lastIndexOf('/')
+      const base = slash >= 0 ? f.id.slice(slash + 1) : f.id
+      const m = /^([a-z])-.+$/.exec(base)
+      if (!m) continue
+      group = slash >= 0 ? f.id.slice(0, slash) : ''
+      if (!group) continue                            // root-level frames don't group
+      key = key ?? m[1]
+    }
+    f.variantGroup = group
+    f.variant = key ?? '?'
+    candidates.set(group, [...(candidates.get(group) ?? []), f])
+  }
+  for (const [group, members] of candidates) {
+    const seen = new Set<string>()
+    const kept: FrameEntry[] = []
+    for (const m of members.sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))) {
+      if (seen.has(m.variant!)) {
+        console.warn(`[marver] duplicate variant "${m.variant}" in group "${group}" (${m.file}) - not grouped.`)
+        delete m.variantGroup; delete m.variant
+        continue
+      }
+      seen.add(m.variant!)
+      kept.push(m)
+    }
+    if (kept.length < 2) for (const m of kept) { delete m.variantGroup; delete m.variant }
+  }
 }
 
 /** Write design/manifest.json only when content changed. Returns the manifest either way. */

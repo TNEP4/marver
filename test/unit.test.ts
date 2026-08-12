@@ -101,3 +101,64 @@ describe('loadConfig (spec §4)', async () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+describe('variant groups (SPEC-023 §1)', () => {
+  const mk = (id: string, extra: Record<string, unknown> = {}) =>
+    ({ id, file: `design/scenes/${id}.tsx`, kind: 'tsx', scene: id.split('/')[0], ...extra }) as any
+
+  it('infers groups from letter-prefixed siblings; states and loners never group', async () => {
+    const { scanFrames } = await import('../src/server/manifest.ts')
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    const root = mkdtempSync(join(tmpdir(), 'mv-vg-'))
+    const w = (rel: string, body = 'export default () => null') => {
+      mkdirSync(join(root, 'design', 'scenes', ...rel.split('/').slice(0, -1)), { recursive: true })
+      writeFileSync(join(root, 'design', 'scenes', rel), body)
+    }
+    w('landing/a-terminal.tsx'); w('landing/b-editorial.tsx')
+    w('landing/empty.tsx')                                 // state: never groups
+    w('checkout/cart.tsx')
+    w('checkout/payment/a-card.tsx'); w('checkout/payment/b-wallet.tsx')   // nested scope
+    w('docs/a-only.tsx')                                   // lone letter-prefix: no group
+    w('hero/x.tsx', 'export const meta = { of: "hero", variant: "z" }\nexport default () => null')
+    w('hero/a-one.tsx')                                    // meta.of joins the letter frame
+    const byId = Object.fromEntries(scanFrames(root).frames.map((f) => [f.id, f]))
+    rmSync(root, { recursive: true, force: true })
+    expect(byId['landing/a-terminal'].variantGroup).toBe('landing')
+    expect(byId['landing/b-editorial'].variant).toBe('b')
+    expect(byId['landing/empty'].variantGroup).toBeUndefined()
+    expect(byId['checkout/payment/a-card'].variantGroup).toBe('checkout/payment')
+    expect(byId['checkout/cart'].variantGroup).toBeUndefined()
+    expect(byId['docs/a-only'].variantGroup).toBeUndefined()
+    expect(byId['hero/x'].variantGroup).toBe('hero')
+    expect(byId['hero/x'].variant).toBe('z')
+    expect(byId['hero/a-one'].variantGroup).toBe('hero')
+  })
+
+  it('tidy keeps a variant group contiguous and ordered, without reordering nodes', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy([
+      { key: 'k1', scene: 'landing', group: 'landing', variant: 'b', w: 100, h: 100 },
+      { key: 'k2', scene: 'landing', w: 100, h: 100 },
+      { key: 'k3', scene: 'landing', group: 'landing', variant: 'a', w: 100, h: 100 },
+    ])
+    const x = Object.fromEntries(placed.map((p) => [p.key, p.x]))
+    // group run starts at first member's slot, ordered a then b, k2 after the run
+    expect(x.k3).toBeLessThan(x.k1)
+    expect(x.k1).toBeLessThan(x.k2)
+  })
+
+  it('tidy honors sceneRows: side-by-side scenes share a row, unlisted append below', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy([
+      { key: 'a', scene: 'landing', w: 100, h: 100 },
+      { key: 'b', scene: 'docs', w: 100, h: 100 },
+      { key: 'c', scene: 'pricing', w: 100, h: 100 },
+    ], [['landing', 'docs']])
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.a.y).toBe(p.b.y)            // same row
+    expect(p.b.x).toBeGreaterThan(p.a.x) // docs to the right
+    expect(p.c.y).toBeGreaterThan(p.a.y) // pricing below
+  })
+})
