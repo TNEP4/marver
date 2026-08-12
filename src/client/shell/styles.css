@@ -550,16 +550,19 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   letter-spacing: .01em; color: rgba(24, 24, 27, .45); white-space: nowrap }
 .sh-app.dark .sh-gcaption { color: rgba(245, 245, 247, .45) }
 
-/* sidebar variant rows: one surface, letter chips (SPEC-023 §5) */
-.sub.vgroup { display: flex; align-items: center; gap: 8px; cursor: default }
+/* sidebar variant rows: group header carries the experimentation mark; each variant
+   row carries its letter CHIP (accent-filled when selected) + name (SPEC-023 §5) */
+.sub.vgroup { display: flex; align-items: center; gap: 8px }
 .sub.vgroup .glabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.sub.vgroup .chips { display: inline-flex; gap: 3px; margin-left: auto }
-.sub.vgroup .chip { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--glass-brd); border-radius: 6px; background: none; cursor: pointer;
+.sub.vgroup .gicon { margin-left: auto; flex: none; color: var(--glass-ink-3); transition: color .15s }
+.sub.vgroup:hover .gicon { color: var(--glass-ink) }
+.sub.vgroup.on .gicon { color: var(--accent) }
+.sub .chip { width: 20px; height: 20px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--glass-brd); border-radius: 7px; background: none; cursor: pointer;
   font: 700 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3);
   transition: color .15s, background .15s, border-color .15s }
-.sub.vgroup .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
-.sub.vgroup .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
+.sub .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.sub .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
 
 /* play-mode variant chips (SPEC-023 §6) */
 .sh-play-nav .vchip { min-width: 24px; font-weight: 700; font-size: 11px }
@@ -582,8 +585,6 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sh-gcaption.on:hover { color: var(--accent) }
 
 /* per-variant sidebar rows under the group header */
-.sub.vrow { display: flex; align-items: center; gap: 8px; padding-left: 26px }
-.sub.vrow b { flex: none; width: 16px; font-size: 10px; font-weight: 700; color: var(--glass-ink-3); text-align: center }
-.sub.vrow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.sub.vrow.on b { color: var(--accent) }
+.sub.vrow { display: flex; align-items: center; gap: 8px; padding-left: 24px }
+.sub.vrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sub.vgroup { cursor: pointer }

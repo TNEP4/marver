@@ -6,7 +6,7 @@ import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
@@ -669,31 +669,20 @@ export function App() {
                         // group header: click selects EVERY variant (the quick compare-and-test grab)
                         rows.push(
                           <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}`}
+                            title="Select all variants"
                             onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <span className="glabel">{rel}</span>
-                            <span className="chips">
-                              {members.map((m) => {
-                                const n = nodeFor(m.id)
-                                const on = !!n && selection.includes(n.key)
-                                return (
-                                  <button key={m.id} className={`chip${on ? ' on' : ''}`}
-                                    title={m.title ?? m.id}
-                                    onClick={(e) => { e.stopPropagation(); go(m.id, e.shiftKey) }}>
-                                    {(m.variant ?? '?').toUpperCase()}
-                                  </button>
-                                )
-                              })}
-                            </span>
+                            <VariantsIcon size={13} className="gicon" />
                           </div>,
                         )
-                        // one row per variant: letter + its name, individually selectable
+                        // one row per variant: [letter chip] + name, individually selectable
                         for (const m of members) {
                           const n = nodeFor(m.id)
                           const on = !!n && selection.includes(n.key)
                           const nm = m.title ?? cap((m.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' '))
                           rows.push(
                             <div key={m.id} className={`sub vrow${on ? ' on' : ''}`} onClick={(e) => go(m.id, e.shiftKey)}>
-                              <b>{(m.variant ?? '?').toUpperCase()}</b><span>{nm}</span>
+                              <span className={`chip${on ? ' on' : ''}`}>{(m.variant ?? '?').toUpperCase()}</span><span className="nm">{nm}</span>
                             </div>,
                           )
                         }
