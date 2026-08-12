@@ -264,15 +264,30 @@ export const useStore = create<State>((set, get) => {
         nodes = nodes.filter((n) => !n.missing)
         prunedAtLoad = !DATA && nodes.length !== before
       }
-      // frames not on the board yet → auto boards only (a curated board shows exactly its list)
+      // frames not on the board yet → auto boards only (a curated board shows exactly its list).
+      // Placement mirrors the live-manifest JOIN: grouped newcomers land beside their
+      // siblings, everything else past the board's right edge - NEVER stacked at (0,0)
+      // (the published all-scenes bug: frames created after the board file was last
+      // saved piled up at the origin)
       if (boardAuto) {
         const placed = new Set(nodes.map((n) => n.frame))
+        let maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
         for (const f of manifest.frames) {
           if (placed.has(f.id)) continue
           placed.add(f.id)
           const d = defaultSize(f)
           const vp = deviceView ? CONFIG.viewports[deviceView] : null
-          nodes.push({ key: nodeKey(), frame: f.id, x: 0, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' })
+          const w = vp?.width ?? d.w, h = vp?.height ?? d.h
+          let x: number, y: number
+          const sibling = f.variantGroup
+            ? nodes.filter((n) => manifest.frames.find((m) => m.id === n.frame)?.variantGroup === f.variantGroup)
+                .reduce<Node | null>((a, n) => (!a || n.x + n.w > a.x + a.w ? n : a), null)
+            : null
+          if (sibling) { x = sibling.x + sibling.w + Math.max(140, sibling.w * 0.12); y = sibling.y }
+          else { x = nodes.length ? maxX + 96 : 0; y = 0 }
+          const node: Node = { key: nodeKey(), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading' }
+          nodes.push(node)
+          maxX = Math.max(maxX, x + w)
         }
       }
       // published: re-apply this visit's pins over the inlined data
