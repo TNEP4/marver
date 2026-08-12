@@ -1,10 +1,13 @@
 export interface TidyNode { key: string; scene: string; group?: string; variant?: string; w: number; h: number }
 export interface Placed { key: string; x: number; y: number }
 
-const GUTTER = 72
-const SCENE_GAP = 96
-const SCENE_ROW_GAP = 192   // between scenes sharing one sceneRows row
-const BADGE_PAD = 110       // extra left headroom for a grouped frame's variant badge
+// Gaps are PROPORTIONAL to frame size (floored at the classic values): monitor-scale
+// frames dwarf fixed gaps, and the zoom-clamped variant text needs its lane to grow
+// with the frames it annotates.
+const gutter = (w: number) => Math.max(72, w * 0.06)
+const badgePad = (w: number) => Math.max(110, w * 0.1)     // grouped frame's badge column
+const sceneGap = (h: number) => Math.max(96, h * 0.16)     // vertical: caption line lives here
+const sceneRowGap = (w: number) => Math.max(192, w * 0.14) // between scenes sharing a row
 
 /**
  * Pure layout (spec §7 + SPEC-023 §2/§3). Returns positions only - the nodes array is
@@ -32,15 +35,17 @@ export function tidy(nodes: TidyNode[], sceneRows?: string[][]): Placed[] {
     let rowH = 0
     for (const scene of row) {
       const members = nodes.filter((n) => n.scene === scene)
+      let lastW = 0
       for (const n of orderWithinScene(members)) {
-        if (n.group) x += BADGE_PAD             // the badge floats left of the frame
+        if (n.group) x += badgePad(n.w)         // the badge floats left of the frame
         out.push({ key: n.key, x, y })
-        x += n.w + GUTTER
+        x += n.w + gutter(n.w)
+        lastW = n.w
         rowH = Math.max(rowH, n.h)
       }
-      x += SCENE_ROW_GAP - GUTTER               // scene boundary reads wider than a frame gap
+      x += sceneRowGap(lastW) - gutter(lastW)   // scene boundary reads wider than a frame gap
     }
-    y += rowH + SCENE_GAP
+    y += rowH + sceneGap(rowH)
   }
   return out
 }
