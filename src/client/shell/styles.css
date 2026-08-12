@@ -560,6 +560,8 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sub .chip { width: 20px; height: 20px; flex: none; display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--glass-brd); border-radius: 7px; background: none; cursor: pointer;
   font: 700 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3);
+  /* optical centering: caps sit high when the em box is centered - settle them 1px */
+  line-height: 1; letter-spacing: 0; padding: 1px 0 0;
   transition: color .15s, background .15s, border-color .15s }
 .sub .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
 .sub .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
@@ -585,6 +587,6 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sh-gcaption.on:hover { color: var(--accent) }
 
 /* per-variant sidebar rows under the group header */
-.sub.vrow { display: flex; align-items: center; gap: 8px; padding-left: 24px }
+.sub.vrow { display: flex; align-items: center; gap: 8px; padding-left: 31px }   /* chip flush with the text column */
 .sub.vrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sub.vgroup { cursor: pointer }

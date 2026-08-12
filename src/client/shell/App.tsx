@@ -672,7 +672,7 @@ export function App() {
                             title="Select all variants"
                             onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <span className="glabel">{rel}</span>
-                            <VariantsIcon size={13} className="gicon" />
+                            <VariantsIcon size={14} className="gicon" />
                           </div>,
                         )
                         // one row per variant: [letter chip] + name, individually selectable
