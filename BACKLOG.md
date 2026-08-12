@@ -58,6 +58,11 @@ Small items that are not milestone work. One line each; delete when done.
   fresh Claude session, official registry install, README-and-AGENTS.md-only onboarding,
   FRICTION.md kept by the dogfooding session. Supersedes the earlier "marver.design"
   bullet's open questions about approach. Friction log gets triaged here for 0.3.0.
+- **M3 comments/identity/access: SPEC-M3.md written as WIP (2026-08-12)** - event-log
+  comments, dev<->published union sync, one publish target per repo (decided), email
+  allowlist w/ READ vs READ+COMMENT roles. Five UNRESOLVED questions in §3 (identity
+  verification, read-gating, unknown-email UX, allowlist editing, avatars). Promote to
+  contract after the dogfood friction triage; no code before promotion.
 - **Distribution: DONE 2026-08-11** (see DECISIONS.md) except user actions: send
   dispute email, flip repo public + register trusted publisher, carrara-labs npm org
   transfer, move Railway project to personal workspace.
