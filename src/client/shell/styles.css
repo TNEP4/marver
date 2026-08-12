@@ -532,7 +532,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    up close. Colors are on-canvas ink (the dot-grid's world), not chrome glass. */
 .sh-vbadge { position: absolute; right: 100%; top: 0; margin-right: max(20px, calc(10px * var(--sh-inv, 1)));
   display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
-  text-align: right; user-select: none; -webkit-user-select: none; pointer-events: none;
+  text-align: right; user-select: none; -webkit-user-select: none;
   font-family: -apple-system, system-ui, sans-serif }
 .sh-vbadge b { font-size: max(40px, calc(20px * var(--sh-inv, 1))); line-height: 1; font-weight: 750;
   letter-spacing: -0.02em; color: rgba(24, 24, 27, .55);
@@ -545,7 +545,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sh-app.dark .sh-vbadge b { color: rgba(245, 245, 247, .6) }
 .sh-app.dark .sh-vbadge span { color: rgba(245, 245, 247, .4) }
 
-.sh-gcaption { position: absolute; top: 0; left: 0; pointer-events: none; user-select: none; -webkit-user-select: none;
+.sh-gcaption { position: absolute; top: 0; left: 0; user-select: none; -webkit-user-select: none;
   font: 600 max(17px, calc(12px * var(--sh-inv, 1)))/1.2 -apple-system, system-ui, sans-serif;
   letter-spacing: .01em; color: rgba(24, 24, 27, .45); white-space: nowrap }
 .sh-app.dark .sh-gcaption { color: rgba(245, 245, 247, .45) }
@@ -577,6 +577,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    frame is selected, the interact purple when it is being interacted with - the badge,
    name, caption, and frame title all agree with the frame's state */
 .sh-vbadge { cursor: pointer }
+/* children stay click-transparent: rzpp's pan exclusion and the select handler both
+   need the BADGE DIV to be the event target (same pattern as button svg) */
+.sh-vbadge b, .sh-vbadge span { pointer-events: none }
 .sh-node.sel .sh-vbadge b, .sh-node.sel .sh-vbadge span { color: var(--accent) }
 .sh-node.interact .sh-vbadge b, .sh-node.interact .sh-vbadge span { color: var(--interact) }
 .sh-node.sel .sh-node-head .id { color: var(--accent) }
