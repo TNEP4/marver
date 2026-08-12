@@ -114,7 +114,7 @@ function GroupCaptions() {
         const allOn = g.keys.every((k) => selection.includes(k))
         return (
           <div key={id} className={`sh-gcaption sh-no-pan${allOn ? ' on' : ''}`}
-            style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - 18px))` }}
+            style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - clamp(4px, 8px * var(--sh-inv, 1), 40px)))` }}
             title="Select all variants"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => { useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
