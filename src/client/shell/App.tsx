@@ -156,7 +156,7 @@ function SelectionBar() {
   // caption top = frame top - 18 world px - its own height (world font clamped to a
   // 12px screen minimum). A fixed world offset detached the bar at other zooms.
   const rawTop = frame.variantGroup
-    ? `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - clamp(4px * var(--sh-s, 1), 8px, 40px * var(--sh-s, 1)) - (clamp(12px, 17px * var(--sh-s, 1), 18px) * 1.4) - 48px)`
+    ? `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - clamp(4px * var(--sh-s, 1), 8px, 40px * var(--sh-s, 1)) - (clamp(12px, 17px * var(--sh-s, 1), 18px) * 1.4) - 44px)`
     : `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`
   return (
     <div
