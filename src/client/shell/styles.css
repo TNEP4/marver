@@ -543,8 +543,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   /* world cap 120px: past ~17% zoom the letter stops growing (in world terms) and
      shrinks with the canvas instead of bleeding across the gutter onto the neighbor */
   letter-spacing: -0.02em; color: rgba(24, 24, 27, .55);
-  /* below ~6% zoom the clamped letter outgrows its gutter - fade it out */
-  opacity: clamp(0, calc((var(--sh-s, 1) - 0.055) * 40), 1) }
+  /* the letter retires WITH the name below ~30% zoom (drive feedback 2026-08-12):
+     at overview zooms the group caption is the identity - per-frame letters are noise */
+  opacity: clamp(0, calc((var(--sh-s, 1) - 0.3) * 6), 1) }
 .sh-vbadge span { font-size: max(15px, calc(10px * var(--sh-inv, 1))); font-weight: 550;
   color: rgba(24, 24, 27, .38); max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   /* the letter is the identity at overview zoom; the name earns pixels only close up */

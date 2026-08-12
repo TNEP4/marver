@@ -59,6 +59,11 @@ ordered list of atoms and `{ "space": n }` tokens.
 - `{ "space": n }` = n gap units at that boundary; a unit is the adaptive gutter
   (proportional to the touching frames), so spacing holds across phone and
   monitor frames and through resizes. Plain adjacency = 1 unit.
+- **Isolate variant runs.** When a variant group shares a scene with regular
+  flow frames, put `{ "space": 2 }` or `{ "space": 3 }` before (and after, if
+  frames follow) the group's atom in that scene's recipe - explorations should
+  read as their own cluster, not blend into the flow:
+  `"scenes": { "checkout": { "rows": [["cart", "payment", { "space": 3 }, "directions"]] } }`
 - Tidy, device switches, and frame resizes re-apply the recipe; dragging stays
   free until sizes change. Scenes/frames not listed append after, in default
   order. Unknown names warn and skip - check the name against the sidebar.
