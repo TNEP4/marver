@@ -560,8 +560,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sub .chip { width: 20px; height: 20px; flex: none; display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--glass-brd); border-radius: 7px; background: none; cursor: pointer;
   font: 700 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3);
-  /* optical centering: caps sit high when the em box is centered - settle them 1px */
-  line-height: 1; letter-spacing: 0; padding: 1px 0 0;
+  /* optical centering: trim the text box to CAP height so flex centers the glyph
+     itself, not the em box (whose descender space floats caps high) */
+  line-height: 1; letter-spacing: 0; text-box: trim-both cap alphabetic;
   transition: color .15s, background .15s, border-color .15s }
 .sub .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
 .sub .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
