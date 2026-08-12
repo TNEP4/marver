@@ -213,3 +213,31 @@ an auto-board node's position/pins (auto boards are auto-laid; debounce absorbs 
 atomic saves); registry revalidates per iframe navigation (localhost 304s, correctness
 over micro-perf); tsconfig exclude patch can be unnecessary for exotic `**/src/**`
 includes (harmless, printed, reversible).
+
+## The Method layer + release train (decided with Nic, 2026-08-12)
+
+The product gap is guidance: unguided coding agents produce confident slop, and the
+weaker the model the worse it gets. Marver ships the METHOD, not just the canvas.
+
+- **design/instructions/** (not "guides" - authoritative by name) holds the method:
+  discover, wireframe, brand, craft, components, review + setup.md (the no-app
+  presence file moves in here). AGENTS.md stays the lean every-session contract and
+  MUST-routes agents into the phase instruction before working in that phase. Files
+  carry the same regeneration markers as AGENTS.md (init refreshes them on upgrade;
+  delete the marker to own a file).
+- **Craft rules are STRICT**, kick-started from studying impeccable
+  (github.com/pbakaus/impeccable, Apache-2.0) as a public reference - the rules are
+  re-expressed entirely in our own words (methods and ideas, no copied text; Nic's
+  call 2026-08-12: no attribution, these are a prototyping starting point we will
+  rewrite through dogfood). Low-fi (wireframe) rules are our own. Lo-fi refinement
+  from Nic: throwaway code is CORRECT for wireframes (never build real components
+  for them, never touch the app's components dir); existing branded components may
+  be composed as-is; lo-fi is for NEW work only. Configure phase added: three repo
+  maturities (new / fresh / old) all route to one "idle state" (theme wired,
+  components importable, brand documented, manifest honest).
+- **Release train reordered**: 0.2.2 = staged infra (update pill, setup presence
+  file, collision guard) + the Method layer, so dogfooding the method starts
+  immediately. 0.2.3 = grouping/variants/iteration management - agent gets real
+  canvas control to diverge/converge (design-thinking loop; creative UI work to do).
+  0.2.4 = comments management (SPEC-M3 promotion). Comments moved BEHIND iteration:
+  you iterate before you collect feedback.

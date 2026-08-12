@@ -8,7 +8,16 @@ import { scanFrames, writeManifest } from '../server/manifest.ts'
 
 interface InitOpts { mode: 'studio' | 'embedded'; demo: boolean }
 
-const pkgDir = () => join(dirname(fileURLToPath(import.meta.url)), '..')
+/** Package root = the nearest ancestor holding templates/ (one hop from dist/, two
+ *  from src/cli/ - the walk serves both, and tests run init from source). */
+const pkgDir = () => {
+  let dir = dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 4; i++) {
+    if (existsSync(join(dir, 'templates'))) return dir
+    dir = dirname(dir)
+  }
+  return join(dirname(fileURLToPath(import.meta.url)), '..')
+}
 
 /** Idempotent scaffolder: never overwrites existing files; every host-repo touch prints a diff. */
 export function init(root: string, opts: InitOpts) {
@@ -46,6 +55,26 @@ export function init(root: string, opts: InitOpts) {
     created.push(`design/${rel}`)
   }
 
+  // Managed files (AGENTS.md, instructions/) regenerate on re-init while they carry
+  // the marker - a stale contract is actively harmful, unlike a stale scaffold.
+  // Deleting the marker line hands the file to the user for good. The prefix check
+  // (not full equality) keeps files from older marker wordings regenerating too.
+  const writeManaged = (rel: string, content: string) => {
+    const file = join(design, rel)
+    if (!existsSync(file)) return write(rel, content)
+    const current = readFileSync(file, 'utf8')
+    if (current.startsWith(MANAGED_PREFIX)) {
+      if (current !== content) {
+        writeFileSync(file, content)
+        created.push(`design/${rel} (refreshed)`)
+      }
+    } else if (current !== content.slice(MANAGED_MARKER.length + 1)) {
+      // an unmarked file under a managed path is either user-owned (fine) or a
+      // collision with foreign content that AGENTS.md now declares binding - say so
+      console.warn(`  note: design/${rel} exists without a marver marker - left untouched. If you did not author it, delete it and re-run init to restore the managed version.`)
+    }
+  }
+
   // config (commented defaults + native-TS sharp edges). Theme is deliberately absent:
   // design/theme.css (the wrapper) is the source of truth and always wins over config.
   write('config.ts', configTemplate(opts.mode))
@@ -66,32 +95,41 @@ export function init(root: string, opts: InitOpts) {
   // scaffolded file, a stale contract is actively harmful, so a marker-carrying
   // AGENTS.md regenerates when re-run detection disagrees with it ("set up the app,
   // then re-run init" has to actually work). Deleting the marker opts out for good.
-  const agents = AGENTS_MARKER + '\n' + readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
+  const agents = MANAGED_MARKER + '\n' + readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
     .replaceAll('{{UI_GUIDANCE}}', uiGuidance(host, noApp(host)))
     .replace(/\{\{NEXT_NOTES\}\}\n?/, host.router === 'next' ? NEXT_NOTES : '')
-  const agentsPath = join(design, 'AGENTS.md')
-  if (!existsSync(agentsPath)) write('AGENTS.md', agents)
-  else {
-    const current = readFileSync(agentsPath, 'utf8')
-    if (current.startsWith(AGENTS_MARKER) && current !== agents) {
-      writeFileSync(agentsPath, agents)
-      created.push('design/AGENTS.md (regenerated - detected stack changed)')
-    }
+  writeManaged('AGENTS.md', agents)
+  // pre-marker contracts (0.2.0-era) look user-owned to writeManaged; when one still
+  // carries our generated header but predates the method routing, it is stale, not
+  // owned - say so instead of silently leaving an outdated contract in charge.
+  // (writeManaged's generic note is suppressed by the more specific one reading well;
+  // both are single lines, so a double note on this rare path is acceptable.)
+  const agentsNow = readFileSync(join(design, 'AGENTS.md'), 'utf8')
+  if (!agentsNow.startsWith(MANAGED_PREFIX) && agentsNow.includes('# Design canvas - agent contract') && !agentsNow.includes('## The method (binding)'))
+    console.warn(`  note: design/AGENTS.md predates managed regeneration - if you never edited it, delete it and re-run init to get the current contract (incl. the design/instructions routing).`)
+
+  // The Method: short, strict, phase-scoped instruction files AGENTS.md routes into.
+  // Managed like the contract itself - the method improves with the tool.
+  for (const f of readdirSync(join(templates, 'instructions'))) {
+    if (!f.endsWith('.md')) continue
+    writeManaged(`instructions/${f}`, MANAGED_MARKER + '\n' + readFileSync(join(templates, 'instructions', f), 'utf8'))
   }
 
-  // One-time setup state is a PRESENCE FILE, not contract tokens: SETUP.md exists while
-  // the repo has no app, and init deletes it the moment detection finds one. AGENTS.md
-  // carries only the one-line STOP pointer (uiGuidance) - the every-session contract
-  // never pays for one-time instructions.
-  const setupPath = join(design, 'SETUP.md')
+  // One-time setup state is a PRESENCE FILE, not contract tokens: setup.md exists
+  // while the repo has no app, and init deletes it the moment detection finds one.
+  // AGENTS.md carries only the one-line STOP pointer (uiGuidance).
+  const setupPath = join(design, 'instructions', 'setup.md')
   const ourSetup = () => {
-    try { return readFileSync(setupPath, 'utf8').startsWith('# Setup required') } catch { return false }
+    try {
+      const s = readFileSync(setupPath, 'utf8')
+      return s.startsWith('# Setup required') && s.includes('marver init')
+    } catch { return false }
   }
   if (noApp(host)) {
-    if (!existsSync(setupPath)) write('SETUP.md', SETUP_MD)
+    if (!existsSync(setupPath)) write('instructions/setup.md', SETUP_MD)
   } else if (existsSync(setupPath) && ourSetup()) {   // delete only what we authored
     rmSync(setupPath)
-    console.log(`  - design/SETUP.md removed (app detected - setup complete)`)
+    console.log(`  - design/instructions/setup.md removed (app detected - setup complete)`)
   }
 
   // design/tsconfig.json extends the root config only when one EXISTS (friction log #4)
@@ -123,7 +161,7 @@ export function init(root: string, opts: InitOpts) {
   │ No framework, no theme CSS, no component library. ${NAME} builds      │
   │ frames from YOUR components - with none, designs get thrown away.     │
   │                                                                       │
-  │ The full setup instructions are in design/SETUP.md. Set up the app,   │
+  │ Setup instructions: design/instructions/setup.md. Set up the app,     │
   │ re-run init, and that file removes itself. AGENTS.md carries a STOP   │
   │ so your agent does not design against components that do not exist.   │
   └───────────────────────────────────────────────────────────────────────┘`)
@@ -134,7 +172,8 @@ export function init(root: string, opts: InitOpts) {
   if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
 }
 
-const AGENTS_MARKER = '<!-- generated by marver init from the detected stack; re-running init regenerates this file when detection changes. Made edits you want to keep? Delete this line and init will never touch the file again. -->'
+const MANAGED_PREFIX = '<!-- generated by marver init'
+const MANAGED_MARKER = '<!-- generated by marver init; re-running init refreshes this file when the tool or detection changes. Made edits you want to keep? Delete this line and init will never touch the file again. -->'
 
 /** No framework, no theme, no component alias = nothing to build frames FROM. */
 const noApp = (host: HostInfo) =>
@@ -145,7 +184,7 @@ const noApp = (host: HostInfo) =>
  *  without Tailwind (plain React + CSS) gets guidance, never a dead pointer. */
 function uiGuidance(host: HostInfo, isNoApp: boolean): string {
   if (isNoApp)
-    return `STOP - this repo has no app yet. Read design/SETUP.md before designing anything.`
+    return `STOP - this repo has no app yet. Read design/instructions/setup.md before designing anything.`
   if (host.shadcn)
     return `Use the app's UI: import from ${host.shadcn.uiAlias}; style with the app's Tailwind classes.`
   if (host.tailwind)

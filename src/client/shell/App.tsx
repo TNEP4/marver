@@ -681,7 +681,7 @@ export function App() {
       <PlayOverlay />
 
       {CONFIG.setup
-        ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/SETUP.md, then restart</div>
+        ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>
         : CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
       <UpdatePill />
 

@@ -19,17 +19,20 @@ Small items that are not milestone work. One line each; delete when done.
 
 ## Next phase (2026-08-11 evening - the stabilize-then-launch arc)
 
-- **0.2.2 BUILT (2026-08-12) - staged for publish.** Three features, codex-reviewed:
-  (1) update discovery: daily-cached registry check (design/.local/, 3s timeout,
-  MARVER_NO_UPDATE_CHECK opt-out, x.y.z-validated), stdout line + /__mv/api/update +
-  bottom-center glass update pill (copy command, per-version dismiss, dev only);
-  (2) design/SETUP.md presence-file for the no-app state - AGENTS.md carries one STOP
-  pointer line, init deletes SETUP.md when the app appears (only if we authored it),
-  canvas banner while it exists; (3) collision guard - init refuses a non-marver
-  design/ (content-based shape check so old workspaces re-init fine). DEFERRED: --dir
-  flag (plumbing through ~30 design/ call sites; guard message points people at the
-  repo until someone actually needs it). After publish: the unattended agent upgrade
-  test on marver-site (0.2.1 -> 0.2.2, stranger context, no babysitting).
+- **0.2.2 BUILT incl. THE METHOD LAYER (2026-08-12) - staged for publish.** Infra:
+  update discovery (daily-cached registry check, stdout + glass update pill,
+  MARVER_NO_UPDATE_CHECK opt-out); setup presence-file; design/ collision guard
+  (content-based). THE METHOD: design/instructions/ - configure (idle state, three
+  repo maturities), discover (repo-first interview, mode taxonomy), wireframe (strict
+  lo-fi: throwaway code correct, real copy, structure only), brand (extract-or-create
+  + anti-slop list), craft (strict floor: verify/refuse lists), components
+  (props-not-APIs, a11y baseline, gallery contract), review (bounded passes + keyboard
+  walk), boards (extracted from AGENTS.md). AGENTS.md = lean routed contract w/
+  binding method table; managed-file regeneration (marker prefix check survives
+  wording changes); init tests added (17 total). Craft rules studied from impeccable,
+  re-expressed in our own words (Nic: no attribution). Two codex rounds; deferred:
+  legacy design/SETUP.md migration (no published version ever wrote it), --dir.
+  After publish: unattended agent upgrade test on marver-site (0.2.1 -> 0.2.2).
 - **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,
   serve locally, verify: glass blur computed on .sh-panel, boot opens fit-all light,
   theme matrix (global sticky / scoped pin / pin round-trip), gate + deep link through

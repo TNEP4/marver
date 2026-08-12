@@ -1,0 +1,68 @@
+# Craft - the quality floor for high-fidelity frames
+
+Binding rules for every hi-fi frame. Read them before Build, then apply them silently -
+never announce a checklist. The brief and the settled brand (DESIGN.md) override
+anything here; your own habits never do.
+
+These rules target content surfaces (marketing, docs, product pages). Dense Operate
+UI (dashboards, editors, admin) follows its platform's conventions where they
+conflict - a data table is allowed to be tight, and DESIGN.md's decisions always win.
+
+## Verify - checks against the RENDERED frame, never against intentions
+
+- **Contrast**: body and placeholder text ≥ 4.5:1, large text ≥ 3:1. Secondary text
+  on a colored surface takes its tint from that surface's hue - plain gray on color
+  reads broken.
+- **Spacing rhythm**: elements inside a group sit close; groups sit far apart; a
+  heading holds more air above it than below. All gaps come from the spacing scale.
+- **Type**: body columns 65-75ch; each level of hierarchy differs in BOTH size and
+  weight; letter-spacing never tighter than -0.04em; headings get `text-wrap:
+  balance`; render the real copy at every device width and fix whatever overflows.
+- **Depth**: pick borders or shadows per element, never stack both on one card. A
+  real shadow has offset and blur; an unblurred colored ring around an element is
+  ornament pretending to be elevation.
+- **States**: hover, focus-visible, disabled, loading, error, empty. A control
+  missing its states is an illustration of a control.
+- **Copy**: buttons say what they do ("Publish", not "Submit"); error text says what
+  went wrong and how to recover; everything in the product's own vocabulary.
+- **Browser-owned surfaces**: selection color, caret, focus rings, scrollbars, and
+  the numerals in data tables (`font-variant-numeric: tabular-nums`) all default to
+  browser styling that belongs to no brand. Claiming them is cheap and reads as care;
+  skipping them is the fastest giveaway of unconsidered work.
+- **Motion**: one deliberate, well-placed moment beats an effect on everything.
+  Ease-out, starting from a visible state; never the identical fade-in stamped on
+  each section; honor `prefers-reduced-motion`.
+
+## Refuse - the defaults every unguided model reaches for
+
+A brief can explicitly ask for any of these. Reaching for one unprompted means no
+decision was made - rewrite the element rather than toning it down.
+
+- Uniform icon+heading+paragraph card grids as the whole page structure; a card
+  inside a card (no exceptions); the oversized-number-with-tiny-label stat hero.
+- Little uppercase labels riding above every heading; numbered section markers
+  (01/02/03) when the order carries no information.
+- Gradient-filled text; blur/glass on elements that aren't overlaying anything;
+  thick colored left-border stripes on cards and alerts; chunky offset block shadows
+  in a design that isn't committed to that style throughout.
+- Monospace to signal "technical" - mono earns its place only under code, data, or
+  measurement.
+- Emoji or unicode symbols as icons - icons come drawn, from the app's icon set, in
+  one consistent stroke weight.
+- Centering everything; the same border-radius on every element; pill shapes on
+  large containers (pills belong to small controls).
+- Choosing light or dark by product category reflex - the use scene decides, or
+  DESIGN.md already did.
+
+## Frame law
+
+- Frames are made of the app's real components and tokens. Rebuilding a lookalike of
+  an existing component inside a frame is a defect.
+- Repeated and semantic values (colors, type sizes, radii, the spacing rhythm)
+  resolve to tokens; a missing one is a proposal to raise with the human, not a
+  literal quietly inlined. One-off layout geometry (a grid ratio, a max-width, an
+  SVG coordinate) may stay local - the test is "would a second use want this value".
+- Declare `meta.viewport` for the target width, then check the neighbors - the human
+  WILL sweep devices with keys 1-5.
+- Live fully inside the settled visual world. A direction executed at full commitment
+  can be judged and improved; a hedged one can only be redone.

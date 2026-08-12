@@ -3,6 +3,25 @@
 You design by writing files. The canvas at the printed localhost URL reflects them live.
 Never run or talk to the canvas tool; read and write files only.
 
+## The method (binding)
+
+Design work moves through phases. BEFORE working in a phase, read its instruction
+file in design/instructions/ - they are short, strict, and part of this contract:
+
+| Phase | When | Read |
+|---|---|---|
+| Configure | first session in a repo, or frames render unstyled | instructions/configure.md |
+| Discover | any new surface, feature, or flow | instructions/discover.md |
+| Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
+| Brand | before the first hi-fi work: extract or create the world | instructions/brand.md |
+| Build | hi-fi frames from real components | instructions/craft.md + components.md |
+| Review | before presenting anything | instructions/review.md |
+| Boards | creating a board or publishing | instructions/boards.md |
+
+Refining an existing screen: Configure must hold, then Build + Review. New work runs
+the full ladder. Unsure which phase you are in? Ask the human - one question beats a
+phase of wrong work.
+
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
 - It default-exports a React component. No imports from the tool are needed. Optional:
@@ -35,7 +54,7 @@ Never run or talk to the canvas tool; read and write files only.
    convention). The root design/scenes/_layout.tsx mounts the app's real shell component.
 
 ## Fixtures
-- design/scenes/<scene>/_fixtures.ts - typed plain objects shaped like the future API.
+- design/scenes/<scene>/_fixtures.ts - typed plain objects shaped like the component's PROPS (containers map real APIs into them at promotion; see instructions/components.md).
 - Fixture shapes should match the component's props so tsc catches drift.
 - Loading states are fixtures too: export const slowOrders = () => new Promise(r =>
   setTimeout(() => r(orders), 800)) and let the frame render its skeleton while awaiting.
@@ -59,29 +78,7 @@ Never run or talk to the canvas tool; read and write files only.
 
 ## Boards (curated canvases)
 
-A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
-The human switches boards in the sidebar; YOU create and manage them by writing files.
-Minimal file - just list the frames; the shell fills sizes from each frame's viewport,
-lays it out, and keeps it tidy:
-
-```json
-{ "version": 1, "name": "checkout-compare", "auto": false,
-  "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
-```
-
-- The same frame may appear on many boards, or twice on one board (e.g. two widths:
-  add `"w"`/`"h"` on a node to pin a size, `"x"`/`"y"` to place it - e.g. a comparison
-  row: same `y`, increasing `x`). Know that the human's tidy (`t`) and device views
-  re-layout in frame-id order, so id ordering is the durable arrangement; explicit
-  coordinates are for one-off setups.
-- `auto: false` boards show exactly their list. The `all-scenes` board is auto-managed -
-  never write it.
-- Use boards for comparisons: version A vs B vs C of a flow, side by side.
-- Boards are also the unit of PUBLISHING (`marver build --boards <name>`): a flow being
-  published must have every frame it data-gotos on that board - unlisted frames are
-  excluded from the bundle at build time. The published gate page shows the app's
-  identity: design/logo.svg + the host package name (overridable via config `share`).
-  If the app has no logo asset yet, create a simple design/logo.svg for it.
-  Leave `share.branding` ON unless the human explicitly asks to remove it: Marver is
-  free, the gate is already fully personalized to the app, and the small "Powered by"
-  line is how the tool spreads. Do not remove it as part of "branding polish".
+A board is a saved canvas: `design/boards/<name>.json` - you create and manage them
+by writing files; `all-scenes` is auto-managed, never write it. BEFORE creating a
+board or publishing anything, read instructions/boards.md (file format, layout
+durability, publishing rules).

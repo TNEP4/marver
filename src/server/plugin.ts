@@ -50,10 +50,18 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         return '/* marver: no theme configured */'
       }
       if (id === '\0' + VIRTUAL_CONFIG) {
-        // setup: design/SETUP.md is the "no app yet" presence file (init owns it) -
-        // the shell shows a banner while it exists, so the state is visible in the
-        // thing the human is actually looking at
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: existsSync(join(root, 'design', 'SETUP.md')) })}`
+        // setup: design/instructions/setup.md is the "no app yet" presence file (init
+        // owns it) - the shell shows a banner while it exists, so the state is visible
+        // in the thing the human is actually looking at
+        // ownership check, not bare existence: a foreign setup.md must not lock the
+        // canvas into the no-app banner
+        const setupPending = (() => {
+          try {
+            const s = readFileSync(join(root, 'design', 'instructions', 'setup.md'), 'utf8')
+            return s.startsWith('# Setup required') && s.includes('marver init')
+          } catch { return false }
+        })()
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'
