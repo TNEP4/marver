@@ -153,9 +153,12 @@ function SelectionBar() {
   // off-screen, and must never drift off the sides (friction log #23)
   const centerX = `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${(bx0 + bx1) / 2}px)`
   // a grouped frame carries a caption above it - clear it EXACTLY, in screen terms:
-  // caption top = frame top - 18 world px - its own height (world font clamped to a
-  // 12px screen minimum). A fixed world offset detached the bar at other zooms.
-  const rawTop = frame.variantGroup
+  // frame top - the caption offset (8px screen, world-capped) - the caption's height
+  // (screen-clamped 12..18px font) - the bar. Gate on the TOP edge of the selection,
+  // not the last-selected frame: a mixed selection whose topmost frames are variants
+  // still has a caption to clear (codex final review P2).
+  const capAtTop = selNodes.some((n) => n.y === by0 && useStore.getState().frameFor(n)?.variantGroup)
+  const rawTop = capAtTop
     ? `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - clamp(4px * var(--sh-s, 1), 8px, 40px * var(--sh-s, 1)) - (clamp(12px, 17px * var(--sh-s, 1), 18px) * 1.4) - 44px)`
     : `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`
   return (

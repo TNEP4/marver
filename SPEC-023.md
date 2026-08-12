@@ -44,10 +44,16 @@ place; the group survives keys 1-5. Free-form drag still allowed; tidy restores.
 ## 4. Canvas UI: badge + caption
 
 - Each grouped frame gets a floating badge LEFT of the frame, outside the artwork:
-  the variant letter large, name beneath. World-anchored (scales with zoom) with a
-  screen-space minimum via the existing `--sh-inv` clamp (the resize-handle
-  pattern), so it stays legible at overview zoom and proportionate up close.
-- A group caption above the row: "Landing · 3 variants".
+  the variant letter large, name beneath. World-anchored with SCREEN clamps BOTH
+  ways (drive-tuned 2026-08-12): floors at overview zoom, ceilings at their ~100%
+  screen sizes zoomed in (letter 40px, name 15px), and world caps so nothing
+  outgrows the gutter far out. The name fades out below ~30% zoom; the letter
+  outlives it to ~10-16%; below that the caption alone carries the group.
+- A group caption above the row ("Landing · 3 variants"), 8px screen above the
+  frames (world-capped), font screen-clamped 12-18px. Badge and caption are
+  clickable (select frame / select group) and follow live selection states.
+- Sidebar: the group appears as a row with a flask mark, one sub-row per variant
+  with its letter chip; rows mirror selection (on/held) like scene headers.
 - Curated boards showing a single member still show its badge, no caption.
 
 ## 5. Sidebar

@@ -265,8 +265,8 @@ export const useStore = create<State>((set, get) => {
         prunedAtLoad = !DATA && nodes.length !== before
       }
       // frames not on the board yet → auto boards only (a curated board shows exactly its list).
-      // Placement mirrors the live-manifest JOIN: grouped newcomers land beside their
-      // siblings, everything else past the board's right edge - NEVER stacked at (0,0)
+      // Grouped newcomers land beside their siblings (like the live JOIN); ungrouped ones
+      // go past the board's right edge (the live JOIN flows them below) - NEVER at (0,0)
       // (the published all-scenes bug: frames created after the board file was last
       // saved piled up at the origin)
       if (boardAuto) {
