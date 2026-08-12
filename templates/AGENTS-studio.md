@@ -84,6 +84,9 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
 ## Boards (curated canvases)
 
 A board is a saved canvas: `design/boards/<name>.json` - you create and manage them
-by writing files; `all-scenes` is auto-managed, never write it. BEFORE creating a
-board or publishing anything, read instructions/boards.md (file format, layout
-durability, publishing rules).
+by writing files; `all-scenes` is auto-managed, never write it. Compose a board
+deliberately with `"layout"`: rows/columns lanes of scenes plus `{ "space": n }`
+whitespace tokens, and the same grammar per scene for frames (columns align left
+edges; a variant-group name is one indivisible atom). BEFORE creating a board or
+publishing anything, read instructions/boards.md (the layout grammar, file format,
+publishing rules).

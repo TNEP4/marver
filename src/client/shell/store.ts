@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
-import { tidy } from './tidy.ts'
+import { tidy, type BoardLayout, type Flow, type Lane, type Space } from './tidy.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -76,6 +76,54 @@ function defaultSize(frame: FrameEntry) {
   return { w: vp.width, h: vp.height }
 }
 
+let resizedInGesture = false
+
+/** sceneRows is the legacy shorthand for a plain rows layout (SPEC-024 §5). */
+const effectiveLayout = (layout: BoardLayout | null, sceneRows: string[][] | null): BoardLayout | undefined =>
+  layout ?? (sceneRows?.length ? { rows: sceneRows.map((r) => [...r]) } : undefined)
+
+const layoutWarn = (msg: string) => {
+  console.warn('[marver layout]', msg)
+  try { useStore.getState().toast(`layout: ${msg}`) } catch { /* store not ready during boot */ }
+}
+
+/** Guarded parse of agent-authored board.layout (SPEC-024 §1). Returns null on any
+ *  structurally hopeless input - malformed pieces degrade, they never blank the board. */
+function parseLayout(raw: unknown): BoardLayout | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  const flow = parseFlow(o)
+  const scenes: Record<string, Flow> = {}
+  if (o.scenes && typeof o.scenes === 'object' && !Array.isArray(o.scenes)) {
+    for (const [k, v] of Object.entries(o.scenes as Record<string, unknown>)) {
+      const f = v && typeof v === 'object' && !Array.isArray(v) ? parseFlow(v as Record<string, unknown>) : null
+      if (f) scenes[k] = f
+    }
+  }
+  if (!flow && !Object.keys(scenes).length) return null
+  return { ...(flow ?? {}), ...(Object.keys(scenes).length ? { scenes } : {}) }
+}
+
+function parseFlow(o: Record<string, unknown>): Flow | null {
+  const parseEntries = (v: unknown): Array<Lane | Space> | null => {
+    if (!Array.isArray(v)) return null
+    const out: Array<Lane | Space> = []
+    for (const e of v) {
+      if (Array.isArray(e)) {
+        const lane: Lane = e.filter((a: unknown): a is string | Space =>
+          typeof a === 'string' || (!!a && typeof a === 'object' && !Array.isArray(a) && typeof (a as Space).space === 'number'))
+        out.push(lane)
+      } else if (e && typeof e === 'object' && typeof (e as Space).space === 'number') out.push(e as Space)
+    }
+    return out.length ? out : null
+  }
+  const rows = parseEntries(o.rows)
+  const columns = parseEntries(o.columns)
+  if (!rows && !columns) return null
+  if (rows && columns) return { rows }      // tidy warns; parse keeps the deterministic pick
+  return rows ? { rows } : { columns: columns! }
+}
+
 interface State {
   manifest: Manifest | null
   nodes: Node[]                       // append-only order; NEVER sorted or reordered (iframe law G-1)
@@ -87,7 +135,8 @@ interface State {
   board: string                       // active board name; 'all-scenes' is the auto board
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
-  sceneRows: string[][] | null        // agent-authored scene arrangement (SPEC-023 §2); round-trips through save
+  sceneRows: string[][] | null        // LEGACY scene arrangement (SPEC-023 §2); still round-trips through save
+  layout: BoardLayout | null          // lane-flow recipe (SPEC-024); wins over sceneRows when both exist
   baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
   panelOpen: boolean
   scale: number
@@ -173,6 +222,7 @@ export const useStore = create<State>((set, get) => {
       let boardAuto = boardName === 'all-scenes'
       let deviceView: string | null = null
       let sceneRows: string[][] | null = null
+      let layout: BoardLayout | null = null
       let baseLayout: State['baseLayout'] = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
@@ -233,6 +283,8 @@ export const useStore = create<State>((set, get) => {
             .filter((r: string[]) => r.length)
           if (rows.length) sceneRows = rows
         }
+        layout = parseLayout(board?.layout)
+        if (layout && sceneRows) console.warn('[marver] board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
@@ -268,19 +320,19 @@ export const useStore = create<State>((set, get) => {
         const entryOf = (id: string) => manifest.frames.find((f) => f.id === id)
         const placedAll = tidy(nodes.map((n) => {
           const f = entryOf(n.frame)
-          return { key: n.key, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
-        }), sceneRows ?? undefined)
+          return { key: n.key, frame: n.frame, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
+        }), effectiveLayout(layout, sceneRows), layoutWarn)
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
       }
       // dirty matches disk by construction - except when load-time pruning changed the
       // node set; callers see dirty:true and schedule the save that persists the prune
-      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, baseLayout, selection: [], dirty: prunedAtLoad }
+      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, baseLayout, selection: [], dirty: prunedAtLoad }
     } catch { return null }
   }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, baseLayout: null,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -422,6 +474,7 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
     },
     resizeNode(key, w, h) {
+      resizedInGesture = true
       // a manual resize means the board no longer uniformly shows one device; the resized
       // frame's snapshot entry follows the user's new size so Default will not undo it
       set((s) => {
@@ -516,7 +569,16 @@ export const useStore = create<State>((set, get) => {
     // painted as "interactive"). Exiting keeps the frame selected for continuity.
     setInteract(key) { set((s) => ({ interact: key, selection: key ? [key] : s.selection })) },
     setPlay(play) { set({ play }) },
-    setGesture(gesture) { set({ gesture }) },
+    setGesture(gesture) {
+      set({ gesture })
+      // SPEC-024 §4: a board WITH a layout recipe re-applies it when a resize
+      // gesture ends - sizes changed, so lanes and gaps must recompute
+      if (!gesture && resizedInGesture) {
+        resizedInGesture = false
+        if (get().layout || get().sceneRows?.length) get().runTidy()
+      }
+      if (gesture) resizedInGesture = false
+    },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
     // global theme = the VIEW preference: persists across boards + reloads, clears
@@ -534,12 +596,12 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
     },
     runTidy() {
-      const { nodes, manifest, sceneRows } = get()
+      const { nodes, manifest, sceneRows, layout } = get()
       const entryOf = (id: string) => manifest?.frames.find((f) => f.id === id)
       const placed = tidy(nodes.map((n) => {
         const f = entryOf(n.frame)
-        return { key: n.key, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
-      }), sceneRows ?? undefined)
+        return { key: n.key, frame: n.frame, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
+      }), effectiveLayout(layout, sceneRows), layoutWarn)
       set((s) => ({
         nodes: s.nodes.map((n) => {
           const p = placed.find((x) => x.key === n.key)
@@ -590,6 +652,7 @@ export const useStore = create<State>((set, get) => {
           // exception clears the view but 0 must still restore the snapshot after reload
           ...(deviceView ? { deviceView } : {}),
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
+          ...(get().layout ? { layout: get().layout } : {}),
           ...(baseLayout ? { baseLayout } : {}),
           // only PINNED themes persist - inherited values follow viewTheme at load time
           nodes: nodes.map(({ key, frame, x, y, w, h, themeUser }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), ...(themeUser ? { themeUser } : {}) })),

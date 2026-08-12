@@ -22,12 +22,48 @@ viewport and lays it out:
   never write it.
 - Do not edit board files while the canvas is open unless asked; the shell owns
   their layout fields.
-- **Scene arrangement**: add `"sceneRows": [["landing","docs"],["pricing"]]` to place
-  scenes side by side (one row) or above/below each other (successive rows). Tidy and
-  device views honor it; scenes not listed append below, alphabetical.
 - Use boards for comparisons: version A vs B vs C of a flow, side by side. Variant
   groups (letter-prefixed siblings) stay contiguous through every relayout
-  automatically - sceneRows is for arranging SCENES, not variants.
+  automatically.
+
+## Composing the canvas: `layout`
+
+Compose a board deliberately - whitespace, lanes, alignment - with a `layout`
+recipe. One grammar: a scope is `"rows"` OR `"columns"` of lanes; a lane is an
+ordered list of atoms and `{ "space": n }` tokens.
+
+```json
+{ "version": 1, "name": "showcase", "auto": false,
+  "layout": {
+    "columns": [
+      ["hero", { "space": 2 }, "archive"],
+      { "space": 4 },
+      ["variants"]
+    ],
+    "scenes": {
+      "hero": { "rows": [["overview", "detail", "proof", { "space": 3 }, "directions"]] }
+    }
+  },
+  "nodes": [ { "frame": "hero/overview" }, { "frame": "hero/detail" } ] }
+```
+
+- **Board scope** (`layout.rows` / `layout.columns`): atoms are scene names.
+  `rows` lanes stack top-to-bottom, scenes in a lane flow left-to-right.
+  `columns` lanes sit left-to-right, scenes in a lane stack top-to-bottom and
+  share a left edge - use columns when things must align vertically (a parked
+  archive under a hero, a variants cluster off to the right).
+- **Scene scope** (`layout.scenes.<scene>`): the same grammar, atoms are frame
+  basenames within that scene; a variant-group name (its directory name) is ONE
+  atom - the run stays together. Example above: three frames, a 3-unit gap, then
+  the variant run.
+- `{ "space": n }` = n gap units at that boundary; a unit is the adaptive gutter
+  (proportional to the touching frames), so spacing holds across phone and
+  monitor frames and through resizes. Plain adjacency = 1 unit.
+- Tidy, device switches, and frame resizes re-apply the recipe; dragging stays
+  free until sizes change. Scenes/frames not listed append after, in default
+  order. Unknown names warn and skip - check the name against the sidebar.
+- Legacy `"sceneRows": [["landing","docs"]]` still works (= a plain `rows`
+  layout); prefer `layout` for anything new.
 
 ## Publishing
 

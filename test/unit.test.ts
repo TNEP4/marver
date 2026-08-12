@@ -33,9 +33,9 @@ describe('toFrameId (spec §6)', () => {
 describe('tidy (pure, spec §7)', () => {
   it('rows per scene, scenes alphabetical, gutters applied', () => {
     const placed = tidy([
-      { key: 'b1', scene: 'beta', w: 100, h: 200 },
-      { key: 'a1', scene: 'alpha', w: 100, h: 100 },
-      { key: 'a2', scene: 'alpha', w: 100, h: 150 },
+      { key: 'b1', frame: 'beta/x', scene: 'beta', w: 100, h: 200 },
+      { key: 'a1', frame: 'alpha/one', scene: 'alpha', w: 100, h: 100 },
+      { key: 'a2', frame: 'alpha/two', scene: 'alpha', w: 100, h: 150 },
     ])
     const byKey = Object.fromEntries(placed.map((p) => [p.key, p]))
     expect(byKey.a1).toEqual({ key: 'a1', x: 0, y: 0 })
@@ -45,8 +45,8 @@ describe('tidy (pure, spec §7)', () => {
   })
   it('preserves in-scene order (append-only respect)', () => {
     const placed = tidy([
-      { key: 'x2', scene: 's', w: 50, h: 50 },
-      { key: 'x1', scene: 's', w: 50, h: 50 },
+      { key: 'x2', frame: 's/two', scene: 's', w: 50, h: 50 },
+      { key: 'x1', frame: 's/one', scene: 's', w: 50, h: 50 },
     ])
     expect(placed[0].key).toBe('x2')
     expect(placed[0].x).toBeLessThan(placed[1].x)
@@ -139,9 +139,9 @@ describe('variant groups (SPEC-023 §1)', () => {
   it('tidy keeps a variant group contiguous and ordered, without reordering nodes', async () => {
     const { tidy } = await import('../src/client/shell/tidy.ts')
     const placed = tidy([
-      { key: 'k1', scene: 'landing', group: 'landing', variant: 'b', w: 100, h: 100 },
-      { key: 'k2', scene: 'landing', w: 100, h: 100 },
-      { key: 'k3', scene: 'landing', group: 'landing', variant: 'a', w: 100, h: 100 },
+      { key: 'k1', frame: 'landing/b-two', scene: 'landing', group: 'landing', variant: 'b', w: 100, h: 100 },
+      { key: 'k2', frame: 'landing/thanks', scene: 'landing', w: 100, h: 100 },
+      { key: 'k3', frame: 'landing/a-one', scene: 'landing', group: 'landing', variant: 'a', w: 100, h: 100 },
     ])
     const x = Object.fromEntries(placed.map((p) => [p.key, p.x]))
     // group run starts at first member's slot, ordered a then b, k2 after the run
@@ -149,16 +149,78 @@ describe('variant groups (SPEC-023 §1)', () => {
     expect(x.k1).toBeLessThan(x.k2)
   })
 
-  it('tidy honors sceneRows: side-by-side scenes share a row, unlisted append below', async () => {
+  it('tidy honors row lanes: side-by-side scenes share a row, unlisted append below', async () => {
     const { tidy } = await import('../src/client/shell/tidy.ts')
     const placed = tidy([
-      { key: 'a', scene: 'landing', w: 100, h: 100 },
-      { key: 'b', scene: 'docs', w: 100, h: 100 },
-      { key: 'c', scene: 'pricing', w: 100, h: 100 },
-    ], [['landing', 'docs']])
+      { key: 'a', frame: 'landing/x', scene: 'landing', w: 100, h: 100 },
+      { key: 'b', frame: 'docs/x', scene: 'docs', w: 100, h: 100 },
+      { key: 'c', frame: 'pricing/x', scene: 'pricing', w: 100, h: 100 },
+    ], { rows: [['landing', 'docs']] })
     const p = Object.fromEntries(placed.map((q) => [q.key, q]))
     expect(p.a.y).toBe(p.b.y)            // same row
     expect(p.b.x).toBeGreaterThan(p.a.x) // docs to the right
     expect(p.c.y).toBeGreaterThan(p.a.y) // pricing below
+  })
+})
+
+describe('lane flow (SPEC-024)', () => {
+  const N = (key: string, frame: string, scene: string, w = 100, h = 100, extra: object = {}) =>
+    ({ key, frame, scene, w, h, ...extra })
+
+  it('column lanes share an X origin; lane spacers multiply the horizontal unit', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy(
+      [N('h', 'hero/main', 'hero'), N('a', 'archive/old', 'archive', 80, 80), N('v', 'variants/x', 'variants', 50, 50)],
+      { columns: [['hero', { space: 2 }, 'archive'], { space: 4 }, ['variants']] },
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.h.x).toBe(0)
+    expect(p.a.x).toBe(0)                          // the column alignment
+    expect(p.a.y).toBe(100 + 96 * 2)               // 2 vertical units below hero
+    expect(p.v.x).toBe(100 + 280 * 4)              // lane extent + 4 horizontal units
+    expect(p.v.y).toBe(0)                          // lanes share the top
+  })
+
+  it('scene recipe: frames, a big gap, then the variant run - indivisible and ordered', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy(
+      [
+        N('one', 'shop/one', 'shop'),
+        N('two', 'shop/two', 'shop'),
+        N('pb', 'shop/pay/b-y', 'shop', 60, 60, { group: 'shop/pay', variant: 'b' }),
+        N('pa', 'shop/pay/a-x', 'shop', 60, 60, { group: 'shop/pay', variant: 'a' }),
+      ],
+      { scenes: { shop: { rows: [['one', 'two', { space: 3 }, 'pay']] } } },
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.two.x).toBe(240)                      // 100 + one frame unit (140)
+    expect(p.pa.x).toBe(240 + 100 + 140 * 3)       // 3 units before the run
+    expect(p.pb.x).toBe(p.pa.x + 60 + 140)         // a before b, standard gap inside the run
+  })
+
+  it('guards: unknown atoms skip, invalid space = 1 unit, rows+columns falls back to rows', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const placed = tidy(
+      [N('a', 'alpha/x', 'alpha'), N('b', 'beta/x', 'beta')],
+      { rows: [['alpha', { space: 0 }, 'ghost', 'beta']], columns: [['alpha']] },
+      (m) => warnings.push(m),
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.b.x).toBe(100 + 280)                  // ghost skipped, space 0 degraded to 1 unit
+    expect(p.b.y).toBe(0)
+    expect(warnings.join(' ')).toMatch(/rows AND columns/)
+    expect(warnings.join(' ')).toMatch(/unknown "ghost"/)
+    expect(warnings.join(' ')).toMatch(/invalid space/)
+  })
+
+  it('unlisted frames in a recipe scene append after the recipe atoms', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy(
+      [N('one', 'shop/one', 'shop'), N('extra', 'shop/extra', 'shop')],
+      { scenes: { shop: { rows: [['one']] } } },
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.extra.x).toBeGreaterThan(p.one.x)
   })
 })
