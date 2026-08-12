@@ -668,9 +668,12 @@ export function App() {
                           : cap(f.variantGroup.slice(sc.name.length + 1).replace(/-/g, ' '))
                         const memberKeys = members.map((m) => nodeFor(m.id)?.key).filter((k): k is string => !!k)
                         const allOn = memberKeys.length > 0 && memberKeys.every((k) => selection.includes(k))
+                        // held = SOME member active (same quiet wash as scene headers) - the
+                        // group participates without claiming full selection
+                        const held = !allOn && memberKeys.some((k) => selection.includes(k) || useStore.getState().interact === k)
                         // group header: click selects EVERY variant (the quick compare-and-test grab)
                         rows.push(
-                          <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}`}
+                          <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}${held ? ' held' : ''}`}
                             title="Select all variants"
                             onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <span className="glabel">{rel}</span>

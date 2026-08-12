@@ -596,3 +596,5 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sub.vrow .chip { width: 16px; height: 16px; border-radius: 5px; font-size: 8.5px }
 .sub.vrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sub.vgroup { cursor: pointer }
+.sub.vgroup.held { background: color-mix(in srgb, var(--glass-hover) 55%, transparent) }
+.sub.vgroup.held .gicon { color: var(--glass-ink-2) }
