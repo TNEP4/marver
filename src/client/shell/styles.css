@@ -587,6 +587,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sh-gcaption.on:hover { color: var(--accent) }
 
 /* per-variant sidebar rows under the group header */
-.sub.vrow { display: flex; align-items: center; gap: 8px; padding-left: 31px }   /* chip flush with the text column */
+/* variant rows read one level QUIETER than frame rows: shorter, smaller, lighter -
+   the scannable hierarchy is scene > frame/surface > variants */
+.sub.vrow { display: flex; align-items: center; gap: 7px; padding-left: 31px; height: 24px; font-size: 12px }
+.sub.vrow .chip { width: 16px; height: 16px; border-radius: 5px; font-size: 8.5px }
 .sub.vrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sub.vgroup { cursor: pointer }
