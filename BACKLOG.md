@@ -37,7 +37,10 @@ Small items that are not milestone work. One line each; delete when done.
   design/tsconfig self-exclusion (TS18003 - host exclude inherited via extends; template
   now overrides exclude + allowImportingTsExtensions), unattended-mode path in
   discover.md, init notes the missing DESIGN.md. OPEN: (1) new npm import in a frame ->
-  blank white frame + 504 Outdated Optimize Dep, no error card (frame-host should catch
+  blank white frame + 504 Outdated Optimize Dep, no error card; ALSO manifests as
+  dual-React 'Cannot read properties of null (useRef)' error cards on frames adding
+  their first component-library import mid-session (hit twice now, 2026-08-12) -
+  restart + rm node_modules/.vite heals; likely fix = optimizer warm-up or auto-restart-on-504 (frame-host should catch
   the failed import and card it; investigate optimizeDeps discovery); (2) two dev
   canvases on one repo both own the auto board with no warning (lockfile or banner);
   (3) host eslint sweeps design/.dist (document, or init hints an ignore); (4) cac
