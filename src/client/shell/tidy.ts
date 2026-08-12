@@ -15,15 +15,14 @@ const units = (s: Space, warn: Warn): number =>
   Number.isInteger(s.space) && s.space > 0 ? s.space : (warn(`invalid space ${JSON.stringify(s.space)} - using 1`), 1)
 
 // Adaptive units (SPEC-024 §2): a "block" is a multiple of the proportional gutter,
-// measured from the touching content's characteristic size - never a fixed pixel count.
+// measured from the touching content's characteristic FRAME size (its largest single
+// frame) - a wide multi-frame box must not inflate its neighbors' gutters.
 const frameGapX = (w: number) => Math.max(140, w * 0.12)
 const frameGapY = (h: number) => Math.max(96, h * 0.16)
 const sceneGapX = (w: number) => Math.max(280, w * 0.2)
 const sceneGapY = (h: number) => Math.max(96, h * 0.16)
 
-/** An atom resolved to concrete content: member nodes at relative offsets + extents.
- *  charW/charH drive gap units (max FRAME size, not box size - a wide scene box must
- *  not inflate its neighbors' gutters). */
+/** An atom resolved to concrete content: member nodes at relative offsets + extents. */
 interface Box {
   id: string
   parts: Array<{ key: string; dx: number; dy: number }>
@@ -40,12 +39,25 @@ const box = (id: string, parts: Array<{ key: string; dx: number; dy: number; w: 
   charH: Math.max(0, ...parts.map((p) => p.h)),
 })
 
-/** The one flow engine (both scopes, both axes). Places boxes; returns absolute
- *  box origins. Lanes share an origin on the cross axis - that IS the alignment. */
+/** A run of nodes laid side by side (a frame's instances, or a variant run). */
+const runBox = (id: string, run: TidyNode[]): Box => {
+  const parts: Array<{ key: string; dx: number; dy: number; w: number; h: number }> = []
+  let dx = 0
+  for (const n of run) { parts.push({ key: n.key, dx, dy: 0, w: n.w, h: n.h }); dx += n.w + frameGapX(n.w) }
+  return box(id, parts)
+}
+
+/**
+ * The one flow engine (both scopes, both axes). Places boxes; returns absolute box
+ * origins. Lanes share an origin on the cross axis - that IS the alignment.
+ * Two phases: COLLECT lanes (resolving atoms, so skipped content never strands a
+ * track), then PLACE knowing both neighbors of every boundary.
+ */
 function layoutFlow(
-  flow: Required<Pick<Flow, never>> & Flow,
+  flow: Flow,
   resolve: (atom: string) => Box | null,
-  unresolved: Box[],                 // appended after the recipe (trailing lanes / final lane)
+  trailing: () => Box[],             // unlisted content, appended after the recipe (evaluated post-collection)
+  trailingMode: 'lanes' | 'append',  // board scope: own trailing lanes · scene scope: tail of the final lane
   gapX: (c: number) => number,
   gapY: (c: number) => number,
   warn: Warn,
@@ -59,77 +71,85 @@ function layoutFlow(
   const out = new Map<string, { x: number; y: number }>()
   const seen = new Set<string>()
 
-  let cross = 0                      // rows: y of current lane · columns: x of current lane
-  let pendingLane = 0                // units before the NEXT lane (0 = ordinary)
-  let prevLaneChar = 0
-  let laneCount = 0
-
-  const lanes: Array<{ atoms: Array<Box | number> }> = []  // number = spacer units within lane
+  // ---- phase 1: collect ----
+  interface CollectedLane { beforeUnits: number; items: Array<Box | number> }  // number = spacer units
+  const lanes: CollectedLane[] = []
+  let pendingLane = 0                // 0 = ordinary boundary · -1 = degraded (consecutive/invalid)
   for (const entry of entries) {
     if (isSpace(entry)) {
-      if (pendingLane) warn('consecutive lane spacers - using the last one')
-      pendingLane = units(entry, warn)
+      if (pendingLane) { warn('consecutive lane spacers - degrading to one ordinary gap'); pendingLane = -1 }
+      else pendingLane = units(entry, warn)
       continue
     }
     if (!Array.isArray(entry)) continue
-    const atoms: Array<Box | number> = []
-    for (const a of entry) {
-      if (isSpace(a)) { atoms.push(units(a, warn)); continue }
-      if (typeof a !== 'string') continue
-      if (seen.has(a)) { warn(`"${a}" listed twice - first occurrence wins`); continue }
-      const b = resolve(a)
-      if (!b) { warn(`unknown "${a}" in layout - skipped`); continue }
-      seen.add(a)
-      atoms.push(b)
-    }
-    lanes.push({ atoms })
-    // spacer units recorded on the lane boundary BEFORE this lane
-    ;(lanes[lanes.length - 1] as any).beforeUnits = laneCount === 0 ? 0 : Math.max(1, pendingLane || 1)
-    if (laneCount === 0 && pendingLane) warn('leading lane spacer ignored')
-    pendingLane = 0
-    laneCount++
-  }
-  if (pendingLane) warn('trailing lane spacer ignored')
-  // unresolved content: board scope appends trailing one-atom lanes; scene scope appends
-  // to the final lane (codex-reviewed rule - keeps the recipe the single source of order)
-  if (unresolved.length) {
-    if (lanes.length) lanes[lanes.length - 1].atoms.push(...unresolved)
-    else lanes.push(Object.assign({ atoms: [...unresolved] as Array<Box | number> }, { beforeUnits: 0 }) as any)
-  }
-
-  for (const lane of lanes) {
-    const before = (lane as any).beforeUnits ?? 0
-    if (before) cross += (gapCross(prevLaneChar) * (before - 1))  // ordinary gap added below with lane extent
-    let main = 0
-    let laneExtent = 0
-    let laneChar = 0
+    const items: Array<Box | number> = []
     let pending = 0
-    let prevChar = 0
-    let placedAny = false
-    for (const a of lane.atoms) {
-      if (typeof a === 'number') {
-        if (!placedAny) { warn('leading spacer in lane ignored'); continue }
-        if (pending) warn('consecutive spacers - using the last one')
-        pending = a
+    let hasBox = false
+    for (const a of entry) {
+      if (isSpace(a)) {
+        if (!hasBox) { warn('leading spacer in lane ignored'); continue }
+        if (pending) { warn('consecutive spacers - degrading to one ordinary gap'); pending = -1; items[items.length - 1] = -1 }
+        else { pending = units(a, warn); items.push(pending) }
         continue
       }
-      if (placedAny) {
-        const n = Math.max(1, pending || 1)
-        main += gapMain(Math.max(prevChar, vertical ? a.charH : a.charW)) * n
-      }
+      if (typeof a !== 'string') { warn(`ignoring non-string atom ${JSON.stringify(a)}`); continue }
+      if (seen.has(a)) { warn(`"${a}" listed twice - first occurrence wins`); continue }
+      const b = resolve(a)
+      if (!b) continue                               // resolve() warned with specifics
+      seen.add(a)
+      items.push(b)
+      hasBox = true
       pending = 0
-      const x = vertical ? cross : main
-      const y = vertical ? main : cross
-      out.set(a.id, { x, y })
-      main += vertical ? a.h : a.w
-      laneExtent = Math.max(laneExtent, vertical ? a.w : a.h)
-      laneChar = Math.max(laneChar, vertical ? a.charW : a.charH)
-      prevChar = vertical ? a.charH : a.charW
+    }
+    if (pending) { warn('trailing spacer in lane ignored'); items.pop() }
+    if (!hasBox) {
+      // a lane whose every atom was skipped (or an empty array) must not consume a
+      // track - P1: `[["ghost"],["a"]]` places a at the origin, not one gap down
+      if (entry.length) warn('lane with no placeable content dropped')
+      continue                                       // pendingLane stays armed for the next real lane
+    }
+    if (lanes.length === 0 && pendingLane) warn('leading lane spacer ignored')
+    lanes.push({ beforeUnits: lanes.length === 0 ? 0 : (pendingLane === -1 ? 1 : Math.max(1, pendingLane || 1)), items })
+    pendingLane = 0
+  }
+  if (pendingLane) warn('trailing lane spacer ignored')
+  const extra = trailing()
+  if (extra.length) {
+    if (trailingMode === 'append' && lanes.length) lanes[lanes.length - 1].items.push(...extra)
+    else for (const b of extra) lanes.push({ beforeUnits: lanes.length === 0 ? 0 : 1, items: [b] })
+  }
+
+  // ---- phase 2: place ----
+  const laneChar = (l: CollectedLane) =>
+    Math.max(0, ...l.items.filter((i): i is Box => typeof i !== 'number').map((b) => (vertical ? b.charW : b.charH)))
+  const laneExtent = (l: CollectedLane) =>
+    Math.max(0, ...l.items.filter((i): i is Box => typeof i !== 'number').map((b) => (vertical ? b.w : b.h)))
+
+  let cross = 0
+  for (let i = 0; i < lanes.length; i++) {
+    const lane = lanes[i]
+    if (i > 0) {
+      // the boundary sees BOTH lanes (P1: a small lane before a monitor lane must
+      // not produce a phone-sized gap)
+      const c = Math.max(laneChar(lanes[i - 1]), laneChar(lane), 1)
+      cross += laneExtent(lanes[i - 1]) + gapCross(c) * lane.beforeUnits
+    }
+    let main = 0
+    let pendingUnits = 0
+    let prevChar = 0
+    let placedAny = false
+    for (const item of lane.items) {
+      if (typeof item === 'number') { pendingUnits = item; continue }
+      if (placedAny) {
+        const n = pendingUnits === -1 ? 1 : Math.max(1, pendingUnits || 1)
+        main += gapMain(Math.max(prevChar, vertical ? item.charH : item.charW)) * n
+      }
+      pendingUnits = 0
+      out.set(item.id, { x: vertical ? cross : main, y: vertical ? main : cross })
+      main += vertical ? item.h : item.w
+      prevChar = vertical ? item.charH : item.charW
       placedAny = true
     }
-    if (pending) warn('trailing spacer in lane ignored')
-    cross += laneExtent + gapCross(laneChar || prevLaneChar || 1)
-    prevLaneChar = laneChar || prevLaneChar
   }
   return out
 }
@@ -149,67 +169,68 @@ function orderWithinScene(members: TidyNode[]): TidyNode[] {
   return ordered
 }
 
+/** Group leftover nodes into placement boxes: node order, variant runs contiguous
+ *  and indivisible (P1: leftovers must honor the same contract as listed content). */
+function leftoverBoxes(remaining: TidyNode[]): Box[] {
+  const out: Box[] = []
+  const consumed = new Set<string>()
+  for (const n of remaining) {
+    if (consumed.has(n.key)) continue
+    if (!n.group) { consumed.add(n.key); out.push(runBox(`${n.frame}#${n.key}`, [n])); continue }
+    const run = remaining.filter((m) => m.group === n.group)
+      .sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
+    for (const m of run) consumed.add(m.key)
+    out.push(runBox(`${n.group}#run`, run))
+  }
+  return out
+}
+
 const rel = (id: string, scene: string) => (id.startsWith(scene + '/') ? id.slice(scene.length + 1) : id)
 
 /** Lay out ONE scene: recipe if present, else a single default lane. Returns member
  *  positions relative to the scene origin. */
 function layoutScene(scene: string, members: TidyNode[], flow: Flow | undefined, warn: Warn): Map<string, { x: number; y: number }> {
-  // resolve an atom to a Box: frame basename first (more specific), then group run
+  // atoms CONSUME nodes: a later atom that names already-placed content is a
+  // duplicate reference, not a second placement (P1: ["pay", "pay/a"] must not
+  // tear member a out of the run)
+  const consumed = new Set<string>()
+  const boxIndex = new Map<string, Box>()
   const resolve = (atom: string): Box | null => {
     const frames = members.filter((n) => rel(n.frame, scene) === atom)
-    if (frames.length) {
-      // all node instances of the frame, side by side (duplicates are rare but legal)
-      const parts: Array<{ key: string; dx: number; dy: number; w: number; h: number }> = []
-      let dx = 0
-      for (const n of frames) { parts.push({ key: n.key, dx, dy: 0, w: n.w, h: n.h }); dx += n.w + frameGapX(n.w) }
-      return box(atom, parts)
-    }
     const run = members.filter((n) => n.group && rel(n.group, scene) === atom)
-      .sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
-    if (run.length) {
-      // a variant run always expands horizontally and is indivisible (SPEC-024 §1)
-      const parts: Array<{ key: string; dx: number; dy: number; w: number; h: number }> = []
-      let dx = 0
-      for (const n of run) { parts.push({ key: n.key, dx, dy: 0, w: n.w, h: n.h }); dx += n.w + frameGapX(n.w) }
-      return box(atom, parts)
-    }
-    return null
+    if (frames.length && run.length) warn(`scene "${scene}": "${atom}" names a frame AND a variant group - the frame wins`)
+    const chosen = frames.length ? frames : run.sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
+    if (!chosen.length) { warn(`unknown "${atom}" in scene "${scene}" layout - skipped`); return null }
+    const fresh = chosen.filter((n) => !consumed.has(n.key))
+    if (!fresh.length) { warn(`"${atom}" repeats already-placed content - skipped`); return null }
+    for (const n of fresh) consumed.add(n.key)
+    const b = runBox(atom, fresh)
+    boxIndex.set(atom, b)
+    return b
   }
 
   let flows: Flow
-  if (flow && (flow.rows || flow.columns)) {
-    if (flow.rows && flow.columns) { warn(`scene "${scene}": rows AND columns - using rows`); flows = { rows: flow.rows } }
-    else flows = flow
+  if (flow && flow.rows && flow.columns) {
+    warn(`scene "${scene}": layout has rows AND columns - using the default lane`)
+    flows = { rows: [[...new Set(orderWithinScene(members).map((n) => rel(n.frame, scene)))]] }
+  } else if (flow && (flow.rows || flow.columns)) {
+    flows = flow
   } else {
     // default: one lane, node order, group runs contiguous (dedupe: duplicate node
     // instances share one atom - resolve() expands every instance)
     flows = { rows: [[...new Set(orderWithinScene(members).map((n) => rel(n.frame, scene)))]] }
   }
-  // unlisted frames (recipe'd scenes only): append to the final lane, node order.
-  // A frame is "listed" if its own basename OR its group's name appears.
-  const leftovers: Box[] = []
-  const covered = new Set<string>()
-  for (const entry of [...(flows.rows ?? []), ...(flows.columns ?? [])]) {
-    if (!Array.isArray(entry)) continue
-    for (const a of entry) {
-      if (typeof a !== 'string') continue
-      for (const n of members) if (rel(n.frame, scene) === a || (n.group && rel(n.group, scene) === a)) covered.add(n.key)
-    }
-  }
-  for (const n of members) {
-    if (covered.has(n.key)) continue
-    covered.add(n.key)
-    leftovers.push(box(rel(n.frame, scene) + '#' + n.key, [{ key: n.key, dx: 0, dy: 0, w: n.w, h: n.h }]))
-  }
 
-  const placedBoxes = layoutFlow(flows, resolve, leftovers, frameGapX, frameGapY, warn)
-  // expand boxes to member positions
-  const boxIndex = new Map<string, Box>()
-  for (const entry of [...(flows.rows ?? []), ...(flows.columns ?? [])]) {
-    if (!Array.isArray(entry)) continue
-    for (const a of entry) { if (typeof a === 'string' && !boxIndex.has(a)) { const b = resolve(a); if (b) boxIndex.set(a, b) } }
-  }
-  for (const b of leftovers) boxIndex.set(b.id, b)
+  // unlisted frames append AFTER the recipe as their own lane content, node order,
+  // variant runs intact; evaluated post-collection so `consumed` is final
+  const trailing = () => leftoverBoxes(members.filter((n) => !consumed.has(n.key)))
+
+  const placedBoxes = layoutFlow(flows, resolve, () => {
+    const boxes = trailing()
+    for (const b of boxes) boxIndex.set(b.id, b)
+    return boxes
+  }, 'append', frameGapX, frameGapY, warn)
+
   const out = new Map<string, { x: number; y: number }>()
   for (const [id, pos] of placedBoxes) {
     const b = boxIndex.get(id)
@@ -240,9 +261,10 @@ export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () =>
     sceneBoxes.set(scene, box(scene, parts))
   }
 
-  // pass 2: board flow over scene boxes
+  // pass 2: board flow over scene boxes. rows AND columns is invalid: fall back to
+  // PLAIN tidy (default trailing lanes), never a silent pick (SPEC-024 §5)
   let boardFlow: Flow
-  if (layout && layout.rows && layout.columns) { warn('layout has rows AND columns - using rows'); boardFlow = { rows: layout.rows } }
+  if (layout && layout.rows && layout.columns) { warn('layout has rows AND columns - ignoring it (plain tidy)'); boardFlow = { rows: [] } }
   else if (layout && (layout.rows || layout.columns)) boardFlow = { rows: layout.rows, columns: layout.columns }
   else boardFlow = { rows: [] }      // default: every scene its own trailing lane (alphabetical)
 
@@ -250,18 +272,21 @@ export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () =>
   for (const entry of [...(boardFlow.rows ?? []), ...(boardFlow.columns ?? [])]) {
     if (Array.isArray(entry)) for (const a of entry) if (typeof a === 'string') listed.add(a)
   }
-  const trailing = scenes.filter((s) => !listed.has(s)).sort().map((s) => sceneBoxes.get(s)!)
-  // board scope: unlisted scenes become their OWN lanes, not tail atoms of the last lane
-  const vertical = !!boardFlow.columns
-  const entriesKey = vertical ? 'columns' : 'rows'
-  const flowWithTrailing: Flow = {
-    [entriesKey]: [
-      ...((vertical ? boardFlow.columns : boardFlow.rows) ?? []),
-      ...trailing.map((b) => [b.id] as Lane),
-    ],
-  }
+  // board scope: unlisted scenes become their OWN trailing lanes (below in rows mode,
+  // right in columns mode), alphabetical
+  const trailing = () => scenes.filter((s) => !listed.has(s)).sort().map((s) => sceneBoxes.get(s)!)
 
-  const placedScenes = layoutFlow(flowWithTrailing, (atom) => sceneBoxes.get(atom) ?? null, [], sceneGapX, sceneGapY, warn)
+  const placedScenes = layoutFlow(
+    boardFlow,
+    (atom) => {
+      const b = sceneBoxes.get(atom)
+      if (!b) warn(`unknown scene "${atom}" in layout - skipped`)
+      return b ?? null
+    },
+    trailing,
+    'lanes',
+    sceneGapX, sceneGapY, warn,
+  )
 
   const out: Placed[] = []
   for (const [scene, pos] of placedScenes) {

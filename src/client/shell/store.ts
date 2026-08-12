@@ -110,18 +110,18 @@ function parseFlow(o: Record<string, unknown>): Flow | null {
     const out: Array<Lane | Space> = []
     for (const e of v) {
       if (Array.isArray(e)) {
-        const lane: Lane = e.filter((a: unknown): a is string | Space =>
-          typeof a === 'string' || (!!a && typeof a === 'object' && !Array.isArray(a) && typeof (a as Space).space === 'number'))
-        out.push(lane)
-      } else if (e && typeof e === 'object' && typeof (e as Space).space === 'number') out.push(e as Space)
+        // pass atoms through loosely - the ENGINE warns with specifics (a junk atom
+        // must be visible, not silently normalized into an empty lane)
+        out.push(e.filter((a: unknown): a is string | Space =>
+          typeof a === 'string' || (!!a && typeof a === 'object' && !Array.isArray(a))))
+      } else if (e && typeof e === 'object' && !Array.isArray(e)) out.push(e as Space)
     }
     return out.length ? out : null
   }
   const rows = parseEntries(o.rows)
   const columns = parseEntries(o.columns)
   if (!rows && !columns) return null
-  if (rows && columns) return { rows }      // tidy warns; parse keeps the deterministic pick
-  return rows ? { rows } : { columns: columns! }
+  return { ...(rows ? { rows } : {}), ...(columns ? { columns } : {}) }
 }
 
 interface State {
@@ -136,7 +136,8 @@ interface State {
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
   sceneRows: string[][] | null        // LEGACY scene arrangement (SPEC-023 §2); still round-trips through save
-  layout: BoardLayout | null          // lane-flow recipe (SPEC-024); wins over sceneRows when both exist
+  layout: BoardLayout | null          // lane-flow recipe (SPEC-024), parsed; wins over sceneRows when both exist
+  layoutRaw: unknown                  // the author's layout VERBATIM - save round-trips this, never the parse
   baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
   panelOpen: boolean
   scale: number
@@ -223,6 +224,7 @@ export const useStore = create<State>((set, get) => {
       let deviceView: string | null = null
       let sceneRows: string[][] | null = null
       let layout: BoardLayout | null = null
+      let layoutRaw: unknown = undefined
       let baseLayout: State['baseLayout'] = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
@@ -283,8 +285,9 @@ export const useStore = create<State>((set, get) => {
             .filter((r: string[]) => r.length)
           if (rows.length) sceneRows = rows
         }
+        layoutRaw = board?.layout
         layout = parseLayout(board?.layout)
-        if (layout && sceneRows) console.warn('[marver] board has layout AND sceneRows - layout wins')
+        if (layout && sceneRows) layoutWarn('board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
@@ -326,13 +329,22 @@ export const useStore = create<State>((set, get) => {
       }
       // dirty matches disk by construction - except when load-time pruning changed the
       // node set; callers see dirty:true and schedule the save that persists the prune
-      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, baseLayout, selection: [], dirty: prunedAtLoad }
+      // surface recipe problems at load (dry-run): materialized boards otherwise
+      // never run tidy, so a broken agent-authored layout would fail silently
+      if (layout && boardHash && !needTidy && nodes.length) {
+        const entryOf2 = (id: string) => manifest.frames.find((f) => f.id === id)
+        tidy(nodes.map((n) => {
+          const f = entryOf2(n.frame)
+          return { key: n.key, frame: n.frame, scene: f?.scene ?? '', group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER }
+        }), layout, layoutWarn)
+      }
+      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, selection: [], dirty: prunedAtLoad }
     } catch { return null }
   }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, baseLayout: null,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
     async boot() {
@@ -354,6 +366,7 @@ export const useStore = create<State>((set, get) => {
     async switchBoard(name) {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
       if (name === get().board) return
+      resizedInGesture = false                 // a resize held across a board switch must not retidy the NEW board
       // flush loop: an edit landing mid-save keeps dirty set and gets its own pass
       let ok = true
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
@@ -577,7 +590,6 @@ export const useStore = create<State>((set, get) => {
         resizedInGesture = false
         if (get().layout || get().sceneRows?.length) get().runTidy()
       }
-      if (gesture) resizedInGesture = false
     },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
@@ -652,7 +664,7 @@ export const useStore = create<State>((set, get) => {
           // exception clears the view but 0 must still restore the snapshot after reload
           ...(deviceView ? { deviceView } : {}),
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
-          ...(get().layout ? { layout: get().layout } : {}),
+          ...(get().layoutRaw !== undefined ? { layout: get().layoutRaw } : {}),
           ...(baseLayout ? { baseLayout } : {}),
           // only PINNED themes persist - inherited values follow viewTheme at load time
           nodes: nodes.map(({ key, frame, x, y, w, h, themeUser }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), ...(themeUser ? { themeUser } : {}) })),

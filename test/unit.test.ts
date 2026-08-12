@@ -198,20 +198,124 @@ describe('lane flow (SPEC-024)', () => {
     expect(p.pb.x).toBe(p.pa.x + 60 + 140)         // a before b, standard gap inside the run
   })
 
-  it('guards: unknown atoms skip, invalid space = 1 unit, rows+columns falls back to rows', async () => {
+  it('guards: unknown atoms skip, invalid space = 1 unit', async () => {
     const { tidy } = await import('../src/client/shell/tidy.ts')
     const warnings: string[] = []
     const placed = tidy(
       [N('a', 'alpha/x', 'alpha'), N('b', 'beta/x', 'beta')],
-      { rows: [['alpha', { space: 0 }, 'ghost', 'beta']], columns: [['alpha']] },
+      { rows: [['alpha', { space: 0 }, 'ghost', 'beta']] },
       (m) => warnings.push(m),
     )
     const p = Object.fromEntries(placed.map((q) => [q.key, q]))
     expect(p.b.x).toBe(100 + 280)                  // ghost skipped, space 0 degraded to 1 unit
     expect(p.b.y).toBe(0)
-    expect(warnings.join(' ')).toMatch(/rows AND columns/)
-    expect(warnings.join(' ')).toMatch(/unknown "ghost"/)
+    expect(warnings.join(' ')).toMatch(/unknown scene "ghost"/)
     expect(warnings.join(' ')).toMatch(/invalid space/)
+  })
+
+  it('rows AND columns is invalid: plain tidy, not a silent pick', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const placed = tidy(
+      [N('b', 'beta/x', 'beta'), N('a', 'alpha/x', 'alpha')],
+      { rows: [['beta']], columns: [['alpha']] },
+      (m) => warnings.push(m),
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.a.y).toBe(0)                          // plain tidy: alphabetical
+    expect(p.b.y).toBe(196)
+    expect(warnings.join(' ')).toMatch(/rows AND columns/)
+  })
+
+  it('skipped duplicates and unknown-only lanes consume no track', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed1 = tidy(
+      [N('a', 'alpha/x', 'alpha'), N('b', 'beta/x', 'beta')],
+      { rows: [['alpha'], ['alpha'], ['beta']] },
+    )
+    const p1 = Object.fromEntries(placed1.map((q) => [q.key, q]))
+    expect(p1.b.y).toBe(196)                       // one boundary, not two
+    const placed2 = tidy(
+      [N('a', 'alpha/x', 'alpha')],
+      { rows: [['ghost'], ['alpha']] },
+    )
+    expect(placed2.find((q) => q.key === 'a')!.y).toBe(0)
+  })
+
+  it('frame/group name collision: frame wins the atom, the run appends intact', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const placed = tidy(
+      [
+        N('f', 'shop/pay', 'shop'),
+        N('gb', 'shop/pay/b-y', 'shop', 100, 100, { group: 'shop/pay', variant: 'b' }),
+        N('ga', 'shop/pay/a-x', 'shop', 100, 100, { group: 'shop/pay', variant: 'a' }),
+      ],
+      { scenes: { shop: { rows: [['pay']] } } },
+      (m) => warnings.push(m),
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.f.x).toBe(0)
+    expect(p.ga.x).toBeGreaterThan(p.f.x)          // run appended, not swallowed
+    expect(p.gb.x).toBe(p.ga.x + 240)              // contiguous and sorted
+    expect(warnings.join(' ')).toMatch(/frame AND a variant group/)
+  })
+
+  it('unlisted leftovers keep variant runs indivisible and sorted', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy(
+      [
+        N('hero', 'shop/hero', 'shop'),
+        N('vb', 'shop/dir/b-y', 'shop', 100, 100, { group: 'shop/dir', variant: 'b' }),
+        N('other', 'shop/other', 'shop'),
+        N('va', 'shop/dir/a-x', 'shop', 100, 100, { group: 'shop/dir', variant: 'a' }),
+      ],
+      { scenes: { shop: { rows: [['hero']] } } },
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.va.x).toBe(240)                       // run at the first leftover slot, a first
+    expect(p.vb.x).toBe(480)
+    expect(p.other.x).toBe(720)                    // after the intact run
+  })
+
+  it('re-listing a member of an already-placed run is a duplicate, not a tear', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const placed = tidy(
+      [
+        N('va', 'shop/dir/a-x', 'shop', 100, 100, { group: 'shop/dir', variant: 'a' }),
+        N('vb', 'shop/dir/b-y', 'shop', 100, 100, { group: 'shop/dir', variant: 'b' }),
+      ],
+      { scenes: { shop: { rows: [['dir', 'dir/a-x']] } } },
+      (m) => warnings.push(m),
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.va.x).toBe(0)                         // run intact, a before b
+    expect(p.vb.x).toBe(240)
+    expect(warnings.join(' ')).toMatch(/repeats already-placed/)
+  })
+
+  it('consecutive spacers degrade to ONE ordinary gap', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const placed = tidy(
+      [N('a', 'alpha/x', 'alpha'), N('b', 'beta/x', 'beta')],
+      { rows: [['alpha', { space: 2 }, { space: 4 }, 'beta']] },
+      (m) => warnings.push(m),
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.b.x).toBe(100 + 280)                  // one unit, not 2 and not 4
+    expect(warnings.join(' ')).toMatch(/consecutive spacers/)
+  })
+
+  it('lane boundaries size from BOTH neighbors', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const placed = tidy(
+      [N('s', 'small/x', 'small', 100, 100), N('l', 'large/x', 'large', 2000, 100)],
+      { columns: [['small'], ['large']] },
+    )
+    const p = Object.fromEntries(placed.map((q) => [q.key, q]))
+    expect(p.l.x).toBe(100 + 400)                  // max(280, 2000 * 0.2), not the 100px side
   })
 
   it('unlisted frames in a recipe scene append after the recipe atoms', async () => {

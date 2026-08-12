@@ -55,8 +55,11 @@ touching content:
 | scene-scene across a lane (X) | `max(280, w * 0.2)` |
 | scene lanes (Y) | `max(96, h * 0.16)` |
 
-`w`/`h` = the larger of the two touching extents. Blocks therefore scale with
-content: ~384px next to a monitor frame, 280px next to phones.
+`w`/`h` = the larger of the two touching sides' **characteristic frame size** -
+the largest single FRAME in the touching content, never the box extent. A
+three-frame scene box 6000px wide must not create a 1200px gutter beside it;
+gaps follow the visual rhythm of frames, not footprints. Blocks therefore scale
+with content: ~384px next to a monitor frame, 280px next to phones.
 
 ## 3. Semantics of tidy (two-pass box layout)
 
@@ -90,7 +93,7 @@ A board WITH a `layout` treats the recipe as the living arrangement:
 | unlisted frames in a recipe'd scene | append after the recipe atoms, node order |
 | unknown name | warn and skip |
 | duplicate node instances of one frame | the atom expands all instances in node order |
-| frame vs group name collision inside a scene | authoring error: warn, frame wins (it is the more specific file) |
+| frame vs group name collision inside a scene | warn; the frame wins the atom, the group's members append as an unlisted run |
 | partial variant group on board | expand the members present, variant-sorted |
 | `sceneRows` present | legacy shorthand for a plain `rows` layout; `layout` wins if both exist (warn) |
 
