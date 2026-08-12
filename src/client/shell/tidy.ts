@@ -17,8 +17,11 @@ const BADGE_PAD = 110       // extra left headroom for a grouped frame's variant
 export function tidy(nodes: TidyNode[], sceneRows?: string[][]): Placed[] {
   const present = [...new Set(nodes.map((n) => n.scene))]
   const listed = new Set((sceneRows ?? []).flat())
+  const consumed = new Set<string>()                  // a scene listed twice places once
   const rows: string[][] = [
-    ...(sceneRows ?? []).map((r) => r.filter((s) => present.includes(s))).filter((r) => r.length),
+    ...(sceneRows ?? [])
+      .map((r) => r.filter((s) => present.includes(s) && !consumed.has(s) && (consumed.add(s), true)))
+      .filter((r) => r.length),
     ...present.filter((s) => !listed.has(s)).sort().map((s) => [s]),
   ]
 

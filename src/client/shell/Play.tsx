@@ -182,6 +182,7 @@ function PlayInner() {
     const cur = s.manifest?.frames.find((f) => f.id === s.play?.at)
     if (!cur?.variantGroup) return []
     const onBoard = new Set(s.nodes.filter((n) => !n.missing).map((n) => n.frame))
+    if (!onBoard.has(cur.id)) return []              // off-board frame: no coherent control
     return (s.manifest?.frames ?? [])
       .filter((f) => f.variantGroup === cur.variantGroup && f.kind === 'tsx' && onBoard.has(f.id))
       .sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
@@ -419,6 +420,7 @@ function PlayInner() {
         </Tip>
         {variants.length > 1 && <>
           <i className="sep" />
+          <span className="vname">{(() => { const c = variants.find((v) => v.id === play.at); return c ? (c.title ?? (c.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' ')) : '' })()}</span>
           {variants.map((v) => (
             <Tip inv key={v.id} label={<><b>{v.title ?? v.id}</b><span className="k">[ ]</span></>}>
               <button className={`vchip${v.id === play.at ? ' on' : ''}`} onClick={() => goTo(v.id)}>

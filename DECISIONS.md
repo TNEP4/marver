@@ -240,3 +240,17 @@ weaker the model the worse it gets. Marver ships the METHOD, not just the canvas
   canvas control to diverge/converge (design-thinking loop; creative UI work to do).
   0.2.4 = comments management (SPEC-M3 promotion). Comments moved BEHIND iteration:
   you iterate before you collect feedback.
+
+## 0.2.3 variants: codex round + deviations (2026-08-12)
+
+Codex review of the build: 3 P1s fixed (live-JOIN now places a grouped newcomer
+beside its siblings; meta.of cross-directory groups refused with a warning - variants
+are local comparisons; inference is tsx-only so no group forms that play cannot
+switch). P2s fixed: extractor property-boundary (covariant != variant), no invented
+'?' keys, orphan meta.variant swept, sceneRows dedupes twice-listed scenes, captions
+count distinct frames not node instances + indexed lookup, play control suppressed on
+off-board frames + shows the current variant name, badge letter fades below ~6% zoom
+(the pad cannot hold the clamp there). DEVIATIONS from spec/codex kept deliberately:
+sidebar scene-level groups label as "Variants" not the group name (repeating the
+scene header directly beneath itself is worse); root-level frames (design/scenes/
+a-x.tsx) never group (scenes are directories - documented convention).

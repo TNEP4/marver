@@ -535,7 +535,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   text-align: right; user-select: none; -webkit-user-select: none; pointer-events: none;
   font-family: -apple-system, system-ui, sans-serif }
 .sh-vbadge b { font-size: max(40px, calc(20px * var(--sh-inv, 1))); line-height: 1; font-weight: 750;
-  letter-spacing: -0.02em; color: rgba(24, 24, 27, .55) }
+  letter-spacing: -0.02em; color: rgba(24, 24, 27, .55);
+  /* below ~6% zoom the clamped letter outgrows its gutter - fade it out */
+  opacity: clamp(0, calc((var(--sh-s, 1) - 0.055) * 40), 1) }
 .sh-vbadge span { font-size: max(15px, calc(10px * var(--sh-inv, 1))); font-weight: 550;
   color: rgba(24, 24, 27, .38); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   /* the letter is the identity at overview zoom; the name earns pixels only close up */
@@ -562,3 +564,6 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 /* play-mode variant chips (SPEC-023 §6) */
 .sh-play-nav .vchip { min-width: 24px; font-weight: 700; font-size: 11px }
 .sh-play-nav .vchip.on { color: #fff; background: var(--accent); border-radius: 7px }
+
+.sh-play-nav .vname { font-size: 11px; font-weight: 600; color: var(--glass-ink-2); max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; padding: 0 2px }

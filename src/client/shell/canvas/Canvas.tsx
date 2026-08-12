@@ -97,20 +97,21 @@ function GroupCaptions() {
   const nodes = useStore((s) => s.nodes)
   const manifest = useStore((s) => s.manifest)
   if (!manifest) return null
-  const groups = new Map<string, { x: number; y: number; count: number }>()
+  const byId = new Map(manifest.frames.map((f) => [f.id, f]))   // O(F+N), not O(F*N) per drag
+  const groups = new Map<string, { x: number; y: number; ids: Set<string> }>()
   for (const n of nodes) {
     if (n.missing) continue
-    const f = manifest.frames.find((x) => x.id === n.frame)
+    const f = byId.get(n.frame)
     if (!f?.variantGroup) continue
     const g = groups.get(f.variantGroup)
-    if (!g) groups.set(f.variantGroup, { x: n.x, y: n.y, count: 1 })
-    else { g.x = Math.min(g.x, n.x); g.y = Math.min(g.y, n.y); g.count++ }
+    if (!g) groups.set(f.variantGroup, { x: n.x, y: n.y, ids: new Set([n.frame]) })
+    else { g.x = Math.min(g.x, n.x); g.y = Math.min(g.y, n.y); g.ids.add(n.frame) }
   }
   return (
     <>
-      {[...groups.entries()].filter(([, g]) => g.count > 1).map(([id, g]) => (
+      {[...groups.entries()].filter(([, g]) => g.ids.size > 1).map(([id, g]) => (
         <div key={id} className="sh-gcaption" style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - 18px))` }}>
-          {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.count} variants
+          {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.ids.size} variants
         </div>
       ))}
     </>

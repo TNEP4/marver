@@ -31,7 +31,8 @@ export function extractMeta(src: string): FrameMeta {
   if (!m) return {}
   const body = m[1]
   const pick = (key: string) => {
-    const r = new RegExp(`${key}\\s*:\\s*(['"\`])([^'"\`]*)\\1`).exec(body)
+    // boundary required: `covariant:` must not match `variant:` (property suffixes)
+    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(['"\`])([^'"\`]*)\\1`).exec(body)
     return r ? r[2] : undefined
   }
   const out: FrameMeta = {}
@@ -123,24 +124,40 @@ export function scanFrames(root: string): Manifest {
  *  States (empty.tsx, error.tsx) never letter-prefix, so they never misgroup.
  *  Mutates entries in place: only frames whose group materializes keep the fields. */
 function inferVariantGroups(frames: FrameEntry[]) {
+  const dirOf = (id: string) => { const i = id.lastIndexOf('/'); return i >= 0 ? id.slice(0, i) : '' }
   const candidates = new Map<string, FrameEntry[]>()
   for (const f of frames) {
+    if (f.kind !== 'tsx') {                           // play switching is tsx-only; a group
+      delete f.variantGroup; delete f.variant         // the stage can't switch must not form
+      continue
+    }
     let group = f.variantGroup                        // meta.of, already copied
     let key = f.variant
     if (!group) {
-      const slash = f.id.lastIndexOf('/')
-      const base = slash >= 0 ? f.id.slice(slash + 1) : f.id
+      const base = f.id.slice(f.id.lastIndexOf('/') + 1)
       const m = /^([a-z])-.+$/.exec(base)
       if (!m) continue
-      group = slash >= 0 ? f.id.slice(0, slash) : ''
+      group = dirOf(f.id)
       if (!group) continue                            // root-level frames don't group
       key = key ?? m[1]
+    } else if (!key) {
+      // meta.of without a derivable key: take the letter prefix if present, else refuse -
+      // an invented key would collide with the next member that also invented one
+      const m = /^([a-z])-.+$/.exec(f.id.slice(f.id.lastIndexOf('/') + 1))
+      if (!m) { console.warn(`[marver] ${f.file} declares of:"${group}" but no variant key (add meta.variant or a letter prefix) - not grouped.`); delete f.variantGroup; delete f.variant; continue }
+      key = m[1]
     }
     f.variantGroup = group
-    f.variant = key ?? '?'
+    f.variant = key
     candidates.set(group, [...(candidates.get(group) ?? []), f])
   }
   for (const [group, members] of candidates) {
+    // variants are LOCAL comparisons: one directory per group, no cross-scene lanes
+    if (new Set(members.map((m) => dirOf(m.id))).size > 1) {
+      console.warn(`[marver] group "${group}" spans directories - variants must be siblings; not grouped.`)
+      for (const m of members) { delete m.variantGroup; delete m.variant }
+      continue
+    }
     const seen = new Set<string>()
     const kept: FrameEntry[] = []
     for (const m of members.sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))) {
@@ -154,6 +171,8 @@ function inferVariantGroups(frames: FrameEntry[]) {
     }
     if (kept.length < 2) for (const m of kept) { delete m.variantGroup; delete m.variant }
   }
+  // a stray meta.variant with no materialized group is noise, not data
+  for (const f of frames) if (f.variant && !f.variantGroup) delete f.variant
 }
 
 /** Write design/manifest.json only when content changed. Returns the manifest either way. */

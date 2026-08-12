@@ -337,7 +337,15 @@ export const useStore = create<State>((set, get) => {
         if (known.has(f.id)) continue
         const d = defaultSize(f)
         const maxY = next.reduce((a, n) => Math.max(a, n.y + n.h), 0)
-        const node = { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
+        // a grouped newcomer lands BESIDE its siblings, not at the canvas bottom - the
+        // badge/caption say "these belong together"; the position must agree (SPEC-023 §3)
+        const sibs = f.variantGroup
+          ? next.filter((n) => { const g = m.frames.find((x) => x.id === n.frame)?.variantGroup; return g === f.variantGroup && !n.missing })
+          : []
+        const right = sibs.length ? sibs.reduce((a, n) => (n.x > a.x ? n : a)) : null
+        const node = right
+          ? { key: nodeKey(), frame: f.id, x: right.x + right.w + 72 + 110, y: right.y, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
+          : { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
         next.push(node)
         // in a device view, the snapshot learns the newcomer's DEFAULT size so 0 restores it sanely
         if (vp && nextBase) nextBase = { ...nextBase, [node.key]: { x: node.x, y: node.y, w: d.w, h: d.h } }
