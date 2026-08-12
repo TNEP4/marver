@@ -9,6 +9,14 @@ Small items that are not milestone work. One line each; delete when done.
   pointerenter/leave pairs that break when elements unmount or gain pointer-events:none
   under the cursor; keys forwarded from the stage vs handled in the shell can double-fire
   if focus shifts mid-press.
+- **Resize-shift report (SPEC-023 §8) - investigated 2026-08-12, not reproduced.**
+  Code-level pass found the two plausible mechanisms already guarded: resize handles
+  carry `sh-no-pan` AND the gesture flag hard-disables rzpp panning for the drag's
+  duration; `resizeNode` touches only the dragged node's w/h. Tooling cannot emit
+  trusted pointer-capture drags, so no live repro was possible. NOTE: since SPEC-024,
+  boards WITH a layout recipe deliberately re-tidy at resize-gesture end - if the
+  original report resurfaces, first ask whether the board had a layout (intentional
+  reflow) and capture board + zoom + drag direction.
 - **`--base` support for build** (SPEC-M2 §4a says base-aware; v1 is root-hosted only -
   fine for `marver serve`, Railway, and CF Pages). Root-absolute URLs live in the
   generated pages, `frameUrl`, and the favicon links.
