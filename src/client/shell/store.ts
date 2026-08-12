@@ -631,6 +631,10 @@ export const useStore = create<State>((set, get) => {
         return Promise.resolve(true)
       }
       const p = saveChain.then(async () => {
+        // recheck INSIDE the serialized chain: a save queued behind an in-flight PUT
+        // may only execute after a resize gesture began - the entry guard above ran
+        // too early to see it (codex probe: torn PUT #2 behind blocked PUT #1)
+        if (get().gesture && resizedInGesture) { scheduleSave(); return false }
         const rev = editRev
         const { nodes, boardHash, deviceView, baseLayout, board: boardName, boardAuto } = get()
         // Missing nodes persist too - only the explicit remove button drops them (spec §7).
