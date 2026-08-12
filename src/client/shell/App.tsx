@@ -1,12 +1,12 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, boardLabel, cap, fetchBoardNames } from './store.ts'
+import { useStore, CONFIG, PUBLISHED, boardLabel, cap, fetchBoardNames } from './store.ts'
 import { Tip } from './Tip.tsx'
-import { ROUTE } from '../const.ts'
+import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
@@ -247,6 +247,44 @@ function DeviceMenu() {
           </button>
         ))}
       </Popover>
+    </div>
+  )
+}
+
+/** Update pill (dev only): the daily registry check surfaces here - same glass, same
+ *  pill, bottom-center. Click the command to copy it; × dismisses THIS version for
+ *  good (localStorage), so the pill returns only when the next release lands. */
+function UpdatePill() {
+  const [latest, setLatest] = useState<string | null>(null)
+  const play = useStore((s) => s.play)
+  useEffect(() => {
+    if (PUBLISHED) return                     // a shared canvas never nags its viewers
+    fetch(`${ROUTE}/api/update`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((u) => {
+        if (u?.latest && localStorage.getItem('mv-update-seen') !== u.latest) setLatest(u.latest)
+      })
+      .catch(() => { /* dev server gone or endpoint absent - stay quiet */ })
+  }, [])
+  if (!latest || play) return null
+  const cmd = `npm i -D ${PKG}@latest`
+  const dismiss = () => {
+    try { localStorage.setItem('mv-update-seen', latest) } catch { /* storage unavailable */ }
+    setLatest(null)
+  }
+  return (
+    <div className="sh-update">
+      <span><b>{latest}</b> is out</span>
+      <Tip side="top" label="Copy, then paste to your terminal or your agent">
+        <button className="cmd" onClick={() => {
+          const t = useStore.getState().toast
+          navigator.clipboard?.writeText(cmd).then(() => t('update command copied'), () => t('copy blocked - select it manually'))
+            ?? t('copy unavailable - select it manually')
+        }}><code>{cmd}</code></button>
+      </Tip>
+      <Tip side="top" label="Dismiss this version">
+        <button className="x" onClick={dismiss}><XIcon size={13} /></button>
+      </Tip>
     </div>
   )
 }
@@ -642,7 +680,10 @@ export function App() {
 
       <PlayOverlay />
 
-      {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
+      {CONFIG.setup
+        ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/SETUP.md, then restart</div>
+        : CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
+      <UpdatePill />
 
       <div className="sh-toasts">
         {toasts.map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}

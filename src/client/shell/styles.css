@@ -194,7 +194,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-handle.se { right: -5px; bottom: -5px; width: 11px; height: 11px; cursor: nwse-resize }
 
 /* glass surfaces share one recipe; chrome text is never selectable (shift-click = multi-select) */
-.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast {
+.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update {
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
   user-select: none; -webkit-user-select: none }
@@ -202,7 +202,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* edge light: a 1px gradient ring over the border, so glass reads as glass even
    with nothing behind it to blur (masked-border technique) */
 .sh-ctx::after, .sh-panel::after, .sh-fab::after, .sh-pill::after, .sh-pill-fab::after,
-.sh-menu::after, .sh-banner::after, .sh-toast::after, .sh-node::after {
+.sh-menu::after, .sh-banner::after, .sh-toast::after, .sh-update::after, .sh-node::after {
   content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
   background: var(--edge-light); pointer-events: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -403,6 +403,25 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 .sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
+
+/* update pill: bottom-center, the quietest possible member of the pill family.
+   The command IS the button - one click copies it for the terminal or the agent. */
+.sh-update { position: absolute; left: 50%; bottom: var(--edge); transform: translateX(-50%); z-index: 10;
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 7px 0 16px; border-radius: 999px;
+  max-width: min(92vw, 620px); white-space: nowrap;
+  font: 500 12.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2);
+  animation: sh-update-in .35s cubic-bezier(.2, .9, .3, 1.2) }
+@keyframes sh-update-in { from { opacity: 0; transform: translate(-50%, 8px) scale(.96) } }
+.sh-update b { font-weight: 650; color: var(--glass-ink) }
+.sh-update .cmd { border: 1px solid var(--glass-brd); background: var(--glass-hover); border-radius: 999px;
+  padding: 4px 11px; cursor: pointer; min-width: 0; overflow: hidden; transition: color .15s }
+.sh-update .cmd code { font: 500 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--glass-ink-2);
+  display: block; overflow: hidden; text-overflow: ellipsis }
+.sh-update .cmd:hover code { color: var(--glass-ink) }
+.sh-update .x { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border: 0; background: none; border-radius: 999px; color: var(--glass-ink-3); cursor: pointer;
+  transition: color .15s, background .15s }
+.sh-update .x:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
 .sh-toasts { position: absolute; left: var(--edge); bottom: var(--edge); z-index: 12; display: flex; flex-direction: column; gap: 6px }
 .sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;

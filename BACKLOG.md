@@ -19,22 +19,17 @@ Small items that are not milestone work. One line each; delete when done.
 
 ## Next phase (2026-08-11 evening - the stabilize-then-launch arc)
 
-- **NEXT (0.2.2, decided with Nic 2026-08-12) - init one-time-state polish, two items:**
-  1. **SETUP.md instead of contract machinery.** Empty-repo init writes
-     `design/SETUP.md` (the one-time instructions: what's missing, create-next-app +
-     shadcn commands, "then re-run init"); AGENTS.md carries exactly ONE line: "STOP -
-     this repo has no app yet. Read design/SETUP.md before designing anything." Re-run
-     init after scaffolding → detection finds the app → DELETE SETUP.md and regenerate
-     the line. File presence IS the state; replaces the marker+regeneration machinery
-     shipped in 0.2.1 (keep the marker mechanism only if needed for the one line).
-     `marver dev` shows a banner while SETUP.md exists. Principle going forward:
-     AGENTS.md is the lean every-session contract; one-time guidance gets a
-     presence-file, never contract tokens.
-  2. **design/ collision guard + --dir.** Folder name stays `design/` (decided - the
-     folder is the USER's design layer; vendor-naming contradicts the uninstall
-     promise). But init must detect an existing non-marver `design/` (has files, none
-     of ours) and STOP loudly instead of quietly merging, with `marver init --dir
-     <name>` as the escape hatch; dir then flows through config to dev/build/serve.
+- **0.2.2 BUILT (2026-08-12) - staged for publish.** Three features, codex-reviewed:
+  (1) update discovery: daily-cached registry check (design/.local/, 3s timeout,
+  MARVER_NO_UPDATE_CHECK opt-out, x.y.z-validated), stdout line + /__mv/api/update +
+  bottom-center glass update pill (copy command, per-version dismiss, dev only);
+  (2) design/SETUP.md presence-file for the no-app state - AGENTS.md carries one STOP
+  pointer line, init deletes SETUP.md when the app appears (only if we authored it),
+  canvas banner while it exists; (3) collision guard - init refuses a non-marver
+  design/ (content-based shape check so old workspaces re-init fine). DEFERRED: --dir
+  flag (plumbing through ~30 design/ call sites; guard message points people at the
+  repo until someone actually needs it). After publish: the unattended agent upgrade
+  test on marver-site (0.2.1 -> 0.2.2, stranger context, no babysitting).
 - **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,
   serve locally, verify: glass blur computed on .sh-panel, boot opens fit-all light,
   theme matrix (global sticky / scoped pin / pin round-trip), gate + deep link through

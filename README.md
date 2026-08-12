@@ -18,6 +18,7 @@ Then, to your agent:
 - **Boards**: one canvas on screen at a time. Agents write `design/boards/<name>.json` (a frame list is enough); switch boards at the top of the sidebar. `all-scenes` is auto-managed.
 - **Devices view**: the Devices menu (or hotkeys `1`-`5`) sizes every frame to mobile / tablet / laptop / monitor / tv to sweep your breakpoints; `0` restores your own layout exactly. Widths live in `design/config.ts`.
 - `data-goto="scene/frame"` on any element links frames into a walkable prototype.
+- **Upgrade**: `npm i -D @marver-design/marver@latest`. The canvas tells you when a new version is out (one anonymous registry check per day, cached in `design/.local/`; set `MARVER_NO_UPDATE_CHECK=1` to disable). No migration steps on 0.x - `design/` is yours and versions don't touch it.
 - Uninstall: delete `design/`, remove the dependency. (If `init` patched your tsconfig `exclude`, revert that one line.)
 
 **Next.js**: supported with one caveat - frames render in Vite, outside Next. `next/font` CSS variables are undefined inside frames (give font tokens a fallback chain), `next/image`/`next/link` should be plain `img`/`data-goto` in frames, and Server Components cannot run there. `init` writes the specifics into `design/AGENTS.md` when it detects Next.

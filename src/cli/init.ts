@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
@@ -16,6 +16,27 @@ export function init(root: string, opts: InitOpts) {
   const design = join(root, 'design')
   const templates = join(pkgDir(), 'templates')
   const created: string[] = []
+
+  // Collision guard: a design/ that predates marver (assets, Figma exports, a design
+  // system's own config.ts) must not be quietly merged into - files would interleave
+  // and "uninstall = delete design/" would delete THEIR work. marver-shaped means OUR
+  // anchor files by CONTENT, not by name (every generated config.ts and AGENTS.md
+  // since 0.1 carries these strings, so re-init on existing workspaces stays fine).
+  const fileHas = (rel: string, needle: string) => {
+    try { return readFileSync(join(design, rel), 'utf8').includes(needle) } catch { return false }
+  }
+  const marverShaped = fileHas('config.ts', NAME) || fileHas('AGENTS.md', 'agent contract')
+  if (existsSync(design) && !marverShaped && readdirSync(design).some((f) => !f.startsWith('.'))) {
+    console.error(`
+[${NAME}] design/ already exists in this repo and does not look like a ${NAME} workspace.
+         Refusing to merge into it - your files and ${NAME}'s would interleave, and
+         "uninstall = delete design/" would stop being safe.
+
+         Move or rename the existing design/ folder, then re-run \`npx ${NAME} init\`.
+         (If you need marver to live in a differently-named folder, say so at
+         github.com/TNEP4/marver - a --dir flag is planned.)`)
+    process.exit(1)
+  }
 
   const write = (rel: string, content: string) => {
     const file = join(design, rel)
@@ -46,7 +67,7 @@ export function init(root: string, opts: InitOpts) {
   // AGENTS.md regenerates when re-run detection disagrees with it ("set up the app,
   // then re-run init" has to actually work). Deleting the marker opts out for good.
   const agents = AGENTS_MARKER + '\n' + readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
-    .replaceAll('{{UI_GUIDANCE}}', uiGuidance(host))
+    .replaceAll('{{UI_GUIDANCE}}', uiGuidance(host, noApp(host)))
     .replace(/\{\{NEXT_NOTES\}\}\n?/, host.router === 'next' ? NEXT_NOTES : '')
   const agentsPath = join(design, 'AGENTS.md')
   if (!existsSync(agentsPath)) write('AGENTS.md', agents)
@@ -56,6 +77,21 @@ export function init(root: string, opts: InitOpts) {
       writeFileSync(agentsPath, agents)
       created.push('design/AGENTS.md (regenerated - detected stack changed)')
     }
+  }
+
+  // One-time setup state is a PRESENCE FILE, not contract tokens: SETUP.md exists while
+  // the repo has no app, and init deletes it the moment detection finds one. AGENTS.md
+  // carries only the one-line STOP pointer (uiGuidance) - the every-session contract
+  // never pays for one-time instructions.
+  const setupPath = join(design, 'SETUP.md')
+  const ourSetup = () => {
+    try { return readFileSync(setupPath, 'utf8').startsWith('# Setup required') } catch { return false }
+  }
+  if (noApp(host)) {
+    if (!existsSync(setupPath)) write('SETUP.md', SETUP_MD)
+  } else if (existsSync(setupPath) && ourSetup()) {   // delete only what we authored
+    rmSync(setupPath)
+    console.log(`  - design/SETUP.md removed (app detected - setup complete)`)
   }
 
   // design/tsconfig.json extends the root config only when one EXISTS (friction log #4)
@@ -84,17 +120,12 @@ export function init(root: string, opts: InitOpts) {
   if (noApp(host)) {
     console.warn(`
   ┌─ NO APP DETECTED ─────────────────────────────────────────────────────┐
-  │ This repo has no framework, no theme CSS, and no component library.   │
-  │ ${NAME} builds frames from YOUR components - with none, frames become │
-  │ hand-rolled CSS that cannot be promoted into an app later.            │
+  │ No framework, no theme CSS, no component library. ${NAME} builds      │
+  │ frames from YOUR components - with none, designs get thrown away.     │
   │                                                                       │
-  │ Set up the app first, then re-run init (it is idempotent and will     │
-  │ fill in what it detects). For a web app or site:                      │
-  │   npx create-next-app@latest . --ts --tailwind --app --src-dir        │
-  │   npx shadcn@latest init                                              │
-  │                                                                       │
-  │ design/AGENTS.md was generated with a STOP instruction so your agent  │
-  │ does not design against a component library that does not exist.     │
+  │ The full setup instructions are in design/SETUP.md. Set up the app,   │
+  │ re-run init, and that file removes itself. AGENTS.md carries a STOP   │
+  │ so your agent does not design against components that do not exist.   │
   └───────────────────────────────────────────────────────────────────────┘`)
   }
   console.log(`\n  commit design/ - only .local/ is ignored`)
@@ -109,14 +140,50 @@ const AGENTS_MARKER = '<!-- generated by marver init from the detected stack; re
 const noApp = (host: HostInfo) =>
   !host.router && !host.tailwind && !host.shadcn && !host.themeCss
 
-/** The UI line of AGENTS.md, matched to what detection actually found (friction log #1). */
-function uiGuidance(host: HostInfo): string {
+/** The UI line of AGENTS.md, matched to what detection actually found (friction log #1).
+ *  The STOP branch fires only on the same condition that creates SETUP.md - an app
+ *  without Tailwind (plain React + CSS) gets guidance, never a dead pointer. */
+function uiGuidance(host: HostInfo, isNoApp: boolean): string {
+  if (isNoApp)
+    return `STOP - this repo has no app yet. Read design/SETUP.md before designing anything.`
   if (host.shadcn)
     return `Use the app's UI: import from ${host.shadcn.uiAlias}; style with the app's Tailwind classes.`
   if (host.tailwind)
     return `Style with the app's Tailwind classes and design tokens; there is no detected component library - extract shared pieces into design/components/.`
-  return `STOP - this repo has no component library, no Tailwind, and no theme. Frames built from hand-rolled CSS cannot be promoted into an app later. Ask the human to set up the app first (framework + styling), then re-run \`npx ${NAME} init\` so this contract regenerates against the real stack.`
+  return `Use the app's existing components and stylesheets (import them directly); there is no Tailwind or component library detected - extract shared pieces into design/components/.`
 }
+
+const SETUP_MD = `# Setup required - this repo has no app yet
+
+> This file exists because \`${NAME} init\` ran in a repo with no framework, no theme
+> CSS, and no component library. It disappears automatically: set up the app, re-run
+> \`npx ${NAME} init\`, and init deletes this file and regenerates AGENTS.md against
+> the real stack. While this file exists, DO NOT design.
+
+${NAME} builds frames from YOUR components and YOUR theme. With none, frames become
+hand-rolled CSS that shares nothing with the future app and cannot be promoted into
+it later - work that gets thrown away.
+
+## Do this first
+
+For a web app or marketing site, the blessed stack:
+
+\`\`\`bash
+npx create-next-app@latest . --ts --tailwind --app --src-dir
+npx shadcn@latest init
+\`\`\`
+
+Any React + CSS setup works; the point is that components and a theme EXIST.
+
+## Then
+
+\`\`\`bash
+npx ${NAME} init
+\`\`\`
+
+init is idempotent: it fills in what it now detects (theme wrapper, providers, a
+shadcn-aware AGENTS.md), deletes this file, and you design from real parts.
+`
 
 /** Next.js frames render OUTSIDE Next - say concretely what that means (friction log #10/#11). */
 const NEXT_NOTES = `- Next.js caveats (frames render in Vite, outside Next):

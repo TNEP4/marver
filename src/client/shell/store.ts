@@ -11,6 +11,9 @@ import shData from 'virtual:sh-data'
  *  is where `/` opens - never a synthesized aggregate of a filtered build. */
 const DATA: { manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string } | null = shData
 
+/** True on a published static canvas - no dev server, no API, no update checks. */
+export const PUBLISHED = DATA !== null
+
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
 export interface Node {
@@ -27,7 +30,7 @@ export interface Node {
 }
 export interface Toast { id: number; text: string }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean } = shConfig
 
 export const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 

@@ -2,11 +2,12 @@ import type { Plugin, ViteDevServer } from 'vite'
 import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs'
 import { join } from 'node:path'
 import { hash } from './manifest.ts'
-// ROUTE unused here since bridge rides /@fs/
+import { PKG, ROUTE } from '../cli/name.ts'
 import type { ShConfig } from './config.ts'
 import { scanFrames, writeManifest } from './manifest.ts'
 import { apiMiddleware } from './api.ts'
 import { routesMiddleware } from './routes.ts'
+import { checkUpdate, installedVersion } from './update.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
 const VIRTUAL_CONFIG = 'virtual:sh-config'
@@ -49,7 +50,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         return '/* marver: no theme configured */'
       }
       if (id === '\0' + VIRTUAL_CONFIG) {
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null })}`
+        // setup: design/SETUP.md is the "no app yet" presence file (init owns it) -
+        // the shell shows a banner while it exists, so the state is visible in the
+        // thing the human is actually looking at
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: existsSync(join(root, 'design', 'SETUP.md')) })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'
@@ -105,6 +109,24 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
             orig(name, String(name).toLowerCase() === 'cache-control' ? 'no-cache' : value as any)) as any
         }
         next()
+      })
+
+      // Update discovery (dev only): one cached registry check per day (update.ts has
+      // the privacy story). Two surfaces from the same result - a stdout line for the
+      // terminal, and /__mv/api/update for the shell's pill. Must be registered BEFORE
+      // apiMiddleware, whose unknown-endpoint 404 would eat the path.
+      const update = checkUpdate(root).catch(() => null)
+      update.then((latest) => {
+        if (latest) console.log(`\n  update: ${PKG} ${latest} is out (installed ${installedVersion() ?? '?'}) → npm i -D ${PKG}@latest\n`)
+      })
+      server.middlewares.use((req, res, next) => {
+        const url = new URL(req.url ?? '/', 'http://x')
+        if (url.pathname !== `${ROUTE}/api/update`) return next()
+        update.then((latest) => {
+          res.setHeader('content-type', 'application/json')
+          res.setHeader('cache-control', 'no-store')
+          res.end(JSON.stringify({ latest, current: installedVersion() }))
+        })
       })
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.
