@@ -53,6 +53,13 @@ presenting, never rescued by enthusiasm. Refusing a bold direction because its d
 data does not exist yet is timidity wearing honesty's clothes - author the
 illustrative material and label it.
 
+## The voice rule
+
+Loud or restrained - never neutral. Restraint is a committed direction with a point
+of view; neutrality is the absence of one, and it is what unguided generation
+produces by default. If the chosen direction cannot be described in three specific
+adjectives, it is neutral.
+
 ## Modes bind the winner
 
 Persuade: the offer and action legible in the first viewport, however committed the

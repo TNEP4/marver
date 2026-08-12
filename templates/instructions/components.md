@@ -39,6 +39,13 @@ every state, labeled, in one frame. The gallery is the review surface, the regre
 canary, and the documentation. A component change without a gallery update is
 incomplete work.
 
+## Maintain - pay down drift before it solidifies
+
+When the same ad-hoc pattern (a value, a markup shape, a style cluster) appears a
+third time, that is the promotion trigger: extract it into a token or shared
+component and update design/DESIGN.md in the same pass. Drift left in place becomes
+the system; three identical one-offs are a primitive announcing itself.
+
 ## Naming
 
 Name by role, not appearance: `PriceCard`, not `BlueBox`. Appearance changes;

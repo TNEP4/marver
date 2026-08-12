@@ -25,6 +25,10 @@ One strong material idea carried through beats stacked techniques. Sibling stagg
 only when a list appears AS a list - cap the total delay; never reinterpret every
 scrolled section as a staggered list.
 
+Refuse unprompted: pulsing dots on static status, fake blinking carets, auto-scrolling
+marquees, and scaling/rotating images on hover (the image is not an action target -
+give its container the feedback).
+
 ## Timing
 
 | Duration | Use |

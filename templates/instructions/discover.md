@@ -15,7 +15,9 @@ work:
 2. **The one job**: what should a visitor be able to decide, complete, understand, or
    feel? (One job. If you get three, ask which one wins.)
 3. **The core flow**: entry → the moment of value → done. What are the 3-6 screens?
-4. **What exists**: real content, brand assets, an app, competitors they respect?
+4. **What exists**: real content, brand assets, an app, competitors they respect,
+   any screenshots or sites they LOVE? (A visual reference beats a paragraph of
+   description - ask for one when the direction matters.)
 5. **Out of scope**: what must NOT be touched or built?
 
 ## 2. Pick the mode - it drives every later decision

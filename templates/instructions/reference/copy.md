@@ -35,6 +35,13 @@ the user should do; routine success stays brief.
 **Help.** Helper text answers an implicit question, never restates the control.
 Link text makes sense out of context. Icon-only controls carry accessible names.
 
+## Cadence tells (generated-copy tics to sweep)
+
+Em dashes sprinkled through body copy; manufactured-contrast aphorisms closing
+sections ("It's not X. It's Y."); dismissing things as "theater"; generic SaaS
+buzzwords ("supercharge", "seamless", "unlock"); the same label repeated in several
+slots of one card. Plain sentences in the product's own vocabulary beat all of these.
+
 ## Voice and resilience
 
 Voice stays constant; tone adapts to the moment's stakes. Plain language without

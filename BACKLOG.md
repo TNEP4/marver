@@ -29,8 +29,8 @@ Small items that are not milestone work. One line each; delete when done.
   (props-not-APIs, a11y baseline, gallery contract), review (bounded passes + keyboard
   walk), boards (extracted from AGENTS.md). AGENTS.md = lean routed contract w/
   binding method table; managed-file regeneration (marker prefix check survives
-  wording changes); init tests added (17 total). Craft rules studied from impeccable,
-  re-expressed in our own words (Nic: no attribution). Two codex rounds; deferred:
+  wording changes); init tests added (17 total). Craft rules distilled from public
+  best-practice references, re-expressed entirely in our own words. Two codex rounds; deferred:
   legacy design/SETUP.md migration (no published version ever wrote it), --dir.
   After publish: unattended agent upgrade test on marver-site (0.2.1 -> 0.2.2).
 - **Release smoke checklist** (each version bump, BEFORE railway up): build the pilot,

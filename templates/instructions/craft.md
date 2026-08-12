@@ -22,6 +22,7 @@ that owns the problem, when the problem appears:
 | a personality moment, celebration, easter egg | reference/delight.md |
 | brand-new surface or visual world (with brand.md) | reference/concepts.md |
 | a full review pass was requested | reference/critique.md |
+| output feels generic; sweeping for AI tells | reference/slop.md |
 
 These rules target content surfaces (marketing, docs, product pages). Dense Operate
 UI (dashboards, editors, admin) follows its platform's conventions where they
@@ -55,7 +56,9 @@ conflict - a data table is allowed to be tight, and DESIGN.md's decisions always
 ## Refuse - the defaults every unguided model reaches for
 
 A brief can explicitly ask for any of these. Reaching for one unprompted means no
-decision was made - rewrite the element rather than toning it down.
+decision was made - rewrite the element rather than toning it down. This is the
+short list; the COMPLETE catalog of generated-UI tells is reference/slop.md - sweep
+it on review passes.
 
 - Uniform icon+heading+paragraph card grids as the whole page structure; a card
   inside a card (no exceptions); the oversized-number-with-tiny-label stat hero.

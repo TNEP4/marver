@@ -27,7 +27,7 @@ describe('init: the method layer (0.2.2)', () => {
     init(root, OPTS)
     for (const f of ['configure', 'discover', 'wireframe', 'brand', 'craft', 'components', 'review', 'boards'])
       expect(read(`instructions/${f}.md`)).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
-    for (const f of ['layout', 'typography', 'color', 'motion', 'copy', 'tune', 'critique', 'states', 'delight', 'operate', 'concepts'])
+    for (const f of ['layout', 'typography', 'color', 'motion', 'copy', 'tune', 'critique', 'states', 'delight', 'operate', 'concepts', 'slop'])
       expect(read(`instructions/reference/${f}.md`)).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
     expect(read('instructions/setup.md')).toMatch(/^# Setup required/)
     expect(read('AGENTS.md')).toContain('design/instructions/setup.md')

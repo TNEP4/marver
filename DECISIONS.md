@@ -225,10 +225,9 @@ weaker the model the worse it gets. Marver ships the METHOD, not just the canvas
   MUST-routes agents into the phase instruction before working in that phase. Files
   carry the same regeneration markers as AGENTS.md (init refreshes them on upgrade;
   delete the marker to own a file).
-- **Craft rules are STRICT**, kick-started from studying impeccable
-  (github.com/pbakaus/impeccable, Apache-2.0) as a public reference - the rules are
-  re-expressed entirely in our own words (methods and ideas, no copied text; Nic's
-  call 2026-08-12: no attribution, these are a prototyping starting point we will
+- **Craft rules are STRICT**, distilled from studying public best-in-class design
+  references - re-expressed entirely in our own words (methods and ideas, never
+  copied text; Nic's call 2026-08-12: these are a prototyping baseline we will
   rewrite through dogfood). Low-fi (wireframe) rules are our own. Lo-fi refinement
   from Nic: throwaway code is CORRECT for wireframes (never build real components
   for them, never touch the app's components dir); existing branded components may

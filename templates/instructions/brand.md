@@ -32,10 +32,14 @@ token-level work once a direction exists.
    pairing, radius/material language. Half-committed directions are unjudgeable.
 3. **The forbidden defaults.** These are what every unguided model produces; reaching
    for one when the brief didn't ask means you were not deciding:
-   - warm cream ground + serif display + terracotta accent
-   - near-black + lone neon/acid accent, purple-to-blue gradient heroes
-   - glassmorphism as decoration, gradient text, Inter/Space Grotesk as the "safe" pick
+   - warm cream ground + serif display + terracotta accent; oversized ITALIC serif
+     as the hero voice
+   - near-black + lone neon/acid accent, cyan-on-dark, purple-to-blue gradient heroes,
+     dark mode made of colored glows
+   - glassmorphism as decoration, gradient text, Inter/Geist/Space Grotesk as the
+     "safe" pick
    - emoji as icons, `rounded-lg` on everything, everything centered
+   (the complete tell catalog: reference/slop.md)
 4. **Settle it into tokens.** The winning direction becomes CSS custom properties in
    the theme (grounds, text tiers, accent + meaning, radius scale, spacing scale, two
    type roles minimum). Then write DESIGN.md as in Path A. Components consume tokens;

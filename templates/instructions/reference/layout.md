@@ -38,7 +38,8 @@ simplest structural model that expresses those relationships.
   thing is the most visually weighted thing.
 - `gap` on the parent beats per-child margins for sibling rhythm.
 - Responsive behavior is STRUCTURAL: reorder, collapse, reveal based on what remains
-  important at each width - not just shrinking everything.
+  important at each width - not just shrinking everything. Feature amputation is not
+  responsive design: every capability stays reachable at every supported width.
 - Depth (shadow/elevation) only where it clarifies state or hierarchy.
 - Repetition supports recognition; break it only when content or priority changes.
   Variation for its own sake reads as noise.
