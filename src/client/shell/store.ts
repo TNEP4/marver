@@ -17,6 +17,9 @@ export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number
   /** RESOLVED theme (what renders): themeUser ?? frame meta.theme ?? viewTheme. */
   theme: string
+  /** Renavigation nonce: bumped when the shell wants this iframe on a FRESH URL
+   *  (errored frame whose file is back in the manifest). Never persisted. */
+  nav?: number
   /** Explicit per-frame override, set by scoped theme actions; cleared by a global set.
    *  The only theme value that persists into the board file. */
   themeUser?: string
@@ -42,10 +45,16 @@ const HEADER = 28
 let toastSeq = 0
 const nodeKey = () => 'n_' + Math.random().toString(36).slice(2, 8)
 
+/** Manifest revision - bumps whenever a manifest lands (boot, switch, sh:manifest).
+ *  Stamped into frame URLs so a changed frame set mints genuinely NEW iframe URLs:
+ *  the browser can never revive a pre-change document from cache (friction log #20). */
+let manifestRev = 0
+export const bumpManifestRev = () => { manifestRev++ }
+
 export function frameUrl(frame: FrameEntry, theme: string): string {
   return frame.kind === 'html'
     ? `/${frame.file}?theme=${theme}`
-    : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}`
+    : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}&r=${manifestRev}`
 }
 
 /** The global view theme: the user's sticky preference, applied across boards and
@@ -148,6 +157,7 @@ export const useStore = create<State>((set, get) => {
         raw = await mRes.json().catch(() => undefined)
       }
       if (raw === undefined || raw === null || typeof raw !== 'object') return null
+      bumpManifestRev()                        // fresh manifest → fresh iframe URLs
       const manifest: Manifest = {
         frames: (Array.isArray(raw?.frames) ? raw.frames : [])
           .filter((f: any) => f && typeof f.id === 'string' && typeof f.file === 'string'),
@@ -164,9 +174,12 @@ export const useStore = create<State>((set, get) => {
       if (DATA) loaded = DATA.boards[boardName] ? { board: DATA.boards[boardName], sha256: 'published' } : 'fresh'
       else {
         const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
-        if (res.ok) loaded = await res.json()
-        else if (res.status === 404) loaded = 'fresh'
-        else loaded = null                     // only 404 means "fresh board"; anything else must not commit an empty canvas
+        if (res.ok) {
+          const body = await res.json()
+          loaded = body?.board == null ? 'fresh' : body   // board:null = not materialized yet
+        }
+        else if (res.status === 404) loaded = 'fresh'    // older servers still 404 fresh boards
+        else loaded = null                     // anything else must not commit an empty canvas
       }
       if (loaded === null) return null
       if (loaded !== 'fresh') {
@@ -210,6 +223,16 @@ export const useStore = create<State>((set, get) => {
         if (typeof board?.deviceView === 'string' && CONFIG.viewports[board.deviceView]) deviceView = board.deviceView
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
       }
+      // auto-managed goes both ways (friction log #15): an auto board gains new frames
+      // AND sheds deleted ones. Tombstone cards are a curated-board concept (spec §7).
+      // Pruning at load DIRTIES the board (dev only) so the file on disk sheds the
+      // tombstones too - otherwise a recreated frame id resurrects its stale node.
+      let prunedAtLoad = false
+      if (boardAuto) {
+        const before = nodes.length
+        nodes = nodes.filter((n) => !n.missing)
+        prunedAtLoad = !DATA && nodes.length !== before
+      }
       // frames not on the board yet → auto boards only (a curated board shows exactly its list)
       if (boardAuto) {
         const placed = new Set(nodes.map((n) => n.frame))
@@ -234,8 +257,9 @@ export const useStore = create<State>((set, get) => {
         const placedAll = tidy(nodes.map((n) => ({ key: n.key, scene: sceneOf(n.frame), w: n.w, h: n.h + HEADER })))
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
       }
-      // dirty: false - the committed state matches disk by construction
-      return { manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [], dirty: false }
+      // dirty matches disk by construction - except when load-time pruning changed the
+      // node set; callers see dirty:true and schedule the save that persists the prune
+      return { manifest, nodes, boardHash, boardAuto, deviceView, baseLayout, selection: [], dirty: prunedAtLoad }
     } catch { return null }
   }
 
@@ -255,6 +279,7 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
+      if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       return true
     },
@@ -280,10 +305,12 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
+      if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
     },
 
     applyManifest(m) {
+      bumpManifestRev()                        // frame set changed → new iframes get fresh URLs
       const { nodes, toast, boardAuto } = get()
       const known = new Set(nodes.map((n) => n.frame))
       const next = [...nodes]
@@ -313,8 +340,28 @@ export const useStore = create<State>((set, get) => {
         const f = m.frames.find((x) => x.id === n.frame)
         const want = n.themeUser ?? f?.theme ?? get().viewTheme
         if (n.theme !== want) { n.theme = want; retinted = true }
+        // an errored frame whose file IS in the fresh manifest gets one automatic retry
+        // on a rev-stamped URL - the "unknown frame id" dead end must self-heal (#20)
+        if (!missing && n.status === 'error') { n.status = 'loading'; n.nav = (n.nav ?? 0) + 1; retinted = true }
       }
-      set({ manifest: m, nodes: changed || retinted ? [...next] : next, ...(changed ? { dirty: true, baseLayout: nextBase } : {}) })
+      // auto boards prune deleted frames outright - "auto-managed" must manage both
+      // directions (friction log #15). Curated boards keep the explicit card (spec §7).
+      let final = next
+      if (boardAuto) {
+        final = next.filter((n) => !n.missing)
+        const dropped = next.length - final.length
+        if (dropped) {
+          changed = true
+          toast(dropped === 1 ? 'removed 1 deleted frame' : `removed ${dropped} deleted frames`)
+        }
+      }
+      set((s) => ({
+        manifest: m,
+        nodes: changed || retinted ? [...final] : final,
+        selection: s.selection.filter((k) => final.some((n) => n.key === k)),
+        interact: s.interact && final.some((n) => n.key === s.interact) ? s.interact : null,
+        ...(changed ? { dirty: true, baseLayout: nextBase } : {}),
+      }))
       if (changed) scheduleSave()
     },
 

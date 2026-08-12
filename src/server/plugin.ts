@@ -45,7 +45,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
 
     load(id) {
       if (id === '\0' + VIRTUAL_THEME + '.css') {
-        console.warn('[marver] no theme detected - frames render unstyled. Set `theme` in design/config.ts.')
+        console.warn('[marver] no theme detected - frames render unstyled. Create design/theme.css importing your app\'s stylesheet (or set `theme` in design/config.ts).')
         return '/* marver: no theme configured */'
       }
       if (id === '\0' + VIRTUAL_CONFIG) {
@@ -90,6 +90,23 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
     },
 
     configureServer(server: ViteDevServer) {
+      // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
+      // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static
+      // package code, poison for this one module: its TRANSFORM is dynamic (the glob
+      // map tracks the host's design/ tree). A restart re-globs server-side while every
+      // open tab trusts its year-long cache, and each canvas bricks with "unknown frame
+      // id" - unfixable by hard reload (iframe subresources never revalidate immutable
+      // entries). Forcing no-cache keeps the ETag dance honest: 304 while unchanged,
+      // fresh 200 the moment the map differs.
+      server.middlewares.use((req, res, next) => {
+        if (req.url && req.url.includes('/frame-host/registry.ts')) {
+          const orig = res.setHeader.bind(res)
+          res.setHeader = ((name: string, value: unknown) =>
+            orig(name, String(name).toLowerCase() === 'cache-control' ? 'no-cache' : value as any)) as any
+        }
+        next()
+      })
+
       // Pre-middlewares: our routes + api run before Vite's html fallback.
       server.middlewares.use(apiMiddleware(root))
       server.middlewares.use(routesMiddleware(server, clientDir))
@@ -104,8 +121,37 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       const watched = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]
       const inScope = (file: string) => watched.some((w) => file.startsWith(w))
 
-      server.watcher.on('add', (f) => inScope(f) && regen())
-      server.watcher.on('unlink', (f) => inScope(f) && regen())
+      // Tailwind's scan set is computed when the theme CSS compiles; a NEW frame file's
+      // classes silently miss until that CSS rebuilds (friction log #22 - the canvas
+      // renders a confident wrong design). Two phases per add/unlink:
+      //   1. invalidate the theme module chain SYNCHRONOUSLY - an iframe mounting off
+      //      the manifest event can then never fetch the pre-change compiled CSS;
+      //   2. reloadModule (debounced) pushes the recompiled CSS to already-open frames.
+      const themeModules = (): any[] => {
+        const f = themeFile()
+        if (!f) return []
+        const out: any[] = []
+        const seen = new Set<any>()
+        const walk = (mod: any) => {
+          if (!mod || seen.has(mod)) return
+          seen.add(mod)
+          out.push(mod)
+          for (const im of mod.clientImportedModules ?? mod.importedModules ?? [])
+            if (String(im.id ?? '').split('?')[0].endsWith('.css')) walk(im)
+        }
+        for (const mod of server.moduleGraph.getModulesByFile(f) ?? []) walk(mod)
+        return out
+      }
+      const pushTheme = debounce(() => {
+        for (const mod of themeModules()) server.reloadModule(mod).catch(() => { /* gone mid-reload */ })
+      }, 150)
+      const rescanTheme = () => {
+        for (const mod of themeModules()) server.moduleGraph.invalidateModule(mod)
+        pushTheme()
+      }
+
+      server.watcher.on('add', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
+      server.watcher.on('unlink', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
       // change: only meta edits matter; scanFrames re-extracts and writeManifest de-dupes writes.
       server.watcher.on('change', (f) => inScope(f) && /\.(tsx|jsx)$/.test(f) && regen())
 
@@ -143,16 +189,24 @@ function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): T {
   return ((...a: any[]) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) }) as T
 }
 
-/** Extra vite plugin when the host runs Tailwind v4: use their own @tailwindcss/vite. */
+/** Extra vite plugin when the host runs Tailwind v4. The host's own @tailwindcss/vite
+ *  wins (version-matched to their tailwindcss); the fallback is marver's bundled copy -
+ *  Next.js hosts use @tailwindcss/postcss and never have the vite plugin (the blessed
+ *  stack would otherwise render every frame without its utility classes). */
 export async function tailwind4Plugin(root: string): Promise<Plugin[] | null> {
-  try {
-    const mod = await import(join(root, 'node_modules', '@tailwindcss', 'vite', 'dist', 'index.mjs'))
-    const factory = mod.default ?? mod
-    const result = factory()
-    return Array.isArray(result) ? result : [result]
-  } catch {
-    return null
+  const factories: (() => Promise<any>)[] = [
+    () => import(join(root, 'node_modules', '@tailwindcss', 'vite', 'dist', 'index.mjs')),
+    () => import('@tailwindcss/vite'),
+  ]
+  for (const load of factories) {
+    try {
+      const mod = await load()
+      const factory = mod.default ?? mod
+      const result = factory()
+      return Array.isArray(result) ? result : [result]
+    } catch { /* try the next source */ }
   }
+  return null
 }
 
 /** Tailwind v3: inline PostCSS config extending the host's tailwind config with design/ globs. Host files untouched. */

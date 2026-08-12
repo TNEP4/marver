@@ -1,4 +1,4 @@
-import { createServer, searchForWorkspaceRoot } from 'vite'
+import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,17 +22,28 @@ export async function dev(root: string, portFlag?: number) {
   if (host.tailwind === 4) {
     const tw = await tailwind4Plugin(root)
     if (tw) plugins.push(...tw)
-    else console.warn('[marver] tailwindcss v4 detected but @tailwindcss/vite not found in the host - theme classes may be missing.')
+    else console.warn(`[marver] tailwindcss v4 detected but @tailwindcss/vite could not be loaded - utility classes WILL be missing from frames. Fix: npm i -D @tailwindcss/vite (used only by the canvas, never by your app's build).`)
   }
   let css: Record<string, unknown> | undefined
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
 
   plugins.push(marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }))
 
+  // ~35 lines of "Sourcemap for react-zoom-pan-pinch points to missing sources" per boot
+  // (their published map is broken, not actionable here) were burying the warnings that
+  // matter. Filter exactly that noise; everything else passes through.
+  const logger = createLogger('info')
+  const noise = (msg: string) => /Sourcemap for .*node_modules.*points to/.test(msg)
+  const warnBase = logger.warn.bind(logger)
+  const warnOnceBase = logger.warnOnce.bind(logger)
+  logger.warn = (msg, opts) => { if (!noise(msg)) warnBase(msg, opts) }
+  logger.warnOnce = (msg, opts) => { if (!noise(msg)) warnOnceBase(msg, opts) }
+
   const server = await createServer({
     configFile: false,
     root,
     css: css as any,
+    customLogger: logger,
     plugins,
     server: {
       port: portFlag ?? config.port,
@@ -41,7 +52,14 @@ export async function dev(root: string, portFlag?: number) {
       fs: { allow: [...new Set([root, pkgDir, searchForWorkspaceRoot(root)])] },
       // Spec §5.6: our own writes must never bounce off the watcher - an out-of-graph
       // .json change makes Vite full-reload every client, shell included (measured).
-      watch: { ignored: ['**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**'] },
+      // Host build output is ignored too: `next build` (etc.) writing .next/ was firing
+      // a storm of full page reloads at the open canvas (friction log #21).
+      watch: {
+        ignored: [
+          '**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**',
+          '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
+        ],
+      },
     },
     resolve: {
       dedupe: ['react', 'react-dom'],

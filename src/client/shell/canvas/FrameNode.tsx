@@ -47,6 +47,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     fileRef.current = sig
   }, [frame?.kind, frame?.file])
 
+  // shell-requested renavigation (store bumps node.nav): reload on a FRESH rev-stamped
+  // URL - the errored document's own URL may be poisoned by cache (friction log #20)
+  const navRef = useRef(node.nav ?? 0)
+  useEffect(() => {
+    if ((node.nav ?? 0) === navRef.current) return
+    navRef.current = node.nav ?? 0
+    if (frame && iframeRef.current) iframeRef.current.src = frameUrl(frame, node.theme)
+  }, [node.nav])
+
   // ready timeout (spec §7): 10s without sh:ready -> error card with reload
   useEffect(() => {
     if (node.status !== 'loading') return

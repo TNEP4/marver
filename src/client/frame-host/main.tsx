@@ -12,7 +12,11 @@ import { frameFile, frames, layoutChain, layouts, providers } from './registry.t
 const params = new URLSearchParams(location.search)
 const id = params.get('id') ?? ''
 const theme = params.get('theme') ?? 'light'
+// Both signals, always: [data-theme] for token systems keyed on the attribute, and the
+// `dark` class for Tailwind/shadcn (`@custom-variant dark (&:is(.dark *))` never sees a
+// data attribute). The bridge applies the same pair on sh:set-theme.
 document.documentElement.dataset.theme = theme
+document.documentElement.classList.toggle('dark', theme === 'dark')
 
 const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
 
@@ -47,7 +51,9 @@ async function boot() {
     await import('virtual:sh-theme' as string)
 
     const fileKey = frameFile(id)
-    if (!fileKey) return fail(`unknown frame id "${id}"`)
+    // Honest copy: the id usually IS valid on disk - this document's frame registry is
+    // what's stale (file just added/renamed, or the dev server restarted). See #20.
+    if (!fileKey) return fail(`frame "${id}" is not in this canvas's registry yet - the file was likely just added or renamed. The canvas should recover on its own; if this card persists, reload it.`)
 
     const frameMod: any = await frames[fileKey]()
     const Frame = frameMod.default

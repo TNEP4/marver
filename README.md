@@ -20,9 +20,9 @@ Then, to your agent:
 - `data-goto="scene/frame"` on any element links frames into a walkable prototype.
 - Uninstall: delete `design/`, remove the dependency. (If `init` patched your tsconfig `exclude`, revert that one line.)
 
-The implementation contract is [SPEC.md](./SPEC.md). Deviations live in [DECISIONS.md](./DECISIONS.md).
+**Next.js**: supported with one caveat - frames render in Vite, outside Next. `next/font` CSS variables are undefined inside frames (give font tokens a fallback chain), `next/image`/`next/link` should be plain `img`/`data-goto` in frames, and Server Components cannot run there. `init` writes the specifics into `design/AGENTS.md` when it detects Next.
 
-; private; TNEP4.
+Implementation contracts (SPEC.md, DECISIONS.md) live in the [GitHub repo](https://github.com/TNEP4/marver).
 
 ## Shortcuts
 

@@ -2,8 +2,9 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
-import { detectHost } from '../server/detect.ts'
+import { detectHost, type HostInfo } from '../server/detect.ts'
 import { DEFAULTS } from '../server/config.ts'
+import { scanFrames, writeManifest } from '../server/manifest.ts'
 
 interface InitOpts { mode: 'studio' | 'embedded'; demo: boolean }
 
@@ -33,18 +34,35 @@ export function init(root: string, opts: InitOpts) {
     const relCss = relative(design, join(root, host.themeCss)).split('\\').join('/')
     write('theme.css', themeWrapper(relCss, host.tailwind === 4))
   } else {
-    console.warn(`[${NAME}] no theme CSS detected - set \`theme\` in design/config.ts when you have one.`)
+    console.warn(`[${NAME}] no theme CSS detected - create design/theme.css importing your app's stylesheet when you have one (or set \`theme\` in design/config.ts).`)
   }
 
   // providers (mock contexts by detection)
   write('providers.tsx', providersTemplate(host.router, host.toaster, host.routerPkg))
 
-  // agent contract
-  const agents = readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
-    .replaceAll('{{UI_ALIAS}}', host.shadcn?.uiAlias ?? '@/components/ui')
-  write('AGENTS.md', agents)
+  // agent contract - generated from what was DETECTED, never from wishful thinking:
+  // an agent follows the contract it is given (friction log #1). Unlike every other
+  // scaffolded file, a stale contract is actively harmful, so a marker-carrying
+  // AGENTS.md regenerates when re-run detection disagrees with it ("set up the app,
+  // then re-run init" has to actually work). Deleting the marker opts out for good.
+  const agents = AGENTS_MARKER + '\n' + readFileSync(join(templates, `AGENTS-${opts.mode}.md`), 'utf8')
+    .replaceAll('{{UI_GUIDANCE}}', uiGuidance(host))
+    .replace(/\{\{NEXT_NOTES\}\}\n?/, host.router === 'next' ? NEXT_NOTES : '')
+  const agentsPath = join(design, 'AGENTS.md')
+  if (!existsSync(agentsPath)) write('AGENTS.md', agents)
+  else {
+    const current = readFileSync(agentsPath, 'utf8')
+    if (current.startsWith(AGENTS_MARKER) && current !== agents) {
+      writeFileSync(agentsPath, agents)
+      created.push('design/AGENTS.md (regenerated - detected stack changed)')
+    }
+  }
 
-  write('tsconfig.json', readFileSync(join(templates, 'design-tsconfig.json'), 'utf8'))
+  // design/tsconfig.json extends the root config only when one EXISTS (friction log #4)
+  const rootTsconfig = existsSync(join(root, 'tsconfig.json'))
+  write('tsconfig.json', rootTsconfig
+    ? readFileSync(join(templates, 'design-tsconfig.json'), 'utf8')
+    : STANDALONE_TSCONFIG)
   write('.gitignore', '.local/\n.dist/\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
   if (!existsSync(join(design, 'boards'))) { mkdirSync(join(design, 'boards'), { recursive: true }); writeFileSync(join(design, 'boards', '.gitkeep'), ''); created.push('design/boards/') }
@@ -57,14 +75,73 @@ export function init(root: string, opts: InitOpts) {
   // The one conditional host patch: tsconfig exclude (printed diff, reversible).
   if (host.tsconfigSweepsDesign) patchTsconfigExclude(root)
 
+  // the first manifest, so AGENTS.md's "read design/manifest.json" is true before dev runs
+  writeManifest(root, scanFrames(root))
+
   console.log(`\n${NAME} initialized (${opts.mode} mode). Created:`)
   for (const f of created) console.log(`  + ${f}`)
-  if (host.router === 'next') console.log(`\n  note: Next.js support is partial until M3 - HTML frames and next-free components work today.`)
+  if (host.router === 'next') console.log(`\n  note: Next.js support is partial - frames render outside Next, so next/font, next/image and Server Components do not exist inside them (details in design/AGENTS.md).`)
+  if (noApp(host)) {
+    console.warn(`
+  ┌─ NO APP DETECTED ─────────────────────────────────────────────────────┐
+  │ This repo has no framework, no theme CSS, and no component library.   │
+  │ ${NAME} builds frames from YOUR components - with none, frames become │
+  │ hand-rolled CSS that cannot be promoted into an app later.            │
+  │                                                                       │
+  │ Set up the app first, then re-run init (it is idempotent and will     │
+  │ fill in what it detects). For a web app or site:                      │
+  │   npx create-next-app@latest . --ts --tailwind --app --src-dir        │
+  │   npx shadcn@latest init                                              │
+  │                                                                       │
+  │ design/AGENTS.md was generated with a STOP instruction so your agent  │
+  │ does not design against a component library that does not exist.     │
+  └───────────────────────────────────────────────────────────────────────┘`)
+  }
   console.log(`\n  commit design/ - only .local/ is ignored`)
   console.log(`  uninstall = delete design/, remove the ${NAME} dependency${host.tsconfigSweepsDesign ? ', revert the "design" line in tsconfig exclude' : ''}`)
   console.log(`\n  next: npx ${NAME} dev   (canvas on http://localhost:${DEFAULTS.port} by default)\n`)
-  console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
+  if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
 }
+
+const AGENTS_MARKER = '<!-- generated by marver init from the detected stack; re-running init regenerates this file when detection changes. Made edits you want to keep? Delete this line and init will never touch the file again. -->'
+
+/** No framework, no theme, no component alias = nothing to build frames FROM. */
+const noApp = (host: HostInfo) =>
+  !host.router && !host.tailwind && !host.shadcn && !host.themeCss
+
+/** The UI line of AGENTS.md, matched to what detection actually found (friction log #1). */
+function uiGuidance(host: HostInfo): string {
+  if (host.shadcn)
+    return `Use the app's UI: import from ${host.shadcn.uiAlias}; style with the app's Tailwind classes.`
+  if (host.tailwind)
+    return `Style with the app's Tailwind classes and design tokens; there is no detected component library - extract shared pieces into design/components/.`
+  return `STOP - this repo has no component library, no Tailwind, and no theme. Frames built from hand-rolled CSS cannot be promoted into an app later. Ask the human to set up the app first (framework + styling), then re-run \`npx ${NAME} init\` so this contract regenerates against the real stack.`
+}
+
+/** Next.js frames render OUTSIDE Next - say concretely what that means (friction log #10/#11). */
+const NEXT_NOTES = `- Next.js caveats (frames render in Vite, outside Next):
+  next/font does not exist here - CSS variables it injects (e.g. --font-geist-sans) are
+  undefined in frames, so give every font token a real fallback chain in the app's CSS:
+  --font-sans: var(--font-geist-sans, ui-sans-serif, system-ui, sans-serif).
+  next/image and next/link render as plain img/a via shims at best - prefer <img> and
+  data-goto in frames. Server Components and server actions cannot run: frames are
+  client components importing client components.
+`
+
+const STANDALONE_TSCONFIG = `{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["."]
+}
+`
 
 function patchTsconfigExclude(root: string) {
   const file = join(root, 'tsconfig.json')

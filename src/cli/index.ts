@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { cac } from 'cac'
-import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
 
 const [major, minor] = process.versions.node.split('.').map(Number)
@@ -9,12 +11,30 @@ if (major < 22 || (major === 22 && minor < 18)) {
   process.exit(1)
 }
 
+// design/config.ts loads through Node's native TS import; without "type" in the HOST's
+// package.json Node prints MODULE_TYPELESS_PACKAGE_JSON advising the user to change
+// THEIR package - wrong advice from a guest tool. Swallow that one code, keep the rest.
+const emitWarning = process.emitWarning.bind(process)
+process.emitWarning = ((warning: any, ...rest: any[]) => {
+  const opt = rest[0]
+  const code = (typeof opt === 'object' && opt ? opt.code : rest[1]) ?? (warning && typeof warning === 'object' ? (warning as any).code : undefined)
+  if (code === 'MODULE_TYPELESS_PACKAGE_JSON') return
+  emitWarning(warning, ...rest)
+}) as typeof process.emitWarning
+
+/** The real installed version - dist/cli.mjs lives one level under the package root. */
+function version(): string {
+  try {
+    return JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version
+  } catch { return '0.0.0' }
+}
+
 const cli = cac(NAME)
 
 cli
   .command('init', 'Scaffold design/ in this repo')
   .option('--mode <mode>', 'studio | embedded', { default: 'studio' })
-  .option('--no-demo', 'Skip the demo scene')
+  .option('--no-demo', 'Skip the demo scene (the demo ships unless this flag is passed)')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .action(async (opts) => {
     const { init } = await import('./init.ts')
@@ -68,5 +88,5 @@ cli
   })
 
 cli.help()
-cli.version('0.1.0')
+cli.version(version())
 cli.parse()

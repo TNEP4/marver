@@ -106,6 +106,14 @@ export function serve(root: string, portFlag?: number) {
   })
 
   const port = portFlag ?? (Number(process.env.PORT) || 4199)
+  // same condition as `dev`, same manners: a busy port is a message, not a stack trace
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[${NAME}] port ${port} is already in use - another \`${NAME} serve\` still running? Stop it, or pass --port <n>.`)
+      process.exit(1)
+    }
+    throw err
+  })
   server.listen(port, () => {
     console.log(`\n  ${NAME} serving design/.dist → http://localhost:${port}/`)
     console.log(verifier ? '  gate: ON (MARVER_PASSWORD set)\n' : '  gate: off - set MARVER_PASSWORD to require a password\n')

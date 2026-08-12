@@ -175,3 +175,41 @@ FRICTION.md of every confusion, doc gap, and workaround (including every time it
 read package source in node_modules to answer something AGENTS.md should have). That
 log flows back to this session and becomes the 0.3.0 backlog. This tests studio mode
 end to end (the pilot covers embedded mode) and doubles as the stress test.
+
+## Friction triage shipped as 0.2.1 (2026-08-12, codex-reviewed)
+
+The marver-site dogfood produced a 23-issue FRICTION.md; everything bug-shaped shipped
+in 0.2.1, verified end-to-end in a real browser against a fresh Next 16 + Tailwind v4 +
+shadcn repro app (the blessed stack). Root causes worth remembering:
+
+- **#20 (stale canvas) was HTTP caching all along.** registry.ts lives in node_modules,
+  so Vite stamps `?v=<hash>` and serves it `max-age=31536000,immutable` - correct for
+  static package code, poison for a module whose TRANSFORM is dynamic (the glob map
+  tracks the host's design/ tree). Restart → same hash → year-old glob map, unfixable
+  by hard reload (iframe subresources never revalidate immutable entries). Fix: a
+  middleware forces `no-cache` on that one URL; plus rev-stamped frame URLs
+  (`&r=<manifestRev>`), `no-store` on marver-served HTML, and an auto-retry (nav nonce)
+  for errored frames when a manifest lands.
+- **#22 (new frames lose Tailwind classes)**: the scan set is computed when the theme
+  CSS compiles; frame add/unlink now synchronously invalidates the theme module chain
+  and pushes the recompiled CSS via reloadModule (debounced).
+- **detect.ts stripJsonComments ate glob patterns**: `.next/types/**/*.ts` contains
+  `/*`, the regex stripper corrupted the whole tsconfig, detection silently saw null -
+  so init never patched exclude and `next build` failed typechecking design/. Rewritten
+  string-aware (comments AND trailing commas). Detection bugs are silent-degrade bugs.
+
+Spec deviations (spec §7 said tombstones persist until removed): AUTO boards now prune
+deleted frames at load and on manifest events, and the prune dirties the board so disk
+converges; curated boards keep the explicit deleted card. Board GET returns 200
+`{board:null}` for never-materialized boards (404 was red console noise). AGENTS.md is
+now a marker-carrying regenerating contract: re-running init rewrites it when detection
+changes; deleting the marker line opts out. init refuses nothing but says NO APP
+DETECTED loudly and generates a STOP contract when there is nothing to build from.
+
+Codex adversarial review caught 4 real issues pre-commit (prune not persisted, a
+rescan/manifest race, init re-run couldn't actually regenerate the contract, trailing
+commas inside strings). Accepted trade-offs: transient unlink+add across >150ms loses
+an auto-board node's position/pins (auto boards are auto-laid; debounce absorbs editor
+atomic saves); registry revalidates per iframe navigation (localhost 304s, correctness
+over micro-perf); tsconfig exclude patch can be unnecessary for exotic `**/src/**`
+includes (harmless, printed, reversible).

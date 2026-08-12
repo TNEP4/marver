@@ -4,9 +4,15 @@ const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
 const id = new URLSearchParams(location.search).get('id') ?? location.pathname
 
+// theme lands as BOTH signals: [data-theme] plus the `dark` class Tailwind/shadcn key on
+const setTheme = (theme) => {
+  document.documentElement.dataset.theme = theme
+  document.documentElement.classList.toggle('dark', theme === 'dark')
+}
+
 if (isHtmlFrame) {
   const theme = new URLSearchParams(location.search).get('theme')
-  if (theme) document.documentElement.dataset.theme = theme
+  if (theme) setTheme(theme)
 }
 
 document.addEventListener('click', (e) => {
@@ -23,7 +29,7 @@ window.addEventListener('error', (e) => post({ type: 'sh:error', id, message: St
 window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:error', id, message: `unhandled rejection: ${e.reason}` }))
 
 window.addEventListener('message', (e) => {
-  if (e?.data?.type === 'sh:set-theme') document.documentElement.dataset.theme = e.data.theme
+  if (e?.data?.type === 'sh:set-theme') setTheme(e.data.theme)
 })
 
 if (isHtmlFrame) {

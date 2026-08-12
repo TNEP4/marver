@@ -11,7 +11,14 @@ Never run or talk to the canvas tool; read and write files only.
   // tv available commented-out). Pick the one the screen is designed for - the human can
   // flip the whole board to any device (Devices menu, hotkeys 0-5) to check responsiveness.
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
-- Use the app's UI: import from {{UI_ALIAS}}; style with the app's Tailwind classes.
+- VERSIONS are sibling frames too - the scene is the surface, each frame one direction:
+  design/scenes/landing/a-terminal.tsx, landing/b-editorial.tsx, landing/c-product.tsx.
+  Layout and the sidebar follow frame-id order, so variants named under one scene with
+  a-/b-/c- prefixes stay adjacent and ordered through tidy and every device view.
+  Never spread versions across scenes (terminal/landing, editorial/landing) - they
+  interleave with everything else and the comparison falls apart.
+- {{UI_GUIDANCE}}
+{{NEXT_NOTES}}
 - Navigation: put data-goto="scene/frame" on any element. That is the whole prototype system.
   In play mode (the human presses P) frames swap in place inside one device - design flows
   as complete graphs: every screen a data-goto points at should itself link somewhere or be
@@ -33,7 +40,8 @@ Never run or talk to the canvas tool; read and write files only.
   setTimeout(() => r(orders), 800)) and let the frame render its skeleton while awaiting.
 
 ## Orientation
-- design/manifest.json lists every frame (id, file, scene, title) - read it before exploring.
+- design/manifest.json lists every frame (id, file, scene, title) - read it before
+  exploring. `init` writes the first one; `marver dev` keeps it fresh.
 - Component galleries: create design/components/<name>/variants.tsx rendering each variant
   and each state (default / hover-styled / focus / disabled / loading) of one ui component.
 
@@ -62,7 +70,10 @@ lays it out, and keeps it tidy:
 ```
 
 - The same frame may appear on many boards, or twice on one board (e.g. two widths:
-  add `"w"`/`"h"` on a node to pin a size).
+  add `"w"`/`"h"` on a node to pin a size, `"x"`/`"y"` to place it - e.g. a comparison
+  row: same `y`, increasing `x`). Know that the human's tidy (`t`) and device views
+  re-layout in frame-id order, so id ordering is the durable arrangement; explicit
+  coordinates are for one-off setups.
 - `auto: false` boards show exactly their list. The `all-scenes` board is auto-managed -
   never write it.
 - Use boards for comparisons: version A vs B vs C of a flow, side by side.

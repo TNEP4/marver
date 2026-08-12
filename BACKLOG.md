@@ -52,12 +52,22 @@ Small items that are not milestone work. One line each; delete when done.
 - **npm dispute email for bare `marver`**: drafted (to hhutton@spurpose.com, cc
   support@npmjs.com) - Nic to send; 4-week clock, then npm adjudicates. If won, publish
   bare `marver` and deprecate @marver-design/marver with a pointer.
-- **CLI version banner is hardcoded** (`cli.version('0.1.0')` in src/cli/index.ts) -
-  read from package.json at next release.
-- **DOGFOOD: marver.design website (NEXT, 2026-08-11)** - fresh repo `~/marver-site`,
-  fresh Claude session, official registry install, README-and-AGENTS.md-only onboarding,
-  FRICTION.md kept by the dogfooding session. Supersedes the earlier "marver.design"
-  bullet's open questions about approach. Friction log gets triaged here for 0.3.0.
+- **FRICTION TRIAGE DONE (2026-08-12) - 0.2.1 staged, Nic to publish.** All 23 friction
+  issues triaged; every bug-shaped one fixed and browser-verified (see DECISIONS.md).
+  Remaining product decisions parked below. Publish: `cd ~/marver && git push && npm
+  publish` from a real terminal (passkey 2FA), then bump the pilot + marver-site to
+  `@marver-design/marver@^0.2.1` and redeploy Railway.
+- **PARKED for Nic - variant groups (friction #19, the big product idea).** The
+  convention (scene = surface, variants = a-/b-/c- sibling frames) is now documented in
+  AGENTS.md and survives tidy/device views. The FEATURE half needs product decisions:
+  `meta.of/variant/order` as a first-class group, group-aware tidy (never split or
+  interleave a group), a caption + variant chrome on canvas, variant switching in play
+  mode (←/→ swaps direction A/B/C on the same screen mid-flow - the killer review
+  feature), sidebar variant switcher. Also #16's ask that tidy lay out in rows, and
+  "make board layout durable" (device-view keys currently rewrite hand-placed x/y even
+  on `auto:false` boards - decide what `auto:false` should promise).
+- **Serve host needs a persistent volume note** - when M3 comments land, publish docs
+  must say loudly that `marver serve` hosts need a volume (SPEC-M3 §5 already flags it).
 - **M3 comments/identity/access: SPEC-M3.md written as WIP (2026-08-12)** - event-log
   comments, dev<->published union sync, one publish target per repo (decided), email
   allowlist w/ READ vs READ+COMMENT roles. Five UNRESOLVED questions in §3 (identity

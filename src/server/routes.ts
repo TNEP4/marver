@@ -47,6 +47,9 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string): Conn
     try {
       const html = await server.transformIndexHtml(req.url ?? '/', page(dir))
       res.setHeader('content-type', 'text/html')
+      // never cache the host pages: a stale frame-host document pins an outdated module
+      // graph inside an iframe, which no reload of the PARENT can flush (friction log #20)
+      res.setHeader('cache-control', 'no-store')
       res.end(html)
     } catch (err) {
       res.statusCode = 500

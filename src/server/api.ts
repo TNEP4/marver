@@ -94,7 +94,9 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         const p = boardPath(boardMatch[1])
         if (!p) return json(res, 400, { error: 'invalid board name' })
         if (req.method === 'GET') {
-          if (!existsSync(p)) return json(res, 404, { error: 'not found' })
+          // a board that does not exist yet is a normal state (all-scenes before first
+          // save), not an error: 200 + board:null keeps the devtools console clean
+          if (!existsSync(p)) return json(res, 200, { board: null })
           const content = readFileSync(p, 'utf8')
           try {
             return json(res, 200, { board: JSON.parse(content), sha256: hash(content) })

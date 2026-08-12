@@ -115,6 +115,18 @@ function SelectionBar() {
   const node = useStore((s) => s.nodes.find((n) => n.key === s.selection[s.selection.length - 1]))
   const frame = useStore((s) => (node ? s.frameFor(node) : undefined))
   const nodes = useStore((s) => s.nodes)
+  // measured width feeds the viewport clamp below; a callback ref because the bar
+  // mounts/unmounts with the selection (an effect with [] would miss remounts)
+  const [barW, setBarW] = useState(0)
+  const roRef = useRef<ResizeObserver | null>(null)
+  const barRef = (el: HTMLDivElement | null) => {
+    roRef.current?.disconnect()
+    roRef.current = null
+    if (el) {
+      roRef.current = new ResizeObserver(() => setBarW(el.offsetWidth))
+      roRef.current.observe(el)
+    }
+  }
   if (!node || !frame || node.missing) return null
   // anchor: centered over the bounding box of ALL selected frames, above the topmost
   const selNodes = nodes.filter((n) => selection.includes(n.key))
@@ -135,14 +147,21 @@ function SelectionBar() {
       .map((k) => { const n = st.nodes.find((x) => x.key === k); return n ? st.frameFor(n) : undefined })
       .filter((f): f is NonNullable<typeof f> => !!f)
   }
+  // centered over the selection's bounding box, then CLAMPED into the viewport: the
+  // controls for a selected frame must stay reachable when its top edge is panned
+  // off-screen, and must never drift off the sides (friction log #23)
+  const centerX = `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${(bx0 + bx1) / 2}px)`
+  const rawTop = `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`
   return (
     <div
       className="sh-ctx"
+      ref={barRef}
       style={{
-        // centered over the selection's bounding box; translateX keeps it centered at any width
-        left: `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${(bx0 + bx1) / 2}px)`,
-        top: `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`,
-        transform: 'translateX(-50%)',
+        left: barW
+          ? `clamp(8px, calc(${centerX} - ${Math.round(barW / 2)}px), calc(100vw - ${barW + 8}px))`
+          : centerX,
+        top: `clamp(8px, ${rawTop}, calc(100vh - 52px))`,
+        transform: barW ? undefined : 'translateX(-50%)',
       }}
     >
       {multi && <>
@@ -623,7 +642,7 @@ export function App() {
 
       <PlayOverlay />
 
-      {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled (design/config.ts → theme)</div>}
+      {CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
 
       <div className="sh-toasts">
         {toasts.map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
