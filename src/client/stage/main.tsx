@@ -16,7 +16,12 @@ import { createRoot } from 'react-dom/client'
 import { frameFile, frames, layoutChain, layouts, providers } from '../frame-host/registry.ts'
 
 const params = new URLSearchParams(location.search)
-document.documentElement.dataset.theme = params.get('theme') ?? 'light'
+// Both signals, always - same pair as the frame host: [data-theme] for attribute-keyed
+// token systems, .dark for class-keyed ones (Tailwind/shadcn). Missing the class made
+// play render class-keyed apps light while the canvas showed them dark.
+const bootTheme = params.get('theme') ?? 'light'
+document.documentElement.dataset.theme = bootTheme
+document.documentElement.classList.toggle('dark', bootTheme === 'dark')
 const startId = params.get('at') ?? ''
 
 const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
@@ -125,7 +130,10 @@ function Stage() {
     const onMsg = (e: MessageEvent) => {
       if (e.source !== window.parent) return
       const data = e.data
-      if (data?.type === 'sh:set-theme') document.documentElement.dataset.theme = data.theme
+      if (data?.type === 'sh:set-theme') {
+        document.documentElement.dataset.theme = data.theme
+        document.documentElement.classList.toggle('dark', data.theme === 'dark')
+      }
       else if (data?.type === 'sh:stage-set' && typeof data.at === 'string') goto(data.at, false)
     }
     window.addEventListener('message', onMsg)
