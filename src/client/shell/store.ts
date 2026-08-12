@@ -345,7 +345,7 @@ export const useStore = create<State>((set, get) => {
           : []
         const right = sibs.length ? sibs.reduce((a, n) => (n.x > a.x ? n : a)) : null
         const node = right
-          ? { key: nodeKey(), frame: f.id, x: right.x + right.w + Math.max(72, right.w * 0.06) + Math.max(110, right.w * 0.1), y: right.y, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
+          ? { key: nodeKey(), frame: f.id, x: right.x + right.w + Math.max(140, right.w * 0.12), y: right.y, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
           : { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
         next.push(node)
         // in a device view, the snapshot learns the newcomer's DEFAULT size so 0 restores it sanely

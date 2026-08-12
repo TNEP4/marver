@@ -39,7 +39,7 @@ describe('tidy (pure, spec §7)', () => {
     ])
     const byKey = Object.fromEntries(placed.map((p) => [p.key, p]))
     expect(byKey.a1).toEqual({ key: 'a1', x: 0, y: 0 })
-    expect(byKey.a2).toEqual({ key: 'a2', x: 172, y: 0 })
+    expect(byKey.a2).toEqual({ key: 'a2', x: 240, y: 0 })
     expect(byKey.b1.y).toBe(150 + 96) // tallest alpha + scene gap
     expect(byKey.b1.x).toBe(0)
   })
