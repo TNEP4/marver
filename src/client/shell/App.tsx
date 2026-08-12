@@ -152,10 +152,12 @@ function SelectionBar() {
   // controls for a selected frame must stay reachable when its top edge is panned
   // off-screen, and must never drift off the sides (friction log #23)
   const centerX = `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${(bx0 + bx1) / 2}px)`
-  // a grouped frame carries a caption + badge above/left of it - anchor the bar higher
-  // so the floating menu never sits ON the variant text (drive feedback 2026-08-12)
-  const clearY = frame.variantGroup ? by0 - 96 : by0
-  const rawTop = `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${clearY}px - 52px)`
+  // a grouped frame carries a caption above it - clear it EXACTLY, in screen terms:
+  // caption top = frame top - 18 world px - its own height (world font clamped to a
+  // 12px screen minimum). A fixed world offset detached the bar at other zooms.
+  const rawTop = frame.variantGroup
+    ? `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - (var(--sh-s, 1) * 18px) - (max(17px * var(--sh-s, 1), 12px) * 1.4) - 46px)`
+    : `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${by0}px - 52px)`
   return (
     <div
       className="sh-ctx"
