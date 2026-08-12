@@ -155,18 +155,28 @@ export function Canvas() {
       }
       ref.current.setTransform(px - x * scale, py - y * scale, scale, 320, 'easeOut')
     }
-    canvasCtl.fitNode = (key: string) => {
-      const n = useStore.getState().nodes.find((x) => x.key === key)
-      if (n) fitRect(n.x, n.y, n.w, n.h + HEADER, true)
-    }
     const fitKeys = (keys: string[], focus: boolean) => {
+      const st = useStore.getState()
       const sel = new Set(keys)
-      const ns = useStore.getState().nodes.filter((n) => sel.has(n.key))
+      const ns = st.nodes.filter((n) => sel.has(n.key))
       if (!ns.length) return
-      const x0 = Math.min(...ns.map((n) => n.x)), y0 = Math.min(...ns.map((n) => n.y))
+      let x0 = Math.min(...ns.map((n) => n.x)), y0 = Math.min(...ns.map((n) => n.y))
       const x1 = Math.max(...ns.map((n) => n.x + n.w)), y1 = Math.max(...ns.map((n) => n.y + n.h + HEADER))
+      // grouped frames carry chrome OUTSIDE their box (badge left, caption above) -
+      // fit must include that envelope or the variant text lands under the sidebar.
+      // Screen-clamped sizes need a scale estimate first: one pre-pass, then pad.
+      if (ns.some((n) => st.frameFor(n)?.variantGroup)) {
+        const el = wrap()
+        if (el) {
+          const p = insets(el)
+          const s1 = Math.max(0.05, Math.min(1, (el.clientWidth - p.left - p.right) / (x1 - x0), (el.clientHeight - p.top - p.bottom) / (y1 - y0)))
+          x0 -= Math.max(140, 44 / s1)   // badge letter+name column (min 44 screen px)
+          y0 -= Math.max(64, 36 / s1)    // caption line above the group
+        }
+      }
       fitRect(x0, y0, x1 - x0, y1 - y0, focus)
     }
+    canvasCtl.fitNode = (key: string) => fitKeys([key], true)
     canvasCtl.fitNodes = (keys: string[]) => fitKeys(keys, true)
     canvasCtl.fitAll = () => fitKeys(useStore.getState().nodes.map((n) => n.key), false)
     canvasCtl.zoomTo = (target: number) => {
