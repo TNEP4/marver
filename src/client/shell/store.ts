@@ -480,8 +480,10 @@ export const useStore = create<State>((set, get) => {
         const want = n.themeUser ?? f?.theme ?? get().viewTheme
         if (n.theme !== want) { n.theme = want; retinted = true }
         // content-ness can change live (agent adds/removes the primitives): reconcile
-        // provenance or measurements are rejected / UI dims silently omitted from saves
-        if (f?.contentWidth && !n.sizeMode) { n.sizeMode = 'auto'; retinted = true }
+        // provenance or measurements are rejected / UI dims silently omitted from saves.
+        // Under an active device view the newcomer joins it as 'device' - a measurement
+        // must not override the preset the whole board is showing
+        if (f?.contentWidth && !n.sizeMode) { n.sizeMode = deviceView ? 'device' : 'auto'; retinted = true }
         if (!f?.contentWidth && n.sizeMode) { delete n.sizeMode; retinted = true }
         // an errored frame whose file IS in the fresh manifest gets one automatic retry
         // on a rev-stamped URL - the "unknown frame id" dead end must self-heal (#20)

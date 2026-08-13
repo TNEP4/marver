@@ -530,8 +530,14 @@ export function App() {
       } else if (data.type === 'sh:exit-interact') {
         if (s.interact === nodeKey) setInteract(null)
       } else if (data.type === 'sh:measure') {
-        // SPEC-026 content-frame measurement; measureNode does its own admission
-        // (content frames only, frame-id match, finite positive, clamped)
+        // SPEC-026 generation guard: the sender echoes ITS document's URL rev; a
+        // WindowProxy survives navigation, so a stale pre-navigation message would
+        // otherwise route as if it came from the current document. Compare against
+        // the iframe's CURRENT src - mismatched generations are dropped.
+        const gen = el.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
+        if (String(data.gen ?? '') !== gen) return
+        // measureNode does the rest of the admission (content frames only,
+        // frame-id match, finite positive, clamped)
         s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
       } else if (data.type === 'sh:go') {
         const target = String(data.target ?? '')

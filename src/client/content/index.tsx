@@ -24,12 +24,15 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     const el = ref.current
     if (!el || window.parent === window) return
     let t: ReturnType<typeof setTimeout> | undefined
+    const params = new URLSearchParams(location.search)
     const post = () => {
       window.parent.postMessage({
         type: 'sh:measure',
-        // identity guard: board files may reuse node keys, so an iframe can survive a
-        // board switch - the shell only commits a measurement whose frame id matches
-        frame: new URLSearchParams(location.search).get('id') ?? '',
+        // identity guards: board files may reuse node keys (frame id must match), and
+        // a WindowProxy survives navigation (gen = THIS document's URL rev - the shell
+        // drops echoes that don't match the iframe's current src)
+        frame: params.get('id') ?? '',
+        gen: params.get('r') ?? '',
         ownWidth: CONTENT_WIDTH[layout] ?? CONTENT_WIDTH.document,
         measuredWidth: window.innerWidth,          // the width this height is TRUE at (r3 #1)
         height: Math.ceil(el.getBoundingClientRect().height),

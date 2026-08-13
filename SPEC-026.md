@@ -117,12 +117,14 @@ after last change) and posts `sh:measure { ownWidth, measuredWidth, height, gen 
   a height only when `measuredWidth` matches the width it is applying (a
   phone-width height is never applied to a 1280 frame); mismatched
   measurements just trigger a remeasure at the right width.
-- `gen` - REALIZED AS (impl round 2): message routing (event.source must map to
-  a mounted iframe inside a live node) + a `frame` id carried in the message
-  that must equal the node's frame + auto-only admission + the width match.
-  A stale message surviving all four is a width-matched measurement of the
-  SAME frame in auto state - valid by definition, so a wire-level stamp would
-  be machinery defending against nothing. The shell-side reflow debounce
+- `gen` - REALIZED AS (impl round 3): the sending document echoes the `r`
+  (manifest rev) from ITS OWN frame URL; the shell compares it against the
+  iframe's CURRENT src and drops mismatches. A WindowProxy survives
+  navigation, so routing alone cannot tell a pre-navigation document's late
+  message from the live one - the URL-rev echo can, with zero new state
+  (frame URLs are already rev-stamped). Plus: routing (event.source must map
+  to a mounted iframe inside a live node), a `frame` id equal to the node's,
+  auto-only admission, and the width match. The shell-side reflow debounce
   carries the board-name generation (cancel-on-switch).
 
 **Admission** (r2 P2): the shell accepts `sh:measure` only from frames whose
