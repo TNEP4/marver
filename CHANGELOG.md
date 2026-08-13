@@ -2,6 +2,12 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.3.1 - 2026-08-13
+
+### Fixed
+
+- Play-mode variant chrome: the current variant's name was invisible (theme ink on the always-dark glass pill - now the pill's own light ink), the pill jiggled as variant names changed length (fixed-width name slot, ellipsis past it, tooltip with the full name), and the active variant chip lost its full rounding (chips stay circular in every state).
+
 ## 0.3.0 - 2026-08-13
 
 The co-thinking release: the canvas now holds the thinking, not just the screens.
