@@ -45,9 +45,10 @@ explicitly asked for unattended execution.
    with one line of reasoning each (marketing/content/SEO → latest Next.js;
    app-like/interactive → latest React Router; something else if their answer
    calls for it). If web search is available, verify current major versions
-   first - never let search stall the flow. The only fixed opinions: shadcn/ui +
-   latest Tailwind. Close with "aligned, or tell me what you'd rather use."
-   STOP.
+   first - never let search stall the flow. shadcn/ui + latest Tailwind are the
+   recommended default, NOT a requirement (Nic, 2026-08-13): the human's choice
+   of component layer wins, and marver adapts to whatever detection finds.
+   Close with "aligned, or tell me what you'd rather use." STOP.
 3. **Scaffold and verify.** Scaffold the agreed stack (temp-dir merge mechanics
    preserved from the current template - scaffolders refuse non-empty dirs),
    install, wire shadcn, then START the dev server and verify it renders before

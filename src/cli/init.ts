@@ -344,12 +344,14 @@ From their answer, recommend a framework with one line of reasoning each:
 - Their answer points somewhere else? Recommend that instead, and say why.
 
 If you can search the web, verify current major versions first - one or two
-searches, then propose. The only fixed opinions: shadcn/ui + latest Tailwind
-(fixed at the library level - take their current defaults). Present the
-proposal with the harness's structured question tool when it has one - short
-labels, one-line trade-offs - closing with "aligned, or tell me what you'd
-rather use". Then STOP again: no further tool calls, end your turn, wait for
-the nod.
+searches, then propose. Recommend shadcn/ui + latest Tailwind as the default
+component layer (take their current defaults) - but they are a recommendation,
+not a requirement: if the human prefers another component library, plain CSS,
+or their own design system, that wins. Any React + a real stylesheet works;
+${NAME} adapts to what detection finds. Present the proposal with the
+harness's structured question tool when it has one - short labels, one-line
+trade-offs - closing with "aligned, or tell me what you'd rather use". Then
+STOP again: no further tool calls, end your turn, wait for the nod.
 
 ## 4. Scaffold and verify
 
@@ -369,7 +371,8 @@ npx shadcn@latest init
 Scaffolder flags drift between versions (create-next-app and shadcn both) - if
 a flag errors or a prompt appears despite --yes, accept the tool's defaults.
 
-Known scaffold bug (hit on every create-next-app + shadcn run so far): shadcn's
+Known scaffold bug if shadcn was agreed (hit on every create-next-app + shadcn
+run so far): shadcn's
 init rewrites the theme CSS's \`@theme inline\` block and leaves
 \`--font-sans: var(--font-sans)\` - self-referential, resolves to nothing, and
 the app silently renders in the browser's default font. After shadcn init,
