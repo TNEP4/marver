@@ -147,31 +147,46 @@ body { margin: 0; }
 .mv-imgerr { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--mv-muted); }
 .mv-imgerr b { color: #E0402F; }
 
-/* markdown typography: measure + rhythm */
-.mv-md { max-width: 72ch; min-width: 0; }
+/* markdown typography - the HIG scale, Notion's calm. Body 16 on generous
+   leading; headings tighten tracking as they grow (SF behavior); sections
+   breathe ABOVE far more than below, so structure reads at a glance. Every
+   list-style is re-asserted: host Tailwind preflight strips markers. */
+.mv-md { max-width: 72ch; min-width: 0; font-size: 16px; line-height: 1.65; }
 .mv-md > :first-child { margin-top: 0; }
 .mv-md > :last-child { margin-bottom: 0; }
-.mv-md h1 { font-size: 28px; line-height: 1.2; letter-spacing: -0.015em; margin: 28px 0 12px; }
-.mv-md h2 { font-size: 21px; line-height: 1.25; letter-spacing: -0.01em; margin: 24px 0 10px; }
-.mv-md h3 { font-size: 17px; margin: 20px 0 8px; }
-.mv-md h4, .mv-md h5, .mv-md h6 { font-size: 15px; margin: 16px 0 6px; }
-.mv-md p, .mv-md ul, .mv-md ol { margin: 0 0 12px; }
-.mv-md ul, .mv-md ol { padding-left: 24px; }
-.mv-md li { margin-bottom: 4px; }
+.mv-md h1 { font-size: 30px; line-height: 1.16; letter-spacing: -0.021em; font-weight: 700; margin: 44px 0 14px; }
+.mv-md h2 { font-size: 22px; line-height: 1.22; letter-spacing: -0.017em; font-weight: 700; margin: 40px 0 12px; }
+.mv-md h3 { font-size: 18px; line-height: 1.3; letter-spacing: -0.01em; font-weight: 650; margin: 30px 0 8px; }
+.mv-md h4, .mv-md h5, .mv-md h6 { font-size: 15px; font-weight: 650; margin: 24px 0 6px; }
+.mv-md p { margin: 0 0 14px; }
+.mv-md ul, .mv-md ol { margin: 0 0 14px; padding-left: 26px; }
+.mv-md ul { list-style: disc; }
+.mv-md ul ul { list-style: circle; }
+.mv-md ol { list-style: decimal; }
+.mv-md li { margin-bottom: 5px; }
+.mv-md li::marker { color: var(--mv-faint); }
+.mv-md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -26px; }
 .mv-md a { color: var(--mv-accent); text-decoration: none; }
 .mv-md a[data-goto] { border-bottom: 1px dashed var(--mv-accent); cursor: pointer; }
-.mv-md blockquote { margin: 0 0 12px; padding: 4px 16px; border-left: 3px solid var(--mv-line);
-  color: var(--mv-muted); }
-.mv-md code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em;
-  background: var(--mv-surface); border: 1px solid var(--mv-line-soft); border-radius: 4px; padding: 1px 5px; }
-.mv-md pre { background: var(--mv-surface); border: 1px solid var(--mv-line-soft); border-radius: 8px;
-  padding: 14px 16px; overflow-x: auto; margin: 0 0 12px; }
-.mv-md pre code { background: none; border: 0; padding: 0; font-size: 12.5px; line-height: 1.6; }
-.mv-md table { border-collapse: collapse; width: 100%; margin: 0 0 12px; font-size: 14px; }
-.mv-md th, .mv-md td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--mv-line-soft); }
-.mv-md th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--mv-faint); }
-.mv-md img { max-width: 100%; border-radius: 6px; }
-.mv-md hr { border: 0; border-top: 1px solid var(--mv-line-soft); margin: 20px 0; }
-.mv-md input[type="checkbox"] { margin-right: 6px; }
+.mv-md blockquote { margin: 4px 0 16px; padding: 2px 0 2px 18px; border-left: 3px solid var(--mv-text);
+  color: var(--mv-text); }
+.mv-md blockquote p:last-child { margin-bottom: 0; }
+.mv-md code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em;
+  background: var(--mv-surface); border: 1px solid var(--mv-line-soft); border-radius: 5px; padding: 1.5px 6px; }
+.mv-md pre { background: var(--mv-surface); border: 1px solid var(--mv-line-soft); border-radius: 10px;
+  padding: 16px 18px; overflow-x: auto; margin: 0 0 16px; }
+.mv-md pre code { background: none; border: 0; padding: 0; font-size: 13px; line-height: 1.65; }
+/* tables are CONTAINED (Notion): outer border + radius, header surface, row hairlines */
+.mv-md table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 4px 0 18px;
+  font-size: 14.5px; border: 1px solid var(--mv-line-soft); border-radius: 10px; overflow: hidden; }
+.mv-md th, .mv-md td { text-align: left; padding: 9px 14px; }
+.mv-md th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600;
+  color: var(--mv-faint); background: var(--mv-surface); border-bottom: 1px solid var(--mv-line-soft); }
+.mv-md td { border-bottom: 1px solid var(--mv-line-soft); }
+.mv-md tr:last-child td { border-bottom: 0; }
+.mv-md img { max-width: 100%; border-radius: 8px; }
+.mv-md hr { border: 0; border-top: 1px solid var(--mv-line-soft); margin: 32px 0; }
+.mv-md input[type="checkbox"] { appearance: auto; accent-color: var(--mv-accent); width: 15px; height: 15px;
+  margin: 0 8px 0 0; vertical-align: -2px; }
 .mv-md-noimg { font-size: 13px; color: var(--mv-faint); font-style: italic; }
 `
