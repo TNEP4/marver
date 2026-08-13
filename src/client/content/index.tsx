@@ -114,6 +114,7 @@ body { margin: 0; }
 .mv-doc {
   --mv-bg: #FFFFFF; --mv-surface: #F7F7F9; --mv-line: #D1D1D6; --mv-line-soft: #E5E5EA;
   --mv-text: #1C1C1E; --mv-muted: #636366; --mv-faint: #8E8E93; --mv-accent: #0088FF;
+  --mv-block-bg: rgba(20, 22, 28, 0.02); --mv-block-line: rgba(20, 22, 28, 0.07);
   box-sizing: border-box; width: 100%;
   background: var(--mv-bg); color: var(--mv-text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -123,6 +124,7 @@ body { margin: 0; }
 .dark .mv-doc, [data-theme="dark"] .mv-doc {
   --mv-bg: #1C1C1E; --mv-surface: #26262A; --mv-line: #3A3A3C; --mv-line-soft: #2C2C2E;
   --mv-text: #F2F2F7; --mv-muted: #AEAEB2; --mv-faint: #8E8E93; --mv-accent: #0091FF;
+  --mv-block-bg: rgba(255, 255, 255, 0.025); --mv-block-line: rgba(255, 255, 255, 0.07);
 }
 .mv-doc * { box-sizing: border-box; }
 .mv-row { display: flex; flex-wrap: wrap; align-items: flex-start; }
@@ -130,9 +132,10 @@ body { margin: 0; }
 .mv-row > .mv-space { flex: none; }
 .mv-col { display: flex; flex-direction: column; min-width: 0; }
 
-/* the rubber: diagram + image blocks own their breathing room */
-.mv-block { margin: 0; padding: ${UNIT}px; border: 1px solid var(--mv-line-soft);
-  border-radius: 10px; background: var(--mv-surface); }
+/* the rubber: diagram + image blocks own their breathing room. The surface is
+   a whisper, not a card - the content pops, the block only frames it */
+.mv-block { margin: 0; padding: ${UNIT}px; border: 1px solid var(--mv-block-line);
+  border-radius: 10px; background: var(--mv-block-bg); }
 .mv-block figcaption, .mv-img figcaption { font-size: 12.5px; color: var(--mv-faint); padding-top: 8px; }
 .mv-diagram-svg { display: flex; justify-content: center; }
 .mv-diagram-svg svg { max-width: 100%; height: auto; }
