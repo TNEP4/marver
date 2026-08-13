@@ -109,6 +109,28 @@ a quadrant for prioritization, a state diagram for lifecycle logic, a sequence
 for API choreography. The syntax reference is the Mermaid docs:
 https://mermaid.js.org/intro/ - pull the one page you need, apply, return.
 
+**Color carries meaning - and the floor is never gray-on-gray.** The marver
+theme already colors every node (accent-washed fills, accent borders, both
+modes) - a default diagram looks designed with zero effort, so never hand-set
+grays "to be safe" and never re-theme (init directives are stripped anyway).
+Where the diagram has SEMANTICS, add them with `classDef` on top:
+
+```
+flowchart LR
+  A[Draft] --> B{Review?} -->|approved| C[Published]
+  B -->|rejected| D[Archived]
+  classDef win fill:#34C759,stroke:#248A3D,color:#fff
+  classDef stop fill:#FF383C,stroke:#D70015,color:#fff
+  class C win
+  class D stop
+```
+
+Use the system palette (the same 12 colors the series ramp uses), a few
+classes at most, and never encode meaning in color ALONE - the label or shape
+must carry it too. Check the diagram in BOTH themes (`d`): fills flip with
+the theme, hand-set classDef colors do not, so pick values that hold on both
+grounds (the system colors do).
+
 ## Images and mood boards
 
 Images arrive through the conversation: the human dumps screenshots and links,

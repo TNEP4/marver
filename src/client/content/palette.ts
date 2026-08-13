@@ -24,29 +24,36 @@ export function themeVars(dark: boolean): Record<string, string> {
   const surface = dark ? '#1C1C1E' : '#FFFFFF'
   const blue = dark ? ACCENT.blue.dark : ACCENT.blue.light
   const purple = dark ? ACCENT.purple.dark : ACCENT.purple.light
+  // Nodes are ACCENTED by default - a plain flowchart only ever touches
+  // primaryColor, so a gray primary meant every default diagram rendered
+  // gray-on-gray (Nic's dogfood catch, 2026-08-13). Structure (lines, clusters,
+  // labels) stays grayscale; the shapes carry the marver blue.
+  const blueWash = dark ? '#123A5C' : '#E4F0FF'
+  const purpleWash = dark ? '#3A1440' : '#F8E4FC'
+  const tealWash = dark ? '#0C3B40' : '#DFF7F9'
   const vars: Record<string, string> = {
     fontFamily: FONT_STACK,
     fontSize: '14px',
     background: surface,
-    mainBkg: g[4],                    // node fill: gray5
-    primaryColor: g[4],
+    mainBkg: blueWash,                // the default node: blue-washed, blue-edged
+    primaryColor: blueWash,
     primaryTextColor: text,
-    primaryBorderColor: g[2],         // gray3
-    nodeBorder: g[2],
+    primaryBorderColor: blue,
+    nodeBorder: blue,
     lineColor: g[0],                  // gray1 - edges read as drawing strokes
     textColor: text,
-    secondaryColor: dark ? '#123A5C' : '#E0F0FF',   // blue-washed fill for secondary nodes
+    secondaryColor: purpleWash,
     secondaryTextColor: text,
-    secondaryBorderColor: blue,
-    tertiaryColor: dark ? '#3A1440' : '#F8E4FC',    // purple-washed
+    secondaryBorderColor: purple,
+    tertiaryColor: tealWash,
     tertiaryTextColor: text,
-    tertiaryBorderColor: purple,
+    tertiaryBorderColor: dark ? '#00D2E0' : '#00C3D0',
     clusterBkg: dark ? '#232326' : '#FAFAFC',
     clusterBorder: g[3],
     edgeLabelBackground: surface,
     titleColor: text,
-    actorBkg: g[4],
-    actorBorder: g[2],
+    actorBkg: blueWash,
+    actorBorder: blue,
     actorTextColor: text,
     signalColor: g[0],
     signalTextColor: text,
