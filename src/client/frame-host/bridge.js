@@ -41,3 +41,157 @@ if (isHtmlFrame) {
 // iframe's document, so the shell's blocker cannot see them). Keyboard cmd +/- untouched.
 window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }, { passive: false })
 document.addEventListener('gesturestart', (e) => e.preventDefault())
+
+// ---- laser mode + element picking (SPEC-M3 §5, §7) ----------------------------------
+// Laser: one injected stylesheet, outline only (zero layout shift), depth-based hue -
+// each nesting level steps 60° around the wheel, cycling at 6. Picking: laser plus a
+// click interception that captures the anchor bundle and posts it to the shell.
+
+const LASER_ID = 'mv-laser-style'
+const laserCss = () => {
+  // depth via unrolled descendant combinators - CSS custom properties cannot cycle
+  let rules = 'body { --mv-hue: 0 }\n'
+  for (let d = 1; d <= 12; d++)
+    rules += `body ${'> * '.repeat(d)}{ --mv-hue: ${(d % 6) * 60} }\n`
+  return rules + `
+body *:not(script):not(style) { outline: 1px solid hsl(var(--mv-hue) 85% 55% / .75); outline-offset: -1px }
+body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-offset: -2px;
+  background-image: linear-gradient(hsl(var(--mv-hue) 95% 50% / .08), hsl(var(--mv-hue) 95% 50% / .08)) }
+#mv-laser-label { position: fixed; z-index: 2147483647; pointer-events: none; outline: none !important;
+  font: 600 10px -apple-system, system-ui, sans-serif; color: #fff; background: rgba(20, 20, 24, .92);
+  padding: 3px 7px; border-radius: 5px; max-width: 340px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; letter-spacing: .01em }
+`
+}
+
+let laserOn = false, laserWanted = false, pickOn = false, hoverEl = null, labelEl = null
+
+const setLaser = (on) => {
+  laserOn = on
+  const cur = document.getElementById(LASER_ID)
+  if (on && !cur) {
+    const s = document.createElement('style')
+    s.id = LASER_ID
+    s.textContent = laserCss()
+    document.head.appendChild(s)
+  } else if (!on && cur) cur.remove()
+  if (!on) clearHover()
+}
+
+const clearHover = () => {
+  if (hoverEl) { delete hoverEl.dataset.mvHover; hoverEl = null }
+  if (labelEl) { labelEl.remove(); labelEl = null }
+}
+
+const describe = (el) => {
+  const tag = el.tagName.toLowerCase()
+  const loc = el.dataset.mvLoc
+  const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 40)
+  return loc ? `${tag} · ${loc}` : text ? `${tag} · “${text}”` : tag
+}
+
+document.addEventListener('mousemove', (e) => {
+  if (!laserOn) return
+  const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
+  if (!el || el === hoverEl) { if (labelEl && hoverEl) place(labelEl, e); return }
+  clearHover()
+  hoverEl = el
+  el.dataset.mvHover = '1'
+  labelEl = document.createElement('div')
+  labelEl.id = 'mv-laser-label'
+  labelEl.textContent = describe(el)
+  document.body.appendChild(labelEl)
+  place(labelEl, e)
+}, true)
+const place = (label, e) => {
+  const pad = 14
+  label.style.left = Math.min(e.clientX + pad, innerWidth - label.offsetWidth - 4) + 'px'
+  label.style.top = Math.min(e.clientY + pad, innerHeight - label.offsetHeight - 4) + 'px'
+}
+
+// the anchor bundle (SPEC-M3 §5): every rung captured at pick time
+const cssPath = (el) => {
+  const seg = []
+  for (let cur = el; cur && cur !== document.body; cur = cur.parentElement) {
+    if (cur.id) { seg.unshift(`#${CSS.escape(cur.id)}`); break }
+    const tag = cur.tagName.toLowerCase()
+    let n = 1
+    for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling)
+      if (sib.tagName === cur.tagName) n++
+    seg.unshift(n > 1 ? `${tag}:nth-of-type(${n})` : tag)
+  }
+  return seg.join(' > ')
+}
+const anchorBundle = (el, e) => {
+  const r = el.getBoundingClientRect()
+  const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ')
+  return {
+    el: {
+      semantics: {
+        tag: el.tagName.toLowerCase(),
+        role: el.getAttribute('role') ?? undefined,
+        ariaLabel: el.getAttribute('aria-label') ?? undefined,
+        testId: el.getAttribute('data-testid') ?? undefined,
+        quote: text.slice(0, 200) || undefined,
+      },
+      cssPath: cssPath(el),
+      source: el.dataset.mvLoc ?? undefined,
+    },
+    pos: {
+      fx: r.width ? Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) : .5,
+      fy: r.height ? Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) : .5,
+    },
+    rect: { x: r.left, y: r.top, w: r.width, h: r.height },   // frame-viewport coords for the shell's pin math
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (!pickOn) return
+  e.preventDefault()
+  e.stopPropagation()
+  const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
+  if (el) post({ type: 'sh:picked', id, anchor: anchorBundle(el, e) })
+}, true)
+
+/** Resolve a stored anchor back to a rect (the ladder, §5): semantics-verified CSS
+ *  path first, then a quote scan; null = orphan. The shell asks, the frame answers. */
+const resolveAnchor = (anchor) => {
+  const want = anchor?.el?.semantics ?? {}
+  const match = (el) => {
+    if (want.tag && el.tagName.toLowerCase() !== want.tag) return false
+    const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ')
+    if (want.quote && !(text.startsWith(want.quote.slice(0, 60)) || text.includes(want.quote.slice(0, 40)))) return false
+    return true
+  }
+  try {
+    const byPath = anchor?.el?.cssPath && document.querySelector(anchor.el.cssPath)
+    if (byPath && match(byPath)) return byPath
+  } catch { /* stale selector */ }
+  if (want.testId) {
+    const el = document.querySelector(`[data-testid="${CSS.escape(want.testId)}"]`)
+    if (el && match(el)) return el
+  }
+  if (want.quote && want.tag) {
+    for (const el of document.querySelectorAll(want.tag))
+      if (match(el)) return el
+  }
+  return null
+}
+
+window.addEventListener('message', (e) => {
+  const m = e?.data
+  if (!m || typeof m !== 'object') return
+  // pick implies laser; when either flips, the union decides (laser returns to its
+  // own toggle state when picking ends)
+  if (m.type === 'sh:laser') { laserWanted = !!m.on; setLaser(laserWanted || pickOn) }
+  if (m.type === 'sh:pick') { pickOn = !!m.on; setLaser(laserWanted || pickOn) }
+  if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
+    const rects = m.anchors.map((a) => {
+      const el = resolveAnchor(a.anchor)
+      if (!el) return { key: a.key, orphan: true }
+      const r = el.getBoundingClientRect()
+      return { key: a.key, rect: { x: r.left, y: r.top, w: r.width, h: r.height } }
+    })
+    post({ type: 'sh:anchor-rects', id, rects })
+  }
+})
