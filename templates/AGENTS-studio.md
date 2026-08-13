@@ -27,6 +27,8 @@ phase of wrong work.
 
 First sessions are teaching sessions: narrate what you do and why in short plain
 sentences - the human should learn the tool by watching you work (welcome.md).
+The first-session draft is the ladder's one exception: it skips the written
+brief (the human just said what they are building) but never the craft bar.
 
 Stuck, or the human is unhappy with a result? instructions/reference/ holds the deep
 guides (layout, typography, color, motion, copy, states, tuning, critique, concepts) -
@@ -38,7 +40,8 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
   export const meta = { title: "...", viewport: "mobile" }   // literal values only
   // viewport names come from design/config.ts (default: mobile, tablet, laptop, monitor;
   // tv available commented-out). Pick the one the screen is designed for - the human can
-  // flip the whole board to any device (Devices menu, hotkeys 0-5) to check responsiveness.
+  // flip the whole board to any device (Devices menu; digit keys - 0 restores each
+  // frame's own size, 1..n per configured device) to check responsiveness.
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
 - VERSIONS are sibling frames with letter prefixes, and the canvas understands them:
   design/scenes/landing/a-terminal.tsx + b-editorial.tsx form a VARIANT GROUP - kept

@@ -160,24 +160,33 @@ export function init(root: string, opts: InitOpts) {
   // while the repo has no app, and init deletes it the moment detection finds one.
   // AGENTS.md carries only the one-line STOP pointer (uiGuidance).
   const setupPath = join(design, 'instructions', 'setup.md')
-  const ourSetup = () => {
-    try {
-      const s = readFileSync(setupPath, 'utf8')
-      return s.startsWith('# Setup required') && s.includes('marver init')
-    } catch { return false }
-  }
-  const appJustAppeared = !noApp(host) && existsSync(setupPath) && ourSetup()
-  if (noApp(host)) {
-    if (!existsSync(setupPath)) write('instructions/setup.md', SETUP_MD)
-    // setup.md is machinery, not content: while it is ours (never hand-edited into
-    // something else - ourSetup checks the anchors), a newer template replaces it
-    else if (ourSetup() && readFileSync(setupPath, 'utf8') !== SETUP_MD) {
-      writeFileSync(setupPath, SETUP_MD)
-      created.push('design/instructions/setup.md (updated)')
+  // absent | ours-pristine | ours-edited | foreign. Marker-carrying files (0.2.4+)
+  // are judged by their hash; markerless files with our anchors are 0.2.2/0.2.3-era,
+  // pristine-by-construction (write-once and machinery nobody edits by design).
+  const setupState = (): string => {
+    if (!existsSync(setupPath)) return 'absent'
+    const s = readFileSync(setupPath, 'utf8')
+    if (s.startsWith(MANAGED_PREFIX)) {
+      const recorded = s.slice(MANAGED_PREFIX.length).split(' ')[0]
+      const nl = s.indexOf('\n')
+      return nl >= 0 && hashBody(s.slice(nl + 1)) === recorded ? 'ours-pristine' : 'ours-edited'
     }
-  } else if (appJustAppeared) {   // delete only what we authored
+    return s.startsWith('# Setup required') && s.includes('marver init') ? 'ours-pristine' : 'foreign'
+  }
+  const setupWas = setupState()
+  const appJustAppeared = !noApp(host) && (setupWas === 'ours-pristine' || setupWas === 'ours-edited')
+  if (noApp(host)) {
+    // managed lifecycle: creates it, refreshes a pristine one on upgrade, preserves
+    // and stages around a human-edited one - user bytes never lose. Markerless
+    // 0.2.2/0.2.3-era files would read as user-owned to writeManaged; they are
+    // pristine machinery (setupState says so) - recreate them onto the marker.
+    if (setupWas === 'ours-pristine' && !readFileSync(setupPath, 'utf8').startsWith(MANAGED_PREFIX)) rmSync(setupPath)
+    if (setupWas !== 'foreign') writeManaged('instructions/setup.md', SETUP_MD)
+  } else if (setupWas === 'ours-pristine') {   // delete only what we authored, unedited
     rmSync(setupPath)
     console.log(`  - design/instructions/setup.md removed (app detected - setup complete)`)
+  } else if (setupWas === 'ours-edited') {
+    console.log(`  - design/instructions/setup.md: app detected, but you customized the file - delete it yourself when setup is done`)
   }
 
   // design/tsconfig.json extends the root config only when one EXISTS (friction log #4).
@@ -195,16 +204,21 @@ export function init(root: string, opts: InitOpts) {
   // Refresh the ones the user never touched: byte-compare against the exact no-app
   // output, so an edited file is never on the losing side.
   if (appJustAppeared) {
-    const refresh = (rel: string, noAppPristine: string, next: string) => {
+    // candidate baselines, because the no-app run was not always identical: a toaster
+    // dep can be detected with no app around it. A pre-existing root tsconfig with
+    // since-changed paths stays stale by design - unknowable old output; configure.md's
+    // checklist catches unresolvable aliases.
+    const refresh = (rel: string, noAppPristine: string[], next: string) => {
       try {
-        if (noAppPristine !== next && readFileSync(join(design, rel), 'utf8') === noAppPristine) {
+        if (!noAppPristine.includes(next) && noAppPristine.includes(readFileSync(join(design, rel), 'utf8'))) {
           writeFileSync(join(design, rel), next)
           created.push(`design/${rel} (updated for the detected app)`)
         }
       } catch { /* absent - write() above already created the fresh version */ }
     }
-    refresh('providers.tsx', providersTemplate(null, null), providersTemplate(host.router, host.toaster, host.routerPkg))
-    refresh('tsconfig.json', STANDALONE_TSCONFIG, tsconfigNow())
+    refresh('providers.tsx', [providersTemplate(null, null), providersTemplate(null, host.toaster, host.routerPkg)],
+      providersTemplate(host.router, host.toaster, host.routerPkg))
+    refresh('tsconfig.json', [STANDALONE_TSCONFIG], tsconfigNow())
   }
   write('.gitignore', '.local/\n.dist/\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
@@ -232,8 +246,8 @@ export function init(root: string, opts: InitOpts) {
   │                                                                       │
   │ Setup instructions: design/instructions/setup.md. Your agent will     │
   │ ask what you are building, propose a stack, set it up with you, and   │
-  │ re-run init - that file then removes itself. AGENTS.md carries a      │
-  │ STOP so nothing gets designed against components that do not exist.   │
+  │ re-run init - that file then removes itself. AGENTS.md points there   │
+  │ so nothing gets designed against components that do not exist.        │
   └───────────────────────────────────────────────────────────────────────┘`)
   }
   console.log(`\n  commit design/ - only .local/ is ignored`)
@@ -244,7 +258,7 @@ export function init(root: string, opts: InitOpts) {
   if (!noApp(host) && !existsSync(join(design, 'DESIGN.md')))
     console.log(`\n  note: design/DESIGN.md (the brand doc) does not exist yet - have your agent create it from the app's tokens (instructions/brand.md, Path A) to reach the idle state.`)
   console.log(`\n  next: npx ${NAME} dev   (canvas on http://localhost:${DEFAULTS.port} by default)\n`)
-  if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. Build an onboarding scene - welcome, form, done - mobile-first, using our components."\n`)
+  if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)
 }
 
 const MANAGED_PREFIX = '<!-- marver:managed '
@@ -280,7 +294,7 @@ const noApp = (host: HostInfo) =>
  *  without Tailwind (plain React + CSS) gets guidance, never a dead pointer. */
 function uiGuidance(host: HostInfo, isNoApp: boolean): string {
   if (isNoApp)
-    return `STOP - this repo has no app yet. Read design/instructions/setup.md before designing anything.`
+    return `Setup required - this repo has no app yet: read design/instructions/setup.md and follow it before designing anything.`
   if (host.shadcn)
     return `Use the app's UI: import from ${host.shadcn.uiAlias}; style with the app's Tailwind classes.`
   if (host.tailwind)

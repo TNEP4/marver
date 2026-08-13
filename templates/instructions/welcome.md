@@ -19,8 +19,8 @@ every device size - before app logic is written.
 
 ## Empty repo?
 
-STOP - design/instructions/setup.md is the authority (it exists only while the
-repo has no app). Follow it end to end; it sends you back here for the tour.
+design/instructions/setup.md is the authority (it exists only while the repo
+has no app). Follow it end to end; it sends you back here for the tour.
 
 ## Existing codebase - first session flow
 
@@ -64,7 +64,7 @@ URL. The highlights, all real features:
   switch device presets - 1-4 for the configured devices, 0 back to each
   frame's own size - scoped to the selection when one exists, the whole board
   otherwise. `d` cycles light/dark the same way: selected frames, or the
-  entire canvas.
+  entire canvas view (frames pinned to a theme in their meta stay put).
 - **Touch it.** Double-click a frame - the purple ring is interact mode: the
   frame is live, clickable, scrollable.
 - **Play it.** `p` opens play mode: the design full screen in a device, with

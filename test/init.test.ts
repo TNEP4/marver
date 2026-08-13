@@ -29,7 +29,7 @@ describe('init: the method layer (0.2.2)', () => {
       expect(read(`instructions/${f}.md`)).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
     for (const f of ['layout', 'typography', 'color', 'motion', 'copy', 'tune', 'critique', 'states', 'delight', 'operate', 'concepts', 'slop'])
       expect(read(`instructions/reference/${f}.md`)).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
-    expect(read('instructions/setup.md')).toMatch(/^# Setup required/)
+    expect(read('instructions/setup.md')).toContain('# Setup required')
     expect(read('AGENTS.md')).toContain('design/instructions/setup.md')
     expect(read('AGENTS.md')).toContain('## The method (binding)')
   })
@@ -170,5 +170,17 @@ describe('init: onboarding (SPEC-025)', () => {
     init(root, OPTS)
     expect(read('instructions/welcome.md')).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
     expect(read('AGENTS.md')).toContain('instructions/welcome.md')
+  })
+
+  it('an edited setup.md is preserved while no-app, and survives the transition', () => {
+    init(root, OPTS)
+    const setup = join(root, 'design', 'instructions', 'setup.md')
+    writeFileSync(setup, readFileSync(setup, 'utf8') + '\nMY NOTES\n')
+    init(root, OPTS)   // still no app: edited -> untouched
+    expect(readFileSync(setup, 'utf8')).toContain('MY NOTES')
+    appify()
+    init(root, OPTS)   // app detected: edited -> kept, told to delete manually
+    expect(existsSync(setup)).toBe(true)
+    expect(readFileSync(setup, 'utf8')).toContain('MY NOTES')
   })
 })

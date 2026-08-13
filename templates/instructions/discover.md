@@ -2,7 +2,8 @@
 
 Run this phase for any NEW surface, feature, or project. Skip it only when a brief
 already answers everything below. Its output is a written brief; nothing gets designed
-until the brief has a human nod.
+until the brief has a human nod. (One exception: the first-session draft
+(welcome.md) skips the brief - the human just said what they are building.)
 
 ## 1. Read the repo, then interview
 
