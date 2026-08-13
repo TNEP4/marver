@@ -328,6 +328,21 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     copiedAssets++
   }
 
+  // comment logs for published boards ride along as the SEED (SPEC-M3 §2): serve
+  // unions them into its live store on boot - a republish adds, never clobbers
+  const commentsDir = join(root, 'design', 'comments')
+  if (existsSync(commentsDir)) {
+    let seeded = 0
+    for (const n of publishedNames) {
+      const f = join(commentsDir, `${n}.jsonl`)
+      if (!existsSync(f)) continue
+      mkdirSync(join(outDir, 'design', 'comments'), { recursive: true })
+      cpSync(f, join(outDir, 'design', 'comments', `${n}.jsonl`))
+      seeded++
+    }
+    if (seeded) console.log(`  comments: ${seeded} board log${seeded === 1 ? '' : 's'} seeded`)
+  }
+
   // serve reads this: gate page title, branding footer, and the app's own logo when one
   // exists (agent-native convention: design/logo.svg|png; host public/ as fallback)
   let name = basename(root)

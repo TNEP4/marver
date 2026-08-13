@@ -7,7 +7,7 @@
  */
 import { createServer } from 'node:http'
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { NAME } from '../cli/name.ts'
 
@@ -21,7 +21,7 @@ const MIME: Record<string, string> = {
 const COOKIE = 'mv_a'
 const MONTH = 30 * 24 * 3600
 
-export function serve(root: string, portFlag?: number) {
+export async function serve(root: string, portFlag?: number) {
   const dist = join(root, 'design', '.dist')
   if (!existsSync(join(dist, 'index.html'))) {
     console.error(`[${NAME}] design/.dist not found - run \`npx ${NAME} build\` first.`)
@@ -30,6 +30,38 @@ export function serve(root: string, portFlag?: number) {
   const realDist = realpathSync(dist)
   let meta: { name: string; branding: boolean; logo?: string } = { name: 'Marver', branding: true }
   try { meta = { ...meta, ...JSON.parse(readFileSync(join(dist, 'meta.json'), 'utf8')) } } catch { /* defaults */ }
+
+  // ---- collaboration (SPEC-M3): on when MARVER_DATA_DIR names a durable home ----
+  let collab: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
+  if (process.env.MARVER_DATA_DIR) {
+    const { collabHandler } = await import('./collab.ts')
+    const { appendEvents, readLog } = await import('./comments.ts')
+    const { dataDir } = await import('./comments.ts')
+    const dir = dataDir()
+    // the load-bearing seed rule: store = union of bundle seed + what it already holds.
+    // Republishing must never clobber feedback collected since the last deploy.
+    const seedDir = join(dist, 'design', 'comments')
+    if (existsSync(seedDir))
+      for (const f of readdirSync(seedDir)) {
+        if (!f.endsWith('.jsonl')) continue
+        const board = f.slice(0, -6)
+        appendEvents(join(dir, 'comments'), board, readLog(seedDir, board))
+      }
+    collab = collabHandler(dir, dist)
+    // bootstrap: a fresh store has no owner to mint invites. MARVER_OWNER_EMAIL names
+    // the first account; its one-time claim link prints HERE (deploy logs are the
+    // trusted channel the deployer already reads - the Jupyter token pattern).
+    const owner = process.env.MARVER_OWNER_EMAIL
+    if (owner) {
+      const { loadStore, createInvite, normEmail } = await import('./auth.ts')
+      const store = loadStore(dir)
+      if (!store.users.length && !store.invites.some((i) => i.emailNorm === normEmail(owner))) {
+        const { token } = createInvite(dir, owner)
+        console.log(`\n  owner bootstrap: ${normEmail(owner)} claims their account at`)
+        console.log(`    /#/claim?token=${token}   (single-use, 7 days)\n`)
+      }
+    }
+  }
 
   const password = process.env.MARVER_PASSWORD ?? ''
   // verifier: scrypt-derived, fixed length - each guess pays the scrypt cost (a natural
@@ -77,7 +109,20 @@ export function serve(root: string, portFlag?: number) {
       // Favicons and the app logo are the one exemption: the gate page itself wears
       // them, and they carry no design data.
       const cosmetic = url.pathname.startsWith('/__mv/favicon/') || /^\/__mv\/logo\.(svg|png)$/.test(url.pathname)
-      if (!authed(req) && !cosmetic) return gate(res, meta)
+      if (!authed(req) && !cosmetic) {
+        // bearer requests (dev proxy / agent CLI) prove themselves to the account
+        // layer instead - the gate lets them through to the API only
+        if (!(collab && url.pathname.startsWith('/__mv/api/') && /^Bearer /.test(String(req.headers.authorization ?? ''))))
+          return gate(res, meta)
+      }
+    }
+
+    // the collaboration API sits behind the gate, before static
+    if (collab && url.pathname.startsWith('/__mv/api/')) {
+      collab(req, res, url).then((handled) => {
+        if (!handled) { res.statusCode = 404; res.end('not found') }
+      }).catch(() => { res.statusCode = 500; res.end('error') })
+      return
     }
 
     // static: sanitized path under dist; extensionless → index.html (hash routing).
