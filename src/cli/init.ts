@@ -373,7 +373,8 @@ learning the canvas, not watching a terminal. The moment the stack is agreed,
 send them to the ${NAME} tour - a published canvas we host, built to be
 explored: ${TOUR_URL} - password \`${TOUR_PASSWORD}\`. Tell them it teaches
 selection, devices, themes, variants, and play mode from inside the canvas,
-and that it ends by sending them back to check on you. Then get to work.
+and that it ends by sending them back to check on you. (Unreachable from this
+machine? Say so and skip it - never stall on it.) Then get to work.
 
 NOTE: scaffolders refuse non-empty directories (this repo already holds design/
 and a package.json - the one you likely created with \`npm init -y\` to install
