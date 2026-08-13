@@ -39,7 +39,9 @@ token-level work once a direction exists.
    - glassmorphism as decoration, gradient text, Inter/Geist/Space Grotesk as the
      "safe" pick
    - emoji as icons, `rounded-lg` on everything, everything centered
-   (the complete tell catalog: reference/slop.md)
+   (the complete tell catalog: reference/slop.md; icons and real-asset rules:
+   craft.md "Real assets" - Phosphor is the default icon system when the repo
+   has none)
 4. **Settle it into tokens.** The winning direction becomes CSS custom properties in
    the theme (grounds, text tiers, accent + meaning, radius scale, spacing scale, two
    type roles minimum). Then write DESIGN.md as in Path A. Components consume tokens;

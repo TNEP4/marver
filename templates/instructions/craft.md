@@ -76,6 +76,30 @@ it on review passes.
 - Choosing light or dark by product category reflex - the use scene decides, or
   DESIGN.md already did.
 
+## Real assets - fetched, not faked
+
+The difference between a frame that feels alive and one that feels generated is
+usually the assets. Doing the work - finding, downloading, and wiring the real
+thing - changes everything. This section is binding, not aspiration:
+
+- **Icons come from a real icon system, Phosphor by default.** The app's existing
+  icon library always wins (consistency beats preference); when the repo has none,
+  install Phosphor (`@phosphor-icons/react` or the framework's equivalent) - that
+  is the house default and good taste. One weight throughout a design. Never emoji,
+  never unicode glyphs, never hand-drawn approximations of icons that exist.
+- **Real brands get their real logos.** An integrations row, a payment-methods
+  strip, a press bar, a testimonial card - fetch the ACTUAL marks (official brand
+  or press pages first; Simple Icons for product marks), download them into the
+  repo (the host's `public/` for app frames, `design/assets/` for content frames),
+  SVG preferred, respectful of clear space, checked in both themes. A gray box
+  labeled "Logo" is a defect, not a placeholder.
+- **Imagery is real imagery.** When the design calls for photos or screenshots,
+  fetch and commit them locally with names that say what they are - never
+  hotlink (published canvases make zero external requests, and remote URLs rot).
+- **Licensing sanity, briefly:** brand marks from official sources shown to
+  identify the brand are fine; photos come from sources that permit the use.
+  Unsure about one? Use it, and flag it to the human in the same message.
+
 ## Frame law
 
 - Frames are made of the app's real components and tokens. Rebuilding a lookalike of

@@ -87,6 +87,13 @@ IS - `stripe-checkout-2col.png`, not `img4.png`) and compose the mood board -
 `Row`s of `Img` blocks with captions, short `Md` notes between them. Nothing
 is ingested without intent. Always give an `Img` a caption or alt.
 
+Go get assets yourself too: when the human names an inspiration ("like Stripe's
+checkout", "Linear's sidebar") and you have web access, FETCH the real thing -
+screenshots, official brand logos, product visuals - download into
+`design/assets/` and place them. A mood board of real fetched imagery beats one
+of described imagery every time (the full asset rules: instructions/craft.md,
+"Real assets").
+
 ## When Shape ends
 
 The board holds the agreed flow, spec, and direction. Wireframe picks up from
