@@ -788,6 +788,7 @@ export function App() {
         <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
           <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
         </Tip>
+        <i className="sep" />
         <DeviceMenu />
         <ThemeMenu />
         <i className="sep" />
