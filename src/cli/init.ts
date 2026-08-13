@@ -368,6 +368,15 @@ npx shadcn@latest init
 
 Scaffolder flags drift between versions (create-next-app and shadcn both) - if
 a flag errors or a prompt appears despite --yes, accept the tool's defaults.
+
+Known scaffold bug (hit on every create-next-app + shadcn run so far): shadcn's
+init rewrites the theme CSS's \`@theme inline\` block and leaves
+\`--font-sans: var(--font-sans)\` - self-referential, resolves to nothing, and
+the app silently renders in the browser's default font. After shadcn init,
+open the theme CSS and bind every font token to a variable that actually
+exists (e.g. \`--font-sans: var(--font-geist-sans)\` under Next); check
+--font-heading and friends for the same circularity.
+
 Then START the dev server and
 confirm the starter page renders before moving on. Unsure about the stack's
 conventions? Fetch its docs.

@@ -62,7 +62,9 @@ Small items that are not milestone work. One line each; delete when done.
   OPEN: (1) **`marver check` - strong feature candidate**: validate data-goto targets,
   orphan frames, duplicate view-transition-names, frames that fail to render - all
   answerable from manifest.json + a headless pass; the agent hand-rolled exactly this
-  (merge with the `marver smoke` bullet); (2) frames that 500 look identical to healthy
+  (merge with the `marver smoke` bullet); also flag self-referential CSS custom
+  properties in the theme (`--font-sans: var(--font-sans)` - the shadcn-init scaffold
+  bug that silently drops the app to the browser default font, 2/2 cold starts); (2) frames that 500 look identical to healthy
   boards until a browser opens - dev could surface frame HTTP errors in the terminal;
   (3) tsconfig edits need a Vite restart + node_modules/.vite delete to take - detect
   and say so, or auto-bust; (4) three marver instances on one machine collided on ports
