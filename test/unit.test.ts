@@ -656,13 +656,16 @@ describe('auth - invites, accounts, sessions (SPEC-M3 §3)', async () => {
       auth.signOut(dir, session)
       expect(auth.sessionUser(dir, session)).toBeNull()
     }))
-  it('revokeUser removes account, sessions, and pending invites', () =>
+  it('revokeUser removes a member; the last owner is protected', () =>
     store((dir) => {
-      const { token } = auth.createInvite(dir, 'a@x.com')
-      const { session } = auth.claimInvite(dir, token, { password: 'longenough1', name: 'A' })
-      auth.revokeUser(dir, 'A@X.COM')
+      const a = auth.createInvite(dir, 'a@x.com')
+      auth.claimInvite(dir, a.token, { password: 'longenough1', name: 'Owner' })
+      const b = auth.createInvite(dir, 'b@x.com')
+      const { session } = auth.claimInvite(dir, b.token, { password: 'longenough2', name: 'B' })
+      auth.revokeUser(dir, 'B@X.COM')
       expect(auth.sessionUser(dir, session)).toBeNull()
-      expect(auth.signIn(dir, 'a@x.com', 'longenough1')).toBeNull()
+      expect(auth.signIn(dir, 'b@x.com', 'longenough2')).toBeNull()
+      expect(() => auth.revokeUser(dir, 'a@x.com')).toThrow(/last owner/)
     }))
   it('weak passwords and blank names are rejected at claim', () =>
     store((dir) => {
@@ -670,4 +673,53 @@ describe('auth - invites, accounts, sessions (SPEC-M3 §3)', async () => {
       expect(() => auth.claimInvite(dir, token, { password: 'short', name: 'A' })).toThrow(/at least 8/)
       expect(() => auth.claimInvite(dir, token, { password: 'longenough1', name: '  ' })).toThrow(/display name/)
     }))
+})
+
+describe('validateEvents (SPEC-M3 - acceptance is forever, validate hard)', async () => {
+  const { validateEvents } = await import('../src/server/collab.ts')
+  const me = { email: 'nic@x.com', name: 'Nic', role: 'member', salt: '', hash: '', params: {} as any, createdAt: 0 } as any
+  const mine = { email: 'nic@x.com', name: 'Nic' }
+  const now = () => Date.now()
+  const log = [
+    { id: 'L1', ts: 1755000000000, type: 'create' as const, commentId: 'c-exists', author: { email: 'other@x.com', name: 'Other' }, body: 'hi' },
+  ]
+
+  it('accepts a well-formed create + reply chain', () => {
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now(), type: 'create', commentId: 'c-new00001', author: mine, body: 'x' },
+      { id: 'e-bbbbbbbb', ts: now(), type: 'reply', commentId: 'c-new00002', parentId: 'c-new00001', author: mine, body: 'y' },
+    ], log, me, 'review')).toBeNull()
+  })
+  it('rejects hijacking an existing thread id', () => {
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: 1600000000000, type: 'create', commentId: 'c-exists', author: mine, body: 'mine now' },
+    ], log, me, 'review')).toMatch(/already exists/)
+  })
+  it('rejects author impersonation', () => {
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now(), type: 'create', commentId: 'c-n1000000', author: { email: 'other@x.com' }, body: 'x' },
+    ], log, me, 'review')).toMatch(/signed-in account/)
+  })
+  it('rejects future-dated events', () => {
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now() + 3600_000, type: 'create', commentId: 'c-n1000000', author: mine, body: 'x' },
+    ], log, me, 'review')).toMatch(/timestamp/)
+  })
+  it("rejects editing someone else's comment, allows editing your own", () => {
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now(), type: 'edit', commentId: 'c-exists', author: mine, body: 'rewritten' },
+    ], log, me, 'review')).toMatch(/only the author/)
+    const ownLog = [...log, { id: 'L2', ts: 1755000001000, type: 'create' as const, commentId: 'c-mine0001', author: mine, body: 'v1' }]
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now(), type: 'edit', commentId: 'c-mine0001', author: mine, body: 'v2' },
+    ], ownLog, me, 'review')).toBeNull()
+  })
+  it('rejects replies to ghosts and cross-board events', () => {
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now(), type: 'reply', commentId: 'c-n1000000', parentId: 'c-ghost000', author: mine, body: 'x' },
+    ], log, me, 'review')).toMatch(/parent/)
+    expect(validateEvents([
+      { id: 'e-aaaaaaaa', ts: now(), type: 'create', commentId: 'c-n1000000', author: mine, body: 'x', board: 'other-board' },
+    ], log, me, 'review')).toMatch(/board/)
+  })
 })

@@ -86,17 +86,22 @@ export async function dev(root: string, portFlag?: number) {
   const port = typeof addr === 'object' && addr ? addr.port : config.port
   console.log(`\n  ${NAME} canvas → http://localhost:${port}/\n`)
 
-  // comment sync loop (SPEC-M3 §2): ~30s exchanges with the publish target when
-  // connected. Quiet on failure - the exchange is idempotent, the next one heals.
+  // comment sync loop (SPEC-M3 §2): ~30s exchanges with the publish target. The
+  // ticker ALWAYS runs and re-reads credentials each pass, so `comments connect`
+  // issued while dev is already open starts syncing on the next tick - no restart.
+  // Single-flight; quiet on failure - the exchange is idempotent, the next one heals.
   const { loadCollab, syncOnce } = await import('./sync.ts')
-  if (loadCollab(root)) {
-    console.log(`  comments: syncing with the published canvas (design/.local/collab.json)\n`)
-    const tick = async () => {
+  if (loadCollab(root)) console.log(`  comments: syncing with the published canvas (design/.local/collab.json)\n`)
+  let syncing = false
+  const tick = async () => {
+    if (syncing) return
+    syncing = true
+    try {
       const collab = loadCollab(root)
       if (collab) await syncOnce(root, collab).catch(() => { /* next tick heals */ })
-    }
-    void tick()
-    setInterval(tick, 30_000).unref()
+    } finally { syncing = false }
   }
+  void tick()
+  setInterval(tick, 30_000).unref()
   return server
 }

@@ -52,8 +52,10 @@ the designer, and the coding agent close the feedback loop together.
 ### Security
 
 - Comment mutations are CSRF-protected (double-submit cookie + origin checks) and
-  rate-limited; session and invite tokens are stored hashed; author snapshots are
-  server-stamped (a client cannot claim someone else's identity on a published canvas).
+  rate-limited; session and invite tokens are stored hashed; every pushed event is
+  validated hard (author must match the session, thread ids cannot be hijacked,
+  edits are owner-only, timestamps cannot come from the future) - and accepted
+  events are never rewritten, so id-keyed sync converges byte-identically.
 - v1 trust boundary, stated plainly: frame code in your design repo runs same-origin
   with the shell - review what you merge. Full frame sandboxing is the v1.1 follow-up
   (SPEC-M3 §0 records the probe results and the plan).

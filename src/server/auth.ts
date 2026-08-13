@@ -41,12 +41,25 @@ const token = () => randomBytes(32).toString('base64url')
 
 const storeFile = (dir: string) => join(dir, 'auth.json')
 
+/** Only a MISSING file is an empty store. A present-but-unreadable/corrupt auth.json
+ *  must fail CLOSED - treating it as empty would let the owner bootstrap re-run and
+ *  a later save overwrite every account. */
 export function loadStore(dir: string): Store {
-  try { return { users: [], invites: [], sessions: [], ...JSON.parse(readFileSync(storeFile(dir), 'utf8')) } }
-  catch { return { users: [], invites: [], sessions: [] } }
+  let raw: string
+  try { raw = readFileSync(storeFile(dir), 'utf8') }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { users: [], invites: [], sessions: [] }
+    throw new Error(`auth store unreadable (${(err as Error).message}) - refusing to treat it as empty`)
+  }
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch { throw new Error('auth store is corrupt JSON - refusing to treat it as empty. Restore it or delete it deliberately.') }
+  if (!Array.isArray(parsed?.users) || !Array.isArray(parsed?.invites) || !Array.isArray(parsed?.sessions))
+    throw new Error('auth store has an unexpected shape - refusing to load it')
+  return parsed
 }
 
-/** Atomic rewrite (tmp + rename) - a crash mid-write must never lose every account. */
+/** Atomic rewrite (tmp + rename) - a crash mid-write must never lose every account.
+ *  0600 throughout: the store holds emails and password verifiers. */
 function saveStore(dir: string, store: Store) {
   const file = storeFile(dir)
   mkdirSync(dirname(file), { recursive: true })
@@ -54,8 +67,8 @@ function saveStore(dir: string, store: Store) {
   const now = Date.now()
   store.invites = store.invites.filter((i) => i.exp > now)
   store.sessions = store.sessions.filter((s) => s.exp > now)
-  const tmp = file + '.tmp'
-  writeFileSync(tmp, JSON.stringify(store, null, 2))
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600, flag: 'wx' })
   renameSync(tmp, file)
 }
 
@@ -146,9 +159,14 @@ export function updateProfile(dir: string, email: string, patch: { name?: string
   return user
 }
 
-/** Remove an account and all its sessions (owner action). */
+/** Remove an account and all its sessions (owner action). The LAST owner cannot be
+ *  removed - a store with members but no owner has no one left to administer it,
+ *  and bootstrap will not re-run while any user exists. */
 export function revokeUser(dir: string, email: string) {
   const store = loadStore(dir)
+  const target = store.users.find((u) => normEmail(u.email) === normEmail(email))
+  if (target?.role === 'owner' && !store.users.some((u) => u.role === 'owner' && normEmail(u.email) !== normEmail(email)))
+    throw new Error('cannot remove the last owner - the canvas would have no administrator left')
   store.users = store.users.filter((u) => normEmail(u.email) !== normEmail(email))
   store.sessions = store.sessions.filter((s) => s.emailNorm !== normEmail(email))
   store.invites = store.invites.filter((i) => i.emailNorm !== normEmail(email))

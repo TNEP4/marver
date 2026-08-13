@@ -156,9 +156,14 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
           const incoming = Array.isArray(b.events) ? b.events : []
           const me = localProfile(root)
+          // fill-at-origin, never rewrite: this endpoint is where dev-born events are
+          // CREATED, so completing them here is fine - but an event that already
+          // carries board/author must pass through byte-identical, or the id-keyed
+          // sync would hold two versions of "the same" event forever
           const stamped = incoming.map((ev: any) => ({
-            ...ev, board: cm[1],
-            author: ['create', 'reply', 'react', 'edit'].includes(ev.type) ? me : ev.author,
+            ...ev,
+            board: ev.board ?? cm[1],
+            author: ev.author ?? (['create', 'reply', 'react', 'edit'].includes(ev.type) ? me : undefined),
           }))
           const fresh = appendEvents(dir, cm[1], stamped)
           // push in the background - the periodic sync catches anything this drops
@@ -182,6 +187,12 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
 }
 
 function localProfile(root: string): { email: string; name: string; avatar?: string } {
+  // the connect account IS the dev identity once connected - events born here must
+  // carry an author the published server will accept (it validates author == session)
+  try {
+    const c = JSON.parse(readFileSync(join(root, 'design', '.local', 'collab.json'), 'utf8'))
+    if (typeof c?.email === 'string' && c.email) return { email: c.email, name: c.name ?? 'Designer' }
+  } catch { /* not connected */ }
   try {
     const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
     if (typeof p?.name === 'string') return { email: p.email ?? '', name: p.name, avatar: p.avatar }

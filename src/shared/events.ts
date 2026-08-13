@@ -42,21 +42,23 @@ export function diffEvents(mine: CommentEvent[], theirIds: Iterable<string>): Co
 }
 
 /** Replay a board's events into current thread state. Deterministic: replay order is
- *  (ts, id) so two stores holding the same event SET always derive the same state. */
+ *  (ts, id) so two stores holding the same event SET always derive the same state.
+ *  TWO passes - creates first, then everything else - so a reply whose author's clock
+ *  ran ahead of the creator's still lands instead of being dropped forever. */
 export function replay(events: CommentEvent[]): Thread[] {
   const ordered = [...events].sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
   const threads = new Map<string, Thread>()
   for (const ev of ordered) {
+    if (ev.type !== 'create') continue
+    if (!ev.commentId || threads.has(ev.commentId)) continue
+    threads.set(ev.commentId, {
+      id: ev.commentId, board: ev.board, nodeKey: ev.nodeKey, frame: ev.frame,
+      anchor: ev.anchor, author: ev.author, body: ev.body, ts: ev.ts,
+      resolved: false, replies: [], reactions: {},
+    })
+  }
+  for (const ev of ordered) {
     switch (ev.type) {
-      case 'create': {
-        if (!ev.commentId || threads.has(ev.commentId)) break
-        threads.set(ev.commentId, {
-          id: ev.commentId, board: ev.board, nodeKey: ev.nodeKey, frame: ev.frame,
-          anchor: ev.anchor, author: ev.author, body: ev.body, ts: ev.ts,
-          resolved: false, replies: [], reactions: {},
-        })
-        break
-      }
       case 'reply': {
         const t = ev.parentId ? threads.get(ev.parentId) : undefined
         if (!t || !ev.commentId || t.replies.some((r) => r.id === ev.commentId)) break

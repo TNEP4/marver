@@ -27,6 +27,7 @@ interface CommentsState {
   send(events: CommentEvent[]): Promise<boolean>
   create(body: string): Promise<void>
   reply(threadId: string, body: string): Promise<void>
+  replyOk(threadId: string, body: string): Promise<boolean>
   resolve(threadId: string, reopen?: boolean): Promise<void>
   setMode(on: boolean): void
   setShow(show: boolean): void
@@ -101,9 +102,11 @@ export const useComments = create<CommentsState>((set, get) => {
       if (!board) return false
       const res = await api(`comments/${board}`, { events })
       if (res.status === 401) { set({ needsIdentity: true }); return false }
-      // union only what the server took - a rejected send must not leave phantoms;
-      // client ids keep the eventual SSE/poll echo idempotent
-      if (res.ok) union(events)
+      // union only what the server took - a rejected send must not leave phantoms -
+      // and only if the user is still LOOKING at that board (a slow response after a
+      // board switch must not leak events into the wrong client state); client ids
+      // keep the eventual SSE/poll echo idempotent either way
+      if (res.ok && get().board === board) union(events)
       return res.ok
     },
 
@@ -119,9 +122,10 @@ export const useComments = create<CommentsState>((set, get) => {
       if (ok) set({ draft: null, active: id, commentMode: false })
     },
 
-    async reply(threadId, body) {
-      if (!body.trim()) return
-      await get().send([{
+    async reply(threadId, body) { await get().replyOk(threadId, body) },
+    async replyOk(threadId, body) {
+      if (!body.trim()) return false
+      return get().send([{
         id: uuid(), ts: Date.now(), type: 'reply', commentId: uuid(), parentId: threadId,
         author: get().me ?? undefined, body: body.trim(),
       }])

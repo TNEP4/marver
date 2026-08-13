@@ -33,6 +33,7 @@ export async function serve(root: string, portFlag?: number) {
 
   // ---- collaboration (SPEC-M3): on when MARVER_DATA_DIR names a durable home ----
   let collab: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
+  let bearerCheck: ((token: string) => unknown) | null = null
   if (process.env.MARVER_DATA_DIR) {
     const { collabHandler } = await import('./collab.ts')
     const { appendEvents, readLog } = await import('./comments.ts')
@@ -48,17 +49,19 @@ export async function serve(root: string, portFlag?: number) {
         appendEvents(join(dir, 'comments'), board, readLog(seedDir, board))
       }
     collab = collabHandler(dir, dist)
+    const { loadStore, createInvite, normEmail, sessionUser } = await import('./auth.ts')
+    bearerCheck = (token) => sessionUser(dir, token)
     // bootstrap: a fresh store has no owner to mint invites. MARVER_OWNER_EMAIL names
-    // the first account; its one-time claim link prints HERE (deploy logs are the
+    // the first account; its one-time claim token prints HERE (deploy logs are the
     // trusted channel the deployer already reads - the Jupyter token pattern).
     const owner = process.env.MARVER_OWNER_EMAIL
     if (owner) {
-      const { loadStore, createInvite, normEmail } = await import('./auth.ts')
       const store = loadStore(dir)
       if (!store.users.length && !store.invites.some((i) => i.emailNorm === normEmail(owner))) {
         const { token } = createInvite(dir, owner)
-        console.log(`\n  owner bootstrap: ${normEmail(owner)} claims their account at`)
-        console.log(`    /#/claim?token=${token}   (single-use, 7 days)\n`)
+        console.log(`\n  owner bootstrap for ${normEmail(owner)} (single-use, 7 days):`)
+        console.log(`    on the canvas:  press C, click an element, choose "I have an invite", paste  ${token}`)
+        console.log(`    from the repo:  npx ${NAME} comments connect <this-url> --invite ${token}\n`)
       }
     }
   }
@@ -110,10 +113,14 @@ export async function serve(root: string, portFlag?: number) {
       // them, and they carry no design data.
       const cosmetic = url.pathname.startsWith('/__mv/favicon/') || /^\/__mv\/logo\.(svg|png)$/.test(url.pathname)
       if (!authed(req) && !cosmetic) {
-        // bearer requests (dev proxy / agent CLI) prove themselves to the account
-        // layer instead - the gate lets them through to the API only
-        if (!(collab && url.pathname.startsWith('/__mv/api/') && /^Bearer /.test(String(req.headers.authorization ?? ''))))
-          return gate(res, meta)
+        // bearer requests (dev proxy / agent CLI) may pierce the gate to the API,
+        // but only a VALID session token counts - `Bearer garbage` must not read
+        // comment bodies or subscribe to events
+        const bearerOk = collab && url.pathname.startsWith('/__mv/api/') && (() => {
+          const tok = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
+          return !!tok && !!bearerCheck?.(tok)
+        })()
+        if (!bearerOk) return gate(res, meta)
       }
     }
 

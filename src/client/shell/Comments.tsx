@@ -50,7 +50,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   useEffect(() => {
     const win = iframe.current?.contentWindow
     if (!win || node.status !== 'ready' || !anchored.length) return
-    const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: anchored.map((t) => ({ key: t.id, anchor: t.anchor })) }, '*')
+    const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: anchored.map((t) => ({ key: t.id, anchor: t.anchor })) }, location.origin)
     const onMsg = (e: MessageEvent) => {
       if (e.source !== win || e.data?.type !== 'sh:anchor-rects') return
       const next: typeof rects = {}
@@ -110,10 +110,11 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 }
 
 function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: number }; node: Node }) {
-  const { reply, resolve, setActive } = useComments.getState()
+  const { resolve, setActive } = useComments.getState()
   const [text, setText] = useState('')
   const flip = at.x > node.w * 0.55
-  const submit = async () => { if (text.trim()) { await reply(thread.id, text); setText('') } }
+  // clear only after the server took it - a failed send must not eat the words
+  const submit = async () => { if (text.trim() && await useComments.getState().replyOk(thread.id, text)) setText('') }
   return (
     <div className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
@@ -244,7 +245,7 @@ export function CommentsController() {
   // broadcast pick mode to every frame (laser rides along inside the bridge)
   useEffect(() => {
     for (const f of document.querySelectorAll('iframe'))
-      (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, '*')
+      (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
   }, [commentMode])
 
   return <IdentityDialog />

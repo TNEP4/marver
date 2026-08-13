@@ -44,12 +44,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const commentMode = useComments((s) => s.commentMode)
   useEffect(() => {
     if (node.status === 'ready' || !laser)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, '*')
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, location.origin)
   }, [laser, node.status])
   // comment mode = pick mode in the frame (late loaders join like laser does)
   useEffect(() => {
     if (node.status === 'ready' || !commentMode)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, '*')
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
   }, [commentMode, node.status])
 
   // a frame whose FILE actually changed (e.g. tsx -> html swap, same id) must renavigate

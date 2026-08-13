@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, diffEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 
-export interface Collab { url: string; token: string }
+export interface Collab { url: string; token: string; email?: string; name?: string }
 
 const collabFile = (root: string) => join(root, 'design', '.local', 'collab.json')
 
@@ -42,10 +42,11 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
 
   const boards = [...new Set([...Object.keys(rights), ...listBoards(dir)])]
   const out: Record<string, { pulled: number; pushed: number }> = {}
+  const failures: string[] = []
   for (const board of boards) {
     if (!(board in rights)) continue          // local-only board: nothing published to sync with
     const res = await fetch(`${base}/__mv/api/comments/${board}`, { headers: auth })
-    if (!res.ok) continue
+    if (!res.ok) { failures.push(`${board}: pull ${res.status}`); continue }
     const { events: remote } = await res.json() as { events: CommentEvent[] }
     const pulled = appendEvents(dir, board, remote).length
     let pushed = 0
@@ -57,10 +58,13 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
           body: JSON.stringify({ events: missing.slice(i, i + 100) }),
         })
         if (r.ok) pushed += (await r.json() as any).accepted ?? 0
+        else failures.push(`${board}: push ${r.status} ${((await r.json().catch(() => null)) as any)?.error ?? ''}`.trim())
       }
     }
     out[board] = { pulled, pushed }
   }
+  // a partial exchange must never read as a clean one - the caller decides retry vs surface
+  if (failures.length) throw new Error(`sync incomplete - ${failures.join(' · ')}`)
   return out
 }
 
@@ -90,7 +94,9 @@ async function sessionFrom(res: Response, ctx: string): Promise<string> {
   return token
 }
 
-/** Sign in against a published canvas and persist the device credential. */
+/** Sign in against a published canvas and persist the device credential. The account's
+ *  identity rides along: locally-born events carry it as their author snapshot (the
+ *  server validates the claim against the session - it never rewrites events). */
 export async function connect(root: string, url: string, email: string, password: string, canvasPassword?: string): Promise<void> {
   const base = url.replace(/\/+$/, '')
   const gate = await gateCookie(base, canvasPassword)
@@ -98,7 +104,9 @@ export async function connect(root: string, url: string, email: string, password
     method: 'POST', headers: { 'content-type': 'application/json', ...(gate ? { cookie: gate } : {}) },
     body: JSON.stringify({ email, password }),
   })
-  saveCollab(root, { url: base, token: await sessionFrom(res, 'sign-in') })
+  const token = await sessionFrom(res, 'sign-in')
+  const user = (await res.clone().json().catch(() => null) as any)?.user
+  saveCollab(root, { url: base, token, email: user?.email ?? email, name: user?.name })
 }
 
 /** Claim an invite from the CLI (the dev-first path - no published UI needed). */
@@ -109,5 +117,7 @@ export async function connectClaim(root: string, url: string, invite: string, pr
     method: 'POST', headers: { 'content-type': 'application/json', ...(gate ? { cookie: gate } : {}) },
     body: JSON.stringify({ token: invite, ...profile }),
   })
-  saveCollab(root, { url: base, token: await sessionFrom(res, 'claim') })
+  const token = await sessionFrom(res, 'claim')
+  const user = (await res.clone().json().catch(() => null) as any)?.user
+  saveCollab(root, { url: base, token, email: user?.email, name: user?.name ?? profile.name })
 }

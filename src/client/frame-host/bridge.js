@@ -154,11 +154,15 @@ document.addEventListener('click', (e) => {
 }, true)
 
 /** Resolve a stored anchor back to a rect (the ladder, §5): semantics-verified CSS
- *  path first, then a quote scan; null = orphan. The shell asks, the frame answers. */
+ *  path first, then testId, then a quote scan; null = orphan. Every check compares
+ *  the FULL captured semantics - two textless buttons must not swap silently. */
 const resolveAnchor = (anchor) => {
   const want = anchor?.el?.semantics ?? {}
   const match = (el) => {
     if (want.tag && el.tagName.toLowerCase() !== want.tag) return false
+    if (want.role && el.getAttribute('role') !== want.role) return false
+    if (want.ariaLabel && el.getAttribute('aria-label') !== want.ariaLabel) return false
+    if (want.testId && el.getAttribute('data-testid') !== want.testId) return false
     const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ')
     if (want.quote && !(text.startsWith(want.quote.slice(0, 60)) || text.includes(want.quote.slice(0, 40)))) return false
     return true
@@ -167,18 +171,23 @@ const resolveAnchor = (anchor) => {
     const byPath = anchor?.el?.cssPath && document.querySelector(anchor.el.cssPath)
     if (byPath && match(byPath)) return byPath
   } catch { /* stale selector */ }
-  if (want.testId) {
-    const el = document.querySelector(`[data-testid="${CSS.escape(want.testId)}"]`)
-    if (el && match(el)) return el
-  }
-  if (want.quote && want.tag) {
-    for (const el of document.querySelectorAll(want.tag))
-      if (match(el)) return el
-  }
+  try {
+    if (want.testId) {
+      const el = document.querySelector(`[data-testid="${CSS.escape(want.testId)}"]`)
+      if (el && match(el)) return el
+    }
+    if (want.quote && typeof want.tag === 'string' && /^[a-z][a-z0-9-]*$/.test(want.tag)) {
+      for (const el of document.querySelectorAll(want.tag))
+        if (match(el)) return el
+    }
+  } catch { /* malformed semantics must not sink the whole batch */ }
   return null
 }
 
 window.addEventListener('message', (e) => {
+  // commands come from the SHELL only - the parent window. Anything else (nested
+  // third-party iframes, a hijacked opener) is ignored.
+  if (e.source !== window.parent || window.parent === window) return
   const m = e?.data
   if (!m || typeof m !== 'object') return
   // pick implies laser; when either flips, the union decides (laser returns to its
@@ -186,8 +195,9 @@ window.addEventListener('message', (e) => {
   if (m.type === 'sh:laser') { laserWanted = !!m.on; setLaser(laserWanted || pickOn) }
   if (m.type === 'sh:pick') { pickOn = !!m.on; setLaser(laserWanted || pickOn) }
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
-    const rects = m.anchors.map((a) => {
-      const el = resolveAnchor(a.anchor)
+    const rects = m.anchors.slice(0, 200).map((a) => {
+      let el = null
+      try { el = resolveAnchor(a.anchor) } catch { /* one bad anchor, not the batch */ }
       if (!el) return { key: a.key, orphan: true }
       const r = el.getBoundingClientRect()
       return { key: a.key, rect: { x: r.left, y: r.top, w: r.width, h: r.height } }

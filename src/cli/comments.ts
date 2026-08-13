@@ -10,6 +10,7 @@
  */
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
@@ -76,7 +77,8 @@ export async function commentsCommand(root: string, action: string, value: strin
       const t = allThreads(root).find((t) => t.id === value)
       if (!t) throw new Error(`no thread ${value} in design/comments/`)
       appendEvents(join(root, 'design', 'comments'), t.board, [{
-        id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id, body: String(opts.body),
+        id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id,
+        author: localAuthor(root), body: String(opts.body),
       }])
       await pushIfConnected(root)
       return void console.log(`  replied to ${t.id}`)
@@ -99,5 +101,18 @@ export async function commentsCommand(root: string, action: string, value: strin
 
 const pushIfConnected = async (root: string) => {
   const collab = loadCollab(root)
-  if (collab) await syncOnce(root, collab).catch(() => console.log(`  (push deferred - next sync will carry it)`))
+  if (collab) await syncOnce(root, collab).catch((e) => console.log(`  (push deferred: ${(e as Error).message})`))
+}
+
+/** Author snapshot for CLI-born events: the connected account (the server validates
+ *  authors against the session - an authorless push would be rejected), else the
+ *  local dev profile. */
+const localAuthor = (root: string): { email: string; name?: string } | undefined => {
+  const collab = loadCollab(root)
+  if (collab?.email) return { email: collab.email, name: collab.name }
+  try {
+    const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
+    if (p?.email) return { email: p.email, name: p.name }
+  } catch { /* no profile */ }
+  return undefined
 }

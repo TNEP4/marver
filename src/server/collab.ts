@@ -33,18 +33,80 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
   return !!user && rights[board] === 'comment'
 }
 
+const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile'])
+const ID_RE = /^[\w-]{8,64}$/
+const MAX_BODY_TEXT = 10_000
+
+/** Reject anything the log must not absorb. Returns an error string or null.
+ *  Events are append-only and synced by id, so acceptance is forever - validate hard. */
+export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u: User, board: string): string | null {
+  const now = Date.now()
+  const creates = new Map<string, CommentEvent>()
+  const authors = new Map<string, string>()               // commentId -> author email (create + reply)
+  for (const ev of log) {
+    if (ev.type === 'create' && ev.commentId && !creates.has(ev.commentId)) creates.set(ev.commentId, ev)
+    if ((ev.type === 'create' || ev.type === 'reply') && ev.commentId && ev.author?.email && !authors.has(ev.commentId))
+      authors.set(ev.commentId, ev.author.email.toLowerCase())
+  }
+  const me = u.email.toLowerCase()
+  for (const ev of incoming) {
+    if (!ev || typeof ev !== 'object') return 'malformed event'
+    if (typeof ev.id !== 'string' || !ID_RE.test(ev.id)) return 'event id must be an 8-64 char token'
+    if (!EVENT_TYPES.has(ev.type as string)) return `unknown event type "${ev.type}"`
+    // past timestamps are legitimate (sync carries repo history); the FUTURE is the
+    // attack surface - a far-future edit would win replay forever
+    if (typeof ev.ts !== 'number' || ev.ts < 1_577_836_800_000 || ev.ts > now + 60_000)
+      return 'event timestamp out of bounds'
+    if (ev.board !== undefined && ev.board !== board) return 'event board does not match the endpoint'
+    if (ev.body !== undefined && (typeof ev.body !== 'string' || ev.body.length > MAX_BODY_TEXT)) return 'body too long'
+    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit'
+    if (needsAuthor && ev.author?.email?.toLowerCase() !== me)
+      return 'event author must be the signed-in account'
+    if (typeof ev.commentId !== 'string' || !ID_RE.test(ev.commentId)) {
+      if (ev.type !== 'profile') return 'event needs a commentId'
+    }
+    switch (ev.type) {
+      case 'create':
+        if (creates.has(ev.commentId!)) return 'a thread with that id already exists'
+        creates.set(ev.commentId!, ev)
+        if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
+        break
+      case 'reply':
+        if (typeof ev.parentId !== 'string' || (!creates.has(ev.parentId) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.parentId)))
+          return 'reply parent does not exist'
+        if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
+        break
+      case 'edit': {
+        const owner = authors.get(ev.commentId!)
+        if (!owner) return 'cannot edit a comment that does not exist'
+        if (owner !== me) return 'only the author can edit a comment'
+        break
+      }
+      case 'resolve':
+      case 'reopen':
+        if (!creates.has(ev.commentId!) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.commentId))
+          return 'cannot resolve a thread that does not exist'
+        break
+    }
+  }
+  return null
+}
+
 export function collabHandler(dataDir: string, distDir: string) {
   let rights: Rights = {}
   try { rights = JSON.parse(readFileSync(join(distDir, 'meta.json'), 'utf8')).rights ?? {} } catch { /* no policy = no boards */ }
   const commentsDir = join(dataDir, 'comments')
 
   // ---- SSE hub ----
+  // ids are `<bootEpoch>-<seq>`: a reconnect from a previous boot cannot silently
+  // miss the gap (its Last-Event-ID carries the old epoch → resync)
+  const bootEpoch = randomBytes(4).toString('hex')
   let seq = 0
   const ring: { seq: number; data: string }[] = []          // last 500 broadcast frames
   const clients = new Set<ServerResponse>()
   const broadcast = (board: string, events: CommentEvent[]) => {
     for (const ev of events) {
-      const frame = `id: ${++seq}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
+      const frame = `id: ${bootEpoch}-${++seq}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
       ring.push({ seq, data: frame })
       if (ring.length > 500) ring.shift()
       for (const res of clients) res.write(frame)
@@ -52,13 +114,22 @@ export function collabHandler(dataDir: string, distDir: string) {
   }
   setInterval(() => { for (const res of clients) res.write(': keepalive\n\n') }, 240_000).unref()
 
-  // ---- naive per-IP rate limit on auth attempts (the scrypt cost is the real throttle) ----
+  // ---- rate limit on auth attempts, keyed by BOTH network peer and target email.
+  // X-Forwarded-For is client-controlled; trust it only when the deployer says the
+  // proxy in front is trusted (MARVER_TRUSTED_PROXY=1 - true on Railway/Fly).
+  // The map is capped so header rotation cannot grow it without bound.
   const attempts = new Map<string, { n: number; reset: number }>()
-  const limited = (ip: string): boolean => {
+  const limited = (...keys: string[]): boolean => {
     const now = Date.now()
-    const a = attempts.get(ip)
-    if (!a || a.reset < now) { attempts.set(ip, { n: 1, reset: now + 60_000 }); return false }
-    return ++a.n > 10
+    if (attempts.size > 10_000) for (const [k, a] of attempts) { if (a.reset < now) attempts.delete(k) }
+    if (attempts.size > 20_000) return true                 // under active flooding, fail closed
+    let hit = false
+    for (const key of keys) {
+      const a = attempts.get(key)
+      if (!a || a.reset < now) attempts.set(key, { n: 1, reset: now + 60_000 })
+      else if (++a.n > 10) hit = true
+    }
+    return hit
   }
 
   const cookie = (req: IncomingMessage, name: string): string | undefined =>
@@ -77,6 +148,10 @@ export function collabHandler(dataDir: string, distDir: string) {
     res.end(JSON.stringify(body))
   }
   const readBody = (req: IncomingMessage): Promise<any> => new Promise((resolve, reject) => {
+    // JSON only, declared as such: a cross-site <form> can post text/plain with a
+    // JSON-shaped body, and content-type is the one thing it cannot forge
+    if (!/^application\/json\b/.test(String(req.headers['content-type'] ?? '')))
+      return reject(new Error('content-type must be application/json'))
     let body = ''
     req.on('data', (c) => { body += c; if (body.length > MAX_BODY) { reject(new Error('body too large')); req.destroy() } })
     req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('bad json')) } })
@@ -103,7 +178,9 @@ export function collabHandler(dataDir: string, distDir: string) {
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith('/__mv/api/')) return false
     const path = url.pathname.slice('/__mv/api/'.length)
-    const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '?').split(',')[0]
+    const ip = process.env.MARVER_TRUSTED_PROXY
+      ? String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '?').split(',')[0].trim()
+      : String(req.socket.remoteAddress ?? '?')
     try {
       if (req.method === 'GET') {
         if (path === 'me') {
@@ -123,12 +200,18 @@ export function collabHandler(dataDir: string, distDir: string) {
           res.setHeader('cache-control', 'no-store')
           res.setHeader('x-accel-buffering', 'no')
           res.write(': connected\n\n')
-          const last = Number(req.headers['last-event-id'])
-          if (Number.isFinite(last) && last > 0) {
-            const missed = ring.filter((r) => r.seq > last)
-            // a gap the ring cannot cover (or an older boot) = tell the client to refetch
-            if (missed.length && missed[0].seq !== last + 1) res.write('event: resync\ndata: {}\n\n')
-            else for (const r of missed) res.write(r.data)
+          // resume ids are `<bootEpoch>-<seq>`; a different epoch (restart) or a gap
+          // the ring cannot cover = resync (the client refetches - logs are tiny)
+          const lastRaw = String(req.headers['last-event-id'] ?? '')
+          const lm = /^([0-9a-f]{8})-(\d+)$/.exec(lastRaw)
+          if (lastRaw) {
+            const last = lm && lm[1] === bootEpoch ? Number(lm[2]) : NaN
+            if (!Number.isFinite(last)) res.write('event: resync\ndata: {}\n\n')
+            else {
+              const missed = ring.filter((r) => r.seq > last)
+              if (missed.length && missed[0].seq !== last + 1) res.write('event: resync\ndata: {}\n\n')
+              else for (const r of missed) res.write(r.data)
+            }
           }
           clients.add(res)
           req.on('close', () => clients.delete(res))
@@ -145,7 +228,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
 
       if (path === 'auth/claim') {
-        if (limited(ip)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
         const b = await readBody(req)
         const { user, session } = claimInvite(dataDir, String(b.token ?? ''), {
           password: String(b.password ?? ''), name: String(b.name ?? ''),
@@ -155,9 +238,10 @@ export function collabHandler(dataDir: string, distDir: string) {
         return json(res, 200, { user: publicUser(user) }), true
       }
       if (path === 'auth/signin') {
-        if (limited(ip)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
         const b = await readBody(req)
-        const hit = signIn(dataDir, String(b.email ?? ''), String(b.password ?? ''))
+        const email = String(b.email ?? '').trim().toLowerCase()
+        if (limited(`ip:${ip}`, `em:${email}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        const hit = signIn(dataDir, email, String(b.password ?? ''))
         if (!hit) return json(res, 401, { error: 'wrong email or password' }), true
         setSession(req, res, hit.session)
         return json(res, 200, { user: publicUser(hit.user) }), true
@@ -201,13 +285,14 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const incoming: CommentEvent[] = Array.isArray(b.events) ? b.events : []
         if (incoming.length > 100) return json(res, 400, { error: 'too many events in one push' }), true
-        // the author snapshot is the SERVER's idea of the user, never the client's claim
-        const stamped = incoming.map((ev) => ({
-          ...ev, board: m[1],
-          author: ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit'
-            ? publicUser(u!) : ev.author,
-        }))
-        const fresh = appendEvents(commentsDir, m[1], stamped)
+        // VALIDATE, never rewrite: an accepted event must be byte-identical everywhere
+        // (sync compares ids only - a server that mutates content forks the stores).
+        // The author claim must match the session; ownership gates edits; timestamps
+        // are bounded so nobody time-travels over someone else's thread.
+        const log = readLog(commentsDir, m[1])
+        const bad = validateEvents(incoming, log, u!, m[1])
+        if (bad) return json(res, 400, { error: bad }), true
+        const fresh = appendEvents(commentsDir, m[1], incoming)
         broadcast(m[1], fresh)
         return json(res, 200, { accepted: fresh.length }), true
       }
