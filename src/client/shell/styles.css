@@ -373,6 +373,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-pill-btn.pct { font-variant-numeric: tabular-nums; min-width: 46px }
 .sh-pill-btn.off { color: var(--glass-ink-3); cursor: default }
 .sh-pill-btn.off:hover { background: none; color: var(--glass-ink-3) }
+.sh-pill-btn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent) }
+.sh-pill-btn.on:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent) }
 .sh-pill .sep { width: 1px; height: 16px; background: var(--glass-brd); margin: 0 3px }
 
 /* dropdown menu (theme) - portaled to .sh-app (its own backdrop root), left-aligned to its trigger */

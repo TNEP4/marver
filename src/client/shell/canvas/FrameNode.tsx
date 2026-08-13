@@ -36,6 +36,14 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     }
   }, [node.theme])
 
+  // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
+  // so late loaders join an already-lasered board
+  const laser = useStore((s) => s.laser)
+  useEffect(() => {
+    if (node.status === 'ready' || !laser)
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, '*')
+  }, [laser, node.status])
+
   // a frame whose FILE actually changed (e.g. tsx -> html swap, same id) must renavigate
   useEffect(() => {
     if (!frame) return

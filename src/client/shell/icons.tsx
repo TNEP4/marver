@@ -41,6 +41,7 @@ export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="16
 
 /** Plain UI frame - the rectangle every non-content sidebar row leads with. */
 export const FrameRectIcon = icon(<rect x="40" y="52" width="176" height="152" rx="20" fill="none" stroke="currentColor" strokeWidth="16" />)
+export const LaserIcon = icon(<><circle cx="128" cy="128" r="56" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" /><circle cx="128" cy="128" r="12" /></>)
 
 /* Content-frame intent glyphs (SPEC-026), custom in the same 256-space. */
 export const DiagramShapeIcon = icon(<><rect x="28" y="36" width="88" height="64" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="140" y="156" width="88" height="64" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M116 68 H184 V156" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" /></>)

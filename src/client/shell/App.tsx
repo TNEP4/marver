@@ -6,7 +6,7 @@ import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, FrameRectIcon, GridIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, FrameRectIcon, GridIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
@@ -375,7 +375,7 @@ function ThemeMenu() {
 }
 
 export function App() {
-  const { manifest, nodes, panelOpen, toasts, selection } = useStore()
+  const { manifest, nodes, panelOpen, toasts, selection, laser } = useStore()
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
   const [pillOpen, setPillOpen] = useState(true)
 
@@ -568,6 +568,7 @@ export function App() {
       if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
       if (e.key === 'p') enterPlay()
       if (e.key === 't') { animateLayout(); runTidy() }
+      if (e.key === 'l') s.setLaser(!s.laser)
       if (e.key === 'c' && s.selection.length) {
         const files = s.selection
           .map((k) => { const n = s.nodes.find((x) => x.key === k); return n ? s.frameFor(n)?.file : undefined })
@@ -769,6 +770,9 @@ export function App() {
         <ZoomMenu />
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><GridIcon size={16} /></button>
+        </Tip>
+        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
+          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
         </Tip>
         <i className="sep" />
         <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>

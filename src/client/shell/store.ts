@@ -112,6 +112,7 @@ interface State {
   viewTheme: string                   // the global theme preference; sticky across boards and reloads
   play: { at: string; device: string; theme: string } | null   // play mode (SPEC-M2 §1); at = current frame id
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
+  laser: boolean                      // laser/inspect mode (SPEC-M3 §7): frames outline their structure
   board: string                       // active board name; 'all-scenes' is the auto board
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
@@ -139,6 +140,7 @@ interface State {
   setInteract(key: string | null): void
   setPlay(p: State['play']): void
   setGesture(g: boolean): void
+  setLaser(on: boolean): void
   moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
   setSelectedTheme(theme: string): void
   setDeviceView(name: string | null): void
@@ -388,7 +390,7 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false,
+    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
 
@@ -687,6 +689,7 @@ export const useStore = create<State>((set, get) => {
     // painted as "interactive"). Exiting keeps the frame selected for continuity.
     setInteract(key) { set((s) => ({ interact: key, selection: key ? [key] : s.selection })) },
     setPlay(play) { set({ play }) },
+    setLaser(laser) { set({ laser }) },
     setGesture(gesture) {
       set({ gesture })
       // SPEC-024 §4: a board WITH a layout recipe re-applies it when a resize
