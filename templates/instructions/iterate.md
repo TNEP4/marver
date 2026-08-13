@@ -48,3 +48,31 @@ The human picks a direction; then, in one pass:
 Archived frames are history, not options: never link them from live flows,
 never count them as current design. They exist so "what did we try for the
 editor?" has a visual answer.
+
+## Comments are your work queue
+
+When collaboration is on, humans pin comments to specific elements inside
+frames. Those threads are addressed to YOU as much as to the designer - treat
+the open list as a queue:
+
+```bash
+npx marver comments list --open --json     # what needs you (anchors included)
+npx marver comments reply <thread> --body "…"
+npx marver comments resolve <thread> --addressed-in <scene/frame>
+```
+
+The discipline:
+
+1. **Read the anchor before the words.** Each thread carries the element it
+   points at - tag, quote, source hint, position. "Too cramped" pinned to a
+   button is a different task than "too cramped" on the whole frame.
+2. **Fork, don't overwrite.** Address feedback by creating a NEW variant of the
+   frame (the letter convention above) and iterating there. The commented
+   frame stays as the before; your variant is the after.
+3. **Resolve with the receipt.** `--addressed-in <the-new-variant>` records
+   WHICH frame answered the feedback - the thread becomes an auditable link
+   from complaint to fix. Reply first when the change deserves a sentence of
+   explanation; resolve silently only for trivial mechanical fixes.
+4. **Never resolve what you didn't address.** Disagree? Reply with your
+   reasoning and leave the thread open - the human closes debates, you close
+   completed work.

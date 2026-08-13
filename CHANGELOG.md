@@ -2,6 +2,62 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.4.0 - UNRELEASED
+
+The collaboration release (SPEC-M3): the canvas becomes a place where colleagues,
+the designer, and the coding agent close the feedback loop together.
+
+### Added
+
+- **Element-anchored comments.** `C` enters comment mode: click any element inside a
+  frame (laser outlines guide you) and the thread pins to it - fractional position
+  inside the element's box, so pins ride through responsive reflow. Threads are
+  Google-Docs-shaped: root + one level of replies, resolve/reopen. Anchors survive
+  agent edits via a verified ladder (semantics → CSS path → fuzzy quote match);
+  a dead anchor parks the thread visibly at the frame edge, never silently deleted.
+  Inactive frames collapse their open threads into a top-right avatar stack.
+  `Shift+C` hides all pins; `?c=<thread>` deep-links a specific thread through the
+  password gate (copy-link on every card).
+- **Real commenter identity, no email infrastructure.** Viewers on a published canvas
+  claim an account through a single-use invite link (owner mints it; the link travels
+  over Slack/DM) - display name, password, avatar. Accounts are scrypt-verified with
+  per-user salts; sessions survive restarts. The first account owns the canvas;
+  `MARVER_OWNER_EMAIL` prints the owner's one-time claim link in the deploy logs.
+  Avatars fall back to initials on a deterministic color.
+- **One deploy, comments live everywhere.** `marver serve` grows a collaboration API
+  (REST + SSE) when `MARVER_DATA_DIR` names a durable volume; the published canvas is
+  the comments' home. `marver dev` two-way syncs every 30s (`marver comments connect
+  <url>` once), so client feedback lands in `design/comments/<board>.jsonl` - a
+  git-tracked, append-only event log the agent reads with zero tooling. Republishing
+  never clobbers collected feedback (the store unions the bundle seed on boot).
+- **The agent works the queue.** `marver comments list --open --json` / `reply` /
+  `resolve --addressed-in <frame>` - resolving records which variant answered the
+  feedback, making the fork-don't-overwrite doctrine auditable. `instructions/iterate.md`
+  now carries the comments-as-work-queue discipline.
+- **Laser mode.** `L` (or the toolbar crosshair) outlines every element in every frame
+  with depth-hued borders (60° per nesting level) plus a DevTools-style hover label.
+  Zero layout shift - outlines only. Comment mode turns it on implicitly.
+- **Default-closed publishing.** `marver build` now requires a publish policy:
+  `design/publish.json` names each published board with `read` or `comment` rights
+  (enforced server-side, not just hidden in UI). `--boards a,b` stays as an explicit
+  override; publishing everything takes a deliberate `--all-boards`.
+
+### Changed
+
+- **`c` is comment mode now** (the Figma/Miro convention). Copy-selected-file-paths
+  moved from `c` to `y`.
+- `marver build` without a publish policy fails with instructions instead of
+  publishing everything - the privacy default flipped closed.
+
+### Security
+
+- Comment mutations are CSRF-protected (double-submit cookie + origin checks) and
+  rate-limited; session and invite tokens are stored hashed; author snapshots are
+  server-stamped (a client cannot claim someone else's identity on a published canvas).
+- v1 trust boundary, stated plainly: frame code in your design repo runs same-origin
+  with the shell - review what you merge. Full frame sandboxing is the v1.1 follow-up
+  (SPEC-M3 §0 records the probe results and the plan).
+
 ## 0.3.1 - 2026-08-13
 
 ### Fixed
