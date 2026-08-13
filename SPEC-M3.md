@@ -22,10 +22,32 @@ over-engineered.**
    iframes. The moment serve exposes authenticated write APIs, arbitrary frame code
    could issue requests with the viewer's cookies. Prove frames run under
    `sandbox="allow-scripts"` (NO `allow-same-origin`) with the postMessage bridge
-   intact, in dev and published. If opaque-origin sandboxing breaks module loading,
-   the fallback is serving frames from a separate origin. Cookie-path tricks are NOT
-   an acceptable answer - same-origin frame JS can always send authenticated
-   requests.
+   intact, in dev and published. Cookie-path tricks are NOT an acceptable answer -
+   same-origin frame JS can always send authenticated requests.
+
+   **Probe result (2026-08-13, empirical in dev): naive sandboxing FAILS.** An
+   opaque-origin frame's module fetches carry `Origin: null`; Vite's dev CORS
+   answers with the literal dev origin → every module blocked, frame never boots.
+   Blanket-allowing `null` is not acceptable either - it would let any website the
+   designer visits read dev-server source through its own sandboxed iframes. On the
+   published side the failure is different and worse: a sandboxed document counts as
+   cross-site for cookies, so the `SameSite=Lax` gate cookie is not sent even for
+   the frame's own HTML - the frame would land on the gate page.
+
+   Viable paths, in preference order:
+   a. **Second listener, real origin (dev)**: the dev process opens a companion
+      port for frame documents; frames get a real (non-opaque) origin, module CORS
+      is scoped to exactly that origin, cookies stay HttpOnly, and every collab
+      mutation requires a shell-held secret header frames can never read (sandboxed
+      or cross-origin frames cannot reach the shell document). Published analog:
+      frame-host becomes self-contained (single inlined chunk) addressed by a
+      short-lived signed URL the authed shell mints.
+   b. **v1 honest-boundary fallback**: frames stay same-origin unsandboxed, but all
+      mutations require the shell-secret header + origin check + CSRF token. This
+      does NOT stop a malicious frame (it can read the parent document), it only
+      stops third-party pages. Acceptable only if we state plainly: frame code in
+      your design repo runs with viewer privileges - review what you merge. The
+      seam is built so (a) can replace it without route changes.
 2. **Anchor survival test.** Create anchors against pilot frames, have a coding
    agent genuinely rewrite them (restyle, reorder, extract components), measure what
    the resolution ladder (§5) recovers. This calibrates the fingerprint thresholds
