@@ -56,7 +56,7 @@ export async function dev(root: string, portFlag?: number) {
       // a storm of full page reloads at the open canvas (friction log #21).
       watch: {
         ignored: [
-          '**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**',
+          '**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**', '**/design/comments/**',
           '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
         ],
       },
@@ -85,5 +85,18 @@ export async function dev(root: string, portFlag?: number) {
   const addr = server.httpServer?.address()
   const port = typeof addr === 'object' && addr ? addr.port : config.port
   console.log(`\n  ${NAME} canvas → http://localhost:${port}/\n`)
+
+  // comment sync loop (SPEC-M3 §2): ~30s exchanges with the publish target when
+  // connected. Quiet on failure - the exchange is idempotent, the next one heals.
+  const { loadCollab, syncOnce } = await import('./sync.ts')
+  if (loadCollab(root)) {
+    console.log(`  comments: syncing with the published canvas (design/.local/collab.json)\n`)
+    const tick = async () => {
+      const collab = loadCollab(root)
+      if (collab) await syncOnce(root, collab).catch(() => { /* next tick heals */ })
+    }
+    void tick()
+    setInterval(tick, 30_000).unref()
+  }
   return server
 }

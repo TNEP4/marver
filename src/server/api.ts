@@ -122,9 +122,84 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         }
       }
 
+      // ---- comments (SPEC-M3): the dev mirror of serve's collab API - same shapes,
+      // so the shell ships ONE client. Identity is the local profile (it's the
+      // designer's machine); rights are 'comment' everywhere locally.
+      if (path === 'me' && req.method === 'GET') {
+        const prof = localProfile(root)
+        return json(res, 200, { user: prof, role: 'owner', local: true })
+      }
+      if (path === 'profile' && req.method === 'POST') {
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const dir = join(root, 'design', '.local')
+        mkdirSync(dir, { recursive: true })
+        const prof = { ...localProfile(root), ...(typeof b.name === 'string' && b.name.trim() ? { name: b.name.trim() } : {}), ...(typeof b.email === 'string' ? { email: b.email.trim() } : {}), ...(typeof b.avatar === 'string' ? { avatar: b.avatar || undefined } : {}) }
+        atomicWrite(join(dir, 'profile.json'), JSON.stringify(prof, null, 2) + '\n')
+        return json(res, 200, { user: prof })
+      }
+      if (path === 'boards.rights' && req.method === 'GET') {
+        // every board is commentable in dev; the published policy applies out there
+        const { listBoards } = await import('./comments.ts')
+        const stored = listBoards(join(root, 'design', 'comments'))
+        return json(res, 200, { local: true, stored })
+      }
+      const cm = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
+      if (cm) {
+        const { appendEvents, readLog } = await import('./comments.ts')
+        const dir = join(root, 'design', 'comments')
+        if (req.method === 'GET') return json(res, 200, { events: readLog(dir, cm[1]) })
+        if (req.method === 'POST') {
+          const raw = await readBody(req)
+          if (raw == null) return json(res, 400, { error: 'body too large' })
+          let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+          const incoming = Array.isArray(b.events) ? b.events : []
+          const me = localProfile(root)
+          const stamped = incoming.map((ev: any) => ({
+            ...ev, board: cm[1],
+            author: ['create', 'reply', 'react', 'edit'].includes(ev.type) ? me : ev.author,
+          }))
+          const fresh = appendEvents(dir, cm[1], stamped)
+          // push in the background - the periodic sync catches anything this drops
+          void backgroundPush(root)
+          return json(res, 200, { accepted: fresh.length })
+        }
+      }
+      if (path === 'sync' && req.method === 'POST') {
+        const { loadCollab, syncOnce } = await import('./sync.ts')
+        const collab = loadCollab(root)
+        if (!collab) return json(res, 200, { connected: false })
+        try { return json(res, 200, { connected: true, boards: await syncOnce(root, collab) }) }
+        catch (err) { return json(res, 502, { connected: true, error: (err as Error).message }) }
+      }
+
       json(res, 404, { error: 'unknown endpoint' })
     } catch (err) {
       json(res, 500, { error: (err as Error).message })
     }
   }
+}
+
+function localProfile(root: string): { email: string; name: string; avatar?: string } {
+  try {
+    const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
+    if (typeof p?.name === 'string') return { email: p.email ?? '', name: p.name, avatar: p.avatar }
+  } catch { /* no profile yet */ }
+  return { email: '', name: 'Designer' }
+}
+
+let pushTimer: ReturnType<typeof setTimeout> | null = null
+/** Debounced fire-and-forget push after a local write; failures are silent - the
+ *  30s sync loop is the reliability layer, this is just latency. */
+function backgroundPush(root: string) {
+  if (pushTimer) return
+  pushTimer = setTimeout(async () => {
+    pushTimer = null
+    try {
+      const { loadCollab, syncOnce } = await import('./sync.ts')
+      const collab = loadCollab(root)
+      if (collab) await syncOnce(root, collab)
+    } catch { /* the loop will retry */ }
+  }, 1500)
 }

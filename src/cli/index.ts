@@ -88,6 +88,28 @@ cli
     serve(resolve(opts.root), port)
   })
 
+cli
+  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · reply <thread> · resolve <thread>')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--invite <token>', 'connect: claim this invite instead of signing in')
+  .option('--canvas-password <password>', 'connect: the canvas gate password (default $MARVER_PASSWORD or prompt)')
+  .option('--email <email>', 'connect: account email (skips the prompt)')
+  .option('--password <password>', 'connect: account password (skips the prompt - mind your shell history)')
+  .option('--name <name>', 'connect --invite: display name for the new account')
+  .option('--open', 'list: only unresolved threads')
+  .option('--json', 'list: machine-readable output')
+  .option('--board <board>', 'scope to one board')
+  .option('--body <text>', 'reply: the reply text')
+  .option('--addressed-in <frame>', 'resolve: the variant frame that answered the feedback')
+  .action(async (action: string, value: string | undefined, opts) => {
+    const { commentsCommand } = await import('./comments.ts')
+    try { await commentsCommand(resolve(opts.root), action, value, opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
 cli.help()
 cli.version(version())
 cli.parse()
