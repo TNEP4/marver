@@ -16,6 +16,17 @@ const SERIES_DARK = ['#FF4245', '#FF9230', '#FFD600', '#30D158', '#00DAC3', '#00
 
 export const ACCENT = { blue: { light: '#0088FF', dark: '#0091FF' }, purple: { light: '#CB30E0', dark: '#DB34F2' } }
 
+/** Rides INSIDE the SVG via mermaid's themeCSS option - labels must be MEASURED
+ *  with this treatment (host CSS landing after render would change text metrics
+ *  without mermaid re-laying-out the boxes). Same voice as the Md typography:
+ *  medium-weight labels, SF-style tightening, breathing room on wrapped lines. */
+export const THEME_CSS = `
+  .nodeLabel, .cluster-label, .label, text { letter-spacing: -0.01em; }
+  .nodeLabel, .cluster-label { font-weight: 600; line-height: 1.4; }
+  .nodeLabel p, .edgeLabel p, .label p { margin: 0; }
+  .edgeLabel, .edgeLabel .label { font-weight: 500; }
+`
+
 /** Mermaid themeVariables for one mode. Base theme + these = the marver look. */
 export function themeVars(dark: boolean): Record<string, string> {
   const g = dark ? GRAY_DARK : GRAY_LIGHT
@@ -33,7 +44,7 @@ export function themeVars(dark: boolean): Record<string, string> {
   const tealWash = dark ? '#0C3B40' : '#DFF7F9'
   const vars: Record<string, string> = {
     fontFamily: FONT_STACK,
-    fontSize: '14px',
+    fontSize: '15px',
     background: surface,
     mainBkg: blueWash,                // the default node: blue-washed, blue-edged
     primaryColor: blueWash,

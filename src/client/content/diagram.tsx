@@ -8,7 +8,7 @@
  * blank frame, never a tripped readiness timeout.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { FONT_STACK, themeVars } from './palette.ts'
+import { FONT_STACK, THEME_CSS, themeVars } from './palette.ts'
 
 let uidSeq = 0
 
@@ -64,6 +64,7 @@ export function Diagram({ title, children }: { title?: string; children?: ReactN
           securityLevel: 'strict',
           theme: 'base',
           themeVariables: themeVars(isDark()),
+          themeCSS: THEME_CSS,
           fontFamily: FONT_STACK,
         })
         // unique id per render: mermaid mounts a temp element under it, and a
