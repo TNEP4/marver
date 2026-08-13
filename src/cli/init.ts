@@ -318,7 +318,7 @@ in one plain line as you go: the human learns the tool by watching you work.
 ## 1. Greet and explain
 
 Tell the human the repo is empty and that this is a perfect starting point. Then
-the pitch, ~4 sentences (instructions/welcome.md has the full version): we design
+the pitch, ~4 sentences in your own words (source: instructions/welcome.md): we design
 in real code; the theme, components, and screens made while designing ARE the
 app's building blocks; by the time the design is agreed most of the UI work
 exists, and building the product means plugging functionality in; the goal is
@@ -347,8 +347,9 @@ way and wait for the nod.
 ## 4. Scaffold and verify
 
 NOTE: scaffolders refuse non-empty directories (this repo already holds design/
-and a package.json), so scaffold into a temp dir and merge. The Next.js lane -
-adapt the same shape to whatever stack was agreed:
+and a package.json - the one you likely created with \`npm init -y\` to install
+${NAME} into), so scaffold into a temp dir and merge. The Next.js lane - adapt
+the same shape to whatever stack was agreed:
 
 \`\`\`bash
 npx create-next-app@latest app-scaffold --ts --tailwind --app --src-dir --yes
