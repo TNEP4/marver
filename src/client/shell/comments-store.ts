@@ -68,19 +68,26 @@ export const useComments = create<CommentsState>((set, get) => {
       if (res.ok && get().board === board) set(derive(res.data.events ?? []))
     },
 
-    /** Liveness: SSE when the server offers it, 30s+focus poll as the floor. */
+    /** Liveness: SSE on the published serve; dev has no event rail (its sync loop
+     *  writes files) so it polls only - an EventSource there would 404-retry forever. */
     live(board) {
       const stops: (() => void)[] = []
-      const es = new EventSource(`${ROUTE}/api/events`)
-      es.addEventListener('comment', (e) => {
-        try {
-          const { board: b, ev } = JSON.parse((e as MessageEvent).data)
-          if (b === get().board) union([ev])
-        } catch { /* ignore */ }
-      })
-      es.addEventListener('resync', () => { void get().load(board) })
-      es.onerror = () => { /* EventSource retries itself; the poll covers the gap */ }
-      stops.push(() => es.close())
+      let es: EventSource | null = null
+      const wantSSE = () => {
+        if (es || get().local) return
+        es = new EventSource(`${ROUTE}/api/events`)
+        es.addEventListener('comment', (e) => {
+          try {
+            const { board: b, ev } = JSON.parse((e as MessageEvent).data)
+            if (b === get().board) union([ev])
+          } catch { /* ignore */ }
+        })
+        es.addEventListener('resync', () => { void get().load(board) })
+        es.onerror = () => { /* EventSource retries itself; the poll covers the gap */ }
+      }
+      // `local` is only known once load() has answered - defer the SSE decision past it
+      const t = setTimeout(wantSSE, 1500)
+      stops.push(() => { clearTimeout(t); es?.close() })
       const poll = () => { if (get().board === board) void api(`comments/${board}`).then((r) => r.ok && union(r.data.events ?? [])) }
       const iv = setInterval(poll, 30_000)
       const onFocus = () => poll()
@@ -146,6 +153,9 @@ export const useComments = create<CommentsState>((set, get) => {
     },
   }
 })
+
+// dev-only debug handle - the canvas store exposes the same
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvComments = useComments
 
 /** Initials + deterministic hue for avatarless authors - the whole fallback ladder. */
 export const avatarFallback = (author?: { email?: string; name?: string }) => {

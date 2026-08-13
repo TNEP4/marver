@@ -5,9 +5,11 @@
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away.
  */
 import { useEffect, useRef, useState } from 'react'
-import { avatarFallback, useComments, type Me } from './comments-store.ts'
+import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
-import { CheckIcon, XIcon } from './icons.tsx'
+import { canvasCtl } from './canvas/Canvas.tsx'
+import { bootHash, buildHash } from './hash.ts'
+import { CheckIcon, CopyIcon, XIcon } from './icons.tsx'
 import type { Thread } from '../../shared/events.ts'
 
 const rel = (ts: number) => {
@@ -119,6 +121,11 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
         <b>{thread.author?.name ?? 'Someone'}</b>
         <span className="dim">{rel(thread.ts)}</span>
         <span className="grow" />
+        <button className="cm-icon" title="Copy link" onClick={() => {
+          const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
+          void navigator.clipboard.writeText(url)
+          useStore.getState().toast('comment link copied')
+        }}><CopyIcon size={12} /></button>
         <button className="cm-icon" title="Resolve" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckIcon size={13} /></button>
         <button className="cm-icon" title="Close" onClick={() => setActive(null)}><XIcon size={12} /></button>
       </header>
@@ -206,13 +213,30 @@ export function IdentityDialog() {
 }
 
 /** Board-level comment wiring: load + liveness + mode broadcast, one instance in App. */
+let bootThreadConsumed = false
 export function CommentsController() {
   const board = useStore((s) => s.board)
   const commentMode = useComments((s) => s.commentMode)
 
   useEffect(() => {
     const { load, live } = useComments.getState()
-    void load(board)
+    void load(board).then(() => {
+      // deep link ?c=<thread> (SPEC-M3 §6): open the thread, select its node, fit it.
+      // Consumed only on a successful find: the controller's first effect fires with
+      // the pre-boot board (child effects run before the parent's boot effect), and
+      // burning the flag on that empty pass would eat the link.
+      const c = bootHash.c
+      if (bootThreadConsumed || !c) return
+      const t = useComments.getState().threads.find((t) => t.id === c)
+      if (!t) return
+      bootThreadConsumed = true
+      useComments.getState().setActive(c)
+      const node = t.nodeKey && useStore.getState().nodes.find((n) => n.key === t.nodeKey)
+      if (node) {
+        useStore.getState().select(node.key)
+        setTimeout(() => canvasCtl.fitNode(node.key), 80)
+      }
+    })
     return live(board)
   }, [board])
 

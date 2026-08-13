@@ -7,12 +7,14 @@
  *   #/                     default board, fit all
  *   #/b/<board>            board, fit all
  *   #/b/<board>?n=k1,k2    board with nodes selected, camera fit to selection
+ *   #/b/<board>?c=<id>     board with a comment thread open (SPEC-M3 §6)
  *   #/p/<board>?at=<frame-id>&device=<viewport>&theme=<theme>   play mode
  */
 
 export interface HashState {
   board?: string
   n?: string[]
+  c?: string
   play?: { at?: string; device?: string; theme?: string }
 }
 
@@ -31,7 +33,8 @@ export function parseHash(hash: string = location.hash): HashState {
     if (!BOARD_RE.test(board)) return {}
     if (m[1] === 'b') {
       const n = (params.get('n') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
-      return { board, ...(n.length ? { n } : {}) }
+      const c = params.get('c') ?? undefined
+      return { board, ...(n.length ? { n } : {}), ...(c && /^[\w-]+$/.test(c) ? { c } : {}) }
     }
     return {
       board,
@@ -51,8 +54,12 @@ export function buildHash(s: HashState): string {
     if (s.play.theme) p.set('theme', s.play.theme)
     return `#/p/${s.board}?${p}`
   }
-  if (!s.board || (s.board === 'all-scenes' && !s.n?.length)) return '#/'
-  return `#/b/${s.board}${s.n?.length ? `?n=${s.n.join(',')}` : ''}`
+  if (!s.board || (s.board === 'all-scenes' && !s.n?.length && !s.c)) return '#/'
+  const p = new URLSearchParams()
+  if (s.n?.length) p.set('n', s.n.join(','))
+  if (s.c) p.set('c', s.c)
+  const q = p.toString()
+  return `#/b/${s.board}${q ? `?${decodeURIComponent(q)}` : ''}`
 }
 
 /** Write the hash; identical URLs are skipped so restore paths never loop. */
