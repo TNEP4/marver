@@ -41,6 +41,7 @@ export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="16
 
 /** Plain UI frame - the rectangle every non-content sidebar row leads with. */
 export const FrameRectIcon = icon(<rect x="40" y="52" width="176" height="152" rx="20" fill="none" stroke="currentColor" strokeWidth="16" />)
+export const LinkIcon = icon(<path d="M137.54,186.36a8,8,0,0,1,0,11.31l-9.94,10A56,56,0,0,1,48.38,128.4L72.5,104.28A56,56,0,0,1,149.31,102a8,8,0,1,1-10.64,12,40,40,0,0,0-54.85,1.63L59.7,139.72a40,40,0,0,0,56.58,56.58l9.94-9.94A8,8,0,0,1,137.54,186.36Zm70.08-138a56.08,56.08,0,0,0-79.22,0l-9.94,9.95a8,8,0,0,0,11.32,11.31l9.94-9.94a40,40,0,0,1,56.58,56.58L172.18,140.4a40,40,0,0,1-54.85,1.6,8,8,0,1,0-10.64,12,56,56,0,0,0,76.81-2.26l24.12-24.12A56.08,56.08,0,0,0,207.62,48.38Z" />)
 export const LaserIcon = icon(<><circle cx="128" cy="128" r="56" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" /><circle cx="128" cy="128" r="12" /></>)
 
 /* Content-frame intent glyphs (SPEC-026), custom in the same 256-space. */

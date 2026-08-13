@@ -9,7 +9,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash } from './hash.ts'
-import { CheckIcon, CopyIcon, XIcon } from './icons.tsx'
+import { CheckIcon, LinkIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import type { Thread } from '../../shared/events.ts'
 
@@ -129,7 +129,7 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
             void navigator.clipboard.writeText(url)
             useStore.getState().toast('comment link copied')
-          }}><CopyIcon size={15} /></button>
+          }}><LinkIcon size={15} /></button>
         </Tip>
         <Tip side="bottom" label={<b>Resolve</b>}>
           <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckIcon size={16} /></button>
