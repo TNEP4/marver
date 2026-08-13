@@ -10,12 +10,42 @@ mode; Shape is the visual thinking surface built from its answers.
 
 ## The feature-story board
 
-One board per feature, reading left to right as the feature's whole story:
+One board per feature, reading as the feature's whole story - thinking at the
+top, structure in the middle, the answer at the bottom:
 
 ```
-[ flow diagram ]  [ spec ]  [ moodboard ]  [ wireframes ]  [ hi-fi + variants ]
-      why           what     inspiration     structure          the answer
+[ intent ]  [ flow diagram ]  [ spec ]  [ moodboard ]      <- scene: <feature>-specs
+[ lo-fi list ]  [ lo-fi editor ]  [ lo-fi confirm ]        <- scene: <feature>-lofi
+[ hi-fi ]      [ A variant ]  [ B variant ]                <- scene: <feature>
 ```
+
+**One scene per phase, not one scene for everything.** `<feature>-specs`
+(content frames), `<feature>-lofi` (wireframes), `<feature>` (the hi-fi
+answer). Scenes are the canvas's grouping unit - phase scenes give the board
+rows, the sidebar sections, and device keys a phase to act on.
+
+**Spacing is meaning - compose the board with a recipe, deliberately:**
+
+```json
+"layout": {
+  "rows": [ ["evening-specs"], { "space": 2 },
+            ["evening-lofi"],  { "space": 4 },
+            ["evening"] ],
+  "scenes": { "evening": { "rows": [["list", { "space": 2 }, "editor"]] } }
+}
+```
+
+- Graduate the gaps: a bigger space before the final hi-fi row than between
+  thinking and structure - the answer deserves its own room.
+- Space units are ADAPTIVE (proportional to the touching frames), so a gap
+  between phone-sized rows needs a higher count than the same visual gap
+  between big spec frames - which is why the example uses 4 before the hi-fi
+  row and only 2 after the large specs. Judge the RENDERED gap, not the
+  number.
+- ALWAYS isolate a variant group from ordinary frames with `space: 2` or more
+  on each touching side. Two similar-looking frames sitting near a normal one
+  read as confusion; the gap is what says "these two are alternatives of one
+  thing". (This rule is also in boards.md - it is binding, not taste.)
 
 Content frames sit beside UI frames on the same board - ordinary atoms in the
 board layout grammar (instructions/boards.md). Everything the canvas does -
