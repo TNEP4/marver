@@ -785,15 +785,16 @@ export function App() {
 
       {/* floating pill nav, top right; collapses to a chip (same ladder as panel/fab) */}
       <nav className={`sh-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
+        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
+          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
+        </Tip>
+        <i className="sep" />
         <DeviceMenu />
         <ThemeMenu />
         <i className="sep" />
         <ZoomMenu />
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><GridIcon size={16} /></button>
-        </Tip>
-        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
-          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
         </Tip>
         <i className="sep" />
         <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
