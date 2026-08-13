@@ -70,11 +70,11 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // inactive frame: the stack - count + avatars, top-right (SPEC-M3 §6)
   const engaged = selected || open.some((t) => t.id === active) || drafting
   if (!engaged && open.length) {
-    const authors = [...new Map(open.map((t) => [t.author?.email ?? t.id, t.author])).values()].slice(0, 3)
+    const authors = [...new Map(open.map((t) => [t.author?.email ?? t.id, t.author])).values()].slice(0, 2)
     return (
       <button className="cm-stack sh-no-pan" onClick={(e) => { e.stopPropagation(); useStore.getState().select(node.key); if (open[0]) setActive(open[0].id) }}>
-        {authors.map((a, i) => <Avatar key={i} author={a} size={18} />)}
-        <b>{open.length}</b>
+        {authors.map((a, i) => <Avatar key={i} author={a} size={24} />)}
+        {open.length > 1 && <b>{open.length}</b>}
       </button>
     )
   }
@@ -98,7 +98,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
             title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
-            <Avatar author={t.author} size={20} />
+            <Avatar author={t.author} size={24} />
           </div>
         )
       })}

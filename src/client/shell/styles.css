@@ -636,80 +636,96 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sub.vgroup.held { background: color-mix(in srgb, var(--glass-hover) 55%, transparent) }
 .sub.vgroup.held .gicon { color: var(--glass-ink-2) }
 
-/* ---- comments (SPEC-M3 §6) ---------------------------------------------------------- */
-/* pins keep screen size via --sh-inv, anchored inside the frame body */
+/* ---- comments (SPEC-M3 §6) ----------------------------------------------------------
+   The marker family (pins, stacks) is SOLID with the Figma teardrop silhouette - a
+   marker must hold contrast on any artwork. The surfaces (card, composer, dialog)
+   are OUR glass - the shell's own token language, theme-aware where Figma is flat. */
 .cm-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
   color: #fff; font-weight: 700; font-family: -apple-system, system-ui, sans-serif;
   object-fit: cover; flex: none; user-select: none }
-.cm-pin { position: absolute; z-index: 30; transform: translate(-4px, -100%) scale(var(--sh-inv, 1));
+
+/* pin: the teardrop. Bottom-left tail points at the anchored element. */
+.cm-pin { position: absolute; z-index: 30; transform: translate(-2px, -100%) scale(var(--sh-inv, 1));
   transform-origin: bottom left; cursor: pointer;
-  background: #fff; border-radius: 14px 14px 14px 3px; padding: 3px;
-  box-shadow: 0 1px 2px rgba(24,24,27,.2), 0 4px 12px -4px rgba(24,24,27,.3);
-  border: 1px solid rgba(24,24,27,.12); transition: box-shadow .15s }
-.cm-pin:hover { box-shadow: 0 1px 2px rgba(24,24,27,.25), 0 6px 16px -4px rgba(24,24,27,.4) }
+  background: #fff; border-radius: 18px 18px 18px 4px; padding: 4px;
+  box-shadow: 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35);
+  border: 1px solid rgba(24,24,27,.1); transition: box-shadow .15s, transform .15s }
+.cm-pin:hover { box-shadow: 0 1px 3px rgba(24,24,27,.22), 0 10px 24px -6px rgba(24,24,27,.45) }
 .cm-pin.on { outline: 2px solid var(--accent); outline-offset: 1px }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
-.cm-stack { position: absolute; top: 8px; right: 8px; z-index: 30;
+
+/* stack: the cluster teardrop - overlapping avatars, count only when it adds signal */
+.cm-stack { position: absolute; top: 10px; right: 10px; z-index: 30;
   transform: scale(var(--sh-inv, 1)); transform-origin: top right;
-  display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px 3px 4px;
-  background: #fff; border: 1px solid rgba(24,24,27,.12); border-radius: 999px; cursor: pointer;
-  box-shadow: 0 1px 2px rgba(24,24,27,.15), 0 4px 10px -4px rgba(24,24,27,.25);
-  font: 700 11px -apple-system, system-ui, sans-serif; color: #18181b }
-.cm-stack .cm-avatar { margin-right: -6px; border: 1.5px solid #fff }
-.cm-stack .cm-avatar:last-of-type { margin-right: 2px }
-.cm-stack:hover { background: #fafafa }
-.cm-card { position: absolute; z-index: 40; width: 288px; padding: 14px 16px 12px;
+  display: inline-flex; align-items: center; padding: 4px;
+  background: #fff; border: 1px solid rgba(24,24,27,.1); border-radius: 18px 18px 4px 18px;
+  cursor: pointer; box-shadow: 0 1px 2px rgba(24,24,27,.15), 0 6px 16px -6px rgba(24,24,27,.3);
+  font: 700 11px -apple-system, system-ui, sans-serif; color: #18181b;
+  transition: box-shadow .15s }
+.cm-stack:hover { box-shadow: 0 1px 3px rgba(24,24,27,.2), 0 10px 24px -6px rgba(24,24,27,.4) }
+.cm-stack .cm-avatar { border: 2px solid #fff }
+.cm-stack .cm-avatar + .cm-avatar { margin-left: -8px }
+.cm-stack b { padding: 0 8px 0 6px }
+
+/* card: OUR glass - the floating-menu language, theme-aware */
+.cm-card { position: absolute; z-index: 40; width: 300px; padding: 16px;
   transform: scale(var(--sh-inv, 1)); transform-origin: top left;
-  background: #fff; color: #18181b; border-radius: 16px; border: 1px solid rgba(24,24,27,.1);
-  box-shadow: 0 2px 6px rgba(24,24,27,.12), 0 12px 32px -8px rgba(24,24,27,.28);
-  display: flex; flex-direction: column; gap: 10px;
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--glass-brd);
+  box-shadow: var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
+  display: flex; flex-direction: column; gap: 12px;
   font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
-.cm-card header { display: flex; align-items: center; gap: 8px }
+.cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 13px; font-weight: 600; letter-spacing: -.01em }
-.cm-card .dim { color: rgba(24,24,27,.42); font-size: 11.5px }
+.cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
 .cm-card .grow { flex: 1 }
-.cm-card header .cm-icon + .cm-icon { margin-left: -2px }
-.cm-card .cm-body { margin: 0; font-size: 13px; line-height: 1.5; color: rgba(24,24,27,.86);
+.cm-card .cm-body { margin: 0; font-size: 13px; line-height: 1.55; color: var(--glass-ink-2);
   white-space: pre-wrap; overflow-wrap: break-word }
-.cm-card > .cm-body { margin-top: -2px }       /* the root body tucks under its header */
+.cm-card > .cm-body { margin: -4px 2px 0; color: var(--glass-ink) }  /* the root comment carries the weight */
 .cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
-  border: 0; border-radius: 7px; background: none; color: rgba(24,24,27,.48); cursor: pointer;
+  border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
   transition: background .12s, color .12s }
-.cm-icon:hover { background: rgba(24,24,27,.06); color: #18181b }
-.cm-reply { display: flex; gap: 8px; padding-top: 2px }
-.cm-reply > div { display: flex; flex-direction: column; gap: 2px; min-width: 0 }
+.cm-icon:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.cm-reply { display: flex; gap: 9px; padding: 2px 2px 0 }
+.cm-reply > div { display: flex; flex-direction: column; gap: 3px; min-width: 0 }
 .cm-who { display: flex; align-items: baseline; gap: 6px }
 .cm-who b { font-size: 12.5px; font-weight: 600; letter-spacing: -.01em }
-.cm-compose { padding-top: 2px }
-.cm-compose input { width: 100%; height: 34px; padding: 0 12px; border-radius: 10px;
-  border: 1px solid rgba(24,24,27,.14); background: #fff; color: #18181b;
-  font: 400 13px -apple-system, system-ui, sans-serif; outline: none }
-.cm-compose input::placeholder { color: rgba(24,24,27,.35) }
-.cm-compose input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent) }
-.cm-draft { padding: 10px }
-.cm-draft .cm-compose { padding-top: 0 }
-/* identity modal */
+.cm-compose input { width: 100%; height: 36px; padding: 0 15px; border-radius: 999px;
+  border: 1px solid var(--glass-brd); background: var(--node-bg); color: var(--glass-ink);
+  font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
+  transition: border-color .15s, box-shadow .15s }
+.cm-compose input::placeholder { color: var(--glass-ink-3) }
+.cm-compose input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring) }
+/* the draft composer is JUST the pill - no card chrome around a single input */
+.cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none }
+.cm-draft input { height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
+/* identity modal - same glass family */
 .cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.35); backdrop-filter: blur(4px) }
-.cm-modal { width: 340px; padding: 22px; border-radius: 20px; background: #fff; color: #18181b;
-  display: flex; flex-direction: column; gap: 10px; font: 400 13px -apple-system, system-ui, sans-serif;
-  box-shadow: 0 8px 40px -8px rgba(24,24,27,.4) }
+.cm-modal { width: 344px; padding: 24px; border-radius: 24px;
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  color: var(--glass-ink); border: 1px solid var(--glass-brd);
+  display: flex; flex-direction: column; gap: 11px; font: 400 13px -apple-system, system-ui, sans-serif;
+  box-shadow: var(--shadow-glass), 0 8px 40px -8px rgba(24,24,27,.4) }
 .cm-modal h2 { margin: 0; font-size: 16px; letter-spacing: -.01em }
-.cm-modal .dim { color: rgba(24,24,27,.55); font-size: 12.5px; line-height: 1.45 }
-.cm-modal input { height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid rgba(24,24,27,.14);
-  font: inherit; outline: none }
-.cm-modal input:focus { border-color: var(--accent) }
-.cm-tabs { display: flex; gap: 4px; padding: 3px; background: rgba(24,24,27,.05); border-radius: 9px }
-.cm-tabs button { flex: 1; height: 28px; border: 0; border-radius: 7px; background: none;
-  font: 600 12px -apple-system, system-ui, sans-serif; color: rgba(24,24,27,.55); cursor: pointer }
-.cm-tabs button.on { background: #fff; color: #18181b; box-shadow: 0 1px 2px rgba(24,24,27,.1) }
+.cm-modal .dim { color: var(--glass-ink-2); font-size: 12.5px; line-height: 1.5 }
+.cm-modal input { height: 38px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--glass-brd);
+  background: var(--node-bg); color: var(--glass-ink); font: inherit; outline: none }
+.cm-modal input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring) }
+.cm-tabs { display: flex; gap: 4px; padding: 3px; background: var(--glass-hover); border-radius: 999px }
+.cm-tabs button { flex: 1; height: 28px; border: 0; border-radius: 999px; background: none;
+  font: 600 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); cursor: pointer }
+.cm-tabs button.on { background: var(--node-bg); color: var(--glass-ink); box-shadow: 0 1px 2px rgba(24,24,27,.1) }
 .cm-err { color: #b42318; font-size: 12px }
 .cm-row { display: flex; gap: 8px }
-.cm-row button { height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(24,24,27,.14);
-  background: #fff; font: 600 12.5px -apple-system, system-ui, sans-serif; cursor: pointer }
-.cm-row button.cm-primary { background: #18181b; color: #fafafa; border-color: #18181b; flex: 1 }
-.cm-row button.cm-primary:hover { background: #000 }
+.cm-row button { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--glass-brd);
+  background: none; color: var(--glass-ink); font: 600 12.5px -apple-system, system-ui, sans-serif; cursor: pointer }
+.cm-row button:hover { background: var(--glass-hover) }
+.cm-row button.cm-primary { background: var(--glass-ink); color: var(--glass); border-color: transparent; flex: 1 }
+.cm-row button.cm-primary:hover { opacity: .88 }
+
 /* the unclipped comment plane over each frame: itself transparent to the pointer,
    its children (pins, cards, stacks) fully interactive */
 .cm-layer { position: absolute; left: 0; width: 100%; pointer-events: none; z-index: 25 }
