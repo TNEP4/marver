@@ -254,3 +254,30 @@ off-board frames + shows the current variant name, badge letter fades below ~6% 
 sidebar scene-level groups label as "Variants" not the group name (repeating the
 scene header directly beneath itself is worse); root-level frames (design/scenes/
 a-x.tsx) never group (scenes are directories - documented convention).
+
+## M3 promoted to contract (decided with Nic, 2026-08-13)
+
+Design cycle: three research tracks (Vercel toolbar decompiled; Figma/Docs/Miro/
+tldraw commenting autopsied; lightweight backend+auth surveyed) + codex consult,
+synthesized on the pilot canvas (board `m3-comments`, six content frames). Nic's
+three calls, closing the WIP questions:
+
+- **Password = read, account = comment.** The gate password alone grants READ;
+  commenting requires an allowlisted account claimed via a single-use invite link
+  (closes the claim-any-email hole with zero email infrastructure).
+- **Storage = JSONL event log**, not SQLite ("whatever is leaner, cheaper, simpler,
+  more robust"). Set-union on event UUIDs is the whole sync protocol; upgrade
+  trigger to node:sqlite documented in the spec.
+- **Laser mode = depth-hue rainbow** (60°/level), single-accent as fallback if it
+  reads noisy in practice.
+
+Architecture: serve grows a collaboration core (auth + comments API + SSE + JSONL
+on a volume) - one process, no new services, no vendors. Local dev reaches the
+published canvas ONLY through a Vite-side proxy with a scoped token (browser stays
+same-origin; CORS never exists). Publishing flips to default-closed with per-board
+read/comment rights in design/publish.json. Two prototypes gate feature code:
+frame sandbox isolation (authenticated APIs beside same-origin frames = the shell's
+cookies are reachable from frame JS today) and anchor survival under a real agent
+rewrite (calibrates the ladder; decides urgency of lazy data-mv-oid stamping,
+which is deferred, not dropped). Dogfood bug filed: <br/> in Mermaid labels breaks
+the diagram SVG sanitizer.

@@ -24,6 +24,11 @@ Small items that are not milestone work. One line each; delete when done.
   canvases ever face real brute-force pressure.
 - **`--boards` and the host `public/` directory**: the filter covers frames only; public
   assets ship in full (build prints a note). Revisit if a real leak case appears.
+- **Mermaid labels reject `<br/>`** (found dogfooding the M3 board, 2026-08-13): a
+  quoted node label containing `<br/>` renders an in-frame parse-error card ("Opening
+  and ending tag mismatch: br and p") - the sanitizer/htmlLabels path chokes on the
+  void tag. Either support it (mermaid renders `<br/>` natively when htmlLabels is on)
+  or strip it with a clear warning; today's failure mode is a red error box.
 
 ## Next phase (2026-08-11 evening - the stabilize-then-launch arc)
 
