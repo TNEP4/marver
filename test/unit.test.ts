@@ -514,3 +514,91 @@ describe('resolvePublish (SPEC-M3 §4 - default-closed)', async () => {
         { 'all-scenes': 'comment', review: 'comment', archive: 'comment' })
     }))
 })
+
+describe('comment event store (SPEC-M3 §1 - set-union merge, deterministic replay)', async () => {
+  const { appendEvents, readLog, replay, diffEvents, listBoards } = await import('../src/server/comments.ts')
+  const { mkdtempSync, rmSync, appendFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  const ev = (id: string, type: string, extra: object = {}) =>
+    ({ id, ts: Number(id.replace(/\D/g, '') || 0), type, ...extra }) as any
+  const store = (fn: (dir: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), 'sh-cmt-'))
+    try { fn(dir) } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  it('append is idempotent - re-sending events writes nothing', () =>
+    store((dir) => {
+      const events = [ev('e1', 'create', { commentId: 'c1', body: 'hi' })]
+      expect(appendEvents(dir, 'review', events)).toHaveLength(1)
+      expect(appendEvents(dir, 'review', events)).toHaveLength(0)
+      expect(readLog(dir, 'review')).toHaveLength(1)
+    }))
+  it('merge is set union - interleaved appends from two sides converge', () =>
+    store((dir) => {
+      appendEvents(dir, 'review', [ev('e1', 'create', { commentId: 'c1', body: 'a' })])
+      appendEvents(dir, 'review', [ev('e1', 'create', { commentId: 'c1', body: 'a' }), ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'b' })])
+      const log = readLog(dir, 'review')
+      expect(log.map((e) => e.id)).toEqual(['e1', 'e2'])
+    }))
+  it('replay derives threads: create, reply, resolve with addressedIn', () => {
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', body: 'too cramped', frame: 'checkout/cart' }),
+      ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'on it' }),
+      ev('e3', 'resolve', { commentId: 'c1', addressedIn: 'checkout/cart/b-airy' }),
+    ])
+    expect(threads).toHaveLength(1)
+    expect(threads[0].resolved).toBe(true)
+    expect(threads[0].addressedIn).toBe('checkout/cart/b-airy')
+    expect(threads[0].replies.map((r) => r.body)).toEqual(['on it'])
+  })
+  it('replay is order-independent - same set, any arrival order, same state', () => {
+    const events = [
+      ev('e1', 'create', { commentId: 'c1', body: 'v1' }),
+      ev('e2', 'edit', { commentId: 'c1', body: 'v2' }),
+      ev('e3', 'resolve', { commentId: 'c1' }),
+      ev('e4', 'reopen', { commentId: 'c1' }),
+    ]
+    const a = replay(events)
+    const b = replay([...events].reverse())
+    expect(a).toEqual(b)
+    expect(a[0].body).toBe('v2')
+    expect(a[0].resolved).toBe(false)
+  })
+  it('react toggles per author+emoji', () => {
+    const me = { email: 'nic@x.com' }
+    const on = replay([
+      ev('e1', 'create', { commentId: 'c1' }),
+      ev('e2', 'react', { commentId: 'c1', emoji: '👍', author: me }),
+    ])
+    expect(on[0].reactions['👍']).toEqual(['nic@x.com'])
+    const off = replay([
+      ev('e1', 'create', { commentId: 'c1' }),
+      ev('e2', 'react', { commentId: 'c1', emoji: '👍', author: me }),
+      ev('e3', 'react', { commentId: 'c1', emoji: '👍', author: me }),
+    ])
+    expect(off[0].reactions['👍']).toBeUndefined()
+  })
+  it('a torn trailing line is skipped, the rest of the log survives', () =>
+    store((dir) => {
+      appendEvents(dir, 'review', [ev('e1', 'create', { commentId: 'c1' })])
+      appendFileSync(join(dir, 'review.jsonl'), '{"id":"e2","type":"cre')
+      expect(readLog(dir, 'review').map((e) => e.id)).toEqual(['e1'])
+      // and the merge rule heals it: the torn event re-arrives complete via sync
+      appendEvents(dir, 'review', [ev('e2', 'reply', { commentId: 'c2', parentId: 'c1' })])
+      expect(readLog(dir, 'review').map((e) => e.id)).toEqual(['e1', 'e2'])
+    }))
+  it('diffEvents yields exactly what the other side lacks', () => {
+    const mine = [ev('e1', 'create', { commentId: 'c1' }), ev('e2', 'reply', { commentId: 'c2', parentId: 'c1' })]
+    expect(diffEvents(mine, ['e1']).map((e) => e.id)).toEqual(['e2'])
+    expect(diffEvents(mine, ['e1', 'e2'])).toHaveLength(0)
+  })
+  it('board names are validated, logs listed sorted', () =>
+    store((dir) => {
+      appendEvents(dir, 'zeta', [ev('e1', 'create', { commentId: 'c1' })])
+      appendEvents(dir, 'alpha', [ev('e2', 'create', { commentId: 'c2' })])
+      expect(listBoards(dir)).toEqual(['alpha', 'zeta'])
+      expect(() => readLog(dir, '../escape')).toThrow(/bad board name/)
+    }))
+})
