@@ -92,9 +92,11 @@ Deliver conversationally when the first draft is ready - a short guided
 message, not a manual. Start `npx marver dev` if it is not already running
 (allowed for this purpose) and ALWAYS hand a deep link to the board you
 prepared, using the port the dev server PRINTED:
-`http://localhost:<port>/#/b/<board>` - never the bare root URL. The human has
-already played with the hosted tour by now, so keep it short - let their own
-product carry the moment. The highlights, all real features:
+`http://localhost:<port>/#/b/<board>` - never the bare root URL. The link goes
+at the BOTTOM of the message, on its own line: the human reads through, then
+clicks. The human has already played with the hosted tour by now, so keep it
+short - let their own product carry the moment. The highlights, all real
+features:
 
 - **Select and preview.** Click frames (shift-click for several). Digit keys
   switch device presets - 1-4 for the configured devices, 0 back to each

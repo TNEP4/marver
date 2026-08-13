@@ -335,11 +335,18 @@ alignment on look and feel across themes and devices first.
 
 ## 2. Ask what they are building - STOP
 
-One question: "In a sentence or two - what are we building?" Use the harness's
-structured question tool if it has one. Then STOP: no further tool calls, end
-your turn, resume only after the human replies. (The one exception: the human
-explicitly asked for unattended execution - then assume something reasonable,
-mark it UNCONFIRMED, surface it first.)
+Two questions, one message (use the harness's structured question tool if it
+has one):
+
+1. "In a sentence or two - what are we building?"
+2. "Any intuition for the look? Colors, mood, UI style - a sentence like
+   'minimalist, glass UI, witty copy' steers everything. 'Surprise me' is a
+   fine answer."
+
+Then STOP: no further tool calls, end your turn, resume only after the human
+replies. (The one exception: the human explicitly asked for unattended
+execution - then assume something reasonable, mark it UNCONFIRMED, surface it
+first.)
 
 ## 3. Propose the stack - STOP
 
@@ -415,11 +422,20 @@ This is the human's first impression of the canvas AND the first draft of their
 product - it sets the direction. Take the time to do it well:
 
 - If you can search the web, spend a few minutes understanding the domain from
-  step 2's answer; sketch a reasonable brand and write design/DESIGN.md for it.
+  step 2's answer; write design/DESIGN.md. The human's look intuition from
+  step 2 is the north star - honor it literally. If they said "surprise me",
+  commit to a direction and name it in one sentence at the reveal.
 - Build ~4 frames of THEIR product - not lorem, not filler. Hold them to the
   craft bar: instructions/craft.md and instructions/reference/slop.md are
   binding here. Responsive, working in BOTH themes, linked with data-goto so
   play mode flows.
+- UNDERWHELMING IS THE FAILURE MODE. A restrained concept executed thinly
+  reads as a wireframe, however careful the type. Every frame needs presence -
+  scale, contrast, color, one real visual moment - and the human should feel
+  the direction before they read a word. Write the copy like it ships:
+  specific, confident, witty where the brand allows, never placeholder. This
+  first draft is the product's first impression AND ${NAME}'s - go above and
+  beyond.
 - Delete the generic demo scene (design/scenes/demo/) once your frames are in -
   it exists to show YOU the file shapes, not to impress anyone.
 - Create a curated board for them (instructions/boards.md) containing every

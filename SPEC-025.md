@@ -39,8 +39,15 @@ explicitly asked for unattended execution.
    building blocks; when we later wire the real app, ~90% of the UI work is
    already done - only functionality remains; goal: full alignment on look and
    feel across light/dark and every device size before writing app logic.
-1. **Ask what they're building.** One question: "In a sentence or two - what are
-   we building?" STOP.
+1. **Ask what they're building AND how it should feel.** Two questions, one
+   message: the product in a sentence or two, and any look intuition (colors,
+   mood, UI style - "minimalist, glass UI, witty copy" steers everything;
+   "surprise me" is fine). STOP. (Nic, 2026-08-13: run 2's Drawing Set draft
+   was underwhelming - restrained concept, wireframe-thin execution, and
+   nobody had asked the human for a visual steer. The look answer is the first
+   draft's north star, and setup.md now names underwhelming as the failure
+   mode: presence per frame, ship-grade copy. Reveal message ends with the
+   canvas link at the BOTTOM.)
 2. **Propose the stack, get the nod.** From their answer, recommend a framework
    with one line of reasoning each (marketing/content/SEO → latest Next.js;
    app-like/interactive → latest React Router; something else if their answer
