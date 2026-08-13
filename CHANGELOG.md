@@ -6,7 +6,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Fixed
 
-- Play-mode variant chrome: the current variant's name was invisible (theme ink on the always-dark glass pill - now the pill's own light ink), the pill jiggled as variant names changed length (fixed-width name slot, ellipsis past it, tooltip with the full name), and the active variant chip lost its full rounding (chips stay circular in every state).
+- Play-mode variant chrome: the current variant's name was invisible (theme ink on the always-dark glass pill - now the pill's own light ink), and switching variants jiggled the controls. Redesigned: the letter chips now use the sidebar's exact badge language (20px, 7px-radius, one shape in every state) so the two surfaces read as one concept, they LEAD the cluster as the stable anchor, and the name trails at natural width (capped with ellipsis + a tooltip carrying the full title) - a name change grows the pill rightward without moving anything underfoot.
 
 ## 0.3.0 - 2026-08-13
 

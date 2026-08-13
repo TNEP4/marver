@@ -587,17 +587,23 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sub .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
 .sub .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
 
-/* play-mode variant chips (SPEC-023 §6). Chips stay fully round in EVERY state -
-   the active square was a shape change, and shape changes read as different controls. */
-.sh-play-nav .vchip { min-width: 24px; font-weight: 700; font-size: 11px }
-.sh-play-nav .vchip.on { color: #fff; background: var(--accent) }
+/* play-mode variant chips (SPEC-023 §6): the SAME badge language as the sidebar's
+   variant rows (20px, 7px-radius square, one consistent shape in every state) so the
+   two surfaces read as one concept - but in the pill's own dark-glass inks, never
+   theme tokens (the nav is always dark; theme ink goes invisible in light mode). */
+.sh-play-nav .vchip { width: 20px; height: 20px; min-width: 0; flex: none; margin: 0 1px;
+  border: 1px solid rgba(255, 255, 255, .14); border-radius: 7px;
+  font: 700 10px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .6);
+  line-height: 1; letter-spacing: 0; text-box: trim-both cap alphabetic }
+.sh-play-nav .vchip:hover { color: #f5f5f7; background: rgba(255, 255, 255, .1) }
+.sh-play-nav .vchip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
 
-/* the current variant's name: the nav pill is ALWAYS dark glass, so the ink is the
-   pill's own (a theme token goes dark-on-dark in light mode). Fixed width so the
-   pill never jiggles between variants; overflow ellipsizes, the Tip shows the rest. */
+/* the current variant's name trails the chips at natural width - the chips anchor,
+   so a name change grows the pill rightward without shifting any control underfoot.
+   A max caps runaway titles; the Tip carries the full name. */
 .sh-play-nav .vname { font-size: 11px; font-weight: 600; color: rgba(245, 245, 247, .78);
-  width: 118px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  text-transform: capitalize; padding: 0 4px 0 6px }
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-transform: capitalize; padding: 0 7px 0 5px }
 
 /* variant chrome goes LIVE with selection (drive feedback 2026-08-12): accent when the
    frame is selected, the interact purple when it is being interacted with - the badge,

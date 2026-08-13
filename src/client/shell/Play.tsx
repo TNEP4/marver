@@ -420,13 +420,6 @@ function PlayInner() {
         </Tip>
         {variants.length > 1 && <>
           <i className="sep" />
-          {(() => {
-            const c = variants.find((v) => v.id === play.at)
-            const full = c ? (c.title ?? (c.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' ')) : ''
-            // fixed-width + ellipsis in CSS keeps the pill's shape stable across
-            // variants; the tooltip carries the full name
-            return <Tip inv label={<b>{full}</b>}><span className="vname">{full}</span></Tip>
-          })()}
           {variants.map((v) => (
             <Tip inv key={v.id} label={<><b>{v.title ?? v.id}</b><span className="k">[ ]</span></>}>
               <button className={`vchip${v.id === play.at ? ' on' : ''}`} onClick={() => goTo(v.id)}>
@@ -434,6 +427,13 @@ function PlayInner() {
               </button>
             </Tip>
           ))}
+          {(() => {
+            // chips lead as the stable anchor; the name trails at natural width, so
+            // a length change grows the pill rightward instead of shifting the chips
+            const c = variants.find((v) => v.id === play.at)
+            const full = c ? (c.title ?? (c.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' ')) : ''
+            return <Tip inv label={<b>{full}</b>}><span className="vname">{full}</span></Tip>
+          })()}
         </>}
       </div>
     </div>
