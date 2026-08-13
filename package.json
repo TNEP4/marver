@@ -14,7 +14,8 @@
     "templates",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "CHANGELOG.md"
   ],
   "exports": {
     "./runtime": "./src/client/runtime/index.ts",
