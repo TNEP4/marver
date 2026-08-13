@@ -63,11 +63,12 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     return () => { clearInterval(iv); window.removeEventListener('message', onMsg) }
   }, [node.status, anchored.map((t) => t.id).join(','), iframe])
 
-  if (!show || (!open.length && !draft)) return null
+  const drafting = draft?.nodeKey === node.key
+  if (!show || (!open.length && !drafting)) return null
 
   // inactive frame: the stack - count + avatars, top-right (SPEC-M3 §6)
-  const engaged = selected || open.some((t) => t.id === active) || (draft?.nodeKey === node.key)
-  if (!engaged) {
+  const engaged = selected || open.some((t) => t.id === active) || drafting
+  if (!engaged && open.length) {
     const authors = [...new Map(open.map((t) => [t.author?.email ?? t.id, t.author])).values()].slice(0, 3)
     return (
       <button className="cm-stack sh-no-pan" onClick={(e) => { e.stopPropagation(); useStore.getState().select(node.key); if (open[0]) setActive(open[0].id) }}>

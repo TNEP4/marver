@@ -89,10 +89,14 @@ export function collabHandler(dataDir: string, distDir: string) {
       `mv_c=${randomBytes(16).toString('base64url')}; Path=/; Max-Age=${MONTH}; SameSite=Lax${secure}`,
     ])
   }
-  // mutations: double-submit check. Bearer requests skip it - a token IS the proof
-  // (headers cannot be set cross-origin without CORS consent, which we never grant).
+  // mutations: double-submit check. Bearer requests skip it (a token IS the proof -
+  // headers cannot be set cross-origin without CORS consent, which we never grant),
+  // and so do sessionless requests: CSRF defends the SESSION cookie, and with no
+  // mv_s there is nothing to ride - those requests fall through to a clean 401,
+  // which is what tells the client to open the sign-in dialog.
   const csrfOk = (req: IncomingMessage): boolean =>
     !!/^Bearer /.test(String(req.headers.authorization ?? '')) ||
+    !cookie(req, 'mv_s') ||
     (!!cookie(req, 'mv_c') && req.headers['x-mv-c'] === cookie(req, 'mv_c'))
 
   /** Returns true when the request was handled. Mounted behind the gate by serve. */
