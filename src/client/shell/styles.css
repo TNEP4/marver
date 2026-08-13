@@ -658,27 +658,37 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-stack .cm-avatar { margin-right: -6px; border: 1.5px solid #fff }
 .cm-stack .cm-avatar:last-of-type { margin-right: 2px }
 .cm-stack:hover { background: #fafafa }
-.cm-card { position: absolute; z-index: 40; width: 260px; padding: 10px 12px;
+.cm-card { position: absolute; z-index: 40; width: 288px; padding: 14px 16px 12px;
   transform: scale(var(--sh-inv, 1)); transform-origin: top left;
-  background: #fff; color: #18181b; border-radius: 14px; border: 1px solid rgba(24,24,27,.1);
+  background: #fff; color: #18181b; border-radius: 16px; border: 1px solid rgba(24,24,27,.1);
   box-shadow: 0 2px 6px rgba(24,24,27,.12), 0 12px 32px -8px rgba(24,24,27,.28);
-  display: flex; flex-direction: column; gap: 8px;
-  font: 400 12.5px -apple-system, system-ui, sans-serif; text-align: left }
+  display: flex; flex-direction: column; gap: 10px;
+  font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
-.cm-card header { display: flex; align-items: center; gap: 7px }
-.cm-card header b { font-size: 12.5px }
-.cm-card .dim { color: rgba(24,24,27,.45); font-size: 11px }
+.cm-card header { display: flex; align-items: center; gap: 8px }
+.cm-card header b { font-size: 13px; font-weight: 600; letter-spacing: -.01em }
+.cm-card .dim { color: rgba(24,24,27,.42); font-size: 11.5px }
 .cm-card .grow { flex: 1 }
-.cm-card p { margin: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word }
-.cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
-  border: 0; border-radius: 6px; background: none; color: rgba(24,24,27,.5); cursor: pointer }
+.cm-card header .cm-icon + .cm-icon { margin-left: -2px }
+.cm-card .cm-body { margin: 0; font-size: 13px; line-height: 1.5; color: rgba(24,24,27,.86);
+  white-space: pre-wrap; overflow-wrap: break-word }
+.cm-card > .cm-body { margin-top: -2px }       /* the root body tucks under its header */
+.cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border: 0; border-radius: 7px; background: none; color: rgba(24,24,27,.48); cursor: pointer;
+  transition: background .12s, color .12s }
 .cm-icon:hover { background: rgba(24,24,27,.06); color: #18181b }
-.cm-reply { display: flex; gap: 7px; padding-top: 2px }
-.cm-reply b { font-size: 12px }
-.cm-compose input { width: 100%; height: 30px; padding: 0 10px; border-radius: 8px;
-  border: 1px solid rgba(24,24,27,.14); background: #fff; color: #18181b; font: inherit; outline: none }
+.cm-reply { display: flex; gap: 8px; padding-top: 2px }
+.cm-reply > div { display: flex; flex-direction: column; gap: 2px; min-width: 0 }
+.cm-who { display: flex; align-items: baseline; gap: 6px }
+.cm-who b { font-size: 12.5px; font-weight: 600; letter-spacing: -.01em }
+.cm-compose { padding-top: 2px }
+.cm-compose input { width: 100%; height: 34px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid rgba(24,24,27,.14); background: #fff; color: #18181b;
+  font: 400 13px -apple-system, system-ui, sans-serif; outline: none }
+.cm-compose input::placeholder { color: rgba(24,24,27,.35) }
 .cm-compose input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent) }
-.cm-draft { padding: 8px }
+.cm-draft { padding: 10px }
+.cm-draft .cm-compose { padding-top: 0 }
 /* identity modal */
 .cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.35); backdrop-filter: blur(4px) }
@@ -700,3 +710,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   background: #fff; font: 600 12.5px -apple-system, system-ui, sans-serif; cursor: pointer }
 .cm-row button.cm-primary { background: #18181b; color: #fafafa; border-color: #18181b; flex: 1 }
 .cm-row button.cm-primary:hover { background: #000 }
+/* the unclipped comment plane over each frame: itself transparent to the pointer,
+   its children (pins, cards, stacks) fully interactive */
+.cm-layer { position: absolute; left: 0; width: 100%; pointer-events: none; z-index: 25 }
+.cm-layer > * { pointer-events: auto }

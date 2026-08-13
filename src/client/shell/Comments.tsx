@@ -8,8 +8,9 @@ import { useEffect, useRef, useState } from 'react'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
-import { bootHash, buildHash } from './hash.ts'
+import { bootHash, buildHash, parseHash } from './hash.ts'
 import { CheckIcon, CopyIcon, XIcon } from './icons.tsx'
+import { Tip } from './Tip.tsx'
 import type { Thread } from '../../shared/events.ts'
 
 const rel = (ts: number) => {
@@ -119,23 +120,32 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
     <div className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <header>
-        <Avatar author={thread.author} size={20} />
+        <Avatar author={thread.author} size={24} />
         <b>{thread.author?.name ?? 'Someone'}</b>
         <span className="dim">{rel(thread.ts)}</span>
         <span className="grow" />
-        <button className="cm-icon" title="Copy link" onClick={() => {
-          const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
-          void navigator.clipboard.writeText(url)
-          useStore.getState().toast('comment link copied')
-        }}><CopyIcon size={12} /></button>
-        <button className="cm-icon" title="Resolve" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckIcon size={13} /></button>
-        <button className="cm-icon" title="Close" onClick={() => setActive(null)}><XIcon size={12} /></button>
+        <Tip side="bottom" label={<b>Copy link</b>}>
+          <button className="cm-icon" onClick={() => {
+            const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
+            void navigator.clipboard.writeText(url)
+            useStore.getState().toast('comment link copied')
+          }}><CopyIcon size={15} /></button>
+        </Tip>
+        <Tip side="bottom" label={<b>Resolve</b>}>
+          <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckIcon size={16} /></button>
+        </Tip>
+        <Tip side="bottom" label={<b>Close</b>}>
+          <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
+        </Tip>
       </header>
-      <p>{thread.body}</p>
+      <p className="cm-body">{thread.body}</p>
       {thread.replies.map((r) => (
         <div key={r.id} className="cm-reply">
-          <Avatar author={r.author} size={18} />
-          <div><b>{r.author?.name ?? 'Someone'}</b> <span className="dim">{rel(r.ts)}</span><p>{r.body}</p></div>
+          <Avatar author={r.author} size={20} />
+          <div>
+            <span className="cm-who"><b>{r.author?.name ?? 'Someone'}</b> <span className="dim">{rel(r.ts)}</span></span>
+            <p className="cm-body">{r.body}</p>
+          </div>
         </div>
       ))}
       <div className="cm-compose">
@@ -214,6 +224,19 @@ export function IdentityDialog() {
   )
 }
 
+/** Open a thread by id: activate, select its node, fit the camera. True on success. */
+function revealThread(c: string): boolean {
+  const t = useComments.getState().threads.find((t) => t.id === c)
+  if (!t) return false
+  useComments.getState().setActive(c)
+  const node = t.nodeKey && useStore.getState().nodes.find((n) => n.key === t.nodeKey)
+  if (node) {
+    useStore.getState().select(node.key)
+    setTimeout(() => canvasCtl.fitNode(node.key), 80)
+  }
+  return true
+}
+
 /** Board-level comment wiring: load + liveness + mode broadcast, one instance in App. */
 let bootThreadConsumed = false
 export function CommentsController() {
@@ -227,20 +250,22 @@ export function CommentsController() {
       // Consumed only on a successful find: the controller's first effect fires with
       // the pre-boot board (child effects run before the parent's boot effect), and
       // burning the flag on that empty pass would eat the link.
-      const c = bootHash.c
-      if (bootThreadConsumed || !c) return
-      const t = useComments.getState().threads.find((t) => t.id === c)
-      if (!t) return
-      bootThreadConsumed = true
-      useComments.getState().setActive(c)
-      const node = t.nodeKey && useStore.getState().nodes.find((n) => n.key === t.nodeKey)
-      if (node) {
-        useStore.getState().select(node.key)
-        setTimeout(() => canvasCtl.fitNode(node.key), 80)
-      }
+      if (bootThreadConsumed || !bootHash.c) return
+      if (revealThread(bootHash.c)) bootThreadConsumed = true
     })
     return live(board)
   }, [board])
+
+  // a comment link pasted into an ALREADY-OPEN canvas is a hash-only navigation -
+  // no reload, no boot path. Watch for c on hashchange and reveal it live.
+  useEffect(() => {
+    const onHash = () => {
+      const c = parseHash().c
+      if (c) setTimeout(() => revealThread(c), 60)   // give a board switch a beat to load
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   // broadcast pick mode to every frame (laser rides along inside the bridge)
   useEffect(() => {

@@ -42,6 +42,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // so late loaders join an already-lasered board
   const laser = useStore((s) => s.laser)
   const commentMode = useComments((s) => s.commentMode)
+  // a node hosting the OPEN thread card (or a draft composer) rises above its
+  // neighbors - each node is a stacking context, so an overflowing card would
+  // otherwise paint under the next frame
+  const hostsCard = useComments((s) =>
+    (!!s.active && s.threads.some((t) => t.id === s.active && t.nodeKey === node.key)) || s.draft?.nodeKey === node.key)
   useEffect(() => {
     if (node.status === 'ready' || !laser)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, location.origin)
@@ -173,7 +178,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     <div
       className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}`}
       data-theme={node.theme}
-      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER }}
+      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined }}
       data-node={node.key}
     >
       {frame.variantGroup && (
@@ -220,6 +225,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
           />
         )}
+      </div>
+
+      {/* comments live OUTSIDE the clipped body: a card or pin near the frame edge
+          hangs over it (the vbadge precedent) instead of being cut off */}
+      <div className="cm-layer" style={{ top: HEADER, height: node.h }}>
         <CommentLayer node={node} frameId={frame.id} iframe={iframeRef} />
       </div>
 
