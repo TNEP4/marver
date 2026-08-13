@@ -1,7 +1,9 @@
 # Design canvas - agent contract (embedded mode)
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
-Never run or talk to the canvas tool; read and write files only.
+Never drive or automate the canvas UI; read and write files only. (Starting
+`npx marver dev` so the human has a live canvas - first session, or on request -
+is the one allowed touch.)
 
 ## The method (binding)
 
@@ -10,6 +12,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 
 | Phase | When | Read |
 |---|---|---|
+| Welcome | the human's FIRST session, or "what is this?" | instructions/welcome.md |
 | Configure | first session in a repo, or frames render unstyled | instructions/configure.md |
 | Discover | any new surface, feature, or flow | instructions/discover.md |
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
@@ -21,6 +24,9 @@ file in design/instructions/ - they are short, strict, and part of this contract
 Refining an existing screen: Configure must hold, then Build + Review. New work runs
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a
 phase of wrong work.
+
+First sessions are teaching sessions: narrate what you do and why in short plain
+sentences - the human should learn the tool by watching you work (welcome.md).
 
 Stuck, or the human is unhappy with a result? instructions/reference/ holds the deep
 guides (layout, typography, color, motion, copy, states, tuning, critique, concepts) -

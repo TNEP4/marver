@@ -166,9 +166,16 @@ export function init(root: string, opts: InitOpts) {
       return s.startsWith('# Setup required') && s.includes('marver init')
     } catch { return false }
   }
+  const appJustAppeared = !noApp(host) && existsSync(setupPath) && ourSetup()
   if (noApp(host)) {
     if (!existsSync(setupPath)) write('instructions/setup.md', SETUP_MD)
-  } else if (existsSync(setupPath) && ourSetup()) {   // delete only what we authored
+    // setup.md is machinery, not content: while it is ours (never hand-edited into
+    // something else - ourSetup checks the anchors), a newer template replaces it
+    else if (ourSetup() && readFileSync(setupPath, 'utf8') !== SETUP_MD) {
+      writeFileSync(setupPath, SETUP_MD)
+      created.push('design/instructions/setup.md (updated)')
+    }
+  } else if (appJustAppeared) {   // delete only what we authored
     rmSync(setupPath)
     console.log(`  - design/instructions/setup.md removed (app detected - setup complete)`)
   }
@@ -178,9 +185,27 @@ export function init(root: string, opts: InitOpts) {
   // which is this one - inherited paths resolve relative to the declaring config, so
   // without an explicit copy every `@/components/ui` import 500s (scratch-test P0).
   const rootTsconfig = existsSync(join(root, 'tsconfig.json'))
-  write('tsconfig.json', rootTsconfig
+  const tsconfigNow = () => rootTsconfig
     ? readFileSync(join(templates, 'design-tsconfig.json'), 'utf8').replace('{{PATHS}}', designPaths(root))
-    : STANDALONE_TSCONFIG)
+    : STANDALONE_TSCONFIG
+  write('tsconfig.json', tsconfigNow())
+  // The no-app run shaped providers.tsx and tsconfig.json blind (no router, no root
+  // tsconfig to extend), and write() is write-once - so on the setup->app transition
+  // those two would stay wrong forever (standalone tsconfig = every @/ alias 500s).
+  // Refresh the ones the user never touched: byte-compare against the exact no-app
+  // output, so an edited file is never on the losing side.
+  if (appJustAppeared) {
+    const refresh = (rel: string, noAppPristine: string, next: string) => {
+      try {
+        if (noAppPristine !== next && readFileSync(join(design, rel), 'utf8') === noAppPristine) {
+          writeFileSync(join(design, rel), next)
+          created.push(`design/${rel} (updated for the detected app)`)
+        }
+      } catch { /* absent - write() above already created the fresh version */ }
+    }
+    refresh('providers.tsx', providersTemplate(null, null), providersTemplate(host.router, host.toaster, host.routerPkg))
+    refresh('tsconfig.json', STANDALONE_TSCONFIG, tsconfigNow())
+  }
   write('.gitignore', '.local/\n.dist/\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
   if (!existsSync(join(design, 'boards'))) { mkdirSync(join(design, 'boards'), { recursive: true }); writeFileSync(join(design, 'boards', '.gitkeep'), ''); created.push('design/boards/') }
@@ -205,9 +230,10 @@ export function init(root: string, opts: InitOpts) {
   │ No framework, no theme CSS, no component library. ${NAME} builds      │
   │ frames from YOUR components - with none, designs get thrown away.     │
   │                                                                       │
-  │ Setup instructions: design/instructions/setup.md. Set up the app,     │
-  │ re-run init, and that file removes itself. AGENTS.md carries a STOP   │
-  │ so your agent does not design against components that do not exist.   │
+  │ Setup instructions: design/instructions/setup.md. Your agent will     │
+  │ ask what you are building, propose a stack, set it up with you, and   │
+  │ re-run init - that file then removes itself. AGENTS.md carries a      │
+  │ STOP so nothing gets designed against components that do not exist.   │
   └───────────────────────────────────────────────────────────────────────┘`)
   }
   console.log(`\n  commit design/ - only .local/ is ignored`)
@@ -270,14 +296,45 @@ const SETUP_MD = `# Setup required - this repo has no app yet
 > the real stack. While this file exists, DO NOT design.
 
 ${NAME} builds frames from YOUR components and YOUR theme. With none, frames become
-hand-rolled CSS that shares nothing with the future app and cannot be promoted into
-it later - work that gets thrown away.
+hand-rolled CSS that shares nothing with the future app - throwaway work. So the
+first session sets up the stack - TOGETHER with the human. The stack is their
+decision; your job is a good recommendation and a smooth setup. Narrate every step
+in one plain line as you go: the human learns the tool by watching you work.
 
-## Do this first
+## 1. Greet and explain
 
-For a web app or marketing site, the blessed stack. NOTE: create-next-app refuses a
-non-empty directory (this repo already holds design/ and a package.json), so
-scaffold into a temp dir and merge:
+Tell the human the repo is empty and that this is a perfect starting point. Then
+the pitch, ~4 sentences (instructions/welcome.md has the full version): we design
+in real code; the theme, components, and screens made while designing ARE the
+app's building blocks; by the time the design is agreed most of the UI work
+exists, and building the product means plugging functionality in; the goal is
+alignment on look and feel across themes and devices first.
+
+## 2. Ask what they are building - STOP
+
+One question: "In a sentence or two - what are we building?" Then STOP: no
+further tool calls, end your turn, resume only after the human replies. (The
+one exception: the human explicitly asked for unattended execution - then
+assume something reasonable, mark it UNCONFIRMED, surface it first.)
+
+## 3. Propose the stack - STOP
+
+From their answer, recommend a framework with one line of reasoning each:
+
+- Marketing site, content, SEO -> latest Next.js.
+- App-like, interactive, client-heavy -> latest React Router.
+- Their answer points somewhere else? Recommend that instead, and say why.
+
+If you can search the web, verify current major versions first - never let a
+search stall the flow. The only fixed opinions: shadcn/ui + latest Tailwind.
+Close with "aligned, or tell me what you'd rather use" - then STOP the same
+way and wait for the nod.
+
+## 4. Scaffold and verify
+
+NOTE: scaffolders refuse non-empty directories (this repo already holds design/
+and a package.json), so scaffold into a temp dir and merge. The Next.js lane -
+adapt the same shape to whatever stack was agreed:
 
 \`\`\`bash
 npx create-next-app@latest app-scaffold --ts --tailwind --app --src-dir --yes
@@ -288,17 +345,43 @@ npx shadcn@latest init
 \`\`\`
 
 shadcn's flags change between versions - if a flag errors or it prompts despite
---yes, answer the prompts with its defaults. Any React + CSS setup works; the
-point is that components and a theme EXIST.
+--yes, answer the prompts with its defaults. Then START the dev server and
+confirm the starter page renders before moving on. Unsure about the stack's
+conventions? Fetch its docs.
 
-## Then
+## 5. Re-run init
 
 \`\`\`bash
 npx ${NAME} init
 \`\`\`
 
-init is idempotent: it fills in what it now detects (theme wrapper, providers, a
-shadcn-aware AGENTS.md), deletes this file, and you design from real parts.
+init is idempotent: it detects the real stack, deletes this file, and
+regenerates AGENTS.md against reality. Verify the wiring (instructions/
+configure.md): frames render styled, one app component imports cleanly.
+DESIGN.md comes next, as part of the first draft.
+
+## 6. The first draft - make it impressive, then tour
+
+This is the human's first impression of the canvas AND the first draft of their
+product - it sets the direction. Take the time to do it well:
+
+- If you can search the web, spend a few minutes understanding the domain from
+  step 2's answer; sketch a reasonable brand and write design/DESIGN.md for it.
+- Replace the generic demo scene (delete design/scenes/demo/) with ~4 frames of
+  THEIR product - not lorem, not filler. Hold them to the craft bar:
+  instructions/craft.md and instructions/reference/slop.md are binding here.
+  Responsive, working in BOTH themes, linked with data-goto so play mode flows.
+- Create a curated board for them (instructions/boards.md) containing every
+  frame the flow visits.
+- Offer a divergence: "want a variant of <frame> exploring a different
+  direction?" - one a-/b- pair teaches the variant workflow better than any
+  explanation.
+
+This first draft skips the written-brief ceremony (the human just told you what
+they are building) but never the quality bar. Then give the tour from
+instructions/welcome.md: start \`npx ${NAME} dev\` if it is not running and use
+the PRINTED port for the deep link - \`http://localhost:<port>/#/b/<board>\`,
+never the bare root URL.
 `
 
 /** Next.js frames render OUTSIDE Next - say concretely what that means (friction log #10/#11). */

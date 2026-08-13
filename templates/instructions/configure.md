@@ -20,9 +20,12 @@ All four true → idle state. Go design.
 
 ## By repo maturity
 
+The human's first session layers on top of this: philosophy, their product on the
+canvas, the tour - that flow lives in instructions/welcome.md, run it alongside.
+
 - **Brand-new repo (no app)**: `design/instructions/setup.md` exists and is the
-  authority - STOP, follow it (set up the stack, re-run init). Do not design against
-  a repo that has nothing to build from.
+  authority - STOP, follow it (set up the stack WITH the human, re-run init). Do
+  not design against a repo that has nothing to build from.
 - **Fresh repo (app scaffolded, little product code)**: init's detection is usually
   right. Verify the checklist, create DESIGN.md from the starter tokens (Path A -
   even a default shadcn theme is a documentable brand), and note in it which parts

@@ -120,3 +120,55 @@ describe('init: the method layer (0.2.2)', () => {
     expect(read('instructions/setup.md')).toBe('my personal setup notes\n')
   })
 })
+
+describe('init: onboarding (SPEC-025)', () => {
+  const appify = () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'host', devDependencies: { tailwindcss: '^4.0.0' } }))
+    writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { paths: { '@/*': ['./src/*'] } } }))
+    mkdirSync(join(root, 'src'), { recursive: true })
+    writeFileSync(join(root, 'src', 'index.css'), '@import "tailwindcss";')
+  }
+
+  it('setup.md is the conversational flow: pitch, two STOPs, the first draft', () => {
+    init(root, OPTS)
+    const s = read('instructions/setup.md')
+    expect(s).toContain('what are we building')
+    expect((s.match(/STOP/g) ?? []).length).toBeGreaterThanOrEqual(2)
+    expect(s).toContain('welcome.md')
+    expect(s).toContain('#/b/')
+  })
+
+  it('a stale marver-authored setup.md is refreshed in place', () => {
+    init(root, OPTS)
+    const setup = join(root, 'design', 'instructions', 'setup.md')
+    writeFileSync(setup, '# Setup required - old template\nrun npx marver init\n')
+    init(root, OPTS)   // still no app: ours + stale -> current template
+    expect(read('instructions/setup.md')).toContain('what are we building')
+  })
+
+  it('setup->app transition refreshes pristine tsconfig.json (standalone -> extends)', () => {
+    init(root, OPTS)   // no root tsconfig -> standalone design/tsconfig.json
+    expect(read('tsconfig.json')).not.toContain('"extends"')
+    appify()
+    init(root, OPTS)
+    expect(existsSync(join(root, 'design', 'instructions', 'setup.md'))).toBe(false)
+    expect(read('tsconfig.json')).toContain('"extends"')
+    expect(read('tsconfig.json')).toContain('"@/*"')
+  })
+
+  it('setup->app transition never touches an edited tsconfig or providers', () => {
+    init(root, OPTS)
+    writeFileSync(join(root, 'design', 'tsconfig.json'), '{ "my": "own" }\n')
+    writeFileSync(join(root, 'design', 'providers.tsx'), '// mine\n')
+    appify()
+    init(root, OPTS)
+    expect(read('tsconfig.json')).toBe('{ "my": "own" }\n')
+    expect(read('providers.tsx')).toBe('// mine\n')
+  })
+
+  it('welcome.md ships in instructions/ and AGENTS.md routes to it', () => {
+    init(root, OPTS)
+    expect(read('instructions/welcome.md')).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
+    expect(read('AGENTS.md')).toContain('instructions/welcome.md')
+  })
+})
