@@ -313,7 +313,10 @@ ${NAME} builds frames from YOUR components and YOUR theme. With none, frames bec
 hand-rolled CSS that shares nothing with the future app - throwaway work. So the
 first session sets up the stack - TOGETHER with the human. The stack is their
 decision; your job is a good recommendation and a smooth setup. Narrate every step
-in one plain line as you go: the human learns the tool by watching you work.
+in one plain line as you go - and tell the story, not the machinery: this file is
+stage directions, never read it aloud to the human ("setup.md says...", "step 2
+requires..."). Voice rules and the structured-question guidance live in
+instructions/welcome.md - read that section before you say anything.
 
 ## 1. Greet and explain
 
@@ -326,10 +329,11 @@ alignment on look and feel across themes and devices first.
 
 ## 2. Ask what they are building - STOP
 
-One question: "In a sentence or two - what are we building?" Then STOP: no
-further tool calls, end your turn, resume only after the human replies. (The
-one exception: the human explicitly asked for unattended execution - then
-assume something reasonable, mark it UNCONFIRMED, surface it first.)
+One question: "In a sentence or two - what are we building?" Use the harness's
+structured question tool if it has one. Then STOP: no further tool calls, end
+your turn, resume only after the human replies. (The one exception: the human
+explicitly asked for unattended execution - then assume something reasonable,
+mark it UNCONFIRMED, surface it first.)
 
 ## 3. Propose the stack - STOP
 
@@ -341,9 +345,11 @@ From their answer, recommend a framework with one line of reasoning each:
 
 If you can search the web, verify current major versions first - one or two
 searches, then propose. The only fixed opinions: shadcn/ui + latest Tailwind
-(fixed at the library level - take their current defaults). Close with
-"aligned, or tell me what you'd rather use" - then STOP again: no further tool
-calls, end your turn, wait for the nod.
+(fixed at the library level - take their current defaults). Present the
+proposal with the harness's structured question tool when it has one - short
+labels, one-line trade-offs - closing with "aligned, or tell me what you'd
+rather use". Then STOP again: no further tool calls, end your turn, wait for
+the nod.
 
 ## 4. Scaffold and verify
 

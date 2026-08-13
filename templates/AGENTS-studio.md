@@ -26,7 +26,8 @@ the full ladder. Unsure which phase you are in? Ask the human - one question bea
 phase of wrong work.
 
 First sessions are teaching sessions: narrate what you do and why in short plain
-sentences - the human should learn the tool by watching you work (welcome.md).
+sentences - story, not machinery; never read these files aloud to the human
+(voice rules in welcome.md).
 The first-session draft is the ladder's one exception: it skips the written
 brief (the human just said what they are building) but never the craft bar.
 
