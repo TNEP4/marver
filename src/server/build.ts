@@ -35,17 +35,22 @@ function packageDir(): string {
  *  example cannot fail the build. A computed <Img src={...}> fails CLOSED - the build
  *  cannot know what it resolves to, so it must not publish. */
 export function scanAssetRefs(src: string, moduleId: string): string[] {
-  // conservative comment strip: block comments, plus lines that START as line comments
-  // (mid-line "//" is left alone - it may live inside a string like https://...)
-  const code = src
+  // template literals come out of the RAW source first: Md prose keeps any /*...*/
+  // it legitimately contains, and removing the spans makes the comment strip safe
+  const templates: string[] = []
+  const code = src.replace(/`(?:[^`\\]|\\[\s\S])*`/g, (t) => { templates.push(t); return '``' })
+  // conservative comment strip on the remaining code: block comments, and //-to-EOL
+  // when preceded by line start or whitespace ("https://" in a string survives -
+  // its // follows a colon)
+  const stripped = code
     .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n').filter((l) => !l.trimStart().startsWith('//')).join('\n')
-  if (/<Img\b[^>]*\bsrc\s*=\s*\{/.test(code))
+    .replace(/(^|\s)\/\/.*$/gm, '$1')
+  if (/<Img\b[^>]*\bsrc\s*=\s*\{/.test(stripped))
     throw new Error(`${moduleId}: <Img src={...}> is computed - published builds copy only statically referenced assets. Use a string literal.`)
   const out: string[] = []
-  for (const m of code.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
-  for (const tpl of code.matchAll(/`(?:[^`\\]|\\[\s\S])*`/g))
-    for (const m of tpl[0].matchAll(/!\[[^\]]*\]\(([^)\s"']+)\)/g)) out.push(m[1])
+  for (const m of stripped.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
+  for (const tpl of templates)
+    for (const m of tpl.matchAll(/!\[[^\]]*\]\(([^)\s"']+)\)/g)) out.push(m[1])
   return out
 }
 

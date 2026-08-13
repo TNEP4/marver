@@ -197,7 +197,12 @@ export const useStore = create<State>((set, get) => {
 
   /** Published parity for content-frame sizes (SPEC-026): manual/device sizes persist
    *  to the session the same way theme pins do - a board switch or reload on a
-   *  published canvas must not silently drop a hand-resized spec frame. */
+   *  published canvas must not silently drop a hand-resized spec frame. Keys are
+   *  frame#occurrence: node keys are minted per load on virtual boards, but the node
+   *  ORDER round-trips (board file order / manifest order), so the ordinal is the
+   *  stable identity - duplicates of one frame keep their individual sizes. */
+  const sizeKey = (nodes: Node[], node: Node) =>
+    `${node.frame}#${nodes.filter((n) => n.frame === node.frame).indexOf(node)}`
   const sessionSizes = {
     read(board: string): Record<string, { w: number; h: number; sizeMode: 'manual' | 'device' }> {
       try { return JSON.parse(sessionStorage.getItem(`mv-sizes-${board}`) ?? '{}') } catch { return {} }
@@ -206,7 +211,7 @@ export const useStore = create<State>((set, get) => {
       try {
         const sizes: Record<string, { w: number; h: number; sizeMode: string }> = {}
         for (const n of nodes) if (n.sizeMode === 'manual' || n.sizeMode === 'device')
-          sizes[n.frame] = { w: Math.round(n.w), h: Math.round(n.h), sizeMode: n.sizeMode }
+          sizes[sizeKey(nodes, n)] = { w: Math.round(n.w), h: Math.round(n.h), sizeMode: n.sizeMode }
         sessionStorage.setItem(`mv-sizes-${board}`, JSON.stringify(sizes))
       } catch { /* storage unavailable */ }
     },
@@ -352,7 +357,7 @@ export const useStore = create<State>((set, get) => {
         for (const n of nodes) {
           const pin = pins[n.frame]
           if (pin && CONFIG.themes.includes(pin)) { n.themeUser = pin; n.theme = pin }
-          const sz = sizes[n.frame]
+          const sz = sizes[sizeKey(nodes, n)]
           if (sz && manifest.frames.find((f) => f.id === n.frame)?.contentWidth
             && Number.isFinite(sz.w) && Number.isFinite(sz.h) && (sz.sizeMode === 'manual' || sz.sizeMode === 'device')) {
             n.w = sz.w; n.h = sz.h; n.sizeMode = sz.sizeMode
@@ -474,6 +479,10 @@ export const useStore = create<State>((set, get) => {
         const f = m.frames.find((x) => x.id === n.frame)
         const want = n.themeUser ?? f?.theme ?? get().viewTheme
         if (n.theme !== want) { n.theme = want; retinted = true }
+        // content-ness can change live (agent adds/removes the primitives): reconcile
+        // provenance or measurements are rejected / UI dims silently omitted from saves
+        if (f?.contentWidth && !n.sizeMode) { n.sizeMode = 'auto'; retinted = true }
+        if (!f?.contentWidth && n.sizeMode) { delete n.sizeMode; retinted = true }
         // an errored frame whose file IS in the fresh manifest gets one automatic retry
         // on a rev-stamped URL - the "unknown frame id" dead end must self-heal (#20)
         if (!missing && n.status === 'error') { n.status = 'loading'; n.nav = (n.nav ?? 0) + 1; retinted = true }
@@ -592,10 +601,12 @@ export const useStore = create<State>((set, get) => {
       const vp = name ? CONFIG.viewports[name] : null
       if (name && !vp) return
       set((s) => {
-        // entering a device view from free-form: snapshot the layout so Default restores it
+        // entering a device view from free-form: snapshot the layout so Default restores it.
+        // Auto content nodes snapshot POSITIONS only - their w/h are measured (transient by
+        // contract) and restore comes from the measurement cache, never from the snapshot
         const baseLayout = name
           ? (s.deviceView === null
-              ? Object.fromEntries(s.nodes.map((n) => [n.key, { x: n.x, y: n.y, w: n.w, h: n.h }]))
+              ? Object.fromEntries(s.nodes.map((n) => [n.key, n.sizeMode === 'auto' ? { x: n.x, y: n.y } : { x: n.x, y: n.y, w: n.w, h: n.h }]))
               : s.baseLayout)
           : null
         const nodes = s.nodes.map((n) => {

@@ -54,8 +54,9 @@ export function Diagram({ title, children }: { title?: string; children?: ReactN
       try {
         // the zero-external-request boundary must hold BEFORE render: mermaid's image
         // shapes fetch their URL during render(), so post-render SVG sanitizing alone
-        // would be too late. External URLs have no legitimate place in diagram source.
-        if (/https?:\/\//i.test(src)) throw new Error('external URLs are not allowed in diagram source - use local design/assets/ images in an Img block instead')
+        // would be too late. Reject ANY URL shape - absolute (scheme://) and
+        // protocol-relative (//host) alike; neither has a place in diagram source.
+        if (/(?:\w+:)?\/\//.test(src)) throw new Error('URLs are not allowed in diagram source - use local design/assets/ images in an Img block instead')
         const mermaid = (await import('mermaid')).default
         if (!live || mySeq !== seq) return
         mermaid.initialize({

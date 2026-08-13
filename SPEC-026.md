@@ -117,9 +117,13 @@ after last change) and posts `sh:measure { ownWidth, measuredWidth, height, gen 
   a height only when `measuredWidth` matches the width it is applying (a
   phone-width height is never applied to a 1280 frame); mismatched
   measurements just trigger a remeasure at the right width.
-- `gen` - a shell-issued generation stamp (bumped on board switch and preset
-  change); stale generations are dropped, so a debounce firing after a board
-  switch cannot touch the new board.
+- `gen` - REALIZED AS (impl round 2): message routing (event.source must map to
+  a mounted iframe inside a live node) + a `frame` id carried in the message
+  that must equal the node's frame + auto-only admission + the width match.
+  A stale message surviving all four is a width-matched measurement of the
+  SAME frame in auto state - valid by definition, so a wire-level stamp would
+  be machinery defending against nothing. The shell-side reflow debounce
+  carries the board-name generation (cancel-on-switch).
 
 **Admission** (r2 P2): the shell accepts `sh:measure` only from frames whose
 manifest entry is content-detected, only finite positive numbers, clamped
