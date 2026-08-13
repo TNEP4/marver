@@ -102,7 +102,25 @@ group; a play-mode flow; closing frame that sends the human back to their
 agent. Build it AS a marver project (dogfood), host it (marver.design DNS +
 a small serve deployment), gate it with `welcome`.
 
-## Path B - existing codebase (first session, instructions/welcome.md)
+## The fork (Nic, 2026-08-13 - amendment, enabled by SPEC-026)
+
+Both paths gain a CHOICE at the last moment before the agent would tunnel into
+building - once the agent understands what the human is doing and wants, their
+PRIORITY decides what happens first. Applies to any kind of product (marketing
+site or web app alike).
+
+- **Path A**, folded into the stack STOP (step 2, one message, two questions):
+  "think it through together first" (co-develop the idea, workflow, specs, and
+  mood on the canvas - what goes on each screen, what stays out, what the
+  intent is; shape.md, seeded from the step-1 answers, revealed early, iterated
+  live) vs "build me something to react to" (the impressive-first-draft tunnel,
+  unchanged).
+- **Path B**, a new STOP after the stack confirmation: "start something new,
+  together" (Shape on a brand-new feature) vs "see your app on the canvas
+  first" (recreate 3-4 existing screens, unchanged).
+- shape.md consequently allows first-session entry ONLY through this fork -
+  never unprompted; the tour handoff still covers whichever waiting time the
+  chosen path creates.
 
 1. **Say what the app is.** Read the repo; state your understanding of the
    product in 2-3 sentences; confirm with the human.

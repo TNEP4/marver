@@ -361,10 +361,23 @@ searches, then propose. Recommend shadcn/ui + latest Tailwind as the default
 component layer (take their current defaults) - but they are a recommendation,
 not a requirement: if the human prefers another component library, plain CSS,
 or their own design system, that wins. Any React + a real stylesheet works;
-${NAME} adapts to what detection finds. Present the proposal with the
-harness's structured question tool when it has one - short labels, one-line
-trade-offs - closing with "aligned, or tell me what you'd rather use". Then
-STOP again: no further tool calls, end your turn, wait for the nod.
+${NAME} adapts to what detection finds.
+
+Ask the FORK in the same message - it decides everything after the scaffold,
+so it belongs here, before any tunnel. Two questions through the harness's
+structured question tool when it has one (short labels, one-line trade-offs):
+
+1. The stack - closing with "aligned, or tell me what you'd rather use".
+2. How do you want to start?
+   - **Think it through together first** - we co-develop the idea, the
+     workflow, the specs, and the mood/inspiration on the canvas before any
+     pixels. What goes on each screen, what stays out, what the intent is.
+   - **Build me something to react to** - I go heads-down and come back with
+     a first draft of ~4 screens you can play with, and we iterate from there.
+
+Works for any kind of product - a marketing site co-thinks its story and
+inspiration the same way an app co-thinks its workflow. Then STOP: no further
+tool calls, end your turn, wait for both answers.
 
 ## 4. Hand them the tour, then scaffold
 
@@ -417,7 +430,23 @@ configure.md): frames render styled, one app component imports cleanly.
 DESIGN.md comes next, as part of the first draft.
 
 
-## 6. The first draft - make it impressive, then tour
+## 6. The path they chose at the fork
+
+**Chose "think it together"?** No tunnel - the canvas becomes the shared
+thinking surface (instructions/shape.md is the guide). Start
+\`npx ${NAME} dev\`, then seed a feature-story board from what step 2 taught
+you: an intent content frame with their answer restated as problem/goal/
+non-goals, a first-guess workflow diagram (mermaid - your draft of THEIR flow,
+made to be corrected), and a mood frame - fetch real inspiration and brand
+references when you can search (craft.md "Real assets"). Reveal it EARLY with
+the board deep link and iterate together: what belongs on each screen, what
+stays out, what the intent of each step is. Wireframes and the hi-fi draft
+come after the story is agreed - and by then the brief writes itself. Delete
+the generic demo scene once your frames are in.
+
+**Chose "build me something"?** The impressive first draft, below.
+
+## The first draft - make it impressive, then tour
 
 This is the human's first impression of the canvas AND the first draft of their
 product - it sets the direction. Take the time to do it well:

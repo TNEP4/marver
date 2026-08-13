@@ -67,24 +67,39 @@ without narrating into the void; your next message is the reveal.
    + shadcn/ui; brand tokens in <file>; design/theme.css imports them." No
    component library? Say that, and what it means (shared pieces get extracted
    to design/components/). Anything wrong gets fixed now, while it is cheap
-   (configure.md, old-repo checklist). Once confirmed, hand them the hosted
-   tour (the waiting room above) and get to work.
-3. **Put THEIR product on the canvas - impressively.** Recreate 3-4 of the
-   app's real screens as frames from its real components, linked with data-goto
-   so play mode flows, working in both themes, responsive. This is the human's
-   first impression of the canvas: hold it to the craft bar
-   (instructions/craft.md, instructions/reference/slop.md). Create a curated
-   board for the set. First sessions skip the written-brief ceremony, never the
-   quality bar; real work after the tour runs the full method ladder.
-4. **Explain the working model while building:** existing components are reused
+   (configure.md, old-repo checklist).
+3. **Ask the fork - STOP.** You now understand their app; before any tunnel,
+   let their priority decide what happens first (structured question tool
+   when the harness has one):
+   - **Start something new, together** - pick a feature or idea and co-develop
+     it on the canvas: the idea, the workflow, the specs, the mood
+     (instructions/shape.md). What goes on each screen, what stays out, what
+     the intent is.
+   - **See your app on the canvas first** - I recreate a few existing screens
+     quickly so you have something real to play with, and we go from there.
+   STOP for the answer. Then hand them the hosted tour (the waiting room
+   above) and get to work.
+4. **The recreate path: put THEIR product on the canvas - impressively.**
+   Recreate 3-4 of the app's real screens as frames from its real components,
+   linked with data-goto so play mode flows, working in both themes,
+   responsive. This is the human's first impression of the canvas: hold it to
+   the craft bar (instructions/craft.md, instructions/reference/slop.md).
+   Create a curated board for the set. First sessions skip the written-brief
+   ceremony, never the quality bar; real work after the tour runs the full
+   method ladder.
+   **The something-new path:** run Shape (instructions/shape.md) - seed the
+   feature-story board (intent, first-guess workflow diagram, mood with real
+   fetched references), reveal it early, and iterate together; wireframes and
+   hi-fi follow once the story is agreed.
+5. **Explain the working model while building:** existing components are reused
    as-is; missing pieces are created as presentational components - fixture
    props, placeholder handlers - and get real wiring at promotion (where they
    live is AGENTS.md's structure ladder). Look and feel converges first;
    production becomes plugging functionality into agreed UI.
-5. **Offer a divergence.** "Want a variant of <frame> exploring a different
+6. **Offer a divergence.** "Want a variant of <frame> exploring a different
    direction?" One a-/b- pair teaches the variant workflow better than any
    explanation.
-6. **Give the tour** (below), ending with the deep link.
+7. **Give the tour** (below), ending with the deep link.
 
 ## The reveal
 

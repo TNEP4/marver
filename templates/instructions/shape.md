@@ -2,11 +2,11 @@
 
 Run this when the human wants to think a feature through on the canvas - specs,
 workflows, mood boards, inspiration - or when meaty new work deserves visual
-alignment before wireframes. NEVER in the first session: the welcome/setup flow
-(instructions/welcome.md) is the first session, complete and untouched, and its
-first-draft exception skips Shape entirely. Discover stays the interview -
-questions, brief, mode; Shape is the visual thinking surface built from its
-answers.
+alignment before wireframes. In a FIRST session it runs only when the human
+chose it at the welcome/setup fork ("think it through together" / "start
+something new, together") - never unprompted; the welcome flow owns the first
+session and routes here. Discover stays the interview - questions, brief,
+mode; Shape is the visual thinking surface built from its answers.
 
 ## The feature-story board
 

@@ -283,14 +283,16 @@ frame" is an icon scan, not a title read.
 New instruction file `templates/instructions/shape.md` + a method-table row:
 **Shape** - "an idea needs thinking before it needs screens".
 
-**Routing** (codex r1 #14): Shape NEVER runs in the first session - SPEC-025's
-Welcome/setup flow is locked and unchanged, and its first-draft exception
-skips Shape entirely. Shape enters afterwards, when the human wants to think
-a feature through on canvas (or the agent proposes it for meaty new work).
-The Discover boundary: Discover stays the interview - questions, brief, mode
-taxonomy; Shape is the visual thinking surface built from Discover's answers
-(the feature-story board). discover.md's existing flow-diagram note points to
-Shape instead of duplicating it.
+**Routing** (codex r1 #14; amended by the SPEC-025 fork, Nic 2026-08-13):
+Shape never runs UNPROMPTED in the first session - but the onboarding fork
+(SPEC-025 "The fork") now offers it explicitly: "think it through together"
+(Path A) / "start something new, together" (Path B) route the first session
+INTO Shape by the human's choice. Outside first sessions it enters when the
+human wants to think a feature through on canvas (or the agent proposes it
+for meaty new work). The Discover boundary: Discover stays the interview -
+questions, brief, mode taxonomy; Shape is the visual thinking surface built
+from Discover's answers (the feature-story board). discover.md's existing
+flow-diagram note points to Shape instead of duplicating it.
 
 shape.md teaches:
 
