@@ -92,9 +92,10 @@ export default () => (
   shows an in-frame card: fix the source, the frame heals live. Never hand-set
   colors or `%%{init}%%` themes - marver's palette is injected and source
   overrides are stripped.
-- `Img` shows `design/assets/<src>` with an optional caption. Blocks carry
-  their own padding, border, and surface - never hand-manage spacing around
-  them.
+- `Img` shows `design/assets/<src>` with an optional caption; `h={n}` cover-crops
+  to a fixed rendered height (the lever for optically aligning a mixed row - see
+  "Images and mood boards" below). Blocks carry their own padding, border, and
+  surface - never hand-manage spacing around them.
 - `intent` (`diagram` | `spec` | `moodboard` | `notes`) is the frame's PURPOSE,
   not its content mix - a frame with two diagrams and a paragraph is still the
   "diagram frame" if diagrams are why it exists. It drives the icon the human
@@ -145,6 +146,22 @@ screenshots, official brand logos, product visuals - download into
 `design/assets/` and place them. A mood board of real fetched imagery beats one
 of described imagery every time (the full asset rules: instructions/craft.md,
 "Real assets").
+
+**Size images to be SEEN, and make rows read as one set:**
+
+- An image that renders as a stamp is a defect. The image IS the content of a
+  mood board - give the important one most of a row, let supporting shots share
+  a row, and never pack so many into one `Row` that each collapses below
+  legibility.
+- Equal component widths do NOT make unequal images look equal - aspect ratios
+  and internal density differ, so a row of same-width `Img` blocks can still
+  read ragged. Normalize a mixed row with a shared rendered height:
+  `<Img src="..." h={240} />` cover-crops every image in the row to one height,
+  which is what makes them READ aligned. Group similar aspects together when
+  cropping would destroy the shot.
+- Alignment is judged on the RENDER, not the props: after composing, look at the
+  actual frame (screenshot it if you can) and adjust until the rows sit
+  optically consistent. "The code says they're the same width" proves nothing.
 
 ## When Shape ends
 

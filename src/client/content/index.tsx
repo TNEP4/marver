@@ -72,7 +72,7 @@ export function Md({ children }: { children?: ReactNode }) {
 
 /* ---------------------------------- Img ----------------------------------- */
 
-export function Img({ src, caption, alt }: { src: string; caption?: string; alt?: string }) {
+export function Img({ src, caption, alt, h }: { src: string; caption?: string; alt?: string; h?: number }) {
   const url = assetUrl(src)
   const [err, setErr] = useState(false)
   if (!url || err) {
@@ -86,7 +86,11 @@ export function Img({ src, caption, alt }: { src: string; caption?: string; alt?
   }
   return (
     <figure className="mv-block mv-img">
-      <img src={url} alt={alt ?? caption ?? ''} loading="lazy" onError={() => setErr(true)} />
+      {/* h: shared rendered height for a row of mixed-aspect images - equal widths
+          alone never make unequal images READ equal; cover-crop to one height does */}
+      <img src={url} alt={alt ?? caption ?? ''} loading="lazy"
+        style={h ? { height: h, width: '100%', objectFit: 'cover' } : undefined}
+        onError={() => setErr(true)} />
       {caption && <figcaption>{caption}</figcaption>}
     </figure>
   )

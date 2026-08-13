@@ -100,6 +100,31 @@ thing - changes everything. This section is binding, not aspiration:
   identify the brand are fine; photos come from sources that permit the use.
   Unsure about one? Use it, and flag it to the human in the same message.
 
+## Interactive means visibly interactive - true to life
+
+The prototype is only believable if everything that would respond in the shipped
+product responds here. This is binding at EVERY fidelity (the lo-fi version is in
+instructions/wireframe.md); in play mode a hover-dead control reads as a broken
+app, and the human attributes the fault to your frame, not to a library.
+
+- **Every clickable target shows `cursor: pointer` and a visible hover state** -
+  buttons, dropdown triggers AND the options inside them, tabs, toggles, rows and
+  cards that navigate, icon buttons. If it responds to a click, it must respond to
+  a hover first.
+- **Component libraries do not guarantee this - audit them.** shadcn/ui on
+  Tailwind v4 notably ships buttons with the browser's `cursor: default`, and
+  menu/select items can lack a hover treatment depending on version. These are
+  design-system deficiencies, not reasons the rule bends.
+- **Fix gaps at the design-system level, never per-instance.** One base-layer rule
+  (e.g. `@layer base { button:not(:disabled), [role="button"]:not(:disabled)
+  { cursor: pointer } }` plus the library's own hover token on option items) beats
+  a hundred scattered `cursor-pointer` classes - and fixes the app, not just the
+  frame. When you find such a gap, patch the theme/base layer and tell the human
+  what the library got wrong.
+- **Sweep by hand once per design system:** render a frame, hover every KIND of
+  control it uses, and watch for the dead ones. The check is against the rendered
+  frame - a class in the source proves nothing about what the cascade delivered.
+
 ## Frame law
 
 - Frames are made of the app's real components and tokens. Rebuilding a lookalike of

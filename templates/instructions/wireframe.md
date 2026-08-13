@@ -30,7 +30,14 @@ lands on what is actually being decided.
    Never source or generate imagery in this phase.
 5. **Every screen reachable.** Wire the flow with `data-goto` as you go. A wireframe
    that cannot be walked end-to-end in play mode (press P) is not done.
-6. **States are structure.** empty / error / loading as sibling frames for any screen
+6. **Interactive reads interactive - even in grayscale.** Every target that would be
+   clickable in the real product gets `cursor: pointer` and a visible hover shift (a
+   light gray fill is enough; no new visual language needed). The wireframe is WALKED
+   in play mode - a hover-dead button reads as a broken prototype, not as an
+   unfinished sketch, and the human stops trusting the flow. This applies to every
+   fidelity; the hi-fi version of this rule (and component-library gotchas) is in
+   instructions/craft.md.
+7. **States are structure.** empty / error / loading as sibling frames for any screen
    where they meaningfully differ - "what does empty look like" is a structural
    decision, not polish.
 
