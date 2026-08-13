@@ -1,6 +1,8 @@
 import { memo, useEffect, useRef } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
 import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
+import { CommentLayer } from '../Comments.tsx'
+import { useComments } from '../comments-store.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -39,10 +41,16 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board
   const laser = useStore((s) => s.laser)
+  const commentMode = useComments((s) => s.commentMode)
   useEffect(() => {
     if (node.status === 'ready' || !laser)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, '*')
   }, [laser, node.status])
+  // comment mode = pick mode in the frame (late loaders join like laser does)
+  useEffect(() => {
+    if (node.status === 'ready' || !commentMode)
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, '*')
+  }, [commentMode, node.status])
 
   // a frame whose FILE actually changed (e.g. tsx -> html swap, same id) must renavigate
   useEffect(() => {
@@ -205,13 +213,14 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           title={frame.id}
           style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
-        {!interact && (
+        {!interact && !commentMode && (
           <div
             className="sh-overlay sh-no-pan"
             onPointerDown={(e) => drag(e, 'move')}
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
           />
         )}
+        <CommentLayer node={node} frameId={frame.id} iframe={iframeRef} />
       </div>
 
       {selected && (

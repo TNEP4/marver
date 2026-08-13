@@ -7,6 +7,10 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, FrameRectIcon, GridIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CommentsController } from './Comments.tsx'
+import { useComments } from './comments-store.ts'
+
+const commentsStore = () => useComments.getState()
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
@@ -539,6 +543,11 @@ export function App() {
         // measureNode does the rest of the admission (content frames only,
         // frame-id match, finite positive, clamped)
         s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
+      } else if (data.type === 'sh:picked') {
+        // comment mode: the frame reports the picked element - stage the draft on
+        // that node; the CommentLayer opens the composer at the pin
+        const c = commentsStore()
+        if (c.commentMode) c.setDraft({ nodeKey, frame: String(data.id ?? ''), anchor: data.anchor })
       } else if (data.type === 'sh:go') {
         const target = String(data.target ?? '')
         const existing = s.nodes.find((n) => n.frame === target && !n.missing)
@@ -565,11 +574,23 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setPillOpen((o) => !o); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
-      if (e.key === 'Escape') s.interact ? setInteract(null) : select(null)
+      if (e.key === 'Escape') {
+        const c = commentsStore()
+        if (c.commentMode || c.active || c.draft) { c.setMode(false); c.setActive(null); c.setDraft(null) }
+        else s.interact ? setInteract(null) : select(null)
+      }
       if (e.key === 'p') enterPlay()
       if (e.key === 't') { animateLayout(); runTidy() }
       if (e.key === 'l') s.setLaser(!s.laser)
-      if (e.key === 'c' && s.selection.length) {
+      // C = comment mode (SPEC-M3 §6, the Figma/Miro convention) · Shift+C = hide/show
+      // pins · copy-file-paths moved to Y (changelog 0.4.0)
+      if (e.key === 'c' && !e.shiftKey) {
+        const c = commentsStore()
+        c.setMode(!c.commentMode)
+        toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
+      }
+      if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); c.setShow(!c.show) }
+      if (e.key === 'y' && s.selection.length) {
         const files = s.selection
           .map((k) => { const n = s.nodes.find((x) => x.key === k); return n ? s.frameFor(n)?.file : undefined })
           .filter((f): f is string => !!f)
@@ -790,6 +811,7 @@ export function App() {
       </Tip>
 
       <PlayOverlay />
+      <CommentsController />
 
       {CONFIG.setup
         ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>

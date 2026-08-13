@@ -635,3 +635,68 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .sub.vgroup { cursor: pointer }
 .sub.vgroup.held { background: color-mix(in srgb, var(--glass-hover) 55%, transparent) }
 .sub.vgroup.held .gicon { color: var(--glass-ink-2) }
+
+/* ---- comments (SPEC-M3 §6) ---------------------------------------------------------- */
+/* pins keep screen size via --sh-inv, anchored inside the frame body */
+.cm-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
+  color: #fff; font-weight: 700; font-family: -apple-system, system-ui, sans-serif;
+  object-fit: cover; flex: none; user-select: none }
+.cm-pin { position: absolute; z-index: 30; transform: translate(-4px, -100%) scale(var(--sh-inv, 1));
+  transform-origin: bottom left; cursor: pointer;
+  background: #fff; border-radius: 14px 14px 14px 3px; padding: 3px;
+  box-shadow: 0 1px 2px rgba(24,24,27,.2), 0 4px 12px -4px rgba(24,24,27,.3);
+  border: 1px solid rgba(24,24,27,.12); transition: box-shadow .15s }
+.cm-pin:hover { box-shadow: 0 1px 2px rgba(24,24,27,.25), 0 6px 16px -4px rgba(24,24,27,.4) }
+.cm-pin.on { outline: 2px solid var(--accent); outline-offset: 1px }
+.cm-pin.orphan { border-style: dashed; opacity: .75 }
+.cm-stack { position: absolute; top: 8px; right: 8px; z-index: 30;
+  transform: scale(var(--sh-inv, 1)); transform-origin: top right;
+  display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px 3px 4px;
+  background: #fff; border: 1px solid rgba(24,24,27,.12); border-radius: 999px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(24,24,27,.15), 0 4px 10px -4px rgba(24,24,27,.25);
+  font: 700 11px -apple-system, system-ui, sans-serif; color: #18181b }
+.cm-stack .cm-avatar { margin-right: -6px; border: 1.5px solid #fff }
+.cm-stack .cm-avatar:last-of-type { margin-right: 2px }
+.cm-stack:hover { background: #fafafa }
+.cm-card { position: absolute; z-index: 40; width: 260px; padding: 10px 12px;
+  transform: scale(var(--sh-inv, 1)); transform-origin: top left;
+  background: #fff; color: #18181b; border-radius: 14px; border: 1px solid rgba(24,24,27,.1);
+  box-shadow: 0 2px 6px rgba(24,24,27,.12), 0 12px 32px -8px rgba(24,24,27,.28);
+  display: flex; flex-direction: column; gap: 8px;
+  font: 400 12.5px -apple-system, system-ui, sans-serif; text-align: left }
+.cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
+.cm-card header { display: flex; align-items: center; gap: 7px }
+.cm-card header b { font-size: 12.5px }
+.cm-card .dim { color: rgba(24,24,27,.45); font-size: 11px }
+.cm-card .grow { flex: 1 }
+.cm-card p { margin: 0; line-height: 1.45; white-space: pre-wrap; overflow-wrap: break-word }
+.cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border: 0; border-radius: 6px; background: none; color: rgba(24,24,27,.5); cursor: pointer }
+.cm-icon:hover { background: rgba(24,24,27,.06); color: #18181b }
+.cm-reply { display: flex; gap: 7px; padding-top: 2px }
+.cm-reply b { font-size: 12px }
+.cm-compose input { width: 100%; height: 30px; padding: 0 10px; border-radius: 8px;
+  border: 1px solid rgba(24,24,27,.14); background: #fff; color: #18181b; font: inherit; outline: none }
+.cm-compose input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent) }
+.cm-draft { padding: 8px }
+/* identity modal */
+.cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
+  background: rgba(24,24,27,.35); backdrop-filter: blur(4px) }
+.cm-modal { width: 340px; padding: 22px; border-radius: 20px; background: #fff; color: #18181b;
+  display: flex; flex-direction: column; gap: 10px; font: 400 13px -apple-system, system-ui, sans-serif;
+  box-shadow: 0 8px 40px -8px rgba(24,24,27,.4) }
+.cm-modal h2 { margin: 0; font-size: 16px; letter-spacing: -.01em }
+.cm-modal .dim { color: rgba(24,24,27,.55); font-size: 12.5px; line-height: 1.45 }
+.cm-modal input { height: 36px; padding: 0 12px; border-radius: 9px; border: 1px solid rgba(24,24,27,.14);
+  font: inherit; outline: none }
+.cm-modal input:focus { border-color: var(--accent) }
+.cm-tabs { display: flex; gap: 4px; padding: 3px; background: rgba(24,24,27,.05); border-radius: 9px }
+.cm-tabs button { flex: 1; height: 28px; border: 0; border-radius: 7px; background: none;
+  font: 600 12px -apple-system, system-ui, sans-serif; color: rgba(24,24,27,.55); cursor: pointer }
+.cm-tabs button.on { background: #fff; color: #18181b; box-shadow: 0 1px 2px rgba(24,24,27,.1) }
+.cm-err { color: #b42318; font-size: 12px }
+.cm-row { display: flex; gap: 8px }
+.cm-row button { height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(24,24,27,.14);
+  background: #fff; font: 600 12.5px -apple-system, system-ui, sans-serif; cursor: pointer }
+.cm-row button.cm-primary { background: #18181b; color: #fafafa; border-color: #18181b; flex: 1 }
+.cm-row button.cm-primary:hover { background: #000 }
