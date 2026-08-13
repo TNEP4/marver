@@ -339,10 +339,11 @@ From their answer, recommend a framework with one line of reasoning each:
 - App-like, interactive, client-heavy -> latest React Router.
 - Their answer points somewhere else? Recommend that instead, and say why.
 
-If you can search the web, verify current major versions first - never let a
-search stall the flow. The only fixed opinions: shadcn/ui + latest Tailwind.
-Close with "aligned, or tell me what you'd rather use" - then STOP the same
-way and wait for the nod.
+If you can search the web, verify current major versions first - one or two
+searches, then propose. The only fixed opinions: shadcn/ui + latest Tailwind
+(fixed at the library level - take their current defaults). Close with
+"aligned, or tell me what you'd rather use" - then STOP again: no further tool
+calls, end your turn, wait for the nod.
 
 ## 4. Scaffold and verify
 
@@ -359,8 +360,9 @@ npx create-next-app@latest app-scaffold --ts --tailwind --app --src-dir --yes
 npx shadcn@latest init
 \`\`\`
 
-shadcn's flags change between versions - if a flag errors or it prompts despite
---yes, answer the prompts with its defaults. Then START the dev server and
+Scaffolder flags drift between versions (create-next-app and shadcn both) - if
+a flag errors or a prompt appears despite --yes, accept the tool's defaults.
+Then START the dev server and
 confirm the starter page renders before moving on. Unsure about the stack's
 conventions? Fetch its docs.
 
