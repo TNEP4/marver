@@ -108,12 +108,14 @@ must travel in the message too (r2 #1) - a height-only protocol strands an
 unannotated wide Doc at the mobile fallback width forever.
 
 **The message.** `Doc` observes its content (ResizeObserver, debounced ~300ms
-after last change) and posts `sh:measure { ownWidth, height, gen }`:
+after last change) and posts `sh:measure { ownWidth, measuredWidth, height, gen }`:
 
 - `ownWidth` - the Doc layout's natural width (`document` 760 / `wide` 1280).
-- `height` - content height AS MEASURED AT THE CURRENT iframe width. The shell
-  commits a height only when the measurement's width matches the width it is
-  applying (a phone-width height is never applied to a 1280 frame); mismatched
+- `measuredWidth` - the iframe's actual innerWidth when the height was taken
+  (r3: ownWidth alone is the DESIRED width and cannot enforce the match).
+- `height` - content height as measured at `measuredWidth`. The shell commits
+  a height only when `measuredWidth` matches the width it is applying (a
+  phone-width height is never applied to a 1280 frame); mismatched
   measurements just trigger a remeasure at the right width.
 - `gen` - a shell-issued generation stamp (bumped on board switch and preset
   change); stale generations are dropped, so a debounce firing after a board

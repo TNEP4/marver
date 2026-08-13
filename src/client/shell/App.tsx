@@ -6,7 +6,7 @@ import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
@@ -529,6 +529,10 @@ export function App() {
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
       } else if (data.type === 'sh:exit-interact') {
         if (s.interact === nodeKey) setInteract(null)
+      } else if (data.type === 'sh:measure') {
+        // SPEC-026 content-frame measurement; measureNode does its own admission
+        // (content frames only, finite positive, clamped) - this is just routing
+        s.measureNode(nodeKey, Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
       } else if (data.type === 'sh:go') {
         const target = String(data.target ?? '')
         const existing = s.nodes.find((n) => n.frame === target && !n.missing)
@@ -675,10 +679,17 @@ export function App() {
                         // group participates without claiming full selection
                         const held = !allOn && memberKeys.some((k) => selection.includes(k) || useStore.getState().interact === k)
                         // group header: click selects EVERY variant (the quick compare-and-test grab)
+                        // group intent (SPEC-026): the letter chips keep the member rows'
+                        // leading slot, so the intent icon lives on the GROUP row - shown
+                        // when all members agree, generic content glyph on a mixed group
+                        const gIntent = members.every((m) => m.intent === members[0].intent)
+                          ? members[0].intent
+                          : members.some((m) => m.intent) ? 'content' : undefined
                         rows.push(
                           <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}${held ? ' held' : ''}`}
                             title="Select all variants"
                             onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
+                            {gIntent && <IntentGlyph intent={gIntent} size={13} className="iicon" aria-label={gIntent} />}
                             <span className="glabel">{rel}</span>
                             <VariantsIcon size={14} className="gicon" />
                           </div>,
@@ -700,7 +711,9 @@ export function App() {
                     const n = nodeFor(f.id)
                     const on = !!n && selection.includes(n.key)
                     rows.push(
-                      <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)}>
+                      <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} title={f.intent}>
+                        {/* content frames lead with their intent glyph (SPEC-026) - absence means UI */}
+                        {f.intent && <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />}
                         {cap(f.id.split('/').slice(1).join('/') || f.id)}
                       </div>,
                     )

@@ -51,8 +51,8 @@ an absent human; never hide that the brief was self-answered.
 ## 4. Align on flow with a diagram frame
 
 When the flow has branches or more than four screens, draw it before wireframing:
-one frame (`<scene>/flow.tsx`) of labeled boxes and arrows - plain divs and SVG lines,
-grayscale, no dependency. Each box names a future frame. The human can look at one
+one content frame (`<scene>/flow.tsx`) with a mermaid `Diagram` block - the how lives
+in instructions/shape.md. Each node names a future frame. The human can look at one
 picture and say "step 3 is wrong" before step 3 costs anything.
 
 Then move to Wireframe. Do not brand, do not pick type, do not open the craft rules

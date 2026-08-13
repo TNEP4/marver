@@ -14,7 +14,7 @@
 import { build as viteBuild } from 'vite'
 import type { Plugin, Rollup } from 'vite'
 import react from '@vitejs/plugin-react'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, ROUTE } from '../cli/name.ts'
@@ -28,6 +28,22 @@ const posix = (p: string) => p.split(sep).join('/')
 function packageDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), '..')
 }
+
+/** Static asset references in one module's source (SPEC-026): <Img src="..."> string
+ *  literals plus markdown image literals inside template strings. A computed <Img src={...}>
+ *  fails CLOSED - the build cannot know what it resolves to, so it must not publish. */
+export function scanAssetRefs(src: string, moduleId: string): string[] {
+  if (/<Img\b[^>]*\bsrc\s*=\s*\{/.test(src))
+    throw new Error(`${moduleId}: <Img src={...}> is computed - published builds copy only statically referenced assets. Use a string literal.`)
+  const out: string[] = []
+  for (const m of src.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
+  for (const m of src.matchAll(/!\[[^\]]*\]\(([^)\s"']+)\)/g)) out.push(m[1])
+  return out
+}
+
+/** Same shape the client's assetUrl accepts: relative, inside design/assets/, no tricks. */
+export const isLocalAssetRef = (p: string): boolean =>
+  !!p && !p.includes(':') && !p.startsWith('/') && !p.startsWith('\\') && !p.split('/').some((s) => s === '..' || s === '')
 
 /** Read every board file; returns name -> parsed json. Bad JSON fails the build loudly. */
 function readBoards(root: string): Record<string, any> {
@@ -230,6 +246,40 @@ export async function buildSite(root: string, boardsFlag?: string) {
     writeFileSync(join(outDir, f.file), html)
   }
 
+  // ---- referenced assets (SPEC-026): copied BY REFERENCE from the modules that actually
+  // entered the bundle - the filtered registry already excluded unpublished frames, so
+  // walking chunk moduleIds IS the reachable-module-graph scan (shared components and
+  // variant bodies included, hand-rolled import resolution excluded by construction).
+  // An unreferenced screenshot in design/assets/ never ships.
+  const assetsDir = join(root, 'design', 'assets')
+  const rootP = posix(root)
+  const moduleIds = new Set<string>()
+  for (const c of chunks) for (const id of (c as any).moduleIds ?? Object.keys((c as any).modules ?? {})) moduleIds.add(String(id))
+  const refs = new Set<string>()
+  for (const id of moduleIds) {
+    const file = posix(String(id)).split('?')[0]
+    if (!file.startsWith(rootP + '/') || file.includes('/node_modules/')) continue
+    if (!/\.(tsx|jsx|ts|js|mjs)$/.test(file)) continue
+    let src: string
+    try { src = readFileSync(file, 'utf8') } catch { continue }
+    for (const r of scanAssetRefs(src, file.slice(rootP.length + 1))) refs.add(r)
+  }
+  let copiedAssets = 0
+  const realAssets = existsSync(assetsDir) ? realpathSync(assetsDir) : null
+  for (const r of refs) {
+    if (!isLocalAssetRef(r)) continue          // external md refs render as "unavailable" at runtime
+    const srcFile = join(assetsDir, r)
+    if (!existsSync(srcFile)) throw new Error(`design/assets/${r} is referenced by a published frame but does not exist`)
+    // realpath containment: a symlink inside design/assets/ must not publish an outside file
+    const real = posix(realpathSync(srcFile))
+    if (!realAssets || !(real === posix(realAssets) || real.startsWith(posix(realAssets) + '/')))
+      throw new Error(`design/assets/${r} resolves outside design/assets/ (symlink) - refusing to publish it`)
+    const dest = join(outDir, 'design', 'assets', r)
+    mkdirSync(dirname(dest), { recursive: true })
+    cpSync(srcFile, dest)
+    copiedAssets++
+  }
+
   // serve reads this: gate page title, branding footer, and the app's own logo when one
   // exists (agent-native convention: design/logo.svg|png; host public/ as fallback)
   let name = basename(root)
@@ -252,6 +302,7 @@ export async function buildSite(root: string, boardsFlag?: string) {
   console.log(`\n  ${NAME} build → design/.dist`)
   console.log(`  boards: ${publishedNames.join(', ')}`)
   console.log(`  frames: ${frames.length}${includeAll ? '' : ` of ${manifest.frames.length} (build-time filter)`}`)
+  if (copiedAssets) console.log(`  assets: ${copiedAssets} referenced file${copiedAssets === 1 ? '' : 's'} from design/assets/ (unreferenced assets never ship)`)
   if (!includeAll && existsSync(join(root, 'public')))
     console.log(`  note: the host public/ directory ships in full - the --boards filter covers frames, not public assets`)
   console.log(`\n  serve it:  npx ${NAME} serve   (set MARVER_PASSWORD to gate it)\n`)

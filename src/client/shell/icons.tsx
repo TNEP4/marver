@@ -38,6 +38,24 @@ export const ParallelogramDuoIcon = icon(<><path d="M239.29,59.28l-64.8,144a8,8,
 /** Sidebar trigger, custom in Phosphor 256-space: outer frame + panel pill -
  *  pill filled while the sidebar is open, hollow while collapsed. */
 export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" /></>)
+
+/* Content-frame intent glyphs (SPEC-026), custom in the same 256-space.
+ * Absence means UI - only content frames ever show one. */
+export const DiagramShapeIcon = icon(<><rect x="28" y="36" width="88" height="64" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="140" y="156" width="88" height="64" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M116 68 H184 V156" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" /></>)
+export const SpecDocIcon = icon(<><path d="M44 48 H180 M44 96 H212 M44 144 H212 M44 192 H140" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" /></>)
+export const MoodboardIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="20" fill="none" stroke="currentColor" strokeWidth="16" /><circle cx="96" cy="104" r="18" /><path d="M56 192 L112 128 L150 168 L178 140 L200 164 V192 Z" /></>)
+export const NoteStickyIcon = icon(<><path d="M52 40 H204 a16 16 0 0 1 16 16 V152 L156 216 H52 a16 16 0 0 1 -16 -16 V56 a16 16 0 0 1 16 -16 Z" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /><path d="M156 216 V168 a16 16 0 0 1 16 -16 h48" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /></>)
+export const ContentBlocksIcon = icon(<><rect x="36" y="36" width="80" height="80" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><circle cx="180" cy="180" r="44" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M180 36 L224 116 H136 Z" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /></>)
+
+/** intent -> glyph; unknown intents fall to the generic content icon (forward-compatible). */
+export function IntentGlyph({ intent, size = 14, ...rest }: IconProps & { intent: string }) {
+  const I = intent === 'diagram' ? DiagramShapeIcon
+    : intent === 'spec' ? SpecDocIcon
+    : intent === 'moodboard' ? MoodboardIcon
+    : intent === 'notes' ? NoteStickyIcon
+    : ContentBlocksIcon
+  return <I size={size} {...rest} />
+}
 export const PanelHollowIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" fill="none" stroke="currentColor" strokeWidth="14" /></>)
 /** Board glyphs: CardsThree = the built-in `all-scenes` board; Cards = curated boards. */
 export const CardsThreeIcon = icon(<path d="M208,88H48a16,16,0,0,0-16,16v96a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,112H48V104H208v96ZM48,64a8,8,0,0,1,8-8H200a8,8,0,0,1,0,16H56A8,8,0,0,1,48,64ZM64,32a8,8,0,0,1,8-8H184a8,8,0,0,1,0,16H72A8,8,0,0,1,64,32Z" />)

@@ -15,6 +15,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Welcome | the human's FIRST session, or "what is this?" | instructions/welcome.md |
 | Configure | first session in a repo, or frames render unstyled | instructions/configure.md |
 | Discover | any new surface, feature, or flow | instructions/discover.md |
+| Shape | thinking a feature through on canvas (specs, diagrams, mood boards) - never the first session | instructions/shape.md |
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
 | Brand | before the first hi-fi work: extract or create the world | instructions/brand.md |
 | Build | hi-fi frames from real components | instructions/craft.md + components.md |
@@ -59,6 +60,9 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
   a terminal state; play mode makes dead ends visible. Give an element the same
   view-transition-name CSS in two frames and play mode morphs it between screens.
 - Files starting with _ are infrastructure (never frames): _layout.tsx, _fixtures.ts.
+- CONTENT frames (specs, mermaid diagrams, mood boards) are ordinary tsx frames built
+  from the block primitives in '@marver-design/marver/content' - import them directly
+  in the frame file and declare meta.intent. Full guide: instructions/shape.md.
 
 ## Structure ladder (embedded mode: screens live in src/)
 1. First pass: write the whole page inline in the frame file. Diverge fast.

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
-import { CopyIcon, ReloadIcon, XIcon } from '../icons.tsx'
+import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 
 export const HEADER = 28
 const SNAP = 12
@@ -169,6 +169,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         </div>
       )}
       <div className="sh-node-head sh-no-pan" onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
+        {/* content frames carry their intent glyph in the chrome (SPEC-026) */}
+        {frame.intent && <IntentGlyph intent={frame.intent} size={12} className="iicon sh-no-pan" aria-label={frame.intent} />}
         <span className="id sh-no-pan">{frame.title ?? frame.id}</span>
         <span className="dim sh-no-pan">{Math.round(node.w)} · {node.theme}</span>
       </div>

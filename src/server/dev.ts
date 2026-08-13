@@ -1,5 +1,6 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
@@ -68,7 +69,17 @@ export async function dev(root: string, portFlag?: number) {
     } as any,
     optimizeDeps: {
       exclude: [PKG],
-      include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
+      // marked/mermaid: content-frame deps (SPEC-026). Pre-bundling them here avoids
+      // the 504 Outdated-Optimize-Dep white-frame on the FIRST Diagram/Md mount
+      // (friction 0.2.2 #1) - but only when resolvable, or every workspace boots
+      // with a "failed to resolve" warning.
+      include: [
+        'react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime',
+        ...['marked', 'mermaid'].filter((d) => {
+          try { import.meta.resolve?.(d); return true } catch { /* fall through */ }
+          return ['node_modules/' + d, `node_modules/${PKG}/node_modules/` + d].some((p) => existsSync(join(root, p)))
+        }),
+      ],
       entries: [join(clientDir, 'frame-host', 'index.html'), 'design/**/*.{tsx,jsx}'],
     },
     logLevel: 'info',

@@ -374,3 +374,81 @@ describe('lane flow (SPEC-024)', () => {
     expect(p.extra.x).toBeGreaterThan(p.one.x)
   })
 })
+
+describe('content frames (SPEC-026)', () => {
+  const CONTENT = `import { Doc, Row, Md, Diagram, Img } from '@marver-design/marver/content'\n`
+
+  it('contentScan: UI frame with "<Diagram" in a string never misbadges', async () => {
+    const { contentScan } = await import('../src/server/manifest.ts')
+    expect(contentScan(`export default () => <pre>{'<Diagram title="x">'}</pre>`)).toBeNull()
+  })
+  it('contentScan: diagram usage wins the heuristic; wide sets 1280', async () => {
+    const { contentScan } = await import('../src/server/manifest.ts')
+    const r = contentScan(`${CONTENT}export default () => <Doc layout="wide"><Diagram>{'flowchart'}</Diagram><Md>{'x'}</Md></Doc>`)
+    expect(r).toEqual({ intent: 'diagram', width: 1280 })
+  })
+  it('contentScan: image-majority -> moodboard; document default 760', async () => {
+    const { contentScan } = await import('../src/server/manifest.ts')
+    const r = contentScan(`${CONTENT}export default () => <Doc><Img src="a.png" /><Img src="b.png" /><Md>{'x'}</Md></Doc>`)
+    expect(r).toEqual({ intent: 'moodboard', width: 760 })
+  })
+  it('contentScan: text-only -> spec', async () => {
+    const { contentScan } = await import('../src/server/manifest.ts')
+    expect(contentScan(`${CONTENT}export default () => <Doc><Md>{'# spec'}</Md></Doc>`)?.intent).toBe('spec')
+  })
+  it('declared meta.intent wins over the heuristic (scanFrames)', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { scanFrames } = await import('../src/server/manifest.ts')
+    const root = mkdtempSync(join(tmpdir(), 'sh-intent-'))
+    mkdirSync(join(root, 'design/scenes/plan'), { recursive: true })
+    writeFileSync(join(root, 'design/scenes/plan/story.tsx'),
+      `${CONTENT}export const meta = { intent: 'diagram' }\nexport default () => <Doc><Md>{'mostly text'}</Md></Doc>`)
+    writeFileSync(join(root, 'design/scenes/plan/ui.tsx'),
+      `export const meta = { intent: 'diagram' }\nexport default () => <div />`)
+    const m = scanFrames(root)
+    const story = m.frames.find((f) => f.id === 'plan/story')!
+    expect(story.intent).toBe('diagram')
+    expect(story.contentWidth).toBe(760)
+    // meta.intent on a NON-content frame is ignored: absence of icon means UI
+    expect(m.frames.find((f) => f.id === 'plan/ui')!.intent).toBeUndefined()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('assetUrl: local relative only, fail closed on tricks', async () => {
+    const { assetUrl } = await import('../src/client/content/md.ts')
+    expect(assetUrl('shot.png')).toBe('/design/assets/shot.png')
+    expect(assetUrl('sub/dir/shot.png')).toBe('/design/assets/sub/dir/shot.png')
+    expect(assetUrl('https://x.com/a.png')).toBeNull()
+    expect(assetUrl('/etc/passwd')).toBeNull()
+    expect(assetUrl('../secret.png')).toBeNull()
+    expect(assetUrl('data:image/png;base64,x')).toBeNull()
+  })
+  it('renderMarkdown: raw HTML inert, goto links, image policy', async () => {
+    const { renderMarkdown } = await import('../src/client/content/md.ts')
+    expect(renderMarkdown('<script>alert(1)</script>')).not.toContain('<script>')
+    expect(renderMarkdown('[cart](goto:checkout/cart)')).toContain('data-goto="checkout/cart"')
+    const ext = renderMarkdown('[docs](https://mermaid.js.org)')
+    expect(ext).toContain('target="_blank"')
+    expect(ext).toContain('rel="noopener')
+    expect(renderMarkdown('[x](javascript:alert(1))')).not.toContain('javascript:')
+    expect(renderMarkdown('![shot](https://evil.com/a.png)')).not.toContain('evil.com')
+    expect(renderMarkdown('![shot](local.png)')).toContain('/design/assets/local.png')
+  })
+  it('cleanSource strips frontmatter and init directives', async () => {
+    const { cleanSource } = await import('../src/client/content/diagram.tsx')
+    expect(cleanSource(`---\ntheme: forest\n---\nflowchart LR\n A-->B`)).toBe('flowchart LR\n A-->B')
+    expect(cleanSource(`%%{init: {"theme":"dark"}}%%\nflowchart LR\n A-->B`)).toBe('flowchart LR\n A-->B')
+  })
+
+  it('scanAssetRefs: literals collected, computed src fails closed', async () => {
+    const { scanAssetRefs, isLocalAssetRef } = await import('../src/server/build.ts')
+    expect(scanAssetRefs(`<Img src="a.png" caption="x" /> and \`![shot](sub/b.png)\``, 'm')).toEqual(['a.png', 'sub/b.png'])
+    expect(() => scanAssetRefs(`<Img src={dynamic} />`, 'design/scenes/x.tsx')).toThrow(/computed/)
+    expect(isLocalAssetRef('a.png')).toBe(true)
+    expect(isLocalAssetRef('../a.png')).toBe(false)
+    expect(isLocalAssetRef('https://x/a.png')).toBe(false)
+    expect(isLocalAssetRef('/abs.png')).toBe(false)
+  })
+})

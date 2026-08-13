@@ -25,6 +25,8 @@ viewport and lays it out:
 - Use boards for comparisons: version A vs B vs C of a flow, side by side. Variant
   groups (letter-prefixed siblings) stay contiguous through every relayout
   automatically.
+- Content frames (specs, diagrams, mood boards - instructions/shape.md) are ordinary
+  atoms in every layout scope: a feature-story board mixes them freely with UI frames.
 
 ## Composing the canvas: `layout`
 

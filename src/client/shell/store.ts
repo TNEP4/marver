@@ -14,7 +14,7 @@ const DATA: { manifest: Manifest; boards: Record<string, unknown>; names: string
 /** True on a published static canvas - no dev server, no API, no update checks. */
 export const PUBLISHED = DATA !== null
 
-export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string }
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number
@@ -26,6 +26,10 @@ export interface Node {
   /** Explicit per-frame override, set by scoped theme actions; cleared by a global set.
    *  The only theme value that persists into the board file. */
   themeUser?: string
+  /** Size provenance for CONTENT frames (SPEC-026): absent = auto (measured, transient,
+   *  never serialized); 'manual' = the human's - measurements never overwrite; 'device' =
+   *  a preset's. UI frames never carry it. Persists so a reload can tell them apart. */
+  sizeMode?: 'manual' | 'device'
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
 }
 export interface Toast { id: number; text: string }
@@ -71,7 +75,18 @@ const initialViewTheme = () => {
 }
 const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change counts, not just added/removed ids
 
+/** Latest measured content heights, keyed frameId@width. TRANSIENT by design
+ *  (SPEC-026): auto sizes are never serialized - a reload remeasures. */
+const measuredHeights = new Map<string, number>()
+
 function defaultSize(frame: FrameEntry) {
+  // content frames (SPEC-026): own width from Doc layout; height from the latest
+  // measurement at that width, or a placeholder until sh:measure lands.
+  // meta.viewport, when declared, wins - the existing precedence.
+  if (frame.contentWidth && !frame.viewport) {
+    const w = frame.contentWidth
+    return { w, h: measuredHeights.get(`${frame.id}@${w}`) ?? Math.round(w * 0.75) }
+  }
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
   return { w: vp.width, h: vp.height }
 }
@@ -114,6 +129,7 @@ interface State {
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
   resizeNode(key: string, w: number, h: number): void
+  measureNode(key: string, ownWidth: number, measuredWidth: number, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
   removeNode(key: string): void
   select(key: string | null, additive?: boolean): void
@@ -143,6 +159,20 @@ export const useStore = create<State>((set, get) => {
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
   const scheduleSave = () => { editRev++; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+
+  // SPEC-026: one cancelable, BOARD-SCOPED reflow after content measurements settle.
+  // The captured board name is the generation guard - a debounce surviving a board
+  // switch fires into a name check and dies, never touching the new board.
+  let reflowTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleReflow = () => {
+    const boardAt = get().board
+    clearTimeout(reflowTimer)
+    reflowTimer = setTimeout(() => {
+      const s = get()
+      if (s.board !== boardAt || s.gesture) return
+      if (s.layout || s.sceneRows?.length) s.runTidy()
+    }, 400)
+  }
 
   /** Theme resolution ladder: user pin > the frame's declared meta.theme > viewTheme. */
   const resolveTheme = (frame?: FrameEntry, user?: string) => user ?? frame?.theme ?? get().viewTheme
@@ -221,11 +251,16 @@ export const useStore = create<State>((set, get) => {
             let key = typeof n.key === 'string' && n.key ? n.key : nodeKey()
             if (seenKeys.has(key)) key = nodeKey()
             seenKeys.add(key)
+            // content-frame size provenance round-trips (SPEC-026); auto nodes saved no
+            // w/h, so they fall to defaultSize (placeholder) and remeasure on mount
+            const sizeMode = f?.contentWidth && (n.sizeMode === 'manual' || n.sizeMode === 'device')
+              ? { sizeMode: n.sizeMode as 'manual' | 'device' } : {}
             return {
               key,
               frame: n.frame,
               x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
               w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
+              ...sizeMode,
               // pins persist as their own field (exact round-trip). Legacy boards stored a
               // theme on EVERY node: only values differing from the frame's static default
               // were deliberate - the rest follow viewTheme
@@ -393,9 +428,10 @@ export const useStore = create<State>((set, get) => {
           ? next.filter((n) => { const g = m.frames.find((x) => x.id === n.frame)?.variantGroup; return g === f.variantGroup && !n.missing })
           : []
         const right = sibs.length ? sibs.reduce((a, n) => (n.x > a.x ? n : a)) : null
+        const mode = vp && f.contentWidth ? { sizeMode: 'device' as const } : {}
         const node = right
-          ? { key: nodeKey(), frame: f.id, x: right.x + right.w + Math.max(140, right.w * 0.12), y: right.y, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
-          : { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const }
+          ? { key: nodeKey(), frame: f.id, x: right.x + right.w + Math.max(140, right.w * 0.12), y: right.y, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const, ...mode }
+          : { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const, ...mode }
         next.push(node)
         // in a device view, the snapshot learns the newcomer's DEFAULT size so 0 restores it sanely
         if (vp && nextBase) nextBase = { ...nextBase, [node.key]: { x: node.x, y: node.y, w: d.w, h: d.h } }
@@ -478,8 +514,10 @@ export const useStore = create<State>((set, get) => {
       set((s) => {
         const W = Math.max(120, w), H = Math.max(80, h)
         const cur = s.nodes.find((n) => n.key === key)
+        // a human-resized CONTENT frame goes 'manual': measurements never overwrite it (SPEC-026)
+        const content = !!s.manifest?.frames.find((x) => x.id === cur?.frame)?.contentWidth
         return {
-          nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: W, h: H } : n)),
+          nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: W, h: H, ...(content ? { sizeMode: 'manual' as const } : {}) } : n)),
           dirty: true,
           deviceView: null,
           baseLayout: s.baseLayout && cur
@@ -490,6 +528,35 @@ export const useStore = create<State>((set, get) => {
       // mid-gesture saves would persist torn state (new sizes, pre-recipe positions);
       // the gesture-end hook saves once, after any retidy
       if (!inGesture) scheduleSave()
+    },
+
+    /** SPEC-026 sh:measure. Admission: content frames only, finite positive numbers,
+     *  clamped. A height only commits when it was measured at the width being applied;
+     *  auto sizes are transient - applying one never dirties the board (positions from
+     *  the follow-up reflow do, exactly like a human resize). */
+    measureNode(key, ownWidth, measuredWidth, height) {
+      const s = get()
+      const node = s.nodes.find((n) => n.key === key)
+      if (!node || node.sizeMode) return                  // manual/device always win
+      const f = s.manifest?.frames.find((x) => x.id === node.frame)
+      if (!f?.contentWidth) return                        // not a content frame - spoof-proofing
+      if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return
+      const maxH = Math.round(2.5 * Math.max(844, ...Object.values(CONFIG.viewports).map((v) => v.height)))
+      const W = Math.min(1600, Math.max(320, Math.round(ownWidth)))
+      const H = Math.min(maxH, Math.max(80, Math.round(height)))
+      const curW = Math.round(node.w)
+      measuredHeights.set(`${node.frame}@${Math.round(measuredWidth)}`, H)
+      if (Math.round(measuredWidth) !== curW) return      // height not true at the applied width
+      if (W !== curW) {
+        // Doc layout changed (document<->wide): adopt the new own width first; the
+        // iframe resizes, remeasures, and the height commits on the next message
+        set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, w: W } : n)) }))
+        scheduleReflow()
+        return
+      }
+      if (Math.round(node.h) === H) return
+      set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) }))
+      scheduleReflow()
     },
     setDeviceView(name) {
       const vp = name ? CONFIG.viewports[name] : null
@@ -502,10 +569,16 @@ export const useStore = create<State>((set, get) => {
               : s.baseLayout)
           : null
         const nodes = s.nodes.map((n) => {
-          if (vp) return { ...n, w: vp.width, h: vp.height }
-          const b = s.baseLayout?.[n.key]
-          if (b) return { ...n, ...b }               // exact free-form layout, positions included
           const f = s.manifest?.frames.find((x) => x.id === n.frame)
+          const content = !!f?.contentWidth
+          if (vp) return { ...n, w: vp.width, h: vp.height, ...(content ? { sizeMode: 'device' as const } : {}) }
+          // digit 0 on a CONTENT frame = back to auto: measured size, remeasure ahead (SPEC-026)
+          const b = s.baseLayout?.[n.key]
+          if (content && f) {
+            const d = defaultSize(f)
+            return { ...n, ...(b ? { x: b.x, y: b.y } : {}), w: d.w, h: d.h, sizeMode: undefined }
+          }
+          if (b) return { ...n, ...b }               // exact free-form layout, positions included
           if (!f) return n
           const d = defaultSize(f)                   // frames added mid-device-view get their default
           return { ...n, w: d.w, h: d.h }
@@ -539,11 +612,13 @@ export const useStore = create<State>((set, get) => {
         const sel = new Set(s.selection)
         const nodes = s.nodes.map((n) => {
           if (!sel.has(n.key)) return n
-          if (vp) return { ...n, w: vp.width, h: vp.height }
           const f = s.manifest?.frames.find((x) => x.id === n.frame)
+          const content = !!f?.contentWidth
+          if (vp) return { ...n, w: vp.width, h: vp.height, ...(content ? { sizeMode: 'device' as const } : {}) }
           if (!f) return n
           const d = defaultSize(f)
-          return { ...n, w: d.w, h: d.h }
+          // digit 0 on a content frame clears provenance back to auto (SPEC-026)
+          return { ...n, w: d.w, h: d.h, ...(content ? { sizeMode: undefined } : {}) }
         })
         const baseLayout = s.baseLayout ? { ...s.baseLayout } : null
         if (baseLayout) for (const k of s.selection) {
@@ -623,7 +698,7 @@ export const useStore = create<State>((set, get) => {
       const d = defaultSize(f)
       const vp = deviceView ? CONFIG.viewports[deviceView] : null
       const maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
-      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' }
+      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading', ...(vp && f.contentWidth ? { sizeMode: 'device' as const } : {}) }
       set((s) => ({
         nodes: [...s.nodes, node],
         dirty: true,
@@ -661,8 +736,18 @@ export const useStore = create<State>((set, get) => {
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
           ...(get().layoutRaw !== undefined ? { layout: get().layoutRaw } : {}),
           ...(baseLayout ? { baseLayout } : {}),
-          // only PINNED themes persist - inherited values follow viewTheme at load time
-          nodes: nodes.map(({ key, frame, x, y, w, h, themeUser }) => ({ key, frame, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), ...(themeUser ? { themeUser } : {}) })),
+          // only PINNED themes persist - inherited values follow viewTheme at load time.
+          // Content frames in AUTO save no dimensions (SPEC-026): measured sizes are
+          // transient - a reflow-triggered save can never leak an auto height to disk.
+          nodes: nodes.map(({ key, frame, x, y, w, h, themeUser, sizeMode }) => {
+            const auto = !!get().manifest?.frames.find((f) => f.id === frame)?.contentWidth && !sizeMode
+            return {
+              key, frame, x: Math.round(x), y: Math.round(y),
+              ...(auto ? {} : { w: Math.round(w), h: Math.round(h) }),
+              ...(sizeMode ? { sizeMode } : {}),
+              ...(themeUser ? { themeUser } : {}),
+            }
+          }),
         }
         try {
           const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {

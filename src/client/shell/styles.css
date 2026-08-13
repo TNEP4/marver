@@ -178,6 +178,9 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   background-color: var(--head-bg); background-image: var(--head-sheen);
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
 .sh-node-head .id { font-weight: 600; color: var(--head-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* content-frame intent glyphs (SPEC-026): chrome + sidebar */
+.sh-node-head .iicon { flex: none; color: var(--head-dim) }
+.sh-panel .sub .iicon { flex: none; margin-right: 7px; opacity: .72 }
 .sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none; font-variant-numeric: tabular-nums }
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }

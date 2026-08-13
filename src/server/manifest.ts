@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
+import { CONTENT_WIDTH, PKG } from '../client/const.ts'
 
-export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string }
+export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string }
 export interface FrameEntry {
   id: string
   file: string
@@ -16,6 +17,11 @@ export interface FrameEntry {
   variantGroup?: string
   /** This frame's variant key within the group ("a", "b", ...). */
   variant?: string
+  /** Content-frame purpose (SPEC-026): declared meta.intent wins; a usage-count
+   *  heuristic fills the gap. Present ONLY on content frames - absence means UI. */
+  intent?: string
+  /** Content-frame natural width from Doc layout (document 760 / wide 1280). */
+  contentWidth?: number
 }
 export interface Manifest {
   frames: FrameEntry[]
@@ -41,7 +47,25 @@ export function extractMeta(src: string): FrameMeta {
   const theme = pick('theme'); if (theme) out.theme = theme
   const of = pick('of'); if (of) out.of = of
   const variant = pick('variant'); if (variant) out.variant = variant
+  const intent = pick('intent'); if (intent) out.intent = intent
   return out
+}
+
+/** Content-frame detection (SPEC-026): LEXICAL by convention - the frame file
+ *  itself imports PKG/content (an import specifier scan, so "<Diagram" inside a
+ *  string in a UI frame can never misbadge it; barrels/re-exports are not
+ *  detected - meta.intent is the taught path and always works). Returns the
+ *  inferred intent + natural width, or null for UI frames. */
+const CONTENT_IMPORT = new RegExp(`from\\s+['"]${PKG}/content['"]`)
+export function contentScan(src: string): { intent: string; width: number } | null {
+  if (!CONTENT_IMPORT.test(src)) return null
+  const count = (re: RegExp) => (src.match(re) ?? []).length
+  const diagrams = count(/<Diagram[\s>/]/g)
+  const imgs = count(/<Img[\s>/]/g)
+  const mds = count(/<Md[\s>/]/g)
+  const intent = diagrams > 0 ? 'diagram' : imgs > mds ? 'moodboard' : 'spec'
+  const width = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document
+  return { intent, width }
 }
 
 /** id = path relative to design/, extension dropped, `scenes/` prefix dropped. Always `/`-separated. */
@@ -79,12 +103,18 @@ export function scanFrames(root: string): Manifest {
       const kind = name.endsWith('.html') ? 'html' as const : 'tsx' as const
       const entry: FrameEntry = { id, file: `design/${rel}`, kind, scene }
       if (kind === 'tsx') {
-        const meta = extractMeta(readFileSync(abs, 'utf8'))
+        const src = readFileSync(abs, 'utf8')
+        const meta = extractMeta(src)
         if (meta.title) entry.title = meta.title
         if (meta.viewport) entry.viewport = meta.viewport
         if (meta.theme) entry.theme = meta.theme
         if (meta.of) entry.variantGroup = meta.of         // declared membership
         if (meta.variant) entry.variant = meta.variant
+        const content = contentScan(src)
+        if (content) {
+          entry.intent = meta.intent ?? content.intent    // declared purpose wins
+          entry.contentWidth = content.width
+        }
       }
       frames.push(entry)
     }
