@@ -58,6 +58,46 @@ export function scanAssetRefs(src: string, moduleId: string): string[] {
 export const isLocalAssetRef = (p: string): boolean =>
   !!p && !p.includes(':') && !p.startsWith('/') && !p.startsWith('\\') && !p.split('/').some((s) => s === '..' || s === '')
 
+/** The publish policy (SPEC-M3 §4): design/publish.json names what ships and with what
+ *  rights. Publishing is default-CLOSED - no policy and no explicit flag = no build.
+ *  Returns name -> 'read' | 'comment'. Boards absent from the result do not ship. */
+export function resolvePublish(
+  root: string, allBoards: Record<string, any>, boardsFlag?: string, allBoardsFlag?: boolean,
+): Record<string, 'read' | 'comment'> {
+  const known = (n: string) => n === 'all-scenes' || !!allBoards[n]
+  if (boardsFlag !== undefined) {
+    const names = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
+    // an empty filter fails CLOSED - `--boards "$UNSET_VAR"` must never publish everything
+    if (!names.length) throw new Error('--boards was given but named no boards')
+    const missing = names.filter((n) => !known(n))
+    if (missing.length) throw new Error(`--boards names not found in design/boards/: ${missing.join(', ')}`)
+    return Object.fromEntries(names.map((n) => [n, 'comment' as const]))
+  }
+  if (allBoardsFlag)
+    return Object.fromEntries(
+      ['all-scenes', ...Object.keys(allBoards).filter((n) => n !== 'all-scenes')].map((n) => [n, 'comment' as const]))
+  const policyFile = join(root, 'design', 'publish.json')
+  if (!existsSync(policyFile))
+    throw new Error(
+      'publishing is default-closed and no publish policy exists.\n' +
+      `  Either declare one in design/publish.json:  { "boards": { "<board>": "read" | "comment" } }\n` +
+      `  or be explicit:  --boards a,b  (publish just those)  ·  --all-boards  (publish everything)`)
+  let policy: any
+  try { policy = JSON.parse(readFileSync(policyFile, 'utf8')) }
+  catch { throw new Error('design/publish.json is not valid JSON') }
+  const entries = Object.entries(policy?.boards ?? {})
+  if (!entries.length)
+    throw new Error('design/publish.json has no "boards" entries - publishing is default-closed, name what ships')
+  const out: Record<string, 'read' | 'comment'> = {}
+  for (const [n, level] of entries) {
+    if (!known(n)) throw new Error(`design/publish.json names an unknown board: ${n}`)
+    if (level !== 'read' && level !== 'comment')
+      throw new Error(`design/publish.json: board "${n}" has level "${level}" - use "read" or "comment"`)
+    out[n] = level
+  }
+  return out
+}
+
 /** Read every board file; returns name -> parsed json. Bad JSON fails the build loudly. */
 function readBoards(root: string): Record<string, any> {
   const dir = join(root, 'design', 'boards')
@@ -120,27 +160,18 @@ export function layoutChain(fileKey) {
 `
 }
 
-export async function buildSite(root: string, boardsFlag?: string) {
+export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag?: boolean) {
   const config = await loadConfig(root)
   const host = detectHost(root)
   const pkgDir = packageDir()
   const clientDir = join(pkgDir, 'src', 'client')
   const outDir = join(root, 'design', '.dist')
 
-  // ---- data: manifest + boards, filtered by --boards (the privacy boundary) ----
+  // ---- data: manifest + boards, gated by the publish policy (the privacy boundary) ----
   const manifest = scanFrames(root)
   const allBoards = readBoards(root)
-  let publishedNames: string[]
-  if (boardsFlag !== undefined) {
-    publishedNames = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
-    // an empty filter fails CLOSED - `--boards "$UNSET_VAR"` must never publish everything
-    if (!publishedNames.length) throw new Error('--boards was given but named no boards')
-    const missing = publishedNames.filter((n) => n !== 'all-scenes' && !allBoards[n])
-    if (missing.length) throw new Error(`--boards names not found in design/boards/: ${missing.join(', ')}`)
-  } else {
-    // no flag = publish everything: all-scenes (materialized or virtual) + every board
-    publishedNames = ['all-scenes', ...Object.keys(allBoards).filter((n) => n !== 'all-scenes')]
-  }
+  const rights = resolvePublish(root, allBoards, boardsFlag, allBoardsFlag)
+  const publishedNames = Object.keys(rights)
   const includeAll = publishedNames.includes('all-scenes')
   const boards: Record<string, any> = {}
   for (const n of publishedNames) if (allBoards[n]) boards[n] = allBoards[n]
@@ -160,7 +191,7 @@ export async function buildSite(root: string, boardsFlag?: string) {
   }
   // names drives the published board switcher (all-scenes only when actually published);
   // default is where `/` opens - the first published board, never a synthesized aggregate
-  const data = { manifest: pubManifest, boards, names: publishedNames, default: publishedNames[0] }
+  const data = { manifest: pubManifest, boards, names: publishedNames, default: publishedNames[0], rights }
 
   // ---- build overrides: real sh-data + (when filtering) the generated registry ----
   const registryFile = posix(join(clientDir, 'frame-host', 'registry.ts'))
@@ -314,10 +345,12 @@ export async function buildSite(root: string, boardsFlag?: string) {
     logo = `${ROUTE}/logo.${ext}`
     break
   }
-  writeFileSync(join(outDir, 'meta.json'), JSON.stringify({ name, branding: config.share.branding, logo }))
+  // rights ride in meta.json so serve can enforce the policy on comment APIs (SPEC-M3
+  // §4) without parsing the bundle - hiding UI controls is not authorization
+  writeFileSync(join(outDir, 'meta.json'), JSON.stringify({ name, branding: config.share.branding, logo, rights }))
 
   console.log(`\n  ${NAME} build → design/.dist`)
-  console.log(`  boards: ${publishedNames.join(', ')}`)
+  console.log(`  boards: ${publishedNames.map((n) => `${n} (${rights[n]})`).join(', ')}`)
   console.log(`  frames: ${frames.length}${includeAll ? '' : ` of ${manifest.frames.length} (build-time filter)`}`)
   if (copiedAssets) console.log(`  assets: ${copiedAssets} referenced file${copiedAssets === 1 ? '' : 's'} from design/assets/ (unreferenced assets never ship)`)
   if (!includeAll && existsSync(join(root, 'public')))

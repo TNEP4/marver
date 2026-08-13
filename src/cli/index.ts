@@ -57,8 +57,9 @@ cli
   })
 
 cli
-  .command('build', 'Static export → design/.dist')
-  .option('--boards <names>', 'Publish only these boards (comma-separated); the frame filter is applied at build time')
+  .command('build', 'Static export → design/.dist (what ships comes from design/publish.json - publishing is default-closed)')
+  .option('--boards <names>', 'Publish only these boards (comma-separated); overrides the publish policy')
+  .option('--all-boards', 'Publish every board - the loud override for the default-closed policy')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .action(async (opts) => {
     const { buildSite } = await import('../server/build.ts')
@@ -66,7 +67,7 @@ cli
       // cac yields `true` for a valueless/empty --boards; any presence of the flag
       // must reach buildSite so an empty filter fails CLOSED, never publishes all
       const boards = opts.boards === undefined ? undefined : typeof opts.boards === 'string' ? opts.boards : ''
-      await buildSite(resolve(opts.root), boards)
+      await buildSite(resolve(opts.root), boards, opts.allBoards === true)
     } catch (err) {
       console.error(`[${NAME}] build failed: ${(err as Error).message}`)
       process.exit(1)

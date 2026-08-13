@@ -455,3 +455,62 @@ describe('content frames (SPEC-026)', () => {
     expect(isLocalAssetRef('/abs.png')).toBe(false)
   })
 })
+
+describe('resolvePublish (SPEC-M3 §4 - default-closed)', async () => {
+  const { resolvePublish } = await import('../src/server/build.ts')
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const boards = { review: {}, archive: {} }
+
+  const withPolicy = (policy: unknown, fn: (root: string) => void) => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-pub-'))
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      if (policy !== undefined) writeFileSync(join(root, 'design', 'publish.json'), typeof policy === 'string' ? policy : JSON.stringify(policy))
+      fn(root)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
+  it('no policy, no flags → fails closed', () =>
+    withPolicy(undefined, (root) => {
+      expect(() => resolvePublish(root, boards)).toThrow(/default-closed/)
+    }))
+  it('policy names boards with rights', () =>
+    withPolicy({ boards: { review: 'comment', archive: 'read' } }, (root) => {
+      expect(resolvePublish(root, boards)).toEqual({ review: 'comment', archive: 'read' })
+    }))
+  it('policy with unknown board fails', () =>
+    withPolicy({ boards: { ghost: 'read' } }, (root) => {
+      expect(() => resolvePublish(root, boards)).toThrow(/unknown board: ghost/)
+    }))
+  it('policy with bad level fails', () =>
+    withPolicy({ boards: { review: 'write' } }, (root) => {
+      expect(() => resolvePublish(root, boards)).toThrow(/"read" or "comment"/)
+    }))
+  it('policy with no entries fails closed', () =>
+    withPolicy({ boards: {} }, (root) => {
+      expect(() => resolvePublish(root, boards)).toThrow(/name what ships/)
+    }))
+  it('invalid JSON fails loudly', () =>
+    withPolicy('{oops', (root) => {
+      expect(() => resolvePublish(root, boards)).toThrow(/not valid JSON/)
+    }))
+  it('--boards overrides the policy and grants comment', () =>
+    withPolicy({ boards: { archive: 'read' } }, (root) => {
+      expect(resolvePublish(root, boards, 'review')).toEqual({ review: 'comment' })
+    }))
+  it('empty --boards still fails closed', () =>
+    withPolicy(undefined, (root) => {
+      expect(() => resolvePublish(root, boards, '')).toThrow(/named no boards/)
+    }))
+  it('--boards with unknown name fails', () =>
+    withPolicy(undefined, (root) => {
+      expect(() => resolvePublish(root, boards, 'review,ghost')).toThrow(/ghost/)
+    }))
+  it('--all-boards publishes everything, all-scenes first', () =>
+    withPolicy(undefined, (root) => {
+      expect(resolvePublish(root, boards, undefined, true)).toEqual(
+        { 'all-scenes': 'comment', review: 'comment', archive: 'comment' })
+    }))
+})
