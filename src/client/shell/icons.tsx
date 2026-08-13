@@ -47,14 +47,16 @@ export const MoodboardIcon = icon(<><rect x="32" y="48" width="192" height="160"
 export const NoteStickyIcon = icon(<><path d="M52 40 H204 a16 16 0 0 1 16 16 V152 L156 216 H52 a16 16 0 0 1 -16 -16 V56 a16 16 0 0 1 16 -16 Z" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /><path d="M156 216 V168 a16 16 0 0 1 16 -16 h48" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /></>)
 export const ContentBlocksIcon = icon(<><rect x="36" y="36" width="80" height="80" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><circle cx="180" cy="180" r="44" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M180 36 L224 116 H136 Z" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /></>)
 
-/** intent -> glyph; unknown intents fall to the generic content icon (forward-compatible). */
+/** intent -> glyph; unknown intents fall to the generic content icon (forward-compatible).
+ *  Accessible by default: role img + label + tooltip carry the intent name (the base
+ *  icon() is aria-hidden; the spread below overrides it). */
 export function IntentGlyph({ intent, size = 14, ...rest }: IconProps & { intent: string }) {
   const I = intent === 'diagram' ? DiagramShapeIcon
     : intent === 'spec' ? SpecDocIcon
     : intent === 'moodboard' ? MoodboardIcon
     : intent === 'notes' ? NoteStickyIcon
     : ContentBlocksIcon
-  return <I size={size} {...rest} />
+  return <I size={size} role="img" aria-hidden={false} aria-label={intent} {...({ title: intent } as object)} {...rest} />
 }
 export const PanelHollowIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" fill="none" stroke="currentColor" strokeWidth="14" /></>)
 /** Board glyphs: CardsThree = the built-in `all-scenes` board; Cards = curated boards. */

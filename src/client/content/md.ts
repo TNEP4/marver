@@ -8,12 +8,16 @@ import { Marked } from 'marked'
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
-/** Relative design/assets/ path -> served URL; null for anything else (fail closed). */
+/** Relative design/assets/ path -> served URL; null for anything else (fail closed).
+ *  Decodes BEFORE validating (a %2e%2e must not sneak past the ".." check) and
+ *  re-encodes per segment, so the validated path is the path the browser requests. */
 export function assetUrl(src: string): string | null {
-  const p = String(src ?? '').trim()
-  if (!p || p.includes('://') || p.includes(':') || p.startsWith('/') || p.startsWith('\\')) return null
-  if (p.split('/').some((seg) => seg === '..' || seg === '')) return null
-  return `/design/assets/${p}`
+  let p = String(src ?? '').trim()
+  try { p = decodeURIComponent(p) } catch { return null }
+  if (p.includes('%')) return null   // still encoded after one decode - refuse double-encoding games
+  if (!p || p.includes('://') || p.includes(':') || p.startsWith('/') || p.startsWith('\\') || p.includes('\\')) return null
+  if (p.split('/').some((seg) => seg === '..' || seg === '.' || seg === '')) return null
+  return `/design/assets/${p.split('/').map(encodeURIComponent).join('/')}`
 }
 
 const marked = new Marked({

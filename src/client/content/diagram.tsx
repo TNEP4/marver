@@ -52,6 +52,10 @@ export function Diagram({ title, children }: { title?: string; children?: ReactN
     const render = async () => {
       const mySeq = ++seq
       try {
+        // the zero-external-request boundary must hold BEFORE render: mermaid's image
+        // shapes fetch their URL during render(), so post-render SVG sanitizing alone
+        // would be too late. External URLs have no legitimate place in diagram source.
+        if (/https?:\/\//i.test(src)) throw new Error('external URLs are not allowed in diagram source - use local design/assets/ images in an Img block instead')
         const mermaid = (await import('mermaid')).default
         if (!live || mySeq !== seq) return
         mermaid.initialize({
@@ -80,9 +84,10 @@ export function Diagram({ title, children }: { title?: string; children?: ReactN
 
   return (
     <figure className="mv-block mv-diagram">
-      {error
-        ? <div className="mv-diagram-err"><b>diagram error</b><span>{error}</span><span className="dim">fix the mermaid source - the frame heals live</span></div>
-        : <div className="mv-diagram-svg" ref={ref} />}
+      {/* the render target stays MOUNTED through errors - a healed source or theme
+          re-render must find its ref alive to clear the card */}
+      {error && <div className="mv-diagram-err"><b>diagram error</b><span>{error}</span><span className="dim">fix the mermaid source - the frame heals live</span></div>}
+      <div className="mv-diagram-svg" ref={ref} style={error ? { display: 'none' } : undefined} />
       {title && <figcaption>{title}</figcaption>}
     </figure>
   )

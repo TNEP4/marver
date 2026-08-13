@@ -1,6 +1,5 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
-import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
@@ -69,16 +68,13 @@ export async function dev(root: string, portFlag?: number) {
     } as any,
     optimizeDeps: {
       exclude: [PKG],
-      // marked/mermaid: content-frame deps (SPEC-026). Pre-bundling them here avoids
-      // the 504 Outdated-Optimize-Dep white-frame on the FIRST Diagram/Md mount
-      // (friction 0.2.2 #1) - but only when resolvable, or every workspace boots
-      // with a "failed to resolve" warning.
+      // marked/mermaid: content-frame deps (SPEC-026). Pre-bundling avoids the 504
+      // Outdated-Optimize-Dep white-frame on the FIRST Diagram/Md mount (friction
+      // 0.2.2 #1). Nested "PKG > dep" form: Vite resolves them through marver's own
+      // node_modules, so non-hoisted pnpm hosts resolve correctly too.
       include: [
         'react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime',
-        ...['marked', 'mermaid'].filter((d) => {
-          try { import.meta.resolve?.(d); return true } catch { /* fall through */ }
-          return ['node_modules/' + d, `node_modules/${PKG}/node_modules/` + d].some((p) => existsSync(join(root, p)))
-        }),
+        `${PKG} > marked`, `${PKG} > mermaid`,
       ],
       entries: [join(clientDir, 'frame-host', 'index.html'), 'design/**/*.{tsx,jsx}'],
     },

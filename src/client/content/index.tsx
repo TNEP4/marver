@@ -27,6 +27,9 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     const post = () => {
       window.parent.postMessage({
         type: 'sh:measure',
+        // identity guard: board files may reuse node keys, so an iframe can survive a
+        // board switch - the shell only commits a measurement whose frame id matches
+        frame: new URLSearchParams(location.search).get('id') ?? '',
         ownWidth: CONTENT_WIDTH[layout] ?? CONTENT_WIDTH.document,
         measuredWidth: window.innerWidth,          // the width this height is TRUE at (r3 #1)
         height: Math.ceil(el.getBoundingClientRect().height),

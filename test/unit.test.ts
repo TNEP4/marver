@@ -411,8 +411,11 @@ describe('content frames (SPEC-026)', () => {
     const story = m.frames.find((f) => f.id === 'plan/story')!
     expect(story.intent).toBe('diagram')
     expect(story.contentWidth).toBe(760)
-    // meta.intent on a NON-content frame is ignored: absence of icon means UI
-    expect(m.frames.find((f) => f.id === 'plan/ui')!.intent).toBeUndefined()
+    // declaring meta.intent DECLARES a content frame - the taught path works even
+    // when the import scan can't see the primitives (barrels; codex impl #10)
+    const declared = m.frames.find((f) => f.id === 'plan/ui')!
+    expect(declared.intent).toBe('diagram')
+    expect(declared.contentWidth).toBe(760)
     rmSync(root, { recursive: true, force: true })
   })
 

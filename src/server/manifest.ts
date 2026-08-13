@@ -57,6 +57,8 @@ export function extractMeta(src: string): FrameMeta {
  *  detected - meta.intent is the taught path and always works). Returns the
  *  inferred intent + natural width, or null for UI frames. */
 const CONTENT_IMPORT = new RegExp(`from\\s+['"]${PKG}/content['"]`)
+const WIDE_DOC = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/
+export const contentWidthOf = (src: string): number => (WIDE_DOC.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document)
 export function contentScan(src: string): { intent: string; width: number } | null {
   if (!CONTENT_IMPORT.test(src)) return null
   const count = (re: RegExp) => (src.match(re) ?? []).length
@@ -64,8 +66,7 @@ export function contentScan(src: string): { intent: string; width: number } | nu
   const imgs = count(/<Img[\s>/]/g)
   const mds = count(/<Md[\s>/]/g)
   const intent = diagrams > 0 ? 'diagram' : imgs > mds ? 'moodboard' : 'spec'
-  const width = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document
-  return { intent, width }
+  return { intent, width: contentWidthOf(src) }
 }
 
 /** id = path relative to design/, extension dropped, `scenes/` prefix dropped. Always `/`-separated. */
@@ -111,9 +112,12 @@ export function scanFrames(root: string): Manifest {
         if (meta.of) entry.variantGroup = meta.of         // declared membership
         if (meta.variant) entry.variant = meta.variant
         const content = contentScan(src)
-        if (content) {
-          entry.intent = meta.intent ?? content.intent    // declared purpose wins
-          entry.contentWidth = content.width
+        // declared meta.intent DECLARES a content frame even when the primitives
+        // arrive through a barrel the lexical scan can't see - the taught path
+        // must always work (codex impl #10)
+        if (content || meta.intent) {
+          entry.intent = meta.intent ?? content!.intent   // declared purpose wins
+          entry.contentWidth = content?.width ?? contentWidthOf(src)
         }
       }
       frames.push(entry)

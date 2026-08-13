@@ -30,14 +30,22 @@ function packageDir(): string {
 }
 
 /** Static asset references in one module's source (SPEC-026): <Img src="..."> string
- *  literals plus markdown image literals inside template strings. A computed <Img src={...}>
- *  fails CLOSED - the build cannot know what it resolves to, so it must not publish. */
+ *  literals plus markdown image literals INSIDE TEMPLATE STRINGS (where Md content
+ *  lives - prose in comments never counts). Comments are stripped first so a commented
+ *  example cannot fail the build. A computed <Img src={...}> fails CLOSED - the build
+ *  cannot know what it resolves to, so it must not publish. */
 export function scanAssetRefs(src: string, moduleId: string): string[] {
-  if (/<Img\b[^>]*\bsrc\s*=\s*\{/.test(src))
+  // conservative comment strip: block comments, plus lines that START as line comments
+  // (mid-line "//" is left alone - it may live inside a string like https://...)
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !l.trimStart().startsWith('//')).join('\n')
+  if (/<Img\b[^>]*\bsrc\s*=\s*\{/.test(code))
     throw new Error(`${moduleId}: <Img src={...}> is computed - published builds copy only statically referenced assets. Use a string literal.`)
   const out: string[] = []
-  for (const m of src.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
-  for (const m of src.matchAll(/!\[[^\]]*\]\(([^)\s"']+)\)/g)) out.push(m[1])
+  for (const m of code.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
+  for (const tpl of code.matchAll(/`(?:[^`\\]|\\[\s\S])*`/g))
+    for (const m of tpl[0].matchAll(/!\[[^\]]*\]\(([^)\s"']+)\)/g)) out.push(m[1])
   return out
 }
 
@@ -258,11 +266,15 @@ export async function buildSite(root: string, boardsFlag?: string) {
   const refs = new Set<string>()
   for (const id of moduleIds) {
     const file = posix(String(id)).split('?')[0]
-    if (!file.startsWith(rootP + '/') || file.includes('/node_modules/')) continue
+    // every bundled first-party module is scanned - including monorepo siblings
+    // OUTSIDE the project root (pnpm workspaces resolve through to real paths);
+    // only third-party node_modules code is skipped
+    if (file.startsWith('\0') || !file.startsWith('/') || file.includes('/node_modules/')) continue
     if (!/\.(tsx|jsx|ts|js|mjs)$/.test(file)) continue
     let src: string
     try { src = readFileSync(file, 'utf8') } catch { continue }
-    for (const r of scanAssetRefs(src, file.slice(rootP.length + 1))) refs.add(r)
+    const rel = file.startsWith(rootP + '/') ? file.slice(rootP.length + 1) : file
+    for (const r of scanAssetRefs(src, rel)) refs.add(r)
   }
   let copiedAssets = 0
   const realAssets = existsSync(assetsDir) ? realpathSync(assetsDir) : null

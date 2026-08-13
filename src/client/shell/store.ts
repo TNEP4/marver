@@ -26,10 +26,11 @@ export interface Node {
   /** Explicit per-frame override, set by scoped theme actions; cleared by a global set.
    *  The only theme value that persists into the board file. */
   themeUser?: string
-  /** Size provenance for CONTENT frames (SPEC-026): absent = auto (measured, transient,
-   *  never serialized); 'manual' = the human's - measurements never overwrite; 'device' =
-   *  a preset's. UI frames never carry it. Persists so a reload can tell them apart. */
-  sizeMode?: 'manual' | 'device'
+  /** Size provenance for CONTENT frames (SPEC-026), explicit: 'auto' = measured
+   *  (transient - never serialized); 'manual' = the human's - measurements never
+   *  overwrite; 'device' = a preset's. UI frames never carry it. Only manual/device
+   *  persist, so a reload can tell an authored size from a measured one. */
+  sizeMode?: 'auto' | 'manual' | 'device'
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
 }
 export interface Toast { id: number; text: string }
@@ -117,7 +118,7 @@ interface State {
   sceneRows: string[][] | null        // LEGACY scene arrangement (SPEC-023 §2); still round-trips through save
   layout: BoardLayout | null          // lane-flow recipe (SPEC-024), parsed; wins over sceneRows when both exist
   layoutRaw: unknown                  // the author's layout VERBATIM - save round-trips this, never the parse
-  baseLayout: Record<string, { x: number; y: number; w: number; h: number }> | null   // snapshot taken on entering a device view; Default restores it exactly
+  baseLayout: Record<string, { x: number; y: number; w?: number; h?: number }> | null   // snapshot taken on entering a device view; Default restores it exactly (auto content entries carry positions only - their sizes are measured)
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -129,7 +130,7 @@ interface State {
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
   resizeNode(key: string, w: number, h: number): void
-  measureNode(key: string, ownWidth: number, measuredWidth: number, height: number): void
+  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
   removeNode(key: string): void
   select(key: string | null, additive?: boolean): void
@@ -169,7 +170,8 @@ export const useStore = create<State>((set, get) => {
     clearTimeout(reflowTimer)
     reflowTimer = setTimeout(() => {
       const s = get()
-      if (s.board !== boardAt || s.gesture) return
+      if (s.board !== boardAt) return
+      if (s.gesture) { scheduleReflow(); return }   // defer, never drop - retries after the drag
       if (s.layout || s.sceneRows?.length) s.runTidy()
     }, 400)
   }
@@ -189,6 +191,23 @@ export const useStore = create<State>((set, get) => {
         const pins: Record<string, string> = {}
         for (const n of nodes) if (n.themeUser) pins[n.frame] = n.themeUser
         sessionStorage.setItem(`mv-pins-${board}`, JSON.stringify(pins))
+      } catch { /* storage unavailable */ }
+    },
+  }
+
+  /** Published parity for content-frame sizes (SPEC-026): manual/device sizes persist
+   *  to the session the same way theme pins do - a board switch or reload on a
+   *  published canvas must not silently drop a hand-resized spec frame. */
+  const sessionSizes = {
+    read(board: string): Record<string, { w: number; h: number; sizeMode: 'manual' | 'device' }> {
+      try { return JSON.parse(sessionStorage.getItem(`mv-sizes-${board}`) ?? '{}') } catch { return {} }
+    },
+    write(board: string, nodes: Node[]) {
+      try {
+        const sizes: Record<string, { w: number; h: number; sizeMode: string }> = {}
+        for (const n of nodes) if (n.sizeMode === 'manual' || n.sizeMode === 'device')
+          sizes[n.frame] = { w: Math.round(n.w), h: Math.round(n.h), sizeMode: n.sizeMode }
+        sessionStorage.setItem(`mv-sizes-${board}`, JSON.stringify(sizes))
       } catch { /* storage unavailable */ }
     },
   }
@@ -253,8 +272,9 @@ export const useStore = create<State>((set, get) => {
             seenKeys.add(key)
             // content-frame size provenance round-trips (SPEC-026); auto nodes saved no
             // w/h, so they fall to defaultSize (placeholder) and remeasure on mount
-            const sizeMode = f?.contentWidth && (n.sizeMode === 'manual' || n.sizeMode === 'device')
-              ? { sizeMode: n.sizeMode as 'manual' | 'device' } : {}
+            const sizeMode = f?.contentWidth
+              ? { sizeMode: (n.sizeMode === 'manual' || n.sizeMode === 'device' ? n.sizeMode : 'auto') as Node['sizeMode'] }
+              : {}
             return {
               key,
               frame: n.frame,
@@ -320,17 +340,23 @@ export const useStore = create<State>((set, get) => {
             : null
           if (sibling) { x = sibling.x + sibling.w + Math.max(140, sibling.w * 0.12); y = sibling.y }
           else { x = nodes.length ? maxX + 96 : 0; y = 0 }
-          const node: Node = { key: nodeKey(), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading' }
+          const node: Node = { key: nodeKey(), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }
           nodes.push(node)
           maxX = Math.max(maxX, x + w)
         }
       }
-      // published: re-apply this visit's pins over the inlined data
+      // published: re-apply this visit's pins and content sizes over the inlined data
       if (DATA && nodes.length) {
         const pins = sessionPins.read(boardName)
+        const sizes = sessionSizes.read(boardName)
         for (const n of nodes) {
           const pin = pins[n.frame]
           if (pin && CONFIG.themes.includes(pin)) { n.themeUser = pin; n.theme = pin }
+          const sz = sizes[n.frame]
+          if (sz && manifest.frames.find((f) => f.id === n.frame)?.contentWidth
+            && Number.isFinite(sz.w) && Number.isFinite(sz.h) && (sz.sizeMode === 'manual' || sz.sizeMode === 'device')) {
+            n.w = sz.w; n.h = sz.h; n.sizeMode = sz.sizeMode
+          }
         }
       }
       if ((!boardHash || needTidy) && nodes.length) {
@@ -428,7 +454,7 @@ export const useStore = create<State>((set, get) => {
           ? next.filter((n) => { const g = m.frames.find((x) => x.id === n.frame)?.variantGroup; return g === f.variantGroup && !n.missing })
           : []
         const right = sibs.length ? sibs.reduce((a, n) => (n.x > a.x ? n : a)) : null
-        const mode = vp && f.contentWidth ? { sizeMode: 'device' as const } : {}
+        const mode = f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}
         const node = right
           ? { key: nodeKey(), frame: f.id, x: right.x + right.w + Math.max(140, right.w * 0.12), y: right.y, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const, ...mode }
           : { key: nodeKey(), frame: f.id, x: 0, y: maxY + 96, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading' as const, ...mode }
@@ -534,15 +560,19 @@ export const useStore = create<State>((set, get) => {
      *  clamped. A height only commits when it was measured at the width being applied;
      *  auto sizes are transient - applying one never dirties the board (positions from
      *  the follow-up reflow do, exactly like a human resize). */
-    measureNode(key, ownWidth, measuredWidth, height) {
+    measureNode(key, frameId, ownWidth, measuredWidth, height) {
       const s = get()
       const node = s.nodes.find((n) => n.key === key)
-      if (!node || node.sizeMode) return                  // manual/device always win
+      if (!node || node.sizeMode !== 'auto') return       // manual/device always win
+      if (node.frame !== frameId) return                  // generation guard: a reused node key
+                                                          // across a board switch never mis-attributes
       const f = s.manifest?.frames.find((x) => x.id === node.frame)
       if (!f?.contentWidth) return                        // not a content frame - spoof-proofing
       if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return
       const maxH = Math.round(2.5 * Math.max(844, ...Object.values(CONFIG.viewports).map((v) => v.height)))
-      const W = Math.min(1600, Math.max(320, Math.round(ownWidth)))
+      // declared meta.viewport WINS over the Doc layout width - the existing precedence
+      const vpw = CONFIG.viewports[f.viewport ?? '']?.width
+      const W = vpw ?? Math.min(1600, Math.max(320, Math.round(ownWidth)))
       const H = Math.min(maxH, Math.max(80, Math.round(height)))
       const curW = Math.round(node.w)
       measuredHeights.set(`${node.frame}@${Math.round(measuredWidth)}`, H)
@@ -576,7 +606,7 @@ export const useStore = create<State>((set, get) => {
           const b = s.baseLayout?.[n.key]
           if (content && f) {
             const d = defaultSize(f)
-            return { ...n, ...(b ? { x: b.x, y: b.y } : {}), w: d.w, h: d.h, sizeMode: undefined }
+            return { ...n, ...(b ? { x: b.x, y: b.y } : {}), w: d.w, h: d.h, sizeMode: 'auto' as const }
           }
           if (b) return { ...n, ...b }               // exact free-form layout, positions included
           if (!f) return n
@@ -618,7 +648,7 @@ export const useStore = create<State>((set, get) => {
           if (!f) return n
           const d = defaultSize(f)
           // digit 0 on a content frame clears provenance back to auto (SPEC-026)
-          return { ...n, w: d.w, h: d.h, ...(content ? { sizeMode: undefined } : {}) }
+          return { ...n, w: d.w, h: d.h, ...(content ? { sizeMode: 'auto' as const } : {}) }
         })
         const baseLayout = s.baseLayout ? { ...s.baseLayout } : null
         if (baseLayout) for (const k of s.selection) {
@@ -698,7 +728,7 @@ export const useStore = create<State>((set, get) => {
       const d = defaultSize(f)
       const vp = deviceView ? CONFIG.viewports[deviceView] : null
       const maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
-      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading', ...(vp && f.contentWidth ? { sizeMode: 'device' as const } : {}) }
+      const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }
       set((s) => ({
         nodes: [...s.nodes, node],
         dirty: true,
@@ -717,6 +747,7 @@ export const useStore = create<State>((set, get) => {
       // session instead, and dirty must clear or switchBoard's save-flush loop wedges
       if (DATA) {
         sessionPins.write(get().board, get().nodes)
+        sessionSizes.write(get().board, get().nodes)
         set({ dirty: false })
         return Promise.resolve(true)
       }
@@ -735,19 +766,23 @@ export const useStore = create<State>((set, get) => {
           ...(deviceView ? { deviceView } : {}),
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
           ...(get().layoutRaw !== undefined ? { layout: get().layoutRaw } : {}),
-          ...(baseLayout ? { baseLayout } : {}),
+          // baseLayout entries for auto content nodes keep POSITIONS only - their
+          // measured dimensions are transient and never reach the file (SPEC-026)
+          ...(baseLayout ? {
+            baseLayout: Object.fromEntries(Object.entries(baseLayout).map(([k, b]) => {
+              const n = nodes.find((x) => x.key === k)
+              return n?.sizeMode === 'auto' ? [k, { x: b.x, y: b.y }] : [k, b]
+            })),
+          } : {}),
           // only PINNED themes persist - inherited values follow viewTheme at load time.
           // Content frames in AUTO save no dimensions (SPEC-026): measured sizes are
           // transient - a reflow-triggered save can never leak an auto height to disk.
-          nodes: nodes.map(({ key, frame, x, y, w, h, themeUser, sizeMode }) => {
-            const auto = !!get().manifest?.frames.find((f) => f.id === frame)?.contentWidth && !sizeMode
-            return {
-              key, frame, x: Math.round(x), y: Math.round(y),
-              ...(auto ? {} : { w: Math.round(w), h: Math.round(h) }),
-              ...(sizeMode ? { sizeMode } : {}),
-              ...(themeUser ? { themeUser } : {}),
-            }
-          }),
+          nodes: nodes.map(({ key, frame, x, y, w, h, themeUser, sizeMode }) => ({
+            key, frame, x: Math.round(x), y: Math.round(y),
+            ...(sizeMode === 'auto' ? {} : { w: Math.round(w), h: Math.round(h) }),
+            ...(sizeMode === 'manual' || sizeMode === 'device' ? { sizeMode } : {}),
+            ...(themeUser ? { themeUser } : {}),
+          })),
         }
         try {
           const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {

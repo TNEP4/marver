@@ -531,8 +531,8 @@ export function App() {
         if (s.interact === nodeKey) setInteract(null)
       } else if (data.type === 'sh:measure') {
         // SPEC-026 content-frame measurement; measureNode does its own admission
-        // (content frames only, finite positive, clamped) - this is just routing
-        s.measureNode(nodeKey, Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
+        // (content frames only, frame-id match, finite positive, clamped)
+        s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
       } else if (data.type === 'sh:go') {
         const target = String(data.target ?? '')
         const existing = s.nodes.find((n) => n.frame === target && !n.missing)
