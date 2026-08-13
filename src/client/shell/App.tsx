@@ -1,12 +1,12 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, PUBLISHED, boardLabel, cap, fetchBoardNames } from './store.ts'
+import { useStore, CONFIG, PUBLISHED, boardLabel, cap, fetchBoardNames, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, GridIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, DevicesIcon, FrameRectIcon, GridIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
@@ -661,8 +661,24 @@ export function App() {
                 }}>
                 {(() => {
                   // variant groups render as ONE surface row with A/B/C chips (SPEC-023 §5)
-                  const sceneFrames = frames.filter((f) => f.scene === sc.name)
                   const nodeFor = (id: string) => nodes.find((x) => x.frame === id && !x.missing) ?? nodes.find((x) => x.frame === id)
+                  // sidebar order follows the CANVAS (reading order: rows top-to-bottom,
+                  // left-to-right) - a story board's list must tell the same story as its
+                  // layout. Grouped frames anchor at their group's earliest position so
+                  // the run stays contiguous; members sort by letter within it.
+                  const pos = (id: string) => { const n = nodeFor(id); return n ? { y: n.y, x: n.x } : { y: Number.MAX_SAFE_INTEGER, x: 0 } }
+                  const sceneFrames = frames.filter((f) => f.scene === sc.name)
+                  const groupPos = new Map<string, { y: number; x: number }>()
+                  for (const f of sceneFrames) {
+                    if (!f.variantGroup) continue
+                    const p = pos(f.id), g = groupPos.get(f.variantGroup)
+                    if (!g || p.y < g.y || (p.y === g.y && p.x < g.x)) groupPos.set(f.variantGroup, p)
+                  }
+                  const keyOf = (f: FrameEntry) => f.variantGroup ? groupPos.get(f.variantGroup)! : pos(f.id)
+                  sceneFrames.sort((a, b) => {
+                    const ka = keyOf(a), kb = keyOf(b)
+                    return ka.y - kb.y || ka.x - kb.x || (a.variant ?? '').localeCompare(b.variant ?? '')
+                  })
                   const go = (id: string, shift: boolean) => {
                     const n = nodeFor(id)
                     if (!n) return
@@ -685,19 +701,14 @@ export function App() {
                         // group participates without claiming full selection
                         const held = !allOn && memberKeys.some((k) => selection.includes(k) || useStore.getState().interact === k)
                         // group header: click selects EVERY variant (the quick compare-and-test grab)
-                        // group intent (SPEC-026): the letter chips keep the member rows'
-                        // leading slot, so the intent icon lives on the GROUP row - shown
-                        // when all members agree, generic content glyph on a mixed group
-                        const gIntent = members.every((m) => m.intent === members[0].intent)
-                          ? members[0].intent
-                          : members.some((m) => m.intent) ? 'content' : undefined
+                        // the group row leads with the flask - variant-ness IS the row's
+                        // identity; members carry their letter chips, indented below it
                         rows.push(
                           <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}${held ? ' held' : ''}`}
                             title="Select all variants"
                             onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
-                            {gIntent && <IntentGlyph intent={gIntent} size={13} className="iicon" aria-label={gIntent} />}
+                            <VariantsIcon size={13} className="iicon" />
                             <span className="glabel">{rel}</span>
-                            <VariantsIcon size={14} className="gicon" />
                           </div>,
                         )
                         // one row per variant: [letter chip] + name, individually selectable
@@ -718,8 +729,11 @@ export function App() {
                     const on = !!n && selection.includes(n.key)
                     rows.push(
                       <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} title={f.intent}>
-                        {/* content frames lead with their intent glyph (SPEC-026) - absence means UI */}
-                        {f.intent && <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />}
+                        {/* every frame leads with an icon: intent glyph for content
+                            frames, the plain frame rectangle for UI frames */}
+                        {f.intent
+                          ? <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />
+                          : <FrameRectIcon size={13} className="iicon" />}
                         {cap(f.id.split('/').slice(1).join('/') || f.id)}
                       </div>,
                     )

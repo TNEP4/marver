@@ -269,14 +269,15 @@ frame" is an icon scan, not a title read.
   declared intent, the heuristic counts block usage: any `<Diagram` →
   `diagram`; else `<Img` majority → `moodboard`; else → `spec`.
 - Manifest: `intent?: string` on `FrameEntry` (`kind` stays file-kind).
-- **Placement** (codex r1 #12): sidebar - the intent icon leads the row for
-  ungrouped content frames; variant group rows keep their letter chips (the
-  chip wins the leading slot) and the intent icon sits on the GROUP row -
-  shown only when every member shares one intent, generic content icon on a
-  mixed group (r2 P2). Canvas - the intent icon joins the frame's title
-  chrome; the variant badge is untouched. Icon tooltip and accessible label =
-  the intent name. UI frames get no icon - absence means UI, so the icons
-  stay meaningful.
+- **Placement** (codex r1 #12; revised per Nic's dogfood feedback 2026-08-13):
+  EVERY sidebar row leads with an icon - intent glyph for content frames, a
+  plain frame rectangle for UI frames, the variants flask for group rows
+  (variant-ness is the group row's identity; member rows keep their letter
+  chips, indented one step deeper than the group). Sidebar ORDER follows the
+  canvas reading order (nodes by y then x; groups anchor at their earliest
+  member) - the list tells the same story as the layout. Canvas - the intent
+  icon joins the frame's title chrome; the variant badge is untouched. Icon
+  tooltip and accessible label = the intent name.
 
 ## Teaching the agent - link, don't prescribe
 

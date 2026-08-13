@@ -39,8 +39,10 @@ export const ParallelogramDuoIcon = icon(<><path d="M239.29,59.28l-64.8,144a8,8,
  *  pill filled while the sidebar is open, hollow while collapsed. */
 export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" /></>)
 
-/* Content-frame intent glyphs (SPEC-026), custom in the same 256-space.
- * Absence means UI - only content frames ever show one. */
+/** Plain UI frame - the rectangle every non-content sidebar row leads with. */
+export const FrameRectIcon = icon(<rect x="40" y="52" width="176" height="152" rx="20" fill="none" stroke="currentColor" strokeWidth="16" />)
+
+/* Content-frame intent glyphs (SPEC-026), custom in the same 256-space. */
 export const DiagramShapeIcon = icon(<><rect x="28" y="36" width="88" height="64" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="140" y="156" width="88" height="64" rx="14" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M116 68 H184 V156" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" /></>)
 export const SpecDocIcon = icon(<><path d="M44 48 H180 M44 96 H212 M44 144 H212 M44 192 H140" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" /></>)
 export const MoodboardIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="20" fill="none" stroke="currentColor" strokeWidth="16" /><circle cx="96" cy="104" r="18" /><path d="M56 192 L112 128 L150 168 L178 140 L200 164 V192 Z" /></>)
