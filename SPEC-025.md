@@ -68,10 +68,32 @@ explicitly asked for unattended execution.
    linked with data-goto, on a curated board. Offer one a-/b- variant
    divergence to teach the workflow. First sessions skip the written-brief
    ceremony, never the quality bar.
-6. **The tour** (instructions/welcome.md). Start `npx marver dev` if not
-   running (the contract's one allowed canvas touch) and hand the deep link
-   using the PRINTED port - `http://localhost:<port>/#/b/<board>` - never a
-   bare localhost root.
+6. **The reveal** (instructions/welcome.md). Start `npx marver dev` (the
+   contract's one allowed canvas touch) and hand the deep link using the
+   PRINTED port - `http://localhost:<port>/#/b/<board>` - never a bare
+   localhost root. Kept short: the human has already learned the canvas in the
+   waiting room.
+
+## The waiting room (Nic, 2026-08-13, revised)
+
+The first live run measured 16+ minutes from stack nod to frames - dead air
+kills onboarding. The fix is NOT opening the local canvas early (a half-built
+canvas is a construction site, not a demo). Instead: the moment the plan is
+agreed (stack nod in Path A, confirmation in Path B), the agent hands the
+human the HOSTED TOUR - a published, polished canvas marver controls -
+https://tour.marver.design, password `welcome` - which teaches selection,
+devices, themes, variants, and play mode from inside the frames, and ends by
+telling the human to go check on their agent. The agent then builds without
+narrating into the void; its next message is the reveal. The local dev canvas
+is the finale, not the waiting room. The packaged generic demo exists to show
+the AGENT the file shapes, nothing more.
+
+**Release blocker: the tour canvas must exist at that URL before any version
+shipping these templates is published.** Content: intuitive, great-looking
+frames that explain the app in-place; boards showing layout; a real variant
+group; a play-mode flow; closing frame that sends the human back to their
+agent. Build it AS a marver project (dogfood), host it (marver.design DNS +
+a small serve deployment), gate it with `welcome`.
 
 ## Path B - existing codebase (first session, instructions/welcome.md)
 

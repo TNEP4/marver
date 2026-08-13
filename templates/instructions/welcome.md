@@ -43,7 +43,17 @@ every device size - before app logic is written.
 ## Empty repo?
 
 design/instructions/setup.md is the authority (it exists only while the repo
-has no app). Follow it end to end; it sends you back here for the tour.
+has no app). Follow it end to end; it sends you back here for the reveal.
+
+## The waiting room - hand them the hosted tour while you build
+
+Building well takes real minutes, and the human should spend them inside a
+canvas, not watching a terminal. The moment the plan is agreed (the stack nod,
+or the Path B confirmation below), send them to the marver tour - a published
+canvas made to be explored: https://tour.marver.design - password `welcome`.
+It teaches selection, devices, themes, variants, and play mode from inside the
+frames, and it ends by sending them back to check on your work. Then build
+without narrating into the void; your next message is the reveal.
 
 ## Existing codebase - first session flow
 
@@ -57,7 +67,8 @@ has no app). Follow it end to end; it sends you back here for the tour.
    + shadcn/ui; brand tokens in <file>; design/theme.css imports them." No
    component library? Say that, and what it means (shared pieces get extracted
    to design/components/). Anything wrong gets fixed now, while it is cheap
-   (configure.md, old-repo checklist).
+   (configure.md, old-repo checklist). Once confirmed, hand them the hosted
+   tour (the waiting room above) and get to work.
 3. **Put THEIR product on the canvas - impressively.** Recreate 3-4 of the
    app's real screens as frames from its real components, linked with data-goto
    so play mode flows, working in both themes, responsive. This is the human's
@@ -75,13 +86,15 @@ has no app). Follow it end to end; it sends you back here for the tour.
    explanation.
 6. **Give the tour** (below), ending with the deep link.
 
-## The tour
+## The reveal
 
-Deliver conversationally after setup - a short guided message, not a manual.
-Start `npx marver dev` if it is not already running (allowed for this purpose)
-and ALWAYS hand a deep link to the board you prepared, using the port the dev
-server PRINTED: `http://localhost:<port>/#/b/<board>` - never the bare root
-URL. The highlights, all real features:
+Deliver conversationally when the first draft is ready - a short guided
+message, not a manual. Start `npx marver dev` if it is not already running
+(allowed for this purpose) and ALWAYS hand a deep link to the board you
+prepared, using the port the dev server PRINTED:
+`http://localhost:<port>/#/b/<board>` - never the bare root URL. The human has
+already played with the hosted tour by now, so keep it short - let their own
+product carry the moment. The highlights, all real features:
 
 - **Select and preview.** Click frames (shift-click for several). Digit keys
   switch device presets - 1-4 for the configured devices, 0 back to each

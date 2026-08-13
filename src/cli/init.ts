@@ -302,6 +302,12 @@ function uiGuidance(host: HostInfo, isNoApp: boolean): string {
   return `Use the app's existing components and stylesheets (import them directly); there is no Tailwind or component library detected - extract shared pieces into design/components/.`
 }
 
+// The hosted onboarding canvas: handed to the human the moment the plan is
+// agreed, explored while the agent builds. Standing this up (content + stable
+// hosting) is a release blocker for any version that ships these templates.
+const TOUR_URL = 'https://tour.marver.design'
+const TOUR_PASSWORD = 'welcome'
+
 const SETUP_MD = `# Setup required - this repo has no app yet
 
 > This file exists because \`${NAME} init\` ran in a repo with no framework, no theme
@@ -353,7 +359,14 @@ harness's structured question tool when it has one - short labels, one-line
 trade-offs - closing with "aligned, or tell me what you'd rather use". Then
 STOP again: no further tool calls, end your turn, wait for the nod.
 
-## 4. Scaffold and verify
+## 4. Hand them the tour, then scaffold
+
+The setup and first draft take real minutes; the human should spend them
+learning the canvas, not watching a terminal. The moment the stack is agreed,
+send them to the ${NAME} tour - a published canvas we host, built to be
+explored: ${TOUR_URL} - password \`${TOUR_PASSWORD}\`. Tell them it teaches
+selection, devices, themes, variants, and play mode from inside the canvas,
+and that it ends by sending them back to check on you. Then get to work.
 
 NOTE: scaffolders refuse non-empty directories (this repo already holds design/
 and a package.json - the one you likely created with \`npm init -y\` to install
@@ -395,6 +408,7 @@ regenerates AGENTS.md against reality. Verify the wiring (instructions/
 configure.md): frames render styled, one app component imports cleanly.
 DESIGN.md comes next, as part of the first draft.
 
+
 ## 6. The first draft - make it impressive, then tour
 
 This is the human's first impression of the canvas AND the first draft of their
@@ -402,10 +416,12 @@ product - it sets the direction. Take the time to do it well:
 
 - If you can search the web, spend a few minutes understanding the domain from
   step 2's answer; sketch a reasonable brand and write design/DESIGN.md for it.
-- Replace the generic demo scene (delete design/scenes/demo/) with ~4 frames of
-  THEIR product - not lorem, not filler. Hold them to the craft bar:
-  instructions/craft.md and instructions/reference/slop.md are binding here.
-  Responsive, working in BOTH themes, linked with data-goto so play mode flows.
+- Build ~4 frames of THEIR product - not lorem, not filler. Hold them to the
+  craft bar: instructions/craft.md and instructions/reference/slop.md are
+  binding here. Responsive, working in BOTH themes, linked with data-goto so
+  play mode flows.
+- Delete the generic demo scene (design/scenes/demo/) once your frames are in -
+  it exists to show YOU the file shapes, not to impress anyone.
 - Create a curated board for them (instructions/boards.md) containing every
   frame the flow visits.
 - Offer a divergence: "want a variant of <frame> exploring a different
@@ -413,10 +429,11 @@ product - it sets the direction. Take the time to do it well:
   explanation.
 
 This first draft skips the written-brief ceremony (the human just told you what
-they are building) but never the quality bar. Then give the tour from
-instructions/welcome.md: start \`npx ${NAME} dev\` if it is not running and use
-the PRINTED port for the deep link - \`http://localhost:<port>/#/b/<board>\`,
-never the bare root URL.
+they are building) but never the quality bar. Then THE REVEAL: start
+\`npx ${NAME} dev\` and give the guided tour from instructions/welcome.md -
+by now the human has played with the hosted tour, so keep it short and let
+their own product carry it. End with the deep link using the PRINTED port -
+\`http://localhost:<port>/#/b/<board>\`, never the bare root URL.
 `
 
 /** Next.js frames render OUTSIDE Next - say concretely what that means (friction log #10/#11). */
