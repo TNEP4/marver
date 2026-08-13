@@ -27,6 +27,10 @@ viewport and lays it out:
   automatically.
 - Content frames (specs, diagrams, mood boards - instructions/shape.md) are ordinary
   atoms in every layout scope: a feature-story board mixes them freely with UI frames.
+- The `archive` board (instructions/iterate.md) is the one board of retired
+  explorations: curated over design/scenes/archive/, tidied with a recipe,
+  every frame relabeled with what it was and why it retired. Winners live on
+  the feature boards; the archive answers "what did we try?".
 
 ## Composing the canvas: `layout`
 

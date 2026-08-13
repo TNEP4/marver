@@ -19,6 +19,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
 | Brand | before the first hi-fi work: extract or create the world | instructions/brand.md |
 | Build | hi-fi frames from real components | instructions/craft.md + components.md |
+| Iterate | changing a frame the human has seen, or retiring explorations | instructions/iterate.md |
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board or publishing | instructions/boards.md |
 

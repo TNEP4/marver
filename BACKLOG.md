@@ -126,3 +126,8 @@ Small items that are not milestone work. One line each; delete when done.
 - **Distribution: DONE 2026-08-11** (see DECISIONS.md) except user actions: send
   dispute email, flip repo public + register trusted publisher, carrara-labs npm org
   transfer, move Railway project to personal workspace.
+- **Recipe edits don't re-tidy materialized boards.** An agent changing a board's
+  `layout` in the file sees no effect until positions are stripped or a human
+  gesture retriggers tidy (hit on routines-story, 2026-08-13 - had to delete x/y
+  by hand). Candidate fix: store a recipe hash in the board file; loadBoardState
+  retidies when the recipe changed since materialization.
