@@ -602,3 +602,72 @@ describe('comment event store (SPEC-M3 §1 - set-union merge, deterministic repl
       expect(() => readLog(dir, '../escape')).toThrow(/bad board name/)
     }))
 })
+
+describe('auth - invites, accounts, sessions (SPEC-M3 §3)', async () => {
+  const auth = await import('../src/server/auth.ts')
+  const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+
+  const store = (fn: (dir: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), 'sh-auth-'))
+    try { fn(dir) } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  it('invite → claim → session: the whole identity bootstrap, no email infra', () =>
+    store((dir) => {
+      const { token } = auth.createInvite(dir, 'Nic@Example.com')
+      const { user, session } = auth.claimInvite(dir, token, { password: 'hunter22plus', name: 'Nic' })
+      expect(user.email).toBe('nic@example.com')      // normalized
+      expect(user.role).toBe('owner')                 // first account owns the canvas
+      expect(auth.sessionUser(dir, session)?.name).toBe('Nic')
+    }))
+  it('invites are single-use and unknown tokens fail', () =>
+    store((dir) => {
+      const { token } = auth.createInvite(dir, 'a@x.com')
+      auth.claimInvite(dir, token, { password: 'longenough1', name: 'A' })
+      expect(() => auth.claimInvite(dir, token, { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
+      expect(() => auth.claimInvite(dir, 'not-a-token', { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
+    }))
+  it('sign-in verifies scrypt and is generic on failure; second account is member', () =>
+    store((dir) => {
+      const a = auth.createInvite(dir, 'a@x.com')
+      auth.claimInvite(dir, a.token, { password: 'correct-horse', name: 'A' })
+      const b = auth.createInvite(dir, 'b@x.com')
+      expect(auth.claimInvite(dir, b.token, { password: 'battery-staple', name: 'B' }).user.role).toBe('member')
+      expect(auth.signIn(dir, 'a@x.com', 'correct-horse')?.user.name).toBe('A')
+      expect(auth.signIn(dir, 'a@x.com', 'wrong')).toBeNull()
+      expect(auth.signIn(dir, 'ghost@x.com', 'whatever')).toBeNull()
+    }))
+  it('raw tokens never touch disk - only hashes', () =>
+    store((dir) => {
+      const { token } = auth.createInvite(dir, 'a@x.com')
+      const { session } = auth.claimInvite(dir, token, { password: 'longenough1', name: 'A' })
+      const raw = readFileSync(join(dir, 'auth.json'), 'utf8')
+      expect(raw).not.toContain(token)
+      expect(raw).not.toContain(session)
+      expect(raw).not.toContain('longenough1')
+    }))
+  it('sessions survive a restart (fresh read of the same dir) and sign-out revokes', () =>
+    store((dir) => {
+      const { token } = auth.createInvite(dir, 'a@x.com')
+      const { session } = auth.claimInvite(dir, token, { password: 'longenough1', name: 'A' })
+      expect(auth.sessionUser(dir, session)).not.toBeNull()   // loadStore reads disk every call = restart-equivalent
+      auth.signOut(dir, session)
+      expect(auth.sessionUser(dir, session)).toBeNull()
+    }))
+  it('revokeUser removes account, sessions, and pending invites', () =>
+    store((dir) => {
+      const { token } = auth.createInvite(dir, 'a@x.com')
+      const { session } = auth.claimInvite(dir, token, { password: 'longenough1', name: 'A' })
+      auth.revokeUser(dir, 'A@X.COM')
+      expect(auth.sessionUser(dir, session)).toBeNull()
+      expect(auth.signIn(dir, 'a@x.com', 'longenough1')).toBeNull()
+    }))
+  it('weak passwords and blank names are rejected at claim', () =>
+    store((dir) => {
+      const { token } = auth.createInvite(dir, 'a@x.com')
+      expect(() => auth.claimInvite(dir, token, { password: 'short', name: 'A' })).toThrow(/at least 8/)
+      expect(() => auth.claimInvite(dir, token, { password: 'longenough1', name: '  ' })).toThrow(/display name/)
+    }))
+})
