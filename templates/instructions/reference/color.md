@@ -46,8 +46,29 @@ present). Focus indicators need contrast AND a clearly visible change of appeara
 Check interactive states, text over images, and BOTH themes.
 Anything conveyed by color alone also needs text, shape, icon, or position.
 
+## Content-frame families (one palette, prose + diagrams)
+
+In content frames (`Md`, `Diagram`), color-code by MEANING using the built-in family
+names - never hand-roll hex or mermaid `classDef`. The same six families work in both,
+so a sentence and the diagram beside it read as one color language:
+
+- **Prose:** `:blue[the shipper's world]`, `:orange[the carrier market]`, `:purple[the
+  driver pool]`, `:green[...]`, `:red[...]`, `:gray[...]` inside any `Md` block.
+- **Diagram nodes:** tag a node with the family - `HQ:::blue`, `Carriers:::orange`,
+  `Drivers:::purple`. No `classDef` needed; they're injected for you.
+
+Pick ONE family per concept and hold it everywhere it appears (the intro word, the
+diagram box, the section heading). That consistency is what lets a reader link the
+picture to the prose at a glance. Reserve `gray` for the neutral/background ("the platform",
+"out of scope"); use the vivid families for the actors that matter.
+
+Node text: lead with the label, then the gloss - a box should scan as
+label-then-detail, not a run-on. Mermaid markdown-string labels (backtick-wrapped)
+render bold, so make the main word prominent and the example secondary.
+
 ## Verify
 
 Every color has a stable role; attention lands on the intended action; the palette
 holds across quiet, dense, error, and empty states; both themes are composed; the
-result is recognizably THIS product, not a generic colorful treatment.
+result is recognizably THIS product, not a generic colorful treatment. In content
+frames, each concept keeps ONE family across prose and diagram.

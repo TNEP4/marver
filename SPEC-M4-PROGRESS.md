@@ -53,7 +53,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] D4 full-width rich Md
 - [x] D5 humanize sidebar labels
 - [ ] D6 copy-path shortcut → `Shift+P` + fix stale tooltip
-- [ ] D7 teach-the-agent authoring doctrine in `instructions/`
+- [x] D7 (family-color + node doctrine in reference/color.md; fuller content ref optional) teach-the-agent authoring doctrine in `instructions/`
 
 ## Gate for the milestone
 - [ ] every §1 feature works in dev AND publish
