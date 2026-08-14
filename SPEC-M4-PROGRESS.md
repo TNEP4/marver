@@ -48,7 +48,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 
 ## Track D — authoring quality & polish  (ongoing, alongside)
 - [ ] D1 diagram title/subtitle sugar (`Corporate HQ · control tower`)
-- [ ] D2 built-in `:::family` colors from `palette.ts`
+- [x] D2 built-in `:::family` colors from `palette.ts`
 - [x] D3 colored/highlighted inline Md (`:blue[…]`)
 - [ ] D4 full-width rich Md
 - [x] D5 humanize sidebar labels

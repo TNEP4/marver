@@ -23,6 +23,25 @@ export function cleanSource(src: string): string {
     .trim()
 }
 
+// D2: named family fills - the SAME colour language as the Md `:blue[...]` families, so an agent
+// tags a node `HQ:::blue` with zero classDef boilerplate and prose + diagram read as one palette.
+const DIAGRAM_FAMILIES: Record<string, string> = {
+  blue: 'fill:#0088FF,stroke:#0066CC,color:#fff',
+  orange: 'fill:#F5820A,stroke:#C96A08,color:#fff',
+  purple: 'fill:#B32BC8,stroke:#8F22A0,color:#fff',
+  green: 'fill:#1FA34A,stroke:#178139,color:#fff',
+  red: 'fill:#E5342B,stroke:#B71C13,color:#fff',
+  gray: 'fill:#E5E5EA,stroke:#C7C7CC,color:#1C1C1E',
+}
+/** Append the family classDefs to flowchart/graph diagrams (classDef is a flowchart feature).
+ *  Unused defs are harmless; `X:::blue` resolves them regardless of position. */
+export function withFamilies(src: string): string {
+  const first = src.split('\n').find((l) => l.trim())?.trim() ?? ''
+  if (!/^(flowchart|graph)\b/.test(first)) return src
+  const defs = Object.entries(DIAGRAM_FAMILIES).map(([n, s]) => `classDef ${n} ${s}`).join('\n')
+  return `${src}\n${defs}`
+}
+
 /** Remove external URL references from rendered SVG (images, links, href attrs). */
 export function sanitizeSvg(svg: string): string {
   const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
@@ -38,9 +57,9 @@ export function sanitizeSvg(svg: string): string {
 }
 
 export function Diagram({ title, children }: { title?: string; children?: ReactNode }) {
-  const src = cleanSource(
+  const src = withFamilies(cleanSource(
     typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : String(children ?? ''),
-  )
+  ))
   const ref = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const uid = useRef(`mv-mmd-${++uidSeq}`)

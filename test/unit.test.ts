@@ -4,6 +4,20 @@ import { affectedFrameIds, extractMeta, toFrameId, type Manifest } from '../src/
 import { tidy } from '../src/client/shell/tidy.ts'
 import { humanize } from '../src/client/shell/labels.ts'
 import { renderMarkdown } from '../src/client/content/md.ts'
+import { withFamilies } from '../src/client/content/diagram.tsx'
+
+describe('withFamilies (D2 diagram family colors)', () => {
+  it('appends family classDefs to a flowchart', () => {
+    const out = withFamilies('flowchart TB\n  A-->B')
+    expect(out).toContain('classDef blue fill:#0088FF')
+    expect(out).toContain('classDef orange')
+    expect(out).toContain('classDef gray')
+  })
+  it('leaves a non-flowchart diagram untouched', () => {
+    const seq = 'sequenceDiagram\n  A->>B: hi'
+    expect(withFamilies(seq)).toBe(seq)
+  })
+})
 
 describe('renderMarkdown color families (D3)', () => {
   it('renders :family[text] as a colored span', () => {
