@@ -91,13 +91,16 @@ Small items that are not milestone work. One line each; delete when done.
        The stage already keeps the provider+layout chain mounted across data-goto swaps; extend
        that so an HMR update to the CURRENT frame preserves scroll position (and play state)
        rather than remounting from the top. Same "recover in-place" principle, play-mode axis.
-  **Target Nic is designing for (state the bar explicitly):** MULTIPLE agents working at once
-  on different boards/scenes, creating frames as they go, while the user is live in the canvas.
-  Localhost must stay stable through all that churn WITHOUT a full-page refresh - every HMR /
-  frame reload / board change must preserve the user's zoom, pan, scroll, play position, and
-  active mode (laser/comment). A full reload that dumps the user back to fit-all/top is the
-  failure. Design the shell's refresh path around "surgical in-place update, never blow away
-  the viewport or mode."
+  **Target Nic is designing for (the NORTH STAR, restated 2026-08-14):** one or MULTIPLE agents
+  cooking on one or multiple boards/scenes AT THE SAME TIME, while the user stays in the canvas
+  and keeps working on the next iteration. The common loop: user fires instructions at the
+  coding agent(s), goes back to the canvas to look and keep working WHILE the agent cooks - never
+  cut the user out of the action. Concretely, agent edits must NOT: white-zap/refresh the page,
+  reset the viewport (zoom/pan), or drop the user's active mode - **laser, comment ("command")
+  mode, prototype**. Keep EVERY existing feature (nothing that makes Marver Marver gets cut);
+  just make it performant, smartly, without introducing bugs. A frame the user isn't looking at
+  being edited should update silently. Architecture plan: `CONSULT-perf-reliability-2026-08-14.md`
+  (Stage 1 = self-healing sessions delivers the stay-in-action guarantee without snapshots).
   Needs a codex adversarial pass on the frame-lifecycle × mode-state matrix (like the Play
   chrome item): {loading, ready, error, HMR-updating, reloading} × {laser on/off, comment
   on/off} × user mid-gesture. Connects to the cold-boot item below and the multiplayer
@@ -147,6 +150,7 @@ Small items that are not milestone work. One line each; delete when done.
   "three instances collided on 5199/5200 (lockfile or banner)" note. Multi-project concurrency
   is a first-class case Nic wants (multiple agents on multiple projects at once).
 - **Canvas performance at scale - the PRIMARY ask (dogfooding hertz-transpo, 2026-08-14).**
+  Architecture plan: see `CONSULT-perf-reliability-2026-08-14.md` (Codex consult, staged 0-5).
   "All scenes" now holds ~30+ live frames (Tms-specs 6 + Flow-01..10 × overview/reference),
   and zoom/pan goes slow, janky, "pixel-like"; wheel zoom also fights page scroll. Nic's bar,
   stated plainly: **the canvas must stay fast no matter how much content or how heavy it is -
@@ -178,6 +182,16 @@ Small items that are not milestone work. One line each; delete when done.
     - "All scenes" tension Nic flagged: rendering every frame is handy for debugging but a
       perf hazard; culling/LOD makes it safe, OR make all-scenes lazy/opt-in. Prefer the
       former - the whole point is "fast no matter what."
+    - **Device sweep = the hardest unsolved piece (Nic, 2026-08-14).** Clicking a device
+      (Mobile/Tablet/Laptop/Monitor) with NO frame selected re-lays-out EVERY frame on the
+      board to that width via LIVE reflow - and "the beauty is it actually works." Must keep
+      it, but make it smooth. Answer falls out of the snapshot facade: only VISIBLE frames
+      reflow live immediately (animate the card to the new device width showing a scaled
+      snapshot, then crossfade to the live-reflowed frame underneath); off-screen frames
+      re-bake a width-specific snapshot lazily when scrolled into view. Nic's two ideas
+      ("snapshots + smooth animation" and "only render the top section") combine into exactly
+      this. NEVER scale a desktop snapshot into a mobile card and call it responsive - visible
+      instances reflow live. "Default" (free-form) must still restore hand-placed x/y exactly.
   Set a perf gate and hold it: p95 frame time <16ms while panning a 50-frame board.
 - **Board identity: slug = filename = route; spaces/caps break loading (confirmed,
   2026-08-14).** An agent named a board file `TMS High level.json` (spaces) to get a pretty
