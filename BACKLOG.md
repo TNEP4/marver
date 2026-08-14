@@ -2,6 +2,12 @@
 
 Small items that are not milestone work. One line each; delete when done.
 
+> **The performance / reliability / polish work is now specced:** see `SPEC-M4.md` (Performance,
+> Reliability & the Live-Session Guarantee), with mechanism detail in
+> `CONSULT-perf-reliability-2026-08-14.md`. The big BACKLOG items below (canvas performance,
+> concurrent-edit resilience, ghost boards, port collision, device sweep, authoring quality,
+> copy-path shortcut) are all consolidated there as Tracks A-D / Stages 0-5.
+
 - **Play chrome hide/reveal still misbehaves in some flows.** Run a codex adversarial
   review of the chrome state machine in `src/client/shell/Play.tsx` (chrome open/
   collapsed/hidden × idle × over × hint/snooze, plus the H and ⌘/ transitions and the
