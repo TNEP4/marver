@@ -140,6 +140,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
 function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: number }; node: Node }) {
   const { resolve, setActive } = useComments.getState()
+  const me = useComments((s) => s.me)
+  const local = useComments((s) => s.local)
+  const canComment = local || !!me      // dev is always "me"; published needs a session
   const [text, setText] = useState('')
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -191,16 +194,22 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
           <p className="cm-body">{r.body}</p>
         </div>
       ))}
-      <div className="cm-compose">
-        <Avatar author={useComments.getState().me ?? undefined} size={24} />
-        <div className="cm-inputwrap">
-          <input value={text} placeholder="Reply…" onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setActive(null) }} />
-          <button className="cm-send" disabled={!text.trim()} aria-label="Send" onClick={() => void submit()}>
-            <ArrowUpIcon size={15} />
-          </button>
+      {canComment ? (
+        <div className="cm-compose">
+          <Avatar author={me ?? undefined} size={24} />
+          <div className="cm-inputwrap">
+            <input value={text} placeholder="Reply…" onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setActive(null) }} />
+            <button className="cm-send" disabled={!text.trim()} aria-label="Send" onClick={() => void submit()}>
+              <ArrowUpIcon size={15} />
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <button className="cm-signin-cta" onClick={() => useComments.setState({ needsIdentity: true })}>
+          Sign in to comment
+        </button>
+      )}
     </div>
   )
 }
