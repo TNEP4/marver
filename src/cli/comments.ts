@@ -101,9 +101,9 @@ export async function commentsCommand(root: string, action: string, value: strin
       const { token } = await ownerApi(root, 'invite', { email: value })
       const url = loadCollab(root)!.url.replace(/\/+$/, '')
       console.log(`  invite for ${value} (single-use, 7 days):`)
-      console.log(`    canvas:  ${url}`)
-      console.log(`    token:   ${token}`)
-      console.log(`  they open the canvas, try to comment, pick "I have an invite", paste the token.`)
+      console.log(`    ${url}/#/i/${token}`)
+      console.log(`  send them that link (plus the canvas password) - it opens straight into`)
+      console.log(`  "pick your name and password".`)
       return
     }
     case 'revoke': {

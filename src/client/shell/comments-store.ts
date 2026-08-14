@@ -21,6 +21,7 @@ interface CommentsState {
   active: string | null               // open thread id
   draft: { nodeKey: string; frame: string; anchor: unknown } | null   // picked, composing
   needsIdentity: boolean              // published viewer tried to comment while signed out
+  inviteToken: string | null          // arrived via an invite link - claim flow, token known
 
   load(board: string): Promise<void>
   live(board: string): () => void
@@ -59,7 +60,7 @@ export const useComments = create<CommentsState>((set, get) => {
 
   return {
     events: [], threads: [], board: null, me: null, local: false,
-    commentMode: false, show: true, active: null, draft: null, needsIdentity: false,
+    commentMode: false, show: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
 
     async load(board) {
       set({ board })
@@ -145,7 +146,7 @@ export const useComments = create<CommentsState>((set, get) => {
     setShow(show) { set({ show }) },
     setActive(active) { set({ active }) },
     setDraft(draft) { set({ draft }) },
-    dismissIdentity() { set({ needsIdentity: false }) },
+    dismissIdentity() { set({ needsIdentity: false }) },   // inviteToken survives dismissal - commenting later reopens the claim
 
     async signIn(email, password) {
       const res = await api('auth/signin', { email, password })
@@ -156,7 +157,7 @@ export const useComments = create<CommentsState>((set, get) => {
     async claim(token, password, name) {
       const res = await api('auth/claim', { token, password, name })
       if (!res.ok) return res.data?.error ?? 'claim failed'
-      set({ me: res.data.user, needsIdentity: false })
+      set({ me: res.data.user, needsIdentity: false, inviteToken: null })
       return null
     },
     async saveProfile(patch) {

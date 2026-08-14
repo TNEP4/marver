@@ -60,8 +60,8 @@ export async function serve(root: string, portFlag?: number) {
       if (!store.users.length && !store.invites.some((i) => i.emailNorm === normEmail(owner))) {
         const { token } = createInvite(dir, owner)
         console.log(`\n  owner bootstrap for ${normEmail(owner)} (single-use, 7 days):`)
-        console.log(`    on the canvas:  press C, click an element, choose "I have an invite", paste  ${token}`)
-        console.log(`    from the repo:  npx ${NAME} comments connect <this-url> --invite ${token}\n`)
+        console.log(`    in the browser:  <canvas-url>/#/i/${token}`)
+        console.log(`    from the repo:   npx ${NAME} comments connect <this-url> --invite ${token}\n`)
       }
     }
   }

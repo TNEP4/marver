@@ -8,6 +8,7 @@
  *   #/b/<board>            board, fit all
  *   #/b/<board>?n=k1,k2    board with nodes selected, camera fit to selection
  *   #/b/<board>?c=<id>     board with a comment thread open (SPEC-M3 §6)
+ *   #/i/<token>            invite link - opens the claim dialog with the token
  *   #/p/<board>?at=<frame-id>&device=<viewport>&theme=<theme>   play mode
  */
 
@@ -15,6 +16,7 @@ export interface HashState {
   board?: string
   n?: string[]
   c?: string
+  invite?: string
   play?: { at?: string; device?: string; theme?: string }
 }
 
@@ -27,6 +29,8 @@ export function parseHash(hash: string = location.hash): HashState {
     const q = raw.indexOf('?')
     const path = q === -1 ? raw : raw.slice(0, q)
     const params = new URLSearchParams(q === -1 ? '' : raw.slice(q + 1))
+    const mi = path.match(/^\/i\/([\w-]{8,128})$/)
+    if (mi) return { invite: mi[1] }
     const m = path.match(/^\/(b|p)\/([^/?]+)$/)
     if (!m) return {}
     const board = decodeURIComponent(m[2])

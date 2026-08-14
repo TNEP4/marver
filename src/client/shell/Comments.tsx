@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
-import { bootHash, buildHash, parseHash } from './hash.ts'
+import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import type { Thread } from '../../shared/events.ts'
@@ -192,48 +192,60 @@ function DraftComposer({ at, node }: { at: { x: number; y: number }; node: Node 
   )
 }
 
-/** Signed-out published viewer tried to comment: sign in, or claim an invite. */
+/** Signed-out published viewer tried to comment (or arrived on an invite link).
+ *  Invite link: a focused claim - name + password, the token already in hand.
+ *  Fallback: sign in (returning device), with a quiet switch to pasting a token. */
 export function IdentityDialog() {
   const needs = useComments((s) => s.needsIdentity)
+  const invite = useComments((s) => s.inviteToken)
   const { signIn, claim, dismissIdentity } = useComments.getState()
   const [mode, setMode] = useState<'signin' | 'claim'>('signin')
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('')
   const [token, setToken] = useState(''); const [name, setName] = useState('')
   const [err, setErr] = useState<string | null>(null)
   if (!needs) return null
+  const claiming = !!invite || mode === 'claim'
   const go = async () => {
     setErr(null)
-    const e = mode === 'signin' ? await signIn(email, password) : await claim(token, password, name)
-    if (e) setErr(e)
+    const e = claiming ? await claim(invite ?? token, password, name) : await signIn(email, password)
+    if (e) return setErr(e)
+    // a consumed invite link leaves the URL - the hash becomes the plain board view
+    if (invite) writeHash({ board: useStore.getState().board })
   }
+  const onEnter = (e: React.KeyboardEvent) => e.key === 'Enter' && void go()
   return (
     <div className="cm-modal-wrap" onClick={dismissIdentity}>
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Comment as yourself</h2>
-        <p className="dim">Reading needs only the canvas password - commenting carries your name.</p>
-        <div className="cm-tabs">
-          <button className={mode === 'signin' ? 'on' : ''} onClick={() => setMode('signin')}>Sign in</button>
-          <button className={mode === 'claim' ? 'on' : ''} onClick={() => setMode('claim')}>I have an invite</button>
+        <h2>{invite ? 'You’re invited to comment' : 'Comment as yourself'}</h2>
+        <p className="dim">
+          {invite
+            ? 'Pick how you’ll appear - comments carry your name.'
+            : 'Reading needs only the canvas password - commenting carries your name.'}
+        </p>
+        <div className="cm-fields">
+          {claiming ? (
+            <>
+              {!invite && <input placeholder="Invite token" value={token} onChange={(e) => setToken(e.target.value)} />}
+              <input placeholder="Display name" value={name} onChange={(e) => setName(e.target.value)} />
+              <input placeholder="Choose a password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnter} />
+            </>
+          ) : (
+            <>
+              <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnter} />
+            </>
+          )}
         </div>
-        {mode === 'signin' ? (
-          <>
-            <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void go()} />
-          </>
-        ) : (
-          <>
-            <input placeholder="Invite token" value={token} onChange={(e) => setToken(e.target.value)} />
-            <input placeholder="Display name" value={name} onChange={(e) => setName(e.target.value)} />
-            <input placeholder="Choose a password" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void go()} />
-          </>
-        )}
         {err && <span className="cm-err">{err}</span>}
         <div className="cm-row">
-          <button className="cm-primary" onClick={() => void go()}>{mode === 'signin' ? 'Sign in' : 'Create account'}</button>
+          <button className="cm-primary" onClick={() => void go()}>{claiming ? (invite ? 'Join the canvas' : 'Create account') : 'Sign in'}</button>
           <button onClick={dismissIdentity}>Not now</button>
         </div>
+        {!invite && (
+          <button className="cm-switch" onClick={() => { setErr(null); setMode(mode === 'signin' ? 'claim' : 'signin') }}>
+            {mode === 'signin' ? 'Have an invite token instead?' : 'Already have an account? Sign in'}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -276,6 +288,11 @@ export function CommentsController() {
   useEffect(() => {
     const { load, live } = useComments.getState()
     void load(board).then(() => {
+      // invite link (#/i/<token>): open the claim dialog with the token in hand -
+      // unless this browser is already someone (their invite is not for this session)
+      const s = useComments.getState()
+      if (bootHash.invite && !s.local && !s.me && !s.inviteToken)
+        useComments.setState({ inviteToken: bootHash.invite, needsIdentity: true })
       // a cross-board deep link parks its thread id here until the target board's
       // comments have actually loaded - a timer can't know how long that takes
       if (pendingThread && revealThread(pendingThread)) { pendingThread = null; return }
@@ -299,9 +316,14 @@ export function CommentsController() {
       // hashchange handler resets selection, whose projection synchronously
       // rewrites the hash - listener order decides which URL survives, and
       // e.newURL is immune to that race
-      const c = parseHash(e.newURL ? new URL(e.newURL).hash : location.hash).c
-      if (!c) return
-      if (!revealThread(c)) pendingThread = c
+      const h = parseHash(e.newURL ? new URL(e.newURL).hash : location.hash)
+      if (h.invite) {
+        const s = useComments.getState()
+        if (!s.local && !s.me) useComments.setState({ inviteToken: h.invite, needsIdentity: true })
+        return
+      }
+      if (!h.c) return
+      if (!revealThread(h.c)) pendingThread = h.c
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
