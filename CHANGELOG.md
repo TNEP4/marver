@@ -36,7 +36,10 @@ the designer, and the coding agent close the feedback loop together.
   now carries the comments-as-work-queue discipline.
 - **Laser mode.** `L` (or the toolbar crosshair) outlines every element in every frame
   with depth-hued borders (60° per nesting level) plus a DevTools-style hover label.
-  Zero layout shift - outlines only. Comment mode turns it on implicitly.
+  Zero layout shift - outlines only. Clicking an element copies its full address for
+  the agent - frame source file + CSS path (+ JSX source location when stamped).
+  Comment mode shows only the hover highlight (no full rainbow) and a chat-teardrop
+  cursor, so picking an element to comment on stays calm.
 - **Default-closed publishing.** `marver build` now requires a publish policy:
   `design/publish.json` names each published board with `read` or `comment` rights
   (enforced server-side, not just hidden in UI). `--boards a,b` stays as an explicit

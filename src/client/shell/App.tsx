@@ -544,6 +544,16 @@ export function App() {
         // measureNode does the rest of the admission (content frames only,
         // frame-id match, finite positive, clamped)
         s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
+      } else if (data.type === 'sh:laser-copy') {
+        // laser click = copy the element's full address for the agent:
+        // frame source file + css path inside it (+ jsx source loc when stamped)
+        const n = s.nodes.find((x) => x.key === nodeKey)
+        const f = n && s.frameFor(n)
+        if (f) {
+          const addr = `${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+          navigator.clipboard.writeText(addr)
+          toast('element path copied for agent')
+        }
       } else if (data.type === 'sh:picked') {
         // comment mode: the frame reports the picked element - stage the draft on
         // that node; the CommentLayer opens the composer at the pin
@@ -790,7 +800,7 @@ export function App() {
         <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
           <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
         </Tip>
-        <Tip side="bottom" label={<><b>Comment</b><span>C</span></>}>
+        <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C hides pins</span></>}>
           <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
             const c = commentsStore()
             c.setMode(!c.commentMode)

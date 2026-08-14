@@ -48,13 +48,20 @@ document.addEventListener('gesturestart', (e) => e.preventDefault())
 // click interception that captures the anchor bundle and posts it to the shell.
 
 const LASER_ID = 'mv-laser-style'
+// comment-mode cursor: the pin's chat-teardrop, hotspot at the tail
+const PICK_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cpath d='M132,24A100.11,100.11,0,0,0,32,124v84a16,16,0,0,0,16,16h84a100,100,0,0,0,0-200Z' fill='%2318181b' stroke='%23fff' stroke-width='16'/%3E%3C/svg%3E") 4 21, crosshair`
 const laserCss = () => {
   // depth via unrolled descendant combinators - CSS custom properties cannot cycle
   let rules = 'body { --mv-hue: 0 }\n'
   for (let d = 1; d <= 12; d++)
     rules += `body ${'> * '.repeat(d)}{ --mv-hue: ${(d % 6) * 60} }\n`
+  // full rainbow only in laser mode; comment mode keeps just the hover highlight
+  // (understand what you'd click without the whole board shouting)
+  if (laserOn)
+    rules += 'body *:not(script):not(style) { outline: 1px solid hsl(var(--mv-hue) 85% 55% / .75); outline-offset: -1px }\n'
+  if (pickOn)
+    rules += `body, body * { cursor: ${PICK_CURSOR} !important }\n`
   return rules + `
-body *:not(script):not(style) { outline: 1px solid hsl(var(--mv-hue) 85% 55% / .75); outline-offset: -1px }
 body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-offset: -2px;
   background-image: linear-gradient(hsl(var(--mv-hue) 95% 50% / .08), hsl(var(--mv-hue) 95% 50% / .08)) }
 #mv-laser-label { position: fixed; z-index: 2147483647; pointer-events: none; outline: none !important;
@@ -64,18 +71,22 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
 `
 }
 
-let laserOn = false, laserWanted = false, pickOn = false, hoverEl = null, labelEl = null
+let laserOn = false, pickOn = false, hoverEl = null, labelEl = null
+const modeActive = () => laserOn || pickOn
 
-const setLaser = (on) => {
-  laserOn = on
+// laser and pick are independent looks over shared hover machinery: the stylesheet
+// is regenerated on every flip so each mode contributes exactly its own rules
+const applyModes = () => {
   const cur = document.getElementById(LASER_ID)
-  if (on && !cur) {
-    const s = document.createElement('style')
-    s.id = LASER_ID
-    s.textContent = laserCss()
-    document.head.appendChild(s)
-  } else if (!on && cur) cur.remove()
-  if (!on) clearHover()
+  if (!modeActive()) {
+    if (cur) cur.remove()
+    clearHover()
+    return
+  }
+  const s = cur ?? document.createElement('style')
+  s.id = LASER_ID
+  s.textContent = laserCss()
+  if (!cur) document.head.appendChild(s)
 }
 
 const clearHover = () => {
@@ -91,7 +102,7 @@ const describe = (el) => {
 }
 
 document.addEventListener('mousemove', (e) => {
-  if (!laserOn) return
+  if (!modeActive()) return
   const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
   if (!el || el === hoverEl) { if (labelEl && hoverEl) place(labelEl, e); return }
   clearHover()
@@ -146,11 +157,15 @@ const anchorBundle = (el, e) => {
 }
 
 document.addEventListener('click', (e) => {
-  if (!pickOn) return
+  if (!modeActive()) return
   e.preventDefault()
   e.stopPropagation()
   const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
-  if (el) post({ type: 'sh:picked', id, anchor: anchorBundle(el, e) })
+  if (!el) return
+  // comment mode wins when both are on; plain laser click hands the agent an
+  // exact address - frame file + css path (+ source loc when the build stamps one)
+  if (pickOn) post({ type: 'sh:picked', id, anchor: anchorBundle(el, e) })
+  else post({ type: 'sh:laser-copy', id, path: cssPath(el), source: el.dataset.mvLoc ?? null })
 }, true)
 
 /** Resolve a stored anchor back to a rect (the ladder, §5): semantics-verified CSS
@@ -190,10 +205,9 @@ window.addEventListener('message', (e) => {
   if (e.source !== window.parent || window.parent === window) return
   const m = e?.data
   if (!m || typeof m !== 'object') return
-  // pick implies laser; when either flips, the union decides (laser returns to its
-  // own toggle state when picking ends)
-  if (m.type === 'sh:laser') { laserWanted = !!m.on; setLaser(laserWanted || pickOn) }
-  if (m.type === 'sh:pick') { pickOn = !!m.on; setLaser(laserWanted || pickOn) }
+  // independent toggles - each mode contributes its own rules, applyModes composes
+  if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes() }
+  if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes() }
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
     const rects = m.anchors.slice(0, 200).map((a) => {
       let el = null

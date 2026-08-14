@@ -218,7 +218,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           title={frame.id}
           style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
-        {!interact && !commentMode && (
+        {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
+            need the mouse INSIDE the frame for hover highlights, so it steps aside
+            (drag still works via the header) */}
+        {!interact && !commentMode && !laser && (
           <div
             className="sh-overlay sh-no-pan"
             onPointerDown={(e) => drag(e, 'move')}
