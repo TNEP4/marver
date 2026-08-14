@@ -147,12 +147,14 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
    to their new frame on the same 320ms ease-out the camera fit animates with */
 #sh-world.sh-preset .sh-node { transition: transform .32s cubic-bezier(.25,.46,.45,.94),
   width .32s cubic-bezier(.25,.46,.45,.94), height .32s cubic-bezier(.25,.46,.45,.94) }
-#sh-world.sh-preset .sh-node-body { transition: width .32s cubic-bezier(.25,.46,.45,.94),
+#sh-world.sh-preset .sh-node-body,
+#sh-world.sh-preset .sh-node iframe { transition: width .32s cubic-bezier(.25,.46,.45,.94),
   height .32s cubic-bezier(.25,.46,.45,.94) }
-/* Stage 2 device-sweep FLIP: the CARD + body still ease to their target size (the snapshot,
-   at 100% of the body, scales with them - a smooth resize), but the IFRAME no longer animates
-   its width. It jumps straight to the final width = ONE reflow instead of one per frame per
-   intermediate width, hidden under the snapshot until the sweep settles. */
+/* Stage 2 device-sweep FLIP: a frame WITH a ready snapshot jumps its iframe straight to the final
+   width (ONE reflow, hidden under the snapshot which scales with the easing card) instead of a
+   reflow per intermediate width. A frame WITHOUT a usable snapshot keeps the live width animation
+   above - jumping it under an animating body would clip and reflow abruptly (no cover). */
+#sh-world.sh-preset .sh-node:has(.sh-snapshot[data-ready]) iframe { transition: none }
 
 /* cursor conventions (Figma): arrow everywhere; grab only while space is held */
 body.sh-space .sh-canvas { cursor: grab }

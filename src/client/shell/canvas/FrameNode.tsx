@@ -68,6 +68,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // capture a fresh snapshot once the frame is ready and quiet (and after a reload/resize/theme
   // change - keyed on nav/size/theme). Never during a gesture; the coordinator serializes captures.
   useEffect(() => {
+    // dev only: the live producer (html-to-image) is served in dev; published canvases get
+    // build-time snapshots via a separate path (not this on-demand capture), so we never emit a
+    // capture request there (no failing dynamic import; publish behaves as it did pre-facade).
+    if (!import.meta.env.DEV) return
     if (node.status !== 'ready' || node.missing) return
     const iframe = iframeRef.current
     if (!iframe) return

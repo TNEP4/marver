@@ -44,7 +44,11 @@ export async function dev(root: string, portFlag?: number) {
   const pkgDir = packageDir()
   const clientDir = join(pkgDir, 'src', 'client')
   const projectName = basename(root)
-  const desiredPort = portFlag ?? config.port
+  // C1 deterministic default: each project defaults to its OWN path-derived port, so two projects
+  // never collide regardless of which starts first (5199-first-wins was order-dependent). An
+  // explicit --port, or a config.port the user changed off the scaffolded 5199, still wins.
+  const explicitPort = portFlag ?? (config.port !== 5199 ? config.port : undefined)
+  const desiredPort = explicitPort ?? projectPort(root)
   const picked = await pickPort(root, desiredPort)
 
   const plugins: any[] = [react()]
