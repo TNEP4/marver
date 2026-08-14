@@ -9,7 +9,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 
 ## Stage 0 — instrument & stop bleeding  (Track B, no behavior change)
 - [x] B0.1 camera state out of React during gestures (refs/CSS vars, not the store)
-- [ ] B0.2 correct wheel ownership across iframe documents
+- [x] B0.2 correct wheel ownership across iframe documents
 - [x] B0.3 `WindowProxy → node` registry (drop `iframe.closest('[data-node]')` scans)
 - [ ] B0.4 real-board frame-time / blank-frame / warm-latency instrumentation
 

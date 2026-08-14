@@ -40,10 +40,23 @@ if (isHtmlFrame) {
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
 }
 
-// pinch inside a frame must not zoom the parent PAGE (wheel events here belong to the
-// iframe's document, so the shell's blocker cannot see them). Keyboard cmd +/- untouched.
-window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }, { passive: false })
+// B0.2 wheel ownership. A frame is either the interact/play target (the APP owns wheel -
+// its own scroll) or passive (laser/comment/plain view - the CANVAS owns wheel). Wheel
+// events land in the iframe's document, so the shell can't see them: when passive we
+// forward them to the shell, when interactive we leave them for the app (only blocking
+// the browser's own ctrl/meta page pinch-zoom). preventing here is mandatory - the parent
+// gets the forwarded message too late to cancel the iframe's own scroll.
+let interactiveOn = false
+window.addEventListener('wheel', (e) => {
+  if (interactiveOn) { if (e.ctrlKey || e.metaKey) e.preventDefault(); return }
+  e.preventDefault()
+  e.stopImmediatePropagation()
+  post({ type: 'sh:wheel', id, deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
+    ctrlKey: e.ctrlKey, metaKey: e.metaKey, clientX: e.clientX, clientY: e.clientY })
+}, { capture: true, passive: false })
 document.addEventListener('gesturestart', (e) => e.preventDefault())
+// a nested scroll container hitting its boundary must not chain into the shell page
+document.documentElement.style.overscrollBehavior = 'contain'
 
 // ---- laser mode + element picking (SPEC-M3 §5, §7) ----------------------------------
 // Laser: one injected stylesheet, outline only (zero layout shift), depth-based hue -
@@ -260,6 +273,8 @@ window.addEventListener('message', (e) => {
   // independent toggles - each mode contributes its own rules, applyModes composes
   if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes() }
   if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes() }
+  // B0.2: interact/play target owns its own wheel; passive frames forward it to the canvas
+  if (m.type === 'sh:interactive') { interactiveOn = !!m.on }
   if (m.type === 'sh:copy-ok') showCopied(m.seq)
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
     const rects = m.anchors.slice(0, 200).map((a) => {

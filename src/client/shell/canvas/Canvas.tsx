@@ -82,12 +82,20 @@ export function animateLayout(ms = 360) {
   presetTimer = window.setTimeout(() => w.classList.remove('sh-preset'), ms)
 }
 
+/** B0.2: one wheel event, whatever its origin - a shell-document wheel over the canvas, or
+ *  a wheel forwarded from a passive frame's iframe. clientX/Y are shell-viewport pixels. */
+export interface CanvasWheelInput {
+  deltaX: number; deltaY: number; deltaMode: number
+  ctrlKey: boolean; metaKey: boolean; clientX: number; clientY: number
+}
+
 export const canvasCtl = {
   fitNode(_key: string) {},
   fitNodes(_keys: string[]) {},
   fitAll() {},
   zoomTo(_scale: number) {},
   zoom100() { canvasCtl.zoomTo(1) },
+  wheel(_input: CanvasWheelInput) {},
 }
 
 /** Variant-group captions (SPEC-023 §4): "Landing · 3 variants" above each group with
@@ -231,41 +239,53 @@ export function Canvas() {
     return () => el.removeEventListener('pointerdown', down)
   }, [])
 
-  // Zoom curve: rzpp's wheel zoom is ADDITIVE in scale - a constant scale amount per
-  // pinch, which reads as sluggish when zoomed in and runaway when zoomed out (zoom is
-  // perceptually logarithmic). So ctrl/meta wheels (trackpad pinch arrives as ctrl-wheel
-  // in Chrome; cmd+scroll folds in too) are intercepted on an ANCESTOR of the wrapper -
-  // guaranteed to run before rzpp's own listener - and applied as an exponential step:
-  // constant ratio per finger distance, uniform feel at every zoom level.
+  // B0.2: the shell is the SINGLE wheel-camera owner. rzpp's wheel-pan is disabled (below);
+  // both entry paths - a shell-document wheel over the canvas, and a wheel forwarded from a
+  // passive frame's iframe (sh:wheel) - feed one applyCanvasWheel. Plain wheel pans (mirrors
+  // rzpp's old position-delta math); ctrl/meta wheel zooms about the cursor on an exponential
+  // curve (constant ratio per finger distance - uniform feel at every zoom, unlike rzpp's
+  // additive step). setTransform drives onTransformed, which repaints the grid.
   useEffect(() => {
     const app = document.querySelector('.sh-app') as HTMLElement | null
-    const el = document.querySelector('.sh-canvas') as HTMLElement | null
-    if (!app || !el) return
+    const canvas = document.querySelector('.sh-canvas') as HTMLElement | null
+    if (!app || !canvas) return
     let settle = 0
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return
-      if (!(e.target as HTMLElement | null)?.closest?.('.sh-canvas')) return
-      e.preventDefault()
-      e.stopImmediatePropagation()
+    const beginGesture = (panning: boolean) => {
+      document.getElementById('sh-world')?.classList.add('sh-gesturing')
+      document.body.classList.toggle('sh-panning', panning)
+      clearTimeout(settle)
+      settle = window.setTimeout(() => {
+        document.getElementById('sh-world')?.classList.remove('sh-gesturing')
+        document.body.classList.remove('sh-panning')
+      }, 160)
+    }
+    const applyCanvasWheel = (w: CanvasWheelInput) => {
       const inst = ref.current
-      if (!inst) return
+      if (!inst || useStore.getState().play) return
       const { positionX, positionY, scale } = inst.instance.transformState
-      // exponent scales with input; per-event ratio capped so a discrete mouse-wheel
-      // notch (|deltaY| ~100) stays controllable while trackpad streams pass through
-      const f = Math.min(1.4, Math.max(1 / 1.4, Math.exp(-e.deltaY * 0.0075 * (CONFIG.zoomSpeed ?? 1))))
+      const zooming = w.ctrlKey || w.metaKey
+      beginGesture(!zooming)
+      if (!zooming) { inst.setTransform(positionX - w.deltaX, positionY - w.deltaY, scale, 0, 'linear'); return }
+      const f = Math.min(1.4, Math.max(1 / 1.4, Math.exp(-w.deltaY * 0.0075 * (CONFIG.zoomSpeed ?? 1))))
       const next = Math.min(2, Math.max(0.05, scale * f))
       if (next === scale) return
+      const r = canvas.getBoundingClientRect()
+      const cx = w.clientX - r.left, cy = w.clientY - r.top
       const k = next / scale
-      const r = el.getBoundingClientRect()
-      const cx = e.clientX - r.left, cy = e.clientY - r.top
-      // rzpp's zoom callbacks never fire on setTransform - manage the gesture class here
-      document.getElementById('sh-world')?.classList.add('sh-gesturing')
-      clearTimeout(settle)
-      settle = window.setTimeout(() => document.getElementById('sh-world')?.classList.remove('sh-gesturing'), 160)
       inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, next, 0, 'linear')
     }
+    canvasCtl.wheel = applyCanvasWheel
+    const onWheel = (e: WheelEvent) => {
+      const t = e.target as HTMLElement | null
+      if (!t?.closest?.('.sh-canvas')) return
+      if (t.closest('[data-sh-wheel-local]')) return   // escape hatch for scrollable shell UI in-canvas
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      applyCanvasWheel({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
+        ctrlKey: e.ctrlKey, metaKey: e.metaKey, clientX: e.clientX, clientY: e.clientY })
+    }
     app.addEventListener('wheel', onWheel, { capture: true, passive: false })
-    return () => { app.removeEventListener('wheel', onWheel, { capture: true }); clearTimeout(settle) }
+    return () => { canvasCtl.wheel = () => {}; app.removeEventListener('wheel', onWheel, { capture: true }); clearTimeout(settle) }
   }, [])
 
   // space-pan: hold space, drag anywhere - nodes drop pointer-events so the canvas takes the drag
@@ -312,7 +332,9 @@ export function Canvas() {
       // ctrl/meta wheel zoom never reaches rzpp (exponential curve above); pinch.step
       // only serves real touch-screen pinch.
       wheel={{ wheelDisabled: true, step: 0.225 * (CONFIG.zoomSpeed ?? 1) }}
-      panning={{ wheelPanning: true, velocityDisabled: true, excluded: ['sh-no-pan'], disabled: gesture }}
+      // B0.2: rzpp no longer owns wheel-pan (the shell's applyCanvasWheel does, so it works
+      // over passive frames and forwarded from iframes too). excluded still governs pointer-drag.
+      panning={{ wheelPanning: false, velocityDisabled: true, excluded: ['sh-no-pan'], disabled: gesture }}
       pinch={{ step: 7.5 * (CONFIG.zoomSpeed ?? 1) }}
       onPanningStart={pan(true)}
       onPanningStop={pan(false)}

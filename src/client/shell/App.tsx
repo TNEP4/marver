@@ -580,6 +580,24 @@ export function App() {
         // walking a flow must not eject you to design mode at every hop
         if (s.interact === nodeKey) setInteract(node.key)
         setTimeout(() => canvasCtl.fitNode(node.key), 50)
+      } else if (data.type === 'sh:wheel') {
+        // B0.2: a passive frame forwarded a wheel event; the canvas owns it. Never for the
+        // interact target or play (the app scrolls itself - the parent stays authoritative).
+        if (s.play || s.interact === nodeKey) return
+        const nums = [data.deltaX, data.deltaY, data.clientX, data.clientY].map(Number)
+        if (!nums.every(Number.isFinite)) return
+        const [deltaX, deltaY, localX, localY] = nums
+        const rect = el.getBoundingClientRect()
+        // iframe-local (untransformed CSS px) -> shell-screen px: rect is the frame's
+        // transformed size, so rect.width/clientWidth is its effective on-screen scale.
+        // Plain rect.left+localX would put the zoom origin in the wrong place when zoomed.
+        const sx = el.clientWidth ? rect.width / el.clientWidth : 1
+        const sy = el.clientHeight ? rect.height / el.clientHeight : 1
+        canvasCtl.wheel({
+          deltaX, deltaY, deltaMode: Number(data.deltaMode) || 0,
+          ctrlKey: !!data.ctrlKey, metaKey: !!data.metaKey,
+          clientX: rect.left + localX * sx, clientY: rect.top + localY * sy,
+        })
       }
     }
     window.addEventListener('message', onMsg)

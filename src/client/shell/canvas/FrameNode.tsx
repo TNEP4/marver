@@ -76,6 +76,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (node.status === 'ready' || !commentMode)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
   }, [commentMode, node.status])
+  // B0.2: the interact target owns its own wheel (app scrolls); passive frames forward
+  // wheel to the canvas. Replayed on ready like laser/pick so a reload restores truth.
+  useEffect(() => {
+    if (node.status === 'ready' || !interact)
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: interact }, location.origin)
+  }, [interact, node.status])
 
   // a frame whose FILE actually changed (e.g. tsx -> html swap, same id) must renavigate
   useEffect(() => {

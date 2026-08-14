@@ -31,6 +31,8 @@ window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:stage-erro
 // pinch inside the stage must not zoom the parent page (same rule as the frame bridge)
 window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }, { passive: false })
 document.addEventListener('gesturestart', (e) => e.preventDefault())
+// B0.2: a nested scroll container hitting its boundary must not chain into the shell page
+document.documentElement.style.overscrollBehavior = 'contain'
 
 interface Mounted { id: string; Frame: ComponentType; wrappers: ComponentType[] }
 
