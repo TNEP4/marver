@@ -652,12 +652,21 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   color: #fff; font-weight: 700; font-family: -apple-system, system-ui, sans-serif;
   object-fit: cover; flex: none; user-select: none }
 
+/* markers - pins and stacks share one face: overlapping avatars + a total count.
+   A pin shows one thread's participants (tail points at its div); a stack shows
+   everyone across the frame's threads (tail points up-right at the frame corner). */
+.cm-pin, .cm-stack { display: inline-flex; align-items: center; padding: 4px;
+  background: #fff; border: 1px solid rgba(24,24,27,.1); cursor: pointer;
+  font: 700 11px -apple-system, system-ui, sans-serif; color: #18181b }
+.cm-pin .cm-avatar, .cm-stack .cm-avatar { border: 2px solid #fff }
+.cm-pin .cm-avatar + .cm-avatar, .cm-stack .cm-avatar + .cm-avatar { margin-left: -8px }
+.cm-pin b, .cm-stack b { padding: 0 8px 0 6px }
+
 /* pin: the teardrop. Bottom-left tail points at the anchored element. */
 .cm-pin { position: absolute; z-index: 30; transform: translate(-2px, -100%) scale(var(--sh-inv, 1));
-  transform-origin: bottom left; cursor: pointer;
-  background: #fff; border-radius: 18px 18px 18px 4px; padding: 4px;
+  transform-origin: bottom left; border-radius: 18px 18px 18px 4px;
   box-shadow: 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35);
-  border: 1px solid rgba(24,24,27,.1); transition: box-shadow .15s, transform .15s }
+  transition: box-shadow .15s, transform .15s }
 .cm-pin:hover { box-shadow: 0 1px 3px rgba(24,24,27,.22), 0 10px 24px -6px rgba(24,24,27,.45) }
 /* selected pin wears the selected frame's exact geometry - border, 2px
    outline hugging the edge, 4px ring halo - in the comment green (the pin
@@ -668,18 +677,12 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   box-shadow: 0 0 0 4px var(--comment-ring), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
 
-/* stack: the cluster teardrop - overlapping avatars, count only when it adds signal */
+/* stack: the frame-corner cluster - everyone across the frame's threads */
 .cm-stack { position: absolute; top: 10px; right: 10px; z-index: 30;
-  transform: scale(var(--sh-inv, 1)); transform-origin: top right;
-  display: inline-flex; align-items: center; padding: 4px;
-  background: #fff; border: 1px solid rgba(24,24,27,.1); border-radius: 18px 18px 4px 18px;
-  cursor: pointer; box-shadow: 0 1px 2px rgba(24,24,27,.15), 0 6px 16px -6px rgba(24,24,27,.3);
-  font: 700 11px -apple-system, system-ui, sans-serif; color: #18181b;
+  transform: scale(var(--sh-inv, 1)); transform-origin: top right; border-radius: 18px 18px 4px 18px;
+  box-shadow: 0 1px 2px rgba(24,24,27,.15), 0 6px 16px -6px rgba(24,24,27,.3);
   transition: box-shadow .15s }
 .cm-stack:hover { box-shadow: 0 1px 3px rgba(24,24,27,.2), 0 10px 24px -6px rgba(24,24,27,.4) }
-.cm-stack .cm-avatar { border: 2px solid #fff }
-.cm-stack .cm-avatar + .cm-avatar { margin-left: -8px }
-.cm-stack b { padding: 0 8px 0 6px }
 
 /* card: OUR glass - the floating-menu language, theme-aware */
 .cm-card { position: absolute; z-index: 40; width: 300px; padding: 16px;
@@ -717,16 +720,25 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-copy .b { transform: scale(.4); opacity: 0; color: var(--comment) }
 .cm-copy.ok .a { transform: scale(.4); opacity: 0 }
 .cm-copy.ok .b { transform: scale(1); opacity: 1 }
-.cm-compose input { width: 100%; height: 36px; padding: 0 15px; border-radius: 999px;
+/* composer row: my avatar (list size) + a pill input with a round send button inside */
+.cm-compose { display: flex; align-items: center; gap: 8px }
+.cm-inputwrap { position: relative; flex: 1; min-width: 0 }
+.cm-compose input { width: 100%; height: 36px; padding: 0 42px 0 15px; border-radius: 999px;
   border: 1px solid var(--glass-brd); background: var(--cm-field); color: var(--glass-ink);
   font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
   transition: border-color .15s, box-shadow .15s }
 .cm-compose input::placeholder { color: var(--glass-ink-3) }
 .cm-compose input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
+.cm-send { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--comment); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
+.cm-send:hover:not(:disabled) { filter: brightness(1.08) }
+.cm-send:disabled { background: var(--glass-ink-3); opacity: .5; cursor: default }
 /* the draft composer is JUST the pill - no card chrome around a single input */
 .cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
   backdrop-filter: none; -webkit-backdrop-filter: none }
 .cm-draft input { height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
+.cm-draft .cm-send { right: 6px }   /* nudge in for the taller draft pill */
 /* identity modal - same glass family */
 .cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.35); backdrop-filter: blur(4px) }

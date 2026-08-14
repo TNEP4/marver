@@ -9,7 +9,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
-import { CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { ROUTE } from '../const.ts'
 import type { Thread } from '../../shared/events.ts'
@@ -29,6 +29,35 @@ export function Avatar({ author, size = 22 }: { author?: { email?: string; name?
     <span className="cm-avatar" style={{ width: size, height: size, fontSize: size * 0.42, background: `hsl(${hue} 55% 45%)` }}>
       {initials}
     </span>
+  )
+}
+
+type Face = { email?: string; name?: string; avatar?: string }
+
+/** The signal a marker (pin or stack) carries: WHO took part and HOW MANY comments
+ *  in total - root + every reply, across all the given threads. Unique participants
+ *  in first-seen order; a single reply-less comment counts as 1. */
+function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
+  const seen = new Map<string, Face>()
+  let count = 0
+  const add = (a?: Face) => { if (a) { const k = a.email || a.name || JSON.stringify(a); if (!seen.has(k)) seen.set(k, a) } }
+  for (const t of threads) {
+    count += 1 + t.replies.length
+    add(t.author)
+    for (const r of t.replies) add(r.author)
+  }
+  return { faces: [...seen.values()], count }
+}
+
+/** The face of a marker: up to `max` overlapping avatars + the total count when >1.
+ *  One shape for pins (one thread, anchored) and stacks (all threads on a frame). */
+function MarkerFace({ threads, max = 3 }: { threads: Thread[]; max?: number }) {
+  const { faces, count } = markerDigest(threads)
+  return (
+    <>
+      {faces.slice(0, max).map((a, i) => <Avatar key={i} author={a} size={24} />)}
+      {count > 1 && <b>{count}</b>}
+    </>
   )
 }
 
@@ -71,11 +100,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // inactive frame: the stack - count + avatars, top-right (SPEC-M3 §6)
   const engaged = selected || open.some((t) => t.id === active) || drafting
   if (!engaged && open.length) {
-    const authors = [...new Map(open.map((t) => [t.author?.email ?? t.id, t.author])).values()].slice(0, 2)
     return (
       <button className="cm-stack sh-no-pan" onClick={(e) => { e.stopPropagation(); useStore.getState().select(node.key); if (open[0]) setActive(open[0].id) }}>
-        {authors.map((a, i) => <Avatar key={i} author={a} size={24} />)}
-        {open.length > 1 && <b>{open.length}</b>}
+        <MarkerFace threads={open} />
       </button>
     )
   }
@@ -99,7 +126,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
             title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
-            <Avatar author={t.author} size={24} />
+            <MarkerFace threads={[t]} />
           </div>
         )
       })}
@@ -165,8 +192,14 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
         </div>
       ))}
       <div className="cm-compose">
-        <input value={text} placeholder="Reply…" onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setActive(null) }} />
+        <Avatar author={useComments.getState().me ?? undefined} size={24} />
+        <div className="cm-inputwrap">
+          <input value={text} placeholder="Reply…" onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setActive(null) }} />
+          <button className="cm-send" disabled={!text.trim()} aria-label="Send" onClick={() => void submit()}>
+            <ArrowUpIcon size={15} />
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -182,12 +215,17 @@ function DraftComposer({ at, node }: { at: { x: number; y: number }; node: Node 
     <div className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <div className="cm-compose">
-        <input ref={ref} value={text} placeholder="Comment on this element…" onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            e.stopPropagation()
-            if (e.key === 'Enter') void create(text)
-            if (e.key === 'Escape') setDraft(null)
-          }} />
+        <div className="cm-inputwrap">
+          <input ref={ref} value={text} placeholder="Comment on this element…" onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') void create(text)
+              if (e.key === 'Escape') setDraft(null)
+            }} />
+          <button className="cm-send" disabled={!text.trim()} aria-label="Comment" onClick={() => void create(text)}>
+            <ArrowUpIcon size={15} />
+          </button>
+        </div>
       </div>
     </div>
   )
