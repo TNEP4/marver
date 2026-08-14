@@ -28,7 +28,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 ## Stage 2 — snapshot facade  (Track B — white-flash + smooth device sweep)
 - [x] B2.1 snapshot cache (real screenshots, keyed by frame+revision+width+theme+dpr; publish pre-bakes)
 - [x] B2.2 white-flash: snapshot during transform (verify cause with Chrome Layers first)
-- [ ] B2.3 device sweep: 4-phase FLIP transaction (baseLayout sacred; tidy+crossfade one txn)
+- [x] B2.3 (core FLIP: iframe reflows once + snapshot cover; batched-reflow refinement pending) device sweep: 4-phase FLIP transaction (baseLayout sacred; tidy+crossfade one txn)
 - [ ] B2.4 reflow scheduler (bounded batches; heavy work off the critical path)
 
 ## Stage 3 — visible working set + suspension  (Track B)
