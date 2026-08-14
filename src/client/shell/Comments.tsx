@@ -119,11 +119,9 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
   return (
     <div className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
-      <header>
-        <Avatar author={thread.author} size={24} />
-        <b>{thread.author?.name ?? 'Someone'}</b>
-        <span className="dim">{rel(thread.ts)}</span>
-        <span className="grow" />
+      {/* thread-level actions pin to the card corner, out of the header's flow -
+          the name row never has to share its line with them */}
+      <div className="cm-actions">
         <Tip side="bottom" label={<b>Copy link</b>}>
           <button className="cm-icon" onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
@@ -137,6 +135,11 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
         <Tip side="bottom" label={<b>Close</b>}>
           <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
+      </div>
+      <header>
+        <Avatar author={thread.author} size={24} />
+        <b>{thread.author?.name ?? 'Someone'}</b>
+        <span className="dim">{rel(thread.ts)}</span>
       </header>
       <p className="cm-body">{thread.body}</p>
       {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
