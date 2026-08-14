@@ -16,6 +16,9 @@ if (isHtmlFrame) {
 }
 
 document.addEventListener('click', (e) => {
+  // laser/comment mode owns every click - a goto link must not ALSO navigate
+  // (both handlers capture on document, so stopPropagation can't referee)
+  if (modeActive()) return
   const el = e.target instanceof Element ? e.target.closest('[data-goto]') : null
   if (!el) return
   e.preventDefault()

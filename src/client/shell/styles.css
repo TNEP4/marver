@@ -31,6 +31,9 @@
   /* comments own a third mode color (Apple systemGreen): selection = blue,
      interact = purple, comments = green - same geometry, unique hue per mode */
   --comment: #34c759; --comment-ring: rgba(52, 199, 89, .22);
+  /* comment-card field surface: APP-scoped on purpose - the card keys to the board
+     theme, and node-scoped --node-bg would flip with the frame underneath it */
+  --cm-field: #fff;
 
   --r-node: 10px; --r-panel: 24px; --edge: 10px;
   --blur: blur(20px) saturate(150%);
@@ -64,6 +67,7 @@
   --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
   --interact-deep: rgba(203, 48, 224, .8); --interact-spark: rgba(255, 255, 255, .9);
   --comment: #30d158; --comment-ring: rgba(48, 209, 88, .34);
+  --cm-field: #0f1015;
 
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
 }
@@ -714,7 +718,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-copy.ok .a { transform: scale(.4); opacity: 0 }
 .cm-copy.ok .b { transform: scale(1); opacity: 1 }
 .cm-compose input { width: 100%; height: 36px; padding: 0 15px; border-radius: 999px;
-  border: 1px solid var(--glass-brd); background: var(--node-bg); color: var(--glass-ink);
+  border: 1px solid var(--glass-brd); background: var(--cm-field); color: var(--glass-ink);
   font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
   transition: border-color .15s, box-shadow .15s }
 .cm-compose input::placeholder { color: var(--glass-ink-3) }

@@ -128,10 +128,12 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
         <Tip side="bottom" label={<b>{copied ? 'Copied' : 'Copy link'}</b>}>
           <button className={`cm-icon cm-copy${copied ? ' ok' : ''}`} onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
-            void navigator.clipboard.writeText(url)
-            setCopied(true)
-            clearTimeout(copyTimer.current)
-            copyTimer.current = setTimeout(() => setCopied(false), 1600)
+            // the check means "it's on your clipboard" - only show it when that's true
+            navigator.clipboard.writeText(url).then(() => {
+              setCopied(true)
+              clearTimeout(copyTimer.current)
+              copyTimer.current = setTimeout(() => setCopied(false), 1600)
+            }, () => useStore.getState().toast('copy blocked - try again'))
           }}>
             <span className="a"><LinkIcon size={15} /></span>
             <span className="b"><CheckIcon size={16} /></span>
@@ -252,6 +254,7 @@ function revealThread(c: string): boolean {
 
 /** Board-level comment wiring: load + liveness + mode broadcast, one instance in App. */
 let bootThreadConsumed = false
+let pendingThread: string | null = null   // cross-board deep link awaiting its board's comments
 export function CommentsController() {
   const board = useStore((s) => s.board)
   const commentMode = useComments((s) => s.commentMode)
@@ -259,6 +262,9 @@ export function CommentsController() {
   useEffect(() => {
     const { load, live } = useComments.getState()
     void load(board).then(() => {
+      // a cross-board deep link parks its thread id here until the target board's
+      // comments have actually loaded - a timer can't know how long that takes
+      if (pendingThread && revealThread(pendingThread)) { pendingThread = null; return }
       // deep link ?c=<thread> (SPEC-M3 §6): open the thread, select its node, fit it.
       // Consumed only on a successful find: the controller's first effect fires with
       // the pre-boot board (child effects run before the parent's boot effect), and
@@ -270,11 +276,14 @@ export function CommentsController() {
   }, [board])
 
   // a comment link pasted into an ALREADY-OPEN canvas is a hash-only navigation -
-  // no reload, no boot path. Watch for c on hashchange and reveal it live.
+  // no reload, no boot path. Same board: the threads are in memory, reveal now.
+  // Different board: park the id; the load effect above consumes it once the
+  // board switch has fetched that board's comments.
   useEffect(() => {
     const onHash = () => {
       const c = parseHash().c
-      if (c) setTimeout(() => revealThread(c), 60)   // give a board switch a beat to load
+      if (!c) return
+      if (!revealThread(c)) pendingThread = c
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
