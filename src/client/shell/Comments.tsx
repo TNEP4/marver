@@ -9,7 +9,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash } from './hash.ts'
-import { CheckIcon, LinkIcon, XIcon } from './icons.tsx'
+import { CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import type { Thread } from '../../shared/events.ts'
 
@@ -138,7 +138,7 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
           </button>
         </Tip>
         <Tip side="bottom" label={<b>Resolve</b>}>
-          <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckIcon size={16} /></button>
+          <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckSquareOffsetIcon size={16} /></button>
         </Tip>
         <Tip side="bottom" label={<b>Close</b>}>
           <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>

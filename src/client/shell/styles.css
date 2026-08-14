@@ -651,7 +651,13 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   box-shadow: 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35);
   border: 1px solid rgba(24,24,27,.1); transition: box-shadow .15s, transform .15s }
 .cm-pin:hover { box-shadow: 0 1px 3px rgba(24,24,27,.22), 0 10px 24px -6px rgba(24,24,27,.45) }
-.cm-pin.on { outline: 2px solid var(--accent); outline-offset: 1px }
+/* selected pin wears the selected frame's exact treatment: accent border,
+   2px accent outline hugging the edge, 4px accent-ring halo (the pin is
+   already screen-space via scale(--sh-inv), so plain px match the frame's
+   calc'd screen px) */
+.cm-pin.on { border-color: var(--accent);
+  outline: 2px solid var(--accent); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--accent-ring), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
 
 /* stack: the cluster teardrop - overlapping avatars, count only when it adds signal */
