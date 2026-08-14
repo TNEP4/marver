@@ -30,7 +30,7 @@
   --interact-deep: rgba(176, 47, 194, .85); --interact-spark: rgba(255, 255, 255, .95);
   /* comments own a third mode color (Apple systemGray): selection = blue,
      interact = purple, comments = neutral gray - same geometry, unique hue per mode */
-  --comment: #8e8e93; --comment-ring: rgba(142, 142, 147, .22);
+  --comment: #aeaeb2; --comment-ring: rgba(142, 142, 147, .3);
 
   --r-node: 10px; --r-panel: 24px; --edge: 10px;
   --blur: blur(20px) saturate(150%);
@@ -63,7 +63,7 @@
   --interact: #ea8dff; --interact-ring: rgba(219, 53, 242, .3);
   --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
   --interact-deep: rgba(203, 48, 224, .8); --interact-spark: rgba(255, 255, 255, .9);
-  --comment: #8e8e93; --comment-ring: rgba(142, 142, 147, .34);
+  --comment: #98989d; --comment-ring: rgba(142, 142, 147, .42);
 
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
 }
