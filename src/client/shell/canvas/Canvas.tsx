@@ -140,8 +140,9 @@ export function Canvas() {
   const gesture = useStore((s) => s.gesture)
   const setScale = useStore((s) => s.setScale)
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
+  const scaleTimer = useRef(0)
 
-  useEffect(() => { startPerf() }, [])   // B0.4: dev-only frame-time sampler (window.__mvPerf)
+  useEffect(() => { startPerf() }, [])   // B0.4: frame-time sampler (window.__mvPerf)
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
@@ -343,7 +344,14 @@ export function Canvas() {
       onPanningStop={pan(false)}
       onZoomStart={zoom(true)}
       onZoomStop={zoom(false)}
-      onTransformed={(r) => { setScale(r.state.scale); paintGrid(r.state.positionX, r.state.positionY, r.state.scale) }}
+      // B0.1: the grid repaints live via CSS vars (no React), but the store scale - which
+      // only the zoom-% badge reads - commits after the transform SETTLES, so no React
+      // re-render happens per tick during a pan/zoom.
+      onTransformed={(r) => {
+        paintGrid(r.state.positionX, r.state.positionY, r.state.scale)
+        clearTimeout(scaleTimer.current)
+        scaleTimer.current = window.setTimeout(() => setScale(r.state.scale), 120)
+      }}
       onInit={(r) => paintGrid(r.state.positionX, r.state.positionY, r.state.scale)}
     >
       <TransformComponent wrapperClass="sh-canvas" contentClass="sh-content">

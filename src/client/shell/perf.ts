@@ -1,24 +1,26 @@
 /**
- * B0.4: canvas performance instrumentation (dev-only, zero cost in published builds).
+ * B0.4: canvas performance instrumentation. Zero cost unless explicitly enabled.
  *
- * The SPEC-M4 gate is stated in frame-time: p95 main-thread work < 16 ms per animation
- * frame while panning/zooming a heavy board. This samples exactly that - inter-frame
- * deltas recorded ONLY while a gesture is active (the `#sh-world.sh-gesturing` class,
- * which every gesture path already sets), so idle time never pollutes the numbers and
- * we don't wire a probe into each of pan/zoom/drag/sweep separately.
+ * Enabled in dev, or in ANY build (incl. packed/published - the SPEC-M4 gate is dev AND
+ * publish) via `?mvperf` in the URL or `localStorage.mvPerf==='1'`. So publish-side gate
+ * measurement is possible without shipping an always-on probe.
  *
- * Read it live from the console or a headless check:
- *   __mvPerf.report()  -> { frames, p50, p95, max, long16, longFrac }
- *   __mvPerf.reset()
+ * Two honest signals, sampled ONLY while a gesture is active (the `#sh-world.sh-gesturing`
+ * class every gesture path already sets):
+ *  - frame INTERVALS (rAF deltas). A healthy 60Hz frame is ~16.7ms, so the interval is NOT
+ *    "main-thread work" - we report its p50/p95/max and, as the jank signal, `dropped` =
+ *    intervals over 32ms (a missed refresh).
+ *  - long-task durations (PerformanceObserver 'longtask', >50ms by spec) landing during a
+ *    gesture: actual main-thread work that blew the budget. 0 long-tasks = smooth.
  *
- * Blank-frame and warm-latency counters are stubs here (nothing blanks or warms until the
- * snapshot facade / working set land in Stages 2-3); they hang off the same object so later
- * stages plug in without a new surface. `perfMark(name)` is the one-shot they'll call.
+ * Read it live:  __mvPerf.report()  /  __mvPerf.reset()
+ * perfMark(name) + counters are the plug points Stages 2-3 use (blank-frame / warm-latency).
  */
 
 const GESTURING = () => document.getElementById('sh-world')?.classList.contains('sh-gesturing') ?? false
 
-const deltas: number[] = []   // gesturing-frame deltas (ms), ring-buffered
+const frames: number[] = []   // inter-frame intervals (ms) during gestures
+const tasks: number[] = []    // long-task durations (ms) during gestures
 const MAX = 1200
 let last = 0
 let raf = 0
@@ -26,11 +28,16 @@ let raf = 0
 const counters: Record<string, number> = { blankFrames: 0 }
 const marks: { name: string; t: number }[] = []
 
+const enabled = (): boolean => {
+  if (import.meta.env.DEV) return true
+  try {
+    if (typeof location !== 'undefined' && /[?&]mvperf\b/.test(location.search)) return true
+    return localStorage.getItem('mvPerf') === '1'
+  } catch { return false }
+}
+
 const tick = (t: number) => {
-  if (last) {
-    const dt = t - last
-    if (GESTURING()) { deltas.push(dt); if (deltas.length > MAX) deltas.shift() }
-  }
+  if (last && GESTURING()) { const dt = t - last; frames.push(dt); if (frames.length > MAX) frames.shift() }
   last = t
   raf = requestAnimationFrame(tick)
 }
@@ -40,6 +47,8 @@ const pct = (sorted: number[], p: number): number => {
   const i = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
   return Math.round(sorted[i] * 100) / 100
 }
+const top = (sorted: number[]): number => (sorted.length ? Math.round(sorted[sorted.length - 1] * 100) / 100 : 0)
+const frac = (n: number, d: number): number => (d ? Math.round((n / d) * 1000) / 1000 : 0)
 
 /** One-shot event later stages record (e.g. a blank frame, or warm-promotion latency). */
 export const perfMark = (name: string): void => {
@@ -48,25 +57,31 @@ export const perfMark = (name: string): void => {
   if (marks.length > 400) marks.shift()
 }
 
-/** Start the dev sampler. Idempotent; a no-op in production builds. */
+/** Start the sampler. Idempotent; a no-op unless enabled() (dev, ?mvperf, or localStorage). */
 export function startPerf(): void {
-  if (raf || !import.meta.env.DEV) return
+  if (raf || !enabled()) return
   raf = requestAnimationFrame(tick)
+  try {
+    const obs = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) if (GESTURING()) { tasks.push(e.duration); if (tasks.length > MAX) tasks.shift() }
+    })
+    obs.observe({ type: 'longtask', buffered: false })
+  } catch { /* longtask entry type unsupported (e.g. Safari) - frame intervals still sample */ }
   ;(window as unknown as { __mvPerf: unknown }).__mvPerf = {
     report() {
-      const a = [...deltas].sort((x, y) => x - y)
-      const long = a.filter((d) => d > 16).length
+      const fi = [...frames].sort((a, b) => a - b)
+      const tw = [...tasks].sort((a, b) => a - b)
+      const dropped = fi.filter((d) => d > 32).length
       return {
-        frames: a.length,
-        p50: pct(a, 50),
-        p95: pct(a, 95),
-        max: a.length ? Math.round(a[a.length - 1] * 100) / 100 : 0,
-        long16: long,
-        longFrac: a.length ? Math.round((long / a.length) * 1000) / 1000 : 0,
+        gestureFrames: fi.length,
+        frameP50: pct(fi, 50), frameP95: pct(fi, 95), frameMax: top(fi),
+        dropped, droppedFrac: frac(dropped, fi.length),
+        // actual main-thread work during gestures (long tasks >50ms). 0 = smooth.
+        longTasks: tw.length, longTaskP95: pct(tw, 95), longTaskMax: top(tw),
         counters: { ...counters },
       }
     },
-    reset() { deltas.length = 0; marks.length = 0; for (const k in counters) counters[k] = 0 },
+    reset() { frames.length = 0; tasks.length = 0; marks.length = 0; for (const k in counters) counters[k] = 0 },
     marks: () => [...marks],
   }
 }

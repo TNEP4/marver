@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
 import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
@@ -43,8 +43,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
 
   // B0.3: register this frame's WindowProxy so the shell routes its messages in O(1)
   // (source window -> node), instead of rescanning every iframe + walking the DOM per
-  // message. The WindowProxy is stable across navigations; onLoad covers the case where
-  // contentWindow was not yet available at mount.
+  // message. Registration runs SYNCHRONOUSLY through the ref callback (P1): a fast static
+  // HTML frame or an immediate boot failure can post sh:ready/sh:error before a passive
+  // effect would run, and the registry is the security gate that would otherwise drop it
+  // as an unknown source (misleading 10s timeout). The WindowProxy is stable across
+  // navigations; onLoad re-asserts it (idempotent) after each navigation.
   const regWin = useRef<WindowProxy | null>(null)
   const registerWin = () => {
     const iframe = iframeRef.current
@@ -53,9 +56,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     regWin.current = win
     registerFrame(win, { key: node.key, iframe })
   }
-  useEffect(() => {
+  const bindIframe = useCallback((el: HTMLIFrameElement | null) => {
+    if (regWin.current && (!el || el.contentWindow !== regWin.current)) { unregisterFrame(regWin.current); regWin.current = null }
+    iframeRef.current = el
     registerWin()
-    return () => { if (regWin.current) { unregisterFrame(regWin.current); regWin.current = null } }
   }, [node.key])
 
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
@@ -239,7 +243,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           </div>
         ) : null}
         <iframe
-          ref={iframeRef}
+          ref={bindIframe}
           src={initialSrc.current ?? frameUrl(frame, node.theme)}
           title={frame.id}
           onLoad={registerWin}

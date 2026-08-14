@@ -380,7 +380,14 @@ function ThemeMenu() {
 }
 
 export function App() {
-  const { manifest, nodes, panelOpen, toasts, selection, laser } = useStore()
+  // B0.1: per-field selectors, NOT `useStore()` (which subscribes to the whole store and
+  // re-rendered the entire shell on every setScale tick during a pan/zoom).
+  const manifest = useStore((s) => s.manifest)
+  const nodes = useStore((s) => s.nodes)
+  const panelOpen = useStore((s) => s.panelOpen)
+  const toasts = useStore((s) => s.toasts)
+  const selection = useStore((s) => s.selection)
+  const laser = useStore((s) => s.laser)
   const commentMode = useComments((s) => s.commentMode)
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
   const [pillOpen, setPillOpen] = useState(true)
