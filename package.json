@@ -11,6 +11,7 @@
   "files": [
     "dist",
     "src/client",
+    "src/shared",
     "templates",
     "README.md",
     "LICENSE",
