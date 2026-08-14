@@ -44,7 +44,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] C1 deterministic per-project port
 - [ ] C2 show the project name in the sidebar
 - [ ] C3 board identity = kebab slug + separate `title` field
-- [ ] C4 DECISION: boards single-writer (agents author scenes/frames, shell owns board JSON)
+- [x] C4 DECIDED (Nic, approved): boards single-writer - agents author scenes/frames across boards; the shell is the sole writer of board-layout JSON. True co-editing (CRDT/op-log) only if ever needed.
 
 ## Track D — authoring quality & polish  (ongoing, alongside)
 - [ ] D1 diagram title/subtitle sugar (`Corporate HQ · control tower`)
