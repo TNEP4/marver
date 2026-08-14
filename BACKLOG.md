@@ -24,6 +24,83 @@ Small items that are not milestone work. One line each; delete when done.
   canvases ever face real brute-force pressure.
 - **`--boards` and the host `public/` directory**: the filter covers frames only; public
   assets ship in full (build prints a note). Revisit if a real leak case appears.
+- **Content frames time out to a dead error card, and recovery loses the user's place
+  (dogfooding hertz-transpo, 2026-08-14 - bugs "a fair bit," priority).** On a fresh
+  `marver dev` (empty `node_modules/.vite`, e.g. right after `npm i` to a new version) - and
+  intermittently after, whenever Vite re-optimizes mid-session - content frames show "frame
+  failed / frame never reported ready (10s)" and just sit there; the only recovery is the
+  per-frame `reload` button or a full-page refresh, and a page refresh throws away the
+  user's scroll/zoom/pan and canvas work. Mechanism: `content/index.tsx` STATICALLY
+  re-exports `Diagram` from `diagram.tsx`, so every content frame - diagram or not - pulls
+  the mermaid (209KB) + marked (162KB) chain. marver force-adds those to
+  `optimizeDeps.include`, but Vite pre-bundles them async at boot without blocking. If a
+  frame iframe's `import()` of the content chain lands mid-optimize, Vite holds the request;
+  on a cold machine the optimize runs >10s, so the import neither resolves (no `sh:ready`)
+  nor throws (no `sh:error`) and the shell's 10s watchdog fires on ALL frames. Distinct from
+  the line-~55 mid-session-new-import 504 item but the fix converges. **Requirement (Nic):
+  recover silently in the background, never a full-page refresh - the canvas must keep the
+  user's scroll/zoom/pan/work.** The mechanism is already isolated: the shell owns
+  scroll/zoom, each frame is a child iframe, and the error card's `reload` button just does
+  `iframe.src = frameUrl(...)` (FrameNode.tsx:206) WITHOUT touching the shell - so doing that
+  automatically inherently preserves canvas state. Fix: (a) on ready-timeout, auto-reload the
+  iframe once (maybe with a brief backoff, 1-2 tries) before ever showing the error card -
+  smallest change, masks any transient boot/optimize race in place; (b) also await the dep
+  optimizer at `marver dev` boot before printing "canvas ready" to remove the race at source
+  (costs a few cold-boot seconds). Do (a) regardless - it's the "hot reload in the background"
+  behavior Nic wants. Verified the frames render clean once warm.
+- **Make rich diagram/doc authoring EASY - the agent struggles to hand-roll it
+  (dogfooding hertz-transpo, 2026-08-14; Nic's biggest content-frame ask so far).** The
+  agent CAN produce beautiful content frames (the "platform at a glance" board is genuinely
+  good) but only with heavy hand-holding from Nic, because two common patterns have no easy
+  primitive and force fragile hacks:
+    1. **Node with a bold title + muted subtitle.** To get "**Corporate HQ**" on top and
+       "control tower" muted below, the agent resorted to inline HTML inside the mermaid
+       label: `HQ["<div><b>Corporate HQ</b></div><div style='opacity:0.65'>control tower
+       </div>"]` - fragile (see the `<br/>` parse-error item), hard to teach, easy to break.
+       FIX: a tiny preprocess in `diagram.tsx` `cleanSource()` (the pass already runs before
+       `mermaid.render`) - a plain delimiter convention like `HQ["Corporate HQ · control
+       tower"]` or `title :: subtitle` auto-renders title bold on top, remainder muted below,
+       via a marver-controlled span/class styled in the injected `THEME_CSS` (mermaid
+       markdown-string + `<br/>` under the hood). Agent writes plain text; marver does the
+       two-tier styling. No HTML, no opacity hacks.
+    2. **Family colors.** Today the agent hand-writes `classDef shipper fill:#… stroke:#…
+       color:#…` per family and gets it inconsistent/off-brand. `palette.ts` ALREADY holds
+       every family (Apple system series + gray ramp + blue/purple accents, light+dark).
+       FIX: pre-define named family classDefs in the injected mermaid theme (shipper=blue,
+       carrier=orange, driver=purple, platform=gray, mover=green …) so the agent just tags
+       `HQ:::shipper` (mermaid's native `:::` shorthand) - zero boilerplate, guaranteed
+       on-brand and dark-safe. SAME named families as the `Md` `:blue[…]` highlight item
+       above: one palette drives prose highlights AND diagram fills, so copy and the diagram
+       beside it read as one color language (exactly Nic's "highlight the shipper's world,
+       carrier market, driver pool, platform with the right colors so it's easy to link").
+    3. **Full-width / rich Md documents.** Nic wants a full-width `Md` region below a diagram
+       to build genuinely rich docs (prose + images + mermaid + more) with real layout
+       flexibility. Confirm what `Doc layout="wide"` / `Row`/`Col` already give, and add
+       what's missing for full-bleed Md at a comfortable measure so a "platform at a glance"
+       page can carry a long rich body under the diagram.
+    4. **Teach the agent to do this unprompted (doctrine).** The point of 1-3 is that the
+       agent does it ITSELF without Nic hand-editing. Add/expand a content-frame + diagram
+       authoring reference in `instructions/` (and route it from AGENTS + `craft.md`):
+       family-color discipline, the title/subtitle node convention, when to go full-width,
+       how to compose prose/image/diagram into one rich document. Ground truth to encode:
+       the good version Nic converged on (bold family word top, muted example below,
+       consistent family colors, scannable two-column body).
+  Through-line: ONE named palette (`palette.ts`) everywhere, and marver primitives absorb the
+  fiddly CSS/HTML so the agent expresses semantic intent, not styling hacks. Small, seam
+  already exists (`cleanSource` + injected `THEME_CSS`); high leverage for how good boards look.
+- **Colored / highlighted inline text in `Md` (requested dogfooding hertz-transpo,
+  2026-08-14).** Nic wants to color inline prose to match a board's color guidelines - e.g.
+  "**blue** is the shipper's world, **orange** is the carrier market, **gray** is the
+  platform" where those words actually render in-family, so the copy and the diagram beside
+  it read as one color language. Today `md.ts` (marked, custom renderer) makes raw HTML
+  inert by construction, so `<span style>` is a non-starter - correct default. Fix: add a
+  `marked` INLINE extension emitting our own controlled, theme-aware class (never user CSS),
+  mapped to the SAME named families the diagrams use (`content/palette.ts` - blue/orange/
+  gray/green/etc.), so one palette drives both. Syntax candidates: `:blue[text]` /
+  `:carrier[text]` directive style (semantic names preferred over hex - stays on-brand and
+  dark-mode-safe), plus optionally `==text==` -> `<mark>` for a plain highlighter. Keep it
+  to the guideline palette, not arbitrary color, so boards can't drift off-brand. Small,
+  self-contained; document the syntax in `instructions/reference/color.md` + typography.
 - **Mermaid labels reject `<br/>`** (found dogfooding the M3 board, 2026-08-13): a
   quoted node label containing `<br/>` renders an in-frame parse-error card ("Opening
   and ending tag mismatch: br and p") - the sanitizer/htmlLabels path chokes on the
