@@ -77,6 +77,20 @@ the designer, and the coding agent close the feedback loop together.
   with the shell - review what you merge. Full frame sandboxing is the v1.1 follow-up
   (SPEC-M3 §0 records the probe results and the plan).
 
+### Durability & concurrency
+
+- Comment appends and auth writes are `fsync`'d before they are acknowledged - a
+  comment or account confirmed to the client survives a crash or volume interruption,
+  not just the page cache.
+- `auth.json`'s read-modify-write is guarded by a cross-process lock (stale-stolen
+  after 10s, never deadlocks) so a deploy overlap or an accidental second instance
+  cannot resurrect a revoked account or drop an invite. The comment log needs no lock:
+  append-only + id-keyed union is conflict-free by construction (and git merges it
+  with `merge=union`). Two honest v1 limits, documented not hidden: thread ordering
+  uses client timestamps (a badly-skewed clock can mis-order a resolve/reopen race -
+  re-resolve to fix), and comment logs have no hard size ceiling (fine at the design-
+  review scale marver targets; a per-board cap is a later concern).
+
 ## 0.3.1 - 2026-08-13
 
 ### Fixed

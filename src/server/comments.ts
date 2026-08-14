@@ -7,7 +7,7 @@
  * state is derived by replaying events (ordered by ts then id, last writer wins per
  * field). Files, not a database - tens to low hundreds of events per board.
  */
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CommentEvent } from '../shared/events.ts'
 
@@ -58,7 +58,10 @@ export function appendEvents(dir: string, board: string, events: CommentEvent[])
         if (last[0] !== 0x0a) lead = '\n'
       }
     }
-    appendFileSync(file, lead + fresh.map((e) => JSON.stringify(e)).join('\n') + '\n')
+    // fsync the append: a comment acked with HTTP 200 must survive a crash, not sit
+    // in the page cache to be lost on a volume interruption
+    const fd = openSync(file, 'a')
+    try { writeSync(fd, lead + fresh.map((e) => JSON.stringify(e)).join('\n') + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
   }
   return fresh
 }

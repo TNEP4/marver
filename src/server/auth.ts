@@ -11,7 +11,7 @@
  * users change rarely; the event-log treatment is reserved for comments.
  */
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 // scrypt cost: N=2^15 (OWASP fallback tier), per-user random salt. Params are recorded
@@ -68,8 +68,34 @@ function saveStore(dir: string, store: Store) {
   store.invites = store.invites.filter((i) => i.exp > now)
   store.sessions = store.sessions.filter((s) => s.exp > now)
   const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
-  writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600, flag: 'wx' })
+  // fsync before rename: an acked account/session/invite must survive a crash or
+  // volume interruption, not just reach the page cache
+  const fd = openSync(tmp, 'wx', 0o600)
+  try { writeSync(fd, JSON.stringify(store, null, 2)); fsyncSync(fd) } finally { closeSync(fd) }
   renameSync(tmp, file)
+}
+
+/** Cross-process mutex over auth.json's read-modify-write. Within one Node process
+ *  the store mutations are already synchronous and atomic; this covers deploy overlap
+ *  and any accidental multi-instance run (the supported setup is single-instance) -
+ *  without it, a sign-in that loaded a pre-revoke snapshot could rename it back over a
+ *  successful revoke. A crashed holder's lock is stolen after 10s; waiting past 5s
+ *  fails loudly rather than hanging. */
+function withLock<T>(dir: string, fn: () => T): T {
+  mkdirSync(dir, { recursive: true })
+  const lock = join(dir, '.auth.lock')
+  const nap = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  const deadline = Date.now() + 5000
+  for (;;) {
+    try { closeSync(openSync(lock, 'wx')); break }        // O_EXCL create = acquired
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      try { if (Date.now() - statSync(lock).mtimeMs > 10_000) { unlinkSync(lock); continue } } catch { continue }
+      if (Date.now() > deadline) throw new Error('auth store is busy - please retry')
+      nap(25)
+    }
+  }
+  try { return fn() } finally { try { unlinkSync(lock) } catch { /* already released */ } }
 }
 
 const findUser = (store: Store, email: string) => store.users.find((u) => normEmail(u.email) === normEmail(email))
@@ -92,6 +118,7 @@ export function inviteInfo(dir: string, rawToken: string): { email: string } | n
 }
 
 export function createInvite(dir: string, email: string): { token: string; exp: number } {
+  return withLock(dir, () => {
   const store = loadStore(dir)
   if (findUser(store, email)) throw new Error(`${normEmail(email)} already has an account`)
   const raw = token()
@@ -100,6 +127,7 @@ export function createInvite(dir: string, email: string): { token: string; exp: 
   store.invites.push({ emailNorm: normEmail(email), tokenHash: sha256(raw), exp })
   saveStore(dir, store)
   return { token: raw, exp }
+  })
 }
 
 /** Claim an invite: burns it, creates the account, opens the first session. */
@@ -108,6 +136,7 @@ export function claimInvite(
 ): { user: User; session: string } {
   if (profile.password.length < 8) throw new Error('password must be at least 8 characters')
   if (!profile.name.trim()) throw new Error('a display name is required')
+  return withLock(dir, () => {
   const store = loadStore(dir)
   const hash = sha256(rawToken)
   const invite = store.invites.find((i) => i.tokenHash === hash && i.exp > Date.now())
@@ -124,10 +153,12 @@ export function claimInvite(
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
+  })
 }
 
 /** Password sign-in. One generic failure - never reveal whether the email exists. */
 export function signIn(dir: string, email: string, password: string): { user: User; session: string } | null {
+  return withLock(dir, () => {
   const store = loadStore(dir)
   const user = findUser(store, email)
   // unknown email still pays a scrypt to keep timing flat
@@ -139,6 +170,7 @@ export function signIn(dir: string, email: string, password: string): { user: Us
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
+  })
 }
 
 function pushSession(store: Store, user: User): string {
@@ -156,14 +188,17 @@ export function sessionUser(dir: string, rawToken: string): User | null {
 }
 
 export function signOut(dir: string, rawToken: string) {
+  withLock(dir, () => {
   const store = loadStore(dir)
   const hash = sha256(rawToken)
   store.sessions = store.sessions.filter((s) => s.tokenHash !== hash)
   saveStore(dir, store)
+  })
 }
 
 /** Update name/avatar on an existing account. */
 export function updateProfile(dir: string, email: string, patch: { name?: string; avatar?: string }) {
+  return withLock(dir, () => {
   const store = loadStore(dir)
   const user = findUser(store, email)
   if (!user) throw new Error('no such account')
@@ -171,12 +206,14 @@ export function updateProfile(dir: string, email: string, patch: { name?: string
   if (patch.avatar !== undefined) user.avatar = patch.avatar || undefined
   saveStore(dir, store)
   return user
+  })
 }
 
 /** Remove an account and all its sessions (owner action). The LAST owner cannot be
  *  removed - a store with members but no owner has no one left to administer it,
  *  and bootstrap will not re-run while any user exists. */
 export function revokeUser(dir: string, email: string) {
+  withLock(dir, () => {
   const store = loadStore(dir)
   const target = store.users.find((u) => normEmail(u.email) === normEmail(email))
   if (target?.role === 'owner' && !store.users.some((u) => u.role === 'owner' && normEmail(u.email) !== normEmail(email)))
@@ -185,6 +222,7 @@ export function revokeUser(dir: string, email: string) {
   store.sessions = store.sessions.filter((s) => s.emailNorm !== normEmail(email))
   store.invites = store.invites.filter((i) => i.emailNorm !== normEmail(email))
   saveStore(dir, store)
+  })
 }
 
 /** The public shape of a user - what other viewers (and events) may see. */

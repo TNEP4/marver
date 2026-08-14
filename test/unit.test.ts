@@ -629,6 +629,18 @@ describe('auth - invites, accounts, sessions (SPEC-M3 §3)', async () => {
       expect(() => auth.claimInvite(dir, token, { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
       expect(() => auth.claimInvite(dir, 'not-a-token', { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
     }))
+  it('a stale auth lock is stolen, never deadlocks (release-gate P1)', async () => {
+    const { writeFileSync, utimesSync } = await import('node:fs')
+    store((dir) => {
+      // a crashed holder left .auth.lock behind, mtime 30s ago
+      writeFileSync(join(dir, '.auth.lock'), '')
+      const old = Date.now() / 1000 - 30
+      utimesSync(join(dir, '.auth.lock'), old, old)
+      // the next write must steal it and succeed, not hang
+      const { token } = auth.createInvite(dir, 'a@x.com')
+      expect(auth.inviteInfo(dir, token)?.email).toBe('a@x.com')
+    })
+  })
   it('validAvatar checks magic bytes, not the declared MIME (gate v2 P2)', async () => {
     const { validAvatar } = await import('../src/server/collab.ts')
     const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]).toString('base64')
