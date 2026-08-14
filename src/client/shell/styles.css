@@ -704,8 +704,8 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    body indented to the name column (24px avatar + 9px gap) */
 .cm-card .cm-body { margin: 0; padding-left: 33px; font-size: 13px; line-height: 1.55;
   color: var(--glass-ink); white-space: pre-wrap; overflow-wrap: break-word }
-.cm-card > .cm-body { margin-top: -7px }  /* pulls against the card's 12px gap -> 5px under the header */
-.cm-msg { display: flex; flex-direction: column; gap: 5px }
+.cm-card > .cm-body { margin-top: -10px }  /* pulls against the card's 12px gap -> 2px under the header */
+.cm-msg { display: flex; flex-direction: column; gap: 2px }
 .cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
   border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
   transition: background .12s, color .12s }
