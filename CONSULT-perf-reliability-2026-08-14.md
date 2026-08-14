@@ -531,3 +531,684 @@ to live on interaction.
 
 Deliver: a recommended architecture, the top 3–5 risks, and a STAGED rollout ordered so each stage
 ships value without breaking laser/comment/prototype/resize in dev or publish.
+
+---
+
+# Codex follow-up: device sweep + multi-agent stay-in-action (2026-08-14)
+
+Focused second pass on the two hardest pieces Nic named. Core reframe: **device sweep and
+agent updates are PRESENTATION TRANSACTIONS, not document reloads** - the shell, board model,
+iframe identity, and session state stay mounted; only projected geometry + frame revisions change.
+
+The core design decision is: device sweep and agent updates must become presentation transactions, not document reloads. The shell, board model, iframe identity, and interaction state stay mounted; only projected geometry and frame revisions change.
+
+This is tied to the spec’s named architecture (`server/plugin.ts`, `manifest.ts`, `api.ts`, `client/shell`, `FrameNode`, `bridge.ts`, `frame-host/main.tsx`). I did not inspect repository files.
+
+# A. Device sweep
+
+## 1. Exact transition mechanism
+
+Do not animate live iframe widths continuously. Every intermediate width triggers responsive layout, style recalculation, paint, iframe compositing, and potentially expensive component work. Doing that across 30–50 frames will miss the frame budget.
+
+Use a four-phase transaction:
+
+```text
+live frames at old width
+        │
+        ▼
+freeze presentation with old-width snapshots
+        │
+        ▼
+FLIP snapshot cards to target tidy positions and widths
+        │
+        ├── live visible frames reflow underneath, once, at target width
+        ▼
+crossfade each settled target-width live frame back in
+```
+
+### Phase 0: start a sweep transaction
+
+The shell creates:
+
+```ts
+type SweepTransaction = {
+  id: number
+  target: "mobile" | "tablet" | "laptop" | "monitor" | "default"
+  targetWidth: number | null
+  startedAt: number
+  pending: Set<NodeId>
+  cancelled: boolean
+}
+```
+
+A newer sweep invalidates the prior transaction. Every asynchronous completion must check the transaction ID before changing UI.
+
+At start:
+
+- Finish or cancel any frame drag/resize.
+- Keep selection, mode, camera, focus-mode route, and board identity.
+- Capture no new screenshots synchronously.
+- Read no iframe layout.
+- Use cached presentation geometry and cached snapshots.
+- Set the board’s projected layout in one shell-store transaction.
+
+### Phase 1: cover visible live frames
+
+Each visible card receives a snapshot overlay before its width changes:
+
+```text
+FrameNode
+├─ snapshot layer — old revision/width, visible
+├─ live iframe — same browsing context, covered
+└─ controls — remain in shell, never covered
+```
+
+Do not replace, reparent, or remount the iframe.
+
+The overlay should use the latest valid snapshot for:
+
+```ts
+type SnapshotKey = {
+  frameId: string
+  sourceRevision: string
+  width: number
+  theme: string
+  dprBucket: number
+}
+```
+
+Width alone is insufficient. Otherwise an old source revision can be presented as current after an agent edit.
+
+If no valid snapshot exists for a currently visible live frame, use the current iframe as the initial visual and skip its width animation. Snap-to-target is better than creating a white flash or blocking the sweep to synchronously rasterize it.
+
+### Phase 2: move the presentation using FLIP
+
+Compute target positions from model data in `tidy.ts`. Do not measure 50 DOM nodes.
+
+For each card:
+
+1. Set its logical box immediately to the target `{x, y, width, height}`.
+2. Apply an inverse transform representing the old box.
+3. Animate that transform to identity.
+
+The snapshot is scaled during this movement. It may look slightly stretched for 150–220 ms, but it avoids live responsive work at every intermediate width.
+
+The live iframe underneath is set directly from old width to final width. Never CSS-transition the iframe’s `width`.
+
+A reasonable timing:
+
+```text
+0 ms       snapshot visible; target geometry committed
+0–180 ms   snapshot card FLIP movement
+1–3 rAF    target-width reflow batches begin underneath
+180 ms     movement settles
+180–280 ms settled live frames crossfade in
+```
+
+Movement and reflow can overlap because the user sees only the compositor-driven snapshot layer.
+
+### Phase 3: detect live-frame settlement
+
+The frame bridge should install a `ResizeObserver` on the frame root and emit:
+
+```ts
+{
+  type: "sh:layout-settled",
+  frameId,
+  sweepId,
+  width,
+  sourceRevision,
+  scrollHeight
+}
+```
+
+“Settled” should mean:
+
+- observed width equals the requested target;
+- no root-size change for two animation frames;
+- fonts are ready or a short deadline has expired;
+- the message still matches the current sweep and source revision.
+
+Do not wait indefinitely for animation, polling widgets, or late-loading content. Use a bounded deadline, approximately 300–500 ms. On timeout, reveal the live frame if it has painted; do not leave a permanent snapshot.
+
+Once both conditions are true—
+
+- card movement finished;
+- matching live frame settled—
+
+crossfade the snapshot out over roughly 80–120 ms.
+
+Snapshot rebaking happens after the live frame is revealed. It is not a prerequisite for the crossfade.
+
+### Default restoration
+
+Keep these as distinct state:
+
+```ts
+type BoardState = {
+  baseLayout: Record<NodeId, Rect>       // persisted free-form positions
+  deviceProjection: DeviceProjection | null
+}
+```
+
+A device sweep must never mutate `baseLayout`. “Default” discards the projection and FLIPs back to the exact stored rectangles.
+
+Naive break: if the device layout is written into the regular board frames and autosaved, “Default” cannot restore the hand-placed layout reliably.
+
+Dragging in a device view needs an explicit rule:
+
+- Simplest: device layouts are derived, so position dragging is disabled.
+- If dragging must remain: store per-device overrides separately.
+- Never reinterpret a device-view drag as a base-layout edit.
+
+## 2. Visible versus off-screen reflow
+
+Yes: only the visible working set should reflow immediately.
+
+Use three sets:
+
+```ts
+visible       // intersects the viewport
+nearby        // within a 1–2 viewport overscan margin
+cold          // everything else
+```
+
+On sweep:
+
+- `visible`: cover, resize live iframe to target width, settle, reveal.
+- `nearby`: queue target-width reflow behind visible work.
+- `cold`: update only shell geometry; do not touch live iframe width yet.
+
+Each frame tracks:
+
+```ts
+type FramePresentationState = {
+  desiredWidth: number
+  liveWidth: number
+  desiredRevision: string
+  liveRevision: string
+  phase:
+    | "ready"
+    | "queued"
+    | "reflowing"
+    | "settling"
+    | "crossfading"
+  snapshotKey?: SnapshotKey
+  sweepId: number
+}
+```
+
+When a cold frame enters the overscan region:
+
+1. Look for an exact `{revision, width, theme}` snapshot.
+2. Show it immediately if available.
+3. Otherwise show the newest snapshot scaled into the target card.
+4. Mark it internally as stale.
+5. Resize the live iframe underneath directly to target width.
+6. Wait for its matching settlement message.
+7. Crossfade to live.
+8. Re-bake its exact target snapshot later.
+
+So, yes: on a cache miss, a rapidly scrolling user may briefly see a scaled stale-width snapshot. They must not see white, an empty iframe, or the old card width disturbing the board layout.
+
+A subtle “updating” treatment is acceptable after roughly 150 ms. Do not flash a loader for frames that settle within a couple of frames.
+
+Prewarming the overscan region should make the stale interval uncommon.
+
+Naive breaks:
+
+- Showing a snapshot with the right width but wrong source revision.
+- Revealing an old-width live iframe inside a target-width card.
+- Resizing all cold iframes immediately because they remain mounted.
+- Allowing late completions from an abandoned sweep to overwrite the newest sweep.
+
+## 3. Tidy ordering
+
+Tidy and crossfade should compose as one transaction, not run as independent animations.
+
+Correct sequence:
+
+1. Choose snapshot presentation.
+2. Compute the complete target tidy layout.
+3. Commit target positions and widths.
+4. FLIP snapshot cards from old geometry to target geometry.
+5. Reflow visible live frames underneath at final width.
+6. Crossfade each frame only after movement and live settlement.
+7. Queue exact target-width snapshot rebakes.
+
+Do not first animate width in place and then run tidy. That creates two board movements and twice the visual instability.
+
+Do not tidy again as live frames settle. Tidy must use predetermined card dimensions. If responsive content can change card height, choose one of these contracts:
+
+- Device preset defines both frame width and fixed viewport height; recommended.
+- Board frame height remains unchanged during width sweep.
+- Use previously cached target-width heights and tolerate later corrections.
+
+Dynamically discovering 50 content heights and repeatedly shifting rows will make the board swim. For v1, device sweep should change width while frame/card height remains model-controlled.
+
+The shell controls remain live throughout. Only the frame presentation layer is covered.
+
+## 4. What runs inside the p95 <16 ms gate
+
+The gate should mean p95 main-thread work per animation frame during the interaction, not “all 50 frames complete within 16 ms.” The latter is impossible while preserving real reflow.
+
+### Allowed on the click’s critical path
+
+- One Zustand/store transaction.
+- Pure target-layout calculation from stored dimensions.
+- Updating lightweight wrapper geometry.
+- Adding snapshot overlays for the visible set.
+- Starting compositor transforms.
+- Enqueuing reflow work.
+
+For 50 frames, `tidy.ts` should be O(n), using model rectangles only.
+
+### Must not run on the critical path
+
+- Screenshot capture or bitmap encoding.
+- Filesystem/API writes.
+- Board autosave.
+- Manifest rescans.
+- DOM measurement of every card.
+- Iframe `scrollHeight` reads.
+- Sequential forced layout.
+- Reflowing all 30–50 iframe documents.
+- Snapshot cache eviction.
+- PNG/WebP compression.
+- Font waits.
+- React remounts.
+- Rebuilding the whole `FrameNode[]` array with different keys/order.
+
+### Reflow scheduler
+
+Process the visible set in bounded batches. Start with one or two iframe width commits per animation frame; increase only after measurement proves headroom.
+
+Priority:
+
+```text
+selected frame
+→ visible frames nearest viewport center
+→ remaining visible
+→ overscan in scroll direction
+→ other overscan
+→ cold frames only when approached
+```
+
+Use `requestAnimationFrame` for visible scheduling. Use `scheduler.postTask` when available or `requestIdleCallback` with a timeout for snapshot rebakes and cold maintenance.
+
+CSS transforms and snapshot opacity should be compositor animations. Do not animate box `left`, `top`, or live iframe `width`.
+
+Also cap active bitmap overlays to visible plus overscan. Fifty desktop-resolution snapshots can consume hundreds of megabytes of GPU memory.
+
+# B. Multi-agent “stay in the action”
+
+## 1. Exact invariant
+
+The invariant should be:
+
+> A filesystem revision may update frame content and the catalog, but it may never replace or reinitialize the shell session. The shell applies every external change as a scoped, revisioned diff while preserving all unrelated session state and every unaffected iframe browsing context.
+
+Session state must be separate from disk document state:
+
+```ts
+type SessionState = {
+  activeBoard
+  camera
+  selectedNode
+  activeMode
+  focusedFrame
+  stageHistory
+  stageScroll
+  panelState
+  pendingComment
+  laserState
+}
+
+type DocumentState = {
+  manifestRevision
+  boards
+  baseLayouts
+}
+
+type FrameRuntimeState = {
+  iframeIdentity
+  liveRevision
+  pendingRevision
+  liveWidth
+  scrollState
+  interactionLease
+}
+```
+
+Under an agent edit, these must never happen:
+
+- No browser full-page reload.
+- No shell React-root remount.
+- No board route replacement.
+- No zoom/pan reset.
+- No selected-frame reset unless that node was actually deleted.
+- No comment, laser, or prototype-mode drop.
+- No play/stage history reset.
+- No stage or iframe scroll reset.
+- No iframe reparenting.
+- No unrelated iframe reload.
+- No focus steal.
+- No sidebar/panel reset.
+- No autosave of derived manifest changes.
+- No white iframe exposure.
+- No old asynchronous update applying after a newer revision.
+- No deleted or renamed board being recreated by a stale debounce.
+
+“Preserve focus” cannot mean preserving an input that the agent deleted from the source. It means the shell does not proactively move focus, and active prototype updates are deferred until a safe point.
+
+## 2. Updating inactive versus actively used frames
+
+### Frame not visible or not active
+
+Apply silently:
+
+1. `server/plugin.ts` emits a revisioned frame-change event.
+2. Shell marks that frame’s existing snapshots stale.
+3. If cold, record `pendingRevision`; perform no visible work.
+4. If nearby, update/reflow in the background under its current snapshot.
+5. Re-bake `{newRevision, currentWidth, theme}`.
+6. Never toast ordinary successful edits.
+
+If the frame is on another board, only its catalog/runtime record changes. Do not mount that board or mutate the active camera.
+
+### Visible but not being interacted with
+
+Use snapshot shielding:
+
+1. Put the last valid snapshot over the iframe.
+2. Apply the frame update underneath.
+3. Wait for `ready` plus layout settlement.
+4. Restore frame scroll if necessary.
+5. Crossfade back.
+6. Keep the shell selection and mode unchanged.
+
+This eliminates the white zap while still showing the update promptly.
+
+### Active comment, laser, drag, or resize gesture
+
+Defer the visual/live swap until the gesture ends.
+
+The shell creates an interaction lease:
+
+```ts
+type InteractionLease = {
+  frameId: string
+  mode: "comment" | "laser" | "prototype" | "drag" | "resize"
+  startedAt: number
+  pendingRevision?: string
+}
+```
+
+Only the newest pending revision matters. Coalesce five saves into one eventual update.
+
+After pointer-up/cancel:
+
+- cover with snapshot;
+- apply latest revision;
+- settle;
+- restore the same mode;
+- crossfade;
+- preserve comment draft or laser state in the shell.
+
+### Active prototype interaction
+
+Defer the update. Do not apply HMR underneath a live click, input edit, drag, dialog, or pointer capture. Snapshot shielding alone protects appearance, not DOM targets or event handlers.
+
+A safe moment is:
+
+- explicit exit from prototype mode;
+- pointer capture released and active element blurred;
+- navigation completed;
+- or a visible “update ready” action after a bounded defer period.
+
+Do not force it after an arbitrary 500 ms timeout. Someone may be completing a form or inspecting a dialog.
+
+If freshness matters, show a quiet “Update ready” badge in the frame chrome. The user can apply it without losing the entire canvas session.
+
+### Stock Vite HMR is a problem
+
+Naively importing every design module through ordinary Vite HMR cannot provide this guarantee. Vite may execute the module and trigger React Refresh before the shell decides whether the frame is safe to update.
+
+For design files, updates need to be controlled:
+
+- `handleHotUpdate` recognizes affected `design/**` modules.
+- Suppress default full reload for those modules.
+- Emit `sh:frame-invalidated` with frame IDs and source revisions.
+- Frame hosts load the accepted revision only when the shell authorizes it.
+- Use revisioned module URLs or a revisioned virtual-frame module.
+- Coalesce invalidations while a frame has an interaction lease.
+
+Shared dependencies such as `src/components/ui/Button.tsx` are harder because one edit can affect many frames. The server must traverse Vite’s module graph to determine affected frame entrypoints. Until that exists, Stage 1 should guarantee controlled updates for direct frame/layout/provider/fixture edits and prevent shell reloads for everything else.
+
+Naive break: claiming updates are deferrable while leaving React Fast Refresh fully automatic inside every frame.
+
+## 3. Multiple agents, manifests, and board autosave
+
+Three classes of state must have different ownership:
+
+| State | Authority | Reconciliation |
+|---|---|---|
+| Scenes, frames, fixtures | Disk | Revisioned per-frame invalidation |
+| Manifest | Server-derived from disk | Atomic full scan, shell applies catalog diff |
+| Board layouts | Shell-owned file with CAS | Hash-guarded save; external disk change wins |
+| Camera/mode/panels | Current shell session | Never replaced by manifest or board reload |
+
+### Manifest behavior
+
+`server/manifest.ts` should produce a monotonically ordered scan result:
+
+```ts
+{
+  revision: number,
+  contentHash: string,
+  frames: [...]
+}
+```
+
+The shell should receive either the full manifest plus revision or an explicit diff. It must:
+
+- ignore revisions older than the last applied;
+- update the catalog by frame ID;
+- never replace the whole shell store;
+- never reset the active board;
+- never autosave merely because the manifest changed;
+- preserve missing board references as “frame missing” tombstones;
+- add new frames to the virtual `everything` projection without touching `baseLayout`.
+
+Filesystem events must be coalesced into scan transactions. An editor’s temp-file rename can produce unlink/add/change events for one logical save.
+
+### Board autosave
+
+Every loaded persisted board needs:
+
+```ts
+type BoardDocument = {
+  name: string
+  diskHash: string
+  diskRevision: number
+  dirtyGeneration: number
+  saveGeneration: number
+  status: "clean" | "dirty" | "saving" | "conflicted" | "deleted"
+}
+```
+
+Every save carries:
+
+```json
+{
+  "board": {},
+  "baseHash": "hash-loaded-from-disk",
+  "clientId": "shell-session-id",
+  "mutationId": "monotonic-local-id",
+  "mustExist": true
+}
+```
+
+The server atomically checks `baseHash` immediately before rename.
+
+A debounce callback must capture the board’s generation. Before writing, it verifies:
+
+- board still has the same name;
+- board is still dirty;
+- generation still matches;
+- board was not externally modified, renamed, or deleted;
+- base hash still matches;
+- the shell still owns this pending mutation.
+
+Otherwise it drops the write.
+
+### Fixing ghost-board resurrection
+
+The old failure is predictable:
+
+```text
+shell schedules save for old-name.json
+external actor renames old-name.json → new-name.json
+watcher reports deletion/addition
+stale debounce fires
+PUT old-name.json creates it again
+```
+
+Prevent it structurally:
+
+- Autosave of a previously loaded board always sends `mustExist: true`.
+- Creating a board requires a separate explicit create operation.
+- A missing destination under `mustExist` returns `410` or `409`; it never creates.
+- External unlink immediately increments that board’s generation and cancels its save timer.
+- Rename correlation updates the active document name without remounting the board.
+- If correlation is uncertain, mark the active board deleted/read-only and offer “Save as”; never resurrect it.
+
+Within the watcher debounce window, correlate unlink/add pairs by board content hash or stable board ID. A stable board ID in schema v2 is safer than filename/hash heuristics.
+
+### External board modifications
+
+Disk remains authoritative under the existing disk-wins policy, but “disk wins” must not mean “reset the session.”
+
+On a changed active board:
+
+1. Cancel pending autosave.
+2. Mark the board externally changed.
+3. Apply a node-level document diff.
+4. Preserve camera, mode, panel state, and unaffected iframe identities.
+5. Drop conflicting unsaved board-layout edits with an explicit notice.
+6. Do not reload the shell or route.
+
+If an external edit removes the currently selected node, that selection cannot remain valid. Clear or orphan only that selection; preserve the active tool mode.
+
+### Multiple external board writers
+
+Plain JSON files cannot guarantee conflict-free N-writer editing when agents write them directly. They have no compare-and-swap and can overwrite one another between watcher observations.
+
+There are only three honest options:
+
+1. Keep `design/boards/*.json` single-writer and shell-owned. Agents edit scene/frame files, not boards. This is the lean Stage 1 answer.
+2. Require agents to use the guarded board API, which conflicts with the filesystem-only agent contract.
+3. Replace board files with an operation log or mergeable CRDT-like format. This is later machinery.
+
+For the current product principle, retain one writer for boards. Multi-agent support should mean concurrent frame/scene authorship across boards, not concurrent direct editing of the same board JSON.
+
+## 4. Rollout
+
+## Stage 1: self-healing sessions
+
+This is the minimum that delivers “stay in the action”:
+
+1. **Separate stores**
+   - Session state, board document state, manifest state, and frame runtime state cannot share a replace-all hydration path.
+
+2. **Stable shell and iframe identity**
+   - Shell root never reloads for design changes.
+   - FrameNode insertion order and keys remain stable.
+   - Manifest updates are diffs, not remount triggers.
+
+3. **Revisioned invalidation**
+   - `plugin.ts` emits `{frameIds, revision}`.
+   - Stale completions are ignored.
+   - Direct design-file updates never trigger a browser full reload.
+
+4. **Interaction leases**
+   - Active gestures and prototype interaction defer frame application.
+   - Inactive frames update silently.
+   - Visible inactive frames update under a snapshot.
+   - Only the latest queued revision is eventually applied.
+
+5. **No-white presentation**
+   - Snapshot remains until matching revision emits ready/layout-settled.
+   - Errors replace it with the existing per-frame error card, not a blank iframe.
+
+6. **Board save hardening**
+   - Per-board timers and generations.
+   - CAS on every existing-board save.
+   - `mustExist` prevents resurrection.
+   - External rename/delete cancels pending saves.
+   - Manifest changes never trigger board saves.
+
+7. **Session-preservation tests**
+   - Edit active/inactive frames while panned and zoomed.
+   - Edit during laser/comment/prototype modes.
+   - Rename/delete a board during pending autosave.
+   - Burst-save five revisions.
+   - Edit two scenes simultaneously.
+   - Assert shell root and unaffected iframe identities are unchanged.
+
+Stage 1 does not need perfect state preservation inside an actively changing prototype DOM. It must defer that change rather than pretending it can preserve arbitrary component state.
+
+## Stage 2: smooth device sweep
+
+Add:
+
+- derived device projection distinct from `baseLayout`;
+- snapshot-key revision correctness;
+- FLIP snapshot movement;
+- visible/overscan/cold scheduler;
+- target-width settlement protocol;
+- lazy off-screen reflow;
+- bounded bitmap cache;
+- performance instrumentation.
+
+This can ship after session survival because it builds on the same revisioned snapshot coordinator.
+
+## Stage 3: broader controlled HMR
+
+Add:
+
+- Vite module-graph traversal from shared `src/` dependencies to affected frames;
+- controlled refresh for shared layouts/providers/UI components;
+- scroll restoration for window and explicitly keyed scroll containers;
+- optional hidden shadow-frame warming;
+- snapshot rebaking across commonly used widths.
+
+Nested scroll restoration cannot be universally exact without frame cooperation. Support `data-sh-scroll-key` for durable restoration rather than guessing arbitrary DOM identity.
+
+## Stage 4: true multi-writer boards, only if required
+
+Add stable board/node IDs and either:
+
+- API-mediated CAS operations; or
+- an append-only board-operation journal with deterministic reduction.
+
+Do not introduce this to solve concurrent scene editing. It is only necessary if agents must concurrently modify board layout documents.
+
+# Silent-break checklist
+
+The naive implementations most likely to betray the product are:
+
+- Animating live iframe width across intermediate values.
+- Reflowing all off-screen frames during a sweep.
+- Letting target-width layout settlement repeatedly re-run tidy.
+- Saving device-projected positions over `baseLayout`.
+- Using width-only snapshot keys without source revision and theme.
+- Allowing old sweep completions to apply after a new device click.
+- Assuming a snapshot overlay makes active prototype HMR safe.
+- Leaving default Vite/React HMR in control while claiming updates can be deferred.
+- Replacing the whole Zustand store when a manifest or board changes.
+- Treating filesystem watcher events as isolated logical edits.
+- Letting manifest changes mark boards dirty.
+- Allowing an autosave PUT to create a previously existing but now missing board.
+- Reloading an active board to resolve disk-wins conflicts.
+- Promising conflict-free direct JSON editing by multiple external agents.
