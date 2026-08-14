@@ -161,6 +161,19 @@ Small items that are not milestone work. One line each; delete when done.
       to live when zoomed in / interacted. Biggest single win for heavy boards.
     - **Zoom/pan smoothness:** GPU-composited transform only, throttle to rAF, and wheel/pinch
       must NEVER scroll the host page (verify the preventDefault path holds under load).
+    - **Acute case - heavy frames flash WHITE / blank during pan-zoom (2026-08-14).** A very
+      heavy frame (marver-site's `landing/keynote-v2`, 775 lines, a whole detailed website)
+      flashes white and sometimes the content vanishes entirely while moving around the canvas;
+      Nic has to click it, enter play mode, fit-to-screen to recover, and it degrades again on
+      the next pan. Distinct from the TMS slowness: TMS (React Router + Vite) was slow/janky
+      but never blanked; marver-site is **Next.js 16 + React 19**, and the flash is worst on
+      its heaviest frame. Mechanism: applying a CSS transform to a large iframe forces the
+      browser to re-rasterize a big compositing layer; under memory pressure / at high zoom it
+      DROPS the layer and paints white until a repaint. LOD/snapshot fixes it directly (a
+      static snapshot never blanks); also probe iframe-layer stability (`contain`,
+      `will-change`, backface, persistent layer) and whether Next's client runtime/hydration
+      re-executes on transform. Record the stack as a variable: **Next.js frames blank; Vite/RR
+      frames just slow** - the fix must hold for both.
     - Applies to the published canvas too, not just dev.
     - "All scenes" tension Nic flagged: rendering every frame is handy for debugging but a
       perf hazard; culling/LOD makes it safe, OR make all-scenes lazy/opt-in. Prefer the
