@@ -4,6 +4,7 @@ import { useStore, CONFIG, PUBLISHED, boardLabel, cap, fetchBoardNames, type Fra
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
+import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
@@ -521,11 +522,11 @@ export function App() {
     const onMsg = (e: MessageEvent) => {
       const data = e.data
       if (!data || typeof data.type !== 'string' || !data.type.startsWith('sh:')) return
-      const iframes = [...document.querySelectorAll('iframe')]
-      const el = iframes.find((f) => f.contentWindow === e.source) as HTMLIFrameElement | undefined
-      if (!el) return
-      const nodeKey = el.closest('[data-node]')?.getAttribute('data-node')
-      if (!nodeKey) return
+      // B0.3: O(1) registry lookup - also the security gate (unknown source = not a
+      // registered frame = dropped), replacing a per-message iframe scan + DOM walk.
+      const reg = frameByWindow(e.source)
+      if (!reg) return
+      const { key: nodeKey, iframe: el } = reg
       const s = useStore.getState()
 
       if (data.type === 'sh:ready') {

@@ -3,6 +3,7 @@ import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
 import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
+import { registerFrame, unregisterFrame } from './frame-registry.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -39,6 +40,23 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme: node.theme }, '*')
     }
   }, [node.theme])
+
+  // B0.3: register this frame's WindowProxy so the shell routes its messages in O(1)
+  // (source window -> node), instead of rescanning every iframe + walking the DOM per
+  // message. The WindowProxy is stable across navigations; onLoad covers the case where
+  // contentWindow was not yet available at mount.
+  const regWin = useRef<WindowProxy | null>(null)
+  const registerWin = () => {
+    const iframe = iframeRef.current
+    const win = iframe?.contentWindow
+    if (!iframe || !win || regWin.current === win) return
+    regWin.current = win
+    registerFrame(win, { key: node.key, iframe })
+  }
+  useEffect(() => {
+    registerWin()
+    return () => { if (regWin.current) { unregisterFrame(regWin.current); regWin.current = null } }
+  }, [node.key])
 
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board
@@ -218,6 +236,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           ref={iframeRef}
           src={initialSrc.current ?? frameUrl(frame, node.theme)}
           title={frame.id}
+          onLoad={registerWin}
           style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
