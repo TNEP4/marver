@@ -75,6 +75,29 @@ Small items that are not milestone work. One line each; delete when done.
        state (laser, comment, scroll, zoom) must survive ANY frame lifecycle event and
        re-attach after crash-recover/HMR/reload; (b) one frame erroring must NEVER break the
        board-level mode - isolate the overlay per frame so a dead frame is skipped, not fatal.
+    3. **Board rename resurrects a ghost board (confirmed, 2026-08-14).** An agent renamed a
+       board (`tms-high-level` -> `TMS High level`, filename carries the display name) and the
+       sidebar showed BOTH for a while. Root cause, from the editing session itself: "the
+       shell re-persisted the old file while I renamed it" - the shell's board-state autosave
+       writes the board back to disk on canvas interaction, and it raced the external rename,
+       recreating `tms-high-level.json` after it was gone. FIX: the shell must reconcile board
+       identity against disk - never write back a board whose source file was renamed/deleted
+       out from under it (check existence before persist, or treat disk as source of truth for
+       board identity and only autosave positions for boards that still exist). This is THE
+       multi-writer bug: any external process (agent, git, another marver tab) mutating
+       `design/boards/` races the shell's autosave.
+    4. **Play/prototype mode loses in-frame scroll on agent edit.** Nic: often mid-prototype,
+       an agent edits, and the stage snaps back to the TOP instead of where he was scrolled.
+       The stage already keeps the provider+layout chain mounted across data-goto swaps; extend
+       that so an HMR update to the CURRENT frame preserves scroll position (and play state)
+       rather than remounting from the top. Same "recover in-place" principle, play-mode axis.
+  **Target Nic is designing for (state the bar explicitly):** MULTIPLE agents working at once
+  on different boards/scenes, creating frames as they go, while the user is live in the canvas.
+  Localhost must stay stable through all that churn WITHOUT a full-page refresh - every HMR /
+  frame reload / board change must preserve the user's zoom, pan, scroll, play position, and
+  active mode (laser/comment). A full reload that dumps the user back to fit-all/top is the
+  failure. Design the shell's refresh path around "surgical in-place update, never blow away
+  the viewport or mode."
   Needs a codex adversarial pass on the frame-lifecycle × mode-state matrix (like the Play
   chrome item): {loading, ready, error, HMR-updating, reloading} × {laser on/off, comment
   on/off} × user mid-gesture. Connects to the cold-boot item below and the multiplayer
