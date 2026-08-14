@@ -551,8 +551,9 @@ export function App() {
         const f = n && s.frameFor(n)
         if (f) {
           const addr = `${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
-          navigator.clipboard.writeText(addr)
-          toast('element path copied for agent')
+          navigator.clipboard.writeText(addr).then(
+            () => toast('element path copied for agent'),
+            () => toast('copy blocked - click the canvas first'))
         }
       } else if (data.type === 'sh:picked') {
         // comment mode: the frame reports the picked element - stage the draft on

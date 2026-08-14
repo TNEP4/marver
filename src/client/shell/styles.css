@@ -692,6 +692,10 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-card header b { font-size: 13px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
 .cm-actions { position: absolute; top: 13px; right: 12px; display: flex; gap: 2px }
+/* the root header shares its line with the pinned actions - reserve their width
+   so a long display name ellipsizes instead of running under the icons */
+.cm-card > header { padding-right: 84px }
+.cm-card > header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 /* every message - root and replies - is the same unit: avatar + name + time,
    body indented to the name column (24px avatar + 9px gap) */
 .cm-card .cm-body { margin: 0; padding-left: 33px; font-size: 13px; line-height: 1.55;
