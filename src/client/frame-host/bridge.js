@@ -71,8 +71,15 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
   font: 600 10px -apple-system, system-ui, sans-serif; color: #fff; background: rgba(20, 20, 24, .92);
   padding: 3px 7px; border-radius: 5px; max-width: 340px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; letter-spacing: .01em }
+#mv-laser-label svg { vertical-align: -3px; margin-right: 5px }
+#mv-laser-label.mv-copied { animation: mv-pop .22s cubic-bezier(.32, .72, .35, 1) }
+@keyframes mv-pop { from { transform: scale(.85); opacity: .5 } }
 `
 }
+
+// clipboard-with-check (Phosphor clipboard + a check inside): the label wears this
+// while confirming a copy
+const COPIED_HTML = `<svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor"><path d="M200,32H163.74a47.92,47.92,0,0,0-71.48,0H56A16,16,0,0,0,40,48V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm-72,0a32,32,0,0,1,32,32H96A32,32,0,0,1,128,32Zm72,184H56V48H82.75A47.93,47.93,0,0,0,80,64v8a8,8,0,0,0,8,8h80a8,8,0,0,0,8-8V64a47.93,47.93,0,0,0-2.75-16H200Z"/><path d="M92 148l26 26 48-52" fill="none" stroke="currentColor" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/></svg>Element path copied`
 
 let laserOn = false, pickOn = false, hoverEl = null, labelEl = null
 const modeActive = () => laserOn || pickOn
@@ -92,9 +99,27 @@ const applyModes = () => {
   if (!cur) document.head.appendChild(s)
 }
 
+let copiedTimer = null
+
 const clearHover = () => {
   if (hoverEl) { delete hoverEl.dataset.mvHover; hoverEl = null }
   if (labelEl) { labelEl.remove(); labelEl = null }
+  clearTimeout(copiedTimer)
+}
+
+// the shell confirmed the clipboard write - the hover label ITSELF says so (a
+// corner toast is too far from where the eyes are), then reverts after 2s
+const showCopied = () => {
+  if (!labelEl) return
+  labelEl.classList.add('mv-copied')
+  labelEl.innerHTML = COPIED_HTML
+  clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    if (!labelEl) return
+    labelEl.classList.remove('mv-copied')
+    if (hoverEl) labelEl.textContent = describe(hoverEl)
+    else { labelEl.remove(); labelEl = null }
+  }, 2000)
 }
 
 const describe = (el) => {
@@ -211,6 +236,7 @@ window.addEventListener('message', (e) => {
   // independent toggles - each mode contributes its own rules, applyModes composes
   if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes() }
   if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes() }
+  if (m.type === 'sh:copy-ok') showCopied()
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
     const rects = m.anchors.slice(0, 200).map((a) => {
       let el = null

@@ -551,8 +551,10 @@ export function App() {
         const f = n && s.frameFor(n)
         if (f) {
           const addr = `${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+          // success confirms IN the frame's hover label (right where the eyes are);
+          // only failure needs the toast
           navigator.clipboard.writeText(addr).then(
-            () => toast('element path copied for agent'),
+            () => el.contentWindow?.postMessage({ type: 'sh:copy-ok' }, location.origin),
             () => toast('copy blocked - click the canvas first'))
         }
       } else if (data.type === 'sh:picked') {
