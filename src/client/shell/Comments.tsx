@@ -318,13 +318,13 @@ export function IdentityDialog() {
   return (
     <div className="cm-modal-wrap" onClick={dismissIdentity}>
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>{invite ? 'You’re invited to comment' : 'Comment as yourself'}</h2>
+        <h2>{invite ? 'You’re invited to comment' : claiming ? 'Join with your invite' : 'Sign in to comment'}</h2>
         <p className="dim">
           {invite
             ? <>Pick how you’ll appear - comments carry your name.</>
             : claiming
               ? <>Paste the invite token you were sent.<br />Pick how you’ll appear - comments carry your name.</>
-              : <>Reading needs only the canvas password - commenting carries your name.</>}
+              : <>You’re in read-only. Sign in to your account to comment on this canvas.</>}
         </p>
         <div className="cm-fields">
           {claiming ? (
