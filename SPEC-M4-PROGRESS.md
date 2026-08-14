@@ -11,7 +11,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [x] B0.1 camera state out of React during gestures (refs/CSS vars, not the store)
 - [x] B0.2 correct wheel ownership across iframe documents
 - [x] B0.3 `WindowProxy → node` registry (drop `iframe.closest('[data-node]')` scans)
-- [ ] B0.4 real-board frame-time / blank-frame / warm-latency instrumentation
+- [x] B0.4 real-board frame-time / blank-frame / warm-latency instrumentation
 
 ## Stage 1 — self-healing sessions  (Track A, PRIORITY — "stay in the action")
 - [ ] A1 split Session / Document / FrameRuntime stores (diffs, never store-replace)

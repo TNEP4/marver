@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch'
 import { CONFIG, useStore } from '../store.ts'
 import { bootHash } from '../hash.ts'
+import { startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 
 /**
@@ -139,6 +140,8 @@ export function Canvas() {
   const gesture = useStore((s) => s.gesture)
   const setScale = useStore((s) => s.setScale)
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
+
+  useEffect(() => { startPerf() }, [])   // B0.4: dev-only frame-time sampler (window.__mvPerf)
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
