@@ -18,7 +18,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
-import { claimInvite, createInvite, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { claimInvite, createInvite, inviteInfo, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 
 const MONTH = 30 * 24 * 3600
 const MAX_BODY = 256 * 1024
@@ -187,12 +187,19 @@ export function collabHandler(dataDir: string, distDir: string) {
           const u = currentUser(req)
           return json(res, u ? 200 : 401, u ? { user: publicUser(u), role: u.role } : { error: 'signed out' }), true
         }
-        if (path === 'boards')
-          return json(res, 200, { rights, stored: listBoards(commentsDir) }), true
+        if (path === 'boards') {
+          const name = ownerName(dataDir)
+          return json(res, 200, { rights, stored: listBoards(commentsDir), ...(name ? { owner: { name } } : {}) }), true
+        }
         const m = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
         if (m) {
           if (!can(currentUser(req), rights, m[1], 'read')) return json(res, 404, { error: 'no such board' }), true
           return json(res, 200, { events: readLog(commentsDir, m[1]) }), true
+        }
+        if (path === 'invite-info') {
+          if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+          const info = inviteInfo(dataDir, String(url.searchParams.get('token') ?? ''))
+          return json(res, info ? 200 : 404, info ?? { error: 'this invite link is invalid, expired, or already used' }), true
         }
         if (path === 'events') {
           res.statusCode = 200
@@ -232,7 +239,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const { user, session } = claimInvite(dataDir, String(b.token ?? ''), {
           password: String(b.password ?? ''), name: String(b.name ?? ''),
-          avatar: typeof b.avatar === 'string' && b.avatar.startsWith('data:image/') ? b.avatar : undefined,
+          avatar: typeof b.avatar === 'string' && b.avatar.startsWith('data:image/') && b.avatar.length <= 65536 ? b.avatar : undefined,
         })
         setSession(req, res, session)
         return json(res, 200, { user: publicUser(user) }), true
@@ -258,7 +265,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const next = updateProfile(dataDir, u.email, {
           name: typeof b.name === 'string' ? b.name : undefined,
-          avatar: typeof b.avatar === 'string' && (b.avatar === '' || b.avatar.startsWith('data:image/')) ? b.avatar : undefined,
+          avatar: typeof b.avatar === 'string' && (b.avatar === '' || (b.avatar.startsWith('data:image/') && b.avatar.length <= 65536)) ? b.avatar : undefined,
         })
         return json(res, 200, { user: publicUser(next) }), true
       }
@@ -281,7 +288,7 @@ export function collabHandler(dataDir: string, distDir: string) {
       if (m) {
         const u = currentUser(req)
         if (!can(u, rights, m[1], 'comment'))
-          return json(res, u ? 403 : 401, { error: u ? 'this board is read-only' : 'sign in to comment' }), true
+          return json(res, u ? 403 : 401, { error: u ? `this board is read-only - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` : 'sign in to comment' }), true
         const b = await readBody(req)
         const incoming: CommentEvent[] = Array.isArray(b.events) ? b.events : []
         if (incoming.length > 100) return json(res, 400, { error: 'too many events in one push' }), true

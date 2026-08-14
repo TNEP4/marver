@@ -742,7 +742,20 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   background: var(--cm-field); color: var(--glass-ink); font: inherit; outline: none }
 .cm-modal input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
 .cm-err { color: #b42318; font-size: 12px }
+.cm-chip { height: 38px; padding: 0 14px; border-radius: 999px; background: var(--glass-hover);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; overflow: hidden }
+.cm-chip b { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.cm-chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--glass-ink-3); flex: none }
+.cm-idrow { display: flex; align-items: center; gap: 10px }
+.cm-pfp { width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed var(--glass-ink-3);
+  background: var(--cm-field) center/cover no-repeat; color: var(--glass-ink-3); font-size: 18px; flex: none;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: border-color .15s, color .15s }
+.cm-pfp:hover { border-color: var(--comment); color: var(--comment) }
+.cm-pfp.set { border-style: solid; border-color: var(--glass-brd); color: transparent }
 .cm-row { display: flex; gap: 8px; margin-top: 12px }
+.cm-row button:disabled, .cm-row button.cm-primary:disabled {
+  background: var(--glass-ink-3); color: var(--glass); cursor: default; opacity: 1 }
 .cm-switch { margin: 2px auto 0; border: 0; background: none; padding: 4px 8px; cursor: pointer;
   font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); border-radius: 999px }
 .cm-switch:hover { color: var(--glass-ink); background: var(--glass-hover) }

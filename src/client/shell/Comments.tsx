@@ -11,6 +11,7 @@ import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
+import { ROUTE } from '../const.ts'
 import type { Thread } from '../../shared/events.ts'
 
 const rel = (ts: number) => {
@@ -192,9 +193,38 @@ function DraftComposer({ at, node }: { at: { x: number; y: number }; node: Node 
   )
 }
 
+/** Avatar picker: dashed circle → file input → client-side 128px downscale →
+ *  data-URI preview. Optional everywhere it appears; never gates a CTA. */
+function AvatarPick({ value, onPick }: { value: string; onPick: (dataUri: string) => void }) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const pick = (file: File | undefined) => {
+    if (!file) return
+    const img = new Image()
+    img.onload = () => {
+      const s = Math.min(img.width, img.height)
+      const c = document.createElement('canvas')
+      c.width = c.height = 128
+      c.getContext('2d')!.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128)
+      onPick(c.toDataURL('image/jpeg', 0.85))
+      URL.revokeObjectURL(img.src)
+    }
+    img.src = URL.createObjectURL(file)
+  }
+  return (
+    <>
+      <button className={`cm-pfp${value ? ' set' : ''}`} aria-label="Add a profile picture"
+        style={value ? { backgroundImage: `url(${value})` } : undefined}
+        onClick={() => fileRef.current?.click()}>{value ? '' : '+'}</button>
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
+    </>
+  )
+}
+
 /** Signed-out published viewer tried to comment (or arrived on an invite link).
- *  Invite link: a focused claim - name + password, the token already in hand.
- *  Fallback: sign in (returning device), with a quiet switch to pasting a token. */
+ *  Invite link: a focused claim - the token in hand, email shown as a chip.
+ *  Fallback: sign in (returning device), with a quiet switch to pasting a token.
+ *  Primary CTAs stay disabled until their mandatory fields are filled; hovering
+ *  the disabled button says what's missing (avatar never gates). */
 export function IdentityDialog() {
   const needs = useComments((s) => s.needsIdentity)
   const invite = useComments((s) => s.inviteToken)
@@ -202,12 +232,29 @@ export function IdentityDialog() {
   const [mode, setMode] = useState<'signin' | 'claim'>('signin')
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('')
   const [token, setToken] = useState(''); const [name, setName] = useState('')
+  const [avatar, setAvatar] = useState('')
+  const [invitedAs, setInvitedAs] = useState('')
   const [err, setErr] = useState<string | null>(null)
+  // an invite link knows WHO it's for - show it (the token is the proof of holding)
+  useEffect(() => {
+    if (!needs || !invite) return setInvitedAs('')
+    fetch(`${ROUTE}/api/invite-info?token=${encodeURIComponent(invite)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.email && setInvitedAs(d.email))
+      .catch(() => { /* chip just stays hidden */ })
+  }, [needs, invite])
   if (!needs) return null
   const claiming = !!invite || mode === 'claim'
+  const ready = claiming
+    ? !!(password.trim() && name.trim() && (invite || token.trim()))
+    : !!(email.trim() && password.trim())
+  const missing = claiming
+    ? (invite ? 'Password and display name still needed' : 'Token, password, and display name still needed')
+    : 'Fill in email and password'
   const go = async () => {
+    if (!ready) return
     setErr(null)
-    const e = claiming ? await claim(invite ?? token, password, name) : await signIn(email, password)
+    const e = claiming ? await claim(invite ?? token, password, name, avatar || undefined) : await signIn(email, password)
     if (e) return setErr(e)
     // a consumed invite link leaves the URL - the hash becomes the plain board view
     if (invite) writeHash({ board: useStore.getState().board })
@@ -219,26 +266,47 @@ export function IdentityDialog() {
         <h2>{invite ? 'You’re invited to comment' : 'Comment as yourself'}</h2>
         <p className="dim">
           {invite
-            ? 'Pick how you’ll appear - comments carry your name.'
-            : 'Reading needs only the canvas password - commenting carries your name.'}
+            ? <>Pick how you’ll appear - comments carry your name.</>
+            : claiming
+              ? <>Paste the invite token you were sent.<br />Pick how you’ll appear - comments carry your name.</>
+              : <>Reading needs only the canvas password - commenting carries your name.</>}
         </p>
         <div className="cm-fields">
           {claiming ? (
             <>
-              {!invite && <input placeholder="Invite token" value={token} onChange={(e) => setToken(e.target.value)} />}
-              <input placeholder="Display name" value={name} onChange={(e) => setName(e.target.value)} />
-              <input placeholder="Choose a password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnter} />
+              {invite
+                ? invitedAs && <div className="cm-chip"><b>{invitedAs}</b><span>INVITED</span></div>
+                : <input placeholder="Invite token" value={token} onChange={(e) => setToken(e.target.value)} />}
+              <input placeholder="Choose a password" type="password" autoComplete="new-password"
+                value={password} onChange={(e) => setPassword(e.target.value)} />
+              <div className="cm-idrow">
+                <AvatarPick value={avatar} onPick={setAvatar} />
+                <input placeholder="Set a display name" style={{ flex: 1 }}
+                  value={name} onChange={(e) => setName(e.target.value)} onKeyDown={onEnter} />
+              </div>
             </>
           ) : (
             <>
-              <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnter} />
+              <input placeholder="Email" type="email" autoComplete="email"
+                value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input placeholder="Password" type="password" autoComplete="current-password"
+                value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnter} />
             </>
           )}
         </div>
         {err && <span className="cm-err">{err}</span>}
         <div className="cm-row">
-          <button className="cm-primary" onClick={() => void go()}>{claiming ? (invite ? 'Join the canvas' : 'Create account') : 'Sign in'}</button>
+          {ready ? (
+            <button className="cm-primary" onClick={() => void go()}>
+              {claiming ? (invite ? 'Join the canvas' : 'Create account') : 'Sign in'}
+            </button>
+          ) : (
+            <Tip side="top" label={<b>{missing}</b>}>
+              <button className="cm-primary" disabled>
+                {claiming ? (invite ? 'Join the canvas' : 'Create account') : 'Sign in'}
+              </button>
+            </Tip>
+          )}
           <button onClick={dismissIdentity}>Not now</button>
         </div>
         {!invite && (

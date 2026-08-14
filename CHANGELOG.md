@@ -24,6 +24,17 @@ the designer, and the coding agent close the feedback loop together.
   per-user salts; sessions survive restarts. The first account owns the canvas;
   `MARVER_OWNER_EMAIL` prints the owner's one-time claim link in the deploy logs.
   Avatars fall back to initials on a deterministic color.
+- **Gate v2: one credential per persona.** The gate on a collaboration canvas has
+  three doors: guests pay the canvas password (read-only), members sign in with
+  their OWN password (their session IS gate passage - they never touch the shared
+  secret), and an invite link (`<url>/#/i/<token>`) opens straight into the claim -
+  email shown as an INVITED chip, profile-picture picker (client-side 128px
+  downscale), display name, password. Sign-in/claim endpoints sit in front of the
+  gate (rate-limited, non-enumerating); rotating the canvas password only ever
+  affects guests. Primary buttons stay disabled until their mandatory fields are
+  filled, with a tooltip naming what's missing. The boards payload carries the
+  owner's display name, so a read-only refusal says who to ask. Static canvases
+  keep the single-field gate untouched.
 - **One deploy, comments live everywhere.** `marver serve` grows a collaboration API
   (REST + SSE) when `MARVER_DATA_DIR` names a durable volume; the published canvas is
   the comments' home. `marver dev` two-way syncs every 30s (`marver comments connect

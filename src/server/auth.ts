@@ -77,6 +77,20 @@ const findUser = (store: Store, email: string) => store.users.find((u) => normEm
 /** Mint a single-use invite for an email (this IS the allowlist entry - inviting an
  *  address authorizes it). Re-inviting an email replaces its pending invite. The raw
  *  token is returned exactly once; only its hash is stored. */
+/** The owner's display name - public-safe (never the email). Null before claim. */
+export function ownerName(dir: string): string | null {
+  const owner = loadStore(dir).users.find((u) => u.role === 'owner')
+  return owner?.name?.trim() || null
+}
+
+/** Peek at a live invite: the claim screens show WHO the invite is for. The raw
+ *  token is the proof - holding it means the owner sent it to you. */
+export function inviteInfo(dir: string, rawToken: string): { email: string } | null {
+  const hash = sha256(rawToken)
+  const invite = loadStore(dir).invites.find((i) => i.tokenHash === hash && i.exp > Date.now())
+  return invite ? { email: invite.emailNorm } : null
+}
+
 export function createInvite(dir: string, email: string): { token: string; exp: number } {
   const store = loadStore(dir)
   if (findUser(store, email)) throw new Error(`${normEmail(email)} already has an account`)

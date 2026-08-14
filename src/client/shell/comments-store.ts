@@ -35,7 +35,7 @@ interface CommentsState {
   setActive(id: string | null): void
   setDraft(d: CommentsState['draft']): void
   signIn(email: string, password: string): Promise<string | null>
-  claim(token: string, password: string, name: string): Promise<string | null>
+  claim(token: string, password: string, name: string, avatar?: string): Promise<string | null>
   saveProfile(patch: Partial<Me>): Promise<void>
   dismissIdentity(): void
 }
@@ -154,8 +154,8 @@ export const useComments = create<CommentsState>((set, get) => {
       set({ me: res.data.user, needsIdentity: false })
       return null
     },
-    async claim(token, password, name) {
-      const res = await api('auth/claim', { token, password, name })
+    async claim(token, password, name, avatar) {
+      const res = await api('auth/claim', { token, password, name, avatar })
       if (!res.ok) return res.data?.error ?? 'claim failed'
       set({ me: res.data.user, needsIdentity: false, inviteToken: null })
       return null

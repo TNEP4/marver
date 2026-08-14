@@ -629,6 +629,16 @@ describe('auth - invites, accounts, sessions (SPEC-M3 §3)', async () => {
       expect(() => auth.claimInvite(dir, token, { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
       expect(() => auth.claimInvite(dir, 'not-a-token', { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
     }))
+  it('inviteInfo peeks a live invite, goes dark after claim; ownerName is public-safe (gate v2)', () =>
+    store((dir) => {
+      expect(auth.ownerName(dir)).toBeNull()             // pre-claim: no owner yet
+      const { token } = auth.createInvite(dir, 'Colleague@X.com')
+      expect(auth.inviteInfo(dir, token)?.email).toBe('colleague@x.com')
+      expect(auth.inviteInfo(dir, 'wrong-token')).toBeNull()
+      auth.claimInvite(dir, token, { password: 'longenough1', name: 'Col' })
+      expect(auth.inviteInfo(dir, token)).toBeNull()     // burned with the claim
+      expect(auth.ownerName(dir)).toBe('Col')            // first account owns the canvas
+    }))
   it('sign-in verifies scrypt and is generic on failure; second account is member', () =>
     store((dir) => {
       const a = auth.createInvite(dir, 'a@x.com')

@@ -18,8 +18,11 @@ vars if the host has no CLI.
    `--boards a,b` overrides ad hoc (grants comment), `--all-boards` ships
    everything loudly.
 
-2. **The gate password** - `MARVER_PASSWORD` at serve time. This is the READ
-   boundary: one shared password for viewing. No env var = an open canvas.
+2. **The canvas password** - `MARVER_PASSWORD` at serve time. This is the READ
+   boundary: one shared password for GUESTS. Members never need it - their own
+   account signs them in at the gate, and invite links skip it entirely (the
+   token is the authorization). Rotating it therefore only affects guests.
+   No env var = an open canvas.
 
 3. **Collaboration on or off** - `MARVER_DATA_DIR` at serve time. Set it to a
    path on a PERSISTENT disk and the serve grows accounts + live comments.
@@ -32,7 +35,7 @@ vars if the host has no CLI.
 | Var | Meaning |
 |---|---|
 | `PORT` | listen port (hosts inject this) |
-| `MARVER_PASSWORD` | canvas gate password; unset = open |
+| `MARVER_PASSWORD` | canvas password (guests' read credential); unset = open |
 | `MARVER_DATA_DIR` | persistent dir for `comments/` + `auth.json`; unset = no collaboration |
 | `MARVER_OWNER_EMAIL` | prints a single-use OWNER claim link in the deploy logs on first boot |
 | `MARVER_TRUSTED_PROXY` | set to `1` behind a reverse proxy (Railway, Fly) so rate limits see real IPs |
@@ -61,9 +64,9 @@ marver comments connect https://canvas.example.com --invite <token-from-logs>
 
 # 2. invite each colleague - single-use link, no email infrastructure
 marver comments invite colleague@company.com
-#    → prints canvas URL + token; send both over Slack/DM.
-#    They open the canvas, click any element in comment mode (C), choose
-#    "I have an invite", paste the token, pick display name + password.
+#    → prints a single invite LINK; send it over Slack/DM (no canvas
+#    password needed - the link is the credential). It opens straight into
+#    "set a display name + choose a password" with an avatar picker.
 
 # 3. the loop is now closed
 marver dev                        # two-way syncs comments every 30s

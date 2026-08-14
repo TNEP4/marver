@@ -34,6 +34,7 @@ export async function serve(root: string, portFlag?: number) {
   // ---- collaboration (SPEC-M3): on when MARVER_DATA_DIR names a durable home ----
   let collab: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
   let bearerCheck: ((token: string) => unknown) | null = null
+  let sessionCheck: ((req: any) => unknown) | null = null
   if (process.env.MARVER_DATA_DIR) {
     const { collabHandler } = await import('./collab.ts')
     const { appendEvents, readLog } = await import('./comments.ts')
@@ -51,6 +52,12 @@ export async function serve(root: string, portFlag?: number) {
     collab = collabHandler(dir, dist)
     const { loadStore, createInvite, normEmail, sessionUser } = await import('./auth.ts')
     bearerCheck = (token) => sessionUser(dir, token)
+    // a member's session IS gate passage - an account is strictly stronger than the
+    // shared canvas password, so members never touch the shared secret again
+    sessionCheck = (req) => {
+      const tok = /(?:^|;\s*)mv_s=([\w-]+)/.exec(String(req.headers.cookie ?? ''))?.[1]
+      return tok ? sessionUser(dir, tok) : null
+    }
     // bootstrap: a fresh store has no owner to mint invites. MARVER_OWNER_EMAIL names
     // the first account; its one-time claim token prints HERE (deploy logs are the
     // trusted channel the deployer already reads - the Jupyter token pattern).
@@ -104,7 +111,7 @@ export async function serve(root: string, portFlag?: number) {
             res.setHeader('location', /^#\/[\w\/?&=%.,~-]*$/.test(next) ? `/${next}` : '/')
             return res.end()
           }
-          return gate(res, meta, 'Wrong password - try again')
+          return gate(res, meta, !!collab, 'Wrong canvas password - try again')
         })
         return
       }
@@ -112,7 +119,8 @@ export async function serve(root: string, portFlag?: number) {
       // Favicons and the app logo are the one exemption: the gate page itself wears
       // them, and they carry no design data.
       const cosmetic = url.pathname.startsWith('/__mv/favicon/') || /^\/__mv\/logo\.(svg|png)$/.test(url.pathname)
-      if (!authed(req) && !cosmetic) {
+      // a member session opens the gate outright (account > shared secret)
+      if (!authed(req) && !cosmetic && !sessionCheck?.(req)) {
         // bearer requests (dev proxy / agent CLI) may pierce the gate to the API,
         // but only a VALID session token counts - `Bearer garbage` must not read
         // comment bodies or subscribe to events
@@ -120,7 +128,12 @@ export async function serve(root: string, portFlag?: number) {
           const tok = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
           return !!tok && !!bearerCheck?.(tok)
         })()
-        if (!bearerOk) return gate(res, meta)
+        // sign-in, claim, and the invite peek live IN FRONT of the gate - that's the
+        // whole point of the member path (rate-limited + non-enumerating in collab.ts)
+        const preGate = collab && (
+          (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
+          (req.method === 'GET' && url.pathname === '/__mv/api/invite-info'))
+        if (!bearerOk && !preGate) return gate(res, meta, !!collab)
       }
     }
 
@@ -179,8 +192,11 @@ const MARK = MARK_AT(17)
 const MARK_LG = MARK_AT(24)
 
 /** The gate: the canvas's own antechamber - light ground, dot grid, glass card in the
- *  shell's exact token language. The visitor is one password away from stepping in. */
-function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, error?: string) {
+ *  shell's exact token language. Three doors, one credential each (SPEC-M3 gate v2):
+ *  guests pay the canvas password, members sign in with their OWN password, and an
+ *  invite link (#/i/<token>) opens straight into the claim. The member and claim
+ *  states exist only on collaboration canvases - a static canvas keeps one field. */
+function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string) {
   const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
   // the app's own logo when the build found one; Marver's mark as the backup
   const appMark = meta.logo ? `<img src="${esc(meta.logo)}" alt="" width="24" height="24" />` : MARK_LG
@@ -219,22 +235,51 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
     font: 500 14px -apple-system, system-ui, sans-serif; color: #18181b;
     -webkit-font-smoothing: antialiased }
   main { display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 16px }
-  form { width: 340px; padding: 24px; border-radius: 24px; display: flex; flex-direction: column; gap: 14px;
+  .card { width: 340px; padding: 24px; border-radius: 24px;
     background: rgba(255, 255, 255, .64); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(24, 24, 27, .1);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 4px 12px -6px rgba(24, 24, 27, .12) }
+  section { display: none; flex-direction: column; gap: 14px }
+  section.on { display: flex; animation: rise .24s cubic-bezier(.32, .72, .35, 1) }
+  @keyframes rise { from { opacity: 0; transform: translateY(5px) } }
   header { display: flex; align-items: center; gap: 10px; padding: 4px 2px 4px 4px }
   header svg, header img { color: #0088ff; flex: none; border-radius: 6px }
   h1 { font-size: 17px; font-weight: 600; letter-spacing: -.01em }
   p { font-size: 12.5px; line-height: 1.5; color: rgba(24, 24, 27, .66); padding: 0 4px }
   input { height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(24, 24, 27, .14);
-    background: #fff; color: #18181b; font: inherit; outline: none; transition: border-color .15s, box-shadow .15s }
+    background: #fff; color: #18181b; font: inherit; outline: none; width: 100%;
+    transition: border-color .15s, box-shadow .15s }
   input::placeholder { color: rgba(24, 24, 27, .35) }
   input:focus { border-color: #0088ff; box-shadow: 0 0 0 3px rgba(0, 136, 255, .18) }
-  button { height: 40px; border: 0; border-radius: 999px; background: #18181b; color: #fafafa;
-    font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer; transition: background .15s }
-  button:hover { background: #000 }
+  .stack { display: flex; flex-direction: column; gap: 10px }
+  .chip { height: 40px; padding: 0 16px; border-radius: 999px; background: rgba(24, 24, 27, .05);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; overflow: hidden }
+  .chip b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: rgba(24, 24, 27, .4); flex: none }
+  .idrow { display: flex; align-items: center; gap: 10px }
+  .pfp { width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed rgba(24, 24, 27, .3);
+    background: #fff center/cover no-repeat; color: rgba(24, 24, 27, .4); font-size: 18px; flex: none;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+    transition: border-color .15s, color .15s }
+  .pfp:hover { border-color: #0088ff; color: #0088ff }
+  .pfp.set { border-style: solid; border-color: rgba(24, 24, 27, .12); color: transparent }
+  button.cta { height: 40px; border: 0; border-radius: 999px; background: #18181b; color: #fafafa;
+    font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer; width: 100%;
+    transition: background .18s, color .18s }
+  button.cta:hover:not(:disabled) { background: #000 }
+  button.cta:disabled { background: rgba(24, 24, 27, .35); cursor: default }
+  .ctawrap { position: relative }
+  .tip { display: none; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+    padding: 5px 10px; border-radius: 7px; background: #18181b; color: #fafafa;
+    font: 600 11px -apple-system, system-ui, sans-serif; white-space: nowrap; pointer-events: none;
+    animation: rise .18s cubic-bezier(.32, .72, .35, 1) }
+  .ctawrap:hover button:disabled ~ .tip { display: block }
+  .swap { text-align: center; padding-top: 2px }
+  .swap a { font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(24, 24, 27, .45);
+    cursor: pointer; text-decoration: underline; text-underline-offset: 3px; transition: color .15s }
+  .swap a:hover { color: #18181b }
   .err { font-size: 12px; color: #b42318; padding: 0 4px }
+  .err:empty { display: none }
   footer a { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px -apple-system, system-ui, sans-serif;
     color: rgba(24, 24, 27, .55); text-decoration: none }
   footer a > svg:first-of-type { width: 20px; height: 20px; color: #0088ff }
@@ -244,15 +289,140 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
   footer a:hover .up { opacity: 1; color: #0088ff }
 </style></head>
 <body><main>
-  <form method="post" action="/__mv/auth">
-    <header>${appMark}<h1>${esc(name)}</h1></header>
-    <p>You're one step from the canvas. This space is private - enter the password to step inside.</p>
-    ${error ? `<div class="err">${esc(error)}</div>` : ''}
-    <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password" />
-    <input type="hidden" name="next" />
-    <button type="submit">Open the canvas</button>
-  </form>
-  <script>document.querySelector('[name=next]').value = location.hash</script>
+  <div class="card">
+
+    <section id="guest" class="on">
+      <form method="post" action="/__mv/auth" style="display:flex;flex-direction:column;gap:14px">
+        <header>${appMark}<h1>${esc(name)}</h1></header>
+        <p>You're one step from the canvas. This space is private - enter the canvas password to step inside.</p>
+        <div class="err">${error ? esc(error) : ''}</div>
+        <input type="password" name="password" placeholder="Canvas password" autofocus autocomplete="current-password" />
+        <input type="hidden" name="next" />
+        <div class="ctawrap">
+          <button class="cta" type="submit" disabled>Open the canvas</button>
+          <span class="tip">Enter the canvas password first</span>
+        </div>
+        ${collabOn ? '<div class="swap"><span style="font:500 12px -apple-system,system-ui,sans-serif;color:rgba(24,24,27,.45)">Member? <a data-go="member">Sign in instead</a></span></div>' : ''}
+      </form>
+    </section>
+${collabOn ? `
+    <section id="member">
+      <header>${appMark}<h1>${esc(name)}</h1></header>
+      <p>Welcome back - sign in with your own password. Your account already covers reading.</p>
+      <div class="err" id="member-err"></div>
+      <div class="stack">
+        <input type="email" id="m-email" placeholder="Email" autocomplete="email" />
+        <input type="password" id="m-pass" placeholder="Password" autocomplete="current-password" />
+      </div>
+      <div class="ctawrap">
+        <button class="cta" id="m-go" disabled>Sign in</button>
+        <span class="tip">Fill in email and password</span>
+      </div>
+      <div class="swap"><span style="font:500 12px -apple-system,system-ui,sans-serif;color:rgba(24,24,27,.45)">Just viewing? <a data-go="guest">Enter with the canvas password</a></span></div>
+    </section>
+
+    <section id="claim">
+      <header>${appMark}<h1>${esc(name)}</h1></header>
+      <p>You're invited to comment on this canvas.<br />Pick how you'll appear - comments carry your name.</p>
+      <div class="err" id="claim-err"></div>
+      <div class="stack">
+        <div class="chip" id="c-chip" hidden><b id="c-email"></b><span>INVITED</span></div>
+        <input type="password" id="c-pass" placeholder="Choose a password" autocomplete="new-password" />
+      </div>
+      <div class="idrow">
+        <button class="pfp" id="c-pfp" type="button" aria-label="Add a profile picture">+</button>
+        <input type="file" id="c-file" accept="image/*" hidden />
+        <input type="text" id="c-name" placeholder="Set a display name" autocomplete="nickname" style="flex:1" />
+      </div>
+      <div class="ctawrap">
+        <button class="cta" id="c-go" disabled>Join the canvas</button>
+        <span class="tip">Password and display name still needed</span>
+      </div>
+    </section>
+` : ''}
+  </div>
+  <script>
+  (() => {
+    const $ = (id) => document.getElementById(id)
+    const next = document.querySelector('[name=next]')
+    if (next) next.value = location.hash
+    // the guest CTA follows its field (server-side form, client-side gating)
+    const gpass = document.querySelector('#guest input[type=password]')
+    const gbtn = document.querySelector('#guest button.cta')
+    gpass.addEventListener('input', () => { gbtn.disabled = !gpass.value })
+    ${collabOn ? `
+    const show = (id) => {
+      for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === id)
+      const f = document.querySelector('#' + id + ' input:not([hidden])')
+      if (f) f.focus()
+    }
+    document.addEventListener('click', (e) => {
+      const go = e.target.closest('[data-go]')
+      if (go) { e.preventDefault(); show(go.dataset.go) }
+    })
+    const api = (path, body) => fetch('/__mv/api/' + path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => ({})) }))
+
+    // member sign-in: their session IS gate passage - reload keeps the deep link
+    const gate2 = (btn, fields, tipOk) => fields.forEach((f) => f.addEventListener('input', () => {
+      btn.disabled = !fields.every((x) => x.value.trim())
+    }))
+    gate2($('m-go'), [$('m-email'), $('m-pass')])
+    const signin = async () => {
+      $('m-go').disabled = true
+      const r = await api('auth/signin', { email: $('m-email').value.trim(), password: $('m-pass').value })
+      if (r.ok) return location.reload()
+      $('member-err').textContent = r.data.error || 'sign-in failed'
+      $('m-go').disabled = false
+    }
+    $('m-go').addEventListener('click', signin)
+    $('m-pass').addEventListener('keydown', (e) => e.key === 'Enter' && !$('m-go').disabled && signin())
+
+    // invite link (#/i/<token>): straight into the claim - the token IS the credential.
+    // A hash-only navigation onto an invite link never reloads the page - re-run then.
+    addEventListener('hashchange', () => { if (/^#\\/i\\//.test(location.hash)) location.reload() })
+    const inv = /^#\\/i\\/([\\w-]{8,128})$/.exec(location.hash)
+    let avatar = ''
+    if (inv) {
+      show('claim')
+      api('invite-info?token=' + encodeURIComponent(inv[1])).then((r) => {
+        if (r.ok) { $('c-email').textContent = r.data.email; $('c-chip').hidden = false }
+        else $('claim-err').textContent = r.data.error || 'this invite link is invalid'
+      })
+    }
+    // avatar: pick, downscale to 128px client-side, preview in the circle
+    $('c-pfp').addEventListener('click', () => $('c-file').click())
+    $('c-file').addEventListener('change', () => {
+      const file = $('c-file').files[0]
+      if (!file) return
+      const img = new Image()
+      img.onload = () => {
+        const s = Math.min(img.width, img.height), c = document.createElement('canvas')
+        c.width = c.height = 128
+        c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128)
+        avatar = c.toDataURL('image/jpeg', .85)
+        const p = $('c-pfp')
+        p.classList.add('set'); p.style.backgroundImage = 'url(' + avatar + ')'; p.textContent = ''
+        URL.revokeObjectURL(img.src)
+      }
+      img.src = URL.createObjectURL(file)
+    })
+    gate2($('c-go'), [$('c-pass'), $('c-name')])
+    const claim = async () => {
+      $('c-go').disabled = true
+      const r = await api('auth/claim', { token: inv ? inv[1] : '', password: $('c-pass').value, name: $('c-name').value.trim(), avatar: avatar || undefined })
+      if (r.ok) return location.href = location.pathname   // consumed invite leaves the URL
+      $('claim-err').textContent = r.data.error || 'claim failed'
+      $('c-go').disabled = false
+    }
+    $('c-go').addEventListener('click', claim)
+    $('c-name').addEventListener('keydown', (e) => e.key === 'Enter' && !$('c-go').disabled && claim())
+    ` : ''}
+  })()
+  </script>
   ${meta.branding ? `<footer><a href="https://marver.design" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> <svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
 </main></body></html>`)
 }
