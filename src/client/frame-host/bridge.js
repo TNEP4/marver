@@ -51,10 +51,12 @@ document.addEventListener('gesturestart', (e) => e.preventDefault())
 // click interception that captures the anchor bundle and posts it to the shell.
 
 const LASER_ID = 'mv-laser-style'
-// comment-mode cursor: the pin's chat-teardrop, hotspot at the tail
-const PICK_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cpath d='M132,24A100.11,100.11,0,0,0,32,124v84a16,16,0,0,0,16,16h84a100,100,0,0,0,0-200Z' fill='%2318181b' stroke='%23fff' stroke-width='16'/%3E%3C/svg%3E") 4 21, crosshair`
-// laser-mode cursor: the toolbar's crosshair reticle, hotspot dead center
-const LASER_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cg stroke='%23fff' stroke-width='34' fill='none'%3E%3Ccircle cx='128' cy='128' r='56'/%3E%3Cpath d='M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232' stroke-linecap='round'/%3E%3C/g%3E%3Cg stroke='%2318181b' stroke-width='16' fill='none'%3E%3Ccircle cx='128' cy='128' r='56'/%3E%3Cpath d='M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232' stroke-linecap='round'/%3E%3C/g%3E%3Ccircle cx='128' cy='128' r='12' fill='%2318181b'/%3E%3C/svg%3E") 12 12, crosshair`
+// comment-mode cursor: the pin's teardrop in the comment green, duotone (dark rim,
+// lighter inner) with a white halo ring so it pops on any content; hotspot at the tail
+const PICK_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cpath d='M132,24A100.11,100.11,0,0,0,32,124v84a16,16,0,0,0,16,16h84a100,100,0,0,0,0-200Z' fill='none' stroke='%23fff' stroke-width='40'/%3E%3Cpath d='M132,24A100.11,100.11,0,0,0,32,124v84a16,16,0,0,0,16,16h84a100,100,0,0,0,0-200Z' fill='%2334c759' stroke='%231f8a3d' stroke-width='12'/%3E%3Ccircle cx='138' cy='118' r='46' fill='%23fff' opacity='.32'/%3E%3C/svg%3E") 4 21, crosshair`
+// laser-mode cursor: the crosshair reticle in accent blue with a white halo ring,
+// hotspot dead center
+const LASER_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cg stroke='%23fff' stroke-width='46' fill='none'%3E%3Ccircle cx='128' cy='128' r='56'/%3E%3Cpath d='M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232' stroke-linecap='round'/%3E%3C/g%3E%3Cg stroke='%230088ff' stroke-width='20' fill='none'%3E%3Ccircle cx='128' cy='128' r='56'/%3E%3Cpath d='M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232' stroke-linecap='round'/%3E%3C/g%3E%3Ccircle cx='128' cy='128' r='16' fill='%230088ff' stroke='%23fff' stroke-width='8'/%3E%3C/svg%3E") 12 12, crosshair`
 const laserCss = () => {
   // depth via unrolled descendant combinators - CSS custom properties cannot cycle
   let rules = 'body { --mv-hue: 0 }\n'
@@ -150,10 +152,15 @@ document.addEventListener('mousemove', (e) => {
   document.body.appendChild(labelEl)
   place(labelEl, e)
 }, true)
+// label rides to the RIGHT of the cursor, vertically centered on it - below-right
+// hid the pointer's target; flips to the left when the right edge runs out
 const place = (label, e) => {
-  const pad = 14
-  label.style.left = Math.min(e.clientX + pad, innerWidth - label.offsetWidth - 4) + 'px'
-  label.style.top = Math.min(e.clientY + pad, innerHeight - label.offsetHeight - 4) + 'px'
+  const pad = 18
+  const w = label.offsetWidth, h = label.offsetHeight
+  let x = e.clientX + pad
+  if (x + w > innerWidth - 4) x = Math.max(4, e.clientX - pad - w)
+  label.style.left = x + 'px'
+  label.style.top = Math.min(Math.max(4, e.clientY - h / 2), innerHeight - h - 4) + 'px'
 }
 
 // the anchor bundle (SPEC-M3 §5): every rung captured at pick time

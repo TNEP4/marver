@@ -602,11 +602,17 @@ export function App() {
       }
       if (e.key === 'p') enterPlay()
       if (e.key === 't') { animateLayout(); runTidy() }
-      if (e.key === 'l') s.setLaser(!s.laser)
+      // laser and comment mode are one-at-a-time: comment mode already highlights
+      // what you'd click, so stacking the full rainbow on top only adds noise
+      if (e.key === 'l') {
+        if (!s.laser) commentsStore().setMode(false)
+        s.setLaser(!s.laser)
+      }
       // C = comment mode (SPEC-M3 §6, the Figma/Miro convention) · Shift+C = hide/show
       // pins · copy-file-paths moved to Y (changelog 0.4.0)
       if (e.key === 'c' && !e.shiftKey) {
         const c = commentsStore()
+        if (!c.commentMode) s.setLaser(false)
         c.setMode(!c.commentMode)
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
       }
@@ -810,12 +816,16 @@ export function App() {
         <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C hides pins</span></>}>
           <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
             const c = commentsStore()
+            if (!c.commentMode) useStore.getState().setLaser(false)
             c.setMode(!c.commentMode)
             toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
           }}><CommentIcon size={16} /></button>
         </Tip>
         <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
-          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
+          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
+            if (!laser) commentsStore().setMode(false)
+            useStore.getState().setLaser(!laser)
+          }}><LaserIcon size={16} /></button>
         </Tip>
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
