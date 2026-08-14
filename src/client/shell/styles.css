@@ -677,8 +677,10 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-card { position: absolute; z-index: 40; width: 300px; padding: 16px;
   transform: scale(var(--sh-inv, 1)); transform-origin: top left;
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--glass-brd);
-  box-shadow: var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
+  /* an open card is the active selection - it wears the frame's exact treatment */
+  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--accent);
+  outline: 2px solid var(--accent); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
   display: flex; flex-direction: column; gap: 12px;
   font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
@@ -710,7 +712,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-compose input::placeholder { color: var(--glass-ink-3) }
 .cm-compose input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring) }
 /* the draft composer is JUST the pill - no card chrome around a single input */
-.cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none;
+.cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
   backdrop-filter: none; -webkit-backdrop-filter: none }
 .cm-draft input { height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
 /* identity modal - same glass family */
