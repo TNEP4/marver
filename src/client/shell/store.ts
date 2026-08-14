@@ -803,10 +803,19 @@ export const useStore = create<State>((set, get) => {
         try {
           const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {
             method: 'PUT', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ board, baseHash: boardHash }),
+            // A9: a board loaded from disk (boardHash set) autosaves with mustExist so a
+            // rename/delete out from under us returns 409 instead of resurrecting a ghost.
+            body: JSON.stringify({ board, baseHash: boardHash, mustExist: !!boardHash }),
           })
           if (get().board !== boardName) return true   // switched boards mid-flight; stale response must not touch state
           if (res.status === 409) {
+            const info = await res.json().catch(() => ({} as { gone?: boolean }))
+            if (info?.gone) {
+              // renamed/deleted externally - drop the write, don't recreate it or loop
+              set({ dirty: false })
+              get().toast('this board was renamed or removed - not recreating it')
+              return true
+            }
             const reloaded = await get().boot()   // hash advances only when the authoritative reload commits
             if (reloaded) get().toast('board changed on disk - canvas layout reloaded')
             return reloaded   // false keeps dirty set; the next debounce retries once edits settle

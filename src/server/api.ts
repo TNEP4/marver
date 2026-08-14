@@ -107,8 +107,12 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         if (req.method === 'PUT') {
           const raw = await readBody(req)
           if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
-          let body: { board: unknown; baseHash?: string }
+          let body: { board: unknown; baseHash?: string; mustExist?: boolean }
           try { body = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+          // A9: an autosave of a previously-loaded board must never RESURRECT it. If the file
+          // was renamed or deleted out from under the shell (agent, git, another tab), reject
+          // instead of creating a ghost. Genuine board creation comes without mustExist.
+          if (body.mustExist && !existsSync(p)) return json(res, 409, { error: 'board no longer exists on disk', gone: true })
           const current = existsSync(p) ? readFileSync(p, 'utf8') : ''
           if (current && body.baseHash !== hash(current)) {
             let disk: unknown = null

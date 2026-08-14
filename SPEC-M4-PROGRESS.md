@@ -22,7 +22,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] A6 interaction leases (defer swaps mid-gesture/prototype; coalesce saves)
 - [ ] A7 controlled HMR for `design/**` (`handleHotUpdate` → `sh:frame-invalidated`)
 - [ ] A8 cold-boot: `server.warmup`, bounded nav concurrency, watchdog gated on optimizer state
-- [ ] A9 board autosave CAS + `mustExist` (ends ghost boards); manifest never marks a board dirty
+- [x] A9 board autosave CAS + `mustExist` (ends ghost boards); manifest never marks a board dirty
 - [ ] A10 play-mode scroll preservation (`data-sh-scroll-key`)
 
 ## Stage 2 — snapshot facade  (Track B — white-flash + smooth device sweep)
