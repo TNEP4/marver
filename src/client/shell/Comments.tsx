@@ -40,7 +40,9 @@ type Face = { email?: string; name?: string; avatar?: string }
 function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
   const seen = new Map<string, Face>()
   let count = 0
-  const add = (a?: Face) => { if (a) { const k = a.email || a.name || JSON.stringify(a); if (!seen.has(k)) seen.set(k, a) } }
+  // namespace the identity key so an email can never collide with someone's name,
+  // and normalize email case; authorless comments collapse to one 'anon' face
+  const add = (a?: Face) => { if (a) { const k = a.email ? `e:${a.email.toLowerCase()}` : a.name ? `n:${a.name}` : 'anon'; if (!seen.has(k)) seen.set(k, a) } }
   for (const t of threads) {
     count += 1 + t.replies.length
     add(t.author)
@@ -131,7 +133,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         )
       })}
       {active && open.some((t) => t.id === active) && (
-        <ThreadCard thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} node={node} />
+        <ThreadCard key={active} thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} node={node} />
       )}
       {draft?.nodeKey === node.key && <DraftComposer at={{ x: ((draft.anchor as any)?.rect?.x ?? 0) + ((draft.anchor as any)?.pos?.fx ?? 0.5) * ((draft.anchor as any)?.rect?.w ?? 0), y: ((draft.anchor as any)?.rect?.y ?? 0) + ((draft.anchor as any)?.pos?.fy ?? 0.5) * ((draft.anchor as any)?.rect?.h ?? 0) }} node={node} />}
     </>
@@ -148,8 +150,12 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
   const flip = at.x > node.w * 0.55
-  // clear only after the server took it - a failed send must not eat the words
-  const submit = async () => { if (text.trim() && await useComments.getState().replyOk(thread.id, text)) setText('') }
+  // clear only after the server took it - a failed send must not eat the words,
+  // and text typed WHILE the request was in flight must survive the clear
+  const submit = async () => {
+    const sent = text
+    if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
+  }
   return (
     <div className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>

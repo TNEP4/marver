@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## 0.4.0 - UNRELEASED
+## 0.4.0 - 2026-08-14
 
 The collaboration release (SPEC-M3): the canvas becomes a place where colleagues,
 the designer, and the coding agent close the feedback loop together.
