@@ -110,27 +110,34 @@ a quadrant for prioritization, a state diagram for lifecycle logic, a sequence
 for API choreography. The syntax reference is the Mermaid docs:
 https://mermaid.js.org/intro/ - pull the one page you need, apply, return.
 
-**Color carries meaning - and the floor is never gray-on-gray.** The marver
-theme already colors every node (accent-washed fills, accent borders, both
-modes) - a default diagram looks designed with zero effort, so never hand-set
-grays "to be safe" and never re-theme (init directives are stripped anyway).
-Where the diagram has SEMANTICS, add them with `classDef` on top:
+**Two pieces of built-in sugar make a flowchart read well with zero fiddling -
+use them, don't hand-roll their raw mermaid equivalents.**
+
+*Label hierarchy (`::`).* Write a node label as `Head :: gloss` and marver
+renders the **head bold** on top with the gloss on a lighter, smaller line
+below - no backticks, no `**`, no `<br>`. A box should scan as label-then-
+detail, so lead with the actor and let the example follow:
 
 ```
 flowchart LR
-  A[Draft] --> B{Review?} -->|approved| C[Published]
-  B -->|rejected| D[Archived]
-  classDef win fill:#34C759,stroke:#248A3D,color:#fff
-  classDef stop fill:#FF383C,stroke:#D70015,color:#fff
-  class C win
-  class D stop
+  S["Shipper :: the company that needs freight moved"]:::blue
+  C["Carrier :: the trucking company that hauls it"]:::orange
+  D["Driver :: the person behind the wheel"]:::purple
+  S --> C --> D
 ```
 
-Use the system palette (the same 12 colors the series ramp uses), a few
-classes at most, and never encode meaning in color ALONE - the label or shape
-must carry it too. Check the diagram in BOTH themes (`d`): fills flip with
-the theme, hand-set classDef colors do not, so pick values that hold on both
-grounds (the system colors do).
+*Family colors (`:::name`).* Tag a node with a built-in family and it gets a
+filled, on-brand color with a legible border in both themes - no `classDef`.
+The SAME six names work in `Md` prose (`:blue[the shipper's world]`), so a
+sentence and the diagram beside it read as one color language:
+`blue orange purple green red gray`. Pick ONE family per concept and hold it
+everywhere; reserve `gray` for the neutral/background actor. Never encode
+meaning in color ALONE - the label carries it too.
+
+The marver theme already accent-washes every default node (both modes), so a
+plain flowchart looks designed with zero effort - never hand-set grays "to be
+safe" and never re-theme (init directives are stripped anyway). Check in BOTH
+themes (`d`).
 
 ## Images and mood boards
 

@@ -23,6 +23,32 @@ export function cleanSource(src: string): string {
     .trim()
 }
 
+/** flowchart/graph is where classDef + markdown-string labels both apply; other diagram
+ *  types (sequence, pie, ...) don't take the family/hierarchy sugar. */
+function isFlowchart(src: string): boolean {
+  const first = src.split('\n').find((l) => l.trim())?.trim() ?? ''
+  return /^(flowchart|graph)\b/.test(first)
+}
+
+// D1: head/gloss auto-hierarchy. An agent writes a natural `Head :: gloss` label and marver
+// renders the head BOLD on top with the gloss on a lighter, smaller line below - no backticks,
+// no `**`, no `<br>` to hand-author. It expands the label into a mermaid markdown string (bold
+// head, blank line -> a second <p> the THEME_CSS styles down). ` :: ` (spaced double colon) is
+// the token: rare in prose, and distinct from the `:::family` class tag (no spaces, three colons).
+const GLOSS = ' :: '
+export function withLabelHierarchy(src: string): string {
+  if (!isFlowchart(src)) return src
+  return src.replace(/"([^"\n]*?)"/g, (m, body: string) => {
+    const at = body.indexOf(GLOSS)
+    if (at < 0 || body.startsWith('`')) return m           // no token, or already a markdown string
+    const head = body.slice(0, at).trim()
+    const gloss = body.slice(at + GLOSS.length).trim()
+    if (!head || !gloss) return m
+    const bhead = /[*`]/.test(head) ? head : `**${head}**`  // don't double-bold a hand-marked head
+    return `"\`${bhead}\n\n${gloss}\`"`                     // "`**Head**⏎⏎gloss`"
+  })
+}
+
 // D2: named family fills - the SAME colour language as the Md `:blue[...]` families, so an agent
 // tags a node `HQ:::blue` with zero classDef boilerplate and prose + diagram read as one palette.
 const DIAGRAM_FAMILIES: Record<string, string> = {
@@ -36,8 +62,7 @@ const DIAGRAM_FAMILIES: Record<string, string> = {
 /** Append the family classDefs to flowchart/graph diagrams (classDef is a flowchart feature).
  *  Unused defs are harmless; `X:::blue` resolves them regardless of position. */
 export function withFamilies(src: string): string {
-  const first = src.split('\n').find((l) => l.trim())?.trim() ?? ''
-  if (!/^(flowchart|graph)\b/.test(first)) return src
+  if (!isFlowchart(src)) return src
   const defs = Object.entries(DIAGRAM_FAMILIES).map(([n, s]) => `classDef ${n} ${s}`).join('\n')
   return `${src}\n${defs}`
 }
@@ -57,9 +82,9 @@ export function sanitizeSvg(svg: string): string {
 }
 
 export function Diagram({ title, children }: { title?: string; children?: ReactNode }) {
-  const src = withFamilies(cleanSource(
+  const src = withFamilies(withLabelHierarchy(cleanSource(
     typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : String(children ?? ''),
-  ))
+  )))
   const ref = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const uid = useRef(`mv-mmd-${++uidSeq}`)

@@ -25,6 +25,12 @@ export const THEME_CSS = `
   .nodeLabel, .cluster-label { font-weight: 600; line-height: 1.4; }
   .nodeLabel p, .edgeLabel p, .label p { margin: 0; }
   .edgeLabel, .edgeLabel .label { font-weight: 500; }
+  /* D1 head/gloss hierarchy: a "Head :: gloss" label renders as two paragraphs -
+     bold head (the strong from the markdown), lighter/smaller gloss below. */
+  .nodeLabel p + p, .cluster-label p + p {
+    font-weight: 400; font-size: 0.84em; opacity: 0.68;
+    letter-spacing: 0; margin-top: 3px;
+  }
 `
 
 /** Mermaid themeVariables for one mode. Base theme + these = the marver look. */

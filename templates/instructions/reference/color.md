@@ -62,9 +62,9 @@ diagram box, the section heading). That consistency is what lets a reader link t
 picture to the prose at a glance. Reserve `gray` for the neutral/background ("the platform",
 "out of scope"); use the vivid families for the actors that matter.
 
-Node text: lead with the label, then the gloss - a box should scan as
-label-then-detail, not a run-on. Mermaid markdown-string labels (backtick-wrapped)
-render bold, so make the main word prominent and the example secondary.
+Node text: write labels as `Head :: gloss` - marver renders the head bold on top
+with the gloss lighter and smaller below, so a box scans as label-then-detail,
+never a run-on. Just the ` :: ` token; no backticks or `**` needed.
 
 ## Verify
 

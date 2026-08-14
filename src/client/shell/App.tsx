@@ -202,7 +202,7 @@ function SelectionBar() {
         </Tip>
       ))}
       <i className="sep" />
-      <Tip label={<><b>{multi ? `Copy ${selection.length} file paths` : 'Copy file path'}</b><span className="k">C</span></>}>
+      <Tip label={<><b>{multi ? `Copy ${selection.length} file paths` : 'Copy file path'}</b><span className="k">⇧P</span></>}>
         <button className="icon"
           onClick={() => { navigator.clipboard.writeText(selectedFrames().map((f) => f.file).join('\n')); toast(multi ? `${selection.length} file paths copied` : 'file path copied') }}><SignpostIcon size={15} /></button>
       </Tip>
@@ -650,7 +650,7 @@ export function App() {
         s.setLaser(!s.laser)
       }
       // C = comment mode (SPEC-M3 §6, the Figma/Miro convention) · Shift+C = hide/show
-      // pins · copy-file-paths moved to Y (changelog 0.4.0)
+      // pins · Shift+P = copy file path(s) (P alone is play; D6, changelog 0.4.0)
       if (e.key === 'c' && !e.shiftKey) {
         const c = commentsStore()
         if (!c.commentMode) s.setLaser(false)
@@ -658,7 +658,7 @@ export function App() {
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
       }
       if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); c.setShow(!c.show) }
-      if (e.key === 'y' && s.selection.length) {
+      if (e.key === 'P' && e.shiftKey && s.selection.length) {
         const files = s.selection
           .map((k) => { const n = s.nodes.find((x) => x.key === k); return n ? s.frameFor(n)?.file : undefined })
           .filter((f): f is string => !!f)

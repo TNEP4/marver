@@ -4,7 +4,7 @@ import { affectedFrameIds, extractMeta, toFrameId, type Manifest } from '../src/
 import { tidy } from '../src/client/shell/tidy.ts'
 import { humanize } from '../src/client/shell/labels.ts'
 import { renderMarkdown } from '../src/client/content/md.ts'
-import { withFamilies } from '../src/client/content/diagram.tsx'
+import { withFamilies, withLabelHierarchy } from '../src/client/content/diagram.tsx'
 
 describe('withFamilies (D2 diagram family colors)', () => {
   it('appends family classDefs to a flowchart', () => {
@@ -16,6 +16,38 @@ describe('withFamilies (D2 diagram family colors)', () => {
   it('leaves a non-flowchart diagram untouched', () => {
     const seq = 'sequenceDiagram\n  A->>B: hi'
     expect(withFamilies(seq)).toBe(seq)
+  })
+})
+
+describe('withLabelHierarchy (D1 head/gloss auto-format)', () => {
+  it('expands "Head :: gloss" into a bold-head markdown string', () => {
+    const out = withLabelHierarchy('flowchart TB\n  A["Shipper :: needs freight moved"]')
+    expect(out).toContain('A["`**Shipper**\n\nneeds freight moved`"]')
+  })
+  it('leaves a plain label (no :: token) untouched', () => {
+    const src = 'flowchart TB\n  A["Shipper"]'
+    expect(withLabelHierarchy(src)).toBe(src)
+  })
+  it('does not double-wrap a label already authored as a markdown string', () => {
+    const src = 'flowchart TB\n  A["`**Shipper** :: x`"]'
+    expect(withLabelHierarchy(src)).toBe(src)
+  })
+  it('does not add ** when the head is already emphasized', () => {
+    const out = withLabelHierarchy('flowchart TB\n  A["*Shipper* :: gloss"]')
+    expect(out).toContain('"`*Shipper*\n\ngloss`"')
+  })
+  it('composes with families and preserves an edge after the label', () => {
+    const out = withFamilies(withLabelHierarchy('flowchart LR\n  A["Shipper :: needs freight"] --> B["Carrier :: hauls it"]:::orange'))
+    expect(out).toContain('A["`**Shipper**\n\nneeds freight`"] --> B["`**Carrier**\n\nhauls it`"]:::orange')
+    expect(out).toContain('classDef orange')
+  })
+  it('does not touch a :::family class tag (three colons, no spaces)', () => {
+    const src = 'flowchart TB\n  A["Shipper"]:::blue'
+    expect(withLabelHierarchy(src)).toBe(src)
+  })
+  it('leaves non-flowchart diagrams untouched', () => {
+    const seq = 'sequenceDiagram\n  A->>B: "x :: y"'
+    expect(withLabelHierarchy(seq)).toBe(seq)
   })
 })
 
