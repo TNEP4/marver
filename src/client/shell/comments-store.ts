@@ -102,6 +102,12 @@ export const useComments = create<CommentsState>((set, get) => {
       if (!board) return false
       const res = await api(`comments/${board}`, { events })
       if (res.status === 401) { set({ needsIdentity: true }); return false }
+      // any other refusal gets said out loud - a silent dead Enter key reads as a bug
+      // (the canonical case: a signed-in viewer on a read-only board)
+      if (!res.ok) {
+        const { useStore } = await import('./store.ts')
+        useStore.getState().toast(String((res.data as any)?.error ?? 'comment rejected'))
+      }
       // union only what the server took - a rejected send must not leave phantoms -
       // and only if the user is still LOOKING at that board (a slow response after a
       // board switch must not leak events into the wrong client state); client ids
