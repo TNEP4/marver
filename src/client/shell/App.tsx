@@ -5,6 +5,7 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
+import { onSnapshotMessage } from './canvas/snapshots.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
@@ -617,6 +618,8 @@ export function App() {
         // While engaged the frame is leased, so a hot update to it defers until disengage.
         s.setExternalLease(nodeKey, 'laser', !!data.laser)
         s.setExternalLease(nodeKey, 'comment', !!data.comment)
+      } else if (data.type === 'sh:snapshot-result' || data.type === 'sh:snapshot-error') {
+        onSnapshotMessage(data)   // Stage 2: cache the frame's snapshot blob (or free the slot on error)
       }
     }
     window.addEventListener('message', onMsg)

@@ -4,6 +4,7 @@ import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
+import { registerSnapshotImg, dropSnapshot, scheduleCapture } from './snapshots.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -61,6 +62,19 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     iframeRef.current = el
     registerWin()
   }, [node.key])
+
+  // Stage 2: register the facade <img> so the snapshot coordinator can drive its src imperatively.
+  const bindSnapshot = useCallback((el: HTMLImageElement | null) => { registerSnapshotImg(node.key, el) }, [node.key])
+  // capture a fresh snapshot once the frame is ready and quiet (and after a reload/resize/theme
+  // change - keyed on nav/size/theme). Never during a gesture; the coordinator serializes captures.
+  useEffect(() => {
+    if (node.status !== 'ready' || node.missing) return
+    const iframe = iframeRef.current
+    if (!iframe) return
+    const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), width: node.w, height: node.h, theme: node.theme }), 450)
+    return () => clearTimeout(t)
+  }, [node.status, node.nav, node.w, node.h, node.theme, node.key, node.missing])
+  useEffect(() => () => dropSnapshot(node.key), [node.key])   // revoke the object URL on unmount
 
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board
@@ -136,6 +150,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       }
     }
     world.classList.add('sh-gesturing')
+    // Stage 2: a resized frame stays LIVE (its snapshot must not cover the reflow the user wants to see)
+    const nodeEl = mode !== 'move' ? (el.closest('.sh-node') as HTMLElement | null) : null
+    nodeEl?.classList.add('sh-resizing')
     setGesture(true)
 
     const onMove = (ev: PointerEvent) => {
@@ -159,6 +176,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       finished = true
       try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
       world.classList.remove('sh-gesturing')
+      nodeEl?.classList.remove('sh-resizing')
       setGesture(false)
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', done)
@@ -249,6 +267,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           onLoad={registerWin}
           style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
+        {/* Stage 2: snapshot facade - covers the iframe only while the canvas is gesturing (CSS),
+            so a heavy frame never flashes white while its compositor layer is being re-rastered.
+            pointer-events:none; the coordinator sets .src imperatively (no React render per tick). */}
+        <img ref={bindSnapshot} className="sh-snapshot" alt="" aria-hidden="true" />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}

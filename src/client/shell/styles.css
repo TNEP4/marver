@@ -197,6 +197,13 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none; font-variant-numeric: tabular-nums }
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }
+/* Stage 2 snapshot facade: invisible at rest; covers the iframe instantly while the canvas is
+   gesturing (so a heavy frame never flashes white mid-transform); fades back out on settle - by
+   which point the live iframe has re-painted (the gesture class lingers ~160ms past the last move). */
+.sh-snapshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; pointer-events: none; transition: opacity .14s ease }
+#sh-world.sh-gesturing .sh-snapshot[data-ready] { opacity: 1; transition: none }
+#sh-world.sh-gesturing .sh-node.sh-resizing .sh-snapshot { opacity: 0 !important }
 .sh-overlay { position: absolute; inset: 0; cursor: default }
 .sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
