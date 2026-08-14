@@ -212,9 +212,11 @@ function AvatarPick({ value, onPick }: { value: string; onPick: (dataUri: string
   }
   return (
     <>
-      <button className={`cm-pfp${value ? ' set' : ''}`} aria-label="Add a profile picture"
-        style={value ? { backgroundImage: `url(${value})` } : undefined}
-        onClick={() => fileRef.current?.click()}>{value ? '' : '+'}</button>
+      <Tip side="top" label={<b>{value ? 'Change your photo' : 'Select your profile picture'}</b>}>
+        <button className={`cm-pfp${value ? ' set' : ''}`} aria-label="Select your profile picture"
+          style={value ? { backgroundImage: `url(${value})` } : undefined}
+          onClick={() => fileRef.current?.click()}>{value ? '' : '+'}</button>
+      </Tip>
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
     </>
   )

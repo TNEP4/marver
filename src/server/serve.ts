@@ -261,12 +261,17 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
   .chip b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
   .chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: rgba(24, 24, 27, .4); flex: none }
   .idrow { display: flex; align-items: center; gap: 10px }
-  .pfp { width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed rgba(24, 24, 27, .3);
+  .pfp { position: relative; width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed rgba(24, 24, 27, .3);
     background: #fff center/cover no-repeat; color: rgba(24, 24, 27, .4); font-size: 18px; flex: none;
     display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
     transition: border-color .15s, color .15s }
   .pfp:hover { border-color: #0088ff; color: #0088ff }
   .pfp.set { border-style: solid; border-color: rgba(24, 24, 27, .12); color: transparent }
+  .pfp::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 0;
+    padding: 5px 10px; border-radius: 7px; background: #18181b; color: #fafafa;
+    font: 600 11px -apple-system, system-ui, sans-serif; white-space: nowrap; pointer-events: none;
+    opacity: 0; transform: translateY(3px); transition: opacity .15s, transform .15s }
+  .pfp:hover::after { opacity: 1; transform: translateY(0) }
   button.cta { height: 40px; border: 0; border-radius: 999px; background: #18181b; color: #fafafa;
     font: 600 13px -apple-system, system-ui, sans-serif; cursor: pointer; width: 100%;
     transition: background .18s, color .18s }
@@ -334,7 +339,7 @@ ${collabOn ? `
         <input type="password" id="c-pass" placeholder="Choose a password" autocomplete="new-password" />
       </div>
       <div class="idrow">
-        <button class="pfp" id="c-pfp" type="button" aria-label="Add a profile picture">+</button>
+        <button class="pfp" id="c-pfp" type="button" aria-label="Select your profile picture" data-tip="Select your profile picture">+</button>
         <input type="file" id="c-file" accept="image/*" hidden />
         <input type="text" id="c-name" placeholder="Set a display name" autocomplete="nickname" style="flex:1" />
       </div>
@@ -409,7 +414,7 @@ ${collabOn ? `
         c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128)
         avatar = c.toDataURL('image/jpeg', .85)
         const p = $('c-pfp')
-        p.classList.add('set'); p.style.backgroundImage = 'url(' + avatar + ')'; p.textContent = ''
+        p.classList.add('set'); p.style.backgroundImage = 'url(' + avatar + ')'; p.textContent = ''; p.dataset.tip = 'Change your photo'
         URL.revokeObjectURL(img.src)
       }
       img.src = URL.createObjectURL(file)
