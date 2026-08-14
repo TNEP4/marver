@@ -128,6 +128,42 @@ Small items that are not milestone work. One line each; delete when done.
   optimizer at `marver dev` boot before printing "canvas ready" to remove the race at source
   (costs a few cold-boot seconds). Do (a) regardless - it's the "hot reload in the background"
   behavior Nic wants. Verified the frames render clean once warm.
+- **Canvas performance at scale - the PRIMARY ask (dogfooding hertz-transpo, 2026-08-14).**
+  "All scenes" now holds ~30+ live frames (Tms-specs 6 + Flow-01..10 × overview/reference),
+  and zoom/pan goes slow, janky, "pixel-like"; wheel zoom also fights page scroll. Nic's bar,
+  stated plainly: **the canvas must stay fast no matter how much content or how heavy it is -
+  smooth zoom/pan at ANY canvas size, in BOTH dev and publish mode.** Root: every frame is a
+  live iframe rendering its full React tree, all mounted at once even at 9% zoom where they're
+  illegible thumbnails. Fixes (this is the M1 "culling with hysteresis + pan perf gate p95
+  <16ms @ 30 frames" leftover, now urgent and expanded):
+    - **Cull / virtualize:** freeze or unmount frames outside (and not near) the viewport;
+      hysteresis so panning doesn't thrash mount/unmount. Only visible frames stay live.
+    - **Level-of-detail:** below a zoom threshold, swap the live iframe for a cheap static
+      snapshot/thumbnail - at 9% zoom you need 30 images, not 30 live React apps. Re-hydrate
+      to live when zoomed in / interacted. Biggest single win for heavy boards.
+    - **Zoom/pan smoothness:** GPU-composited transform only, throttle to rAF, and wheel/pinch
+      must NEVER scroll the host page (verify the preventDefault path holds under load).
+    - Applies to the published canvas too, not just dev.
+    - "All scenes" tension Nic flagged: rendering every frame is handy for debugging but a
+      perf hazard; culling/LOD makes it safe, OR make all-scenes lazy/opt-in. Prefer the
+      former - the whole point is "fast no matter what."
+  Set a perf gate and hold it: p95 frame time <16ms while panning a 50-frame board.
+- **Board identity: slug = filename = route; spaces/caps break loading (confirmed,
+  2026-08-14).** An agent named a board file `TMS High level.json` (spaces) to get a pretty
+  display name; clicking it toasts `could not load "TMS High level" - staying on
+  tms-high-level` and shows an empty canvas. Root: `loadBoardState` fetches
+  `${ROUTE}/api/boards/${boardName}` with the name UN-encoded (store.ts ~256), and more
+  fundamentally the board filename doubles as the URL route/slug AND the display name - spaces
+  and capitals can't be a route. This is the same knot as the ghost-board (rename churn) and
+  the humanize-labels items: **board identity must be a kebab SLUG (the filename + the
+  `#/b/<slug>` route); the display name is DERIVED (humanize) or set via an explicit `title`
+  field inside the json - never encoded into the filename.** Fixes: (1) reject/slugify board
+  names with spaces or caps on save (a board file must be a valid slug); (2) add a `title`
+  field to board json for the display name so `TMS High level` is legal without breaking the
+  route; (3) belt-and-suspenders, `encodeURIComponent` the board name in the fetch. Until
+  then, the authoring rule (tell the agent): **board files under `design/boards/` must be
+  lowercase kebab slugs, no spaces, no caps - the filename IS the URL. Don't rename a board
+  file to add spaces/caps for looks.**
 - **Make rich diagram/doc authoring EASY - the agent struggles to hand-roll it
   (dogfooding hertz-transpo, 2026-08-14; Nic's biggest content-frame ask so far).** The
   agent CAN produce beautiful content frames (the "platform at a glance" board is genuinely
