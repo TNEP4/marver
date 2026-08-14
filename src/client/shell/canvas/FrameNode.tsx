@@ -20,7 +20,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const frame = useStore((s) => s.frameFor(node))
   const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
-  const scale = useStore((s) => s.scale)
+  // B0.1: no reactive scale subscription - it re-rendered every FrameNode on every
+  // pan/zoom tick. gestureScale below measures the world rect (the canonical source,
+  // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
   const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const themeRef = useRef(node.theme)
@@ -94,7 +96,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     const world = document.getElementById('sh-world')!
     // Law G-5: measured scale, never stored zoom state. #sh-world is 1px wide by design,
     // so its rendered rect width IS the scale (survives browser page-zoom too).
-    const gestureScale = world.getBoundingClientRect().width || scale || 1
+    const gestureScale = world.getBoundingClientRect().width || useStore.getState().scale || 1
     const start = { x: e.clientX, y: e.clientY, nx: node.x, ny: node.y, nw: node.w, nh: node.h }
     // group drag: moving any member moves the whole selection by the same delta
     const st = useStore.getState()
