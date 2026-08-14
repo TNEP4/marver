@@ -281,6 +281,7 @@ export function IdentityDialog() {
                 : <input placeholder="Invite token" value={token} onChange={(e) => setToken(e.target.value)} />}
               <input placeholder="Choose a password" type="password" autoComplete="new-password"
                 value={password} onChange={(e) => setPassword(e.target.value)} />
+              <hr className="cm-div" />
               <div className="cm-idrow">
                 <AvatarPick value={avatar} onPick={setAvatar} />
                 <input placeholder="Set a display name" style={{ flex: 1 }}

@@ -742,8 +742,10 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   background: var(--cm-field); color: var(--glass-ink); font: inherit; outline: none }
 .cm-modal input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
 .cm-err { color: #b42318; font-size: 12px }
-.cm-chip { height: 38px; padding: 0 14px; border-radius: 999px; background: var(--glass-hover);
+.cm-chip { height: 38px; box-sizing: border-box; padding: 0 14px; border-radius: 999px;
+  border: 1px solid transparent; background: var(--glass-hover);
   display: flex; align-items: center; justify-content: space-between; gap: 10px; overflow: hidden }
+.cm-div { border: 0; height: 1px; background: var(--glass-brd); margin: 1px 2px; align-self: stretch }
 .cm-chip b { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .cm-chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--glass-ink-3); flex: none }
 .cm-idrow { display: flex; align-items: center; gap: 10px }

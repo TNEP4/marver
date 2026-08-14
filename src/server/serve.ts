@@ -256,7 +256,13 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
   input::placeholder { color: rgba(24, 24, 27, .35) }
   input:focus { border-color: #0088ff; box-shadow: 0 0 0 3px rgba(0, 136, 255, .18) }
   .stack { display: flex; flex-direction: column; gap: 10px }
-  .chip { height: 40px; padding: 0 16px; border-radius: 999px; background: rgba(24, 24, 27, .05);
+  /* spacing rhythm on the claim: description breathes before the fields, a hairline
+     divides credentials from identity, and the CTA sits clear of the name row */
+  .lead { margin-bottom: 6px }
+  .cdiv { border: 0; height: 1px; background: rgba(24, 24, 27, .09); margin: 2px 2px }
+  .ctawrap { margin-top: 8px }
+  .chip { height: 40px; box-sizing: border-box; padding: 0 16px; border-radius: 999px;
+    border: 1px solid transparent; background: rgba(24, 24, 27, .05);
     display: flex; align-items: center; justify-content: space-between; gap: 10px; overflow: hidden }
   .chip b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
   .chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: rgba(24, 24, 27, .4); flex: none }
@@ -303,7 +309,7 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
     <section id="guest" class="on">
       <form method="post" action="/__mv/auth" style="display:flex;flex-direction:column;gap:14px">
         <header>${appMark}<h1>${esc(name)}</h1></header>
-        <p>You're one step from the canvas. This space is private - enter the canvas password to step inside.</p>
+        <p class="lead">You're one step from the canvas. This space is private - enter the canvas password to step inside.</p>
         <div class="err">${error ? esc(error) : ''}</div>
         <input type="password" name="password" placeholder="Canvas password" autofocus autocomplete="current-password" />
         <input type="hidden" name="next" />
@@ -317,7 +323,7 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
 ${collabOn ? `
     <section id="member">
       <header>${appMark}<h1>${esc(name)}</h1></header>
-      <p>Welcome back - sign in with your own password. Your account already covers reading.</p>
+      <p class="lead">Welcome back - sign in with your own password. Your account already covers reading.</p>
       <div class="err" id="member-err"></div>
       <div class="stack">
         <input type="email" id="m-email" placeholder="Email" autocomplete="email" />
@@ -332,12 +338,13 @@ ${collabOn ? `
 
     <section id="claim">
       <header>${appMark}<h1>${esc(name)}</h1></header>
-      <p>You're invited to comment on this canvas.<br />Pick how you'll appear - comments carry your name.</p>
+      <p class="lead">You're invited to comment on this canvas.<br />Pick how you'll appear - comments carry your name.</p>
       <div class="err" id="claim-err"></div>
       <div class="stack">
         <div class="chip" id="c-chip" hidden><b id="c-email"></b><span>INVITED</span></div>
         <input type="password" id="c-pass" placeholder="Choose a password" autocomplete="new-password" />
       </div>
+      <hr class="cdiv" />
       <div class="idrow">
         <button class="pfp" id="c-pfp" type="button" aria-label="Select your profile picture" data-tip="Select your profile picture">+</button>
         <input type="file" id="c-file" accept="image/*" hidden />
