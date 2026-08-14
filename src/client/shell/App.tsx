@@ -554,13 +554,20 @@ export function App() {
           // success confirms IN the frame's hover label (right where the eyes are);
           // only failure needs the toast
           navigator.clipboard.writeText(addr).then(
-            () => el.contentWindow?.postMessage({ type: 'sh:copy-ok' }, location.origin),
+            () => el.contentWindow?.postMessage({ type: 'sh:copy-ok', seq: data.seq }, location.origin),
             () => toast('copy blocked - click the canvas first'))
         }
+      } else if (data.type === 'sh:frame-down') {
+        // clicks INSIDE a frame never reach the shell document - the frame reports
+        // them so an open thread card dismisses modal-style from anywhere
+        const c = commentsStore()
+        if (c.active) c.setActive(null)
       } else if (data.type === 'sh:picked') {
         // comment mode: the frame reports the picked element - stage the draft on
-        // that node; the CommentLayer opens the composer at the pin
+        // that node (picking while a thread is open replaces it, modal-style);
+        // the CommentLayer opens the composer at the pin
         const c = commentsStore()
+        if (c.active) c.setActive(null)
         if (c.commentMode) c.setDraft({ nodeKey, frame: String(data.id ?? ''), anchor: data.anchor })
       } else if (data.type === 'sh:go') {
         const target = String(data.target ?? '')

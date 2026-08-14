@@ -113,8 +113,11 @@ const clearHover = () => {
 }
 
 // the shell confirmed the clipboard write - the hover label ITSELF says so (a
-// corner toast is too far from where the eyes are), then reverts after 2s
-const showCopied = () => {
+// corner toast is too far from where the eyes are), then reverts after 2s.
+// The seq + element check keeps a slow ack from decorating a DIFFERENT label
+// (pointer moved on, or laser was retoggled, before writeText resolved).
+const showCopied = (seq) => {
+  if (seq !== copySeq || hoverEl !== copyEl) return
   if (!labelEl) return
   labelEl.classList.add('mv-copied')
   labelEl.innerHTML = COPIED_HTML
@@ -189,6 +192,12 @@ const anchorBundle = (el, e) => {
   }
 }
 
+// every press is reported (tiny message, capture, nothing prevented): the shell
+// uses it to close an open thread card when the click lands INSIDE a frame -
+// shell-document listeners can never see those
+document.addEventListener('pointerdown', () => post({ type: 'sh:frame-down', id }), true)
+
+let copySeq = 0, copyEl = null
 document.addEventListener('click', (e) => {
   if (!modeActive()) return
   e.preventDefault()
@@ -198,7 +207,10 @@ document.addEventListener('click', (e) => {
   // comment mode wins when both are on; plain laser click hands the agent an
   // exact address - frame file + css path (+ source loc when the build stamps one)
   if (pickOn) post({ type: 'sh:picked', id, anchor: anchorBundle(el, e) })
-  else post({ type: 'sh:laser-copy', id, path: cssPath(el), source: el.dataset.mvLoc ?? null })
+  else {
+    copyEl = el
+    post({ type: 'sh:laser-copy', id, seq: ++copySeq, path: cssPath(el), source: el.dataset.mvLoc ?? null })
+  }
 }, true)
 
 /** Resolve a stored anchor back to a rect (the ladder, §5): semantics-verified CSS
@@ -241,7 +253,7 @@ window.addEventListener('message', (e) => {
   // independent toggles - each mode contributes its own rules, applyModes composes
   if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes() }
   if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes() }
-  if (m.type === 'sh:copy-ok') showCopied()
+  if (m.type === 'sh:copy-ok') showCopied(m.seq)
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
     const rects = m.anchors.slice(0, 200).map((a) => {
       let el = null
