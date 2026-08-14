@@ -17,7 +17,12 @@
  * perfMark(name) + counters are the plug points Stages 2-3 use (blank-frame / warm-latency).
  */
 
-const GESTURING = () => document.getElementById('sh-world')?.classList.contains('sh-gesturing') ?? false
+// "in motion" = a pan/zoom/drag gesture OR a device-sweep/tidy preset animation - both are the
+// windows where jank matters and the perf gate is measured.
+const GESTURING = () => {
+  const w = document.getElementById('sh-world')
+  return !!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))
+}
 
 const frames: number[] = []   // inter-frame intervals (ms) during gestures
 const tasks: number[] = []    // long-task durations (ms) during gestures
