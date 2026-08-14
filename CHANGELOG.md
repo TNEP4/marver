@@ -32,8 +32,11 @@ the designer, and the coding agent close the feedback loop together.
   never clobbers collected feedback (the store unions the bundle seed on boot).
 - **The agent works the queue.** `marver comments list --open --json` / `reply` /
   `resolve --addressed-in <frame>` - resolving records which variant answered the
-  feedback, making the fork-don't-overwrite doctrine auditable. `instructions/iterate.md`
-  now carries the comments-as-work-queue discipline.
+  feedback, making the fork-don't-overwrite doctrine auditable. `marver comments
+  invite <email>` mints single-use invite links from the CLI (owner only), `revoke
+  <email>` retires an account. `instructions/iterate.md` carries the
+  comments-as-work-queue discipline; `instructions/publish.md` is the agent-facing
+  deploy runbook (boards policy, gate, volume, accounts) and AGENTS.md routes to it.
 - **Laser mode.** `L` (or the toolbar crosshair) outlines every element in every frame
   with depth-hued borders (60° per nesting level) plus a DevTools-style hover label.
   Zero layout shift - outlines only. Clicking an element copies its full address for

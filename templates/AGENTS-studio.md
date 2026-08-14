@@ -21,7 +21,8 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Build | hi-fi frames from real components | instructions/craft.md + components.md |
 | Iterate | changing a frame the human has seen, or retiring explorations | instructions/iterate.md |
 | Review | before presenting anything | instructions/review.md |
-| Boards | creating a board or publishing | instructions/boards.md |
+| Boards | creating a board, choosing what ships | instructions/boards.md |
+| Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
 
 Refining an existing screen: Configure must hold, then Build + Review. New work runs
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a

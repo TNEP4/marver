@@ -7,6 +7,8 @@
  * list            threads from design/comments/ (--open, --board, --json)
  * reply <thread>  append a reply (--body) - the agent's voice in the loop
  * resolve <thread>  mark addressed (--addressed-in <frame> records WHICH variant)
+ * invite <email>  mint a single-use invite link (owner only, needs connect first)
+ * revoke <email>  revoke an account and its sessions (owner only)
  */
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
@@ -94,9 +96,38 @@ export async function commentsCommand(root: string, action: string, value: strin
       await pushIfConnected(root)
       return void console.log(`  resolved ${t.id}${opts.addressedIn ? ` - addressed in ${opts.addressedIn}` : ''}`)
     }
+    case 'invite': {
+      if (!value || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) throw new Error('usage: comments invite <email>')
+      const { token } = await ownerApi(root, 'invite', { email: value })
+      const url = loadCollab(root)!.url.replace(/\/+$/, '')
+      console.log(`  invite for ${value} (single-use, 7 days):`)
+      console.log(`    canvas:  ${url}`)
+      console.log(`    token:   ${token}`)
+      console.log(`  they open the canvas, try to comment, pick "I have an invite", paste the token.`)
+      return
+    }
+    case 'revoke': {
+      if (!value) throw new Error('usage: comments revoke <email>')
+      await ownerApi(root, 'revoke', { email: value })
+      return void console.log(`  revoked ${value} - their sessions are dead`)
+    }
     default:
-      throw new Error(`unknown action "${action}" - connect | sync | list | reply | resolve`)
+      throw new Error(`unknown action "${action}" - connect | sync | list | reply | resolve | invite | revoke`)
   }
+}
+
+/** Owner-only account call against the connected canvas, via the device credential. */
+const ownerApi = async (root: string, path: string, body: unknown): Promise<any> => {
+  const collab = loadCollab(root)
+  if (!collab) throw new Error(`not connected - run \`${NAME} comments connect <url>\` first`)
+  const res = await fetch(`${collab.url.replace(/\/+$/, '')}/__mv/api/${path}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${collab.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({})) as any
+  if (!res.ok) throw new Error(data.error ?? `canvas answered ${res.status}`)
+  return data
 }
 
 const pushIfConnected = async (root: string) => {

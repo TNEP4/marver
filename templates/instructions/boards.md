@@ -78,9 +78,12 @@ ordered list of atoms and `{ "space": n }` tokens.
 
 ## Publishing
 
-Boards are the unit of publishing (`marver build --boards <name>`): every frame a
-published flow data-gotos must be ON that board - unlisted frames are excluded from
-the bundle at build time.
+Boards are the unit of publishing: `design/publish.json` names each shipped board
+with `read` or `comment` rights (`marver build` fails without it - default-closed;
+`--boards <name>` overrides ad hoc). Every frame a published flow data-gotos must
+be ON a published board - unlisted frames are excluded from the bundle at build
+time. Deploying the built canvas - gate password, the collaboration volume,
+accounts and invites - is its own phase: **instructions/publish.md**.
 
 The published gate page shows the app's identity: `design/logo.svg` + the host
 package name (overridable via config `share`). If the app has no logo asset yet,
