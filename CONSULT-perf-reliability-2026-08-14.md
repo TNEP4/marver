@@ -1212,3 +1212,205 @@ The naive implementations most likely to betray the product are:
 - Allowing an autosave PUT to create a previously existing but now missing board.
 - Reloading an active board to resolve disk-wins conflicts.
 - Promising conflict-free direct JSON editing by multiple external agents.
+
+---
+
+# Codex consult: Stage 2 snapshot facade (2026-08-14)
+
+Verdict: DOM snapshot facade in dev (html-to-image, frame-produced), NOT the portal (Stage 5
+fallback). Min first slice = snapshot-during-gesture (kills white-flash); device-sweep FLIP next.
+
+The smallest robust path is: **frame-produced DOM snapshots in dev, cached and displayed by the shell; keep the portal out of Stage 2.**
+
+Use `html-to-image` as the first producer. It already implements the `<foreignObject>` pipeline, including computed styles, font/image embedding, pseudo-elements, open shadow roots, canvas, and current video frames where origin-clean. Do not write a second serializer. It is still a DOM reconstruction—not a true screenshot—and must fail soft. [html-to-image documents its pipeline and limits](https://github.com/bubkoo/html-to-image#how-it-works); html2canvas has a narrower CSS renderer and explicitly lacks filters, box shadows, blending, and other properties used by modern sites. [html2canvas limitations](https://html2canvas.hertzen.com/documentation), [supported CSS](https://html2canvas.hertzen.com/features).
+
+## 1. Capture mechanism and portal decision
+
+Default in dev:
+
+- Run `html-to-image.toBlob()` **inside the frame document**, not from the parent over `iframe.contentDocument`.
+- The frame bridge receives `sh:snapshot-request`, dynamically loads the capture code, captures its own viewport, and posts a `Blob` back.
+- The shell never captures synchronously at gesture start.
+
+Why frame-side:
+
+- Fonts, CSSOM, relative URLs, `document.fonts`, scrolling, canvas, and the renderer’s ambient `window` all belong to the iframe realm.
+- It works through the existing source-validated `WindowProxy → node` route in [App.tsx](/Users/nictouron/marver/src/client/shell/App.tsx:534).
+- It gives TSX and injected-bridge HTML frames one protocol. Make the existing injected bridge a bundled entry so capture can be dynamically imported without putting the rasterizer into every frame’s boot path.
+
+Important correction: a same-origin iframe does **not** make all its pixels origin-clean. Cross-origin images, fonts, nested iframes, video, or canvases can still taint or disappear without suitable CORS headers. [MDN explains canvas tainting](https://developer.mozilla.org/en-US/docs/Web/HTML/How_to/CORS_enabled_image).
+
+Silent failures to record as `sh:snapshot-error`, never as frame failure:
+
+- Cross-origin assets without CORS; tainted 2D/WebGL canvas.
+- Closed shadow roots, DRM/video, browser-native controls, nested cross-origin frames.
+- Fixed/sticky positioning and root or nested scroll positions unless explicitly reproduced in the clone.
+- DOM changing during capture, producing a torn image.
+- Very large DOM/data-URL limits and expensive style cloning.
+- Browser-specific `<foreignObject>` rendering differences.
+
+The portal is not simpler here. A permanent portal can preserve real pixels, but it changes the canvas’s fundamental layering:
+
+- The iframe currently receives radius/clipping from `.sh-node-body`; a fixed overlay loses that ancestor clipping.
+- Comment pins/cards deliberately live outside the clipped body and raise the whole node to `z-index: 30` in [FrameNode.tsx](/Users/nictouron/marver/src/client/shell/canvas/FrameNode.tsx:264). A global iframe layer cannot naturally interleave beneath each node’s comments but above neighboring artwork.
+- The passive drag overlay would sit in a different stacking tree from the iframe.
+- B0.2’s wheel coordinate conversion currently trusts the iframe’s transformed `getBoundingClientRect()` in [App.tsx](/Users/nictouron/marver/src/client/shell/App.tsx:597). It remains mathematically viable, but only if the portal and world camera never diverge by a frame.
+- Pin rects are iframe-local and are presently placed into the same transformed node coordinate system in [Comments.tsx](/Users/nictouron/marver/src/client/shell/Comments.tsx:112). Portal lag would visibly detach them.
+- Per-visible-frame screen transforms introduce O(visible frames) style writes on every camera tick. A single transformed portal wrapper recreates the original compositor problem.
+- Moving existing iframes into/out of the portal conflicts with Marver’s stable browsing-context invariant. Rendering there permanently avoids reparenting, but becomes a substantial architecture change.
+- It only addresses pan/zoom. Device sweep still needs shielding while live documents reflow.
+
+So: **snapshot first; portal remains a measured Stage 5 fallback.**
+
+Browser View Transitions are interesting because the browser produces genuine visual snapshots, but they are ephemeral pseudo-elements, destroyed after the transition, unavailable as blobs, and live in a topmost transition layer. They cannot back the cache, arbitrary-length pan gestures, or publish pre-bakes. [View Transition lifecycle](https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API/Using).
+
+## 2. Capture lifecycle and cache
+
+Protocol:
+
+```ts
+// shell → frame
+{
+  type: 'sh:snapshot-request',
+  requestId,
+  nodeKey,
+  generation,
+  sourceRevision,
+  width,
+  height,
+  theme,
+  dprBucket
+}
+
+// frame → shell
+{
+  type: 'sh:snapshot-result',
+  requestId,
+  generation,
+  sourceRevision,
+  width,
+  height,
+  theme,
+  dprBucket,
+  blob
+}
+```
+
+The frame should capture only after:
+
+1. Its current generation is ready.
+2. The source edit stream has been quiet for roughly 250 ms.
+3. It is not leased, resizing, or inside a sweep transaction.
+4. `document.fonts.ready`, visible image `decode()` calls, and two stable animation frames complete, each with bounded deadlines.
+
+The current `sh:ready` is insufficient by itself: it is posted immediately after `createRoot(...).render(...)`, before React necessarily commits or paints, in [frame-host/main.tsx](/Users/nictouron/marver/src/client/frame-host/main.tsx:72). The capture handler must perform its own paint-settle wait.
+
+One correction to the proposed cache key: live dev snapshots need more than `frameId`.
+
+```ts
+type LiveSnapshotKey = {
+  nodeKey: string
+  frameId: string
+  documentGeneration: string
+  sourceRevision: string
+  width: number
+  height: number
+  theme: string
+  dprBucket: 1 | 1.5 | 2
+}
+```
+
+`nodeKey` matters because two placements of the same frame can have different scroll/form/runtime state. `height` matters because Marver supports independent vertical resize. Publish-time canonical assets can deduplicate by frame/revision/viewport/theme.
+
+For an `<img>` facade, cache:
+
+- The encoded `Blob`.
+- Its object URL.
+- A preloaded `HTMLImageElement` whose `decode()` has completed.
+- Metadata and estimated decoded bytes: `width × height × 4 × dpr²`.
+
+Do not cache `ImageBitmap` unless the facade becomes `<canvas>`; an `<img>` cannot display an `ImageBitmap` directly.
+
+Start with:
+
+- 96 MiB decoded budget.
+- 24–32 MiB encoded budget.
+- Capture DPR capped at 1.5 in dev.
+- Visible/current-transaction entries pinned.
+- LRU eviction elsewhere; revoke object URLs on eviction.
+- Single capture in flight, scheduled with `requestIdleCallback`/`scheduler.postTask`.
+
+## 3. FrameNode, Canvas, and gesture behavior
+
+Add one always-mounted facade element beside the stable iframe in [FrameNode.tsx](/Users/nictouron/marver/src/client/shell/canvas/FrameNode.tsx:229):
+
+```tsx
+<div className="sh-live-surface">
+  <img ref={snapshotRef} className="sh-snapshot" alt="" />
+  <iframe ref={bindIframe} ... />
+</div>
+```
+
+The snapshot coordinator updates `src`, readiness attributes, and classes imperatively. No Zustand snapshot subscription is needed in every `FrameNode`.
+
+Use the existing `#sh-world.sh-gesturing` signal, but centralize its begin/end bookkeeping because wheel, RZPP pan/zoom, frame drag, and resize currently add/remove the class independently in [Canvas.tsx](/Users/nictouron/marver/src/client/shell/canvas/Canvas.tsx:248).
+
+At motion start:
+
+- Compute the visible set once from `{tx,ty,scale}` and node rectangles.
+- Mark exact, decoded snapshots as active.
+- Add `.sh-resizing` to the live resize target; it is exempt.
+- Never capture on this path.
+- If a frame has no usable snapshot, leave it live.
+
+During motion:
+
+- `paintGrid()` continues writing camera CSS vars as it does now in [Canvas.tsx](/Users/nictouron/marver/src/client/shell/canvas/Canvas.tsx:51).
+- A throttled imperative visibility pass may mark newly entering frames; no React render.
+- CSS controls snapshot/iframe opacity.
+
+At settle:
+
+- Wait two rAFs plus roughly 120 ms.
+- Put the snapshot behind the iframe.
+- Fade the iframe from `opacity: 0` to `1` over 80–120 ms.
+- On `transitionend`, hide the snapshot and clear facade classes.
+
+This is safer than fading a foreground snapshot directly to transparent over an iframe that may still be white.
+
+Comments remain outside the clipped facade and keep their current z-order. Freeze their last-known pin rects while a sweep is active; resume anchor resolution only after the matching layout-settled message.
+
+## 4. Minimum shippable first slice
+
+Do **snapshot-during-gesture only**, not portal-only:
+
+1. Add the frame-side `html-to-image` producer for TSX frames.
+2. Keep one latest exact snapshot per node at its current width/height/theme/revision.
+3. Add the `<img>` facade to `FrameNode`.
+4. Drive it from `.sh-gesturing`, excluding `.sh-resizing`.
+5. Crossfade back after settle.
+6. Verify the 775-line Next frame with the existing blank-frame counter, Chrome Paint Flashing/Layers, trackpad pan, pinch zoom, space-pan, theme, comment pins, and several zoom levels.
+
+This slice makes no device-layout or residency changes. If the heavy Next frame’s DOM snapshot is visibly unacceptable, treat that as producer failure and keep live pixels—do not immediately commit to the portal. First isolate the unsupported feature and assess a narrow renderer patch.
+
+## 5. Device-sweep FLIP on the same primitive
+
+The current device path must change structurally. Today `setDeviceView()` immediately changes every node’s `w/h` and calls tidy in [store.ts](/Users/nictouron/marver/src/client/shell/store.ts:628), while `.sh-preset` CSS animates the iframe’s width through every intermediate value in [styles.css](/Users/nictouron/marver/src/client/shell/styles.css:146). That is exactly what Stage 2 must stop doing.
+
+Implement the second slice as:
+
+1. Extract a pure `planDeviceProjection(name, scope)` returning final nodes, `baseLayout`, and device state without mutating.
+2. Separate target card geometry from each iframe’s `liveWidth/liveHeight`.
+3. `canvasCtl.deviceSweep()` creates a monotonically increasing transaction id and captures First geometry.
+4. Cover visible frames using the existing facade.
+5. Commit final card geometry and tidy once. Keep `baseLayout` untouched for Default restoration.
+6. Animate visible node cards First→Last with Web Animations/compositor transforms for ~180 ms. Do not apply `.sh-preset` width transitions.
+7. Commit visible iframe widths directly to the final value in batches of 1–2 per rAF. Off-screen iframes retain their old live width until they enter overscan.
+8. The frame bridge’s `ResizeObserver` posts `sh:layout-settled` with transaction id, generation, revision, and measured width after two stable frames.
+9. Reveal each live iframe independently; use a 500 ms upper bound.
+10. Re-bake the exact target snapshot later at idle priority.
+
+Publish then plugs a second producer into the same cache/manifest contract: preferably a real Playwright/CDP build-time screenshot. If unavailable, explicitly persist accepted live-browser blobs during the publish preparation step. The consumer, keys, facade, and FLIP transaction remain identical.
+
+That gives the clean staging line: **DOM snapshot facade now; FLIP next; native build-time screenshots later; portal only if measured pan/zoom performance still fails.**
+
