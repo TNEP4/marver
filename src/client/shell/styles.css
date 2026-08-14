@@ -28,6 +28,9 @@
   --interact: #db35f2; --interact-ring: rgba(219, 53, 242, .16);
   --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
   --interact-deep: rgba(176, 47, 194, .85); --interact-spark: rgba(255, 255, 255, .95);
+  /* comments own a third mode color (Apple systemGray): selection = blue,
+     interact = purple, comments = neutral gray - same geometry, unique hue per mode */
+  --comment: #8e8e93; --comment-ring: rgba(142, 142, 147, .22);
 
   --r-node: 10px; --r-panel: 24px; --edge: 10px;
   --blur: blur(20px) saturate(150%);
@@ -60,6 +63,7 @@
   --interact: #ea8dff; --interact-ring: rgba(219, 53, 242, .3);
   --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
   --interact-deep: rgba(203, 48, 224, .8); --interact-spark: rgba(255, 255, 255, .9);
+  --comment: #8e8e93; --comment-ring: rgba(142, 142, 147, .34);
 
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
 }
@@ -651,13 +655,13 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   box-shadow: 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35);
   border: 1px solid rgba(24,24,27,.1); transition: box-shadow .15s, transform .15s }
 .cm-pin:hover { box-shadow: 0 1px 3px rgba(24,24,27,.22), 0 10px 24px -6px rgba(24,24,27,.45) }
-/* selected pin wears the selected frame's exact treatment: accent border,
-   2px accent outline hugging the edge, 4px accent-ring halo (the pin is
-   already screen-space via scale(--sh-inv), so plain px match the frame's
-   calc'd screen px) */
-.cm-pin.on { border-color: var(--accent);
-  outline: 2px solid var(--accent); outline-offset: -1px;
-  box-shadow: 0 0 0 4px var(--accent-ring), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
+/* selected pin wears the selected frame's exact geometry - border, 2px
+   outline hugging the edge, 4px ring halo - in the comment green (the pin
+   is already screen-space via scale(--sh-inv), so plain px match the
+   frame's calc'd screen px) */
+.cm-pin.on { border-color: var(--comment);
+  outline: 2px solid var(--comment); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--comment-ring), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
 
 /* stack: the cluster teardrop - overlapping avatars, count only when it adds signal */
@@ -677,10 +681,10 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-card { position: absolute; z-index: 40; width: 300px; padding: 16px;
   transform: scale(var(--sh-inv, 1)); transform-origin: top left;
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
-  /* an open card is the active selection - it wears the frame's exact treatment */
-  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--accent);
-  outline: 2px solid var(--accent); outline-offset: -1px;
-  box-shadow: 0 0 0 4px var(--accent-ring), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
+  /* an open card is the active selection - the frame's exact geometry, comment green */
+  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--comment);
+  outline: 2px solid var(--comment); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--comment-ring), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
   display: flex; flex-direction: column; gap: 12px;
   font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
@@ -702,7 +706,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-copy { position: relative }
 .cm-copy .a, .cm-copy .b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   transition: transform var(--morph), opacity .2s ease }
-.cm-copy .b { transform: scale(.4); opacity: 0; color: var(--accent) }
+.cm-copy .b { transform: scale(.4); opacity: 0; color: var(--comment) }
 .cm-copy.ok .a { transform: scale(.4); opacity: 0 }
 .cm-copy.ok .b { transform: scale(1); opacity: 1 }
 .cm-compose input { width: 100%; height: 36px; padding: 0 15px; border-radius: 999px;
@@ -710,7 +714,7 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
   transition: border-color .15s, box-shadow .15s }
 .cm-compose input::placeholder { color: var(--glass-ink-3) }
-.cm-compose input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring) }
+.cm-compose input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
 /* the draft composer is JUST the pill - no card chrome around a single input */
 .cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
   backdrop-filter: none; -webkit-backdrop-filter: none }
