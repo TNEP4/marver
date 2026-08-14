@@ -239,7 +239,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const { user, session } = claimInvite(dataDir, String(b.token ?? ''), {
           password: String(b.password ?? ''), name: String(b.name ?? ''),
-          avatar: typeof b.avatar === 'string' && b.avatar.startsWith('data:image/') && b.avatar.length <= 65536 ? b.avatar : undefined,
+          avatar: typeof b.avatar === 'string' && /^data:image\/(jpeg|png|webp|gif);base64,/.test(b.avatar) && b.avatar.length <= 65536 ? b.avatar : undefined,
         })
         setSession(req, res, session)
         return json(res, 200, { user: publicUser(user) }), true
@@ -265,7 +265,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const next = updateProfile(dataDir, u.email, {
           name: typeof b.name === 'string' ? b.name : undefined,
-          avatar: typeof b.avatar === 'string' && (b.avatar === '' || (b.avatar.startsWith('data:image/') && b.avatar.length <= 65536)) ? b.avatar : undefined,
+          avatar: typeof b.avatar === 'string' && (b.avatar === '' || (/^data:image\/(jpeg|png|webp|gif);base64,/.test(b.avatar) && b.avatar.length <= 65536)) ? b.avatar : undefined,
         })
         return json(res, 200, { user: publicUser(next) }), true
       }
