@@ -39,6 +39,34 @@ canvas, the tour - that flow lives in instructions/welcome.md, run it alongside.
   several half-brands - document the one the app actually ships in DESIGN.md and
   name the others as legacy.
 
+## Working with teammates (branches, merges, a second engineer)
+
+The whole `design/` folder is git-tracked - boards, scenes, comment logs, the
+publish policy, these instructions. Only `design/.local/` (this machine's
+connect credential) and `design/.dist/` (built on the host) are ignored. So a
+teammate gets the exact canvas by pulling the branch: `pnpm install` →
+`npx marver dev`. Nothing else to sync.
+
+How the three kinds of design state merge across branches:
+
+- **Comment logs (`design/comments/*.jsonl`) merge themselves.** They're
+  append-only and keyed by event id, and init writes a `merge=union` git
+  attribute for them - two branches that both collected feedback union
+  cleanly, no conflict. Even a hand-botched merge self-heals: replay dedupes
+  by id. This is the point of the event-log design - multiplayer comments
+  Just Work through plain git.
+- **Scenes (`design/scenes/**.tsx`) merge like any code** - they're React
+  components. Standard review, standard conflicts.
+- **Boards (`design/boards/*.json`) are the one friction** - they're node
+  positions, so two people rearranging the same board conflict on x/y. It's
+  cosmetic: take either side and re-run Tidy, or give features their own
+  boards so layouts don't overlap. Never let a boards conflict block a merge.
+
+If collaboration is deployed, each engineer runs `marver comments connect
+<url>` ONCE with their own account (the owner invites them) to get the live
+cloud sync on top of git. Git carries the committed comments; `connect` adds
+the real-time stream from published viewers.
+
 ## When it breaks mid-project
 
 Frames suddenly unstyled → the theme import path moved: fix `design/theme.css`.

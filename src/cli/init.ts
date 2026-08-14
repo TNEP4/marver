@@ -221,6 +221,10 @@ export function init(root: string, opts: InitOpts) {
     refresh('tsconfig.json', [STANDALONE_TSCONFIG], tsconfigNow())
   }
   write('.gitignore', '.local/\n.dist/\n')
+  // comment logs are append-only + id-keyed: two branches both appending never
+  // truly conflict, so git's built-in union driver auto-merges them (worst case a
+  // duplicate line, which replay dedupes). Multiplayer comments merge themselves.
+  write('.gitattributes', 'comments/*.jsonl merge=union\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
   if (!existsSync(join(design, 'boards'))) { mkdirSync(join(design, 'boards'), { recursive: true }); writeFileSync(join(design, 'boards', '.gitkeep'), ''); created.push('design/boards/') }
 
