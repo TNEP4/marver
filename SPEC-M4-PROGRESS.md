@@ -41,8 +41,8 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] B5 portal visible live iframes out of the transformed world
 
 ## Track C — multi-project & board-identity hygiene  (ongoing, alongside)
-- [ ] C1 deterministic per-project port
-- [ ] C2 show the project name in the sidebar
+- [x] C1 deterministic per-project port
+- [~] C2 (terminal naming done; sidebar name pending) show the project name in the sidebar
 - [ ] C3 board identity = kebab slug + separate `title` field
 - [x] C4 DECIDED (Nic, approved): boards single-writer - agents author scenes/frames across boards; the shell is the sole writer of board-layout JSON. True co-editing (CRDT/op-log) only if ever needed.
 

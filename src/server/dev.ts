@@ -1,6 +1,7 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
-import { dirname, join } from 'node:path'
+import { createServer as netServer } from 'node:net'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
@@ -12,11 +13,39 @@ function packageDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), '..')
 }
 
+const portFree = (p: number): Promise<boolean> => new Promise((res) => {
+  const s = netServer()
+  s.once('error', () => res(false))
+  s.once('listening', () => s.close(() => res(true)))
+  s.listen(p, '127.0.0.1')
+})
+/** C1: a deterministic per-project port in [5200,5399] derived from the root path. Two projects
+ *  never collide, and the same project always lands on the same port across restarts. */
+const projectPort = (root: string): number => {
+  let h = 0
+  for (let i = 0; i < root.length; i++) h = (Math.imul(h, 31) + root.charCodeAt(i)) | 0
+  return 5200 + (Math.abs(h) % 200)
+}
+/** Pick the port to serve on: the desired one if free, else a DETERMINISTIC per-project fallback -
+ *  never a silent next-free drift, which made a bookmarked tab silently serve a DIFFERENT project. */
+async function pickPort(root: string, desired: number): Promise<{ port: number; fellBack: boolean }> {
+  if (await portFree(desired)) return { port: desired, fellBack: false }
+  let p = projectPort(root)
+  for (let i = 0; i < 200; i++) {
+    if (p !== desired && await portFree(p)) return { port: p, fellBack: true }
+    p = 5200 + ((p - 5200 + 1) % 200)
+  }
+  return { port: desired, fellBack: true }
+}
+
 export async function dev(root: string, portFlag?: number) {
   const config = await loadConfig(root)
   const host = detectHost(root)
   const pkgDir = packageDir()
   const clientDir = join(pkgDir, 'src', 'client')
+  const projectName = basename(root)
+  const desiredPort = portFlag ?? config.port
+  const picked = await pickPort(root, desiredPort)
 
   const plugins: any[] = [react()]
   if (host.tailwind === 4) {
@@ -46,7 +75,7 @@ export async function dev(root: string, portFlag?: number) {
     customLogger: logger,
     plugins,
     server: {
-      port: portFlag ?? config.port,
+      port: picked.port,
       strictPort: false,
       // keep Vite's workspace-root allowance: monorepo hosts import sibling packages
       fs: { allow: [...new Set([root, pkgDir, searchForWorkspaceRoot(root)])] },
@@ -102,8 +131,11 @@ export async function dev(root: string, portFlag?: number) {
 
   await server.listen()
   const addr = server.httpServer?.address()
-  const port = typeof addr === 'object' && addr ? addr.port : config.port
-  console.log(`\n  ${NAME} canvas → http://localhost:${port}/\n`)
+  const port = typeof addr === 'object' && addr ? addr.port : picked.port
+  // C1: name the project on every boot, and say loudly when the desired port was taken - so two
+  // concurrent projects can never be confused (a tab bookmarked to one silently serving the other).
+  if (picked.fellBack) console.log(`\n  port ${desiredPort} is in use - serving "${projectName}" on ${port} instead`)
+  console.log(`\n  ${NAME} · ${projectName} → http://localhost:${port}/\n`)
 
   // comment sync loop (SPEC-M3 §2): ~30s exchanges with the publish target. The
   // ticker ALWAYS runs and re-reads credentials each pass, so `comments connect`
