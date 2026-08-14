@@ -76,3 +76,13 @@ The discipline:
 4. **Never resolve what you didn't address.** Disagree? Reply with your
    reasoning and leave the thread open - the human closes debates, you close
    completed work.
+5. **A frame with open comments is load-bearing - never delete, rename, or
+   gut it.** Its threads are anchored to elements INSIDE it; restructure the
+   frame and the anchors strand (a dead anchor parks the pin at the frame
+   edge; deleting the whole frame strands the thread off-canvas entirely -
+   never lost from the log, but invisible until the frame returns). So: fork
+   the variant and iterate THERE, leave the commented frame untouched as the
+   before, and only once you `resolve --addressed-in <variant>` its threads
+   may it move to `archive/`. Resolve first, restructure second - never the
+   reverse. Check `comments list --board <b>` (no `--open`) to see resolved
+   threads too; the full history lives in the append-only log and in git.
