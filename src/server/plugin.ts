@@ -1,6 +1,6 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import type { ShConfig } from './config.ts'
@@ -82,7 +82,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
             return s.startsWith('# Setup required') && s.includes('marver init')
           } catch { return false }
         })()
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending })}`
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: basename(root) })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'

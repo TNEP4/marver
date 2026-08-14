@@ -35,7 +35,7 @@ export interface Node {
 }
 export interface Toast { id: number; text: string }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string } = shConfig
 
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'

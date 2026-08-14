@@ -742,6 +742,8 @@ export function App() {
           <div className="sh-panel-top">
             <ParallelogramDuoIcon size={21} className="mark" />
             <span className="name">Marver</span>
+            {/* C2: name the project so two concurrent canvases are never confused at a glance */}
+            {CONFIG.projectName && <span className="sh-proj" title="project">{CONFIG.projectName}</span>}
             <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={togglePanel} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">
