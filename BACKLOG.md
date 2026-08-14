@@ -24,6 +24,20 @@ Small items that are not milestone work. One line each; delete when done.
   canvases ever face real brute-force pressure.
 - **`--boards` and the host `public/` directory**: the filter covers frames only; public
   assets ship in full (build prints a note). Revisit if a real leak case appears.
+- **Sidebar labels keep kebab dashes - humanize them (dogfooding, 2026-08-14).** Board/scene
+  names derive from kebab filenames via `cap()` (store.ts:40, rendered at App.tsx:26), which
+  only upper-cases the first letter and KEEPS the hyphens: `tms-high-level` -> "Tms-high-level",
+  `tms-specs` -> "Tms-specs". Nic had to hand-teach the agent not to leave dashes between
+  words. Note the variant-group label path already de-hyphenates (`App.tsx:757` does
+  `.replace(/-/g,' ')`) - boards/scenes just never got the same treatment. Fix: replace `cap()`
+  in the nav-label path with a `humanize()` - `.replace(/-/g,' ')` + **Title Case** each word
+  (the sidebar convention: Figma pages, Linear, Notion). Keep honoring a frame's explicit
+  `meta.title` verbatim (authored sentence case like "The platform at a glance" - untouched).
+  One caveat humanize can't solve: acronyms - "tms" renders "Tms", not "TMS". Real fix =
+  an explicit display-title override for boards (board `.json` `title`) and scenes (folder
+  meta), same escape hatch content frames already have via `meta.title`; a small acronym
+  allowlist is the brittle alternative. Ship humanize now (drops the dashes, zero author
+  effort); title-override as the follow-up for acronyms.
 - **Copy-path shortcut: mislabeled `C`, rebind to `Shift+P` (dogfooding, 2026-08-14).** The
   toolbar "Copy file path" tooltip advertises `C` (App.tsx:203, `<span className="k">C</span>`)
   but that hint is stale - it was never updated when copy moved `c`->`y` in 0.4.0. The real
