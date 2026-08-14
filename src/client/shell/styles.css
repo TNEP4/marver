@@ -690,6 +690,13 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
   transition: background .12s, color .12s }
 .cm-icon:hover { background: var(--glass-hover); color: var(--glass-ink) }
+/* copy-link morphs into a check on the shell's morph curve, then reverts */
+.cm-copy { position: relative }
+.cm-copy .a, .cm-copy .b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  transition: transform var(--morph), opacity .2s ease }
+.cm-copy .b { transform: scale(.4); opacity: 0; color: var(--accent) }
+.cm-copy.ok .a { transform: scale(.4); opacity: 0 }
+.cm-copy.ok .b { transform: scale(1); opacity: 1 }
 .cm-compose input { width: 100%; height: 36px; padding: 0 15px; border-radius: 999px;
   border: 1px solid var(--glass-brd); background: var(--node-bg); color: var(--glass-ink);
   font: 400 13px -apple-system, system-ui, sans-serif; outline: none;

@@ -113,6 +113,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: number }; node: Node }) {
   const { resolve, setActive } = useComments.getState()
   const [text, setText] = useState('')
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(copyTimer.current), [])
   const flip = at.x > node.w * 0.55
   // clear only after the server took it - a failed send must not eat the words
   const submit = async () => { if (text.trim() && await useComments.getState().replyOk(thread.id, text)) setText('') }
@@ -122,12 +125,17 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
       <div className="cm-actions">
-        <Tip side="bottom" label={<b>Copy link</b>}>
-          <button className="cm-icon" onClick={() => {
+        <Tip side="bottom" label={<b>{copied ? 'Copied' : 'Copy link'}</b>}>
+          <button className={`cm-icon cm-copy${copied ? ' ok' : ''}`} onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
             void navigator.clipboard.writeText(url)
-            useStore.getState().toast('comment link copied')
-          }}><LinkIcon size={15} /></button>
+            setCopied(true)
+            clearTimeout(copyTimer.current)
+            copyTimer.current = setTimeout(() => setCopied(false), 1600)
+          }}>
+            <span className="a"><LinkIcon size={15} /></span>
+            <span className="b"><CheckIcon size={16} /></span>
+          </button>
         </Tip>
         <Tip side="bottom" label={<b>Resolve</b>}>
           <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckIcon size={16} /></button>
