@@ -139,13 +139,15 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
         </Tip>
       </header>
       <p className="cm-body">{thread.body}</p>
+      {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
       {thread.replies.map((r) => (
-        <div key={r.id} className="cm-reply">
-          <Avatar author={r.author} size={20} />
-          <div>
-            <span className="cm-who"><b>{r.author?.name ?? 'Someone'}</b> <span className="dim">{rel(r.ts)}</span></span>
-            <p className="cm-body">{r.body}</p>
-          </div>
+        <div key={r.id} className="cm-msg">
+          <header>
+            <Avatar author={r.author} size={24} />
+            <b>{r.author?.name ?? 'Someone'}</b>
+            <span className="dim">{rel(r.ts)}</span>
+          </header>
+          <p className="cm-body">{r.body}</p>
         </div>
       ))}
       <div className="cm-compose">

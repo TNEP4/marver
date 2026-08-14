@@ -680,17 +680,16 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-card header b { font-size: 13px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
 .cm-card .grow { flex: 1 }
-.cm-card .cm-body { margin: 0; font-size: 13px; line-height: 1.55; color: var(--glass-ink-2);
-  white-space: pre-wrap; overflow-wrap: break-word }
-.cm-card > .cm-body { margin: -4px 2px 0; color: var(--glass-ink) }  /* the root comment carries the weight */
+/* every message - root and replies - is the same unit: avatar + name + time,
+   body indented to the name column (24px avatar + 9px gap) */
+.cm-card .cm-body { margin: 0; padding-left: 33px; font-size: 13px; line-height: 1.55;
+  color: var(--glass-ink); white-space: pre-wrap; overflow-wrap: break-word }
+.cm-card > .cm-body { margin-top: -7px }  /* pulls against the card's 12px gap -> 5px under the header */
+.cm-msg { display: flex; flex-direction: column; gap: 5px }
 .cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
   border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
   transition: background .12s, color .12s }
 .cm-icon:hover { background: var(--glass-hover); color: var(--glass-ink) }
-.cm-reply { display: flex; gap: 9px; padding: 2px 2px 0 }
-.cm-reply > div { display: flex; flex-direction: column; gap: 3px; min-width: 0 }
-.cm-who { display: flex; align-items: baseline; gap: 6px }
-.cm-who b { font-size: 12.5px; font-weight: 600; letter-spacing: -.01em }
 .cm-compose input { width: 100%; height: 36px; padding: 0 15px; border-radius: 999px;
   border: 1px solid var(--glass-brd); background: var(--node-bg); color: var(--glass-ink);
   font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
