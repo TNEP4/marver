@@ -125,6 +125,14 @@ interface State {
   toasts: Toast[]
   boardHash: string | null            // sha256 of the board file on disk, when materialized
   dirty: boolean
+  // A6/A7 controlled HMR (transient, never persisted): a frame the user is actively using
+  // (interact/play target, mid-gesture, laser/comment engaged) is "leased" - a hot update to
+  // it is DEFERRED (coalesced to the latest revision) until a safe point, so an agent edit
+  // never yanks the user out of their flow.
+  pendingFrameRevisions: Record<string, string>            // frameId -> latest deferred revision
+  externalLeases: Record<string, { laser?: true; comment?: true }>   // nodeKey -> transient engagement
+  playUpdateRevision: string | null                        // a revision arrived while play is open
+  playNav: number                                          // bumps to reload the play stage on demand
 
   boot(): Promise<boolean>
   applyManifest(m: Manifest): void
@@ -141,6 +149,10 @@ interface State {
   setPlay(p: State['play']): void
   setGesture(g: boolean): void
   setLaser(on: boolean): void
+  invalidateFrames(frameIds: string[], revision: string): void
+  setExternalLease(nodeKey: string, reason: 'laser' | 'comment', on: boolean): void
+  flushFrameUpdates(frameIds?: string[]): void
+  applyPlayUpdate(): void
   moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
   setSelectedTheme(theme: string): void
   setDeviceView(name: string | null): void
@@ -153,6 +165,16 @@ interface State {
   toast(text: string): void
   spawn(frameId: string): Node | null
   save(): Promise<boolean>
+}
+
+/** A6: is any node of this frame in active use, so a hot update must DEFER? Frame-scoped -
+ *  if the same frame is placed twice and one copy is active, both stay on the same revision. */
+function frameIsLeased(frameId: string, s: State): boolean {
+  return s.nodes.some((n) =>
+    n.frame === frameId && n.status !== 'error' && (
+      s.interact === n.key ||
+      (s.gesture && s.selection.includes(n.key)) ||
+      !!s.externalLeases[n.key]))
 }
 
 export const useStore = create<State>((set, get) => {
@@ -393,6 +415,7 @@ export const useStore = create<State>((set, get) => {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
+    pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0,
 
     async boot() {
       const seq = ++loadSeq
@@ -687,9 +710,22 @@ export const useStore = create<State>((set, get) => {
     // interact is a ONE-frame mode: entering it collapses any multi-selection to the
     // interacted frame (a 4-frame selection double-clicked otherwise leaves all four
     // painted as "interactive"). Exiting keeps the frame selected for continuity.
-    setInteract(key) { set((s) => ({ interact: key, selection: key ? [key] : s.selection })) },
+    setInteract(key) {
+      set((s) => ({ interact: key, selection: key ? [key] : s.selection }))
+      get().flushFrameUpdates()   // A6: the frame just left interact is no longer leased
+    },
     setPlay(play) { set({ play }) },
-    setLaser(laser) { set({ laser }) },
+    setLaser(laser) {
+      if (laser) { set({ laser }); return }
+      // leaving laser mode drops every laser engagement lease (the bridge stops reporting), but
+      // keeps comment engagement; the freed frames may now flush a deferred update
+      set((s) => ({
+        laser,
+        externalLeases: Object.fromEntries(
+          Object.entries(s.externalLeases).filter(([, v]) => v.comment).map(([k]) => [k, { comment: true as const }])),
+      }))
+      get().flushFrameUpdates()
+    },
     setGesture(gesture) {
       set({ gesture })
       // SPEC-024 §4: a board WITH a layout recipe re-applies it when a resize
@@ -699,6 +735,49 @@ export const useStore = create<State>((set, get) => {
         if (get().layout || get().sceneRows?.length) get().runTidy()   // schedules the save
         else scheduleSave()
       }
+      if (!gesture) get().flushFrameUpdates()   // A6: gesture end is a safe point for deferred updates
+    },
+    // A6/A7: apply a controlled hot update. A leased frame's revision is deferred (coalesced to
+    // the latest) and applied at the next safe point; an idle frame reloads now via its nav nonce.
+    invalidateFrames(frameIds, revision) {
+      const ids = new Set(frameIds.filter((x) => typeof x === 'string'))
+      if (!ids.size) return
+      bumpManifestRev()
+      const s = get()
+      const pending = { ...s.pendingFrameRevisions }
+      const nodes = s.nodes.map((n) => {
+        if (!ids.has(n.frame)) return n
+        if (frameIsLeased(n.frame, s)) { pending[n.frame] = revision; return n }
+        return { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1 }
+      })
+      set({ nodes, pendingFrameRevisions: pending, ...(s.play ? { playUpdateRevision: revision } : {}) })
+    },
+    flushFrameUpdates(frameIds) {
+      const s = get()
+      const ids = (frameIds ?? Object.keys(s.pendingFrameRevisions)).filter((id) => s.pendingFrameRevisions[id] && !frameIsLeased(id, s))
+      if (!ids.length) return
+      bumpManifestRev()
+      const apply = new Set(ids)
+      const pending = { ...s.pendingFrameRevisions }
+      for (const id of ids) delete pending[id]
+      const nodes = s.nodes.map((n) => apply.has(n.frame)
+        ? { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1 } : n)
+      set({ nodes, pendingFrameRevisions: pending })
+    },
+    setExternalLease(nodeKey, reason, on) {
+      set((s) => {
+        const cur = { ...(s.externalLeases[nodeKey] ?? {}) }
+        if (on) cur[reason] = true; else delete cur[reason]
+        const leases = { ...s.externalLeases }
+        if (Object.keys(cur).length) leases[nodeKey] = cur; else delete leases[nodeKey]
+        return { externalLeases: leases }
+      })
+      if (!on) get().flushFrameUpdates()
+    },
+    applyPlayUpdate() {
+      if (!get().playUpdateRevision) return
+      bumpManifestRev()
+      set((s) => ({ playUpdateRevision: null, playNav: s.playNav + 1 }))
     },
     setScale(scale) { set({ scale }) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },

@@ -58,12 +58,18 @@ export async function dev(root: string, portFlag?: number) {
         ignored: [
           '**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**', '**/design/comments/**',
           '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
+          // tool-output dirs written into the project must never reload the canvas
+          '**/.gstack/**', '**/.git/**', '**/.playwright-mcp/**',
         ],
       },
       // A8: pre-transform the frame boot chain at server start so the FIRST frame load never
       // races Vite's on-demand transform/optimize (the cold-boot "frame never reported ready"
       // race - every content frame statically pulls the content primitives). optimizeDeps
       // already pre-bundles marked/mermaid; this warms the source modules around them.
+      // Warm ONLY the frame boot chain (not the design frames themselves - warming those as
+      // clientFiles registers each as a boundary-less /@fs/ module whose edit forces a full
+      // page reload, defeating A7 controlled HMR). Frames transform on demand, fast, once the
+      // chain + optimized deps are warm.
       warmup: {
         clientFiles: [
           join(clientDir, 'frame-host', 'main.tsx'),
@@ -71,7 +77,6 @@ export async function dev(root: string, portFlag?: number) {
           join(clientDir, 'content', 'index.tsx'),
           join(clientDir, 'content', 'diagram.tsx'),
           join(clientDir, 'content', 'md.ts'),
-          'design/**/*.{tsx,jsx}',
         ],
       },
     },

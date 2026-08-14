@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import type { ShConfig } from './config.ts'
-import { scanFrames, writeManifest } from './manifest.ts'
+import { scanFrames, writeManifest, affectedFrameIds, type Manifest } from './manifest.ts'
 import { apiMiddleware } from './api.ts'
 import { routesMiddleware } from './routes.ts'
 import { checkUpdate, installedVersion } from './update.ts'
@@ -23,6 +23,21 @@ export interface PluginCtx {
 export function marverPlugin(ctx: PluginCtx): Plugin {
   const { root, clientDir, config } = ctx
 
+  // A7 controlled HMR: a design/** frame EDIT is applied by the SHELL (a rev-stamped iframe
+  // reload gated on interaction leases), not by Vite's default React Fast Refresh which fires
+  // immediately regardless of what the user is doing. handleHotUpdate suppresses the default
+  // and queues sh:frame-invalidated; the shell decides when to reload each affected frame.
+  let manifest: Manifest = scanFrames(root)
+  let devServer: ViteDevServer | null = null
+  const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
+  let invRev = 0
+  const pendingInv = new Set<string>()
+  const flushInv = debounce(() => {
+    if (!devServer || !pendingInv.size) return
+    const frameIds = [...pendingInv]; pendingInv.clear()
+    devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}` })
+  }, 120)
+
   /** Theme resolution: design/theme.css wrapper > configured > detected > empty (spec §5.4). */
   const themeFile = (): string | null => {
     const wrapper = join(root, 'design', 'theme.css')
@@ -34,6 +49,12 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
 
   return {
     name: 'marver',
+    // A7: run our handleHotUpdate BEFORE @vitejs/plugin-react's. A marver frame exports `meta`
+    // (a non-component) alongside its component, so React Fast Refresh refuses to hot-update it
+    // and broadcasts a GLOBAL full-reload (the shell "white zap") as a side effect. By emptying
+    // ctx.modules first for a controlled frame, react's hook then sees nothing to refresh and
+    // never fires that reload - the shell drives a lease-aware rev-stamped iframe reload instead.
+    enforce: 'pre',
 
     resolveId(id) {
       if (id === VIRTUAL_THEME) {
@@ -94,11 +115,19 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
      * Edits to loaded frames keep normal HMR (modules present + file exists → pass through).
      */
     handleHotUpdate(hctx) {
-      const scoped = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]
-        .some((w) => hctx.file.startsWith(w))
-      if (!scoped) return
-      if (!existsSync(hctx.file)) return []                    // unlink: shell shows the deleted card
-      if (hctx.modules.length === 0) return []                 // add: not in any graph yet; new iframes fetch fresh
+      const affected = affectedFrameIds(hctx.file, root, manifest)
+      if (affected === null) {
+        // uncontrolled (src/** deps, theme.css, config, a helper we don't map): default HMR.
+        // A frame ADD/UNLINK is topology - the sh:manifest path handles it; suppress the default
+        // full-reload for an in-scope unlink so an open canvas doesn't hard-refresh.
+        const inScope = [join(root, 'design', 'scenes'), join(root, 'design', 'components')].some((w) => hctx.file.startsWith(w))
+        if (inScope && !existsSync(hctx.file)) return []
+        return
+      }
+      // controlled edit (or a layout/provider/fixture fanout): the shell drives a lease-aware,
+      // rev-stamped reload of exactly these frames. Suppress Vite's default React update.
+      if (affected.length) { for (const id of affected) pendingInv.add(id); flushInv() }
+      return []
     },
 
     configureServer(server: ViteDevServer) {
@@ -141,9 +170,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       server.middlewares.use(apiMiddleware(root))
       server.middlewares.use(routesMiddleware(server, clientDir))
 
+      devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       const regen = debounce(() => {
-        const manifest = scanFrames(root)
+        manifest = scanFrames(root)   // keep the cached manifest fresh for affectedFrameIds
         // Broadcast only real changes - plain content edits ride HMR alone (spec §5.6).
         if (writeManifest(root, manifest)) server.ws.send('sh:manifest', manifest as any)
       }, 150)

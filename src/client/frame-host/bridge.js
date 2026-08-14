@@ -104,6 +104,15 @@ const COPIED_HTML = `<svg width="12" height="12" viewBox="0 0 256 256" fill="cur
 let laserOn = false, pickOn = false, hoverEl = null, labelEl = null
 const modeActive = () => laserOn || pickOn
 
+// A6: report transient laser/comment engagement (pointer inside this frame AND a mode on) so the
+// shell leases the frame - a hot update to it then defers until the pointer leaves or the mode
+// ends, instead of yanking the user mid-inspect/mid-comment.
+let pointerInside = false
+const reportInteraction = () => post({ type: 'sh:interaction', id, laser: pointerInside && laserOn, comment: pointerInside && pickOn })
+document.addEventListener('mouseover', () => { if (!pointerInside) { pointerInside = true; reportInteraction() } })
+document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) { pointerInside = false; reportInteraction() } })
+window.addEventListener('blur', () => { if (pointerInside) { pointerInside = false; reportInteraction() } })
+
 // laser and pick are independent looks over shared hover machinery: the stylesheet
 // is regenerated on every flip so each mode contributes exactly its own rules
 const applyModes = () => {
@@ -271,8 +280,8 @@ window.addEventListener('message', (e) => {
   const m = e?.data
   if (!m || typeof m !== 'object') return
   // independent toggles - each mode contributes its own rules, applyModes composes
-  if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes() }
-  if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes() }
+  if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes(); reportInteraction() }
+  if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes(); reportInteraction() }
   // B0.2: interact/play target owns its own wheel; passive frames forward it to the canvas
   if (m.type === 'sh:interactive') { interactiveOn = !!m.on }
   if (m.type === 'sh:copy-ok') showCopied(m.seq)

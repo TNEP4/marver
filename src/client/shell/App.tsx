@@ -509,6 +509,13 @@ export function App() {
   useEffect(() => {
     if (!import.meta.hot) return
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // A7 controlled HMR: a frame file changed. Reload exactly the affected frames through the
+    // lease-aware path (idle frames now, leased ones deferred to a safe point) - never a shell
+    // reload, never a React Fast Refresh yanking a frame the user is in.
+    import.meta.hot.on('sh:frame-invalidated', (m: any) => {
+      const frameIds = Array.isArray(m?.frameIds) ? m.frameIds.filter((x: unknown) => typeof x === 'string') : []
+      if (frameIds.length && typeof m?.revision === 'string') useStore.getState().invalidateFrames(frameIds, m.revision)
+    })
     // multi-viewer sync: another viewer (or an agent) saved this board. A clean canvas
     // re-boots silently, keeping whatever selection survives; a dirty one keeps its
     // edits and converges through the 409 path on its next save (disk wins, spec §8).
@@ -605,6 +612,11 @@ export function App() {
           ctrlKey: !!data.ctrlKey, metaKey: !!data.metaKey,
           clientX: rect.left + localX * sx, clientY: rect.top + localY * sy,
         })
+      } else if (data.type === 'sh:interaction') {
+        // A6: the frame reports transient laser/comment engagement (pointer inside + mode on).
+        // While engaged the frame is leased, so a hot update to it defers until disengage.
+        s.setExternalLease(nodeKey, 'laser', !!data.laser)
+        s.setExternalLease(nodeKey, 'comment', !!data.comment)
       }
     }
     window.addEventListener('message', onMsg)

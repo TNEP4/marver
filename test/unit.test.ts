@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { extractMeta, toFrameId } from '../src/server/manifest.ts'
+import { join } from 'node:path'
+import { affectedFrameIds, extractMeta, toFrameId, type Manifest } from '../src/server/manifest.ts'
 import { tidy } from '../src/client/shell/tidy.ts'
+
+describe('affectedFrameIds (A7 controlled-HMR fanout, manifest + conventions)', () => {
+  const ROOT = '/proj'
+  const f = (id: string, file: string, kind: 'tsx' | 'html' = 'tsx') => ({ id, file, kind, scene: id.includes('/') ? id.split('/')[0] : '' })
+  const m: Manifest = { frames: [
+    f('tms-specs/structure', 'design/scenes/tms-specs/structure.tsx'),
+    f('tms-specs/intent', 'design/scenes/tms-specs/intent.tsx'),
+    f('landing/hero', 'design/scenes/landing/hero.tsx'),
+    f('widget', 'design/components/widget.tsx'),
+  ], scenes: [] as any }
+  const at = (p: string) => affectedFrameIds(join(ROOT, p), ROOT, m)
+
+  it('a direct frame edit -> that exact id', () => expect(at('design/scenes/tms-specs/structure.tsx')).toEqual(['tms-specs/structure']))
+  it('providers -> every tsx frame', () => expect(at('design/providers.tsx')).toEqual(['tms-specs/structure', 'tms-specs/intent', 'landing/hero', 'widget']))
+  it('a scene _layout -> tsx frames under that dir', () => expect(at('design/scenes/tms-specs/_layout.tsx')).toEqual(['tms-specs/structure', 'tms-specs/intent']))
+  it('the root scenes _layout -> all scene tsx frames', () => expect(at('design/scenes/_layout.tsx')).toEqual(['tms-specs/structure', 'tms-specs/intent', 'landing/hero']))
+  it('_fixtures -> tsx frames under its dir', () => expect(at('design/scenes/landing/_fixtures.ts')).toEqual(['landing/hero']))
+  it('theme.css -> null (CSS HMR owns it)', () => expect(at('design/theme.css')).toBeNull())
+  it('config.ts -> null (not a frame)', () => expect(at('design/config.ts')).toBeNull())
+  it('a src/** dep -> null (default HMR)', () => expect(at('src/components/Button.tsx')).toBeNull())
+})
 
 describe('extractMeta (literal-only regex, spec §6)', () => {
   it('extracts literal strings', () => {

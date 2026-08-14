@@ -76,6 +76,38 @@ export function toFrameId(designRelPath: string): string {
   return noExt.startsWith('scenes/') ? noExt.slice('scenes/'.length) : noExt
 }
 
+/**
+ * A7: which frames does a changed `design/**` file affect? Manifest + directory conventions,
+ * NOT a module-graph walk (deterministic, cheap, may over-reload but never misses a
+ * conventionally-affected frame). Returns:
+ *   null  -> uncontrolled: leave to default Vite HMR (src/** deps, theme.css, config, assets)
+ *   []    -> controlled but affects no current frame (e.g. a layout in an empty dir)
+ *   [ids] -> controlled: the shell drives a rev-stamped reload of these frames
+ */
+export function affectedFrameIds(absFile: string, root: string, manifest: Manifest): string[] | null {
+  const design = join(root, 'design')
+  if (absFile !== design && !absFile.startsWith(design + sep)) return null
+  const rel = relative(design, absFile).split(sep).join('/')     // e.g. scenes/foo/bar.tsx, providers.tsx, theme.css
+  const name = rel.split('/').pop() ?? rel
+  const designRel = `design/${rel}`
+  const tsxFrames = manifest.frames.filter((f) => f.kind === 'tsx')
+
+  if (name === 'theme.css') return null                          // CSS HMR owns this
+  // providers.{tsx,jsx}: every TSX frame wraps in it
+  if (rel === 'providers.tsx' || rel === 'providers.jsx') return tsxFrames.map((f) => f.id)
+  // _layout / _fixtures: fan out to TSX frames in the same directory subtree
+  const dirFanout = /(^|\/)(_layout\.(tsx|jsx)|_fixtures\.(ts|tsx|js|jsx|json))$/.test(rel)
+  if (dirFanout) {
+    const prefix = `design/${rel.slice(0, rel.length - name.length)}`   // 'design/scenes/foo/' or 'design/'
+    return tsxFrames.filter((f) => f.file.startsWith(prefix)).map((f) => f.id)
+  }
+  // a direct frame file (tsx/jsx/html) present in the manifest
+  const direct = manifest.frames.find((f) => f.file === designRel)
+  if (direct) return [direct.id]
+  // an underscore/helper file we don't recognise, or a non-frame under design/: uncontrolled
+  return null
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   if (!existsSync(dir)) return out
   for (const e of readdirSync(dir, { withFileTypes: true })) {

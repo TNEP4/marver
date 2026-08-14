@@ -18,9 +18,9 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] A2 stable shell + iframe identity across manifest updates
 - [ ] A3 phased generationed handshake (bridge-alive → booting → committed → ready → error → diagnostic)
 - [ ] A4 in-place auto-recovery (retry the affected frame on next update; keep last pixels)
-- [ ] A5 replay modes on commit; per-frame overlay (one dead frame never kills a board mode)
-- [ ] A6 interaction leases (defer swaps mid-gesture/prototype; coalesce saves)
-- [ ] A7 controlled HMR for `design/**` (`handleHotUpdate` → `sh:frame-invalidated`)
+- [x] A5 replay modes on commit; per-frame overlay (one dead frame never kills a board mode)
+- [x] A6 interaction leases (defer swaps mid-gesture/prototype; coalesce saves)
+- [x] A7 controlled HMR for `design/**` (`handleHotUpdate` → `sh:frame-invalidated`)
 - [~] A8 cold-boot: server.warmup DONE; bounded nav concurrency + watchdog gating pending (with A3/A6/A7 wave)
 - [x] A9 board autosave CAS + `mustExist` (ends ghost boards); manifest never marks a board dirty
 - [ ] A10 play-mode scroll preservation (`data-sh-scroll-key`)
