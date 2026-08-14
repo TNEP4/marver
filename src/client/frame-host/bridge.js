@@ -58,6 +58,22 @@ document.addEventListener('gesturestart', (e) => e.preventDefault())
 // a nested scroll container hitting its boundary must not chain into the shell page
 document.documentElement.style.overscrollBehavior = 'contain'
 
+// ---- Stage 2 snapshot capture ------------------------------------------------------
+// The producer (html-to-image) is loaded ONLY on demand, so it never touches a frame's boot.
+// Fail soft: any error -> sh:snapshot-error, and the shell keeps live pixels.
+async function captureSnapshot(m) {
+  const echo = { requestId: m.requestId, nodeKey: m.nodeKey, generation: m.generation, sourceRevision: m.sourceRevision, width: m.width, height: m.height, theme: m.theme, dprBucket: m.dprBucket }
+  try {
+    if (modeActive()) return post({ type: 'sh:snapshot-error', ...echo, reason: 'mode-active' })  // don't bake outlines/cursors in
+    const { capture } = await import('./snapshot.js')
+    const blob = await capture({ width: m.width, height: m.height })
+    if (blob) post({ type: 'sh:snapshot-result', ...echo, blob })
+    else post({ type: 'sh:snapshot-error', ...echo, reason: 'empty' })
+  } catch (e) {
+    post({ type: 'sh:snapshot-error', ...echo, reason: String((e && e.message) || e) })
+  }
+}
+
 // ---- laser mode + element picking (SPEC-M3 §5, §7) ----------------------------------
 // Laser: one injected stylesheet, outline only (zero layout shift), depth-based hue -
 // each nesting level steps 60° around the wheel, cycling at 6. Picking: laser plus a
@@ -284,6 +300,8 @@ window.addEventListener('message', (e) => {
   if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes(); reportInteraction() }
   // B0.2: interact/play target owns its own wheel; passive frames forward it to the canvas
   if (m.type === 'sh:interactive') { interactiveOn = !!m.on }
+  // Stage 2: the shell asks this frame to snapshot itself (html-to-image, lazily imported).
+  if (m.type === 'sh:snapshot-request') captureSnapshot(m)
   if (m.type === 'sh:copy-ok') showCopied(m.seq)
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
     const rects = m.anchors.slice(0, 200).map((a) => {
