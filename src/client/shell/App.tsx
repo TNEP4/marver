@@ -1,6 +1,6 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, PUBLISHED, boardLabel, cap, fetchBoardNames, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, PUBLISHED, boardLabel, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
@@ -24,7 +24,7 @@ function SceneGroup({ name, count, held, onPick, children }: { name: string; cou
       <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)}>
         <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
         {/* the NAME selects every frame in the scene; the caret/row still collapses */}
-        <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{cap(name) || '(root)'}</span>
+        <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{humanize(name) || '(root)'}</span>
         <small>{count}</small>
       </button>
       {open && children}

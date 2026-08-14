@@ -37,7 +37,8 @@ export interface Toast { id: number; text: string }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean } = shConfig
 
-export const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+export { cap, humanize } from './labels.ts'
+import { cap, humanize } from './labels.ts'
 
 /** Board names for switchers: all-scenes first, the rest sorted. Throws on transport
  *  failure - callers keep their last known list. */
@@ -47,7 +48,7 @@ export async function fetchBoardNames(): Promise<string[]> {
   return ['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes').sort()]
 }
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
-export const boardLabel = (n: string) => (n === 'all-scenes' ? 'All scenes' : cap(n))
+export const boardLabel = (n: string) => humanize(n)
 
 const HEADER = 28
 let toastSeq = 0

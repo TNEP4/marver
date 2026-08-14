@@ -51,7 +51,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] D2 built-in `:::family` colors from `palette.ts`
 - [ ] D3 colored/highlighted inline Md (`:blue[…]`)
 - [ ] D4 full-width rich Md
-- [ ] D5 humanize sidebar labels
+- [x] D5 humanize sidebar labels
 - [ ] D6 copy-path shortcut → `Shift+P` + fix stale tooltip
 - [ ] D7 teach-the-agent authoring doctrine in `instructions/`
 

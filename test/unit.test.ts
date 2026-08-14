@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import { affectedFrameIds, extractMeta, toFrameId, type Manifest } from '../src/server/manifest.ts'
 import { tidy } from '../src/client/shell/tidy.ts'
+import { humanize } from '../src/client/shell/labels.ts'
+
+describe('humanize (D5 sidebar labels)', () => {
+  it('de-hyphenates and Title-Cases', () => {
+    expect(humanize('tms-high-level')).toBe('Tms High Level')
+    expect(humanize('all-scenes')).toBe('All Scenes')
+    expect(humanize('tms-specs')).toBe('Tms Specs')
+  })
+  it('leaves a single word Title-Cased', () => expect(humanize('structure')).toBe('Structure'))
+  it('empty stays empty', () => expect(humanize('')).toBe(''))
+})
 
 describe('affectedFrameIds (A7 controlled-HMR fanout, manifest + conventions)', () => {
   const ROOT = '/proj'
