@@ -117,8 +117,12 @@ export async function serve(root: string, portFlag?: number) {
       }
       // the bundle is never sent pre-auth - a client-side gate would be theater.
       // Favicons and the app logo are the one exemption: the gate page itself wears
-      // them, and they carry no design data.
-      const cosmetic = url.pathname.startsWith('/__mv/favicon/') || /^\/__mv\/logo\.(svg|png)$/.test(url.pathname)
+      // them, and they carry no design data. Match the DECODED path against strict
+      // filenames (no traversal): the static handler decodes too, so a raw-encoded
+      // `/__mv/favicon/%2f..%2f..%2findex.html` must not slip the gate as "cosmetic".
+      let decoded = url.pathname
+      try { decoded = decodeURIComponent(url.pathname) } catch { /* keep raw - it won't match below */ }
+      const cosmetic = /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png)$/.test(decoded)
       // a member session opens the gate outright (account > shared secret)
       if (!authed(req) && !cosmetic && !sessionCheck?.(req)) {
         // bearer requests (dev proxy / agent CLI) may pierce the gate to the API,

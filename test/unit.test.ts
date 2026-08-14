@@ -629,6 +629,19 @@ describe('auth - invites, accounts, sessions (SPEC-M3 §3)', async () => {
       expect(() => auth.claimInvite(dir, token, { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
       expect(() => auth.claimInvite(dir, 'not-a-token', { password: 'longenough1', name: 'B' })).toThrow(/invalid, expired/)
     }))
+  it('validAvatar checks magic bytes, not the declared MIME (gate v2 P2)', async () => {
+    const { validAvatar } = await import('../src/server/collab.ts')
+    const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]).toString('base64')
+    const jpeg = 'data:image/jpeg;base64,' + Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString('base64')
+    const svgAsPng = 'data:image/png;base64,' + Buffer.from('<svg onload=alert(1)>').toString('base64')
+    expect(validAvatar(png)).toBe(true)
+    expect(validAvatar(jpeg)).toBe(true)
+    expect(validAvatar(svgAsPng)).toBe(false)       // real bytes betray the lie
+    expect(validAvatar('data:image/svg+xml;base64,PHN2Zz4=')).toBe(false)
+    expect(validAvatar('data:image/png;base64,not valid base64!!')).toBe(false)
+    expect(validAvatar('x'.repeat(70000))).toBe(false)   // over the cap
+    expect(validAvatar(123)).toBe(false)
+  })
   it('inviteInfo peeks a live invite, goes dark after claim; ownerName is public-safe (gate v2)', () =>
     store((dir) => {
       expect(auth.ownerName(dir)).toBeNull()             // pre-claim: no owner yet

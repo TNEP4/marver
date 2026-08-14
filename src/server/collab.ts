@@ -37,6 +37,25 @@ const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 're
 const ID_RE = /^[\w-]{8,64}$/
 const MAX_BODY_TEXT = 10_000
 
+/** An avatar the server will store: a raster data-URI whose ACTUAL decoded bytes
+ *  match the declared type. The declared MIME alone is a lie an attacker controls
+ *  (base64 SVG labelled image/png); the magic bytes are the truth. Capped small -
+ *  the client downscales to a 128px jpeg (~15KB), 64KB is generous headroom. */
+export function validAvatar(s: unknown): s is string {
+  if (typeof s !== 'string' || s.length > 65536) return false
+  const m = /^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(s)
+  if (!m) return false
+  let head: Buffer
+  try { head = Buffer.from(m[2].slice(0, 24), 'base64') } catch { return false }
+  const magic: Record<string, (b: Buffer) => boolean> = {
+    jpeg: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+    png: (b) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
+    gif: (b) => b.toString('latin1', 0, 4) === 'GIF8',
+    webp: (b) => b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP',
+  }
+  return magic[m[1]]?.(head) ?? false
+}
+
 /** Reject anything the log must not absorb. Returns an error string or null.
  *  Events are append-only and synced by id, so acceptance is forever - validate hard. */
 export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u: User, board: string): string | null {
@@ -239,7 +258,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const { user, session } = claimInvite(dataDir, String(b.token ?? ''), {
           password: String(b.password ?? ''), name: String(b.name ?? ''),
-          avatar: typeof b.avatar === 'string' && /^data:image\/(jpeg|png|webp|gif);base64,/.test(b.avatar) && b.avatar.length <= 65536 ? b.avatar : undefined,
+          avatar: validAvatar(b.avatar) ? b.avatar : undefined,
         })
         setSession(req, res, session)
         return json(res, 200, { user: publicUser(user) }), true
@@ -265,7 +284,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const next = updateProfile(dataDir, u.email, {
           name: typeof b.name === 'string' ? b.name : undefined,
-          avatar: typeof b.avatar === 'string' && (b.avatar === '' || (/^data:image\/(jpeg|png|webp|gif);base64,/.test(b.avatar) && b.avatar.length <= 65536)) ? b.avatar : undefined,
+          avatar: b.avatar === '' ? '' : validAvatar(b.avatar) ? b.avatar : undefined,
         })
         return json(res, 200, { user: publicUser(next) }), true
       }
