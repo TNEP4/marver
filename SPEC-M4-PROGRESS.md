@@ -21,7 +21,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [ ] A5 replay modes on commit; per-frame overlay (one dead frame never kills a board mode)
 - [ ] A6 interaction leases (defer swaps mid-gesture/prototype; coalesce saves)
 - [ ] A7 controlled HMR for `design/**` (`handleHotUpdate` → `sh:frame-invalidated`)
-- [ ] A8 cold-boot: `server.warmup`, bounded nav concurrency, watchdog gated on optimizer state
+- [~] A8 cold-boot: server.warmup DONE; bounded nav concurrency + watchdog gating pending (with A3/A6/A7 wave)
 - [x] A9 board autosave CAS + `mustExist` (ends ghost boards); manifest never marks a board dirty
 - [ ] A10 play-mode scroll preservation (`data-sh-scroll-key`)
 

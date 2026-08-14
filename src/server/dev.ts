@@ -60,6 +60,20 @@ export async function dev(root: string, portFlag?: number) {
           '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
         ],
       },
+      // A8: pre-transform the frame boot chain at server start so the FIRST frame load never
+      // races Vite's on-demand transform/optimize (the cold-boot "frame never reported ready"
+      // race - every content frame statically pulls the content primitives). optimizeDeps
+      // already pre-bundles marked/mermaid; this warms the source modules around them.
+      warmup: {
+        clientFiles: [
+          join(clientDir, 'frame-host', 'main.tsx'),
+          join(clientDir, 'frame-host', 'bridge.js'),
+          join(clientDir, 'content', 'index.tsx'),
+          join(clientDir, 'content', 'diagram.tsx'),
+          join(clientDir, 'content', 'md.ts'),
+          'design/**/*.{tsx,jsx}',
+        ],
+      },
     },
     resolve: {
       dedupe: ['react', 'react-dom'],
