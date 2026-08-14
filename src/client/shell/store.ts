@@ -914,3 +914,6 @@ export const useStore = create<State>((set, get) => {
     },
   }
 })
+
+// dev-only inspection hook for tests/debugging (never installed in published builds)
+if (import.meta.env.DEV) (window as unknown as { __mvStore: unknown }).__mvStore = useStore

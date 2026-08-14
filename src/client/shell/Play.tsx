@@ -120,6 +120,12 @@ function BoardMenu({ current }: { current: string }) {
 function PlayInner() {
   const play = useStore((s) => s.play)
   const board = useStore((s) => s.board)
+  // A6/A7: a controlled frame edit while play is open never auto-reloads the live stage
+  // (that would destroy the user's session mid-prototype). It records playUpdateRevision;
+  // we surface an "Update ready" affordance, and applyPlayUpdate bumps playNav to reload
+  // the stage at its current position on an explicit click.
+  const playUpdateRevision = useStore((s) => s.playUpdateRevision)
+  const playNav = useStore((s) => s.playNav)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // the src is frozen at mount - navigation happens INSIDE the stage; device and theme
   // changes must never reload it (a phone does not remount when you flip dark mode)
@@ -142,6 +148,16 @@ function PlayInner() {
   const hintTimer = useRef<number | undefined>(undefined)
 
   const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
+
+  // apply a deferred update: reload the stage iframe at its CURRENT frame + theme on a fresh
+  // rev-stamped URL. sh:stage-ready replays position; device size is shell-owned.
+  useEffect(() => {
+    if (!playNav || !iframeRef.current) return
+    const p = useStore.getState().play
+    if (!p) return
+    iframeRef.current.src = `${ROUTE}/stage/?at=${encodeURIComponent(p.at)}&theme=${encodeURIComponent(p.theme)}&r=${playNav}`
+  }, [playNav])
+  const applyUpdate = () => useStore.getState().applyPlayUpdate()
 
   const exit = () => {
     const { at } = useStore.getState().play ?? {}
@@ -378,6 +394,14 @@ function PlayInner() {
             </button>
           </Tip>
         ))}
+        {playUpdateRevision && (
+          <>
+            <i className="sep" />
+            <Tip inv side="bottom" label={<><b>Update ready</b><span>an edit landed - reload this prototype</span></>}>
+              <button className="sh-play-update" onClick={applyUpdate}><ReloadIcon size={13} /><span>Update</span></button>
+            </Tip>
+          </>
+        )}
         <i className="sep" />
         <Tip inv side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything</span><span className="k">⌘/</span></>}>
           <button onClick={() => setChrome('collapsed')}>

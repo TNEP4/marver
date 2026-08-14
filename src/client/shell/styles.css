@@ -498,6 +498,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* board switcher */
 .sh-play-bar .bd-wrap { position: relative }
 .sh-play-bar .bd { width: auto; gap: 6px; padding: 0 10px 0 12px; white-space: nowrap; font: inherit }
+.sh-play-bar .sh-play-update { width: auto; gap: 5px; padding: 0 11px; font-size: 12px; font-weight: 600; color: #6db3ff; white-space: nowrap }
+.sh-play-bar .sh-play-update:hover { background: rgba(109, 179, 255, .16); color: #8ec5ff }
 /* no backdrop-filter here: the menu nests inside the blurred bar, and glass never nests
    (a nested backdrop-filter samples the bar, not the page) - near-opaque ink instead */
 .sh-play-menu { position: absolute; top: calc(100% + 10px); left: 0; min-width: 150px; padding: 4px;
