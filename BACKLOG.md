@@ -128,6 +128,24 @@ Small items that are not milestone work. One line each; delete when done.
   optimizer at `marver dev` boot before printing "canvas ready" to remove the race at source
   (costs a few cold-boot seconds). Do (a) regardless - it's the "hot reload in the background"
   behavior Nic wants. Verified the frames render clean once warm.
+- **Two projects collide on port 5199 - a tab silently shows the wrong project (confirmed,
+  2026-08-14).** Nic ran two marver dev servers at once (marver-site + tms-broker) and his
+  marver-site tab (localhost:5199) started showing the TMS project - looked like cross-repo
+  contamination but is a PORT SWAP: every `marver init` scaffolds the SAME hardcoded
+  `port: 5199` in `design/config.ts`, so two concurrent projects fight for one port; the
+  loser falls back to the next free port, and the mapping is nondeterministic across restarts.
+  When marver-site's server died, tms-broker grabbed :5199, so a tab bookmarked to :5199 now
+  serves the other project. No files touched - marver-site's `design/` is clean. Fixes:
+  (1) **deterministic per-project port** - derive the default from a hash of the project path
+  into a range (don't write a fixed 5199 into every scaffold), so each repo always gets its
+  own port and two projects never collide; (2) **identify the project in the UI** - the
+  sidebar header just says "Marver"; show the project name (host package.json / dir) so a
+  port swap is obvious and a tab can't masquerade as another project (this alone turns
+  "it's broken" into "oh, wrong project on this port"); (3) **collision guard on boot** - if
+  the configured port is held by ANOTHER marver instance, pick a deterministic alternate and
+  log loudly "5199 taken by <other project>, serving <this> on 5201". Subsumes the older
+  "three instances collided on 5199/5200 (lockfile or banner)" note. Multi-project concurrency
+  is a first-class case Nic wants (multiple agents on multiple projects at once).
 - **Canvas performance at scale - the PRIMARY ask (dogfooding hertz-transpo, 2026-08-14).**
   "All scenes" now holds ~30+ live frames (Tms-specs 6 + Flow-01..10 × overview/reference),
   and zoom/pan goes slow, janky, "pixel-like"; wheel zoom also fights page scroll. Nic's bar,
