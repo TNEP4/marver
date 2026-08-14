@@ -3,6 +3,19 @@ import { join } from 'node:path'
 import { affectedFrameIds, extractMeta, toFrameId, type Manifest } from '../src/server/manifest.ts'
 import { tidy } from '../src/client/shell/tidy.ts'
 import { humanize } from '../src/client/shell/labels.ts'
+import { renderMarkdown } from '../src/client/content/md.ts'
+
+describe('renderMarkdown color families (D3)', () => {
+  it('renders :family[text] as a colored span', () => {
+    expect(renderMarkdown(':blue[shipper]')).toContain('<span class="mv-c-blue">shipper</span>')
+  })
+  it('parses inline markdown inside the color span', () => {
+    expect(renderMarkdown(':orange[**bold**]')).toContain('<span class="mv-c-orange"><strong>bold</strong></span>')
+  })
+  it('an unknown family stays literal text', () => {
+    expect(renderMarkdown(':pink[x]')).not.toContain('mv-c-pink')
+  })
+})
 
 describe('humanize (D5 sidebar labels)', () => {
   it('de-hyphenates and Title-Cases', () => {

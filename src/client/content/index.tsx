@@ -9,7 +9,11 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CONTENT_WIDTH } from '../const.ts'
-import { assetUrl, renderMarkdown } from './md.ts'
+import { assetUrl, renderMarkdown, FAMILIES } from './md.ts'
+
+// D3: family color classes for inline Md (`:blue[...]`), theme-aware (frames carry .dark + [data-theme])
+const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
+  `.mv-md .mv-c-${f}{color:${c.light}}.dark .mv-md .mv-c-${f},[data-theme="dark"] .mv-md .mv-c-${f}{color:${c.dark}}`).join('\n')
 
 export { Diagram } from './diagram.tsx'
 
@@ -106,7 +110,7 @@ function ensureStyles() {
   stylesIn = true
   const el = document.createElement('style')
   el.id = 'mv-content-css'
-  el.textContent = CSS
+  el.textContent = CSS + '\n' + FAMILY_CSS
   document.head.appendChild(el)
 }
 

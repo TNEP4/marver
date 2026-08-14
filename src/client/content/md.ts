@@ -8,6 +8,19 @@ import { Marked } from 'marked'
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
+/** D3: named color families for inline Md - the SAME families the diagrams use, so prose and
+ *  the diagram beside it speak one color language. Theme pairs (light/dark). Bound to classes,
+ *  never raw HTML (raw HTML stays inert). Used by the `:family[text]` extension + the frame CSS. */
+export const FAMILIES: Record<string, { light: string; dark: string }> = {
+  blue:   { light: '#0088FF', dark: '#3B9DFF' },
+  orange: { light: '#F5820A', dark: '#FF9F33' },
+  purple: { light: '#B32BC8', dark: '#D34FE8' },
+  green:  { light: '#1FA34A', dark: '#34C759' },
+  red:    { light: '#E5342B', dark: '#FF453A' },
+  gray:   { light: '#8B95A3', dark: '#7D8794' },
+}
+const FAMILY_RE = new RegExp(`^:(${Object.keys(FAMILIES).join('|')})\\[([^\\]\\n]+)\\]`)
+
 /** Relative design/assets/ path -> served URL; null for anything else (fail closed).
  *  Decodes BEFORE validating (a %2e%2e must not sneak past the ".." check) and
  *  re-encodes per segment, so the validated path is the path the browser requests. */
@@ -43,6 +56,22 @@ const marked = new Marked({
       return `<img src="${escapeHtml(url)}" alt="${alt}" loading="lazy" />`
     },
   },
+})
+
+// D3: `:blue[shipper's world]` -> a family-colored span (inline markdown inside still parses).
+marked.use({
+  extensions: [{
+    name: 'mvcolor',
+    level: 'inline',
+    start(src: string) { return src.match(/:(?:blue|orange|purple|green|red|gray)\[/)?.index },
+    tokenizer(this: any, src: string) {
+      const m = FAMILY_RE.exec(src)
+      if (m) return { type: 'mvcolor', raw: m[0], family: m[1], tokens: this.lexer.inlineTokens(m[2]) }
+    },
+    renderer(this: any, token: any) {
+      return `<span class="mv-c-${token.family}">${this.parser.parseInline(token.tokens)}</span>`
+    },
+  }],
 })
 
 export function renderMarkdown(src: string): string {
