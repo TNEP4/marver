@@ -24,6 +24,37 @@ Small items that are not milestone work. One line each; delete when done.
   canvases ever face real brute-force pressure.
 - **`--boards` and the host `public/` directory**: the filter covers frames only; public
   assets ship in full (build prints a note). Revisit if a real leak case appears.
+- **Concurrent user-interaction + agent-edit resilience - the priority UX-damage theme
+  (dogfooding marver-site, 2026-08-14).** The user is IN the canvas (lasering, commenting,
+  scrolling, preparing the next request) WHILE the agent edits frame files in parallel, and
+  the churn breaks things: whole-frame crashes, and laser/comment mode stop working and don't
+  come back. Two distinct problems under one theme:
+    1. **Mid-edit HMR crashes are transient half-written modules.** Confirmed live: play mode
+       carded "frame crashed / FolderTree is not defined" on `landing/keynote-v2` while the
+       agent was mid-edit. `FolderTree` is a valid `lucide-react` export and the on-disk file
+       is correct (import line 4, used line 429) - so Vite HMR applied an INTERMEDIATE save
+       where the symbol was used before its import landed (or mid-rename). Inherent to live
+       editing, BUT the error card is dead: it only clears on a manual `reload`, not on the
+       agent's NEXT save that fixes it. FIX: the stage/frame-host ErrorBoundary should
+       auto-clear and re-render on the next HMR module update for that frame (Boundary resets
+       on resetKey today; also reset on `import.meta.hot` update), so a transient bad save
+       heals itself the instant the agent saves again - no user action.
+    2. **Shell-owned modes die on frame churn and don't re-arm (the real damage).** Laser and
+       comment mode "stop working" after a frame crashes/HMR-reloads. FrameNode already
+       re-sends `sh:laser`/`sh:pick` when a frame becomes `ready` (line ~41), but a CRASHED
+       frame goes to `status:'error'` and never returns to `ready`, so it drops out of the
+       lasered/comment set permanently; and reports say the mode breaks BOARD-WIDE, not just
+       on the crashed frame - suggesting one frame's error also throws in the shell's
+       laser/comment overlay path and kills the whole mode. FIX: (a) shell-owned interaction
+       state (laser, comment, scroll, zoom) must survive ANY frame lifecycle event and
+       re-attach after crash-recover/HMR/reload; (b) one frame erroring must NEVER break the
+       board-level mode - isolate the overlay per frame so a dead frame is skipped, not fatal.
+  Needs a codex adversarial pass on the frame-lifecycle × mode-state matrix (like the Play
+  chrome item): {loading, ready, error, HMR-updating, reloading} × {laser on/off, comment
+  on/off} × user mid-gesture. Connects to the cold-boot item below and the multiplayer
+  concern - unifying principle: **frame churn must never damage shell-owned state or leave a
+  dead frame; always recover in-place.** High priority - Nic flags this as the thing that
+  most hurts the live dogfood experience.
 - **Content frames time out to a dead error card, and recovery loses the user's place
   (dogfooding hertz-transpo, 2026-08-14 - bugs "a fair bit," priority).** On a fresh
   `marver dev` (empty `node_modules/.vite`, e.g. right after `npm i` to a new version) - and
