@@ -24,6 +24,18 @@ Small items that are not milestone work. One line each; delete when done.
   canvases ever face real brute-force pressure.
 - **`--boards` and the host `public/` directory**: the filter covers frames only; public
   assets ship in full (build prints a note). Revisit if a real leak case appears.
+- **Copy-path shortcut: mislabeled `C`, rebind to `Shift+P` (dogfooding, 2026-08-14).** The
+  toolbar "Copy file path" tooltip advertises `C` (App.tsx:203, `<span className="k">C</span>`)
+  but that hint is stale - it was never updated when copy moved `c`->`y` in 0.4.0. The real
+  handler is `y` ("yank", App.tsx:620); `c` is comment mode (App.tsx:613). So nothing is
+  actually double-bound, but the UI CLAIMS copy=C and comment=C, which reads as a collision,
+  and `y` is invisible/unintuitive (vim jargon, and the visible hint lies). Fix, two parts:
+  (1) correct the tooltip regardless; (2) rebind copy-path to **`Shift+P`** - mnemonic (bare
+  `p` = play/prototype is taken, so `Shift+P` = "copy **P**ath"), fits the existing Shift =
+  secondary-action tier (`Shift+C` hide pins, `Shift+0/1/2` zoom), zero collision. Nic also
+  floated `X` (free, easy reach, but cut/delete connotation - weaker mnemonic); recommended
+  `Shift+P`. Nic to confirm the key before wiring; then update handler + tooltip + AGENTS +
+  changelog. Small, self-contained.
 - **Concurrent user-interaction + agent-edit resilience - the priority UX-damage theme
   (dogfooding marver-site, 2026-08-14).** The user is IN the canvas (lasering, commenting,
   scrolling, preparing the next request) WHILE the agent edits frame files in parallel, and
