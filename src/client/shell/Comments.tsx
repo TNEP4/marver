@@ -258,6 +258,20 @@ let pendingThread: string | null = null   // cross-board deep link awaiting its 
 export function CommentsController() {
   const board = useStore((s) => s.board)
   const commentMode = useComments((s) => s.commentMode)
+  const active = useComments((s) => s.active)
+
+  // modal-style dismiss: any press outside the card (and outside the surfaces that
+  // legitimately manage it - pins, stacks, the identity dialog) closes the thread
+  useEffect(() => {
+    if (!active) return
+    const onDown = (e: PointerEvent) => {
+      const t = e.target instanceof Element ? e.target : null
+      if (t?.closest('.cm-card, .cm-pin, .cm-stack, .cm-modal')) return
+      useComments.getState().setActive(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [active])
 
   useEffect(() => {
     const { load, live } = useComments.getState()
@@ -280,8 +294,12 @@ export function CommentsController() {
   // Different board: park the id; the load effect above consumes it once the
   // board switch has fetched that board's comments.
   useEffect(() => {
-    const onHash = () => {
-      const c = parseHash().c
+    const onHash = (e: HashChangeEvent) => {
+      // read the URL the EVENT carries, not location.hash: the shell's own
+      // hashchange handler resets selection, whose projection synchronously
+      // rewrites the hash - listener order decides which URL survives, and
+      // e.newURL is immune to that race
+      const c = parseHash(e.newURL ? new URL(e.newURL).hash : location.hash).c
       if (!c) return
       if (!revealThread(c)) pendingThread = c
     }

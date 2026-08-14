@@ -53,33 +53,38 @@ document.addEventListener('gesturestart', (e) => e.preventDefault())
 const LASER_ID = 'mv-laser-style'
 // comment-mode cursor: the pin's chat-teardrop, hotspot at the tail
 const PICK_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cpath d='M132,24A100.11,100.11,0,0,0,32,124v84a16,16,0,0,0,16,16h84a100,100,0,0,0,0-200Z' fill='%2318181b' stroke='%23fff' stroke-width='16'/%3E%3C/svg%3E") 4 21, crosshair`
+// laser-mode cursor: the toolbar's crosshair reticle, hotspot dead center
+const LASER_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 256 256'%3E%3Cg stroke='%23fff' stroke-width='34' fill='none'%3E%3Ccircle cx='128' cy='128' r='56'/%3E%3Cpath d='M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232' stroke-linecap='round'/%3E%3C/g%3E%3Cg stroke='%2318181b' stroke-width='16' fill='none'%3E%3Ccircle cx='128' cy='128' r='56'/%3E%3Cpath d='M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232' stroke-linecap='round'/%3E%3C/g%3E%3Ccircle cx='128' cy='128' r='12' fill='%2318181b'/%3E%3C/svg%3E") 12 12, crosshair`
 const laserCss = () => {
   // depth via unrolled descendant combinators - CSS custom properties cannot cycle
   let rules = 'body { --mv-hue: 0 }\n'
   for (let d = 1; d <= 12; d++)
     rules += `body ${'> * '.repeat(d)}{ --mv-hue: ${(d % 6) * 60} }\n`
   // full rainbow only in laser mode; comment mode keeps just the hover highlight
-  // (understand what you'd click without the whole board shouting)
+  // (understand what you'd click without the whole board shouting). The label and
+  // its children are chrome, never subjects - no outlines on them.
   if (laserOn)
-    rules += 'body *:not(script):not(style) { outline: 1px solid hsl(var(--mv-hue) 85% 55% / .75); outline-offset: -1px }\n'
-  if (pickOn)
-    rules += `body, body * { cursor: ${PICK_CURSOR} !important }\n`
+    rules += 'body *:not(script):not(style):not(#mv-laser-label):not(#mv-laser-label *) { outline: 1px solid hsl(var(--mv-hue) 85% 55% / .75); outline-offset: -1px }\n'
+  // comment cursor wins when both modes are on (comment owns the click)
+  if (pickOn || laserOn)
+    rules += `body, body * { cursor: ${pickOn ? PICK_CURSOR : LASER_CURSOR} !important }\n`
   return rules + `
 body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-offset: -2px;
   background-image: linear-gradient(hsl(var(--mv-hue) 95% 50% / .08), hsl(var(--mv-hue) 95% 50% / .08)) }
 #mv-laser-label { position: fixed; z-index: 2147483647; pointer-events: none; outline: none !important;
+  display: flex; align-items: center; gap: 5px; width: max-content;
   font: 600 10px -apple-system, system-ui, sans-serif; color: #fff; background: rgba(20, 20, 24, .92);
   padding: 3px 7px; border-radius: 5px; max-width: 340px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; letter-spacing: .01em }
-#mv-laser-label svg { vertical-align: -3px; margin-right: 5px }
+#mv-laser-label svg { flex: none; display: block; outline: none !important }
 #mv-laser-label.mv-copied { animation: mv-pop .22s cubic-bezier(.32, .72, .35, 1) }
 @keyframes mv-pop { from { transform: scale(.85); opacity: .5 } }
 `
 }
 
-// clipboard-with-check (Phosphor clipboard + a check inside): the label wears this
-// while confirming a copy
-const COPIED_HTML = `<svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor"><path d="M200,32H163.74a47.92,47.92,0,0,0-71.48,0H56A16,16,0,0,0,40,48V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm-72,0a32,32,0,0,1,32,32H96A32,32,0,0,1,128,32Zm72,184H56V48H82.75A47.93,47.93,0,0,0,80,64v8a8,8,0,0,0,8,8h80a8,8,0,0,0,8-8V64a47.93,47.93,0,0,0-2.75-16H200Z"/><path d="M92 148l26 26 48-52" fill="none" stroke="currentColor" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/></svg>Element path copied`
+// filled clipboard with a check inside (Phosphor clipboard-fill + check): the label
+// wears this while confirming a copy
+const COPIED_HTML = `<svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor"><path d="M200,32H163.74a47.92,47.92,0,0,0-71.48,0H56A16,16,0,0,0,40,48V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm-72,0a32,32,0,0,1,32,32H96A32,32,0,0,1,128,32Z"/><path d="M92 150l26 26 48-54" fill="none" stroke="rgba(20,20,24,.92)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Element path copied</span>`
 
 let laserOn = false, pickOn = false, hoverEl = null, labelEl = null
 const modeActive = () => laserOn || pickOn

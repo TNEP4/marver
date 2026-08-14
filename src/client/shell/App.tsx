@@ -6,7 +6,7 @@ import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, CommentIcon, DevicesIcon, FrameRectIcon, GridIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController } from './Comments.tsx'
 import { useComments } from './comments-store.ts'
 
@@ -799,10 +799,7 @@ export function App() {
 
       {/* floating pill nav, top right; collapses to a chip (same ladder as panel/fab) */}
       <nav className={`sh-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
-        {/* far-left section: single actions - laser, comment mode, tidy */}
-        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
-          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
-        </Tip>
+        {/* far-left section: single actions - comment mode, laser, tidy */}
         <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C hides pins</span></>}>
           <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
             const c = commentsStore()
@@ -810,8 +807,11 @@ export function App() {
             toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
           }}><CommentIcon size={16} /></button>
         </Tip>
+        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
+          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => useStore.getState().setLaser(!laser)}><LaserIcon size={16} /></button>
+        </Tip>
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
-          <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><GridIcon size={16} /></button>
+          <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
         </Tip>
         <i className="sep" />
         <DeviceMenu />
