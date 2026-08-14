@@ -153,11 +153,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         if (n) groupStarts[k] = { x: n.x, y: n.y }
       }
     }
-    world.classList.add('sh-gesturing')
-    // Stage 2: a resized frame stays LIVE (its snapshot must not cover the reflow the user wants to see)
-    const nodeEl = mode !== 'move' ? (el.closest('.sh-node') as HTMLElement | null) : null
-    nodeEl?.classList.add('sh-resizing')
-    setGesture(true)
+    world.classList.add('sh-gesturing')   // frame drag/resize: drops iframe pointer-events, but
+    setGesture(true)                        // does NOT set sh-camera, so no snapshot covers it
 
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - start.x) / gestureScale
@@ -180,7 +177,6 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       finished = true
       try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
       world.classList.remove('sh-gesturing')
-      nodeEl?.classList.remove('sh-resizing')
       setGesture(false)
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', done)

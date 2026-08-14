@@ -21,7 +21,7 @@
 // windows where jank matters and the perf gate is measured.
 const GESTURING = () => {
   const w = document.getElementById('sh-world')
-  return !!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))
+  return !!w && (w.classList.contains('sh-camera') || w.classList.contains('sh-preset'))
 }
 
 const frames: number[] = []   // inter-frame intervals (ms) during gestures

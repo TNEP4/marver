@@ -255,11 +255,13 @@ export function Canvas() {
     if (!app || !canvas) return
     let settle = 0
     const beginGesture = (panning: boolean) => {
-      document.getElementById('sh-world')?.classList.add('sh-gesturing')
+      // sh-camera = a CANVAS pan/zoom (drives the snapshot cover); sh-gesturing also drops iframe
+      // pointer-events. A frame click/drag sets only sh-gesturing, so it never flashes a snapshot.
+      document.getElementById('sh-world')?.classList.add('sh-gesturing', 'sh-camera')
       document.body.classList.toggle('sh-panning', panning)
       clearTimeout(settle)
       settle = window.setTimeout(() => {
-        document.getElementById('sh-world')?.classList.remove('sh-gesturing')
+        document.getElementById('sh-world')?.classList.remove('sh-gesturing', 'sh-camera')
         document.body.classList.remove('sh-panning')
       }, 160)
     }
@@ -313,12 +315,14 @@ export function Canvas() {
     }
   }, [])
 
+  const camera = (on: boolean) => {
+    document.getElementById('sh-world')?.classList[on ? 'add' : 'remove']('sh-gesturing', 'sh-camera')
+  }
   const pan = (on: boolean) => () => {
-    document.getElementById('sh-world')?.classList[on ? 'add' : 'remove']('sh-gesturing')
+    camera(on)
     document.body.classList[on ? 'add' : 'remove']('sh-panning')
   }
-  const zoom = (on: boolean) => () =>
-    document.getElementById('sh-world')?.classList[on ? 'add' : 'remove']('sh-gesturing')
+  const zoom = (on: boolean) => () => camera(on)
 
   // no initialPosition props on the wrapper: rzpp applies them ASYNC after mount and
   // stomps the boot fit when data is inlined (published builds) - the boot fit owns
