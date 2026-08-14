@@ -38,6 +38,17 @@ Stuck, or the human is unhappy with a result? instructions/reference/ holds the 
 guides (layout, typography, color, motion, copy, states, tuning, critique, concepts) -
 the routing index is at the top of instructions/craft.md. Pull ONE file, apply, return.
 
+## When the human points at a specific element
+
+Two channels carry element-precise feedback - honor both:
+- **A pasted address** like `design/scenes/hero/a.tsx · #root > div > h1 (a.tsx:12)` is
+  a LASER-COPIED pointer: the human pressed L (laser mode), hovered to see the element,
+  clicked it, and its exact address landed on their clipboard. Open that frame file and
+  go straight to that element - the css path (and source location, when present) are exact.
+- **A pinned comment** on an element: run `npx marver comments list --open --json` - each
+  thread carries the anchored element (tag, quoted text, css path, frame). Work that queue
+  per instructions/iterate.md; the comment names the div, so read the anchor before the words.
+
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
 - It default-exports a React component. No imports from the tool are needed. Optional:
