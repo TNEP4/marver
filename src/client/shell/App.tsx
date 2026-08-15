@@ -744,10 +744,14 @@ export function App() {
           mounted so collapse/expand can crossfade-morph between them */}
       <aside className={`sh-panel${panelOpen ? '' : ' closed'}`} aria-hidden={!panelOpen}>
           <div className="sh-panel-top">
-            <ParallelogramDuoIcon size={21} className="mark" />
-            <span className="name">Marver</span>
-            {/* C2: name the project so two concurrent canvases are never confused at a glance */}
-            {CONFIG.projectName && <span className="sh-proj" title="project">{CONFIG.projectName}</span>}
+            {/* the mark links to the marver site; the title is the humanized repo name (C2: names
+                the project so two concurrent canvases are never confused), ellipsed if long */}
+            <Tip side="bottom" label="marver.design">
+              <a className="mark-link" href="https://marver.design" target="_blank" rel="noreferrer" aria-label="marver.design" tabIndex={panelOpen ? 0 : -1}>
+                <ParallelogramDuoIcon size={21} className="mark" />
+              </a>
+            </Tip>
+            <span className="name" title={CONFIG.projectName || 'Marver'}>{CONFIG.projectName ? humanize(CONFIG.projectName) : 'Marver'}</span>
             <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={togglePanel} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">

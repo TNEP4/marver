@@ -337,10 +337,11 @@ body.sh-commenting .sh-lean { opacity: 0 }
   transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
 .sh-panel.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 .sh-panel-top { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px 8px }
-.sh-panel-top .mark { flex: none; color: var(--accent) }
-.sh-panel-top .name { font-weight: 700; font-size: 15px; flex: none; letter-spacing: -0.01em }
-.sh-panel-top .sh-proj { flex: none; margin-right: auto; font-size: 11px; font-weight: 600; letter-spacing: -0.01em;
-  opacity: .5; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-panel-top .mark-link { flex: none; display: flex; border-radius: 6px; outline-offset: 2px; transition: opacity .15s ease }
+.sh-panel-top .mark-link:hover { opacity: .72 }
+.sh-panel-top .mark { flex: none; color: var(--accent); display: block }
+.sh-panel-top .name { margin-right: auto; min-width: 0; font-weight: 700; font-size: 15px; letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
   scrollbar-color: var(--glass-ink-3) transparent }
 /* Sidebar list system (macOS-sidebar conventions): every row is 28px tall with an
