@@ -38,7 +38,8 @@ snapshot that IS what you see, and the real live app takes over the moment you i
   frame theme, not the viewer's OS).
 - A frame you've scrolled, typed into, or themed re-captures faithfully; agent edits (HMR) drop the
   stale snapshot and rebuild; slow data that lands shortly after load triggers one bounded re-capture
-  (data that changes much later refreshes when you focus the frame).
+  (data that changes much later shows live the moment you focus the frame, and the lean rebuilds when
+  you leave it).
 
 ### Known limitations
 
