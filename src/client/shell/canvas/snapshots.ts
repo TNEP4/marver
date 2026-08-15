@@ -27,6 +27,7 @@ const byNode = new Map<string, Entry>()                    // nodeKey -> current
 const frames = new Map<string, HTMLIFrameElement>()        // nodeKey -> the facade <iframe> element
 const gen = new Map<string, number>()                      // nodeKey -> generation (bumped on drop/reload)
 const recheck = new Map<string, number>()                  // nodeKey -> a one-shot re-capture timer (slow async)
+const rechecked = new Set<string>()                        // nodes whose one-shot recheck already fired (no re-arm loop)
 const MAX_LEAN_BYTES = 4 * 1024 * 1024                     // over this a frame is too heavy to inline - stay live
 
 // content identity INCLUDES theme: content whose colors are baked into the DOM at render time
@@ -96,10 +97,14 @@ function install(nodeKey: string): void {
       if (genOf(nodeKey) !== myGen || frames.get(nodeKey) !== iframe) return
       iframe.dataset.ready = '1'
       // slow-async guard: a data fetch / route change that lands AFTER the capture window would leave
-      // the lean frozen on a loading state. One bounded re-capture ~3s after admit catches it; later
-      // changes self-heal on focus. Bounded (single timer) so a long-poll can't thrash.
+      // the lean frozen on a loading state. ONE bounded re-capture ~3s after admit catches it; later
+      // changes self-heal on focus. `rechecked` makes it truly one-shot - the recheck's own recapture
+      // must not re-arm the timer (that was an endless ~3s loop), so a long-poll can't thrash.
       clearTimeout(recheck.get(nodeKey))
-      if (cur.live) recheck.set(nodeKey, window.setTimeout(() => { recheck.delete(nodeKey); if (genOf(nodeKey) === myGen) scheduleCapture(nodeKey, cur.live, cur.meta, true) }, 3000))
+      if (cur.live && !rechecked.has(nodeKey)) recheck.set(nodeKey, window.setTimeout(() => {
+        recheck.delete(nodeKey); rechecked.add(nodeKey)
+        if (genOf(nodeKey) === myGen) scheduleCapture(nodeKey, cur.live, cur.meta, true)
+      }, 3000))
     }
     void (doc.fonts?.ready ?? Promise.resolve()).then(() => requestAnimationFrame(() => requestAnimationFrame(markReady)))
   }
@@ -120,7 +125,7 @@ export function registerLeanFrame(nodeKey: string, iframe: HTMLIFrameElement | n
 export function invalidateLean(nodeKey: string): void {
   bumpGen(nodeKey)
   pending.delete(nodeKey)
-  clearTimeout(recheck.get(nodeKey)); recheck.delete(nodeKey)
+  clearTimeout(recheck.get(nodeKey)); recheck.delete(nodeKey); rechecked.delete(nodeKey)
   const iframe = frames.get(nodeKey)
   if (iframe) delete iframe.dataset.ready
 }
@@ -131,7 +136,7 @@ export function dropSnapshot(nodeKey: string): void {
   bumpGen(nodeKey)
   byNode.delete(nodeKey)
   pending.delete(nodeKey)
-  clearTimeout(recheck.get(nodeKey)); recheck.delete(nodeKey)
+  clearTimeout(recheck.get(nodeKey)); recheck.delete(nodeKey); rechecked.delete(nodeKey)
   const iframe = frames.get(nodeKey)
   if (iframe) { iframe.onload = null; delete iframe.dataset.ready; iframe.removeAttribute('srcdoc') }
 }
@@ -218,9 +223,11 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   try { result = serializeDoc(doc, doc.URL) }   // <base> = the frame's own URL, so relative url()/img/font resolve
   catch { return }                              // fail soft: keep live pixels
   // budget: a pathologically heavy frame (huge inlined CSS/DOM) would multiply memory across the board
-  // and jank the main thread parsing it - over the cap, degrade (stay live) rather than ship it.
-  const degraded = result.html.length > MAX_LEAN_BYTES ? [...result.degraded, 'oversized'] : result.degraded
+  // and jank the main thread parsing it - over the cap, degrade (stay live) AND drop the html so the
+  // giant string is not retained in byNode (keeping it would defeat the memory bound).
+  const oversized = result.html.length > MAX_LEAN_BYTES
+  const degraded = oversized ? [...result.degraded, 'oversized'] : result.degraded
   const theme = doc.documentElement.dataset.theme || meta.theme   // theme AT capture, not a stale closure
-  byNode.set(nodeKey, { key: keyOf(meta), html: result.html, scrollMap: result.scrollMap, degraded, theme, gen: myGen, live, meta })
+  byNode.set(nodeKey, { key: keyOf(meta), html: oversized ? '' : result.html, scrollMap: oversized ? [] : result.scrollMap, degraded, theme, gen: myGen, live, meta })
   install(nodeKey)
 }
