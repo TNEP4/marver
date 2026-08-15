@@ -1,124 +1,132 @@
 /**
- * Stage 2 shell-side snapshot cache + capture coordinator. Imperative on purpose - the facade
- * <img> is driven by setting .src directly, so no FrameNode subscribes to snapshot state and a
- * pan/zoom tick triggers zero React renders.
+ * SPEC-M5 slice 1: the lean-frame facade coordinator. Imperative on purpose - the facade is a
+ * `<iframe class="sh-lean" sandbox="allow-same-origin">` driven by setting .srcdoc directly, so no
+ * FrameNode subscribes to snapshot state and a pan/zoom tick triggers zero React renders.
  *
- * First slice = snapshot-during-gesture: keep the most-recent snapshots (bounded by a decoded-byte
- * budget, LRU-evicted), show the one over the iframe while #sh-world is in motion (CSS), and
- * crossfade back on settle. Captures run one-at-a-time at idle, requested when a frame is
- * ready/quiet - NEVER while the canvas is in motion (rasterizing then would jank the very window
- * this protects).
+ * The lean tier is a DOM SNAPSHOT, not a bitmap: the shell serialises the live frame's document
+ * (same origin) into self-contained static html (post-render DOM + full inlined CSS, JS stripped) and
+ * shows it over the live iframe while #sh-world is in motion. Because it is real DOM + real CSS it
+ * reflows on resize, theme-flips by an attribute mutation (no re-capture), and matches the live app's
+ * color exactly. Captures run one-at-a-time at idle, NEVER during motion.
+ *
+ * Correctness beats the flash-guard (codex): a frame the serialiser cannot render faithfully
+ * (canvas/video/shadow-dom/cross-origin-css, or an unrestorable scroller) is left DEGRADED - no
+ * `data-ready`, no cover, live pixels stay.
  */
+import { serializeDoc, type SerializeResult } from '../../frame-host/serialize.ts'
 
-export interface SnapMeta { sourceRevision: string; width: number; height: number; theme: string }
+export interface SnapMeta { sourceRevision: string; theme: string }
 
-interface Entry { key: string; url: string; bytes: number }
-const byNode = new Map<string, Entry>()                 // nodeKey -> current snapshot (Map order = recency)
-const imgs = new Map<string, HTMLImageElement>()        // nodeKey -> the facade <img> element
+interface Entry { key: string; html: string; scrollMap: SerializeResult['scrollMap']; degraded: string[]; theme: string }
+const byNode = new Map<string, Entry>()                    // nodeKey -> current lean snapshot
+const frames = new Map<string, HTMLIFrameElement>()        // nodeKey -> the facade <iframe> element
 
-const BUDGET = 96 * 1024 * 1024                          // P1: bound decoded bitmap memory (~96 MiB)
-let totalBytes = 0
-const bytesOf = (m: SnapMeta) => Math.round(m.width) * Math.round(m.height) * 4 * 1.5 * 1.5   // rgba x dpr^2
-
-const keyOf = (m: SnapMeta) => `${m.sourceRevision}|${Math.round(m.width)}x${Math.round(m.height)}|${m.theme}`
+const keyOf = (m: SnapMeta) => m.sourceRevision            // content identity; theme/size need no re-capture
 
 const inMotion = (): boolean => {
   const w = document.getElementById('sh-world')
   return !!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))
 }
 
-const setImg = (img: HTMLImageElement, url: string) => {
-  delete img.dataset.ready
-  img.onload = () => { img.dataset.ready = '1' }   // CSS only shows a snapshot that has decoded
-  img.src = url
-}
-const clearImg = (nodeKey: string) => {
-  const img = imgs.get(nodeKey)
-  if (img) { delete img.dataset.ready; img.removeAttribute('src') }
+/** Apply a node's current theme to its lean doc via attribute mutation (allow-same-origin lets the
+ *  shell touch the doc; the full CSS is inlined so only which rules match changes - no re-capture). */
+function applyTheme(doc: Document, theme: string): void {
+  doc.documentElement.dataset.theme = theme
+  doc.documentElement.classList.toggle('dark', theme === 'dark')
 }
 
-/** FrameNode registers its facade <img> on mount so the coordinator can update it imperatively. */
-export function registerSnapshotImg(nodeKey: string, img: HTMLImageElement | null): void {
-  if (!img) { imgs.delete(nodeKey); return }
-  imgs.set(nodeKey, img)
-  const e = byNode.get(nodeKey)
-  if (e) setImg(img, e.url)
-}
-
-/** P1: evict least-recently-stored snapshots (revoking their URLs) until under the byte budget. */
-function evict(keep: string): void {
-  for (const [k, e] of byNode) {
-    if (totalBytes <= BUDGET) break
-    if (k === keep) continue
-    URL.revokeObjectURL(e.url); totalBytes -= e.bytes; byNode.delete(k); clearImg(k)
+/** Restore captured scroll offsets shell-side (the lean doc runs no JS). Returns false if any mapped
+ *  scroller could not be resolved (virtualised / missing) - the frame then degrades to live. */
+function restoreScroll(doc: Document, scrollMap: Entry['scrollMap']): boolean {
+  let ok = true
+  for (const s of scrollMap) {
+    const el = s.sel === ':root' ? doc.documentElement : doc.querySelector<HTMLElement>(s.sel)
+    if (!el) { ok = false; continue }
+    el.scrollTop = s.top; el.scrollLeft = s.left
   }
+  return ok
 }
 
-function storeSnapshot(nodeKey: string, meta: SnapMeta, blob: Blob): void {
-  const prev = byNode.get(nodeKey)
-  if (prev) { URL.revokeObjectURL(prev.url); totalBytes -= prev.bytes; byNode.delete(nodeKey) }
-  const url = URL.createObjectURL(blob)
-  const bytes = bytesOf(meta)
-  byNode.set(nodeKey, { key: keyOf(meta), url, bytes })   // re-inserted at the end = most recent
-  totalBytes += bytes
-  evict(nodeKey)
-  const img = imgs.get(nodeKey)
-  if (img) setImg(img, url)
+/** Install the stored snapshot into a node's lean iframe: parse srcdoc, then on load restore
+ *  scroll + theme and mark ready ONLY if nothing degraded. */
+function install(nodeKey: string): void {
+  const iframe = frames.get(nodeKey)
+  const e = byNode.get(nodeKey)
+  if (!iframe) return
+  delete iframe.dataset.ready
+  if (!e) { iframe.removeAttribute('srcdoc'); return }
+  if (e.degraded.length) { iframe.removeAttribute('srcdoc'); return }   // degraded = no cover, keep live
+  iframe.onload = () => {
+    const doc = iframe.contentDocument
+    if (!doc) return
+    const scrollOk = restoreScroll(doc, e.scrollMap)
+    applyTheme(doc, e.theme)
+    if (scrollOk) iframe.dataset.ready = '1'                            // CSS shows only a [data-ready] cover
+    else { const cur = byNode.get(nodeKey); if (cur) cur.degraded = [...cur.degraded, 'scroll'] }
+  }
+  iframe.srcdoc = e.html
+}
+
+/** FrameNode registers its facade <iframe> on mount so the coordinator can drive it imperatively. */
+export function registerLeanFrame(nodeKey: string, iframe: HTMLIFrameElement | null): void {
+  if (!iframe) { frames.delete(nodeKey); return }
+  frames.set(nodeKey, iframe)
+  if (byNode.has(nodeKey)) install(nodeKey)
+}
+
+/** Live theme flip: update stored theme + mutate the mounted lean doc (no re-capture). */
+export function setLeanTheme(nodeKey: string, theme: string): void {
+  const e = byNode.get(nodeKey)
+  if (e) e.theme = theme
+  const doc = frames.get(nodeKey)?.contentDocument
+  if (doc) applyTheme(doc, theme)
 }
 
 /** Drop a node's snapshot (node removed, or its content changed and the old picture is now wrong). */
 export function dropSnapshot(nodeKey: string): void {
-  const e = byNode.get(nodeKey)
-  if (e) { URL.revokeObjectURL(e.url); totalBytes -= e.bytes }
   byNode.delete(nodeKey)
-  clearImg(nodeKey)
+  const iframe = frames.get(nodeKey)
+  if (iframe) { delete iframe.dataset.ready; iframe.removeAttribute('srcdoc') }
 }
 
-// ---- capture coordinator: single-in-flight, idle-scheduled, never during motion ----
-let reqSeq = 0
+// ---- capture coordinator: single-in-flight, idle-scheduled, never during motion --------------------
+const pending = new Map<string, { live: HTMLIFrameElement; meta: SnapMeta }>()   // nodeKey -> latest request
 let capturing = false
-const inflight = new Map<number, string>()             // requestId -> nodeKey (the ONLY valid ids)
-const finishers = new Map<number, () => void>()
-const pending: Array<{ nodeKey: string; iframe: HTMLIFrameElement; meta: SnapMeta }> = []
 const idle = (fn: () => void) =>
   (window as unknown as { requestIdleCallback?: (f: () => void, o?: object) => void }).requestIdleCallback?.(fn, { timeout: 600 }) ?? setTimeout(fn, 80)
+const rafSettle = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+const withDeadline = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<void>((r) => setTimeout(r, ms))])
 
-/** Request a fresh snapshot for a ready/quiet frame. Coalesces to the latest per node. */
-export function scheduleCapture(nodeKey: string, iframe: HTMLIFrameElement, meta: SnapMeta): void {
-  if (byNode.get(nodeKey)?.key === keyOf(meta)) return   // already have this exact snapshot
-  const i = pending.findIndex((p) => p.nodeKey === nodeKey)
-  if (i >= 0) pending[i] = { nodeKey, iframe, meta }
-  else pending.push({ nodeKey, iframe, meta })
+/** Request a fresh lean snapshot for a ready/quiet frame. Coalesces to the latest per node. */
+export function scheduleCapture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta): void {
+  if (byNode.get(nodeKey)?.key === keyOf(meta)) return   // already have this content revision
+  pending.set(nodeKey, { live, meta })
   pump()
 }
 
 function pump(): void {
-  if (capturing || !pending.length) return
-  if (inMotion()) { idle(pump); return }   // P1: never rasterize while the canvas is in motion
+  if (capturing || !pending.size) return
+  if (inMotion()) { idle(pump); return }                 // never serialise/parse mid-gesture
   capturing = true
-  const { nodeKey, iframe, meta } = pending.shift()!
-  const requestId = ++reqSeq
-  inflight.set(requestId, nodeKey)
-  // idempotent finish: whichever of {result, error, timeout} lands first wins; the rest no-op
-  const done = () => {
-    if (!inflight.has(requestId)) return
-    inflight.delete(requestId); finishers.delete(requestId)
-    capturing = false; idle(pump)
-  }
-  const timer = setTimeout(done, 6000)
-  finishers.set(requestId, () => { clearTimeout(timer); done() })
-  iframe.contentWindow?.postMessage({
-    type: 'sh:snapshot-request', requestId, nodeKey,
-    sourceRevision: meta.sourceRevision, width: meta.width, height: meta.height, theme: meta.theme, dprBucket: 1,
-  }, location.origin)
+  const [nodeKey, req] = pending.entries().next().value as [string, { live: HTMLIFrameElement; meta: SnapMeta }]
+  pending.delete(nodeKey)
+  const done = () => { capturing = false; idle(pump) }
+  void capture(nodeKey, req.live, req.meta).then(done, done)
 }
 
-/** App routes sh:snapshot-result / sh:snapshot-error here (source already validated). */
-export function onSnapshotMessage(msg: { type: string; requestId?: number; nodeKey?: string; sourceRevision?: string; width?: number; height?: number; theme?: string; blob?: unknown }): void {
-  const requestId = msg.requestId
-  if (typeof requestId !== 'number' || !inflight.has(requestId)) return   // P2: expired/unknown -> ignore the late blob
-  if (msg.type === 'sh:snapshot-result' && msg.nodeKey && msg.blob instanceof Blob) {
-    storeSnapshot(msg.nodeKey, { sourceRevision: String(msg.sourceRevision ?? ''), width: Number(msg.width), height: Number(msg.height), theme: String(msg.theme ?? '') }, msg.blob)
-  }
-  finishers.get(requestId)?.()   // clear the timer + free the slot (result OR error)
+async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta): Promise<void> {
+  const wantKey = keyOf(meta)
+  const doc = live.contentDocument
+  if (!doc) return
+  // settle: fonts + two stable paints, each bounded so a slow frame can't hang the coordinator
+  await withDeadline(doc.fonts?.ready ?? Promise.resolve(), 400).catch(() => {})
+  await rafSettle()
+  // generation guard: the frame may have renavigated during settle - if a newer request landed
+  // (or the doc unloaded), drop this stale capture instead of installing old pixels.
+  if (pending.has(nodeKey) || live.contentDocument !== doc) return
+  let result: SerializeResult
+  try { result = serializeDoc(doc, doc.URL) }   // <base> = the frame's own URL, so relative url()/img/font resolve
+  catch { return }   // fail soft: keep live pixels
+  byNode.set(nodeKey, { key: wantKey, html: result.html, scrollMap: result.scrollMap, degraded: result.degraded, theme: meta.theme })
+  install(nodeKey)
 }

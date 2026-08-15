@@ -4,6 +4,15 @@ const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
 const id = new URLSearchParams(location.search).get('id') ?? location.pathname
 
+// SPEC-M5: the shell serialises this frame's DOM (same origin) for the lean facade. Open shadow roots
+// are walkable, but a CLOSED root is invisible after the fact - flag it at creation so the serialiser
+// degrades the frame (keeps it live) instead of shipping a lean copy missing its shadow content.
+const _attachShadow = Element.prototype.attachShadow
+if (_attachShadow) Element.prototype.attachShadow = function (init) {
+  if (init && init.mode === 'closed') window.__mvClosedShadow = true
+  return _attachShadow.call(this, init)
+}
+
 // theme lands as BOTH signals: [data-theme] plus the `dark` class Tailwind/shadcn key on
 const setTheme = (theme) => {
   document.documentElement.dataset.theme = theme
@@ -57,22 +66,6 @@ window.addEventListener('wheel', (e) => {
 document.addEventListener('gesturestart', (e) => e.preventDefault())
 // a nested scroll container hitting its boundary must not chain into the shell page
 document.documentElement.style.overscrollBehavior = 'contain'
-
-// ---- Stage 2 snapshot capture ------------------------------------------------------
-// The producer (html-to-image) is loaded ONLY on demand, so it never touches a frame's boot.
-// Fail soft: any error -> sh:snapshot-error, and the shell keeps live pixels.
-async function captureSnapshot(m) {
-  const echo = { requestId: m.requestId, nodeKey: m.nodeKey, generation: m.generation, sourceRevision: m.sourceRevision, width: m.width, height: m.height, theme: m.theme, dprBucket: m.dprBucket }
-  try {
-    if (modeActive()) return post({ type: 'sh:snapshot-error', ...echo, reason: 'mode-active' })  // don't bake outlines/cursors in
-    const { capture } = await import('./snapshot.js')
-    const blob = await capture({ width: m.width, height: m.height })
-    if (blob) post({ type: 'sh:snapshot-result', ...echo, blob })
-    else post({ type: 'sh:snapshot-error', ...echo, reason: 'empty' })
-  } catch (e) {
-    post({ type: 'sh:snapshot-error', ...echo, reason: String((e && e.message) || e) })
-  }
-}
 
 // ---- laser mode + element picking (SPEC-M3 §5, §7) ----------------------------------
 // Laser: one injected stylesheet, outline only (zero layout shift), depth-based hue -
@@ -300,8 +293,6 @@ window.addEventListener('message', (e) => {
   if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes(); reportInteraction() }
   // B0.2: interact/play target owns its own wheel; passive frames forward it to the canvas
   if (m.type === 'sh:interactive') { interactiveOn = !!m.on }
-  // Stage 2: the shell asks this frame to snapshot itself (html-to-image, lazily imported).
-  if (m.type === 'sh:snapshot-request') captureSnapshot(m)
   if (m.type === 'sh:copy-ok') showCopied(m.seq)
   if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
     const rects = m.anchors.slice(0, 200).map((a) => {

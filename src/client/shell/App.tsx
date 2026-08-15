@@ -5,7 +5,6 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
-import { onSnapshotMessage } from './canvas/snapshots.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
@@ -390,6 +389,10 @@ export function App() {
   const selection = useStore((s) => s.selection)
   const laser = useStore((s) => s.laser)
   const commentMode = useComments((s) => s.commentMode)
+  // SPEC-M5: laser/comment paint live outlines + do element-picking INSIDE the live frame; a scriptless
+  // lean cover would hide them, so a body class suppresses the cover while either mode is active.
+  useEffect(() => { document.body.classList.toggle('sh-laser', laser) }, [laser])
+  useEffect(() => { document.body.classList.toggle('sh-commenting', commentMode) }, [commentMode])
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
   const [pillOpen, setPillOpen] = useState(true)
 
@@ -618,8 +621,6 @@ export function App() {
         // While engaged the frame is leased, so a hot update to it defers until disengage.
         s.setExternalLease(nodeKey, 'laser', !!data.laser)
         s.setExternalLease(nodeKey, 'comment', !!data.comment)
-      } else if (data.type === 'sh:snapshot-result' || data.type === 'sh:snapshot-error') {
-        onSnapshotMessage(data)   // Stage 2: cache the frame's snapshot blob (or free the slot on error)
       }
     }
     window.addEventListener('message', onMsg)

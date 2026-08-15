@@ -141,20 +141,20 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
   opacity: var(--grid-alpha, 1) }
 .sh-content { will-change: auto }
 #sh-world { position: relative; width: 1px; height: 1px }
-#sh-world.sh-gesturing iframe { pointer-events: none }            /* law G-4 */
+#sh-world.sh-gesturing .sh-live { pointer-events: none }          /* law G-4 (live iframe only; lean is always pe:none) */
 .sh-gesturing .sh-content { will-change: transform }              /* law G-3: gesture-scoped only */
 /* preset transitions: armed by animateLayout() around device/tidy mutations - nodes ease
    to their new frame on the same 320ms ease-out the camera fit animates with */
 #sh-world.sh-preset .sh-node { transition: transform .32s cubic-bezier(.25,.46,.45,.94),
   width .32s cubic-bezier(.25,.46,.45,.94), height .32s cubic-bezier(.25,.46,.45,.94) }
 #sh-world.sh-preset .sh-node-body,
-#sh-world.sh-preset .sh-node iframe { transition: width .32s cubic-bezier(.25,.46,.45,.94),
+#sh-world.sh-preset .sh-node .sh-live { transition: width .32s cubic-bezier(.25,.46,.45,.94),
   height .32s cubic-bezier(.25,.46,.45,.94) }
-/* Stage 2 device-sweep FLIP: a frame WITH a ready snapshot jumps its iframe straight to the final
-   width (ONE reflow, hidden under the snapshot which scales with the easing card) instead of a
-   reflow per intermediate width. A frame WITHOUT a usable snapshot keeps the live width animation
-   above - jumping it under an animating body would clip and reflow abruptly (no cover). */
-#sh-world.sh-preset .sh-node:has(.sh-snapshot[data-ready]) iframe { transition: none }
+/* SPEC-M5 device-sweep: a frame WITH a ready lean cover jumps its LIVE iframe straight to the final
+   width (ONE reflow, hidden under the cover) while the lean cover - being width:100% of the animating
+   body - reflows smoothly every frame (real CSS, the device-sweep fix). A frame WITHOUT a usable
+   cover keeps the live width animation above. */
+#sh-world.sh-preset .sh-node:has(.sh-lean[data-ready]) .sh-live { transition: none }
 
 /* cursor conventions (Figma): arrow everywhere; grab only while space is held */
 body.sh-space .sh-canvas { cursor: grab }
@@ -202,15 +202,19 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none; font-variant-numeric: tabular-nums }
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }
-/* Stage 2 snapshot facade: invisible at rest; covers the iframe instantly while the canvas is
-   gesturing (so a heavy frame never flashes white mid-transform); fades back out on settle - by
-   which point the live iframe has re-painted (the gesture class lingers ~160ms past the last move). */
-.sh-snapshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-  opacity: 0; pointer-events: none; transition: opacity .14s ease }
+/* SPEC-M5 lean facade: a DOM-snapshot <iframe> (static html, 0 JS), invisible at rest; covers the
+   live iframe instantly while the canvas is gesturing (so a heavy frame never flashes white
+   mid-transform) and reflows correctly through a device sweep; fades back out on settle - by which
+   point the live iframe has re-painted (the gesture class lingers ~160ms past the last move). */
+.sh-lean { position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+  opacity: 0; pointer-events: none; transition: opacity .14s ease; background: var(--node-bg) }
 /* shown during a CANVAS pan/zoom (sh-camera) or a device-sweep/tidy preset - NOT during a frame
-   click/drag (sh-gesturing only), which would flash a snapshot on every click ("jiggle"). */
-#sh-world.sh-camera .sh-snapshot[data-ready],
-#sh-world.sh-preset .sh-snapshot[data-ready] { opacity: 1; transition: none }
+   click/drag (sh-gesturing only), which would flash the cover on every click ("jiggle"). */
+#sh-world.sh-camera .sh-lean[data-ready],
+#sh-world.sh-preset .sh-lean[data-ready] { opacity: 1; transition: none }
+/* correctness beats the flash-guard: laser/comment paint live outlines + do element-picking INSIDE
+   the live frame, which a scriptless cover would hide - never cover while either mode is active. */
+body.sh-laser .sh-lean, body.sh-commenting .sh-lean { opacity: 0 !important }
 .sh-overlay { position: absolute; inset: 0; cursor: default }
 .sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);

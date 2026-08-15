@@ -4,7 +4,7 @@ import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
-import { registerSnapshotImg, dropSnapshot, scheduleCapture } from './snapshots.ts'
+import { registerLeanFrame, dropSnapshot, scheduleCapture, setLeanTheme } from './snapshots.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -34,13 +34,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   if (frame && initialSrc.current === null) initialSrc.current = frameUrl(frame, node.theme)
   const fileRef = useRef(frame ? `${frame.kind}:${frame.file}` : null)
 
-  // theme switch without remount
+  // theme switch without remount: the live iframe flips via message (no navigation), and the lean
+  // cover flips via an attribute mutation on its doc (no re-capture) - both keep their state.
   useEffect(() => {
     if (themeRef.current !== node.theme) {
       themeRef.current = node.theme
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme: node.theme }, '*')
+      setLeanTheme(node.key, node.theme)
     }
-  }, [node.theme])
+  }, [node.theme, node.key])
 
   // B0.3: register this frame's WindowProxy so the shell routes its messages in O(1)
   // (source window -> node), instead of rescanning every iframe + walking the DOM per
@@ -63,22 +65,22 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     registerWin()
   }, [node.key])
 
-  // Stage 2: register the facade <img> so the snapshot coordinator can drive its src imperatively.
-  const bindSnapshot = useCallback((el: HTMLImageElement | null) => { registerSnapshotImg(node.key, el) }, [node.key])
-  // capture a fresh snapshot once the frame is ready and quiet (and after a reload/resize/theme
-  // change - keyed on nav/size/theme). Never during a gesture; the coordinator serializes captures.
+  // SPEC-M5: register the facade <iframe> so the lean coordinator can drive its srcdoc imperatively.
+  const bindLean = useCallback((el: HTMLIFrameElement | null) => { registerLeanFrame(node.key, el) }, [node.key])
+  // capture a fresh lean snapshot once the frame is ready and quiet, and whenever its CONTENT changes
+  // (nav). Resize needs no re-capture (the lean doc reflows) and theme needs none (attribute flip),
+  // so neither is a dep - keeping captures rare. Never during a gesture; the coordinator serialises.
   useEffect(() => {
-    // dev only: the live producer (html-to-image) is served in dev; published canvases get
-    // build-time snapshots via a separate path (not this on-demand capture), so we never emit a
-    // capture request there (no failing dynamic import; publish behaves as it did pre-facade).
+    // dev only: capture reads the live iframe's same-origin document. Published canvases get a
+    // build-time lean tier via a separate path (SPEC-M5 sec 9), so publish behaves as it does today.
     if (!import.meta.env.DEV) return
     if (node.status !== 'ready' || node.missing) return
     const iframe = iframeRef.current
     if (!iframe) return
-    const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), width: node.w, height: node.h, theme: node.theme }), 450)
+    const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme }), 450)
     return () => clearTimeout(t)
-  }, [node.status, node.nav, node.w, node.h, node.theme, node.key, node.missing])
-  useEffect(() => () => dropSnapshot(node.key), [node.key])   // revoke the object URL on unmount
+  }, [node.status, node.nav, node.key, node.missing])
+  useEffect(() => () => dropSnapshot(node.key), [node.key])   // drop the snapshot on unmount
 
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board
@@ -262,15 +264,18 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         ) : null}
         <iframe
           ref={bindIframe}
+          className="sh-live"
           src={initialSrc.current ?? frameUrl(frame, node.theme)}
           title={frame.id}
           onLoad={registerWin}
           style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
-        {/* Stage 2: snapshot facade - covers the iframe only while the canvas is gesturing (CSS),
-            so a heavy frame never flashes white while its compositor layer is being re-rastered.
-            pointer-events:none; the coordinator sets .src imperatively (no React render per tick). */}
-        <img ref={bindSnapshot} className="sh-snapshot" alt="" aria-hidden="true" />
+        {/* SPEC-M5 lean facade: a DOM-snapshot (static html, 0 JS) covering the live iframe only while
+            the canvas is gesturing (CSS), so a heavy frame never flashes white mid-transform and the
+            device sweep reflows correctly. sandbox WITHOUT allow-scripts = no JS runs; allow-same-origin
+            so fonts/assets resolve and the shell can flip its theme + restore scroll. Never registered,
+            never messaged, pointer-events:none - it is NOT the live iframe (role: .sh-lean). */}
+        <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}
