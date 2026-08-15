@@ -146,6 +146,31 @@ and uncovers on settle. Fixes F1/F2/F3, the color bug, the jiggle, the device sw
 change, so zero state-loss risk. Lowest-risk path to "the real canvas looks right." **Nic tests this
 on an actual board, not the harness.**
 
+**Slice-1 contract (codex v2 review — these are slice-1 requirements, not slice-2):**
+- **Dual iframe roles (THE regression risk).** The node now hosts TWO iframes. The live app iframe
+  carries `.sh-live`; the lean cover carries `.sh-lean`. ONLY `.sh-live` enters the WindowProxy
+  registry, message routing, comments, laser, goto, resize, and the theme bridge. Every existing
+  `iframe` CSS selector and DOM query (styles.css `.sh-node ... iframe`, Comments.tsx, FrameNode
+  `iframeRef`) is scoped to `.sh-live`. The lean iframe is `pointer-events:none`, never registered,
+  never messaged. Assert `iframeRef.current` and its `contentWindow` are identity-stable before/after
+  capture, theme flip, resize, preset, and lean reload.
+- **Generation-safe admission (slice 1, not slice 2).** A cover shown during motion must be the RIGHT
+  content. The capture carries `{nodeKey, generation, sourceRevision}`; the coordinator admits a
+  result only when all three match the in-flight request, and drops a stale cover immediately (a
+  frame that renavigated/resized mid-flight must not flash old pixels).
+- **Cover suppression = hard admission rule.** No `data-ready`, no cover, keep live pixels, when:
+  laser OR comment mode is active (a scriptless cover kills outlines/picking); OR the serializer
+  reported ANY degradation (`cross-origin-css`, `canvas`, `video`, `shadow-dom`, `js-layout`, `scroll`
+  it could not fully restore). Degraded frame = stays live under motion; correctness beats the flash-guard.
+- **Scroll: all-or-nothing.** Restore EVERY mapped native scroller after load (shell mutation). If any
+  mapped scroller cannot be restored (virtualised / missing DOM), the frame is degraded → no cover.
+- **Shadow DOM.** Open roots serialise (declarative `<template shadowrootmode>`). Closed roots are
+  undetectable after the fact, so the bridge instruments `attachShadow` at boot to record a
+  closed-root flag; a flagged frame is degraded → no cover.
+- **Publish untouched in slice 1.** Capture is already dev-only (`FrameNode.tsx:70`); slice 1 keeps
+  the published path exactly as today (live-only, no lean tier). The build-time serializer (§9) is a
+  separate follow-up so publish cannot regress.
+
 **Slice 2 — bounded live residency (the scale win).** Lean-static becomes the *resting* representation
 for cold frames; a bounded **live pool** (weighted LRU: focused + N most-recently-focused) stays live.
 Collapses M4 Stages 3 (working set) + 4 (hibernation) into one mechanism.
@@ -202,13 +227,17 @@ slice 2 on holding p95<16 ms there.
 - Same-origin assets only; no new cross-origin surface. The snapshot is a clone of the live DOM (no
   new secrets) running with strictly fewer capabilities. Net attack surface decreases.
 
-## 9. Publish parity (codex P1 — was unbuilt)
+## 9. Publish parity (codex P2 — a separate follow-up, NOT slice 1)
 
-Runtime capture is dev-only today (`FrameNode.tsx:70`). Publish needs a **build-time serializer**: at
-`marver publish`, render each frame headless, run the §3 serializer, data-URI-inline same-origin
-assets (published output has no dev server), and emit the static html beside the frame. The published
-shell loads the lean tier from these pre-baked files; live-on-focus still boots the real frame. This
-is a required milestone-gate item, speced here, built in slice 1's tail (publish must not regress).
+Runtime capture is dev-only today (`FrameNode.tsx:70`), so **slice 1 leaves publish exactly as it is
+now (live-only, no lean tier) — no regression, by construction.** The lean tier reaching published
+boards is a separate milestone item: the command is `marver build` (there is no `publish`), and it has
+no headless-capture phase today. Adding one means at `marver build` rendering each frame headless,
+running the §3 serializer, data-URI-inlining same-origin assets (no dev server in the output), and
+emitting the static html beside the frame; the published shell then loads the lean tier from those
+pre-baked files, live-on-focus still boots the real frame. Speced here; built after slice 1 + slice 2
+land and the dev path is proven. The milestone gate "works in dev AND publish" is met for slice 1 by
+publish being unchanged.
 
 ## 10. Migration from M4 Stage 2
 
