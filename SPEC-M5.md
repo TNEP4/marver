@@ -238,7 +238,24 @@ slice 2 on holding p95<16 ms there.
 - Same-origin assets only; no new cross-origin surface. The snapshot is a clone of the live DOM (no
   new secrets) running with strictly fewer capabilities. Net attack surface decreases.
 
-## 9. Publish parity (codex P2 — a separate follow-up, NOT slice 1)
+## 9. Publish parity — DONE via runtime capture (2026-08-15, commit 543b813)
+
+**Shipped:** the lean tier now works in published builds (`marver build` → `design/.dist`, `marver
+serve`). Published frames are bundled SAME-ORIGIN, so the existing client-side serializer runs at
+runtime there exactly as in dev - no headless build step, no heavy dependency. Removing the two
+`import.meta.env.DEV` gates was the whole change. Fail-soft: a frame that can't serialise stays live
+(== old publish behaviour), so publish can never regress. Codex-reviewed: no board/password leak
+(`allow-same-origin` without scripts/forms/top-nav adds nothing beyond the already-same-origin live
+iframe); added a CSP sentinel (stay live if a hardened host blocks the inline `<style>`) and
+nested-iframe degradation. Verified in a real published build: 43/43 lean ready, no swap, identical to
+dev. The milestone gate "works in dev AND publish" is now MET.
+
+**Optional future optimization (not required):** build-time pre-baked lean HTML would give an instant
+first paint (runtime capture makes each viewer boot all live frames + capture serially on first load).
+It needs a headless renderer at build (puppeteer/playwright) - a heavy dep deferred unless first-view
+latency on large shared boards becomes a real complaint. The original build-time text is kept below.
+
+### (deferred) build-time pre-bake
 
 Runtime capture is dev-only today (`FrameNode.tsx:70`), so **slice 1 leaves publish exactly as it is
 now (live-only, no lean tier) — no regression, by construction.** The lean tier reaching published

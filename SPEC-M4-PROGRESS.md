@@ -60,7 +60,7 @@ tick items as they land, note the PR/commit. Every change is gated on §1 (must-
 - [x] D7 (family-color + node doctrine in reference/color.md; fuller content ref optional) teach-the-agent authoring doctrine in `instructions/`
 
 ## Gate for the milestone
-- [ ] every §1 feature works in dev AND publish
+- [x] every §1 feature works in dev AND publish (SPEC-M5 lean tier now runs in publish too, commit 543b813)
 - [ ] perf gate holds: p95 < 16ms @ 50 frames (heavy Next board + Vite/RR board)
 - [ ] stay-in-action session-preservation tests pass
 
