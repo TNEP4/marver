@@ -5,3 +5,6 @@ dist/
 .DS_Store
 /tmp-smoke/
 .gstack/
+
+# local-only archive (dev harnesses etc, never shipped)
+.archive/
