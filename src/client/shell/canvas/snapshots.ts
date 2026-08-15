@@ -40,6 +40,10 @@ const inMotion = (): boolean => {
 function applyTheme(doc: Document, theme: string): void {
   doc.documentElement.dataset.theme = theme
   doc.documentElement.classList.toggle('dark', theme === 'dark')
+  // pin the cover's color-scheme to the FRAME theme, not the viewer's OS. A srcdoc doc otherwise
+  // follows the OS: on a dark-mode Mac the UA canvas + any prefers-color-scheme rules go dark and
+  // bleed into the cover (dark mermaid boxes) while data-theme says light. This holds it to light.
+  doc.documentElement.style.colorScheme = theme
 }
 
 /** Restore captured scroll offsets shell-side (the lean doc runs no JS). Returns false if any mapped
