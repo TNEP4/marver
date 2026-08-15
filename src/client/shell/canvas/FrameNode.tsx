@@ -73,9 +73,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // (nav). Resize needs no re-capture (the lean doc reflows) and theme needs none (attribute flip),
   // so neither is a dep - keeping captures rare. Never during a gesture; the coordinator serialises.
   useEffect(() => {
-    // dev only: capture reads the live iframe's same-origin document. Published canvases get a
-    // build-time lean tier via a separate path (SPEC-M5 sec 9), so publish behaves as it does today.
-    if (!import.meta.env.DEV) return
+    // capture reads the live iframe's same-origin document - true in dev AND publish (published frames
+    // are bundled same-origin and served by `marver serve`), so the lean tier works in both via this
+    // client-side capture. Fail-soft: a frame that can't serialise stays live (publish == today's
+    // behaviour in the worst case). No headless build step / heavy dependency needed.
     if (node.status !== 'ready' || node.missing) return
     const iframe = iframeRef.current
     if (!iframe) return
@@ -305,8 +306,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             device sweep reflows correctly. sandbox WITHOUT allow-scripts = no JS runs; allow-same-origin
             so fonts/assets resolve and the shell can flip its theme + restore scroll. Never registered,
             never messaged, pointer-events:none - it is NOT the live iframe (role: .sh-lean).
-            Dev-only: publish has no runtime capture (SPEC-M5 sec 9), so it stays literally live-only. */}
-        {import.meta.env.DEV && <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />}
+            Rendered in dev AND publish (runtime client-side capture; frames are same-origin in both). */}
+        <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}

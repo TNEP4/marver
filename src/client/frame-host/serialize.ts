@@ -87,7 +87,7 @@ function selectorFor(el: Element): string {
 function scrub(root: Element, doc: Document, degraded: string[]): void {
   root.querySelectorAll('script, noscript, link[rel~="modulepreload"], link[rel~="preload"], link[rel~="stylesheet"]').forEach((n) => n.remove())
   const walk = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
-  const flag = { canvas: false, video: false }
+  const flag = { canvas: false, video: false, nested: false }
   for (let el = walk.currentNode as Element | null; el; el = walk.nextNode() as Element | null) {
     for (const attr of Array.from(el.attributes)) {
       if (/^on/i.test(attr.name)) el.removeAttribute(attr.name)
@@ -96,10 +96,14 @@ function scrub(root: Element, doc: Document, degraded: string[]): void {
     const tag = el.tagName
     if (tag === 'CANVAS') flag.canvas = true
     if (tag === 'VIDEO') flag.video = true
+    // a nested iframe/object/embed can't reflow in a scriptless clone (blank/stale, and would
+    // re-fetch third-party content) - degrade to live rather than ship a broken lean.
+    if (tag === 'IFRAME' || tag === 'OBJECT' || tag === 'EMBED') flag.nested = true
     if (STRIP_TAGS.has(tag)) el.remove()
   }
   if (flag.canvas) degraded.push('canvas')
   if (flag.video) degraded.push('video')
+  if (flag.nested) degraded.push('nested-frame')
 }
 
 /** Open shadow roots must be detected on the ORIGINAL tree - cloneNode(true) drops them, so the clone
@@ -166,7 +170,10 @@ export function serializeDoc(doc: Document, baseHref: string): SerializeResult {
   // ONE inlined stylesheet (both themes, all media queries). Drop the clone's own style nodes.
   const head = html.querySelector('head') ?? html.insertBefore(doc.createElement('head'), html.firstChild)
   head.querySelectorAll('style').forEach((n) => n.remove())
-  const style = doc.createElement('style'); style.textContent = css
+  // sentinel first rule: the coordinator checks --mv-lean-ok resolves before showing the lean. If a
+  // hardened host's CSP (style-src 'self') blocked this inline <style>, the sentinel is absent and the
+  // frame stays live rather than showing an unstyled cover.
+  const style = doc.createElement('style'); style.textContent = ':root{--mv-lean-ok:1}\n' + css
   const base = doc.createElement('base'); base.setAttribute('href', baseHref)
   const meta = doc.createElement('meta'); meta.setAttribute('charset', 'utf-8')
   head.insertBefore(style, head.firstChild)

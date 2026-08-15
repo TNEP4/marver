@@ -84,6 +84,9 @@ function install(nodeKey: string): void {
     const doc = iframe.contentDocument
     if (!cur || !doc) return
     if (!restoreScroll(doc, cur.scrollMap)) { cur.degraded = [...cur.degraded, 'scroll']; iframe.removeAttribute('srcdoc'); return }
+    // CSP guard (codex): if a hardened host blocked the inline <style> (style-src 'self'), the lean is
+    // unstyled - the sentinel custom prop won't resolve. Stay live rather than show an unstyled cover.
+    if (getComputedStyle(doc.documentElement).getPropertyValue('--mv-lean-ok').trim() !== '1') { iframe.removeAttribute('srcdoc'); return }
     applyTheme(doc, cur.theme)
     // font+paint readiness gate (F3): the srcdoc doc reloads fonts independently, so mark ready only
     // after its fonts settle + two paints, else a fallback-font seam shows on the swap.
