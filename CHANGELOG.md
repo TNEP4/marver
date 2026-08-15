@@ -20,13 +20,28 @@ snapshot that IS what you see, and the real live app takes over the moment you i
   not just dev - captured client-side from the bundled same-origin frames, no build-time renderer.
 - **Faster first paint.** Leans capture bounded-parallel and viewport-first, so the frames you're
   looking at appear first and a big board settles in seconds instead of tens of seconds.
-- **`Head :: gloss` diagrams.** A diagram node label written `Head :: gloss` renders the head bold on
+- **Content-frame color families.** Tag a diagram node with a built-in family - `HQ:::blue`,
+  `Carriers:::orange`, `Drivers:::purple` (also `green red gray`) - and it gets a filled, on-brand
+  color with a legible border in both themes, no `classDef` boilerplate. The same six names work in
+  `Md` prose as `:blue[the shipper's world]`, so a sentence and the diagram beside it read as one
+  color language.
+- **`Head :: gloss` diagram labels.** A node label written `Head :: gloss` renders the head bold on
   top with the gloss lighter and smaller below - a box scans as label-then-detail, no run-on.
+- **Authoring doctrine that ships with the tool.** The scaffolded instructions
+  (`instructions/shape.md`, `instructions/reference/color.md`) now teach an agent these conventions -
+  the `::` label hierarchy, the `:::family` / `:blue[…]` palette, and "pick one family per concept and
+  hold it" - so diagrams and highlighted prose come out consistent by default instead of hand-rolled
+  hex and one-off `classDef`s.
 
 ### Changed
 
 - **Sidebar header** shows the humanized repo name (`marver-pilot` → "Marver Pilot", ellipsed if
   long); the logo links to marver.design.
+- **Sidebar board/scene labels** are humanized - kebab filenames render Title Case (`tms-specs` →
+  "Tms Specs"), dropping the dashes, while an explicit `meta.title` is honored verbatim.
+- **App cursor** is the marver arrowhead - tilted, rounded, small, soft-shadowed, and theme-adaptive
+  (black-on-light / white-on-dark); reverts to a normal pointer in interact/prototype and keeps the
+  pin/crosshair in comment/laser mode.
 - **Copy-file-path shortcut** moved to `Shift+P` (was a mislabeled `C`).
 
 ### Fixed
