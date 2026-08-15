@@ -79,7 +79,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (!iframe) return
     const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme }), 450)
     return () => clearTimeout(t)
-  }, [node.status, node.nav, node.key, node.missing])
+    // node.theme IS a dep: baked content (mermaid SVG) can't be re-themed by the cover's attribute
+    // flip, so a theme change re-captures after the live frame re-renders (key includes theme).
+  }, [node.status, node.nav, node.key, node.missing, node.theme])
   useEffect(() => () => dropSnapshot(node.key), [node.key])   // drop the snapshot on unmount
   // a reload / file-swap / error takes the frame out of 'ready': drop its cover so a stale picture
   // never lingers (nav may not bump on a same-file reload). The next 'ready' re-captures.
@@ -158,10 +160,21 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         if (n) groupStarts[k] = { x: n.x, y: n.y }
       }
     }
-    world.classList.add('sh-gesturing')   // frame drag/resize: drops iframe pointer-events, but
-    setGesture(true)                        // does NOT set sh-camera, so no snapshot covers it
+    // Defer sh-gesturing (and its `will-change: transform` on .sh-content) until an ACTUAL drag
+    // begins - a bare click otherwise promotes then demotes the compositor layer, re-rasterising
+    // the frame's text at a fractional zoom = the "jiggle". A pure click now never toggles it.
+    let gesturing = false
+    const begin = () => {
+      if (gesturing) return
+      gesturing = true
+      world.classList.add('sh-gesturing')   // drops iframe pointer-events (sh-camera is NOT set, so no cover)
+      setGesture(true)
+    }
+    const MOVE_THRESHOLD = 3   // px in screen space before a press counts as a drag
 
     const onMove = (ev: PointerEvent) => {
+      if (!gesturing && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < MOVE_THRESHOLD) return
+      begin()
       const dx = (ev.clientX - start.x) / gestureScale
       const dy = (ev.clientY - start.y) / gestureScale
       if (mode === 'move') {

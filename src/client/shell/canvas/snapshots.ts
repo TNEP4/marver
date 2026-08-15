@@ -23,7 +23,10 @@ const byNode = new Map<string, Entry>()                    // nodeKey -> current
 const frames = new Map<string, HTMLIFrameElement>()        // nodeKey -> the facade <iframe> element
 const gen = new Map<string, number>()                      // nodeKey -> generation (bumped on drop/reload)
 
-const keyOf = (m: SnapMeta) => m.sourceRevision            // content identity; theme/size need no re-capture
+// content identity INCLUDES theme: content whose colors are baked into the DOM at render time
+// (mermaid SVG) cannot be re-themed by the cover's attribute mutation, so a theme change must
+// re-capture after the live frame re-renders. Size still needs no re-capture (the lean doc reflows).
+const keyOf = (m: SnapMeta) => `${m.sourceRevision}|${m.theme}`
 const genOf = (k: string) => gen.get(k) ?? 0
 const bumpGen = (k: string) => gen.set(k, genOf(k) + 1)    // invalidate any in-flight capture/onload for k
 
@@ -111,6 +114,22 @@ const idle = (fn: () => void) =>
 const rafSettle = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
 const withDeadline = <T,>(p: Promise<T>, ms: number) => Promise.race([p, new Promise<void>((r) => setTimeout(r, ms))])
 
+/** Wait until the frame's DOM stops mutating for `quietMs` (bounded by `maxMs`). Async content -
+ *  lazily-imported mermaid renders its SVG well after the frame reports 'ready', late images/webfont
+ *  swaps, entrance animations - all land here. Capturing before this quiet window yields a cover
+ *  missing the diagram (the mermaid pop-in/out bug). Same-origin, so the shell can observe the doc. */
+function domQuiet(doc: Document, quietMs: number, maxMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let timer = 0, done = false
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); clearTimeout(hard); mo.disconnect(); resolve() }
+    const mo = new MutationObserver(() => { clearTimeout(timer); timer = window.setTimeout(finish, quietMs) })
+    try { mo.observe(doc.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }) }
+    catch { return resolve() }
+    timer = window.setTimeout(finish, quietMs)
+    const hard = window.setTimeout(finish, maxMs)
+  })
+}
+
 /** Request a fresh lean snapshot for a ready/quiet frame. Coalesces to the latest per node. */
 export function scheduleCapture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta): void {
   if (byNode.get(nodeKey)?.key === keyOf(meta)) return   // already have this content revision
@@ -132,9 +151,11 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   const myGen = genOf(nodeKey)
   const doc = live.contentDocument
   if (!doc) return
-  // settle: fonts + two stable paints, each bounded so a slow frame can't hang the coordinator
+  // settle: fonts, two stable paints, THEN a DOM-quiet window so async content (mermaid renders its
+  // SVG after 'ready', late images) is captured - not a diagram-less frame. All bounded.
   await withDeadline(doc.fonts?.ready ?? Promise.resolve(), 400).catch(() => {})
   await rafSettle()
+  await domQuiet(doc, 180, 1500)
   // bail if the world changed under us during settle: superseded (drop/reload), a newer request
   // landed, the frame renavigated, or a gesture/preset started (serialising+parsing now would jank).
   if (genOf(nodeKey) !== myGen || pending.has(nodeKey) || live.contentDocument !== doc) return
