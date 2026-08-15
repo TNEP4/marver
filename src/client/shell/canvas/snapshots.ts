@@ -11,7 +11,7 @@
  * shows underneath only when the frame is interacted, in laser/comment mode, or while the lean is
  * being (re)built. Real DOM + real CSS: exact color, native reflow on resize. Theme change / focus
  * INVALIDATE the lean (never mutate a displayed one - baked mermaid can't re-theme in place) and a
- * fresh capture is admitted before it is shown again. Captures run one-at-a-time at idle, never busy.
+ * fresh capture is admitted before it is shown again. Captures run bounded-parallel, viewport-first, at idle, never while busy.
  *
  * Correctness beats the flash-guard (codex): a frame the serialiser cannot render faithfully
  * (canvas/video/shadow-dom/cross-origin-css, or an unrestorable scroller) is left DEGRADED - no
@@ -22,10 +22,12 @@ import { serializeDoc, type SerializeResult } from '../../frame-host/serialize.t
 
 export interface SnapMeta { sourceRevision: string; theme: string }
 
-interface Entry { key: string; html: string; scrollMap: SerializeResult['scrollMap']; degraded: string[]; theme: string; gen: number }
+interface Entry { key: string; html: string; scrollMap: SerializeResult['scrollMap']; degraded: string[]; theme: string; gen: number; live: HTMLIFrameElement; meta: SnapMeta }
 const byNode = new Map<string, Entry>()                    // nodeKey -> current lean snapshot
 const frames = new Map<string, HTMLIFrameElement>()        // nodeKey -> the facade <iframe> element
 const gen = new Map<string, number>()                      // nodeKey -> generation (bumped on drop/reload)
+const recheck = new Map<string, number>()                  // nodeKey -> a one-shot re-capture timer (slow async)
+const MAX_LEAN_BYTES = 4 * 1024 * 1024                     // over this a frame is too heavy to inline - stay live
 
 // content identity INCLUDES theme: content whose colors are baked into the DOM at render time
 // (mermaid SVG) cannot be re-themed by the cover's attribute mutation, so a theme change must
@@ -90,7 +92,15 @@ function install(nodeKey: string): void {
     applyTheme(doc, cur.theme)
     // font+paint readiness gate (F3): the srcdoc doc reloads fonts independently, so mark ready only
     // after its fonts settle + two paints, else a fallback-font seam shows on the swap.
-    const markReady = () => { if (genOf(nodeKey) === myGen && frames.get(nodeKey) === iframe) iframe.dataset.ready = '1' }
+    const markReady = () => {
+      if (genOf(nodeKey) !== myGen || frames.get(nodeKey) !== iframe) return
+      iframe.dataset.ready = '1'
+      // slow-async guard: a data fetch / route change that lands AFTER the capture window would leave
+      // the lean frozen on a loading state. One bounded re-capture ~3s after admit catches it; later
+      // changes self-heal on focus. Bounded (single timer) so a long-poll can't thrash.
+      clearTimeout(recheck.get(nodeKey))
+      if (cur.live) recheck.set(nodeKey, window.setTimeout(() => { recheck.delete(nodeKey); if (genOf(nodeKey) === myGen) scheduleCapture(nodeKey, cur.live, cur.meta, true) }, 3000))
+    }
     void (doc.fonts?.ready ?? Promise.resolve()).then(() => requestAnimationFrame(() => requestAnimationFrame(markReady)))
   }
   iframe.srcdoc = e.html
@@ -110,6 +120,7 @@ export function registerLeanFrame(nodeKey: string, iframe: HTMLIFrameElement | n
 export function invalidateLean(nodeKey: string): void {
   bumpGen(nodeKey)
   pending.delete(nodeKey)
+  clearTimeout(recheck.get(nodeKey)); recheck.delete(nodeKey)
   const iframe = frames.get(nodeKey)
   if (iframe) delete iframe.dataset.ready
 }
@@ -120,13 +131,16 @@ export function dropSnapshot(nodeKey: string): void {
   bumpGen(nodeKey)
   byNode.delete(nodeKey)
   pending.delete(nodeKey)
+  clearTimeout(recheck.get(nodeKey)); recheck.delete(nodeKey)
   const iframe = frames.get(nodeKey)
   if (iframe) { iframe.onload = null; delete iframe.dataset.ready; iframe.removeAttribute('srcdoc') }
 }
 
-// ---- capture coordinator: single-in-flight, idle-scheduled, never during motion --------------------
+// ---- capture coordinator: bounded-parallel, viewport-first, idle-scheduled, never while busy --------
 const pending = new Map<string, { live: HTMLIFrameElement; meta: SnapMeta }>()   // nodeKey -> latest request
-let capturing = false
+const inflightNodes = new Set<string>()   // nodes currently being captured - never capture one twice at once
+const MAX_CONCURRENT = 3   // overlap the per-frame settle waits (mostly timers) so a big board's leans
+let inflight = 0           // land in ~1/3 the wall-clock of strictly-serial, without janking the loop
 const idle = (fn: () => void) =>
   (window as unknown as { requestIdleCallback?: (f: () => void, o?: object) => void }).requestIdleCallback?.(fn, { timeout: 600 }) ?? setTimeout(fn, 80)
 const rafSettle = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
@@ -157,14 +171,34 @@ export function scheduleCapture(nodeKey: string, live: HTMLIFrameElement, meta: 
   pump()
 }
 
+/** The next node to capture: the pending frame nearest the viewport centre, on-screen before off. So
+ *  the frames the user is actually looking at get their lean first (perceived-instant), and the rest
+ *  fill in behind - instead of registration order, which pops in arbitrary corners of a big board. */
+function pickNext(): string | null {
+  let best: string | null = null, bestScore = Infinity
+  const vw = window.innerWidth, vh = window.innerHeight
+  for (const [k, req] of pending) {
+    if (inflightNodes.has(k)) continue                   // that node is mid-capture; its re-request waits
+    const r = req.live.getBoundingClientRect()
+    const off = r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw
+    const dx = r.left + r.width / 2 - vw / 2, dy = r.top + r.height / 2 - vh / 2
+    const score = (off ? 1e7 : 0) + Math.hypot(dx, dy)   // on-screen first, then by distance to centre
+    if (score < bestScore) { bestScore = score; best = k }
+  }
+  return best
+}
+
 function pump(): void {
-  if (capturing || !pending.size) return
-  if (busy()) { idle(pump); return }                     // never serialise mid-gesture or during laser/comment
-  capturing = true
-  const [nodeKey, req] = pending.entries().next().value as [string, { live: HTMLIFrameElement; meta: SnapMeta }]
-  pending.delete(nodeKey)
-  const done = () => { capturing = false; idle(pump) }
-  void capture(nodeKey, req.live, req.meta).then(done, done)
+  if (busy()) { if (pending.size) idle(pump); return }   // never serialise mid-gesture or during laser/comment
+  while (inflight < MAX_CONCURRENT) {
+    const nodeKey = pickNext()
+    if (!nodeKey) break
+    const req = pending.get(nodeKey)!
+    pending.delete(nodeKey)
+    inflightNodes.add(nodeKey); inflight++
+    const done = () => { inflightNodes.delete(nodeKey); inflight--; idle(pump) }
+    void capture(nodeKey, req.live, req.meta).then(done, done)
+  }
 }
 
 async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta): Promise<void> {
@@ -175,7 +209,7 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   // SVG after 'ready', late images) is captured - not a diagram-less frame. All bounded.
   await withDeadline(doc.fonts?.ready ?? Promise.resolve(), 400).catch(() => {})
   await rafSettle()
-  await domQuiet(doc, 180, 1500)
+  await domQuiet(doc, 180, 2500)   // still-loading frames wait longer so async data lands in-capture
   // bail if the world changed under us during settle: superseded (drop/reload), a newer request
   // landed, the frame renavigated, or a gesture/preset started (serialising+parsing now would jank).
   if (genOf(nodeKey) !== myGen || pending.has(nodeKey) || live.contentDocument !== doc) return
@@ -183,7 +217,10 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   let result: SerializeResult
   try { result = serializeDoc(doc, doc.URL) }   // <base> = the frame's own URL, so relative url()/img/font resolve
   catch { return }                              // fail soft: keep live pixels
+  // budget: a pathologically heavy frame (huge inlined CSS/DOM) would multiply memory across the board
+  // and jank the main thread parsing it - over the cap, degrade (stay live) rather than ship it.
+  const degraded = result.html.length > MAX_LEAN_BYTES ? [...result.degraded, 'oversized'] : result.degraded
   const theme = doc.documentElement.dataset.theme || meta.theme   // theme AT capture, not a stale closure
-  byNode.set(nodeKey, { key: keyOf(meta), html: result.html, scrollMap: result.scrollMap, degraded: result.degraded, theme, gen: myGen })
+  byNode.set(nodeKey, { key: keyOf(meta), html: result.html, scrollMap: result.scrollMap, degraded, theme, gen: myGen, live, meta })
   install(nodeKey)
 }

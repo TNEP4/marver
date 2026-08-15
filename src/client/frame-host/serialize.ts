@@ -36,9 +36,18 @@ function rulesText(rules: CSSRuleList, href: string | null, xo: { n: number }): 
   let text = ''
   for (const r of Array.from(rules)) {
     if (r.type === 3 /* CSSRule.IMPORT_RULE */) {
-      const imported = (r as CSSImportRule).styleSheet
-      if (!imported) { xo.n++; continue }
-      try { text += rulesText(imported.cssRules, imported.href ?? href, xo) } catch { xo.n++ }
+      const imp = r as CSSImportRule & { supportsText?: string; layerName?: string | null }
+      const sheet = imp.styleSheet
+      if (!sheet) { xo.n++; continue }
+      let inner: string
+      try { inner = rulesText(sheet.cssRules, sheet.href ?? href, xo) } catch { xo.n++; continue }
+      // preserve the import's conditions - flattening them makes a conditional (e.g. desktop-only,
+      // layered, feature-gated) sheet globally active and mis-render the lean.
+      if (imp.layerName != null) inner = `@layer${imp.layerName ? ' ' + imp.layerName : ''}{\n${inner}\n}`
+      if (imp.supportsText) inner = `@supports (${imp.supportsText}){\n${inner}\n}`
+      const m = imp.media?.mediaText
+      if (m && m !== 'all') inner = `@media ${m}{\n${inner}\n}`
+      text += inner
       continue
     }
     text += r.cssText + '\n'
@@ -128,6 +137,8 @@ function syncFormState(doc: Document, clone: HTMLElement): void {
     if (!d || d.tagName !== src.tagName) return
     if (src.tagName === 'INPUT') {
       const s = src as HTMLInputElement
+      // never bake a password into the retained snapshot html; a file input can't be reconstructed
+      if (s.type === 'password' || s.type === 'file') { d.removeAttribute('value'); return }
       if (s.type === 'checkbox' || s.type === 'radio') s.checked ? d.setAttribute('checked', '') : d.removeAttribute('checked')
       else d.setAttribute('value', s.value)
     } else if (src.tagName === 'TEXTAREA') { d.textContent = (src as HTMLTextAreaElement).value }

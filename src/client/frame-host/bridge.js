@@ -41,6 +41,8 @@ window.addEventListener('error', (e) => post({ type: 'sh:error', id, message: St
 window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:error', id, message: `unhandled rejection: ${e.reason}` }))
 
 window.addEventListener('message', (e) => {
+  // commands come from the SHELL (parent) only - embedded app content must not flip the theme
+  if (e.source !== window.parent || window.parent === window) return
   if (e?.data?.type === 'sh:set-theme') setTheme(e.data.theme)
 })
 
