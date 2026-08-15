@@ -102,6 +102,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         return {
           html,
           tags: [
+            // SYNCHRONOUS closed-shadow shim: the bridge is a deferred module, so an authored classic
+            // script could attachShadow({mode:'closed'}) before it runs. This classic inline script
+            // runs during parse, before authored content, so the serializer can degrade such a frame.
+            { tag: 'script', children: `(function(){var a=Element.prototype.attachShadow;if(a)Element.prototype.attachShadow=function(i){if(i&&i.mode==='closed')window.__mvClosedShadow=1;return a.call(this,i)};})();`, injectTo: 'head-prepend' },
             { tag: 'script', attrs: { type: 'module' }, children: `import '${VIRTUAL_THEME}'`, injectTo: 'head-prepend' },
             { tag: 'script', attrs: { type: 'module', src: bridge }, injectTo: 'head-prepend' },
           ],

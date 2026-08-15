@@ -36,14 +36,17 @@ snapshot that IS what you see, and the real live app takes over the moment you i
 - Mermaid diagrams no longer pop in/out or flash the wrong theme during zoom (async render is awaited;
   a diagram's baked colors re-capture on theme change; the cover's color-scheme is pinned to the
   frame theme, not the viewer's OS).
-- A frame you've scrolled, typed into, or themed re-captures faithfully; slow data that lands after
-  load refreshes the snapshot; agent edits (HMR) drop the stale snapshot and rebuild.
+- A frame you've scrolled, typed into, or themed re-captures faithfully; agent edits (HMR) drop the
+  stale snapshot and rebuild; slow data that lands shortly after load triggers one bounded re-capture
+  (data that changes much later refreshes when you focus the frame).
 
 ### Known limitations
 
 - Memory targets typical authoring boards (~15-20 frames); dozens of heavy production apps need the
-  bounded-residency milestone. An over-heavy single frame (canvas/video/shadow-DOM/nested-iframe/
-  cross-origin-CSS/blocked-CSP/oversized) degrades to live automatically - fail-soft throughout.
+  bounded-residency milestone. A frame the serializer can't render faithfully (canvas/video/open- or
+  script-created-closed shadow-DOM/nested-iframe/cross-origin-CSS/blocked-CSP/oversized) degrades to
+  live automatically. (One narrow edge: a declarative closed shadow root can't be detected and may
+  render stale - rare in practice.)
 
 ## 0.4.0 - 2026-08-14
 

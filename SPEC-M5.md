@@ -244,7 +244,7 @@ slice 2 on holding p95<16 ms there.
 serve`). Published frames are bundled SAME-ORIGIN, so the existing client-side serializer runs at
 runtime there exactly as in dev - no headless build step, no heavy dependency. Removing the two
 `import.meta.env.DEV` gates was the whole change. Fail-soft: a frame that can't serialise stays live
-(== old publish behaviour), so publish can never regress. Codex-reviewed: no board/password leak
+(== old publish behaviour), so the lean tier is additive and cannot regress publish. Codex-reviewed: no board/password leak
 (`allow-same-origin` without scripts/forms/top-nav adds nothing beyond the already-same-origin live
 iframe); added a CSP sentinel (stay live if a hardened host blocks the inline `<style>`) and
 nested-iframe degradation. Verified in a real published build: 43/43 lean ready, no swap, identical to
@@ -278,7 +278,7 @@ from the codex release review (2026-08-15):
   React tree + timers + data clients) will pressure memory. **This release targets typical authoring
   boards (a handful to ~15-20 frames).** Bounded live residency (M4 Stage 3/4: only the working set
   stays live, cold frames navigate to a dormancy doc) is the next milestone for large heavy boards. An
-  over-heavy single frame (>4 MB serialized) degrades to live automatically.
+  over-heavy single frame (serialized html over ~4M characters) degrades to live automatically.
 
 - **Animations replay on their own timeline in the lean.** A passive frame's CSS animation runs in the
   lean (no JS needed) but from t=0, out of phase with the live app; focusing the frame swaps to live
@@ -286,7 +286,9 @@ from the codex release review (2026-08-15):
   moment. Faithful animation phase-transfer is out of scope; neither breaks correctness.
 
 Everything else is fail-soft: a frame the serializer can't render faithfully (canvas, video, WebGL,
-shadow DOM, cross-origin CSS, nested iframe, unrestorable scroll, blocked CSP, oversized) stays live.
+open- or script-created-closed shadow DOM, cross-origin CSS, nested iframe, unrestorable scroll,
+blocked CSP, oversized) stays live. The one residual: a DECLARATIVE closed shadow root (parsed, not
+attachShadow-created) can't be detected post-hoc and may render stale - rare in design frames.
 
 ## 10. Migration from M4 Stage 2
 

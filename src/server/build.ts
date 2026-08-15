@@ -285,7 +285,12 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   for (const f of frames.filter((x) => x.kind === 'html')) {
     const src = readFileSync(join(root, f.file), 'utf8')
     const inject = `${frameCss}\n<script type="module" src="/assets/bridge.js?html=1"></script>\n`
-    const html = src.includes('</head>') ? src.replace('</head>', `${inject}</head>`) : inject + src
+    let html = src.includes('</head>') ? src.replace('</head>', `${inject}</head>`) : inject + src
+    // SYNCHRONOUS closed-shadow shim, at head-START so it beats any authored classic script that
+    // could attachShadow({mode:'closed'}) before the deferred bridge module runs (else the serializer
+    // would miss it and ship a lean without the shadow content).
+    const shim = `<script>(function(){var a=Element.prototype.attachShadow;if(a)Element.prototype.attachShadow=function(i){if(i&&i.mode==='closed')window.__mvClosedShadow=1;return a.call(this,i)};})();</script>`
+    html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + shim) : shim + html
     mkdirSync(dirname(join(outDir, f.file)), { recursive: true })
     writeFileSync(join(outDir, f.file), html)
   }
