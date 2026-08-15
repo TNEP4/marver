@@ -8,6 +8,35 @@ Small items that are not milestone work. One line each; delete when done.
 > concurrent-edit resilience, ghost boards, port collision, device sweep, authoring quality,
 > copy-path shortcut) are all consolidated there as Tracks A-D / Stages 0-5.
 
+- **Loading / refresh visual language × the attention-aware swap policy (2026-08-15, Nic).**
+  With the LEAN-PRIMARY lean tier (SPEC-M5), a passive frame shows its lean; initial load admits the
+  43 leans serially (~30-40s on a big board) so frames sit on live-fallback until their lean lands -
+  a gradual pop-in. Nic's idea: a **minimalist, calm, geometry-aware skeleton** per frame until it's
+  ready. We already know each frame's device layout + placement, so the skeleton is zero-layout-shift:
+  the frame card + muted body (theme-aware, no spinner - calm). **Canvas mode only, NOT play/prototype**
+  (a skeleton breaks flow/immersion there - keep last pixels instead).
+
+  The careful part Nic flagged: "not ready" is FIVE different situations, each wanting a different
+  treatment. This is where M4 Stage-1 reliability (A3 phased handshake, A4 keep-last-pixels, A6 leases)
+  meets the M5 lean tier. The real deliverable is a small policy table over two axes -
+  **what to SHOW while not-ready** and **WHEN to swap the new version in**:
+
+  | Situation | Show while not-ready | When to swap in the new version |
+  |---|---|---|
+  | Cold load, no pixels ever | **calm skeleton** (known geometry, theme-aware) | as soon as the lean is admitted |
+  | Refresh (agent edited the file), we HAVE a last-good lean | **keep the last-good lean** (maybe a faint "updating" breath) - never drop to a skeleton when we have real pixels | when the fresh capture passes admission |
+  | User FOCUSED/interacting on THIS frame | keep it live, untouched | **defer** the agent's reload (interaction lease) until blur, then refresh - never yank a frame mid-edit |
+  | User placing a COMMENT on THIS frame | keep it live | **defer** - a re-render under the pointer can move/orphan the comment anchor; refresh after the comment lands |
+  | Laser on THIS frame (pointer inside) | keep it live | defer until the pointer leaves |
+  | Passive frame / user focused ELSEWHERE | its lean (or skeleton if cold) | refresh quietly - the agent's work just appears, no interruption |
+
+  Design intent: an agent editing a frame the user isn't touching should **quietly update** (you watch
+  the agent's work land); an agent editing the frame the user IS touching must **wait its turn**. The
+  skeleton makes cold-load feel calm; keep-last-lean makes refresh feel seamless; leases make focus
+  sacred. Two adjacent speedups worth folding in: **viewport-priority capture** (serialize on-screen
+  frames first, not registration order) and **bounded-parallel capture** (2-3 at once, not strictly
+  serial) - both attack the 30-40s pop-in directly. Depends on / overlaps M4 A3/A4/A6 and A10.
+
 - **Play chrome hide/reveal still misbehaves in some flows.** Run a codex adversarial
   review of the chrome state machine in `src/client/shell/Play.tsx` (chrome open/
   collapsed/hidden × idle × over × hint/snooze, plus the H and ⌘/ transitions and the
