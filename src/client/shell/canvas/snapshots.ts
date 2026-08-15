@@ -4,10 +4,14 @@
  * FrameNode subscribes to snapshot state and a pan/zoom tick triggers zero React renders.
  *
  * The lean tier is a DOM SNAPSHOT, not a bitmap: the shell serialises the live frame's document
- * (same origin) into self-contained static html (post-render DOM + full inlined CSS, JS stripped) and
- * shows it over the live iframe while #sh-world is in motion. Real DOM + real CSS: exact color,
- * native reflow on resize, theme-flip by attribute mutation (no re-capture). Captures run
- * one-at-a-time at idle, NEVER during motion.
+ * (same origin) into self-contained static html (post-render DOM + full inlined CSS, JS stripped).
+ * LEAN-PRIMARY: this snapshot is what you SEE for a passive frame - at rest AND during pan/zoom - so
+ * there is NO per-gesture swap between the lean and the live iframe (two documents never render
+ * pixel-identically; the swap shifted text ~1-2px = jiggle, and flashed mermaid/theme). The live app
+ * shows underneath only when the frame is interacted, in laser/comment mode, or while the lean is
+ * being (re)built. Real DOM + real CSS: exact color, native reflow on resize. Theme change / focus
+ * INVALIDATE the lean (never mutate a displayed one - baked mermaid can't re-theme in place) and a
+ * fresh capture is admitted before it is shown again. Captures run one-at-a-time at idle, never busy.
  *
  * Correctness beats the flash-guard (codex): a frame the serialiser cannot render faithfully
  * (canvas/video/shadow-dom/cross-origin-css, or an unrestorable scroller) is left DEGRADED - no
@@ -34,6 +38,10 @@ const inMotion = (): boolean => {
   const w = document.getElementById('sh-world')
   return !!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))
 }
+// never serialise while laser/comment mode is on: those inject outline styles + hover chrome into the
+// live doc, which the shell-side clone would bake into the lean (visible after the mode ends).
+const modeActive = (): boolean => document.body.classList.contains('sh-laser') || document.body.classList.contains('sh-commenting')
+const busy = (): boolean => inMotion() || modeActive()
 
 /** Apply a node's current theme to its lean doc via attribute mutation (allow-same-origin lets the
  *  shell touch the doc; the full CSS is inlined so only which rules match changes - no re-capture). */
@@ -92,12 +100,15 @@ export function registerLeanFrame(nodeKey: string, iframe: HTMLIFrameElement | n
   if (byNode.has(nodeKey)) install(nodeKey)
 }
 
-/** Live theme flip: update stored theme + mutate the mounted lean doc (no re-capture). */
-export function setLeanTheme(nodeKey: string, theme: string): void {
-  const e = byNode.get(nodeKey)
-  if (e) e.theme = theme
-  const doc = frames.get(nodeKey)?.contentDocument
-  if (doc) applyTheme(doc, theme)
+/** Hide the lean at once (show the live app underneath) and cancel in-flight work. Used when a frame
+ *  is focused/interacted, or its theme changes: a baked mermaid SVG cannot be re-themed in place, so
+ *  we never mutate a DISPLAYED snapshot across themes - we drop it and rebuild a fresh one, which is
+ *  only shown once it passes admission. Live stays visible in the meantime (live-fallback). */
+export function invalidateLean(nodeKey: string): void {
+  bumpGen(nodeKey)
+  pending.delete(nodeKey)
+  const iframe = frames.get(nodeKey)
+  if (iframe) delete iframe.dataset.ready
 }
 
 /** Drop a node's snapshot (unmount, or content changed / frame reloaded). Cancels queued + in-flight
@@ -134,16 +145,18 @@ function domQuiet(doc: Document, quietMs: number, maxMs: number): Promise<void> 
   })
 }
 
-/** Request a fresh lean snapshot for a ready/quiet frame. Coalesces to the latest per node. */
-export function scheduleCapture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta): void {
-  if (byNode.get(nodeKey)?.key === keyOf(meta)) return   // already have this content revision
+/** Request a fresh lean snapshot for a ready/quiet frame. Coalesces to the latest per node. `force`
+ *  recaptures even when the key is unchanged - used on blur, where the live state changed under the
+ *  same revision/theme (typed input, toggled UI) and the old lean is now wrong. */
+export function scheduleCapture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta, force = false): void {
+  if (!force && byNode.get(nodeKey)?.key === keyOf(meta)) return   // already have this content revision
   pending.set(nodeKey, { live, meta })
   pump()
 }
 
 function pump(): void {
   if (capturing || !pending.size) return
-  if (inMotion()) { idle(pump); return }                 // never serialise/parse mid-gesture
+  if (busy()) { idle(pump); return }                     // never serialise mid-gesture or during laser/comment
   capturing = true
   const [nodeKey, req] = pending.entries().next().value as [string, { live: HTMLIFrameElement; meta: SnapMeta }]
   pending.delete(nodeKey)
@@ -163,7 +176,7 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   // bail if the world changed under us during settle: superseded (drop/reload), a newer request
   // landed, the frame renavigated, or a gesture/preset started (serialising+parsing now would jank).
   if (genOf(nodeKey) !== myGen || pending.has(nodeKey) || live.contentDocument !== doc) return
-  if (inMotion()) { pending.set(nodeKey, { live, meta }); return }   // requeue for the next idle tick
+  if (busy()) { pending.set(nodeKey, { live, meta }); return }       // requeue for the next idle tick
   let result: SerializeResult
   try { result = serializeDoc(doc, doc.URL) }   // <base> = the frame's own URL, so relative url()/img/font resolve
   catch { return }                              // fail soft: keep live pixels

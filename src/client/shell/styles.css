@@ -154,7 +154,7 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
    width (ONE reflow, hidden under the cover) while the lean cover - being width:100% of the animating
    body - reflows smoothly every frame (real CSS, the device-sweep fix). A frame WITHOUT a usable
    cover keeps the live width animation above. */
-body:not(.sh-laser):not(.sh-commenting) #sh-world.sh-preset .sh-node:has(.sh-lean[data-ready]) .sh-live { transition: none }
+body:not(.sh-laser):not(.sh-commenting) #sh-world.sh-preset .sh-node:has(.sh-lean[data-ready]):not(.interact) .sh-live { transition: none }
 
 /* cursor conventions (Figma): arrow everywhere; grab only while space is held */
 body.sh-space .sh-canvas { cursor: grab }
@@ -202,20 +202,20 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none; font-variant-numeric: tabular-nums }
 .sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
 .sh-node iframe { border: 0; display: block }
-/* SPEC-M5 lean facade: a DOM-snapshot <iframe> (static html, 0 JS), invisible at rest; covers the
-   live iframe instantly while the canvas is gesturing (so a heavy frame never flashes white
-   mid-transform) and reflows correctly through a device sweep; fades back out on settle - by which
-   point the live iframe has re-painted (the gesture class lingers ~160ms past the last move). */
-.sh-lean { position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
-  opacity: 0; pointer-events: none; transition: opacity .14s ease; background: var(--node-bg) }
-/* shown during a CANVAS pan/zoom (sh-camera) or a device-sweep/tidy preset - NOT during a frame
-   click/drag (sh-gesturing only), which would flash the cover on every click ("jiggle"). */
-#sh-world.sh-camera .sh-lean[data-ready],
-#sh-world.sh-preset .sh-lean[data-ready] { opacity: 1; transition: none }
-/* correctness beats the flash-guard: laser/comment paint live outlines + do element-picking INSIDE
-   the live frame, which a scriptless cover would hide - never cover while either mode is active. */
-body.sh-laser .sh-lean, body.sh-commenting .sh-lean { opacity: 0 !important }
-.sh-overlay { position: absolute; inset: 0; cursor: default }
+/* SPEC-M5 LEAN-PRIMARY: the lean DOM-snapshot <iframe> (static html, 0 JS) is what you SEE for a
+   passive frame - at rest AND during pan/zoom/resize. There is NO per-gesture swap between the lean
+   and the live iframe (the swap shifted text ~1-2px = "jiggle", and flashed mermaid/theme colors,
+   because two documents never render pixel-identically). The live app (.sh-live) sits underneath and
+   shows ONLY when: the frame is interacted (.interact), laser/comment mode is on, or the lean is not
+   yet built (no data-ready = live-fallback). Hard cut, never a crossfade - two ~1px-offset text docs
+   would ghost into double text. */
+.sh-lean { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 1;
+  opacity: 0; pointer-events: none; transition: none; background: var(--node-bg) }
+.sh-lean[data-ready] { opacity: 1 }
+.sh-node.interact .sh-lean,
+body.sh-laser .sh-lean,
+body.sh-commenting .sh-lean { opacity: 0 }
+.sh-overlay { position: absolute; inset: 0; cursor: default; z-index: 2 }   /* above the lean (z1) so drag-by-body works */
 .sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
   outline-offset: calc(-1px * var(--sh-inv, 1));

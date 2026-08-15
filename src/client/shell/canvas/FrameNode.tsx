@@ -4,7 +4,7 @@ import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
-import { registerLeanFrame, dropSnapshot, scheduleCapture, setLeanTheme } from './snapshots.ts'
+import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from './snapshots.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -34,13 +34,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   if (frame && initialSrc.current === null) initialSrc.current = frameUrl(frame, node.theme)
   const fileRef = useRef(frame ? `${frame.kind}:${frame.file}` : null)
 
-  // theme switch without remount: the live iframe flips via message (no navigation), and the lean
-  // cover flips via an attribute mutation on its doc (no re-capture) - both keep their state.
+  // theme switch without remount: the live iframe flips via message (no navigation). The lean is
+  // INVALIDATED (not mutated) - a baked mermaid SVG can't be re-themed in place, so we drop it, show
+  // live while it re-renders in the new theme, and the capture effect (theme is a dep) rebuilds a
+  // fresh lean that is only shown once ready. No light-on-dark flash.
   useEffect(() => {
     if (themeRef.current !== node.theme) {
       themeRef.current = node.theme
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme: node.theme }, '*')
-      setLeanTheme(node.key, node.theme)
+      invalidateLean(node.key)
     }
   }, [node.theme, node.key])
 
@@ -86,6 +88,18 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // a reload / file-swap / error takes the frame out of 'ready': drop its cover so a stale picture
   // never lingers (nav may not bump on a same-file reload). The next 'ready' re-captures.
   useEffect(() => { if (node.status !== 'ready') dropSnapshot(node.key) }, [node.status, node.key])
+  // LEAN-PRIMARY focus handoff: entering interact shows the live app (drop the now-stale lean at
+  // once); leaving it recaptures the live frame's CURRENT state (the user may have typed/toggled)
+  // and only swaps back to lean once that fresh capture is admitted. force=true: same nav/theme.
+  const prevInteract = useRef(interact)
+  useEffect(() => {
+    if (prevInteract.current === interact) return
+    const wasInteract = prevInteract.current
+    prevInteract.current = interact
+    if (interact) invalidateLean(node.key)
+    else if (wasInteract && node.status === 'ready' && iframeRef.current)
+      scheduleCapture(node.key, iframeRef.current, { sourceRevision: String(node.nav ?? 0), theme: node.theme }, true)
+  }, [interact, node.key, node.nav, node.theme, node.status])
 
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board

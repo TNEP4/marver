@@ -112,6 +112,25 @@ function hasOpenShadow(doc: Document): boolean {
   return false
 }
 
+/** Copy live form PROPERTIES (value/checked/selected) into the clone. They are runtime state, not
+ *  attributes, so cloneNode never carries them - without this a re-captured frame shows empty inputs
+ *  and unchecked boxes. Original and clone share structure, so we pair them in document order.
+ *  tagName/type checks (not instanceof) because the clone nodes are owned by the frame's realm. */
+function syncFormState(doc: Document, clone: HTMLElement): void {
+  const live = doc.querySelectorAll('input, textarea, option')
+  const dst = clone.querySelectorAll('input, textarea, option')
+  live.forEach((src, i) => {
+    const d = dst[i]
+    if (!d || d.tagName !== src.tagName) return
+    if (src.tagName === 'INPUT') {
+      const s = src as HTMLInputElement
+      if (s.type === 'checkbox' || s.type === 'radio') s.checked ? d.setAttribute('checked', '') : d.removeAttribute('checked')
+      else d.setAttribute('value', s.value)
+    } else if (src.tagName === 'TEXTAREA') { d.textContent = (src as HTMLTextAreaElement).value }
+    else if (src.tagName === 'OPTION') { (src as HTMLOptionElement).selected ? d.setAttribute('selected', '') : d.removeAttribute('selected') }
+  })
+}
+
 /**
  * Serialize a live same-origin Document into a static, self-contained html string.
  * @param doc       the live frame document (same origin - we read its cssRules directly)
@@ -141,6 +160,7 @@ export function serializeDoc(doc: Document, baseHref: string): SerializeResult {
   // clone the RENDERED dom (React's committed output = authored markup that reflows under CSS)
   const html = doc.documentElement.cloneNode(true) as HTMLElement
   scrub(html, doc, degraded)
+  syncFormState(doc, html)
 
   // head: <meta charset> + <base> (relative url()/img/font resolve against the real frame URL) +
   // ONE inlined stylesheet (both themes, all media queries). Drop the clone's own style nodes.
