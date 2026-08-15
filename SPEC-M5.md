@@ -1,6 +1,14 @@
 # SPEC-M5 — The lean-frame facade (DOM snapshot, not pixel snapshot)
 
-Status: v2.1 — **SLICE 1 SHIPPED** (2026-08-15, dev path). Supersedes SPEC-M4 Stage 2 (raster facade)
+Status: v3 — **LEAN-PRIMARY SHIPPED** (2026-08-15, dev path). The motion-cover model (slice 1) was
+reworked: dogfooding proved a cross-document cover↔live swap on every pan/zoom shifts text ~1-2px
+(jiggle) and flashes mermaid/theme, because two documents never render pixel-identically. So the lean
+DOM is now the PRIMARY visible layer for a passive frame (rest + motion); live shows only when
+interacted / in laser+comment / while a fresh lean is building. No per-gesture swap = no jiggle.
+Codex-designed + reviewed (commit 89bd53a). F3 ("seamless swap") is retired — the invariant is now
+STABLE PRIMARY RENDERING with intentional, bounded focus transitions. Below, "cover shown during
+motion" is superseded by "lean shown always except when live-required"; §5 slice-2 residency is moot
+(all frames stay live-mounted underneath for instant focus). Supersedes SPEC-M4 Stage 2 (raster facade)
 and folds in Stages 3–4. Rewrote v1 after the de-risk prototype (`/__mv/proto/`, dd74297) + two Codex
 reviews (architecture 12×P1, then code review). Slice 1 replaces the raster `<img>` facade with the
 DOM-snapshot lean `<iframe>` (commits c89aa3e + f78d8a8, both Codex-reviewed): fidelity fixed, all 43
