@@ -81,6 +81,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     return () => clearTimeout(t)
   }, [node.status, node.nav, node.key, node.missing])
   useEffect(() => () => dropSnapshot(node.key), [node.key])   // drop the snapshot on unmount
+  // a reload / file-swap / error takes the frame out of 'ready': drop its cover so a stale picture
+  // never lingers (nav may not bump on a same-file reload). The next 'ready' re-captures.
+  useEffect(() => { if (node.status !== 'ready') dropSnapshot(node.key) }, [node.status, node.key])
 
   // laser mode (SPEC-M3 §7) rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board
@@ -274,8 +277,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             the canvas is gesturing (CSS), so a heavy frame never flashes white mid-transform and the
             device sweep reflows correctly. sandbox WITHOUT allow-scripts = no JS runs; allow-same-origin
             so fonts/assets resolve and the shell can flip its theme + restore scroll. Never registered,
-            never messaged, pointer-events:none - it is NOT the live iframe (role: .sh-lean). */}
-        <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />
+            never messaged, pointer-events:none - it is NOT the live iframe (role: .sh-lean).
+            Dev-only: publish has no runtime capture (SPEC-M5 sec 9), so it stays literally live-only. */}
+        {import.meta.env.DEV && <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />}
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}

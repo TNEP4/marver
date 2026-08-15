@@ -29,23 +29,43 @@ function absolutizeUrls(css: string, sheetHref: string | null): string {
   })
 }
 
-/** Collect every CSS rule the document renders with: <style>/<link> sheets AND constructable
- *  adoptedStyleSheets. Cross-origin sheets throw on .cssRules - record + degrade (never claim fidelity). */
+/** Serialise one sheet's rules, recursing into same-origin @import (so imported CSS is inlined, not
+ *  left as an invalid mid-list @import pointing at an un-inlined sheet). Bumps `xo` on any unreadable
+ *  (cross-origin) sheet or import so the caller can degrade. */
+function rulesText(rules: CSSRuleList, href: string | null, xo: { n: number }): string {
+  let text = ''
+  for (const r of Array.from(rules)) {
+    if (r.type === 3 /* CSSRule.IMPORT_RULE */) {
+      const imported = (r as CSSImportRule).styleSheet
+      if (!imported) { xo.n++; continue }
+      try { text += rulesText(imported.cssRules, imported.href ?? href, xo) } catch { xo.n++ }
+      continue
+    }
+    text += r.cssText + '\n'
+  }
+  return absolutizeUrls(text, href)
+}
+
+/** Collect every CSS rule the document renders with: <style>/<link> sheets (recursing @import) AND
+ *  constructable adoptedStyleSheets. Cross-origin sheets throw on .cssRules - record + degrade (never
+ *  claim fidelity). Honours per-sheet media (`<link media=print>`) and skips disabled sheets. */
 function collectCss(doc: Document, degraded: string[], notes: string[]): string {
   const chunks: string[] = []
-  let crossOrigin = 0
+  const xo = { n: 0 }
   const dump = (sheet: CSSStyleSheet, href: string | null, label: string) => {
+    if (sheet.disabled) return
     let rules: CSSRuleList | null = null
-    try { rules = sheet.cssRules } catch { crossOrigin++; return }
+    try { rules = sheet.cssRules } catch { xo.n++; return }
     if (!rules) return
-    let text = ''
-    for (const r of Array.from(rules)) text += r.cssText + '\n'
-    if (text) chunks.push(`/* ${label} */\n${absolutizeUrls(text, href)}`)
+    const text = rulesText(rules, href, xo)
+    if (!text) return
+    const media = sheet.media?.mediaText
+    chunks.push(`/* ${label} */\n${media && media !== 'all' ? `@media ${media}{\n${text}\n}` : text}`)
   }
   for (const s of Array.from(doc.styleSheets)) dump(s as CSSStyleSheet, s.href, s.href ?? 'inline')
   const adopted = (doc as Document & { adoptedStyleSheets?: CSSStyleSheet[] }).adoptedStyleSheets ?? []
   adopted.forEach((s, i) => dump(s, null, `adopted[${i}]`))
-  if (crossOrigin) { degraded.push('cross-origin-css'); notes.push(`${crossOrigin} cross-origin stylesheet(s) unreadable`) }
+  if (xo.n) { degraded.push('cross-origin-css'); notes.push(`${xo.n} cross-origin stylesheet(s)/import(s) unreadable`) }
   if (adopted.length) notes.push(`${adopted.length} adoptedStyleSheet(s) inlined`)
   return chunks.join('\n')
 }
@@ -67,7 +87,7 @@ function selectorFor(el: Element): string {
 function scrub(root: Element, doc: Document, degraded: string[]): void {
   root.querySelectorAll('script, noscript, link[rel~="modulepreload"], link[rel~="preload"], link[rel~="stylesheet"]').forEach((n) => n.remove())
   const walk = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
-  const flag = { canvas: false, video: false, shadow: false }
+  const flag = { canvas: false, video: false }
   for (let el = walk.currentNode as Element | null; el; el = walk.nextNode() as Element | null) {
     for (const attr of Array.from(el.attributes)) {
       if (/^on/i.test(attr.name)) el.removeAttribute(attr.name)
@@ -76,12 +96,20 @@ function scrub(root: Element, doc: Document, degraded: string[]): void {
     const tag = el.tagName
     if (tag === 'CANVAS') flag.canvas = true
     if (tag === 'VIDEO') flag.video = true
-    if ((el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot) flag.shadow = true
     if (STRIP_TAGS.has(tag)) el.remove()
   }
   if (flag.canvas) degraded.push('canvas')
   if (flag.video) degraded.push('video')
-  if (flag.shadow) degraded.push('shadow-dom')
+}
+
+/** Open shadow roots must be detected on the ORIGINAL tree - cloneNode(true) drops them, so the clone
+ *  can never reveal them. A frame with any shadow DOM (open here, or closed via the boot-time flag)
+ *  degrades to live rather than shipping a lean copy missing its shadow content. */
+function hasOpenShadow(doc: Document): boolean {
+  const walk = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_ELEMENT)
+  for (let el = walk.currentNode as Element | null; el; el = walk.nextNode() as Element | null)
+    if ((el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot) return true
+  return false
 }
 
 /**
@@ -93,21 +121,22 @@ export function serializeDoc(doc: Document, baseHref: string): SerializeResult {
   const notes: string[] = []
   const degraded: string[] = []
 
-  // closed shadow roots are undetectable after the fact; bridge.js instruments attachShadow at boot
+  // shadow DOM (open detected on the original tree, closed via the boot-time attachShadow flag):
+  // either kind degrades the frame to live - cloneNode cannot carry a shadow root.
   const win = doc.defaultView as (Window & { __mvClosedShadow?: boolean }) | null
-  if (win?.__mvClosedShadow) { degraded.push('shadow-dom'); notes.push('closed shadow root(s) present') }
+  if (win?.__mvClosedShadow || hasOpenShadow(doc)) { degraded.push('shadow-dom'); notes.push('shadow root(s) present') }
 
   const css = collectCss(doc, degraded, notes)
   const cssBytes = new Blob([css]).size
 
-  // scroll offsets to restore shell-side (native scrollers only; a virtualised one that fails to
-  // resolve at restore time re-degrades the frame in the coordinator)
+  // scroll offsets to restore shell-side (native scrollers; a virtualised one that fails to resolve
+  // OR whose offset does not stick re-degrades the frame in the coordinator). != 0 catches RTL/negative.
   const scrollMap: ScrollEntry[] = []
   for (const el of Array.from(doc.querySelectorAll<HTMLElement>('*'))) {
-    if (el.scrollTop > 0 || el.scrollLeft > 0) scrollMap.push({ sel: selectorFor(el), top: el.scrollTop, left: el.scrollLeft })
+    if (el.scrollTop !== 0 || el.scrollLeft !== 0) scrollMap.push({ sel: selectorFor(el), top: el.scrollTop, left: el.scrollLeft })
   }
   const de = doc.documentElement
-  if (de.scrollTop > 0 || de.scrollLeft > 0) scrollMap.push({ sel: ':root', top: de.scrollTop, left: de.scrollLeft })
+  if (de.scrollTop !== 0 || de.scrollLeft !== 0) scrollMap.push({ sel: ':root', top: de.scrollTop, left: de.scrollLeft })
 
   // clone the RENDERED dom (React's committed output = authored markup that reflows under CSS)
   const html = doc.documentElement.cloneNode(true) as HTMLElement

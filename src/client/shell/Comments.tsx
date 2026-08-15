@@ -453,9 +453,10 @@ export function CommentsController() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  // broadcast pick mode to every frame (laser rides along inside the bridge)
+  // broadcast pick mode to every LIVE frame (laser rides along inside the bridge). Scoped to
+  // .sh-live so the SPEC-M5 lean cover (.sh-lean, a scriptless snapshot) is never messaged.
   useEffect(() => {
-    for (const f of document.querySelectorAll('iframe'))
+    for (const f of document.querySelectorAll('iframe.sh-live'))
       (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
   }, [commentMode])
 

@@ -154,7 +154,7 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
    width (ONE reflow, hidden under the cover) while the lean cover - being width:100% of the animating
    body - reflows smoothly every frame (real CSS, the device-sweep fix). A frame WITHOUT a usable
    cover keeps the live width animation above. */
-#sh-world.sh-preset .sh-node:has(.sh-lean[data-ready]) .sh-live { transition: none }
+body:not(.sh-laser):not(.sh-commenting) #sh-world.sh-preset .sh-node:has(.sh-lean[data-ready]) .sh-live { transition: none }
 
 /* cursor conventions (Figma): arrow everywhere; grab only while space is held */
 body.sh-space .sh-canvas { cursor: grab }
