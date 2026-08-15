@@ -2,6 +2,49 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.5.0 - 2026-08-15
+
+The performance & fidelity release (SPEC-M5): the canvas stops jiggling. Moving around a board no
+longer swaps between two documents on every pan/zoom - each passive frame renders as a lean DOM
+snapshot that IS what you see, and the real live app takes over the moment you interact with it.
+
+### Added
+
+- **Lean-primary rendering.** Every passive frame shows a **DOM snapshot** - a self-contained static
+  copy of the frame (real DOM + real CSS, zero JavaScript) served in a `sandbox="allow-same-origin"`
+  iframe. It reflows on resize with the browser's own layout engine and carries the app's exact colors
+  (no rasterisation), so panning, zooming, and device-sweeping a board is smooth and pixel-honest. The
+  full live app sits underneath and swaps in instantly when you focus a frame (double-click), or in
+  laser/comment mode. This replaces the earlier screenshot facade, which invented colors and jittered.
+- **Publish parity.** The lean tier now works in published builds (`marver build` → `marver serve`),
+  not just dev - captured client-side from the bundled same-origin frames, no build-time renderer.
+- **Faster first paint.** Leans capture bounded-parallel and viewport-first, so the frames you're
+  looking at appear first and a big board settles in seconds instead of tens of seconds.
+- **`Head :: gloss` diagrams.** A diagram node label written `Head :: gloss` renders the head bold on
+  top with the gloss lighter and smaller below - a box scans as label-then-detail, no run-on.
+
+### Changed
+
+- **Sidebar header** shows the humanized repo name (`marver-pilot` → "Marver Pilot", ellipsed if
+  long); the logo links to marver.design.
+- **Copy-file-path shortcut** moved to `Shift+P` (was a mislabeled `C`).
+
+### Fixed
+
+- The canvas "jiggle" - text shifting ~1-2px when you click or zoom a frame - is gone; there is no
+  longer a per-gesture document swap to shift it.
+- Mermaid diagrams no longer pop in/out or flash the wrong theme during zoom (async render is awaited;
+  a diagram's baked colors re-capture on theme change; the cover's color-scheme is pinned to the
+  frame theme, not the viewer's OS).
+- A frame you've scrolled, typed into, or themed re-captures faithfully; slow data that lands after
+  load refreshes the snapshot; agent edits (HMR) drop the stale snapshot and rebuild.
+
+### Known limitations
+
+- Memory targets typical authoring boards (~15-20 frames); dozens of heavy production apps need the
+  bounded-residency milestone. An over-heavy single frame (canvas/video/shadow-DOM/nested-iframe/
+  cross-origin-CSS/blocked-CSP/oversized) degrades to live automatically - fail-soft throughout.
+
 ## 0.4.0 - 2026-08-14
 
 The collaboration release (SPEC-M3): the canvas becomes a place where colleagues,
