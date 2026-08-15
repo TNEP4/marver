@@ -122,6 +122,13 @@ button { font-family: inherit }
 button svg { pointer-events: none }   /* event targets stay on the button - pan exclusion depends on it */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important } }
 
+/* Default app pointer: the marver arrowhead (black fill + white outline so it reads on any ground;
+   hotspot at its tip, 6 3). Overridden by the specific-state cursors below - grab (space-pan), resize
+   handles, comment/laser (set inside the frame by the bridge), and normal in interact/prototype. */
+.sh-app { --sh-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%23000000' stroke='%23FFFFFF' stroke-width='0.75' d='M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.85a.5.5 0 0 0-.85.35Z'/%3E%3C/svg%3E") 6 3, default;
+  cursor: var(--sh-cursor) }
+/* interact mode + prototype: normal pointer, so you work the live app naturally (Nic's ask) */
+.sh-app.interacting { cursor: auto }
 .sh-app { position: relative; height: 100%; color: var(--glass-ink); outline: none;
   transition: --accent .4s ease, --accent-ring .4s ease, --beam .4s ease,
     --edge-accent .4s ease, --inner-tint .4s ease, --accent-wash .4s ease,
@@ -188,7 +195,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--accent-ring), var(--shadow-node) }
 .sh-node-head { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 11px;
   font-size: 11px; color: var(--head-dim);
-  border-bottom: 1px solid var(--node-brd); cursor: default; user-select: none;
+  border-bottom: 1px solid var(--node-brd); user-select: none;
   border-radius: var(--r-node) var(--r-node) 0 0;
   background-color: var(--head-bg); background-image: var(--head-sheen);
   backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
@@ -215,7 +222,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-node.interact .sh-lean,
 body.sh-laser .sh-lean,
 body.sh-commenting .sh-lean { opacity: 0 }
-.sh-overlay { position: absolute; inset: 0; cursor: default; z-index: 2 }   /* above the lean (z1) so drag-by-body works */
+.sh-overlay { position: absolute; inset: 0; z-index: 2 }   /* above the lean (z1) so drag-by-body works; inherits the app arrow cursor */
 .sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
   outline-offset: calc(-1px * var(--sh-inv, 1));
@@ -470,7 +477,7 @@ body.sh-commenting .sh-lean { opacity: 0 }
 /* ---- Play mode (SPEC-M2 §1): near-black stage, one centered device, auto-hiding bar.
    Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
 .sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex;
-  align-items: center; justify-content: center; animation: sh-play-in .28s ease-out }
+  align-items: center; justify-content: center; animation: sh-play-in .28s ease-out; cursor: auto }
 @keyframes sh-play-in { from { opacity: 0 } }
 /* the device wears the frame-node card language: same theme border tokens, the same
    masked 1px edge-light gradient ring (glass catching light), and a real drop shadow
