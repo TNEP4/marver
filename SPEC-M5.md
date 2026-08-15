@@ -1,8 +1,11 @@
 # SPEC-M5 — The lean-frame facade (DOM snapshot, not pixel snapshot)
 
-Status: DRAFT v2 (2026-08-15). Supersedes SPEC-M4 Stage 2 (raster facade) and folds in Stages 3–4.
-v2 rewrites v1 after the de-risk prototype (`/__mv/proto/`, commit dd74297) and a Codex architecture
-review (12×P1). The M4 non-negotiables (§1 there) still gate every change. Open decisions in §12.
+Status: v2.1 — **SLICE 1 SHIPPED** (2026-08-15, dev path). Supersedes SPEC-M4 Stage 2 (raster facade)
+and folds in Stages 3–4. Rewrote v1 after the de-risk prototype (`/__mv/proto/`, dd74297) + two Codex
+reviews (architecture 12×P1, then code review). Slice 1 replaces the raster `<img>` facade with the
+DOM-snapshot lean `<iframe>` (commits c89aa3e + f78d8a8, both Codex-reviewed): fidelity fixed, all 43
+pilot frames serialise clean, perf gate held, no feature regressions (real-canvas verified). Slice 2
+(bounded live residency) is the next, optional increment (perf gate already met). Open items in §12.
 
 ---
 
