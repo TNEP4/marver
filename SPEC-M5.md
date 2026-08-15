@@ -267,6 +267,27 @@ pre-baked files, live-on-focus still boots the real frame. Speced here; built af
 land and the dev path is proven. The milestone gate "works in dev AND publish" is met for slice 1 by
 publish being unchanged.
 
+## 9b. Known limitations of the shipped release (honest scope)
+
+The lean tier is robust for authoring-scale boards. Two things it deliberately does NOT promise, both
+from the codex release review (2026-08-15):
+
+- **Memory does not scale to dozens of heavy production apps.** LEAN-PRIMARY keeps every frame's live
+  iframe mounted (for instant focus + state) AND adds a lean each - it improves presentation
+  stability, not residency. ~40 light frames are fine (verified); 30+ heavy real apps (each a full
+  React tree + timers + data clients) will pressure memory. **This release targets typical authoring
+  boards (a handful to ~15-20 frames).** Bounded live residency (M4 Stage 3/4: only the working set
+  stays live, cold frames navigate to a dormancy doc) is the next milestone for large heavy boards. An
+  over-heavy single frame (>4 MB serialized) degrades to live automatically.
+
+- **Animations replay on their own timeline in the lean.** A passive frame's CSS animation runs in the
+  lean (no JS needed) but from t=0, out of phase with the live app; focusing the frame swaps to live
+  at a different phase - a one-time, minor visual jump. JS-driven animations freeze at the captured
+  moment. Faithful animation phase-transfer is out of scope; neither breaks correctness.
+
+Everything else is fail-soft: a frame the serializer can't render faithfully (canvas, video, WebGL,
+shadow DOM, cross-origin CSS, nested iframe, unrestorable scroll, blocked CSP, oversized) stays live.
+
 ## 10. Migration from M4 Stage 2
 
 **Ports unchanged:** the imperative coordinator (single-in-flight, idle-scheduled, never-during-motion
