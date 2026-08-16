@@ -244,7 +244,11 @@ body.sh-commenting .sh-lean { opacity: 0 }
 /* while a camera move is live: a frame with a ready raster shows it and STOPS rendering its heavy
    live+lean (content-visibility:hidden = no re-raster), so only the bitmap costs. Not while
    interacting (the live app is the view) or in laser/comment (need the live DOM for hover chrome). */
-body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact) .sh-raster[data-ready] { opacity: 1; z-index: 4 }
+/* raster shown through BOTH the move (sh-cam) AND the brief settle after it (sh-settling) */
+body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact) .sh-raster[data-ready],
+body.sh-settling:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact) .sh-raster[data-ready] { opacity: 1; z-index: 4 }
+/* DOM stops rendering ONLY during the move; in the settle it renders again BEHIND the raster, so the
+   content-visibility repaint (was a white flash) is masked. The raster drops once settle ends. */
 body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact):has(.sh-raster[data-ready]) .sh-live,
 body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact):has(.sh-raster[data-ready]) .sh-lean { content-visibility: hidden }
 .sh-node.interact { border-color: var(--interact);

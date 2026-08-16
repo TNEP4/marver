@@ -20,7 +20,7 @@ const MAX_CONCURRENT = 2                                   // html-to-image inli
 
 const busy = (): boolean => {
   const w = document.getElementById('sh-world')
-  return document.body.classList.contains('sh-cam') ||
+  return document.body.classList.contains('sh-cam') || document.body.classList.contains('sh-settling') ||
     (!!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))) ||
     document.body.classList.contains('sh-laser') || document.body.classList.contains('sh-commenting')
 }
