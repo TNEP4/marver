@@ -146,10 +146,21 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
   background-size: var(--grid-size, 20px 20px);
   background-position: var(--grid-pos, 0 0);
   opacity: var(--grid-alpha, 1) }
-.sh-content { will-change: auto }
+/* .sh-content is the element rzpp scales (translate+scale matrix); #sh-world is its child.
+   Promote it to its OWN compositing layer PERMANENTLY. Reason: every glass chrome surface
+   (pill, panel, menus, node headers) has a backdrop-filter that samples this surface, and an
+   UN-promoted transformed layer is RE-RASTERISED on every zoom frame - so the backdrop-filter
+   was sampling a moving, half-painted target and Chrome flashed the blurred chrome WHITE on
+   every zoom (worst case: a persistent white block over the top-right toolbar). Promoted, the
+   compositor SCALES a cached texture instead of re-rastering, so the glass always samples a
+   stable painted backdrop. This also subsumes the old click-jiggle guard (no promote/demote =
+   no fractional-zoom text re-raster). NOTE: the old `.sh-gesturing .sh-content` toggle was dead
+   CSS - sh-gesturing lands on #sh-world, a CHILD of .sh-content, so it never matched.
+   __mvDiag.churn(true) restores the un-promoted pre-fix state to A/B the difference. */
+.sh-content { will-change: transform }
+body.mv-churn .sh-content { will-change: auto }                   /* diag A/B: the un-promoted pre-fix state */
 #sh-world { position: relative; width: 1px; height: 1px }
 #sh-world.sh-gesturing .sh-live { pointer-events: none }          /* law G-4 (live iframe only; lean is always pe:none) */
-.sh-gesturing .sh-content { will-change: transform }              /* law G-3: gesture-scoped only */
 /* preset transitions: armed by animateLayout() around device/tidy mutations - nodes ease
    to their new frame on the same 320ms ease-out the camera fit animates with */
 #sh-world.sh-preset .sh-node { transition: transform .32s cubic-bezier(.25,.46,.45,.94),

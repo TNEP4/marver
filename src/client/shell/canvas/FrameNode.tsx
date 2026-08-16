@@ -175,9 +175,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         if (n) groupStarts[k] = { x: n.x, y: n.y }
       }
     }
-    // Defer sh-gesturing (and its `will-change: transform` on .sh-content) until an ACTUAL drag
-    // begins - a bare click otherwise promotes then demotes the compositor layer, re-rasterising
-    // the frame's text at a fractional zoom = the "jiggle". A pure click now never toggles it.
+    // Defer sh-gesturing until an ACTUAL drag begins (a bare click must not drop .sh-live
+    // pointer-events for nothing). The old jiggle this also guarded against is now moot -
+    // .sh-content is promoted permanently (styles.css), so no click ever promotes/demotes it.
     let gesturing = false
     const begin = () => {
       if (gesturing) return

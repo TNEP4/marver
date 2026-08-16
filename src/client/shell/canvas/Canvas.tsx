@@ -3,6 +3,7 @@ import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef 
 import { CONFIG, useStore } from '../store.ts'
 import { bootHash } from '../hash.ts'
 import { startPerf } from '../perf.ts'
+import { startDiag } from '../diag.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 
 /**
@@ -142,7 +143,7 @@ export function Canvas() {
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   const scaleTimer = useRef(0)
 
-  useEffect(() => { startPerf() }, [])   // B0.4: frame-time sampler (window.__mvPerf)
+  useEffect(() => { startPerf(); startDiag() }, [])   // B0.4: frame-time sampler (__mvPerf) + compositor diag (__mvDiag)
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
