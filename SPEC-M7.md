@@ -1,6 +1,46 @@
 # SPEC-M7 — Persisted lean artifacts: the DOM snapshot is a built file
 
-Status: **v1 — PROPOSED.** Follows the M6 pool dogfood: compiling the DOM snapshot (the "lean") in the
+## v2 — codex-reviewed + spike-validated (2026-08-16)
+
+**Spike (proven, `playwright-core` + system Chrome vs the running pilot):** cold Chrome launch **276ms**
+(once/session, no download); per-frame boot+settle+serialize **~142ms** (serialize itself 1ms); **the whole
+43-frame board compiles in ~1s concurrently (4 pages)** vs ~60s for the in-browser one-at-a-time — **~60×
+faster, off the UI thread, then cached.** The fastest-compile choice is confirmed; raw CDP / Vite-SSR /
+Node-fast-path / single-page-swap were all rejected by codex as slower-or-unfaithful.
+
+**Codex REVISE → these P1 corrections override the v1 text below where they conflict:**
+- **Isolation (A4):** NOT one shared context. A **fresh `browser.newContext({ serviceWorkers:'block' })` per
+  capture, closed after** (never `launchPersistentContext`, never the user's Chrome profile). One warm Chrome
+  *process*; per-job fresh context. Vite's server *transform* cache stays warm; ESM/runtime state is per-doc.
+- **Readiness transport:** the bridge only posts when `window.parent !== window`, so a page navigated *directly*
+  to the frame-host never emits `sh:snapshot-ready`. Use a **compiler HARNESS** (a tiny page hosting the real
+  frame-host iframe, preserving postMessage) that also imports + calls the same `serializeDoc`.
+- **Two identities, not one recipe-key:** `buildKey = hash(schema + depClosureRevision + globalEnvRevision +
+  theme + viewport + **routeKey** + serializer + browser)` AND `objectHash = sha256(final portable HTML
+  bytes)`. Manifest maps `buildKey → objectHash/href`. Same buildKey → different bytes ⇒ the frame is
+  **dynamic** → TTL / explicit-capture / `incompatible`. Objects are immutable + content-addressed by objectHash.
+- **Restart-safe identity (Q5):** persist each artifact's **resolved dependency closure `{path,hash}`** after a
+  real boot; rehash that on restart (no Chrome). The in-memory Vite graph is demand-populated (empty after
+  restart, env-scoped in Vite 8) → it drives *incremental* invalidation only, never restart identity.
+- **Admission unchanged:** a matching manifest entry = "available", NOT "ready". State is
+  `available → loading-artifact → admitted`; admit only after key-match + URL loaded + `--mv-lean-ok` sentinel
+  + scroll + fonts/images + two paints + generation current (keep `snapshots.ts`'s existing discipline).
+- **Privacy writer-guard:** tag captures `clean | session`; **only the server clean-context path may write
+  durable artifacts**; client demotion serialization has NO filesystem/manifest path (memory only).
+- **§9 first-increment fixes:** (1) remove client *miss* compilation — client serialize is demotion/session
+  only; (2) compile the **exact current node width**, not `fluid`, until CSS-responsiveness is proven;
+  (3) include provider/layout **fanout + persisted deps** from the start (its own gate needs them);
+  (4) build the **harness/readiness transport before** the compiler seam; (5) separate **buildKey from
+  objectHash** + classify nondeterministic network output.
+- Concurrency (Q3): start `min(4, cores-1)`; memory backpressure (stop dispatch above ~2GiB compiler RSS /
+  25% RAM). Settle contract (Q2): committed React mount (a `useLayoutEffect` blocker) + registered async
+  blockers (`snapshot.waitUntil(p,label)` — Mermaid MUST register) + route-match + `fonts.ready` + per-image
+  `decode()` + 50-100ms stability + two paints; soft 1.5s / hard 3s(dev)/5s(build); pending known work at the
+  hard deadline ⇒ `incompatible`, never persist a loading-state as ready. Node fast-path (Q4): **deferred.**
+
+---
+
+Status: **v1 base (below) — superseded by the v2 corrections above where they conflict.** Follows the M6 pool dogfood: compiling the DOM snapshot (the "lean") in the
 browser, one frame at a time, at runtime, is slow (43 frames ≈ a minute, stalls) and ephemeral (an in-memory
 `Map`, so a reload or board switch recompiles everything). M7 makes the lean a **durable, content-addressed
 BUILD ARTIFACT** produced by a **server-owned headless browser**, served as a file, cached across reloads and
