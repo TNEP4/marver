@@ -175,6 +175,10 @@ function logEv(kind: string, info: string): void {
   evlog.push({ t: Math.round(performance.now()), kind, info })
   if (evlog.length > EVMAX) evlog.shift()
 }
+
+/** Public log hook for other shell modules (snapshots.ts logs capture/serialize cost here, so the
+ *  rolling log shows a heavy serialize aligned to a stall). Always records; shows in dump(). */
+export function diagLog(kind: string, info: string): void { logEv(kind, info) }
 const heapMB = (): string => {
   const m = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
   return m ? `${Math.round(m.usedJSHeapSize / 1048576)}MB` : 'n/a'

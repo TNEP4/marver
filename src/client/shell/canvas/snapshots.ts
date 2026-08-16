@@ -19,6 +19,7 @@
  * so an in-flight capture can never paint a stale/wrong-node cover after a reload or unmount.
  */
 import { serializeDoc, type SerializeResult } from '../../frame-host/serialize.ts'
+import { diagLog } from '../diag.ts'
 
 export interface SnapMeta { sourceRevision: string; theme: string }
 
@@ -29,6 +30,15 @@ const gen = new Map<string, number>()                      // nodeKey -> generat
 const recheck = new Map<string, number>()                  // nodeKey -> a one-shot re-capture timer (slow async)
 const rechecked = new Set<string>()                        // nodes whose one-shot recheck already fired (no re-arm loop)
 const MAX_LEAN_BYTES = 4 * 1024 * 1024                     // over this a frame is too heavy to inline - stay live
+// serializeDoc is a SYNCHRONOUS main-thread DOM-clone + full-CSS-inline. On a heavy frame (big DOM +
+// Tailwind-sized CSS) it - and the lean's subsequent style recalc - can block for SECONDS, freezing
+// the whole app (measured 3-7s stalls = the "white flash"). Two guards keep it off the main thread's
+// back: a cheap node-count PRE-check skips obviously-heavy frames before serialising at all, and any
+// frame whose serialize actually exceeds the time budget is marked `tooHeavy` and never re-serialised
+// (kills the recurring freezes from recheck/blur re-captures). A tooHeavy frame simply stays LIVE.
+const NODE_BUDGET = 6000        // >this many elements -> skip serialise (stay live). Tune from diag data.
+const SERIALIZE_BUDGET_MS = 200 // a serialise slower than this marks the frame no-lean (never retry)
+const tooHeavy = new Set<string>()   // nodeKeys that froze the serialiser once - never serialise again
 
 // content identity INCLUDES theme: content whose colors are baked into the DOM at render time
 // (mermaid SVG) cannot be re-themed by the cover's attribute mutation, so a theme change must
@@ -39,7 +49,10 @@ const bumpGen = (k: string) => gen.set(k, genOf(k) + 1)    // invalidate any in-
 
 const inMotion = (): boolean => {
   const w = document.getElementById('sh-world')
-  return !!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))
+  // sh-gesturing = pointer gesture; sh-preset = device/tidy animation; body.sh-cam = ANY camera move
+  // incl. programmatic zoom/fit (set from onTransformed, cleared 180ms after the last transform). All
+  // three are windows where a synchronous serialise would jank - defer capture past them.
+  return (!!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))) || document.body.classList.contains('sh-cam')
 }
 // never serialise while laser/comment mode is on: those inject outline styles + hover chrome into the
 // live doc, which the shell-side clone would bake into the lean (visible after the mode ends).
@@ -171,6 +184,7 @@ function domQuiet(doc: Document, quietMs: number, maxMs: number): Promise<void> 
  *  recaptures even when the key is unchanged - used on blur, where the live state changed under the
  *  same revision/theme (typed input, toggled UI) and the old lean is now wrong. */
 export function scheduleCapture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta, force = false): void {
+  if (tooHeavy.has(nodeKey)) return                               // known to freeze the serialiser - stay live
   if (!force && byNode.get(nodeKey)?.key === keyOf(meta)) return   // already have this content revision
   pending.set(nodeKey, { live, meta })
   pump()
@@ -219,9 +233,23 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   // landed, the frame renavigated, or a gesture/preset started (serialising+parsing now would jank).
   if (genOf(nodeKey) !== myGen || pending.has(nodeKey) || live.contentDocument !== doc) return
   if (busy()) { pending.set(nodeKey, { live, meta }); return }       // requeue for the next idle tick
+  // cheap PRE-check: an oversized DOM would make the synchronous serialise (and the lean's style
+  // recalc) freeze the main thread for seconds. Skip it - the frame stays live. getElementsByTagName
+  // is O(n) but ~free vs. cloneNode+outerHTML+CSS-regex on the same tree.
+  const nodeCount = doc.getElementsByTagName('*').length
+  if (nodeCount > NODE_BUDGET) {
+    tooHeavy.add(nodeKey); diagLog('lean-skip', `${nodeCount}nodes > budget - stay live · ${nodeKey}`)
+    return
+  }
   let result: SerializeResult
+  const t0 = performance.now()
   try { result = serializeDoc(doc, doc.URL) }   // <base> = the frame's own URL, so relative url()/img/font resolve
   catch { return }                              // fail soft: keep live pixels
+  const serMs = Math.round(performance.now() - t0)
+  diagLog('serialize', `${serMs}ms ${nodeCount}nodes ${Math.round(result.cssBytes / 1024)}KB · ${nodeKey}`)
+  // a serialise that blew the budget froze the app once; never serialise this frame again (recheck +
+  // blur re-captures would repeat the freeze). It keeps the lean it just built; it just won't rebuild.
+  if (serMs > SERIALIZE_BUDGET_MS) { tooHeavy.add(nodeKey); diagLog('lean-heavy', `${serMs}ms - no more re-captures · ${nodeKey}`) }
   // budget: a pathologically heavy frame (huge inlined CSS/DOM) would multiply memory across the board
   // and jank the main thread parsing it - over the cap, degrade (stay live) AND drop the html so the
   // giant string is not retained in byNode (keeping it would defeat the memory bound).

@@ -182,6 +182,11 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   border: 1px solid var(--node-brd); box-shadow: var(--shadow-node); display: flex; flex-direction: column;
   transition: border-color .3s ease, --node-bg .4s ease, --node-brd .4s ease,
     --head-bg .4s ease, --head-ink .4s ease, --head-dim .4s ease }
+/* Viewport culling: an off-screen node (data-cull, set by cull() in Canvas.tsx) skips ALL rendering
+   - Chrome does not re-rasterise its iframe layer at the zoom scale, which is what starved the tile
+   budget and whited out the whole compositor. State is preserved (no reload); size is held by the
+   node's explicit inline width/height, so nothing reflows. */
+.sh-node[data-cull] { content-visibility: hidden }
 .sh-node[data-theme="light"] {
   --node-bg: #fff; --node-brd: #dddee5;
   --head-bg: rgba(255, 255, 255, .55);

@@ -67,6 +67,33 @@ function paintGrid(positionX: number, positionY: number, scale: number) {
     app.style.setProperty('--sh-tx', `${positionX}px`)
     app.style.setProperty('--sh-ty', `${positionY}px`)
   }
+  cull(positionX, positionY, scale)
+}
+
+/**
+ * Viewport culling (the tldraw/Figma recipe, and codex's #1-2 fix for the whole-viewport white
+ * flash): a frame OFF the screen still renders + rasterises its iframe layer at the current zoom
+ * scale. Zoom into one frame and Chrome is still re-rastering the other ~14 at that scale every
+ * tick - the tile/GPU-memory budget starves and it draws blank (white) tiles across the whole
+ * compositor. So we mark off-screen nodes `data-cull` and CSS `content-visibility: hidden` makes
+ * Chrome SKIP their rendering entirely (state preserved, no reload). Screen rect is pure math from
+ * the node's world box + the live transform (no getBoundingClientRect = no forced layout). A half-
+ * viewport overscan keeps frames just past the edge live so panning never pops. DOM is touched only
+ * when a node actually crosses the boundary, so a settled board writes nothing per frame.
+ */
+const culled = new Set<string>()
+function cull(px: number, py: number, scale: number) {
+  const vw = window.innerWidth, vh = window.innerHeight
+  const mx = vw * 0.5, my = vh * 0.5                       // overscan: half a screen each side
+  for (const n of useStore.getState().nodes) {
+    const sx = px + n.x * scale, sy = py + n.y * scale
+    const sw = n.w * scale, sh = (n.h + HEADER) * scale
+    const off = sx + sw < -mx || sx > vw + mx || sy + sh < -my || sy > vh + my
+    if (off === culled.has(n.key)) continue               // no state change - touch nothing
+    if (off) culled.add(n.key); else culled.delete(n.key)
+    const el = document.querySelector(`[data-node="${CSS.escape(n.key)}"]`) as HTMLElement | null
+    if (el) el.toggleAttribute('data-cull', off)
+  }
 }
 
 /**
@@ -145,6 +172,11 @@ export function Canvas() {
   const camTimer = useRef(0)
 
   useEffect(() => { startPerf(); startDiag() }, [])   // B0.4: frame-time sampler (__mvPerf) + compositor diag (__mvDiag)
+  // re-cull when the node set changes (new frames, moves) even if the camera hasn't moved
+  useEffect(() => {
+    const st = ref.current?.instance.transformState
+    if (st) cull(st.positionX, st.positionY, st.scale)
+  }, [nodes])
   // never leave the camera flag (or its pending timer) behind if the canvas unmounts mid-move
   useEffect(() => () => { clearTimeout(camTimer.current); document.body.classList.remove('sh-cam') }, [])
 
