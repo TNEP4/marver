@@ -52,8 +52,7 @@ const inMotion = (): boolean => {
   // sh-gesturing = pointer gesture; sh-preset = device/tidy animation; body.sh-cam = ANY camera move
   // incl. programmatic zoom/fit (set from onTransformed, cleared 180ms after the last transform). All
   // three are windows where a synchronous serialise would jank - defer capture past them.
-  return (!!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))) ||
-    document.body.classList.contains('sh-cam') || document.body.classList.contains('sh-settling')
+  return (!!w && (w.classList.contains('sh-gesturing') || w.classList.contains('sh-preset'))) || document.body.classList.contains('sh-cam')
 }
 // never serialise while laser/comment mode is on: those inject outline styles + hover chrome into the
 // live doc, which the shell-side clone would bake into the lean (visible after the mode ends).

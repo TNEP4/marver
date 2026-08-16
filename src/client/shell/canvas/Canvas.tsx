@@ -170,7 +170,6 @@ export function Canvas() {
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   const scaleTimer = useRef(0)
   const camTimer = useRef(0)
-  const settleTimer = useRef(0)
 
   useEffect(() => { startPerf(); startDiag() }, [])   // B0.4: frame-time sampler (__mvPerf) + compositor diag (__mvDiag)
   // re-cull when the node set changes (new frames, moves) even if the camera hasn't moved
@@ -178,11 +177,8 @@ export function Canvas() {
     const st = ref.current?.instance.transformState
     if (st) cull(st.positionX, st.positionY, st.scale)
   }, [nodes])
-  // never leave the camera/settling flags (or their timers) behind if the canvas unmounts mid-move
-  useEffect(() => () => {
-    clearTimeout(camTimer.current); clearTimeout(settleTimer.current)
-    document.body.classList.remove('sh-cam', 'sh-settling')
-  }, [])
+  // never leave the camera flag (or its pending timer) behind if the canvas unmounts mid-move
+  useEffect(() => () => { clearTimeout(camTimer.current); document.body.classList.remove('sh-cam') }, [])
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
@@ -400,16 +396,8 @@ export function Canvas() {
         // all of them. Debounced off 180ms after the LAST transform = one uniform settle for every
         // path (no instant blur-back pop). The flash-fix CSS keys off body.sh-cam.
         document.body.classList.add('sh-cam')
-        document.body.classList.remove('sh-settling')
-        clearTimeout(camTimer.current); clearTimeout(settleTimer.current)
-        camTimer.current = window.setTimeout(() => {
-          // motion end: HANDOFF, not a hard swap. Keep the raster covering (sh-settling) while the
-          // live/lean DOM repaints BEHIND it (content-visibility flips back to visible), then drop
-          // the raster once it's painted - so the blank content-visibility repaint is never seen.
-          document.body.classList.remove('sh-cam')
-          document.body.classList.add('sh-settling')
-          settleTimer.current = window.setTimeout(() => document.body.classList.remove('sh-settling'), 220)
-        }, 180)
+        clearTimeout(camTimer.current)
+        camTimer.current = window.setTimeout(() => document.body.classList.remove('sh-cam'), 180)
         clearTimeout(scaleTimer.current)
         scaleTimer.current = window.setTimeout(() => setScale(r.state.scale), 120)
       }}

@@ -5,7 +5,6 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
-import { resolve as rasterResolve } from './canvas/raster.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
@@ -617,11 +616,6 @@ export function App() {
           ctrlKey: !!data.ctrlKey, metaKey: !!data.metaKey,
           clientX: rect.left + localX * sx, clientY: rect.top + localY * sy,
         })
-      } else if (data.type === 'sh:snapshot-result') {
-        // LOD raster came back from the frame - hand it to the coordinator (guarded by rev)
-        rasterResolve(nodeKey, Number(data.rev), typeof data.dataUrl === 'string' ? data.dataUrl : null)
-      } else if (data.type === 'sh:snapshot-error') {
-        rasterResolve(nodeKey, Number(data.rev), null)   // capture failed - frame keeps its DOM in motion
       } else if (data.type === 'sh:interaction') {
         // A6: the frame reports transient laser/comment engagement (pointer inside + mode on).
         // While engaged the frame is leased, so a hot update to it defers until disengage.

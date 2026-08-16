@@ -46,28 +46,6 @@ window.addEventListener('message', (e) => {
   if (e?.data?.type === 'sh:set-theme') setTheme(e.data.theme)
 })
 
-// LOD raster capture: html-to-image lazy-imported (pre-bundled in dev optimizeDeps so it never
-// 504s). DPR capped at 1.5 - a motion-time preview needs no retina. Never while laser/comment mode
-// is on (would bake the outline chrome into the bitmap). Fail-soft: post sh:snapshot-error and the
-// shell keeps showing the live/lean DOM during motion (today's behaviour) for this frame.
-let capturingRaster = false
-async function captureRaster(rev) {
-  if (capturingRaster || modeActive()) { post({ type: 'sh:snapshot-error', id, rev }); return }
-  capturingRaster = true
-  try {
-    const { toPng } = await import('html-to-image')
-    const el = document.documentElement
-    const dataUrl = await toPng(el, {
-      width: el.clientWidth, height: el.clientHeight,   // the visible frame box (from the top)
-      pixelRatio: Math.min(1.5, window.devicePixelRatio || 1),
-      cacheBust: false, skipFonts: false,
-    })
-    post({ type: 'sh:snapshot-result', id, rev, dataUrl })
-  } catch {
-    post({ type: 'sh:snapshot-error', id, rev })
-  } finally { capturingRaster = false }
-}
-
 if (isHtmlFrame) {
   const ready = () => post({ type: 'sh:ready', id })
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
@@ -312,11 +290,6 @@ window.addEventListener('message', (e) => {
   if (e.source !== window.parent || window.parent === window) return
   const m = e?.data
   if (!m || typeof m !== 'object') return
-  // LOD raster: the shell asks for a flat bitmap of this frame to show WHILE the camera moves
-  // (a single <img> scales on Chrome's cheap directly-composited-image path, unlike re-rastering
-  // this whole document at the zoom scale every tick). Captured INSIDE the frame realm where fonts
-  // + images + CSSOM live, so image-rich frames keep their pixels. echo `rev` for the shell's guard.
-  if (m.type === 'sh:snapshot-request') captureRaster(m.rev)
   // independent toggles - each mode contributes its own rules, applyModes composes
   if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes(); reportInteraction() }
   if (m.type === 'sh:pick') { pickOn = !!m.on; applyModes(); reportInteraction() }
