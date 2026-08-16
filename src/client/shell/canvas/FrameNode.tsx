@@ -5,6 +5,7 @@ import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from './snapshots.ts'
+import { registerRasterImg, scheduleRaster, dropRaster } from './raster.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -69,6 +70,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
 
   // SPEC-M5: register the facade <iframe> so the lean coordinator can drive its srcdoc imperatively.
   const bindLean = useCallback((el: HTMLIFrameElement | null) => { registerLeanFrame(node.key, el) }, [node.key])
+  // LOD raster: register the <img> the motion-time bitmap is driven into.
+  const bindRaster = useCallback((el: HTMLImageElement | null) => { registerRasterImg(node.key, el) }, [node.key])
   // capture a fresh lean snapshot once the frame is ready and quiet, and whenever its CONTENT changes
   // (nav). Resize needs no re-capture (the lean doc reflows) and theme needs none (attribute flip),
   // so neither is a dep - keeping captures rare. Never during a gesture; the coordinator serialises.
@@ -80,12 +83,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (node.status !== 'ready' || node.missing) return
     const iframe = iframeRef.current
     if (!iframe) return
-    const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme }), 450)
+    const t = setTimeout(() => {
+      scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme })
+      scheduleRaster(node.key, iframe)   // LOD bitmap for motion; same triggers as the lean
+    }, 450)
     return () => clearTimeout(t)
     // node.theme IS a dep: baked content (mermaid SVG) can't be re-themed by the cover's attribute
     // flip, so a theme change re-captures after the live frame re-renders (key includes theme).
   }, [node.status, node.nav, node.key, node.missing, node.theme])
-  useEffect(() => () => dropSnapshot(node.key), [node.key])   // drop the snapshot on unmount
+  useEffect(() => () => { dropSnapshot(node.key); dropRaster(node.key) }, [node.key])   // drop snapshot + raster on unmount
   // a reload / file-swap / error takes the frame out of 'ready': drop its cover so a stale picture
   // never lingers (nav may not bump on a same-file reload). The next 'ready' re-captures.
   useEffect(() => { if (node.status !== 'ready') dropSnapshot(node.key) }, [node.status, node.key])
@@ -307,6 +313,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             never messaged, pointer-events:none - it is NOT the live iframe (role: .sh-lean).
             Rendered in dev AND publish (runtime client-side capture; frames are same-origin in both). */}
         <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />
+        {/* LOD raster (raster.ts): a flat bitmap of the frame, shown ONLY while the camera moves so a
+            cheap composited <img> scales instead of re-rastering the live/lean DOM at the zoom scale.
+            Hidden (opacity 0) at rest; the live/lean DOM is what you see there. */}
+        <img ref={bindRaster} className="sh-raster" alt="" aria-hidden draggable={false} />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}

@@ -235,6 +235,18 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 body.sh-laser .sh-lean,
 body.sh-commenting .sh-lean { opacity: 0 }
 .sh-overlay { position: absolute; inset: 0; z-index: 2 }   /* above the lean (z1) so drag-by-body works; inherits the app arrow cursor */
+/* LOD raster: a flat bitmap of the frame (raster.ts), shown ONLY while the camera moves. A composited
+   <img> scales on Chrome's cheap directly-composited-image path instead of re-rastering the live/lean
+   DOM at the zoom scale (the residual lag/blank on rich frames after culling). Captured at the frame's
+   CSS size, so 100%x100% of the body is 1:1. Hidden at rest - crisp DOM is the view there. */
+.sh-raster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; object-position: top left;
+  opacity: 0; pointer-events: none; z-index: 1; background: var(--node-bg) }
+/* while a camera move is live: a frame with a ready raster shows it and STOPS rendering its heavy
+   live+lean (content-visibility:hidden = no re-raster), so only the bitmap costs. Not while
+   interacting (the live app is the view) or in laser/comment (need the live DOM for hover chrome). */
+body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact) .sh-raster[data-ready] { opacity: 1; z-index: 4 }
+body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact):has(.sh-raster[data-ready]) .sh-live,
+body.sh-cam:not(.sh-laser):not(.sh-commenting) .sh-node:not(.interact):has(.sh-raster[data-ready]) .sh-lean { content-visibility: hidden }
 .sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
   outline-offset: calc(-1px * var(--sh-inv, 1));
