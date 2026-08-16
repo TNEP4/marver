@@ -38,6 +38,7 @@
 
   --r-node: 10px; --r-panel: 24px; --edge: 10px;
   --blur: blur(20px) saturate(150%);
+  --glass-solid: #f4f5f8;   /* opaque stand-in for --glass while a camera gesture drops the blur */
   --shadow-node: 0 1px 2px rgba(24, 24, 27, .05);   /* tailwind shadow-sm: present, not loud */
   --morph: .26s cubic-bezier(.32, .72, .35, 1);
 }
@@ -72,6 +73,7 @@
   --cm-modal-bg: rgba(22, 22, 27, .96);
 
   --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
+  --glass-solid: #141419;   /* opaque stand-in for --glass while a camera gesture drops the blur */
 }
 
 @property --ground { syntax: '<color>'; inherits: true; initial-value: #e7e9ef; }
@@ -250,6 +252,29 @@ body.sh-commenting .sh-lean { opacity: 0 }
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
   user-select: none; -webkit-user-select: none }
+
+/* WHOLE-VIEWPORT WHITE-FLASH FIX: while a CAMERA gesture (pan/zoom) is live, drop the
+   backdrop-filter on every glass surface. Recomputing ~17 blurred backdrops against the
+   transforming canvas every frame is what makes Chrome blank the ENTIRE viewport (canvas,
+   frames, AND the fixed app chrome) white on zoom. Keyed off #sh-world.sh-camera - set by every
+   camera path, cleared 160ms after the last event - via :has(), so it reaches the app chrome
+   that lives OUTSIDE #sh-world. App chrome takes an opaque stand-in (it doesn't move, so the
+   swap is invisible); node headers only lose the blur (they're frame-themed - an app-glass fill
+   would flash the wrong color as they travel). Blur snaps back on settle, imperceptible because
+   the content was moving the whole time. __mvDiag toggles below bisect the cause on real GPUs. */
+body:has(#sh-world.sh-camera) :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update) {
+  backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--glass-solid) }
+body:has(#sh-world.sh-camera) .sh-node-head {
+  backdrop-filter: none; -webkit-backdrop-filter: none }
+
+/* __mvDiag bisection kit - all default-off. Flip ONE during a zoom to isolate the flash:
+   noBlur = all blur off (is backdrop-filter the cause?) · solid = the fix, always on ·
+   leanOnly = hide the 15 live iframes (is it live-frame GPU cost?) · churn = un-promote layer. */
+body.mv-noblur :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head) {
+  backdrop-filter: none; -webkit-backdrop-filter: none }
+body.mv-solid :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update) {
+  backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--glass-solid) }
+body.mv-leanonly .sh-live { visibility: hidden }
 
 /* edge light: a 1px gradient ring over the border, so glass reads as glass even
    with nothing behind it to blur (masked-border technique) */

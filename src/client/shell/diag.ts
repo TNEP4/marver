@@ -10,11 +10,20 @@
  * `.sh-content` permanently (Blink then scales a cached texture instead of re-rastering). This
  * module is how you SEE the gesture cadence and A/B the fix live.
  *
+ * WHOLE-SCREEN flash: when the flash covers the ENTIRE viewport (canvas + frames + the fixed app
+ * chrome), the cause is Chrome recomputing every backdrop-filter blur against the transforming
+ * canvas each frame and blanking the whole frame. The default fix drops the blur only WHILE a
+ * camera gesture is live (styles.css, keyed off #sh-world.sh-camera). Use the bisection toggles
+ * below to confirm the lever on your GPU: flip ONE, zoom, see if the flash stops.
+ *
  *   __mvDiag.watch()        start logging class churn on #sh-world (with cadence deltas)
  *   __mvDiag.unwatch()      stop
  *   __mvDiag.layers()       inventory: backdrop-filter chrome + iframe layer counts
- *   __mvDiag.churn(true)    restore the un-promoted pre-fix state (reproduce the flash)
- *   __mvDiag.churn(false)   back to the stable-layer fix
+ *   __mvDiag.noBlur(true)   ALL backdrop-filter off, always (is the blur the cause?)
+ *   __mvDiag.solid(true)    the fix, but always on (opaque chrome, no blur)
+ *   __mvDiag.leanOnly(true) hide the 15 live iframes (is it live-frame GPU cost?)
+ *   __mvDiag.churn(true)    un-promote .sh-content (the pre-fix transformed-layer state)
+ *   __mvDiag.reset()        clear every toggle
  */
 
 let obs: MutationObserver | null = null
@@ -87,11 +96,27 @@ function layers() {
 /** A/B: restore the un-promoted pre-fix surface (body.mv-churn forces will-change:auto in CSS). */
 function churn(on: boolean): void {
   document.body.classList.toggle('mv-churn', on)
-  console.log(`[mvDiag] churn ${on ? 'ON (pre-fix: .sh-content un-promoted - expect white flashes on zoom)' : 'OFF (fix: stable promoted layer)'}`)
+  console.log(`[mvDiag] churn ${on ? 'ON (pre-fix: .sh-content un-promoted)' : 'OFF (fix: stable promoted layer)'}`)
+}
+
+/** Bisection toggles - flip ONE, zoom, and see whether the whole-screen flash stops. */
+function bisect(cls: string, label: string) {
+  return (on: boolean): void => {
+    document.body.classList.toggle(cls, on)
+    console.log(`[mvDiag] ${label} ${on ? 'ON' : 'OFF'}`)
+  }
+}
+const noBlur = bisect('mv-noblur', 'all backdrop-filter off')
+const solid = bisect('mv-solid', 'opaque chrome (the fix, always on)')
+const leanOnly = bisect('mv-leanonly', 'live iframes hidden')
+
+function reset(): void {
+  document.body.classList.remove('mv-noblur', 'mv-solid', 'mv-leanonly', 'mv-churn')
+  console.log('[mvDiag] all toggles cleared')
 }
 
 export function startDiag(): void {
   const g = window as unknown as { __mvDiag?: unknown }
   if (g.__mvDiag) return
-  g.__mvDiag = { watch, unwatch, layers, churn }
+  g.__mvDiag = { watch, unwatch, layers, churn, noBlur, solid, leanOnly, reset }
 }
