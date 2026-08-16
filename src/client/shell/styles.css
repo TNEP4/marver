@@ -267,6 +267,18 @@ body:has(#sh-world.sh-camera) :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pil
 body:has(#sh-world.sh-camera) .sh-node-head {
   backdrop-filter: none; -webkit-backdrop-filter: none }
 
+/* HEAVY-BOARD relief (the other half of the whole-viewport flash): while a camera gesture is
+   live, HIDE the live iframes on passive frames that already have a lean cover. A live frame
+   (esp. a heavy Next.js app) keeps compositing even fully occluded by its lean - Chrome can't
+   prove an iframe is hidden across the frame boundary - so a zoom re-rasters all ~15 heavy
+   apps at once, spikes GPU memory, and the compositor evicts + repaints the whole frame white.
+   During a gesture you only SEE the lean (static DOM, 0 JS), so the live layer is dead weight:
+   drop it and the compositor scales cheap snapshots instead. Zero visual change (lean is opaque
+   on top); restored on settle. Guarded: not while interacting (live is the view), not in
+   laser/comment mode (lean is hidden there, so live IS the view). */
+body:not(.sh-laser):not(.sh-commenting) #sh-world.sh-camera .sh-node:has(.sh-lean[data-ready]):not(.interact) .sh-live {
+  visibility: hidden }
+
 /* __mvDiag bisection kit - all default-off. Flip ONE during a zoom to isolate the flash:
    noBlur = all blur off (is backdrop-filter the cause?) · solid = the fix, always on ·
    leanOnly = hide the 15 live iframes (is it live-frame GPU cost?) · churn = un-promote layer. */

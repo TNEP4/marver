@@ -21,7 +21,8 @@
  *   __mvDiag.layers()       inventory: backdrop-filter chrome + iframe layer counts
  *   __mvDiag.noBlur(true)   ALL backdrop-filter off, always (is the blur the cause?)
  *   __mvDiag.solid(true)    the fix, but always on (opaque chrome, no blur)
- *   __mvDiag.leanOnly(true) hide the 15 live iframes (is it live-frame GPU cost?)
+ *   __mvDiag.leanOnly(true) hide the 15 live iframes ALWAYS (they are already auto-hidden during
+ *                           a camera gesture; this forces it at rest too, to isolate GPU cost)
  *   __mvDiag.churn(true)    un-promote .sh-content (the pre-fix transformed-layer state)
  *   __mvDiag.reset()        clear every toggle
  */
