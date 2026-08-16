@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  __resetArbiter, getCap, LIVE_CAP, liveCount, leaseFor, releaseLease, requestLease, setCap,
+  __resetArbiter, getCap, leases_, LIVE_CAP, liveCount, leaseFor, releaseLease, requestLease,
+  revoke, revokeAll, setCap, touchLease,
 } from '../src/client/shell/canvas/arbiter.ts'
 
 const noop = () => {}
@@ -116,5 +117,94 @@ describe('Live-Lease Arbiter (SPEC-M6 §5)', () => {
     expect(getCap()).toBe(LIVE_CAP)
     setCap(0)                                                  // clamped down to 1
     expect(getCap()).toBe(1)
+  })
+
+  // --- codex-review P1 regressions ---
+
+  it('lowering the cap while FULL evicts down to compliance immediately (P1)', () => {
+    const gone: string[] = []
+    requestLease('a', 'active', (k) => gone.push(k))
+    requestLease('b', 'active', (k) => gone.push(k))
+    requestLease('c', 'active', (k) => gone.push(k))
+    expect(liveCount()).toBe(3)
+    setCap(1)
+    expect(getCap()).toBe(1)
+    expect(liveCount()).toBe(1)          // was the bug: stayed at 3
+    expect(gone.length).toBe(2)          // the two weakest were torn down
+  })
+
+  it('rejects a non-finite cap (NaN must not disable the cap) (P1)', () => {
+    setCap(NaN)
+    expect(Number.isFinite(getCap())).toBe(true)
+    requestLease('a', 'active', noop); requestLease('b', 'active', noop); requestLease('c', 'active', noop)
+    expect(requestLease('d', 'compile', noop)).toBeNull()
+    expect(liveCount()).toBeLessThanOrEqual(getCap())
+  })
+
+  it('a re-entrant requestLease inside onEvict cannot exceed the cap (P1)', () => {
+    // 'a' will be evicted; its teardown synchronously requests a NEW node while the outer grant runs
+    requestLease('a', 'reachable-warm', () => { requestLease('reentrant', 'compile', noop) })
+    requestLease('b', 'hover-warm', noop)
+    requestLease('c', 'incompatible', noop)
+    const id = requestLease('d', 'active', noop)   // evicts 'a' -> its onEvict fires re-entrantly
+    expect(id).not.toBeNull()
+    expect(liveCount()).toBeLessThanOrEqual(getCap())   // was the bug: 4
+    // byNode <-> leases bijection intact (no orphan/duplicate)
+    const nodes = leases_().map((l) => l.nodeKey)
+    expect(new Set(nodes).size).toBe(nodes.length)
+  })
+
+  it('re-entrant onEvict re-requesting the OUTER node does not create two slots for it (P1)', () => {
+    requestLease('a', 'reachable-warm', () => { requestLease('d', 'compile', noop) })  // teardown grabs 'd'
+    requestLease('b', 'hover-warm', noop)
+    requestLease('c', 'incompatible', noop)
+    const id = requestLease('d', 'active', noop)  // 'd' is the outer node; onEvict also asks for 'd'
+    expect(id).not.toBeNull()
+    expect(leases_().filter((l) => l.nodeKey === 'd').length).toBe(1)   // exactly one slot for 'd'
+    expect(liveCount()).toBeLessThanOrEqual(getCap())
+  })
+
+  it('touchLease refreshes recency so a touched lease is not the LRU victim', () => {
+    requestLease('a', 'hover-warm', noop)   // oldest by grant
+    const b = requestLease('b', 'hover-warm', noop)!
+    requestLease('c', 'hover-warm', noop)
+    touchLease(b)                            // b now most-recently-used; a is the LRU
+    requestLease('d', 'hover-warm', noop)    // evicts the LRU = 'a', not 'b'
+    expect(leaseFor('a')).toBeUndefined()
+    expect(leaseFor('b')).toBeDefined()
+  })
+
+  it('transition ranks between active and handoff-out', () => {
+    requestLease('a', 'handoff-out', noop)
+    requestLease('b', 'incompatible', noop)
+    requestLease('c', 'hover-warm', noop)
+    // a 'transition' (95) outranks the weakest 'hover-warm' (50) -> admitted
+    expect(requestLease('d', 'transition', noop)).not.toBeNull()
+    // but a 'transition' cannot displace an 'active' when that's all there is
+    __resetArbiter()
+    requestLease('x', 'active', noop); requestLease('y', 'active', noop); requestLease('z', 'active', noop)
+    expect(requestLease('t', 'transition', noop)).toBeNull()
+  })
+
+  it('revoke tears a lease down; revokeAll parks the canvas except kept nodes (Play)', () => {
+    const gone: string[] = []
+    requestLease('a', 'active', (k) => gone.push(k))
+    requestLease('b', 'hover-warm', (k) => gone.push(k))
+    revoke(leaseFor('a')!.id)
+    expect(gone).toContain('a')
+    expect(leaseFor('a')).toBeUndefined()
+    // Play opens: park everything except the stage node
+    requestLease('stage', 'active', noop)
+    requestLease('c', 'hover-warm', (k) => gone.push(k))
+    revokeAll(['stage'])
+    expect(liveCount()).toBe(1)
+    expect(leaseFor('stage')).toBeDefined()
+  })
+
+  it('leaseFor / leases_ return copies (external mutation cannot corrupt state)', () => {
+    requestLease('a', 'active', noop)
+    const snap = leaseFor('a')!
+    ;(snap as { kind: string }).kind = 'compile'   // mutate the copy
+    expect(leaseFor('a')!.kind).toBe('active')     // internal state unchanged
   })
 })

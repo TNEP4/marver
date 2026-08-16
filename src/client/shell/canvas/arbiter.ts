@@ -5,17 +5,19 @@
  * because admission is decided BEFORE the iframe is constructed - not cleaned up afterwards.
  *
  * Every running document counts against ONE global cap. When the cap is full, a new request evicts
- * the lowest-priority existing lease *if* the request outranks it (ties break oldest = LRU); if
+ * the weakest existing lease *if* the request outranks it (ties break by least-recently-used); if
  * nothing is evictable the request is DENIED and the caller keeps its snapshot/placeholder. Each
  * lease carries an `onEvict` teardown the arbiter calls when it reclaims the slot.
  *
- * Pure and synchronous by design (no Date.now / timers) so it is exhaustively unit-testable and can
- * never race a mount. Ordering/LRU uses the monotonic lease id.
+ * Re-entrancy is safe: eviction RESERVES the freed slot for the incoming lease BEFORE running the
+ * victim's teardown, so a nested `requestLease()` inside an `onEvict` callback sees a full cap and
+ * cannot over-grant. Pure + synchronous (no Date.now / timers) so it is exhaustively testable.
  */
 
 // higher = harder to evict. Mirrors SPEC-M6 §5.2 priority order.
 export type LeaseKind =
   | 'active'        // the interactive/prototype/laser-enter target (foreground)
+  | 'transition'    // the incoming target during a promote (destination of a handoff)
   | 'handoff-out'   // the outgoing live doc mid promote/demote
   | 'incompatible'  // a frame the serializer can't snapshot - must stay live while visible
   | 'hover-warm'    // predicted-next under the pointer
@@ -23,79 +25,106 @@ export type LeaseKind =
   | 'compile'       // a one-shot background compile to produce a passive artifact
 
 const PRIORITY: Record<LeaseKind, number> = {
-  active: 100, 'handoff-out': 90, incompatible: 80, 'hover-warm': 50, 'reachable-warm': 40, compile: 10,
+  active: 100, transition: 95, 'handoff-out': 90, incompatible: 80,
+  'hover-warm': 50, 'reachable-warm': 40, compile: 10,
 }
 
 export const LIVE_CAP = 3   // SPEC-M6 §5.1 - fixed. deviceMemory may only REDUCE this, never raise it.
 
 export interface Lease { id: number; nodeKey: string; kind: LeaseKind }
 type EvictFn = (nodeKey: string, leaseId: number) => void
+interface Slot { id: number; nodeKey: string; kind: LeaseKind; used: number; onEvict: EvictFn }
 
-let seq = 0
+let seq = 0        // monotonic lease id
+let clock = 0      // monotonic recency counter (LRU): bumped on grant AND reuse/touch
 let cap = LIVE_CAP
-const leases = new Map<number, Lease>()      // leaseId -> lease (its presence == one live doc exists)
+const leases = new Map<number, Slot>()       // leaseId -> slot (presence == one live doc exists)
 const byNode = new Map<string, number>()     // nodeKey -> its current leaseId (one live doc per node, max)
-const evictors = new Map<number, EvictFn>()  // leaseId -> teardown to run when the arbiter reclaims it
 
-/** Constrained devices may lower the cap (never raise). Clamped to [1, LIVE_CAP]. */
-export function setCap(n: number): void { cap = Math.max(1, Math.min(LIVE_CAP, Math.floor(n))) }
+const copy = (s: Slot): Lease => ({ id: s.id, nodeKey: s.nodeKey, kind: s.kind })   // never expose the mutable slot
+
+/** Constrained devices may lower the cap (never raise). Non-finite is rejected. Lowering the cap
+ *  synchronously evicts weakest leases (with teardown) until compliant - the invariant holds at once. */
+export function setCap(n: number): void {
+  if (!Number.isFinite(n)) return
+  cap = Math.max(1, Math.min(LIVE_CAP, Math.floor(n)))
+  while (leases.size > cap) { const w = weakest(); if (!w) break; evictWithTeardown(w.id) }
+}
 export function getCap(): number { return cap }
 export function liveCount(): number { return leases.size }
-export function leaseFor(nodeKey: string): Lease | undefined { const id = byNode.get(nodeKey); return id != null ? leases.get(id) : undefined }
-export function leases_(): Lease[] { return [...leases.values()] }   // diag/tests
+export function leaseFor(nodeKey: string): Lease | undefined { const id = byNode.get(nodeKey); const s = id != null ? leases.get(id) : undefined; return s ? copy(s) : undefined }
+export function leases_(): Lease[] { return [...leases.values()].map(copy) }   // read-only copies (diag/tests)
 
-/** Pick the most-evictable lease: lowest priority, ties broken by oldest (smallest id = LRU). */
-function weakest(): Lease | null {
-  let w: Lease | null = null
-  for (const l of leases.values()) {
-    if (!w) { w = l; continue }
-    const pl = PRIORITY[l.kind], pw = PRIORITY[w.kind]
-    if (pl < pw || (pl === pw && l.id < w.id)) w = l
+/** Weakest = lowest priority; ties broken by least-recently-used (lowest `used`). */
+function weakest(): Slot | null {
+  let w: Slot | null = null
+  for (const s of leases.values()) {
+    if (!w) { w = s; continue }
+    const ps = PRIORITY[s.kind], pw = PRIORITY[w.kind]
+    if (ps < pw || (ps === pw && s.used < w.used)) w = s
   }
   return w
 }
 
-function evict(id: number): void {
-  const l = leases.get(id); if (!l) return
-  const fn = evictors.get(id)
-  releaseLease(id)
-  fn?.(l.nodeKey, id)   // the holder tears its live document down
+/** Internal: drop a lease from accounting WITHOUT running its teardown (caller runs it if needed). */
+function drop(id: number): Slot | undefined {
+  const s = leases.get(id); if (!s) return undefined
+  leases.delete(id)
+  if (byNode.get(s.nodeKey) === id) byNode.delete(s.nodeKey)
+  return s
 }
+
+/** Public: reclaim a lease AND run its teardown (used by Play parking, and internally). */
+function evictWithTeardown(id: number): void { const s = drop(id); s?.onEvict(s.nodeKey, s.id) }
 
 /**
  * Request permission to mount a live document for `nodeKey` as `kind`. SYNCHRONOUS.
  * Returns a leaseId to mount under, or null if denied (caller keeps its snapshot/placeholder).
- * `onEvict(nodeKey, leaseId)` is invoked if the arbiter later reclaims this slot for a higher need.
+ * `onEvict(nodeKey, leaseId)` is invoked if the arbiter later reclaims this slot.
  *
- * A node already holding a live doc keeps its slot; the kind is upgraded/refreshed in place (e.g.
- * a frame that was `compile` becoming `active`) - it never consumes a second slot.
+ * A node already holding a live doc keeps its slot; the kind + evictor are refreshed and recency is
+ * touched - it never consumes a second slot (one-per-node).
  */
 export function requestLease(nodeKey: string, kind: LeaseKind, onEvict: EvictFn): number | null {
   const existing = byNode.get(nodeKey)
   if (existing != null) {
-    const l = leases.get(existing)
-    if (l) { l.kind = kind; evictors.set(existing, onEvict); return existing }   // reuse the slot
+    const s = leases.get(existing)
+    if (s) { s.kind = kind; s.onEvict = onEvict; s.used = ++clock; return existing }   // reuse the slot
   }
   if (leases.size >= cap) {
     const w = weakest()
-    // evict only if the incoming request is at least as important (>=); LRU handles the tie.
-    if (!w || PRIORITY[w.kind] > PRIORITY[kind]) return null
-    evict(w.id)
+    if (!w || PRIORITY[w.kind] > PRIORITY[kind]) return null   // nothing evictable -> deny, never exceed cap
+    // RESERVE the slot before teardown: drop the victim from accounting, install the new lease, THEN
+    // run the victim's teardown. A nested requestLease inside onEvict now sees a full cap.
+    const victim = drop(w.id)!
+    const id = ++seq
+    leases.set(id, { id, nodeKey, kind, used: ++clock, onEvict })
+    byNode.set(nodeKey, id)
+    victim.onEvict(victim.nodeKey, victim.id)
+    return id
   }
   const id = ++seq
-  leases.set(id, { id, nodeKey, kind })
+  leases.set(id, { id, nodeKey, kind, used: ++clock, onEvict })
   byNode.set(nodeKey, id)
-  evictors.set(id, onEvict)
   return id
 }
 
-/** Release a lease when its live doc is torn down (demotion, unmount, compile finished). */
-export function releaseLease(id: number): void {
-  const l = leases.get(id); if (!l) return
-  leases.delete(id)
-  if (byNode.get(l.nodeKey) === id) byNode.delete(l.nodeKey)
-  evictors.delete(id)
+/** Bump a lease's recency (so it isn't the LRU eviction target). No-op if the id is stale. */
+export function touchLease(id: number): void { const s = leases.get(id); if (s) s.used = ++clock }
+
+/** Release a lease when its live doc is torn down (demotion, unmount, compile finished).
+ *  Accounting only - does NOT run the evictor (the holder is already tearing itself down). */
+export function releaseLease(id: number): void { drop(id) }
+
+/** Reclaim a lease AND run its teardown - for Play parking a specific canvas runtime. */
+export function revoke(id: number): void { evictWithTeardown(id) }
+
+/** Park every live doc (running each teardown), except the given node keys. Used when Play opens:
+ *  the stage takes its own lease and every canvas runtime must be released, not left live. */
+export function revokeAll(exceptNodeKeys: string[] = []): void {
+  const keep = new Set(exceptNodeKeys)
+  for (const id of [...leases.keys()]) { const s = leases.get(id); if (s && !keep.has(s.nodeKey)) evictWithTeardown(id) }
 }
 
 /** Test/HMR reset. */
-export function __resetArbiter(): void { leases.clear(); byNode.clear(); evictors.clear(); seq = 0; cap = LIVE_CAP }
+export function __resetArbiter(): void { leases.clear(); byNode.clear(); seq = 0; clock = 0; cap = LIVE_CAP }
