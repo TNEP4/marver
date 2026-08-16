@@ -1,0 +1,316 @@
+<title>Marver Canvas — Infinite-Scale Rendering Architecture</title>
+<meta name="description" content="How to render hundreds of real web apps and images on one infinite canvas at high fidelity — the architecture decision.">
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f0f2f6;
+    --ink: #14161c; --ink-2: #3c4658; --muted: #5b6472; --faint: #8a92a1;
+    --hair: #e3e6ec; --hair-strong: #d3d8e0;
+    --accent: #3552e6; --accent-ink: #2a41c0; --accent-wash: #eef1fe;
+    --code-bg: #f2f4f8; --code-ink: #253046;
+    /* temperature scale for the render tiers (true to the content: hot = live) */
+    --t-cold: #7a828f; --t-cool: #3b82f6; --t-mid: #8b5cf6; --t-warm: #f59e0b; --t-hot: #ef4444;
+    --good: #0f8a5f; --warn: #b26a00;
+    --shadow: 0 1px 2px rgba(20,22,28,.04), 0 6px 20px -12px rgba(20,22,28,.18);
+    --measure: 70ch;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c0e13; --surface: #12151c; --surface-2: #171b24;
+      --ink: #e9ecf2; --ink-2: #c3cad6; --muted: #98a1b1; --faint: #6b7484;
+      --hair: #222734; --hair-strong: #2c3342;
+      --accent: #7d92ff; --accent-ink: #9aabff; --accent-wash: #171d33;
+      --code-bg: #161b25; --code-ink: #c7d2e6;
+      --t-cold: #8b93a1; --t-cool: #5b9bff; --t-mid: #a78bfa; --t-warm: #fbbf24; --t-hot: #ff6b6b;
+      --good: #4cc38a; --warn: #e0a34a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -16px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c0e13; --surface: #12151c; --surface-2: #171b24;
+    --ink: #e9ecf2; --ink-2: #c3cad6; --muted: #98a1b1; --faint: #6b7484;
+    --hair: #222734; --hair-strong: #2c3342;
+    --accent: #7d92ff; --accent-ink: #9aabff; --accent-wash: #171d33;
+    --code-bg: #161b25; --code-ink: #c7d2e6;
+    --t-cold: #8b93a1; --t-cool: #5b9bff; --t-mid: #a78bfa; --t-warm: #fbbf24; --t-hot: #ff6b6b;
+    --good: #4cc38a; --warn: #e0a34a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -16px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.62 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px 120px; }
+  .prose { max-width: var(--measure); }
+
+  /* ---- masthead ---- */
+  header.top { padding: 68px 0 40px; border-bottom: 1px solid var(--hair); margin-bottom: 44px; }
+  .eyebrow { font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 18px; }
+  h1 { font-size: clamp(30px, 5.2vw, 46px); line-height: 1.05; letter-spacing: -.022em;
+    font-weight: 680; margin: 0 0 18px; text-wrap: balance; }
+  .dek { font-size: clamp(17px, 2.4vw, 20px); line-height: 1.5; color: var(--muted);
+    max-width: 62ch; margin: 0; font-weight: 400; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 26px;
+    font: 500 13px/1.4 ui-monospace, Menlo, monospace; color: var(--faint); }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+
+  h2 { font-size: clamp(22px, 3.4vw, 28px); letter-spacing: -.015em; font-weight: 660;
+    margin: 64px 0 8px; line-height: 1.15; scroll-margin-top: 24px; }
+  h2 .num { color: var(--accent); font: 600 15px/1 ui-monospace, Menlo, monospace;
+    letter-spacing: .04em; margin-right: 12px; vertical-align: 2px; }
+  h3 { font-size: 17px; font-weight: 650; letter-spacing: -.008em; margin: 34px 0 6px; }
+  p { margin: 14px 0; }
+  .prose p, .prose li { color: var(--ink-2); }
+  strong { color: var(--ink); font-weight: 640; }
+  a { color: var(--accent-ink); text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    text-underline-offset: 2px; }
+  em { color: var(--ink); font-style: italic; }
+  code { font: 500 13.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--code-bg); color: var(--code-ink); padding: 1px 6px; border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--hair) 70%, transparent); }
+  hr { border: 0; border-top: 1px solid var(--hair); margin: 40px 0; }
+
+  /* ---- TL;DR card ---- */
+  .tldr { background: var(--surface); border: 1px solid var(--hair-strong); border-radius: 16px;
+    padding: 26px 28px; box-shadow: var(--shadow); margin: 4px 0 8px; }
+  .tldr .lab { font: 600 11.5px/1 ui-monospace, Menlo, monospace; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 16px; }
+  .tldr ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; }
+  .tldr li { display: grid; grid-template-columns: 26px 1fr; gap: 4px; color: var(--ink-2); }
+  .tldr li .k { grid-column: 1; color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tldr li b { color: var(--ink); }
+
+  /* ---- callout ---- */
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-wash);
+    padding: 16px 20px; border-radius: 0 12px 12px 0; margin: 24px 0; }
+  .callout.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); }
+  .callout p { margin: 6px 0; color: var(--ink-2); }
+  .callout .lab { font: 700 11px/1 ui-monospace, Menlo, monospace; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent-ink); margin: 0 0 8px; display: block; }
+  .callout.warn .lab { color: var(--warn); }
+
+  /* ---- tier thermometer ---- */
+  .tiers { display: grid; gap: 10px; margin: 26px 0; }
+  .tier { display: grid; grid-template-columns: 62px 1fr auto; align-items: center; gap: 16px;
+    background: var(--surface); border: 1px solid var(--hair); border-radius: 12px; padding: 14px 16px;
+    border-left-width: 4px; }
+  .tier .badge { font: 700 13px/1 ui-monospace, Menlo, monospace; color: #fff; padding: 5px 8px;
+    border-radius: 6px; text-align: center; letter-spacing: .02em; }
+  .tier .body { min-width: 0; }
+  .tier .name { font-weight: 650; color: var(--ink); font-size: 14.5px; }
+  .tier .desc { color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+  .tier .cap { font: 700 15px/1 ui-monospace, Menlo, monospace; color: var(--ink-2);
+    text-align: right; white-space: nowrap; }
+  .tier .cap small { display: block; font: 500 10.5px/1.3 ui-monospace, Menlo, monospace;
+    color: var(--faint); text-transform: uppercase; letter-spacing: .08em; margin-top: 3px; }
+  .tier.t4 { border-left-color: var(--t-hot); } .tier.t4 .badge { background: var(--t-hot); }
+  .tier.t3 { border-left-color: var(--t-warm); } .tier.t3 .badge { background: var(--t-warm); }
+  .tier.t2 { border-left-color: var(--t-mid); } .tier.t2 .badge { background: var(--t-mid); }
+  .tier.t1 { border-left-color: var(--t-cool); } .tier.t1 .badge { background: var(--t-cool); }
+  .tier.t0 { border-left-color: var(--t-cold); } .tier.t0 .badge { background: var(--t-cold); }
+
+  /* ---- tables ---- */
+  .tablewrap { overflow-x: auto; margin: 24px 0; border: 1px solid var(--hair); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--hair);
+    vertical-align: top; color: var(--ink-2); }
+  th { font: 600 12px/1.3 ui-monospace, Menlo, monospace; letter-spacing: .03em; color: var(--faint);
+    text-transform: uppercase; background: var(--surface-2); position: sticky; top: 0; }
+  tr:last-child td { border-bottom: 0; }
+  td b, th b { color: var(--ink); }
+  td .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, Menlo, monospace; }
+
+  /* ---- diagram blocks ---- */
+  pre.dia { background: var(--surface); border: 1px solid var(--hair); border-radius: 12px;
+    padding: 18px 20px; overflow-x: auto; margin: 24px 0;
+    font: 500 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; color: var(--code-ink); }
+  pre.dia b { color: var(--accent-ink); }
+
+  /* ---- shipped list ---- */
+  .ship { display: grid; gap: 10px; margin: 22px 0; }
+  .ship .row { display: grid; grid-template-columns: 20px 1fr; gap: 12px; align-items: start;
+    color: var(--ink-2); font-size: 14.5px; }
+  .ship .row .dot { color: var(--good); font-weight: 700; }
+
+  /* ---- staged plan ---- */
+  ol.stage { counter-reset: st; list-style: none; padding: 0; margin: 24px 0; display: grid; gap: 12px; }
+  ol.stage > li { counter-increment: st; background: var(--surface); border: 1px solid var(--hair);
+    border-radius: 12px; padding: 16px 18px 16px 56px; position: relative; }
+  ol.stage > li::before { content: counter(st); position: absolute; left: 16px; top: 15px;
+    width: 26px; height: 26px; border-radius: 8px; background: var(--accent); color: #fff;
+    font: 700 14px/26px ui-monospace, Menlo, monospace; text-align: center; }
+  ol.stage h3 { margin: 0 0 4px; color: var(--ink); }
+  ol.stage p { margin: 0; color: var(--muted); font-size: 14px; }
+  ol.stage .imp { font: 700 10.5px/1 ui-monospace, Menlo, monospace; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent-ink); float: right; }
+
+  .foot { margin-top: 60px; padding-top: 24px; border-top: 1px solid var(--hair);
+    font-size: 13px; color: var(--faint); }
+  .kicker { font-weight: 650; color: var(--ink-2); }
+  ul.tight li { margin: 6px 0; color: var(--ink-2); }
+  @media (max-width: 560px) {
+    .tier { grid-template-columns: 52px 1fr; } .tier .cap { grid-column: 2; text-align: left; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">Marver · Engineering architecture</p>
+    <h1>Hundreds of real web apps on one canvas</h1>
+    <p class="dek">The rendering architecture for an infinitely scalable, high-fidelity board — where every node is a genuine live app, not a mockup, and the ceiling is on node count, not on what's live.</p>
+    <div class="meta">
+      <span><b>Basis</b> · codex deep research (21 web searches) + 6-product teardown</span>
+      <span><b>Verdict</b> · both converged, no contradictions</span>
+      <span><b>Status</b> · decision-ready</span>
+    </div>
+  </header>
+
+  <div class="tldr">
+    <p class="lab">The answer, in three lines</p>
+    <ul>
+      <li><span class="k">1</span><div><b>"Hundreds of simultaneously live web apps" is blocked by browser physics, not effort.</b> Same-origin iframes share one renderer process and one main thread; each costs 10–50&nbsp;MB and its own compositor layer. No shipping product does it — Figma caps live embeds at <em>exactly one</em>.</div></li>
+      <li><span class="k">2</span><div><b>The differentiator survives by redefining "real."</b> Every node is genuine repo code with genuine browser layout and state. "Real" describes the <em>authoritative artifact and the focused experience</em> — it does not require every node to execute concurrently. A dormant node is a cached visual materialization of its real app, promoted to live on demand.</div></li>
+      <li><span class="k">3</span><div><b>The move is to stop N nodes from owning N browser runtimes.</b> A budgeted scheduler lends a live iframe to the tiny working set that earns it; everything else is a crisp raster proxy. That's the whole game — and it scales to hundreds because the ceiling sits on cheap proxies.</div></li>
+    </ul>
+  </div>
+
+  <div class="prose">
+    <h2><span class="num">01</span>The ceiling is physics</h2>
+    <p>The reason zooming a heavy board flashes white and lags is not a bug we haven't patched hard enough — it's that Chromium re-rasterizes every iframe's content at the zoom scale on each camera tick, and with many iframes it exhausts the GPU tile budget and draws blank tiles. Underneath that sits a harder wall:</p>
+    <div class="callout warn">
+      <span class="lab">The constraint</span>
+      <p>A normal laptop <strong>cannot</strong> provide hundreds of independently executing, arbitrarily-scaled browser documents with zero lag. Same-origin iframes cannot be separated onto other threads without severing scripting. This is not tunable.</p>
+    </div>
+    <p>Two independent references make it concrete: 1000 iframes take Chrome ~3.3s just to instantiate (superlinear beyond that); a decoded 4096×4096 image is ~64&nbsp;MB regardless of file size, and Chrome's <em>entire</em> decoded-image budget is 128–256&nbsp;MB. Hundreds of live apps + hundreds of 4K images, all resident, is multiple gigabytes before GPU copies. So the target can't mean "all live at once." It can mean something better.</p>
+  </div>
+
+  <h2><span class="num">02</span>What the field actually does</h2>
+  <div class="prose"><p>Six product families, researched independently, landed on the identical model: <strong>a few live, the rest frozen, seamless promote-on-focus.</strong> This is a designed-around constraint, not a v1 shortcut.</p></div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Product</th><th>Live embeds at once</th><th>How the rest render</th></tr></thead>
+      <tbody>
+        <tr><td><b>Figma / FigJam</b></td><td><b>Exactly 1</b>, client-local</td><td>Own C++/WASM → WebGPU tile renderer draws <em>bitmaps</em>; a live iframe overlays only the one active embed</td></tr>
+        <tr><td><b>tldraw</b></td><td>1 at a time (double-click to enter)</td><td>DOM shapes, off-screen → <code>display:none</code>; iframes <code>pointer-events:none; z-index:-1</code> until a deliberate gesture. Proof point at hundreds of embed shapes</td></tr>
+        <tr><td><b>Miro</b></td><td>Live for supported media only</td><td>Canvas2D; server 120px preview when zoomed out + client ÷2 mipmap chain, swapped by on-screen size</td></tr>
+        <tr><td><b>Excalidraw</b></td><td>1 (center-third click, not while panning)</td><td>Canvas2D; real iframe over canvas, <code>pointer-events:none</code> until activated</td></tr>
+        <tr><td><b>Framer / Webflow</b></td><td>0 on canvas — live only in Preview</td><td>Canvas renders <em>static</em> placeholders; <code>useIsStaticRenderer()</code> freezes fetch/timers/rAF</td></tr>
+        <tr><td><b>Arc Easel · Replit · Cursor</b></td><td>1 (explicit Play / running-app preview)</td><td>Capture → still screenshot → Play = live → Pause reverts. Annotations sit over a frozen frame</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="prose">
+    <p>Two products define the two lanes. <strong>Figma</strong> ("DOM doesn't scale — own the pixels with GPU tiles") and <strong>tldraw</strong> ("DOM is the <em>only</em> way to host live web, and it's fast enough") are both right — they answer different questions. Marver's requirement (live apps) forces the DOM answer for the live layer. GPU tiling can only ever draw the frozen overview.</p>
+  </div>
+
+  <h2><span class="num">03</span>The tier model</h2>
+  <div class="prose"><p>A board node stops owning a live iframe and a lean iframe for its whole life. The board owns metadata and cached proxy artifacts; a global runtime pool <em>lends</em> a live surface to whichever tiny set earns it. Tiers are chosen from the node's transformed <em>screen</em> rectangle (world size × zoom), with hysteresis so nothing thrashes mid-gesture.</p></div>
+  <div class="tiers">
+    <div class="tier t4"><span class="badge">T4</span><div class="body"><span class="name">Interactive runtime</span><div class="desc">Genuine app iframe in a screen-space overlay portal — fully live, fully interactive. The focused node.</div></div><div class="cap">1<small>2 in compare</small></div></div>
+    <div class="tier t3"><span class="badge">T3</span><div class="body"><span class="name">Warm runtime</span><div class="desc">Loaded iframe, cooperatively <em>paused</em> (rAF/polling/websockets quiesced), fully covered by its proxy. Promotes in &lt;150ms.</div></div><div class="cap">2<small>pooled</small></div></div>
+    <div class="tier t2"><span class="badge">T2</span><div class="body"><span class="name">Crisp DOM snapshot</span><div class="desc">The scriptless inlined-CSS snapshot we already build — for the selected / largest settled node and deep-zoom review before going live.</div></div><div class="cap">2–4<small>bounded</small></div></div>
+    <div class="tier t1"><span class="badge">T1</span><div class="body"><span class="name">Raster proxy</span><div class="desc">A flat bitmap from a resolution pyramid. <strong>The default for every passive node and all camera motion.</strong> Scales on Chrome's cheap composited-image path.</div></div><div class="cap">budget<small>screen-px</small></div></div>
+    <div class="tier t0"><span class="badge">T0</span><div class="body"><span class="name">Model only</span><div class="desc">Bounds, title, theme, artifact keys + a placeholder. Off-screen or under ~48px on its longest edge. <code>content-visibility</code> skips it entirely.</div></div><div class="cap">∞<small>in store</small></div></div>
+  </div>
+  <div class="callout">
+    <span class="lab">The one bespoke piece</span>
+    <p>Nobody hands you the <strong>promote/demote policy</strong> — it's the single design surface that's genuinely ours, and where Marver can be smarter than the field. Score candidates by: active interaction → focus → selection → viewport intersection → screen area → distance-to-center → recency → predicted pan direction → memory budget. Promote after a dwell; <em>demote visually the instant</em> a ready proxy exists.</p>
+  </div>
+
+  <h2><span class="num">04</span>Deep-zoom fidelity without keeping everything live</h2>
+  <div class="prose">
+    <p>"Infinitely crisp" comes from two moves, not from resolution brute force:</p>
+    <h3>1 · A per-proxy mip pyramid</h3>
+    <p>Capture each app snapshot at buckets of <code>0.25× 0.5× 1× 2× 4×</code>; pick the smallest bucket giving ≥1 source pixel per device pixel; re-raster only after the camera settles and crosses a ~1.4× threshold. High-res <em>images</em> use real tile pyramids (OpenSeadragon / IIIF / DZI — 256–512px tiles, decode only what's visible), never a whole-image <code>&lt;img&gt;</code>.</p>
+    <h3>2 · Promote past 4×</h3>
+    <p>Above 4× (or past texture limits) you stop making enormous screenshots and instead swap the proxy for a <strong>DOM snapshot</strong> (inspecting) or the <strong>live app</strong> (focused). Now only one or two documents re-rasterize — so text, SVG and CSS are crisp at <em>any</em> zoom. The deep, detailed view is always the genuine web app.</p>
+    <div class="callout">
+      <span class="lab">Honest boundary</span>
+      <p>DOM text / vectors / CSS stay crisp indefinitely. A photograph cannot exceed its source pixels, and a live app containing a low-res bitmap eventually shows those pixels. That's real, and it's the same boundary Figma and every camera live under.</p>
+    </div>
+  </div>
+
+  <h2><span class="num">05</span>Memory &amp; the runtime lifecycle</h2>
+  <div class="prose">
+    <p>The scale story <em>is</em> the memory story. Because Marver controls the repo runtime same-origin, it has a real advantage over generic embed products: frames can cooperatively pause. Define a bridge:</p>
+    <pre class="dia"><b>interface</b> MarverRuntimeBridge {
+  ready()      : Promise&lt;void&gt;
+  pause()      : Promise&lt;void&gt;    <span style="color:var(--faint)">// quiesce rAF / polling / websockets / media</span>
+  resume()     : Promise&lt;void&gt;
+  checkpoint() : Promise&lt;unknown&gt; <span style="color:var(--faint)">// scroll, route, app state</span>
+  restore(cp)  : Promise&lt;void&gt;
+}</pre>
+    <ul class="tight">
+      <li><b>Keep 1 live + 2 warm.</b> Destroy everything else — checkpoint → <code>about:blank</code> → detach listeners → remove element → revoke object URLs → verify memory returns. Never retain <code>contentWindow</code>/<code>contentDocument</code> in long-lived maps (that's the classic detached-window leak).</li>
+      <li><b>Never reparent a live iframe</b> (destroys state) and never <code>display:none</code> it (throttles + re-lays-out). Park with <code>opacity:.001</code> in a fixed overlay, or use <code>Node.moveBefore()</code> (Chromium&nbsp;133+) to move live↔parked <em>without reload</em>.</li>
+      <li><b>Images: one decode queue, not a swarm.</b> <code>Blob</code>/object URLs (not retained base64), <code>createImageBitmap()</code> → draw → <code>ImageBitmap.close()</code> on eviction, <code>img.decode()</code> before every DOM swap (this alone kills white flashes), <code>srcset</code> to never over-decode.</li>
+    </ul>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Budget</th><th>Starting watermark</th></tr></thead>
+        <tbody>
+          <tr><td>GPU proxy / tile cache</td><td class="num">96–256 MiB (24–32 B / viewport px)</td></tr>
+          <tr><td>CPU decoded-bitmap cache</td><td class="num">96–192 MiB</td></tr>
+          <tr><td>Live runtimes</td><td class="num">1 active + 2 warm</td></tr>
+          <tr><td>Total page memory ceiling</td><td class="num">~500–750 MiB (tune from real boards)</td></tr>
+          <tr><td>Disk artifact cache (hash-addressed)</td><td class="num">large, independently evicted</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h2><span class="num">06</span>Does the high end need a GPU renderer?</h2>
+  <div class="prose">
+    <p><strong>For the live layer: no — it's inapplicable.</strong> A GPU tile renderer draws bitmaps and structurally cannot host a live React/Next node. "Live app node" and "GPU-tiled node" are mutually exclusive for the same node.</p>
+    <p><strong>For the cold/overview tier: eventually yes</strong>, as an optimization — hundreds of static proxies as one GPU pass sidesteps the "hundreds of forced compositor layers" problem. Build it <em>backend-neutral, WebGL2 first</em> (drawing textured rectangles needs no compute); add WebGPU only when profiling shows a win. It never touches the live tier.</p>
+    <pre class="dia">Board store + spatial index
+        │
+        ▼
+<b>GPU proxy plane</b> ───────── app / image tile cache   <span style="color:var(--faint)">(hundreds, cheap)</span>
+        │
+        ├─ DOM chrome · selection · labels · a11y     <span style="color:var(--faint)">(easier in DOM)</span>
+        │
+        └─ <b>screen-space overlay portal</b>
+                 ├─ 1 active live iframe               <span style="color:var(--t-hot)">T4</span>
+                 ├─ 0–2 warm iframe runtimes           <span style="color:var(--t-warm)">T3</span>
+                 └─ 0–4 crisp DOM proxies              <span style="color:var(--t-mid)">T2</span></pre>
+  </div>
+
+  <h2><span class="num">07</span>What we've already shipped is on-path</h2>
+  <div class="prose"><p>The last few days weren't wasted — every piece is a real component of this architecture, just at the tactical layer:</p></div>
+  <div class="ship">
+    <div class="row"><span class="dot">✓</span><div><b>Viewport culling</b> (<code>content-visibility</code> on off-screen nodes) — that's the T0 cold-tier skip, exactly as tldraw does it.</div></div>
+    <div class="row"><span class="dot">✓</span><div><b>Raster-LOD during motion</b> — the T1 proxy. It needs to graduate from <em>motion-only</em> to the <em>default passive representation</em> with versioned mip buckets and Blob storage.</div></div>
+    <div class="row"><span class="dot">✓</span><div><b>The settle-behind-cover handoff</b> — the correct, reusable promote/demote primitive (raster covers while DOM repaints, no flash). This is the mechanism the whole tier model swaps on.</div></div>
+    <div class="row"><span class="dot">✓</span><div><b>The lean DOM snapshot</b> — becomes the bounded T2 crisp tier (2–4), not one-per-node.</div></div>
+    <div class="row"><span class="dot">✓</span><div><b>The live debug HUD + capture cost instrumentation</b> — the measurement rig for the release gates below.</div></div>
+  </div>
+
+  <h2><span class="num">08</span>Staged plan, ranked by impact</h2>
+  <ol class="stage">
+    <li><span class="imp">highest</span><h3>Bound runtime ownership</h3><p>Refactor <code>FrameNode</code> so it doesn't permanently mount <code>.sh-live</code> + <code>.sh-lean</code>. Add a global <code>RuntimePool</code>: 1 active + 2 warm + 4 DOM-proxy slots, with priority scheduling and memory-pressure eviction. Culling becomes proxy mount/decode, not iframe suspension. <em>This is the change that unlocks hundreds.</em></p></li>
+    <li><span class="imp">high</span><h3>Make raster the permanent passive representation</h3><p>Promote the motion-only raster coordinator to canonical: versioned buckets, Blob URLs, freshness keys, visible-first + predicted-direction prefetch, and "proxy never disappears until its replacement has decoded."</p></li>
+    <li><span class="imp">high</span><h3>Live screen-space portal + pause/checkpoint bridge</h3><p>Move the active iframe out of the scaled world into an untransformed overlay. Implement <code>MarverRuntimeBridge</code>. Targets: warm→live &lt;150ms p50, cold→interactive &lt;500–800ms p95, zero exposed blank frames.</p></li>
+    <li><span class="imp">medium</span><h3>Multiresolution artifacts + image tile pyramids</h3><p>0.25×–4× app buckets; DZI/IIIF tiles for uploaded images (decode only visible tiles, keep the coarse parent until children decode → no flash). Optionally pre-generate artifacts out-of-band via the project's real Chromium (Playwright), keyed by <code>revision + route + viewport + theme + state-hash</code>.</p></li>
+    <li><span class="imp">medium</span><h3>Bound the DOM snapshot tier</h3><p>Keep the lean snapshot for the selected/largest settled node and pre-live deep zoom only. Never one lean iframe per node.</p></li>
+    <li><span class="imp">later</span><h3>Add the GPU proxy plane</h3><p>WebGL2 quad/tile renderer for the cold tier + image tiles; DOM keeps chrome/selection/live-portal; <code>&lt;img&gt;</code> fallback on context loss.</p></li>
+    <li><span class="imp">continuous</span><h3>Release gates on real boards</h3><p>Test 500 app nodes + 500 4K images; 100+ visible proxies; fit-all→one-frame zoom; focus-cycle 20 heavy apps; 1-hour memory plateau. Gate: no blank frames, camera p95 &lt;20ms, no &gt;50ms gesture long-tasks, runtime count ≤ capacity, cache returns below watermark after nav.</p></li>
+  </ol>
+
+  <h2><span class="num">09</span>Recommendation</h2>
+  <div class="prose">
+    <p>Adopt the tiered <strong>K-live + proxy</strong> model and treat <strong>Stage&nbsp;1 (bound runtime ownership)</strong> as the next real milestone — it's the one change that converts "optimize N iframes harder" into "N nodes never own N runtimes," which is what makes the AI-content ceiling a non-issue: the ceiling is on cheap proxies, not on live apps.</p>
+    <p>Before committing the full refactor, the highest-value next step is a <span class="kicker">one-day validation spike</span>: DOM canvas, 200 nodes, an 8-slot live pool with LRU promote/demote over foreignObject proxies, measured on a MacBook Air. That converts the industry's numbers into <em>Marver's</em> numbers and de-risks the RuntimePool design before it's load-bearing.</p>
+    <div class="callout">
+      <span class="lab">The honest ceiling — and why it's fine</span>
+      <p>"Hundreds of apps, all interactive, all at once, zero lag" is not achievable on one same-origin main thread. <strong>"Hundreds of nodes, a handful live at a time, the rest crisp proxies with seamless promote-on-focus" is.</strong> And because AI drives up <em>node count</em> (cheap proxies) rather than <em>live count</em>, the architecture scales exactly where the pressure comes from. Every node stays a real web app; only the working set executes.</p>
+    </div>
+  </div>
+
+  <div class="foot">
+    <p><span class="kicker">Sources.</span> tldraw SDK perf + EmbedShapeUtil; Figma "Building a professional design tool on the web" + WebGPU renderer; Miro engineering (image LOD); Excalidraw renderEmbeddables; Framer render-targets; Arc Easel; Replit Canvas; Chromium process-model &amp; image-decode-cache; OpenSeadragon / IIIF; MDN <code>Node.moveBefore</code>, <code>ImageBitmap.close</code>, <code>createImageBitmap</code>. Full URL list in the codex + research-agent transcripts.</p>
+  </div>
+</div>
