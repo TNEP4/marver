@@ -46,6 +46,9 @@ const MAX_ATTEMPTS = 2         // after this many stuck/failed compiles, treat t
 
 const nodes = new Map<string, LC>()
 let compiling: string | null = null   // exactly ONE background compiler at a time (§4.2; the spike proved collisions fail)
+let playOpen = false                  // while Play owns the stage, the canvas is hidden - don't compile behind it
+/** Play sets this on open/close so the background compiler pauses (the stage owns the live slot). */
+export function setPlayOpen(on: boolean): void { playOpen = on; if (!on) { pumpCompiler(); reconcileWaiting() } }
 let timer: (ms: number, fn: () => void) => number = (ms, fn) => (typeof setTimeout !== 'undefined' ? setTimeout(fn, ms) as unknown as number : 0)
 let clearT: (h: number) => void = (h) => { if (typeof clearTimeout !== 'undefined') clearTimeout(h as unknown as ReturnType<typeof setTimeout>) }
 /** tests inject a controllable timer */
@@ -119,7 +122,7 @@ function reconcileWaiting(): void {
 
 /** Keep exactly one background compiler running over visible, cold, un-leased frames. */
 function pumpCompiler(): void {
-  if (compiling != null) return
+  if (compiling != null || playOpen) return
   let next: LC | null = null
   for (const lc of nodes.values())
     if (lc.visible && lc.artifact === 'missing' && lc.phase === 'idle' && !lc.interact && lc.leaseId == null) { next = lc; break }

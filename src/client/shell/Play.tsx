@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore, CONFIG, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
+import { POOL, setPlayOpen } from './canvas/lifecycle.ts'
+import { requestLease, releaseLease, revokeAll } from './canvas/arbiter.ts'
 import { Tip } from './Tip.tsx'
 import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, FrameCornersIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
 
@@ -146,6 +148,17 @@ function PlayInner() {
   const [neverHint, setNeverHint] = useState(() => !!localStorage.getItem('mv-play-hint-off'))
   const [hint, setHint] = useState(false)
   const hintTimer = useRef<number | undefined>(undefined)
+
+  // M6 §5.1: the Play stage is a live document and counts against the cap. On open, PARK every canvas
+  // runtime (they're hidden behind the stage) and reserve a slot for the stage; release on close so the
+  // canvas recovers (visible frames recompile / show snapshots via cull->reconcile).
+  useEffect(() => {
+    if (!POOL) return
+    setPlayOpen(true)                 // pause the canvas compiler while the stage owns the slot
+    revokeAll([])
+    const id = requestLease('__mv_play_stage', 'active', () => {})
+    return () => { if (id != null) releaseLease(id); setPlayOpen(false) }
+  }, [])
 
   const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
 
