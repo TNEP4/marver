@@ -1,9 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { getCap, liveCount, __resetArbiter } from '../src/client/shell/canvas/arbiter.ts'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { getCap, liveCount, setCap, __resetArbiter } from '../src/client/shell/canvas/arbiter.ts'
 import {
-  __resetLifecycle, artifactState, liveMode, onSnapshotAdmitted, registerLC, setInteractLC,
+  __resetLifecycle, __setTimers, artifactState, liveMode, onSnapshotAdmitted, registerLC, setInteractLC,
   setVisible, showPlaceholder, unregisterLC,
 } from '../src/client/shell/canvas/lifecycle.ts'
+
+// controllable watchdog timer for the compile/demote timeout paths
+let pending: Array<{ h: number; ms: number; fn: () => void }> = []
+let th = 0
+const fakeSet = (ms: number, fn: () => void) => { const h = ++th; pending.push({ h, ms, fn }); return h }
+const fakeClr = (h: number) => { pending = pending.filter((p) => p.h !== h) }
+const fireTimers = () => { const due = pending; pending = []; due.forEach((p) => p.fn()) }
 
 const noop = () => {}
 
@@ -11,7 +18,8 @@ const noop = () => {}
 const compilingKey = (keys: string[]) => keys.find((k) => liveMode(k) === 'hidden') ?? null
 
 describe('Passive-Artifact Lifecycle (SPEC-M6 §4/§5, pool mode)', () => {
-  beforeEach(() => { __resetArbiter(); __resetLifecycle() })
+  beforeEach(() => { __resetArbiter(); __resetLifecycle(); pending = []; th = 0; __setTimers(fakeSet, fakeClr) })
+  afterEach(() => { __resetLifecycle(); __resetArbiter() })
 
   it('a cold visible frame shows a placeholder and enters compiling', () => {
     registerLC('a', noop)
@@ -52,7 +60,9 @@ describe('Passive-Artifact Lifecycle (SPEC-M6 §4/§5, pool mode)', () => {
     setInteractLC('a', true)                      // enter the real app
     expect(liveMode('a')).toBe('shown')
     expect(liveCount()).toBe(1)
-    setInteractLC('a', false)                     // leave -> back to snapshot, live released
+    setInteractLC('a', false)                     // leave -> TWO-PHASE demote: live still up until recapture admits
+    expect(liveMode('a')).toBe('shown')           // not blank - live held through the handoff
+    onSnapshotAdmitted('a', true)                 // fresh snapshot admitted -> now release the live doc
     expect(liveMode('a')).toBeNull()
     expect(liveCount()).toBe(0)
   })
@@ -102,4 +112,70 @@ describe('Passive-Artifact Lifecycle (SPEC-M6 §4/§5, pool mode)', () => {
       expect(keys.filter((x) => liveMode(x) === 'hidden').length).toBeLessThanOrEqual(1)
     }
   })
+
+  // --- codex slice-review P1 regressions ---
+
+  it('culling a frame MID-COMPILE releases its slot and the compiler advances (P1.1)', () => {
+    registerLC('a', noop); registerLC('b', noop)
+    setVisible('a', true); setVisible('b', true)
+    expect(liveMode('a')).toBe('hidden')          // a is compiling
+    expect(liveMode('b')).toBeNull()              // b waits
+    setVisible('a', false)                        // a culled mid-compile
+    expect(liveCount()).toBeLessThanOrEqual(getCap())
+    expect(compilingKey(['a', 'b'])).toBe('b')    // the compiler ADVANCED (was the stuck bug)
+    expect(artifactState('a')).toBe('missing')    // a is requeued, not wedged
+  })
+
+  it('a compile that never admits is watchdog-aborted; after MAX_ATTEMPTS -> incompatible, never stuck (P1.2)', () => {
+    registerLC('a', noop); registerLC('b', noop)
+    setVisible('a', true)
+    expect(liveMode('a')).toBe('hidden')
+    fireTimers()                                  // watchdog fires: attempt 1 -> requeue as missing
+    expect(compilingKey(['a', 'b'])).toBe('a')    // still visible+missing -> recompiles
+    fireTimers()                                  // attempt 2 -> MAX_ATTEMPTS -> incompatible (stays live)
+    expect(artifactState('a')).toBe('incompatible')
+    expect(compiling(['a', 'b'])).toBe(false)     // compiler slot is free, not wedged
+    expect(liveCount()).toBeLessThanOrEqual(getCap())
+  })
+
+  it('interact during a compile of ANOTHER frame stays within cap; leaving is two-phase (never blank) (P1.3)', () => {
+    registerLC('a', noop); registerLC('b', noop)
+    setVisible('a', true)                          // a compiling
+    setVisible('b', true)
+    onSnapshotAdmitted('b', true)                  // b already has a snapshot (pretend), then interact it
+    setInteractLC('b', true)
+    expect(liveMode('b')).toBe('shown')
+    expect(liveCount()).toBeLessThanOrEqual(getCap())
+    setInteractLC('b', false)                      // leave -> demote, live held (not blank)
+    expect(liveMode('b')).toBe('shown')
+    expect(showPlaceholder('b')).toBe(false)       // never a blank during the handoff (artifact ready)
+    onSnapshotAdmitted('b', true)                  // recapture admitted -> release
+    expect(liveMode('b')).toBeNull()
+  })
+
+  it('an incompatible frame evicted at cap-1 is RE-COVERED and retried when capacity frees (P1.6)', () => {
+    setCap(1)
+    registerLC('inc', noop); registerLC('act', noop)
+    setVisible('inc', true)
+    onSnapshotAdmitted('inc', false)               // incompatible -> takes the single live slot
+    expect(liveMode('inc')).toBe('shown')
+    setInteractLC('act', true)                     // active evicts the incompatible (cap 1)
+    expect(liveMode('inc')).toBeNull()
+    expect(showPlaceholder('inc')).toBe(true)      // evicted incompatible shows a placeholder, NOT blank (was the bug)
+    setInteractLC('act', false)                    // capacity frees
+    onSnapshotAdmitted('act', true)                // demote of act completes
+    expect(liveMode('inc')).toBe('shown')          // incompatible retried and re-covered
+    setCap(3)
+  })
+
+  it('unregister of a compiling frame frees the compiler (no leaked lease)', () => {
+    registerLC('a', noop); registerLC('b', noop)
+    setVisible('a', true); setVisible('b', true)
+    unregisterLC('a')                              // a leaves mid-compile
+    expect(compilingKey(['b'])).toBe('b')
+    expect(liveCount()).toBeLessThanOrEqual(getCap())
+  })
 })
+
+// live count > 0 iff some node is compiling/shown; helper for the watchdog test
+const compiling = (keys: string[]) => keys.some((k) => liveMode(k) === 'hidden')

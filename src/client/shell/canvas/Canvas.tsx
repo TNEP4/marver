@@ -91,11 +91,12 @@ function cull(px: number, py: number, scale: number) {
     const sx = px + n.x * scale, sy = py + n.y * scale
     const sw = n.w * scale, sh = (n.h + HEADER) * scale
     const off = sx + sw < -mx || sx > vw + mx || sy + sh < -my || sy > vh + my
-    if (off === culled.has(n.key)) continue               // no state change - touch nothing
+    if (POOL) setVisible(n.key, !off)                     // M6: feed visibility EVERY pass (idempotent) so an
+                                                          // initially-on-screen frame is never missed (codex P1.5)
+    if (off === culled.has(n.key)) continue               // cull-attribute: only touch the DOM on a state change
     if (off) culled.add(n.key); else culled.delete(n.key)
     const el = document.querySelector(`[data-node="${CSS.escape(n.key)}"]`) as HTMLElement | null
     if (el) el.toggleAttribute('data-cull', off)
-    if (POOL) setVisible(n.key, !off)                     // M6: feed on-screen visibility to the lifecycle coordinator
   }
 }
 
