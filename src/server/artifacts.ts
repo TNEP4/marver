@@ -24,6 +24,7 @@ export interface FrameArtifacts { variants: Record<string, Variant> }   // varia
 export interface Manifest { schemaVersion: number; captureEngine: string; frames: Record<string, FrameArtifacts> }
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex')
+let tmpSeq = 0   // unique temp-file suffix so concurrent writes never collide on one filename
 export const variantKey = (theme: string, viewport: string): string => `${theme}@${viewport}`
 
 /** Recipe identity for a capture. Stable across processes so a disk artifact can be validated on restart. */
@@ -41,7 +42,9 @@ export const objectHashOf = (html: string): string => sha256(html)
 export class ArtifactStore {
   private manifest: Manifest = { schemaVersion: SCHEMA_VERSION, captureEngine: 'unset', frames: {} }
   private loaded = false
-  constructor(private root: string, private urlBase: string) {}   // root e.g. design/.local/artifacts/v1 ; urlBase e.g. /__mv/artifacts/v1
+  private root: string        // e.g. design/.local/artifacts/v1
+  private urlBase: string     // e.g. /__mv/artifacts/v1
+  constructor(root: string, urlBase: string) { this.root = root; this.urlBase = urlBase }
 
   private objectsDir(): string { return join(this.root, 'objects') }
   private manifestPath(): string { return join(this.root, 'manifest.json') }
@@ -77,7 +80,7 @@ export class ArtifactStore {
     const objectHash = objectHashOf(html)
     const dest = this.objectFilePath(objectHash)
     try { await fs.access(dest) } catch {                                  // don't rewrite an existing immutable object
-      const tmp = `${dest}.${process.pid}.${objectHash.slice(0, 8)}.tmp`
+      const tmp = `${dest}.${process.pid}.${++tmpSeq}.tmp`
       await fs.writeFile(tmp, html, 'utf8')
       await fs.rename(tmp, dest)                                            // atomic on same fs
     }
@@ -104,7 +107,7 @@ export class ArtifactStore {
   }
   private async persist(): Promise<void> {
     if (!this.loaded) return
-    const tmp = `${this.manifestPath()}.${process.pid}.tmp`
+    const tmp = `${this.manifestPath()}.${process.pid}.${++tmpSeq}.tmp`
     await fs.writeFile(tmp, JSON.stringify(this.manifest), 'utf8')
     await fs.rename(tmp, this.manifestPath())                              // atomic manifest swap, written last
   }

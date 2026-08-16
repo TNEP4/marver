@@ -172,7 +172,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.
       server.middlewares.use(apiMiddleware(root))
-      server.middlewares.use(routesMiddleware(server, clientDir))
+      server.middlewares.use(routesMiddleware(server, clientDir, root))
 
       devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
