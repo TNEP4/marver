@@ -1,264 +1,308 @@
 # SPEC-M6 — Scalable canvas: crisp-DOM-first, frame-type-aware, bounded live apps
 
-Status: **v3 — the raster-primary bet is RETRACTED.** v1/v2 (codex-reviewed) made a flat raster image the
-default passive + motion representation. Dogfooding (2026-08-16, tms-broker `shipper-flows`) proved that is
-wrong: a full-frame image jiggles under motion, cannot reflow (line-returns differ moving vs settled), and
-ruins mermaid — the *exact* failures M5's DOM snapshot was built to fix. It also slowed load (an
-`html-to-image` per frame). **v3 pivots to the model Nic specified and the research actually supports:** the
-compiled DOM snapshot (pixel-perfect HTML+CSS) is the **universal default** at every zoom/theme/device/resize;
-the **full live web app runs ONLY when a frame is active** (interactive / laser / comment / prototype),
-bounded by a small pool; optimisation is **frame-type-aware** — markdown/image/mermaid frames are cheap and
-need only per-image resolution LOD, while heavy web-app frames get the full DOM-snapshot treatment; reachable
-next frames are **pre-warmed**. **No full-frame raster of any frame, ever.** Supersedes v2's tier table.
-Retains M5's serializer + lean renderer (now the universal default, not a bounded exception) and the shipped
-culling + settle-handoff. The shipped motion raster-LOD is REMOVED (§9). Open decisions for codex in §12.
-
-Reference correction (v2 was wrong here): the right lodestar is **tldraw** — the one product that hosts live
-web on a zoomable canvas — which keeps shapes as **crisp DOM**, does **per-image** resolution LOD, and
-**activates the live embed only on click**. Figma/Miro's raster tiles are for *vector/bitmap* content, not
-live apps, and pulled v2 the wrong way.
+Status: **v3.1 — build-ready.** v3 established the right thesis (crisp DOM is the universal representation;
+raster stays dead; live apps are bounded and active-only) and codex confirmed it (*"the architectural pivot
+is right"*). v3.1 folds in every codex P1: the two missing protocols (**Passive-Artifact Lifecycle** §4 and
+**Live-Lease Arbiter** §5), the promotion state machine (the old handoff was removed with the raster, §5.3),
+laser/comment made **snapshot-native** (§8), per-image LOD made **shell-driven** (§6), the honest motion
+ceiling (§9), the frame **profiler** (independent capability axes, not one label; §3), and the corrected
+real-board gates + sequencing (§11–12). §1 maps every concrete problem we hit to its fix. Retains M5's
+serializer/renderer; the motion raster-LOD is removed (shipped). Reference: **tldraw** (DOM shapes +
+per-image LOD + activate-on-click), not Figma/Miro raster tiles.
 
 ---
 
-## 0. Why v3 (the retraction)
+## 1. The problems, and exactly what fixes each
 
-| v2 bet | What dogfooding showed | v3 |
+| Problem we hit | Root cause | The fix in this spec |
 |---|---|---|
-| Raster (image) = default for every passive node + all motion | Text jiggles, "everything moves around", mermaid weird — a bitmap can't reflow or re-theme | DOM snapshot is the default at all times; **no full-frame raster** |
-| Crisp DOM demoted to a 2–4 cap | The DOM crispness *is* the differentiator; users see the image degrade | DOM snapshot is universal; live app only when active |
-| One-size raster pyramid | A markdown page and a heavy React app got the same expensive treatment | **Frame-type-aware**: cheap frames stay cheap; only heavy web-apps get heavy optimisation |
-| Eager `html-to-image` per frame | ~1s/frame on image-rich boards → slow load | No per-frame capture; image LOD is per-`<img>`, lazy + debounced |
+| Whole-viewport **white flash** on zoom (marver-site) | N live iframes re-raster at scale → GPU tile starvation | Bounded live pool (§5): only ~3 apps ever live; the rest are cheap DOM snapshots. Plus culling (shipped). |
+| **Deep-zoom blank/lag** on a rich frame | one large iframe re-rastering at high scale | The inspected frame promotes to live/native-crisp (§5.3); it's the only heavy thing on screen. |
+| **tms-broker laggy** on image boards | re-decoding/re-rastering big images at scale (this board is 10 image + 10 mermaid, **not** web-apps) | **Per-image resolution LOD** (§6): low-res zoomed out, sharp on settle. Mermaid = inline SVG, crisp for free (§7). |
+| **Text jiggle / images look bad** | the raster (image) facade during motion | **Removed.** Crisp DOM snapshot at rest AND motion (§2). No frame is ever a bitmap. |
+| **Reflow differs moving vs still** | a bitmap can't reflow; DOM does | Same DOM snapshot in both states → identical reflow (§2). |
+| **Slow board load** | eager `html-to-image` per frame | Removed. Snapshots compile from the DOM (~ms), background-scheduled, capped (§4). |
+| **Mermaid weirdness** | bitmap of a diagram + captured mid-render | Inline SVG, captured after render, no mode-chrome, theme-keyed (§7). |
+| **Hundreds of apps + images** (the goal) | can't run hundreds of live iframes (physics) | Hundreds of cheap crisp snapshots + a handful live; frame-type-aware so light frames stay light (§3). |
 
-**The core realisation (Nic):** Marver is not one content type. A board of markdown + a few images is
-featherweight; a board of 4–5 heavy web-apps is not. Optimisation must be **per frame type**, and the crisp
-DOM snapshot — not an image — is what keeps every frame pixel-perfect across theme, device, resize and motion.
-Run the *full* web app only where it's actually being used.
-
----
-
-## 1. Invariants — what must not break
-
-Inherits M5's F1 (exact color) and F2 (exact reflow). New / promoted:
-
-- **Q1 — Pixel-perfect at every state.** Every visible frame is pixel-perfect — same layout, color, and
-  look — **at rest AND during motion**, across theme switch, device sweep, resize, and pan/zoom. Nothing a
-  user sees is ever a stretched or re-sampled bitmap of a frame. (This is now the top invariant; it is what
-  the raster violated.)
-- **R2 — Real app only where used.** The genuine live web app runs when and only when a frame is active
-  (interactive / laser / comment / prototype). Everything else is its crisp DOM snapshot.
-- **R3 — Bounded live set.** Concurrent live web apps NEVER exceed the pool cap, regardless of board size /
-  zoom / pan speed. Node count unbounded; live-app count hard-capped.
-- **R1 — Never blank / never wrong.** A frame's current crisp visual is never removed until its replacement
-  has painted; a stale snapshot is marked stale and reconverges, never shown as if fresh.
+The honest boundary (§9): for a board of **many heavy web-apps all visible in continuous motion**, crisp DOM
+re-rasters natively — crisp, but not as buttery as a bitmap would be. That is the deliberate fidelity-first
+trade; the mitigation is culling + the pool + density limits, **never** a frame image.
 
 ---
 
-## 2. Frame taxonomy → representation (the core of v3)
+## 2. Two representations, only two (raster is gone)
 
-Classify each frame **cheaply from its already-serialised DOM** (the lean serializer walks it anyway): node
-count, image pixel-area, presence of a mermaid/SVG diagram, and JS-liveness (does it keep mutating after
-`ready`?). Four classes, four optimisation profiles:
+1. **Crisp DOM snapshot — the universal default, rest AND motion.** M5's scriptless `<iframe srcdoc>`:
+   post-render DOM + inlined CSS, JS stripped. Pixel-perfect; reflows natively; theme-flips by attribute;
+   device-sweeps as real CSS; **re-rasters crisp at any zoom** (a DOM re-raster is sharp — only a bitmap is
+   blurry). It is a *compiled* form of the app: pixel-perfect regardless of theme/device/screen.
+2. **Live web app — active frames only.** The genuine running app, mounted only when the frame is
+   interactive / laser-pick / comment-pick / prototype, from the bounded pool (§5).
 
-| Class | Detect | Default representation | Optimisation it needs |
-|---|---|---|---|
-| **A · Markdown / prose** | few nodes, no big images, no canvas/video, quiet after ready | DOM snapshot | ~none. It's already trivial. |
-| **B · Image-heavy** | large `<img>`/background pixel-area | DOM snapshot | **per-image resolution LOD** (§5) — the only real cost |
-| **C · Diagram (mermaid/SVG)** | baked `<svg>` from mermaid/similar | DOM snapshot (SVG inlined) | **SVG parity** (§6) — vector, so infinitely crisp for free |
-| **D · Heavy web-app** | many nodes, JS-live, real layout (React/Next/RR/any stack) | DOM snapshot (compiled HTML+CSS) | the full treatment — this is the bandwidth killer; live only when active |
-
-The point Nic made and v2 missed: **A/B/C are nearly free and must not pay web-app tax.** Only class **D**
-warrants the heavy machinery. A canvas of A+B+C frames should be featherweight even at hundreds.
+No third "image" representation. Ever.
 
 ---
 
-## 3. Two representations per frame — and only two (raster is gone)
+## 3. Frame profiling — independent capability axes (codex Q2)
 
-1. **Crisp DOM snapshot (default, all frames, all the time).** The M5 scriptless `<iframe srcdoc>`: post-
-   render DOM + inlined CSS, JS stripped. Pixel-perfect, reflows natively, theme-flips by attribute, device-
-   sweeps as real CSS. This is a *compiled* form of the app (Nic's "compile to HTML+CSS so it's pixel-perfect
-   no matter theme/device/screen") — and because it re-rasters *natively*, it is **crisp at any zoom** (a
-   DOM re-raster is sharp; only a bitmap is blurry). It is what you see at rest and in motion.
-2. **Full live web app (active frames only).** The genuine running app, mounted **only** when the frame is
-   interactive / laser / comment / prototype, from a bounded pool (§4). This is Marver's differentiator, kept
-   real exactly where it matters.
+Do **not** assign one A/B/C/D label; the classes overlap (a React app can be image-heavy *and* have mermaid
+*and* keep mutating). Profile each frame on **independent axes**, auto-detected from the serialized DOM +
+runtime observation, with an optional authored override:
 
-There is no third "image" representation. The v2 raster tier is deleted.
+| Axis | Cheap signal | Drives |
+|---|---|---|
+| DOM/paint weight | node count, CSS bytes | recapture cost, motion cost |
+| Image weight | total `<img>`/bg pixel-area | needs per-image LOD (§6) |
+| Diagram presence | inline mermaid/D3 `<svg>` | SVG parity path (§7) |
+| Runtime dynamism | mutates / holds sockets/timers after ready | whether the snapshot can go stale silently; pre-warm value |
+| Snapshot compatibility | canvas / video / shadow / oversized / cross-origin CSS | **incompatible** → counted live lease (§4.4) |
+| JS-driven responsiveness | ResizeObserver / JS-measured layout | width-keyed recapture, else CSS-only parity (§4.5) |
 
----
-
-## 4. The live-app pool (bounded, active-only, pre-warming)
-
-Today every node mounts BOTH a live iframe and a lean iframe for life — that double-mount is the single
-biggest cost. v3: passive frames mount **only** the crisp DOM snapshot; the live app is lent by a pool.
-
-- **Cap: small (start 3–4 concurrent live apps), LRU.** Only active frames (interactive/laser/comment/
-  prototype) hold a live app; leaving the active state demotes back to the crisp snapshot behind a covered
-  hard-cut (the shipped settle-handoff primitive). R3 holds by construction.
-- **Pre-warm reachable frames (Nic).** In **interactive/prototype** mode we know the reachable next frames
-  (the `data-goto` targets, the prototype graph). Warm those in advance — mount + boot + cover with their
-  crisp snapshot — so a click transition is instant. In **laser/comment** mode, keep the frames the user is
-  hovering warm. Warm apps are `inert`, `aria-hidden`, `opacity:0`, fully covered by their snapshot; evicted
-  first under pressure.
-- **Promote/demote** ride the shipped covered-hard-cut: snapshot covers → live boots behind → ready-gated
-  (fonts + two paints) → hard-cut. Never a crossfade (M5's 1–2px ghosting).
+- **`kind` (`tsx`/`html`) and `intent` are NOT predictive** — a TSX page can be static prose; an HTML file a
+  live app. Don't overload them.
+- **Authored override:** optional manifest `meta.renderProfile: 'static' | 'image' | 'diagram' | 'app'`,
+  required only when auto-detection reports ambiguity or incompatibility. `auto` is the normal path.
+- **Consequence (the point):** a markdown/prose frame pays almost nothing; only genuinely heavy, dynamic
+  web-app frames carry the full machinery. A board of light frames is featherweight at hundreds.
 
 ---
 
-## 5. Image-resolution LOD — the ONE thing we scale by resolution
+## 4. Passive-Artifact Lifecycle (codex P1.1, P1.2, P1.5, Q6) — the missing protocol
 
-Not full frames — individual **images** inside B-class frames (and images inside any frame). The tldraw/Miro
-image recipe, and exactly Nic's ask ("lower the image resolution when zoomed out, make it clear as you zoom
-in, with a light debounce so it doesn't load on every zoom step").
+The crux codex named: today a snapshot is serialized from the **mounted live** iframe
+([snapshots.ts](src/client/shell/canvas/snapshots.ts)), and every `FrameNode` mounts both live + lean
+([FrameNode.tsx](src/client/shell/canvas/FrameNode.tsx)). If passive frames stop mounting the live app, we
+must define how a **cold** frame gets and keeps its snapshot.
 
-- Serve each `<img>` at a resolution matched to its **on-screen** pixel size: `srcset` + `sizes`, or swap the
-  `src` to a stepped derivative (¼/½/1×/2×) chosen by `worldW × zoom × dpr`, snapping on power-of-two
-  thresholds.
-- **Debounced + lazy:** upgrade resolution only after the camera **settles** (~150–250ms), never mid-gesture,
-  and keep the current (lower-res) image until the higher-res **decodes** (`img.decode()`), so zoom-in is
-  smooth and never flashes. Coarse image stays until the finer one is ready.
-- Very large images (uploaded photos, once first-class image nodes exist) use real **tile pyramids**
-  (DZI/IIIF, 256–512px, decode only visible tiles). Ordinary in-frame images just need the stepped `srcset`.
-- Respect a decode budget (128–256MB); `createImageBitmap`→draw→`ImageBitmap.close()` on eviction; `Blob`
-  URLs, not retained base64.
+### 4.1 Artifact states (freshness)
+```
+missing → compiling → ready → stale → (incompatible | error)
+```
+Every artifact is keyed by `source-revision + theme + viewport(device) + capture-engine-version`. A **stale**
+artifact stays visible (marked stale) and reconverges asynchronously (upholds R1: never blank, never shown
+as fresh when it isn't).
 
-This keeps the **DOM structure crisp** (never a frame bitmap) while making images cheap when small/zoomed-out
-and sharp when zoomed-in.
+### 4.2 Initial production (how a cold frame first appears)
+- On first need (frame enters T0→visible, or board load for near-viewport frames), a **background
+  compilation lease** is granted (counts against the pool cap, §5): the app boots **hidden**, serializes its
+  snapshot, and the runtime is **released** (unless it wins a keep-warm slot). Compilation is one-at-a-time
+  (the "one background capture role" the spike proved — two requesters collide).
+- **Until the first snapshot exists, the frame shows live** (today's fail-soft), then goes cold once the
+  snapshot is admitted. So there is never a blank first paint; a heavy board simply compiles its snapshots
+  over the first seconds, capped, without the eager `html-to-image` cost.
+- **Published boards ship pre-baked artifacts** (§4.6) — no boot-on-first-view.
 
----
+### 4.3 Invalidation
+- **Content revision** (file change / nav) → snapshot `stale` → recompile (background lease).
+- **Theme** → CSS-only snapshots flip by attribute (no recapture, M5 already does this). **Baked content
+  (mermaid SVG, D-class)** needs a **theme-keyed recapture** — precompile both theme variants, or recompile
+  on flip behind the current (stale-marked) one.
+- **Device/width** → CSS-responsive frames reflow the snapshot natively (no recapture). **JS-responsive
+  frames** (§4.5) need a width-keyed recapture.
+- **HMR (dev)** → a cold frame's edit takes a background recompile lease; the stale snapshot stays covered
+  and marked until the new revision is admitted.
 
-## 6. Diagram (mermaid/SVG) parity
+### 4.4 Snapshot-incompatible frames (codex P1.2)
+The serializer degrades canvas / video / nested-frame / shadow-DOM / oversized (>~6000 nodes) → these cannot
+be faithfully snapshotted. v3.1 makes the outcome explicit, not a silent "stay live forever":
+- Mark the frame **`incompatible`** and give it a **counted emergency-live lease** — it holds a live slot
+  while visible (so R3's cap still holds; it just consumes one of the ~3). If more incompatible frames are
+  visible than slots, the lowest-priority ones show a **deterministic placeholder card** (never blank),
+  promoting to live on focus.
+- Future compatibility (compatible with "no full-frame raster"): declarative-closed shadow emission; a
+  **scoped canvas-subtree bitmap** (a bitmap of just the `<canvas>` element, not the frame); a video
+  **poster/frozen** frame. Each is a per-element surrogate, not a frame image.
 
-Mermaid renders to an inline `<svg>`. In the snapshot it is inlined as vector → **infinitely crisp at any
-zoom for free** (no raster, no LOD). The one requirement is **parity with laser/comment**: the snapshot's
-mermaid must equal what the live frame shows in laser/comment mode. Two rules:
+### 4.5 JS-responsive layout (codex Q6)
+A scriptless snapshot cannot reproduce ResizeObserver / JS-measured relayout. Two allowed answers per frame:
+restrict passive parity to **CSS-responsive** frames (the snapshot reflows natively), or **width-keyed
+recapture** for frames flagged JS-responsive (§3) — recompile at the new device width behind the stale cover.
 
-- Capture the snapshot **after** mermaid has finished rendering its SVG (the M5 `domQuiet` settle already
-  does this — it exists precisely because lazy mermaid renders after `ready`). Never capture mid-render.
-- The snapshot must **not** bake laser/comment chrome (outline styles, hover highlights) — capture only when
-  those modes are off (the M5 `modeActive()` guard). A theme change re-captures (baked SVG colors can't be
-  attribute-flipped) — already handled by keying the snapshot on theme.
-
-Result: mermaid frames are class-C, effectively free, and identical across rest / motion / laser / comment.
-
----
-
-## 7. Motion cost — why crisp DOM is acceptable now (the honest part)
-
-A DOM snapshot is still an `<iframe>`, so it re-rasters at the zoom scale during motion — the cost that drove
-v2 to images. v3 accepts a **crisp** re-raster over a **blurry** bitmap, and makes the cost affordable with
-four levers instead of hiding it behind an image:
-
-1. **Half the iframes.** Passive frames mount only the snapshot, not snapshot **+** live app. The double-mount
-   was the dominant cost.
-2. **Culling** (shipped). Only on-screen frames render; a deep zoom into one frame stops the other ~N−1
-   entirely.
-3. **Frame-type weighting.** A/B/C frames are cheap to re-raster; only D frames are heavy, and there are few
-   of those per board. A markdown-heavy board pays almost nothing.
-4. **Deep-zoom escalation.** When one frame fills the screen (the case culling can't help), it is the
-   *selected/inspected* frame → promote it to the **live app** (or keep its crisp snapshot, which re-rasters
-   sharp). The heavy-motion-of-many-frames case does not occur at deep zoom.
-
-**Honest trade:** a board of many **D-class** frames, all visible, in continuous motion, will re-raster more
-than a raster-primary design would — crisp but potentially less buttery on the very heaviest boards. That is
-the deliberate choice: **fidelity first** (Nic's differentiator). The levers above make it affordable for
-realistic boards (dozens of frames, a few heavy); the extreme is bounded by culling + the pool, not by
-degrading to images. Whether it's smooth enough on the heaviest real boards is the spike's job (§11) — and if
-a specific board is still choppy, the fallback is *more culling / smaller live cap*, never a frame bitmap.
+### 4.6 Publish / export (codex Q6)
+Published snapshots must NOT be produced by booting every app in each viewer. Publish runs a **sequential,
+capped, clean-boot compiler** that emits pre-baked artifacts (via the project's real Chromium / Playwright),
+keyed as §4.1. **Persist only deterministic clean-boot state — never viewer form/session data.** Print/export
+renders from artifacts without promoting every node.
 
 ---
 
-## 8. Research alignment (take inspiration, keep our specificity)
+## 5. Live-Lease Arbiter (codex P1.3, P1.4, Q1) — the pool
 
-- **tldraw** (our closest analog — live web on a zoomable canvas): crisp **DOM** shapes, off-screen
-  `display:none`, **per-image** power-of-two resolution LOD, embeds `pointer-events:none` and activated on a
-  deliberate gesture. → v3 §3/§4/§5 mirror this directly.
-- **Miro:** image LOD (120px preview + ÷2 mipmap by on-screen size). → §5.
-- **Figma:** raster/GPU tiles — for **vector** content, **not** live apps; caps live embeds at **one**. → we
-  take "few live at once", we reject "raster the frames".
-- **Marver's specificity:** we uniquely *own the repo runtime, same-origin*, so we can (a) **compile any
-  frame to a faithful DOM snapshot** (most products can't — they screenshot), and (b) cooperatively pause /
-  pre-warm reachable frames. That's why crisp-DOM-first is available to us and not to a generic embed tool —
-  it's our edge, and v3 leans into it instead of copying Figma's bitmap tiles.
+A single **synchronous arbiter** decides every live mount **before** it happens — never an after-the-fact
+LRU cleanup. Reparenting a shared iframe navigates/reloads it, so "lend an iframe" means **lend permission to
+mount a node-local iframe** in the node (or the screen-space portal for the interactive one), not move one
+element around.
 
----
+### 5.1 Capacity
+- **Fixed total cap = 3** live documents (start; 2 on constrained devices; 4 only after telemetry).
+  `deviceMemory` may only reduce. **Every running document counts:** active, pre-warm, background-compile,
+  outgoing-during-handoff, incompatible-lease, and the play-stage iframe.
+- The three slots are exactly enough for: the interactive/prototype target · the outgoing/incoming frame
+  during a handoff · one pre-warm or background-compile job.
 
-## 9. What's shipped — keep, and what to REMOVE
+### 5.2 Priority (eviction order, lowest evicted first)
+```
+foreground active  >  transition destination  >  outgoing handoff  >
+required lease (incompatible on-screen)  >  hover warm  >  reachable warm  >  background compiler
+```
+Pre-warms and background compilers are always evicted first. **Never temporarily exceed the cap** — if no
+slot is free, the request waits or is denied (the requester keeps its snapshot).
 
-On `fix/backdrop-white-flash-zoom`:
+### 5.3 Promotion / demotion state machine (rebuilt — the old handoff was removed)
+```
+PROMOTE:  snapshot visible (cover) → slot granted → live mounted BEHIND cover →
+          restore url/scroll/theme/device + app checkpoint → generation-matched ready
+          + document.fonts.ready + two paints → HARD-CUT cover away (frame boundary)
+DEMOTE:   freeze input → pause()/quiesce (deadline) → obtain {checkpoint, visualRevision} →
+          compile/admit the snapshot FROM the paused state → decode/verify → reveal snapshot →
+          release or park-warm the runtime
+```
+Never crossfade (M5's 1–2px double-text ghosting). The demotion admits the replacement snapshot **before**
+tearing down the live doc (R1). This reuses the *covered-hard-cut idea* the settle-handoff proved, now
+re-implemented between snapshot and live (the CSS was removed with the raster; the primitive is re-added
+here, snapshot↔live, not image↔DOM).
 
-- **KEEP · viewport culling** (`content-visibility` off-screen) — §7 lever 2.
-- **KEEP · settle-behind-cover handoff** (`sh-settling`) — the promote/demote cover primitive (§4), now
-  between snapshot and live app (not snapshot and image).
-- **KEEP · `will-change` reverted** off `.sh-content` (blanks nested iframes — never re-add).
-- **KEEP · `__mvDiag` HUD** — the §11 measurement rig.
-- **REMOVE · the motion raster-LOD** (`raster.ts`, the `sh-raster` `<img>`, `bridge.js` `captureRaster`, the
-  `body.sh-cam` image-swap CSS). It reintroduced images. The crisp DOM snapshot is shown at rest **and**
-  motion; the only motion optimisation is culling (+ image-resolution LOD for B frames).
-
-Net after removal: back to **crisp DOM lean, always** + culling + handoff — Nic's original, minus the
-regression — as the foundation v3 builds the pool + frame-type-LOD on.
-
----
-
-## 10. Staged plan (impact-ranked)
-
-1. **Remove the raster layer; snapshot is the sole passive representation, rest + motion.** Immediate: crisp
-   restored. (Small, do first.)
-2. **Bounded live-app pool.** Passive frames mount only the snapshot; live app lent to active frames (cap 3–4,
-   LRU). This is the scale unlock (drops the double-mount). Promote/demote on the shipped handoff.
-3. **Frame-type classifier** (A/B/C/D from the serialized DOM) + route each to its profile.
-4. **Per-image resolution LOD** for B frames (srcset/stepped src, settle-debounced, decode-before-swap).
-5. **Pre-warm reachable frames** in interactive/prototype (goto/prototype graph) and hovered frames in
-   laser/comment.
-6. **Mermaid/SVG parity checks** (capture-after-render, no-mode-chrome) as an explicit test.
-7. **Release gates on real boards** (§11).
+### 5.4 Bridge additions (frame-side)
+Capability-negotiated, deadline-bounded, size-limited (from the v2 review, kept):
+`ready · pause · resume · checkpoint · restore · visualRevision`, with `{ pause, checkpoint, restoreVersion }`
+capabilities. No-op defaults so unmodified frames still work (they just don't pause/checkpoint efficiently);
+only capability-verified runtimes earn a long warm residency.
 
 ---
 
-## 11. Test plan / gates — on RECORDED real boards
+## 6. Per-image resolution LOD — shell-driven, snapshot-only (codex Q4)
 
-Boards: **marver-site** (heavy D-class Next.js), **tms-broker** (mixed — image-heavy B + mermaid C + prose A +
-some D). Also synthesise a **500-A-frame** board (must be featherweight) and a **20-D-frame** board (the hard
-case).
+The one thing scaled by resolution: individual **images**, not frames. We rewrite `<img>` in the **snapshot**
+(which we own) — the live app is never touched.
+
+- **At serialize:** annotate eligible snapshot `<img>`/`<source>` with their original candidate info + a
+  reference to a **build-time derivative manifest** (stepped ¼/½/1×/2× of local raster assets).
+- **At runtime:** a shell-side controller mutates the same-origin lean document **after camera settle**
+  (~150–250ms), choosing a derivative by `rendered image rect × outer canvas scale × devicePixelRatio` with
+  **stepped thresholds + hysteresis** (longer on downgrade to avoid thrash) and **decode-before-swap** (keep
+  the coarse image until the finer decodes → no flash). Plain `srcset`/`sizes` is **insufficient** — the
+  browser sees the iframe's CSS viewport, not that the whole iframe is displayed at canvas zoom 0.12; the
+  shell must drive selection.
+- **Leave alone:** remote/signed/blob/data URLs, `<svg>` (vector, infinitely crisp), animated GIF/APNG,
+  authored `<picture>`/art-direction (defer to it). CSS `background-image` needs build-time
+  `image-set()`/URL analysis (not runtime-discoverable from arbitrary CSS) — handle at build for local assets,
+  else leave.
+- **Guard reflow:** derivatives preserve intrinsic aspect/orientation; never change layout. Memory is browser
+  `<img>` decode — treat the 128–256MB budget as **telemetry/backpressure**, not a manual `ImageBitmap.close`
+  heap (that API doesn't fit DOM `<img>`).
+
+Result: images are cheap when small/zoomed-out, sharp when zoomed-in, and the **DOM structure stays crisp**.
+
+---
+
+## 7. Diagram (mermaid/SVG) parity (codex Q6)
+
+Mermaid → inline `<svg>` in the snapshot → **infinitely crisp at any zoom, free**. Parity requirement with
+laser/comment, with the edge cases codex named:
+- Capture **after** render (M5 `domQuiet`), but raise the font gate: `document.fonts.ready` is currently
+  bounded at 400ms; extend + detect late font-metric changes for diagrams. Never capture mid-render.
+- Never bake laser/comment chrome (M5 `modeActive()` guard).
+- **Theme-keyed recapture** for baked fills/strokes (§4.3).
+- Mermaid `foreignObject` HTML labels have their own font/CSS readiness — gate on it.
+- A mermaid that **re-lays-out on ResizeObserver** is JS-responsive (§4.5) — width-key it, don't assume one
+  width-independent SVG.
+- `<use href>` / external SVG refs need URL/ID validation.
+
+---
+
+## 8. Laser / comment on cold frames (codex P1.4) — snapshot-native
+
+Today enabling either mode hides every lean and broadcasts to every live iframe
+([Comments.tsx](src/client/shell/Comments.tsx)) — a board can have more visible frames than the pool cap, so
+"promote all visible" is incompatible with R3. **Decision: make inspection/picking snapshot-native.**
+
+- The lean is a **same-origin** document the shell can touch. Attach the shell-owned laser outline / hover
+  highlight / element-pick handlers **to the snapshot document** directly (the M5 `allow-same-origin` sandbox
+  permits it). Then laser/comment work on **cold frames** with no promotion, no boot delay, no cap pressure.
+- Element anchors resolve against the snapshot's DOM (it shares structure with the live app — the M5 anchor
+  ladder already keys on tag/role/testid/quote/cssPath). The 4s live-poll anchor refresh
+  ([Comments.tsx](src/client/shell/Comments.tsx)) is replaced by resolving against the snapshot; only a frame
+  the user actively enters (interact) promotes to live.
+- Fallback for `incompatible` frames (no snapshot): promote-on-hover (accepts a small boot delay), counted.
+
+---
+
+## 9. The honest motion ceiling (codex P1.5, Q3)
+
+Correcting v3's §7: **the camera path already hides the covered live iframe during motion**
+([styles.css](src/client/shell/styles.css)), so the pool's big wins are **boot, memory, timers, idle CPU** —
+**not** the motion paint cost of the lean DOM itself. On a board of many heavy web-app frames all visible in
+continuous motion, the crisp lean re-rasters natively, and **no fidelity-preserving trick removes that cost**
+(compositor promotion = the rejected bitmap; foreignObject/canvas = raster in disguise; reduced render scale
+= not crisp; per-tick CSS `zoom` = more expensive; flattening into the shell breaks iframe viewport/isolation).
+
+Fidelity-preserving levers (all applied): tighter motion-time culling + small overscan; verified
+paint/layout `contain` where it yields zero layout diff; zero JS in passive snapshots; per-image LOD; only
+truly-visible frames paint. **If N heavy frames are genuinely visible, their paint cost is real.** The
+product answer is: accept the lower frame rate on such boards, or **cap how many heavy frames render at once**
+(a density limit, honestly surfaced) — never a frame bitmap. Light/image/diagram boards are unaffected.
+
+---
+
+## 10. What's shipped — keep / removed
+
+KEEP (on `fix/backdrop-white-flash-zoom`): viewport culling; camera blur-drop for glass chrome;
+drop-live-during-camera (crisp lean shows in motion); reverted `will-change`; `__mvDiag` HUD.
+REMOVED: the motion raster-LOD (`raster.ts`, `sh-raster`, `captureRaster`, `sh-settling`) — crisp DOM is the
+sole passive representation again.
+
+---
+
+## 11. Test plan / gates — recorded REAL boards (codex Q3, Q7, P2)
+
+Real boards (codex correction — pick the right stressors):
+- **tms-broker/shipper-flows** = 10 diagram + 10 moodboard → the **B/C image + mermaid** regression board.
+- **marver-site/all-scenes** = the real **D-class heavy-DOM** board.
+- the heaviest existing real board at fit-all + several zoom levels; **dev AND built/published** bundles.
+- synthetic **500-A** (must be featherweight) and **20-D** (the hard case) as stress tests only, never a
+  substitute for the real-board gate.
 
 Gates:
-- **Q1 pixel-perfect:** snapshot == live for color + reflow, at rest AND mid-motion, across theme flip +
-  device sweep + resize. No visible jiggle, no reflow difference moving↔settled, mermaid identical to
-  laser/comment. (This is the invariant the raster broke — assert it explicitly with a computed-style +
-  layout diff, not eyeball.)
-- **R3:** live-app count ≤ cap, always, under rapid focus-cycling.
-- **A/B/C frames are cheap:** a 500-A-frame board loads fast and pans/zooms at p95 < 20ms with no capture
-  cost. Image frames upgrade resolution only after settle, never mid-gesture, never flash.
-- **D frames:** camera p95 < 20ms on the Air with culling + pool; deep-zoom into one D frame is crisp (live
-  or native snapshot re-raster), never blank.
-- Pre-warm: a prototype/interactive transition to a reachable frame is instant (no boot flash).
+- **Pixel-perfect (Q1):** snapshot == live for text/layout/color, at rest AND mid-motion, across theme flip +
+  device sweep + resize; no jiggle; reflow identical moving↔settled; mermaid identical to laser/comment.
+  Asserted by computed-style + layout diff, not eyeball. (Per-image downsampling at low zoom is intentional,
+  not source-pixel identity.)
+- **R3:** live-document count ≤ 3, always, under rapid focus-cycling (assert after every transition).
+- **Motion:** camera **p95 ≤ 16.7ms** (true 60fps, not the looser 20ms) **+ a long-task/blank-frame gate**,
+  on the target laptop, per board class. Heavy-D board reports its honest number (§9).
+- **Cheap frames:** the 500-A board loads fast, pans/zooms at 60fps, zero capture cost. Image frames upgrade
+  resolution only after settle, never mid-gesture, never flash.
+- **Never blank:** no blank/stale-as-fresh frame in any transition, promote/demote, theme flip, or HMR.
+- Metrics recorded: snapshot parse time, retained HTML/CSS bytes, image transfer/decode, renderer memory,
+  promotion latency (warm→live < 150ms p50; cold→interactive < 500–800ms p95).
 
 ---
 
-## 12. Open decisions for Codex (review this v3)
+## 12. Sequencing (codex Q7) & open items
 
-- **Q1 — Live-app cap.** Is 3–4 concurrent live apps the right start, or should it scale with `deviceMemory`?
-  Interaction with pre-warm (a warmed reachable frame is a live app — does it count against the cap)?
-- **Q2 — Frame-type classifier.** Is "classify from the serialized DOM (node count / image-area / mermaid-SVG
-  / JS-liveness)" robust, or does a frame need to *declare* its class in frontmatter? What misclassifies (a
-  markdown page with one huge hero image; a mostly-static React page)?
-- **Q3 — Does crisp-DOM-in-motion actually hold on a heavy D board** without the raster crutch, given culling
-  + half-the-iframes + pool? If not, what's the *fidelity-preserving* fallback (smaller live cap? lower the
-  snapshot's own raster scale during motion via a crisp-preserving trick? cap max simultaneous D frames)?
-  Explicitly: is there any crisp option better than "just re-raster the DOM"?
-- **Q4 — Per-image LOD mechanism.** `srcset`/`sizes` vs JS `src` swapping vs a stepped derivative service —
-  which, given frames are arbitrary same-origin apps we don't control the markup of? Can we rewrite `<img>`
-  in the *snapshot* (which we do control) without touching the live app?
-- **Q5 — Pre-warm policy.** How many reachable frames to warm (prototype graphs can fan out), and the evict
-  order vs the interactive frame + LRU. Does pre-warm risk exceeding R3?
-- **Q6 — Mermaid parity edge cases.** Beyond capture-after-render + no-mode-chrome, any mermaid/theme/font
-  case where the inlined SVG still diverges from live (web-font metrics, `foreignObject` inside the SVG)?
-- **Q7 — Sequencing.** Is "remove raster (Stage 1) → pool (Stage 2)" safe, i.e. does removing the raster
-  regress motion enough to be unshippable before the pool lands, or is culling + crisp-DOM already
-  acceptable as an interim (0.5.x) while the pool is built?
+**Order (corrected):**
+1. **Post-raster real-board gate** — the current crisp-DOM + culling branch, run on the real boards above
+   (dev + published). If it passes, it ships as a **0.5.x interim** (correctness-safe: right visual, keeps
+   today's live fallback). It will NOT fix heavy-D motion (§9); that's fine for an interim.
+2. **Passive-Artifact Lifecycle** (§4) — the prerequisite for removing per-node live mounts.
+3. **Live-Lease Arbiter + pool** (§5) — lands atomically with §4.
+4. **Hybrid frame profiler** (§3).
+5. **Per-image LOD** (§6).
+6. **Pre-warm** (§5, reachable=1) + laser/comment-on-snapshot (§8).
+
+**Resolved decisions:** laser/comment = **snapshot-native** (§8). Heavy-D density = **accept honest lower FPS
++ optional visible-D cap**, never a bitmap (§9). Live cap = **3, fixed** (§5.1).
+
+**Remaining open (for the spike/build to settle):**
+- The exact background-compile scheduling cadence that keeps a heavy board's first-paint fast without janking.
+- Whether `incompatible`-frame emergency leases need their own smaller sub-cap so they can't starve the
+  interactive slot on a canvas/video-dense board.
+- Per-image LOD build-time derivative pipeline for CSS `background-image` (local assets only).
 
 ---
 
-*v3 written after Nic's frame-type-aware direction (2026-08-16), retracting the v1/v2 raster-primary bet.
-Reference: tldraw (DOM shapes + per-image LOD + activate-on-click) — the correct analog for a live-web-app
-canvas — over Figma/Miro raster tiles. Retains M5's serializer/renderer and the shipped culling + handoff.*
+*v3.1 = v3 (crisp-DOM-first, frame-type-aware, retract raster) + all codex P1s folded in (passive-artifact
+lifecycle, live-lease arbiter, promotion state machine, snapshot-native laser/comment, shell-driven image
+LOD, honest motion ceiling, capability-axis profiler, corrected real-board gates + sequencing). Retains M5
+serializer/renderer + shipped culling/handoff-primitive; motion raster-LOD removed. Reference: tldraw.*
