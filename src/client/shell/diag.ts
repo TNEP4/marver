@@ -103,10 +103,11 @@ function layers() {
   return report
 }
 
-/** A/B: restore the un-promoted pre-fix surface (body.mv-churn forces will-change:auto in CSS). */
+/** A/B: force-promote .sh-content (body.mv-churn -> will-change:transform). Reproduces the
+ *  blank/white-frame-at-high-zoom regression; default (off) leaves it un-promoted. */
 function churn(on: boolean): void {
   document.body.classList.toggle('mv-churn', on)
-  console.log(`[mvDiag] churn ${on ? 'ON (pre-fix: .sh-content un-promoted)' : 'OFF (fix: stable promoted layer)'}`)
+  console.log(`[mvDiag] promote .sh-content ${on ? 'ON (force will-change:transform - may blank frames at high zoom)' : 'OFF (default, un-promoted)'}`)
 }
 
 /** Bisection toggles - flip ONE, zoom, and see whether the whole-screen flash stops. */

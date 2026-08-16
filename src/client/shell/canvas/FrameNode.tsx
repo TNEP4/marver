@@ -176,8 +176,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       }
     }
     // Defer sh-gesturing until an ACTUAL drag begins (a bare click must not drop .sh-live
-    // pointer-events for nothing). The old jiggle this also guarded against is now moot -
-    // .sh-content is promoted permanently (styles.css), so no click ever promotes/demotes it.
+    // pointer-events for nothing, and must not promote/demote the compositor layer = the jiggle).
     let gesturing = false
     const begin = () => {
       if (gesturing) return
