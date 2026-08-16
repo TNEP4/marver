@@ -36,7 +36,7 @@ let lastAt = 0
 const world = () => document.getElementById('sh-world')
 const now = () => Math.round(performance.now())
 
-const GLASS = '.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head, .cm-card'
+const GLASS = '.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head, .cm-card, .cm-modal-wrap, .cm-modal'
 
 /** Elements whose backdrop-filter samples the canvas - the surfaces that flash white.
  *  Truly-visible only: a collapsed panel keeps its box (offsetParent) but is opacity:0. */

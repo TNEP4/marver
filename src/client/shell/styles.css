@@ -267,6 +267,12 @@ body.sh-cam:not(.mv-nofix) :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-f
   backdrop-filter: none; -webkit-backdrop-filter: none; background-color: var(--glass-solid) }
 body.sh-cam:not(.mv-nofix) .sh-node-head {
   backdrop-filter: none; -webkit-backdrop-filter: none }
+/* A modal (publish/invite) can coexist with a camera move: the global Shift+1/2 fit shortcuts
+   stay live when focus isn't in an input, and deep-link thread nav calls fitNode. The full-screen
+   .cm-modal-wrap blur scrim would then sample the moving canvas -> flash. Drop its blur too, but
+   keep its own backgrounds (scrim = translucent, card = near-opaque) - no opaque fill. (codex) */
+body.sh-cam:not(.mv-nofix) :is(.cm-modal-wrap, .cm-modal) {
+  backdrop-filter: none; -webkit-backdrop-filter: none }
 
 /* HEAVY-BOARD relief (the other half of the whole-viewport flash): while the camera moves, HIDE
    the live iframes on passive frames that already have a lean cover. A live frame (esp. a heavy

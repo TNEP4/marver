@@ -145,6 +145,8 @@ export function Canvas() {
   const camTimer = useRef(0)
 
   useEffect(() => { startPerf(); startDiag() }, [])   // B0.4: frame-time sampler (__mvPerf) + compositor diag (__mvDiag)
+  // never leave the camera flag (or its pending timer) behind if the canvas unmounts mid-move
+  useEffect(() => () => { clearTimeout(camTimer.current); document.body.classList.remove('sh-cam') }, [])
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
