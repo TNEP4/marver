@@ -22,8 +22,10 @@
  *   __mvDiag.noBlur(true)   ALL backdrop-filter off, always (is the blur the cause?)
  *   __mvDiag.solid(true)    the fix, but always on (opaque chrome, no blur)
  *   __mvDiag.leanOnly(true) hide the 15 live iframes ALWAYS (they are already auto-hidden during
- *                           a camera gesture; this forces it at rest too, to isolate GPU cost)
+ *                           a camera move; this forces it at rest too, to isolate GPU cost)
  *   __mvDiag.churn(true)    un-promote .sh-content (the pre-fix transformed-layer state)
+ *   __mvDiag.disableFix(true) turn the camera flash-fix OFF - blur + live stay on during zoom,
+ *                           so the ORIGINAL flash returns (the honest A/B for the fix itself)
  *   __mvDiag.reset()        clear every toggle
  */
 
@@ -34,7 +36,7 @@ let lastAt = 0
 const world = () => document.getElementById('sh-world')
 const now = () => Math.round(performance.now())
 
-const GLASS = '.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head'
+const GLASS = '.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head, .cm-card'
 
 /** Elements whose backdrop-filter samples the canvas - the surfaces that flash white.
  *  Truly-visible only: a collapsed panel keeps its box (offsetParent) but is opacity:0. */
@@ -46,23 +48,29 @@ function backdropEls(): HTMLElement[] {
   })
 }
 
+// combined signal: #sh-world gesture classes + a `cam` marker for body.sh-cam (the class the
+// flash fix actually keys off - set for EVERY camera path incl. programmatic setTransform).
+function camState(): string {
+  const wc = (world()?.className ?? '').split(/\s+/).filter((c) => c.startsWith('sh-'))
+  if (document.body.classList.contains('sh-cam')) wc.push('cam')
+  return wc.sort().join(' ')
+}
+
 function watch(): void {
   if (obs) return
   const w = world()
   if (!w) { console.warn('[mvDiag] #sh-world not mounted yet - retry after the board loads'); return }
-  lastClasses = w.className
+  lastClasses = camState()
   lastAt = now()
   obs = new MutationObserver(() => {
-    const cls = (world()?.className ?? '')
+    const cls = camState()
     if (cls === lastClasses) return
     const t = now()
     const before = new Set(lastClasses.split(/\s+/).filter(Boolean))
     const after = new Set(cls.split(/\s+/).filter(Boolean))
-    const added = [...after].filter((c) => !before.has(c) && c.startsWith('sh-'))
-    const removed = [...before].filter((c) => !after.has(c) && c.startsWith('sh-'))
     const parts: string[] = []
-    for (const c of added) parts.push(`+${c}`)
-    for (const c of removed) parts.push(`-${c}`)
+    for (const c of [...after].filter((c) => !before.has(c))) parts.push(`+${c}`)
+    for (const c of [...before].filter((c) => !after.has(c))) parts.push(`-${c}`)
     if (parts.length) {
       const content = document.querySelector('.sh-content') as HTMLElement | null
       const wc = content ? getComputedStyle(content).willChange : '?'
@@ -72,7 +80,8 @@ function watch(): void {
     lastAt = t
   })
   obs.observe(w, { attributes: true, attributeFilter: ['class'] })
-  console.log('[mvDiag] watching #sh-world class churn. Zoom now; each +sh-camera/-sh-camera brackets one canvas gesture (the window where the glass re-samples the surface below it).')
+  obs.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+  console.log('[mvDiag] watching camera state. Zoom/pan now; each +cam/-cam brackets the window where the flash fix drops the blur (body.sh-cam). +sh-camera/-sh-camera = the wheel/rzpp gesture cadence.')
 }
 
 function unwatch(): void { obs?.disconnect(); obs = null; console.log('[mvDiag] stopped') }
@@ -107,17 +116,18 @@ function bisect(cls: string, label: string) {
     console.log(`[mvDiag] ${label} ${on ? 'ON' : 'OFF'}`)
   }
 }
-const noBlur = bisect('mv-noblur', 'all backdrop-filter off')
-const solid = bisect('mv-solid', 'opaque chrome (the fix, always on)')
-const leanOnly = bisect('mv-leanonly', 'live iframes hidden')
+const noBlur = bisect('mv-noblur', 'all backdrop-filter off (always)')
+const solid = bisect('mv-solid', 'opaque chrome (always)')
+const leanOnly = bisect('mv-leanonly', 'live iframes hidden (always)')
+const disableFix = bisect('mv-nofix', 'camera flash-fix OFF (reproduce the flash)')
 
 function reset(): void {
-  document.body.classList.remove('mv-noblur', 'mv-solid', 'mv-leanonly', 'mv-churn')
+  document.body.classList.remove('mv-noblur', 'mv-solid', 'mv-leanonly', 'mv-churn', 'mv-nofix')
   console.log('[mvDiag] all toggles cleared')
 }
 
 export function startDiag(): void {
   const g = window as unknown as { __mvDiag?: unknown }
   if (g.__mvDiag) return
-  g.__mvDiag = { watch, unwatch, layers, churn, noBlur, solid, leanOnly, reset }
+  g.__mvDiag = { watch, unwatch, layers, churn, noBlur, solid, leanOnly, disableFix, reset }
 }

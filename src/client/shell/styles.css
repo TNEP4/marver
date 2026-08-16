@@ -253,39 +253,40 @@ body.sh-commenting .sh-lean { opacity: 0 }
   border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
   user-select: none; -webkit-user-select: none }
 
-/* WHOLE-VIEWPORT WHITE-FLASH FIX: while a CAMERA gesture (pan/zoom) is live, drop the
+/* WHOLE-VIEWPORT WHITE-FLASH FIX: while the camera is moving (body.sh-cam), drop the
    backdrop-filter on every glass surface. Recomputing ~17 blurred backdrops against the
    transforming canvas every frame is what makes Chrome blank the ENTIRE viewport (canvas,
-   frames, AND the fixed app chrome) white on zoom. Keyed off #sh-world.sh-camera - set by every
-   camera path, cleared 160ms after the last event - via :has(), so it reaches the app chrome
-   that lives OUTSIDE #sh-world. App chrome takes an opaque stand-in (it doesn't move, so the
-   swap is invisible); node headers only lose the blur (they're frame-themed - an app-glass fill
-   would flash the wrong color as they travel). Blur snaps back on settle, imperceptible because
-   the content was moving the whole time. __mvDiag toggles below bisect the cause on real GPUs. */
-body:has(#sh-world.sh-camera) :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update) {
-  backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--glass-solid) }
-body:has(#sh-world.sh-camera) .sh-node-head {
+   frames, AND the fixed app chrome) white on zoom. body.sh-cam is set from onTransformed
+   (Canvas.tsx) so it covers EVERY camera path - wheel, pinch, rzpp pan, AND programmatic
+   setTransform (toolbar zoom, fit, device preset, board switch, boot) - cleared 180ms after the
+   last transform. App chrome (and the app-themed comment card) take an opaque stand-in; node
+   headers only lose the blur (they're frame-themed - an app-glass fill would flash the wrong
+   color as they travel). background-color (not the shorthand) so the ::after edge sheen survives.
+   Blur snaps back on settle. __mvDiag.disableFix(true) removes this to A/B the flash. */
+body.sh-cam:not(.mv-nofix) :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .cm-card) {
+  backdrop-filter: none; -webkit-backdrop-filter: none; background-color: var(--glass-solid) }
+body.sh-cam:not(.mv-nofix) .sh-node-head {
   backdrop-filter: none; -webkit-backdrop-filter: none }
 
-/* HEAVY-BOARD relief (the other half of the whole-viewport flash): while a camera gesture is
-   live, HIDE the live iframes on passive frames that already have a lean cover. A live frame
-   (esp. a heavy Next.js app) keeps compositing even fully occluded by its lean - Chrome can't
-   prove an iframe is hidden across the frame boundary - so a zoom re-rasters all ~15 heavy
-   apps at once, spikes GPU memory, and the compositor evicts + repaints the whole frame white.
-   During a gesture you only SEE the lean (static DOM, 0 JS), so the live layer is dead weight:
-   drop it and the compositor scales cheap snapshots instead. Zero visual change (lean is opaque
-   on top); restored on settle. Guarded: not while interacting (live is the view), not in
-   laser/comment mode (lean is hidden there, so live IS the view). */
-body:not(.sh-laser):not(.sh-commenting) #sh-world.sh-camera .sh-node:has(.sh-lean[data-ready]):not(.interact) .sh-live {
+/* HEAVY-BOARD relief (the other half of the whole-viewport flash): while the camera moves, HIDE
+   the live iframes on passive frames that already have a lean cover. A live frame (esp. a heavy
+   Next.js app) keeps compositing even fully occluded by its lean - Chrome can't prove an iframe
+   is hidden across the frame boundary - so a zoom re-rasters all ~15 heavy apps at once, spikes
+   GPU memory, and the compositor evicts + repaints the whole frame white. During a gesture you
+   only SEE the lean (static DOM, 0 JS), so the live layer is dead weight: drop it and the
+   compositor scales cheap snapshots instead. Zero visual change (lean is opaque on top); restored
+   on settle. Guarded: not while interacting (live is the view), not in laser/comment mode (lean
+   is hidden there, so live IS the view). */
+body.sh-cam:not(.mv-nofix):not(.sh-laser):not(.sh-commenting) #sh-world .sh-node:has(.sh-lean[data-ready]):not(.interact) .sh-live {
   visibility: hidden }
 
 /* __mvDiag bisection kit - all default-off. Flip ONE during a zoom to isolate the flash:
-   noBlur = all blur off (is backdrop-filter the cause?) · solid = the fix, always on ·
-   leanOnly = hide the 15 live iframes (is it live-frame GPU cost?) · churn = un-promote layer. */
-body.mv-noblur :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head) {
+   noBlur = all blur off · solid = opaque chrome always · leanOnly = hide live iframes always ·
+   churn = un-promote the layer · nofix (disableFix) = turn the camera fix OFF to reproduce. */
+body.mv-noblur :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .sh-node-head, .cm-card) {
   backdrop-filter: none; -webkit-backdrop-filter: none }
-body.mv-solid :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update) {
-  backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--glass-solid) }
+body.mv-solid :is(.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update, .cm-card) {
+  backdrop-filter: none; -webkit-backdrop-filter: none; background-color: var(--glass-solid) }
 body.mv-leanonly .sh-live { visibility: hidden }
 
 /* edge light: a 1px gradient ring over the border, so glass reads as glass even

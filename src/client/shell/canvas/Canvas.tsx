@@ -142,6 +142,7 @@ export function Canvas() {
   const setScale = useStore((s) => s.setScale)
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   const scaleTimer = useRef(0)
+  const camTimer = useRef(0)
 
   useEffect(() => { startPerf(); startDiag() }, [])   // B0.4: frame-time sampler (__mvPerf) + compositor diag (__mvDiag)
 
@@ -354,6 +355,15 @@ export function Canvas() {
       // re-render happens per tick during a pan/zoom.
       onTransformed={(r) => {
         paintGrid(r.state.positionX, r.state.positionY, r.state.scale)
+        // camera-active flag for EVERY transform path. rzpp fires onZoomStart/Stop ONLY for its
+        // own wheel/pinch/pan; programmatic setTransform (toolbar zoom, fit, device preset, board
+        // switch, boot fit) never triggers them, so the flash fixes below - if keyed off the
+        // gesture callbacks - would miss every button-driven camera move. onTransformed fires for
+        // all of them. Debounced off 180ms after the LAST transform = one uniform settle for every
+        // path (no instant blur-back pop). The flash-fix CSS keys off body.sh-cam.
+        document.body.classList.add('sh-cam')
+        clearTimeout(camTimer.current)
+        camTimer.current = window.setTimeout(() => document.body.classList.remove('sh-cam'), 180)
         clearTimeout(scaleTimer.current)
         scaleTimer.current = window.setTimeout(() => setScale(r.state.scale), 120)
       }}
