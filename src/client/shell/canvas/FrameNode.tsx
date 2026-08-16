@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
 import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from './snapshots.ts'
+import { POOL, registerLC, unregisterLC, setInteractLC, liveMode, showPlaceholder, type LiveMode } from './lifecycle.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -28,6 +29,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const themeRef = useRef(node.theme)
+  // M6 pool mode: `lm` (reactive) = whether/how to mount this frame's live iframe - 'shown' (the real
+  // app is the view), 'hidden' (a background compile boot behind the placeholder), or null (no live
+  // doc; the crisp snapshot or placeholder is the view). Non-pool = always 'shown' (today's behaviour).
+  const [lm, setLm] = useState<LiveMode>(POOL ? null : 'shown')
   // src is frozen at mount: theme changes ride sh:set-theme (never navigation), so
   // frame state (forms, scroll, dialogs) survives a theme flip. Real file changes below.
   const initialSrc = useRef<string | null>(null)
@@ -86,6 +91,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // flip, so a theme change re-captures after the live frame re-renders (key includes theme).
   }, [node.status, node.nav, node.key, node.missing, node.theme])
   useEffect(() => () => dropSnapshot(node.key), [node.key])   // drop the snapshot on unmount
+  // M6: subscribe to the lifecycle coordinator (pool mode) - it drives whether the live iframe is
+  // mounted (via the arbiter), reported here as `lm`. Visibility is fed from cull() in Canvas.tsx.
+  useEffect(() => {
+    if (!POOL) return
+    const sync = () => setLm(liveMode(node.key))
+    registerLC(node.key, sync); sync()
+    return () => unregisterLC(node.key)
+  }, [node.key])
+  useEffect(() => { if (POOL) setInteractLC(node.key, interact) }, [interact, node.key])
   // a reload / file-swap / error takes the frame out of 'ready': drop its cover so a stale picture
   // never lingers (nav may not bump on a same-file reload). The next 'ready' re-captures.
   useEffect(() => { if (node.status !== 'ready') dropSnapshot(node.key) }, [node.status, node.key])
@@ -150,9 +164,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // ready timeout (spec §7): 10s without sh:ready -> error card with reload
   useEffect(() => {
     if (node.status !== 'loading') return
+    if (POOL && lm === null) return   // pool: a frame awaiting a compile slot isn't booting - don't time it out
     const t = setTimeout(() => setStatus(node.key, 'error', 'frame never reported ready (10s)'), 10_000)
     return () => clearTimeout(t)
-  }, [node.status, node.key, setStatus])
+  }, [node.status, node.key, setStatus, lm])
 
   const drag = (e: React.PointerEvent, mode: 'move' | 'e' | 's' | 'se') => {
     e.stopPropagation()
@@ -292,14 +307,29 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             </span>
           </div>
         ) : null}
-        <iframe
-          ref={bindIframe}
-          className="sh-live"
-          src={initialSrc.current ?? frameUrl(frame, node.theme)}
-          title={frame.id}
-          onLoad={registerWin}
-          style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
-        />
+        {/* M6 pool mode: a deterministic placeholder while a passive frame has no usable snapshot yet
+            (before/behind a compile boot). Never blank. Non-pool never shows it. */}
+        {POOL && showPlaceholder(node.key) && (
+          <div className="sh-ph" style={{ width: node.w, height: node.h }} aria-hidden>
+            <div className="sh-ph-bar" style={{ width: '55%' }} />
+            <div className="sh-ph-bar" style={{ width: '85%' }} />
+            <div className="sh-ph-bar" style={{ width: '70%' }} />
+          </div>
+        )}
+        {/* The live app iframe. Non-pool: always mounted ('shown'). Pool: mounted ONLY when the
+            lifecycle coordinator (via the arbiter) grants a lease - 'shown' (the view) or 'hidden'
+            (a background compile boot, behind the placeholder). Unmounts when the lease is released. */}
+        {lm !== null && (
+          <iframe
+            ref={bindIframe}
+            className="sh-live"
+            data-lm={lm}
+            src={initialSrc.current ?? frameUrl(frame, node.theme)}
+            title={frame.id}
+            onLoad={registerWin}
+            style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
+          />
+        )}
         {/* SPEC-M5 lean facade: a DOM-snapshot (static html, 0 JS) covering the live iframe only while
             the canvas is gesturing (CSS), so a heavy frame never flashes white mid-transform and the
             device sweep reflows correctly. sandbox WITHOUT allow-scripts = no JS runs; allow-same-origin

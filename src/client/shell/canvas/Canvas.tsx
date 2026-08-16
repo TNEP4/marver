@@ -4,6 +4,8 @@ import { CONFIG, useStore } from '../store.ts'
 import { bootHash } from '../hash.ts'
 import { startPerf } from '../perf.ts'
 import { startDiag } from '../diag.ts'
+import { POOL, setVisible, onSnapshotAdmitted } from './lifecycle.ts'
+import { onAdmit } from './snapshots.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 
 /**
@@ -93,6 +95,7 @@ function cull(px: number, py: number, scale: number) {
     if (off) culled.add(n.key); else culled.delete(n.key)
     const el = document.querySelector(`[data-node="${CSS.escape(n.key)}"]`) as HTMLElement | null
     if (el) el.toggleAttribute('data-cull', off)
+    if (POOL) setVisible(n.key, !off)                     // M6: feed on-screen visibility to the lifecycle coordinator
   }
 }
 
@@ -171,7 +174,7 @@ export function Canvas() {
   const scaleTimer = useRef(0)
   const camTimer = useRef(0)
 
-  useEffect(() => { startPerf(); startDiag() }, [])   // B0.4: frame-time sampler (__mvPerf) + compositor diag (__mvDiag)
+  useEffect(() => { startPerf(); startDiag(); if (POOL) onAdmit(onSnapshotAdmitted) }, [])   // B0.4: samplers + M6 snapshot→lifecycle admit hook
   // re-cull when the node set changes (new frames, moves) even if the camera hasn't moved
   useEffect(() => {
     const st = ref.current?.instance.transformState

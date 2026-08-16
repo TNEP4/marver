@@ -83,6 +83,13 @@ function restoreScroll(doc: Document, scrollMap: Entry['scrollMap']): boolean {
   return true
 }
 
+// M6 pool mode: the lifecycle coordinator needs to know when a snapshot is ADMITTED (ready) or the
+// frame is DEGRADED (must stay live = incompatible), so it can release/return the compile lease.
+// A single registered callback (wired at boot) keeps snapshots.ts free of a lifecycle import cycle.
+let admitCb: ((nodeKey: string, ok: boolean) => void) | null = null
+export function onAdmit(cb: (nodeKey: string, ok: boolean) => void): void { admitCb = cb }
+const admit = (nodeKey: string, ok: boolean): void => { admitCb?.(nodeKey, ok) }
+
 /** Install the stored snapshot into a node's lean iframe: parse srcdoc, then on load restore scroll,
  *  apply theme, and (only if nothing degraded AND fonts+paint have settled) mark ready. Every step is
  *  generation-guarded so a superseded capture or an about:blank reset never re-admits a cover. */
@@ -92,23 +99,24 @@ function install(nodeKey: string): void {
   iframe.onload = null                                     // detach any prior handler (about:blank reset can't re-admit)
   delete iframe.dataset.ready
   const e = byNode.get(nodeKey)
-  if (!e || e.degraded.length) { iframe.removeAttribute('srcdoc'); return }   // degraded = no cover, keep live
+  if (!e || e.degraded.length) { iframe.removeAttribute('srcdoc'); admit(nodeKey, false); return }   // degraded = no cover, keep live
   const myGen = e.gen
   iframe.onload = () => {
     if (genOf(nodeKey) !== myGen || frames.get(nodeKey) !== iframe) return    // superseded / remounted
     const cur = byNode.get(nodeKey)
     const doc = iframe.contentDocument
     if (!cur || !doc) return
-    if (!restoreScroll(doc, cur.scrollMap)) { cur.degraded = [...cur.degraded, 'scroll']; iframe.removeAttribute('srcdoc'); return }
+    if (!restoreScroll(doc, cur.scrollMap)) { cur.degraded = [...cur.degraded, 'scroll']; iframe.removeAttribute('srcdoc'); admit(nodeKey, false); return }
     // CSP guard (codex): if a hardened host blocked the inline <style> (style-src 'self'), the lean is
     // unstyled - the sentinel custom prop won't resolve. Stay live rather than show an unstyled cover.
-    if (getComputedStyle(doc.documentElement).getPropertyValue('--mv-lean-ok').trim() !== '1') { iframe.removeAttribute('srcdoc'); return }
+    if (getComputedStyle(doc.documentElement).getPropertyValue('--mv-lean-ok').trim() !== '1') { iframe.removeAttribute('srcdoc'); admit(nodeKey, false); return }
     applyTheme(doc, cur.theme)
     // font+paint readiness gate (F3): the srcdoc doc reloads fonts independently, so mark ready only
     // after its fonts settle + two paints, else a fallback-font seam shows on the swap.
     const markReady = () => {
       if (genOf(nodeKey) !== myGen || frames.get(nodeKey) !== iframe) return
       iframe.dataset.ready = '1'
+      admit(nodeKey, true)   // M6: snapshot admitted -> lifecycle can release the compile lease
       // slow-async guard: a data fetch / route change that lands AFTER the capture window would leave
       // the lean frozen on a loading state. ONE bounded re-capture ~3s after admit catches it; later
       // changes self-heal on focus. `rechecked` makes it truly one-shot - the recheck's own recapture
@@ -239,12 +247,13 @@ async function capture(nodeKey: string, live: HTMLIFrameElement, meta: SnapMeta)
   const nodeCount = doc.getElementsByTagName('*').length
   if (nodeCount > NODE_BUDGET) {
     tooHeavy.add(nodeKey); diagLog('lean-skip', `${nodeCount}nodes > budget - stay live · ${nodeKey}`)
+    admit(nodeKey, false)   // pool: too heavy to snapshot -> incompatible, stays live
     return
   }
   let result: SerializeResult
   const t0 = performance.now()
   try { result = serializeDoc(doc, doc.URL) }   // <base> = the frame's own URL, so relative url()/img/font resolve
-  catch { return }                              // fail soft: keep live pixels
+  catch { admit(nodeKey, false); return }       // fail soft: keep live pixels (pool: incompatible)
   const serMs = Math.round(performance.now() - t0)
   diagLog('serialize', `${serMs}ms ${nodeCount}nodes ${Math.round(result.cssBytes / 1024)}KB · ${nodeKey}`)
   // a serialise that blew the budget froze the app once; never serialise this frame again (recheck +

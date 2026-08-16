@@ -16,6 +16,13 @@
  */
 import { requestLease, releaseLease, touchLease } from './arbiter.ts'
 
+/** M6 pool mode is OFF by default (the working board is untouched). Opt in per-session with
+ *  `?pool` in the URL or `localStorage.mvPool='1'` while it's built + dogfooded. */
+export const POOL = (() => {
+  try { return typeof location !== 'undefined' && (/[?&]pool\b/.test(location.search) || localStorage.getItem('mvPool') === '1') }
+  catch { return false }
+})()
+
 export type Artifact = 'missing' | 'compiling' | 'ready' | 'incompatible' | 'error'
 export type LiveMode = 'shown' | 'hidden' | null   // shown = live is the view; hidden = compile boot; null = snapshot/placeholder
 

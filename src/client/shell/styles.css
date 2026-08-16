@@ -235,6 +235,16 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 body.sh-laser .sh-lean,
 body.sh-commenting .sh-lean { opacity: 0 }
 .sh-overlay { position: absolute; inset: 0; z-index: 2 }   /* above the lean (z1) so drag-by-body works; inherits the app arrow cursor */
+/* M6 pool mode: a deterministic placeholder (never blank) for a passive frame with no snapshot yet,
+   and the hidden compile-boot state (a live iframe booting behind the placeholder just to serialize). */
+.sh-ph { position: absolute; inset: 0; z-index: 0; background: var(--node-bg);
+  display: flex; flex-direction: column; gap: 14px; padding: 26px }
+.sh-ph-bar { height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg, var(--node-brd), color-mix(in srgb, var(--node-brd) 45%, transparent), var(--node-brd));
+  background-size: 200% 100%; animation: sh-ph-shimmer 1.4s ease-in-out infinite }
+@keyframes sh-ph-shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+@media (prefers-reduced-motion: reduce) { .sh-ph-bar { animation: none } }
+.sh-live[data-lm="hidden"] { opacity: 0; z-index: 0; pointer-events: none }   /* compile boot: behind the placeholder */
 .sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
   outline-offset: calc(-1px * var(--sh-inv, 1));
