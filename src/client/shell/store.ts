@@ -600,27 +600,38 @@ export const useStore = create<State>((set, get) => {
     measureNode(key, frameId, ownWidth, measuredWidth, height) {
       const s = get()
       const node = s.nodes.find((n) => n.key === key)
-      if (!node || node.sizeMode !== 'auto') return       // manual/device always win
+      // Only an explicit DEVICE viewport locks a content frame's height. 'auto' and 'manual' both
+      // auto-fit height: a content frame must always grow/shrink to show ALL its content, even after
+      // the human drags its WIDTH (SPEC-026 r4). 'manual' just means the human owns the WIDTH; the
+      // HEIGHT is still measured, so resizing width reflows and refits height (no clipped/empty frame).
+      if (!node || node.sizeMode === 'device') return
       if (node.frame !== frameId) return                  // generation guard: a reused node key
                                                           // across a board switch never mis-attributes
       const f = s.manifest?.frames.find((x) => x.id === node.frame)
       if (!f?.contentWidth) return                        // not a content frame - spoof-proofing
       if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return
-      const maxH = Math.round(2.5 * Math.max(844, ...Object.values(CONFIG.viewports).map((v) => v.height)))
-      // declared meta.viewport WINS over the Doc layout width - the existing precedence
-      const vpw = CONFIG.viewports[f.viewport ?? '']?.width
-      const W = vpw ?? Math.min(1600, Math.max(320, Math.round(ownWidth)))
+      // Generous cap: a reference doc with many screenshots is legitimately very tall and must fit in
+      // FULL (this was 2.5x a viewport ~= 2700px, which clipped image-heavy docs). Still bounded so a
+      // broken measurement can't mint an infinite frame.
+      const maxH = 40000
       const H = Math.min(maxH, Math.max(80, Math.round(height)))
       const curW = Math.round(node.w)
       measuredHeights.set(`${node.frame}@${Math.round(measuredWidth)}`, H)
-      if (Math.round(measuredWidth) !== curW) return      // height not true at the applied width
-      if (W !== curW) {
-        // Doc layout changed (document<->wide): adopt the new own width first; the
-        // iframe resizes, remeasures, and the height commits on the next message
-        set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, w: W } : n)) }))
-        scheduleReflow()
-        return
+      // AUTO owns the width too - adopt the Doc's declared/own width. MANUAL keeps the human's width
+      // and only fits the height.
+      if (node.sizeMode !== 'manual') {
+        // declared meta.viewport WINS over the Doc layout width - the existing precedence
+        const vpw = CONFIG.viewports[f.viewport ?? '']?.width
+        const W = vpw ?? Math.min(1600, Math.max(320, Math.round(ownWidth)))
+        if (W !== curW) {
+          // Doc layout changed (document<->wide): adopt the new own width first; the
+          // iframe resizes, remeasures, and the height commits on the next message
+          set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, w: W } : n)) }))
+          scheduleReflow()
+          return
+        }
       }
+      if (Math.round(measuredWidth) !== curW) return      // height only true at the width it was measured at
       if (Math.round(node.h) === H) return
       set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) }))
       scheduleReflow()

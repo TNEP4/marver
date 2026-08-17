@@ -158,7 +158,13 @@ body { margin: 0; }
    a whisper, not a card - the content pops, the block only frames it */
 .mv-block { margin: 0; padding: ${UNIT}px; border: 1px solid var(--mv-block-line);
   border-radius: 10px; background: var(--mv-block-bg); }
-.mv-block figcaption, .mv-img figcaption { font-size: 12.5px; color: var(--mv-faint); padding-top: 8px; }
+/* an image block is NOT a card: the screenshot IS the content. Drop the surface + border so we don't
+   frame a frame; give the image itself a hairline edge and a whisper of shadow so it reads as a clean,
+   distinct object on the page (no heavy double-border around browser mockups). */
+.mv-block.mv-img { padding: 0; border: none; background: none; }
+.mv-img .mv-img-el { border: 1px solid var(--mv-line-soft);
+  box-shadow: 0 1px 4px rgba(20, 22, 28, 0.07); }
+.mv-block figcaption, .mv-img figcaption { font-size: 12.5px; color: var(--mv-faint); padding-top: 10px; }
 .mv-diagram-svg { display: flex; justify-content: center; }
 .mv-diagram-svg svg { max-width: 100%; height: auto; }
 .mv-diagram-err { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--mv-muted);

@@ -332,7 +332,7 @@ export function Canvas() {
     <TransformWrapper
       ref={ref}
       minScale={0.05}
-      maxScale={2}
+      maxScale={5}
       limitToBounds={false}
       doubleClick={{ disabled: true }}
       // wheelDisabled is load-bearing: rzpp's onWheelPanning is a no-op without it, and
