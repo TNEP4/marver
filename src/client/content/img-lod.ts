@@ -57,6 +57,12 @@ async function decode(it: Item, bucket: number): Promise<void> {
   if (it.token !== token || !it.canvas.isConnected) { bmp.close(); return }   // superseded or unmounted
   const ctx = it.canvas.getContext('bitmaprenderer')
   if (!ctx) { bmp.close(); return }
+  // PIN the display aspect-ratio on the first decode and never change it. Different buckets round to
+  // slightly different integer dims (256x153 = 1.673 vs 1280x761 = 1.682), so if each drove height:auto
+  // the layout box would shift a hair on every resolution switch - the doc reflows, the content frame
+  // auto-resizes, and the frame "jiggles" as you zoom (and the reflow storm helped starve frames to a
+  // ready-timeout). A fixed aspect-ratio makes the box identical across buckets: only pixels sharpen.
+  if (!it.canvas.style.aspectRatio) it.canvas.style.aspectRatio = `${bmp.width} / ${bmp.height}`
   it.canvas.width = bmp.width; it.canvas.height = bmp.height
   ctx.transferFromImageBitmap(bmp)                         // zero-copy; consumes + closes the bitmap
   it.bucket = bucket
@@ -82,16 +88,20 @@ export function registerLodImage(canvas: HTMLCanvasElement, src: string): () => 
   return () => { items.delete(it); it.token++ }            // token bump drops any in-flight decode
 }
 
-// The shell posts camera transitions ONCE per gesture (never per animation frame). Freeze during motion;
-// re-pick every image's resolution to the settled zoom when it stops.
+// The shell posts camera transitions ONCE per gesture. Freeze during motion; re-pick every image's
+// resolution to the SETTLED zoom - but debounced, and cancelling any queued work from a prior settle, so
+// a fast zoom in-out-in doesn't stack decode waves across all frames (which starved the main thread and
+// timed frames out). The re-decode only fires once the camera has truly rested.
+let settleTimer = 0
 if (typeof window !== 'undefined' && lodSupported) {
   window.addEventListener('message', (e) => {
     if (e.origin !== location.origin) return
     const m = (e as MessageEvent).data as { type?: string; moving?: boolean; scale?: number } | null
     if (!m || m.type !== 'sh:camera') return
-    if (m.moving) { moving = true; return }
+    if (m.moving) { moving = true; clearTimeout(settleTimer); q.length = 0; return }   // new gesture: drop pending decodes
     moving = false
     if (typeof m.scale === 'number' && m.scale > 0) scale = m.scale
-    for (const it of items) refresh(it)
+    clearTimeout(settleTimer)
+    settleTimer = window.setTimeout(() => { if (!moving) for (const it of items) refresh(it) }, 220)
   })
 }
