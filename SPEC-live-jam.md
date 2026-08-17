@@ -1,4 +1,13 @@
-# SPEC — Live Jam (Phase 4) — v10 (contracts closed: batch model + ledger semantics + retry predicate)
+# SPEC — Live Jam (Phase 4) — v10.1 (internally consistent; remaining work is implementation)
+
+> **Status after 3 Codex review rounds + a night of spikes:** the *execution loop* is proven (real
+> agents, real files, real marver replay), every *safety contract* has a validated design, and the
+> spec is now internally consistent. **What remains is not spec design, it is implementation** — build
+> the daemon + the auth ledger + the batch journal per this spec — plus TWO honestly-stated residuals:
+> (1) within-batch file non-overlap is **orchestrator-assigned, not OS-enforced** (P2/P3
+> filesystem-allowlist hardening); (2) the live **Q7 render/glow** UI is unbuilt (build-then-test). A
+> fourth solo review round would keep finding finer nuances asymptotically; the right next step is to
+> **build P1 against this spec** — code forces the last decisions faster than more prose.
 
 **One line:** Tag `@marver` in a comment and the coding agent that started your local dev session
 picks it up, acts on the code, and replies in the thread. You review by pointing; it builds by
@@ -132,8 +141,8 @@ sections below.** Full detail + evidence in `DERISK-live-jam.md`.
 4. ✅ **RESOLVED (spiked) — recovery = fence + goal-phrased re-run.** Files stay valid under a
    mid-job kill (atomic edits); re-running the *goal-phrased* job reconciles partial state without
    double-applying. Requirements: **kill the process group** before reclaim, and **phrase jobs as
-   goals not diffs**. (Original text below.) Kill the process group before reclaim, pre/post
-   file hashes, classify no-edits / applied-but-lost / safe-to-retry.
+   goals not diffs**. The completion predicate is a captured `{status:ok}` result with a reply per
+   member (§3.2) — not pre/post hashes (that earlier approach is superseded).
 5. ✅ **RESOLVED — one daemon-captured result `{ reply, reanchors[], status }`.** §3.3 rewritten to the
    spawn model (no pull loop); §3.4 rewritten to the single portable structured result the daemon
    captures and writes (reply + reanchors) in-process; token CLI is optional (interim replies only).
@@ -186,14 +195,14 @@ v2 makes it a first-class rule.
   informational-only (not trusted for auth) — or dropped. Non-owner `@marver` mentions **never
   auto-trigger** a job.
   **[v10] Precise ledger semantics** (Codex v9): (a) it keys on the **event id** of each accepted local
-  write, and the daemon matches a *trigger candidate* by the id of the specific create/reply/**edit**
-  event that carries the `@marver` text — so an **edit that adds `@marver` to an existing comment must
-  be separately ledgered** (its own edit-event id), not inherit the create's authorization; (b)
-  **agent-written events are never ledgered** (they're daemon-authored, not owner input, so they can't
-  self-authorize a next job — this also backstops the recursion guard §4); (c) **fail-closed
-  atomicity:** the dev POST appends+fsyncs the event *first*, then records its id in the ledger; a
-  crash between the two leaves the event present-but-unauthorized (won't trigger) — the safe direction,
-  the owner just re-tags. The ledger file (`design/.local/jam-ledger`) is gitignored and never synced.
+  write, and only **new `create`/`reply` events** are trigger candidates — matched by the id of the
+  event that carries the `@marver` text. **Edits never trigger** (consistent with §2/§4): to ask
+  Marver about an existing comment, add a *reply*, don't edit the body. (b) **Agent-written events are
+  never ledgered** (daemon-authored, not owner input, so they can't self-authorize a next job — this
+  also backstops the recursion guard §4). (c) **Fail-closed atomicity:** the dev POST appends+fsyncs
+  the event *first*, then records its id in the ledger; a crash between the two leaves the event
+  present-but-unauthorized (won't trigger) — the safe direction, the owner just re-tags. The ledger
+  file (`design/.local/jam-ledger`) is gitignored and never synced.
 - **[v10] Trigger vs context (aligned with §3.7).** An **owner-ledgered** comment (§1 ledger) with
   `@marver` is a trigger — it creates a job. A **non-owner** comment is **context the agent may read
   but never act on autonomously**; turning it into a job requires **explicit owner promotion** (the
@@ -205,9 +214,10 @@ v2 makes it a first-class rule.
   - Anyone else's `@marver` → plain weight, muted — read like any comment, not a mechanical command.
   The renderer decides bold-vs-plain by comparing the comment's `author.email` to the session owner's
   email (both already available client-side), not by string-matching the word.
-- **[v7] Tooltip on the plain `@marver`** (teaching colleagues): *"Read like any other comment. It
-  won't trigger Marver on its own — Marver may still pick it up if it decides to."* This clarifies that
-  a teammate's mention does nothing mechanically, and teaches that **all** comments are read.
+- **[v10] Tooltip on the plain `@marver`** (teaching colleagues): *"Read like any other comment.
+  Marver won't act on this unless the owner promotes it."* This clarifies that a teammate's mention is
+  context Marver reads but never acts on autonomously; the owner must promote it (tag or click) to make
+  it a job (§3.7). It teaches that **all** comments are read, and that only the owner triggers action.
 - **The body is untrusted data** even from the owner (they may paste text, or an element quote may
   contain adversarial content). The agent is always told the comment is user data, not instructions
   (§8, §5).
@@ -274,12 +284,16 @@ loop; the agent owns the thinking.
   which is idempotent *because jobs are phrased as goals* ("make the CTA say X"), not diffs. Two
   requirements this pins: **the daemon must phrase jobs as goals**, and **agents must write atomically**
   (rename) — true of Claude/Codex. The reply is deduped by event id (`comments.ts:42`) regardless.
-- **[v10] Completion predicate + target set** (Codex v9 asked for both). The **target set is the
-  batch's thread ids** (the packet lists exactly which mentions the job must address, §3.3). The
-  **completion predicate is a captured structured result** (§3.4) with `status:'ok'` **and a reply for
-  every batched thread**; only then does the daemon write the replies and mark `done`. A killed/failed
-  run leaves no captured result → the batch is re-run (goal-phrased, so already-done frames are
-  no-ops). This makes "done" a deterministic check on the daemon side, not a guess about file state.
+- **[v10.1] Batch durability + completion** (Codex v10 NEW holes). A **batch** is a first-class
+  durable record: `{ batchId, memberEventIds[] (frozen at spawn), state, leaseUntil, attempts }`. The
+  **target set is the member EVENT ids** (not thread ids — two `@marver` events in one thread are two
+  distinct members, §2). Claiming a batch is an **atomic multi-event claim** (all members → `claimed`
+  under `batchId`, one journal write). The daemon's result (§3.4) reports **per-member**
+  `{ eventId, reply, reanchors[], status }`; the **completion predicate is: every member has
+  `status:ok` + a reply**. **Partial failure is per-member:** members with `ok` are written + marked
+  `done`; failed members are retried (goal-phrased, so `done` ones are no-ops on re-run) up to
+  `attempts`, then get an individual "couldn't do that" reply — never one blanket failure for the
+  batch. Mentions arriving mid-batch join the **next** batch (membership is frozen at spawn).
 **3.3 Orchestration — the daemon BATCHES mentions into one orchestrated job  [v10, corrects the parallel-UX contradiction]**
 (Supersedes the earlier `marver jam next` pull loop AND the "one serialized job per mention" of v9.)
 > **Why batch:** Codex caught that "one job per mention, serialized across jobs" would kill the core
@@ -297,9 +311,13 @@ loop; the agent owns the thinking.
   batch's mentions (§5, §3.2). That run reads context (`nearby`, screenshot, code, §15), then either
   edits a frame itself or **spawns subagents, one per frame** (Claude/Cursor/OpenCode/Factory can; the
   orchestrator assigns each subagent a distinct frame — its job to avoid overlap, §12). **Codex has no
-  in-process subagents**, so a Codex batch runs the frames sequentially in one `codex exec` (correct,
-  slower), or the daemon spawns one `codex exec` per frame only after confirming the frames are
-  file-disjoint. The daemon delivers the batch; the spawned agent orchestrates within it.
+  in-process subagents**, so a Codex batch runs its frames **sequentially in one `codex exec`**
+  (correct, just slower — no parallel-frame glow for Codex). Parallel Codex is a harness-conditional
+  P2 (would need enforced write allowlists, since disjointness can't be known a priori). The daemon
+  delivers the batch; the spawned agent orchestrates within it.
+- **[v10] Parallelism is harness-conditional (stated honestly):** the live "several frames at once"
+  glow requires a **subagent-capable** adapter (Claude/Cursor/OpenCode/Factory). Codex is correct but
+  sequential. This is a capability difference to surface in the UI, not hide.
 - **Continuity** across a jam via `--resume <session_id>` / `codex exec resume` is a **P2**
   optimization (**spiked** — `claude -p --resume` recalled a fact across two spawned runs,
   `scratchpad/spike-resume`); P1 cold-starts per job (CLAUDE.md/AGENTS.md re-load the conventions, §16).
@@ -420,15 +438,13 @@ so an author mismatch would poison a board's sync batch. The fix is to stop inve
 - **`agent: true` is modeled end to end:** add optional `agent?: boolean` to `CommentEvent`
   (`events.ts:9`) and carry it through `replay` onto the `Thread`/reply objects (`events.ts:54`) so
   rendering, the recursion guard (§4), and notifications (§9) can all key off it — never off the name.
-- **[v5] The daemon is the ONLY writer of `agent:true`, via a job-token loopback (§3.4).** A worker
-  (the main agent or a subagent) cannot call `appendEvents` directly (separate process), so it posts
-  `marver jam reply <thread> <body>` → the daemon's loopback endpoint, carrying the **one-time job
-  token** the daemon minted for that job. The daemon validates the token and **appends the reply
-  in-process** via `appendEvents` (`comments.ts:42`), stamping owner-author + `agent:true` +
-  `origin:'local'`. The token is what authenticates "this really is the agent for this job," so the
-  flag can never be forged from a page. (In the Codex-spawn path the daemon can equally capture the
-  process's final structured output and write it the same way; the token CLI is the general path that
-  also serves subagents and interim replies.)
+- **[v10] The daemon is the ONLY writer of `agent:true`, PRIMARY path = capture the structured
+  result (§3.4).** The spawned agent returns `{ reply, reanchors[], status }`; the daemon captures it
+  and **appends the reply + reanchor events in-process** via `appendEvents` (`comments.ts:42`),
+  stamping owner-author + `agent:true` + `agentMeta`. This is portable (no model-invoked write needed).
+  The `marver jam reply` **token loopback is the OPTIONAL secondary path** (Claude/Cursor only) for
+  *interim/progress* replies mid-run — never the primary, never required. In both paths the daemon is
+  the sole writer, so the flag can never be forged from a page.
 - **[v3] The public dev POST must strip client-set `agent:true` and `origin`.** The existing
   `POST /__mv/api/comments/<board>` preserves caller-supplied fields (`api.ts:178`), so it must be
   changed to **reject/blank any client-supplied `agent` flag or origin marker** — only the daemon's
