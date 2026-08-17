@@ -4,6 +4,7 @@ import { CONFIG, useStore } from '../store.ts'
 import { bootHash } from '../hash.ts'
 import { startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
+import { startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.
@@ -142,7 +143,7 @@ export function Canvas() {
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   const scaleTimer = useRef(0)
 
-  useEffect(() => { startPerf() }, [])   // B0.4: frame-time sampler (window.__mvPerf)
+  useEffect(() => { startPerf(); startCameraBroadcast() }, [])   // B0.4: frame-time sampler + image-LOD camera signal
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
@@ -353,6 +354,7 @@ export function Canvas() {
       // re-render happens per tick during a pan/zoom.
       onTransformed={(r) => {
         paintGrid(r.state.positionX, r.state.positionY, r.state.scale)
+        setCameraScale(r.state.scale)   // keep the LOD's settle-scale current (cheap number write, no React)
         clearTimeout(scaleTimer.current)
         scaleTimer.current = window.setTimeout(() => setScale(r.state.scale), 120)
       }}

@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CONTENT_WIDTH } from '../const.ts'
 import { assetUrl, renderMarkdown, FAMILIES } from './md.ts'
+import { lodSupported, registerLodImage } from './img-lod.ts'
 
 // D3: family color classes for inline Md (`:blue[...]`), theme-aware (frames carry .dark + [data-theme])
 const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
@@ -79,6 +80,14 @@ export function Md({ children }: { children?: ReactNode }) {
 export function Img({ src, caption, alt, h }: { src: string; caption?: string; alt?: string; h?: number }) {
   const url = assetUrl(src)
   const [err, setErr] = useState(false)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  // LOD: paint the image on a <canvas> decoded to its on-screen size (never the full 17MB bitmap), and
+  // re-pick resolution only when the canvas settles after a zoom. See img-lod.ts. Falls back to a plain
+  // <img> where createImageBitmap/bitmaprenderer isn't available (correctness over the optimization).
+  useEffect(() => {
+    if (!url || err || !lodSupported || !canvasRef.current) return
+    return registerLodImage(canvasRef.current, url)
+  }, [url, err])
   if (!url || err) {
     return (
       <div className="mv-block mv-imgerr">
@@ -88,13 +97,14 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
       </div>
     )
   }
+  // h: shared rendered height for a row of mixed-aspect images - equal widths alone never make unequal
+  // images READ equal; cover-crop to one height does.
+  const style = h ? { height: h, width: '100%', objectFit: 'cover' as const } : undefined
   return (
     <figure className="mv-block mv-img">
-      {/* h: shared rendered height for a row of mixed-aspect images - equal widths
-          alone never make unequal images READ equal; cover-crop to one height does */}
-      <img src={url} alt={alt ?? caption ?? ''} loading="lazy"
-        style={h ? { height: h, width: '100%', objectFit: 'cover' } : undefined}
-        onError={() => setErr(true)} />
+      {lodSupported
+        ? <canvas ref={canvasRef} className="mv-img-el" role="img" aria-label={alt ?? caption ?? ''} style={style} />
+        : <img className="mv-img-el" src={url} alt={alt ?? caption ?? ''} loading="lazy" style={style} onError={() => setErr(true)} />}
       {caption && <figcaption>{caption}</figcaption>}
     </figure>
   )
@@ -151,7 +161,7 @@ body { margin: 0; }
   font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .mv-diagram-err b { color: #E0402F; font-family: inherit; }
 .mv-diagram-err .dim, .mv-imgerr .dim { color: var(--mv-faint); font-size: 12px; }
-.mv-img img { display: block; max-width: 100%; border-radius: 6px; }
+.mv-img .mv-img-el { display: block; width: 100%; height: auto; max-width: 100%; border-radius: 6px; }
 .mv-imgerr { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--mv-muted); }
 .mv-imgerr b { color: #E0402F; }
 

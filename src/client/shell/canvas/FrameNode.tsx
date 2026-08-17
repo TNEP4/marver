@@ -4,6 +4,7 @@ import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
+import { primeCameraFor } from './camera-broadcast.ts'
 import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from './snapshots.ts'
 
 export const HEADER = 28
@@ -126,6 +127,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (node.status === 'ready' || !interact)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: interact }, location.origin)
   }, [interact, node.status])
+  // image-LOD: once the frame is ready its content listener is live, so send the settled zoom - a static
+  // board that never gets a gesture then still sharpens its images from the cheap low-res first paint.
+  useEffect(() => {
+    if (node.status === 'ready') primeCameraFor(iframeRef.current?.contentWindow)
+  }, [node.status])
 
   // a frame whose FILE actually changed (e.g. tsx -> html swap, same id) must renavigate
   useEffect(() => {

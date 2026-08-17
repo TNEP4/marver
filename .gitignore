@@ -8,3 +8,4 @@ dist/
 
 # local-only archive (dev harnesses etc, never shipped)
 .archive/
+spike/
