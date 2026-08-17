@@ -1,214 +1,182 @@
-# Live Jam — overnight de-risking report
+# Live Jam — de-risking complete, build plan
 
-Branch `feat/live-jam` (off 0.7.0 `7601b8b`). Run: 2026-08-17 night, autonomous.
-Goal: turn the risky assumptions into evidence so we can nail Live Jam end to end.
-Nothing pushed or merged; main untouched; all spikes throwaway in scratchpad; the one
-real code change (`events.ts`) is committed on this branch with tests.
+**Read this to start building.** Branch `feat/live-jam` (off 0.7.0). Spec: `SPEC-live-jam.md` v10.1.
+Overnight run: 10+ spikes with real agents + 3 Codex review rounds. 12 commits, 109 tests green, main
+untouched.
 
-## Bottom line
+---
 
-**The execution loop works — proven with real agents editing real files. The safety contracts
-do not yet, and that's the honest headline.** The single biggest *execution* unknown (does the
-daemon→agent→edit→reply loop hold?) is now a green spike, and the runtime model got one important
-correction (daemon-spawn-per-job). But a Codex adversarial review of the v8 spec found that the
-**authorization, concurrency, and crash-recovery contracts are not safe to build yet** — exactly the
-parts a happy-path spike can't touch. So:
+## TL;DR
 
-- **Confidence the loop/execution works: high (~80%)** — spiked, real agents, real marver.
-- **Confidence in "build P1 as currently specified": NOT yet** — three contracts must be nailed
-  first (below). Pre-night I'd have said ~25-35% on a blind one-shot; the night's real result is
-  better than that number implies (the core is proven) *and* more sobering (the spec's safety
-  contracts need a design pass before code). We now know precisely what to fix, which was the goal.
+The risky unknown is retired: **the loop works** (proven with real `claude -p`/`codex exec` editing
+real marver frames in parallel, replies replayed by marver). The architecture got three important
+corrections. Every safety contract now has a validated design. The **event-model foundation is already
+built and tested on the branch.** What remains is **implementation** (the daemon + ledger + batch
+journal + UI), not design. **Confidence in a clean P1: ~65-70%** (up from ~25-35% pre-night); the loop
+itself ~80%.
 
-## What was proven (spikes, real agents, real files)
+---
 
-| # | Question | Result |
-|---|----------|--------|
-| Q1 | Headless edit works? | **YES.** `claude -p … --permission-mode acceptEdits --allowedTools … --output-format json` and `codex exec --json -s workspace-write -o <msg>` both edit files with no prompt hang; session/thread id + final message captured. |
-| Q2 | The daemon-spawn loop holds? (the crux) | **YES.** A real daemon spawned **2 `claude -p` in parallel** on disjoint frame files; both edited correctly; daemon captured + posted `agent:true` replies. **14s for two parallel jobs.** |
-| Q8 | Real-marver integration? | **YES.** Real `marver init` project: real `design/comments/…jsonl` → daemon → `claude -p` edited a real `design/scenes/demo/welcome.tsx` → real reply event → **`marver comments list` replayed it**. |
-| Q8b | Dev server serves the reply? | **YES.** `GET /__mv/api/comments/<board>` returned the daemon-written reply with `agent:true` intact — the client will get it on poll. |
-| Provenance | Can we show who orchestrated? | **YES.** `claude -p` JSON carries `canonicalModel` (`claude-opus-5`); the daemon stamped `agentMeta{devUser,harness,model,effort}` for the avatar tooltip. |
-| Q4/Q5 | Event-model extensions integrate? | **YES.** `events.ts` now has `reanchor` + `agent`/`agentMeta`/`origin`, carried through `replay`; **108 tests pass, typecheck clean** (committed `e07f249`). |
+## The architecture to build (final, validated)
 
-## The architecture correction (the most valuable finding)
+One loop, one page:
 
-**Daemon-spawn-per-job, not a main-agent pull loop.** No coding agent — Claude Code, Codex,
-Cursor, OpenCode, Factory — sustains a self-driven `marver jam next` pull loop; all are
-one-shot headless. So the daemon owns the loop and **spawns one headless agent per job**; the
-spawned run is the "main agent" (decides, edits, and — Claude Code / Cursor / OpenCode /
-Factory — spawns subagents). And **the daemon posts the reply** (captures the agent's final
-output) as the portable default, because Codex `workspace-write` blocks network and Antigravity
-soft-denies shell, so a model-invoked reply CLI is not portable. Nic's intent (daemon → powerful
-main agent that decides + fans out subagents) is preserved; only the delivery changed. The spec's
-"VALIDATED ARCHITECTURE" block captures this and supersedes the earlier pull-loop model.
+```
+ owner comment (@marver, ledgered)          the marver dev server = the daemon
+        │                                    ┌───────────────────────────────────────┐
+        ▼                                    │ 1 watch design/comments/*.jsonl         │
+ design/comments/<board>.jsonl  ───────────▶ │ 2 owner-gate via device ledger (by id)  │
+        ▲                                    │ 3 BATCH pending mentions → 1 durable job │
+        │ daemon appends                     │ 4 spawn ONE headless agent for the batch │
+ reply + reanchor events                     │ 5 agent edits frames / fans out subagents│
+ (owner-authored + agent:true + agentMeta)   │ 6 capture {reply,reanchors[],status}     │
+        │                                    │ 7 append results in-process; mark done   │
+        ▼                                    └───────────────────────────────────────┘
+ client polls → renders reply + live frame            spawned agent = claude -p / codex exec /
+ update + "working" glow + notification                cursor-agent … (one flag adapter each)
+```
 
-## Agent compatibility matrix
+**The decisions that define it:**
+- **The daemon is the marver dev server** (already long-lived, owns the log). No new infra.
+- **Owner auth = a device-bound ledger.** When the dev POST accepts a local browser write, it records
+  that **event id** in `design/.local/jam-ledger` (gitignored, never synced). Trigger = a new
+  `create`/`reply` whose id is in the ledger and whose body has `@marver`. (A synced `origin` field
+  can NOT gate — it copies byte-for-byte; proven RCE.)
+- **Daemon-spawn-per-batch, not a pull loop.** No agent sustains a self-driven loop. The daemon
+  **batches the currently-pending owner mentions into ONE orchestrated job** and spawns one headless
+  agent. Parallelism = **subagents within the batch** (one per frame) → several frames build at once
+  (the UX). Batches serialize (mid-batch arrivals form the next batch).
+- **The daemon posts the reply** — it captures the agent's structured `{reply, reanchors[], status}`
+  and writes reply + reanchor events in-process (owner-authored + `agent:true` + `agentMeta`). Portable
+  across every agent (a model-invoked reply CLI isn't — Codex blocks network, Antigravity blocks shell).
+- **Recovery = fence + goal-phrased re-run.** Files stay valid under a kill (atomic edits); re-running
+  the goal-phrased batch reconciles partial state. So: kill the process group before reclaim; phrase
+  jobs as goals, not diffs; completion = captured `{status:ok}` + a reply per member.
+- **CLI-agnostic.** `jam.agent` picks the adapter; one flag differs per agent. GUI harnesses
+  (Conductor, t3.code, Cursor IDE) are orthogonal — the daemon spawns the CLI underneath.
+- **Instructions ship as `design/AGENTS.md`** (read natively by Codex/Cursor/OpenCode/Factory) + a
+  root `CLAUDE.md` that `@`-imports it (Claude reads CLAUDE.md). `marver init` already scaffolds
+  `design/AGENTS.md`.
+- **Provenance:** every agent event carries `agentMeta {devUser, harness, model, effort}` → tooltip on
+  the Marver avatar. The `claude -p` JSON already exposes `canonicalModel`.
 
-**Reframing (corrected after review): Live Jam integrates with a CLI, not a harness.** The daemon
-spawns an agent CLI itself; it never hooks into the user's GUI or running session. So the only real
-requirement is **a local, spawnable, file-editing agent CLI, installed and authed**. That reframes the
-two "won't work" rows: Conductor and t3.code are GUI *wrappers around exactly these CLIs* (Conductor
-spawns the real `claude` binary; t3.code is built on the Codex CLI), and CLI auth is machine-level and
-shared. So **a Conductor / t3.code / Cursor-IDE user is fully supported** — Live Jam spawns the CLI
-underneath, orthogonal to whatever GUI they use for manual work. The *only* genuinely out-of-scope case
-is a **purely-cloud agent with no local file access** — and that's physics (it can't edit your local
-files), not a Live Jam limitation. So the matrix below is really "which CLI does the daemon spawn,"
-selected by one `jam.agent` config line.
+---
 
-| Agent CLI | Verdict | Shape / note |
+## What's proven (evidence)
+
+| Spike | Result | Where |
 |---|---|---|
-| **Claude Code** | ✅ WORKS | `claude -p` per job. Subagents work (AGENTS.md→CLAUDE.md import). Reads CLAUDE.md. |
-| **Cursor** (primary) | ✅ WORKS | `cursor-agent -p --force --output-format json`. Reads AGENTS.md+CLAUDE.md. MCP. Needs `CURSOR_API_KEY` (paid). Watch: `--force` unattended; forum bug "CLI doesn't release terminal" → validate exit. |
-| **Codex** | ✅ WORKS | `codex exec --json -s workspace-write -o <msg>`. Reads AGENTS.md. **workspace-write blocks network** → daemon posts reply. Parallel needs care (no work isolation). |
-| **OpenCode** | ✅ WORKS | `opencode run --agent …`; native AGENTS.md; MCP; first-class subagents; `serve`/`--attach` for warm. |
-| **Factory Droid** | ✅ WORKS (best drop-in) | `droid exec … --auto low --output-format json`; native AGENTS.md; MCP; worktree parallel. |
-| **Antigravity** (`agy`) | ⚠️ WORKS-with-tweak | `agy -p … --output-format json`; shell soft-denied headless → allowlist reply cmd OR daemon posts. AGENTS.md support unverified. |
-| **Conductor** user | ✅ via CLI | Conductor is a GUI that spawns the real `claude` binary; the daemon spawns `claude -p` directly. The user is supported; Conductor is orthogonal. |
-| **t3.code** user | ✅ via CLI | Built on the Codex CLI; the daemon spawns `codex exec` directly (same auth/subscription). Supported; t3.code is orthogonal. |
-| _(pure-cloud agent, no local CLI)_ | ❌ | Can't edit local files at all → out of scope by physics, not a Live Jam gap. |
+| Headless edit (Claude + Codex) | ✅ edit files, no prompt, session id captured | `spike-runtime` |
+| Daemon-spawn parallel loop (the crux) | ✅ 2 `claude -p` in parallel, both frames, 14s | `spike-loop` |
+| Real-marver integration | ✅ comment → agent edit → reply → `marver comments list` replay | `marver-test` |
+| Dev server serves the reply | ✅ `GET …/comments` returns the `agent:true` reply | `marver-test` |
+| CLI-swap | ✅ same daemon, `JAM_AGENT=codex`, 2 parallel edits | `spike-loop` |
+| Same-frame parallel | ⚠️ a **race** (both landed only by luck) → serialize | `spike-loop` |
+| Crash recovery | ✅ file stays valid; goal-phrased re-run reconciles | `spike-crash` |
+| Owner-auth ledger | ✅ defeats the synced-`origin` RCE spoof | `spike-auth` |
+| Session-resume continuity | ✅ context carried across two spawned runs | `spike-resume` |
+| Instruction delivery | ✅ root `CLAUDE.md` `@import` delivers `design/AGENTS.md` | `marver-test` |
 
-All the ✅ ride ONE contract (daemon-spawn-per-job + daemon-posts-reply); per-agent differences
-are a single adapter of flags (e.g. Codex needs `--skip-git-repo-check` outside a git dir; Factory
-needs `--auto low`). **Instructions ship as `design/AGENTS.md`** — which `marver init` already
-scaffolds, so Live Jam extends an existing convention rather than inventing one.
+---
 
-## What is NOT yet proven (the remaining risk, ranked)
+## Already built on the branch (done + tested)
 
-1. **Live in-browser render + working glow without losing camera (Q7).** The data + server paths
-   are proven; the visual "watch it build live, frame glows, camera holds" needs the client
-   changes + a browser test. Lower risk (built on existing marver HMR + camera-preservation that
-   the earlier code map showed is friendly), but unproven tonight.
-2. **Durable job queue edge cases (Q6).** Activation baseline, per-frame lease, flock, atomic
-   write, crash-mid-edit recovery. Ordinary code, designed in the spec, not spiked. Medium risk.
-3. **Same-tree parallelism beyond disjoint frames.** Two frames importing one shared component,
-   or `package.json`, must serialize under a per-path lease. Proven for disjoint files; the
-   shared-file path needs the lease implementation. Codex is riskiest (no work isolation).
-4. **Cursor live smoke test.** Verdict is from docs; needs a real `cursor-agent -p` run (and the
-   "terminal not released" bug check) before we claim Cursor parity.
+- **Event model** (`src/shared/events.ts`): `reanchor` type; `agent` / `agentMeta` / `origin` fields;
+  `replay` carries `agent`/`agentMeta` onto root + replies and applies `reanchor` to the thread anchor.
+- **Published validator** (`src/server/collab.ts`): accepts + validates `reanchor` (root target,
+  non-null anchor, author-owned); **rejects client-set `agent`/`agentMeta`** (anti-forge).
+- **Dev POST** (`src/server/api.ts`): strips client-set `agent`/`agentMeta`/`origin`.
+- **Sync** (`src/server/sync.ts`): filters `agent:true` events out of the push set (dev-local in v1).
+- Tests: `test/unit.test.ts` covers agent/agentMeta passthrough, `reanchor` re-pin, null-anchor guard.
+  **109 pass, typecheck clean.**
 
-## Codex review of v8 — the safety contracts to nail (before P1)
+---
 
-Codex reviewed the v8 spec + the `events.ts` change adversarially. It confirmed the happy path but
-raised six [P1]s. These are correct and mostly things this run introduced or left contradictory:
+## P1 build plan (ordered, file-grounded)
 
-1. **[P1] Owner authorization can't be a synced event field.** `origin:'local'` is stamped on *any*
-   accepted local POST (a same-origin frame just asks the server to add it — no forgery needed), and
-   sync carries `origin` byte-for-byte, so another checkout pulls an event still marked `local`. Fix:
-   a **daemon-local authorization ledger keyed by event id** (or a device-bound marker that never
-   syncs) — not a persisted `origin` field. *(This invalidates the v3 origin design.)*
-2. **[P1] Proactive pickup reopens the RCE boundary.** Under daemon-spawn there is no persistent
-   human orchestrator; an idle tick acting on non-owner text = mechanically spawning a privileged
-   model because remote text exists. Model judgment + after-the-fact diff review ≠ owner
-   authorization. Fix: non-owner comments are **context only**; acting on one requires **explicit
-   owner promotion/approval**. *(Constrains Nic's "proactive" to: read freely, act autonomously only
-   on the owner's own backlog, never on others' text without a click.)*
-3. **[P1] Per-path leases are unenforceable a priori.** The daemon can't know which files a model
-   will touch (shared components, `package.json`, config) before it decides. The two-file spike only
-   proves *that* disjoint run. Fix: **serialize unknown/shared writes**, or give each process an
-   **enforced write allowlist** with daemon-mediated lease expansion. Optimistic per-file leasing is
-   not safe on its own. **Tested tonight:** two parallel jobs on the *same* frame both landed — but
-   only because Claude's Edit is surgical and the writes interleaved cleanly. That is a **race, not a
-   guarantee** (same-line edits / a whole-file-rewrite agent / different timing would clobber) — the
-   dangerous kind of pass. So **serializing same-frame jobs is non-negotiable**; the only open question
-   is shared-file-across-frames.
-4. **[P1] Retry is neither idempotent nor fenced.** FS edits aren't idempotent because the prompt
-   says so; a lease expiry doesn't stop the old process. Fix: **kill/fence the process group before
-   reclaim**, record **pre/post file hashes**, and classify no-edits / edits-applied-output-lost /
-   safe-to-retry.
-5. **[P1] The reply/reanchor contract is self-contradictory.** §3.3 still has the pull loop, §3.4/§7
-   call the token endpoint the only/general writer, §11/§15 require CLI reanchor — all contradicting
-   the VALIDATED "daemon captures final output." Fix: **one portable structured result
-   `{ reply, reanchors, status }`** the daemon captures; token CLI optional (progress only).
-6. **[P1] The event change isn't fully integrated.** `reanchor` is in the shared union but the
-   **published validator rejects unknown types** (`collab.ts:36`), and the **dev POST still preserves
-   client-set `agent`/`agentMeta`/`origin`** (`api.ts:178`), contrary to daemon-only provenance. Ship
-   type + validation + stripping + sync + daemon-only writer together. *(Partially addressed on the
-   branch tonight — see below.)*
-   Plus [P2]s: reanchor should validate target-is-root + anchor schema (reject `anchor:null`); reject
-   `agent:true` on a create; carry or document `origin` on derived shapes; a pre-existing replay
-   clock-skew gap for edits-before-replies; and a §7-vs-Non-goals sync contradiction.
+1. **Config** (`src/server/config.ts`): add `jam.agent` (`claude|codex|cursor|opencode|droid`),
+   `jam.concurrency`, `jam.subagents` (default on), `jam.proactive` (default off).
+2. **The auth ledger** (`src/server/api.ts` POST): after `appendEvents` fsyncs a locally-accepted
+   event, record its id to `design/.local/jam-ledger` (append+fsync; event-first, fail-closed). A tiny
+   `ledger.ts` helper (has/record). Client provenance stripping is already done.
+3. **The daemon** — a new `src/server/jam/` module wired into the long-lived dev server
+   (`src/server/dev.ts`) alongside the existing sync loop:
+   - **watch** `design/comments/` (dir watch + ~5s rescan; Vite already ignores this dir).
+   - **durable batch journal** `design/.local/jam-jobs.json` (atomic temp+rename+fsync):
+     `{ batchId, memberEventIds[] frozen at spawn, state pending→claimed→done|failed, leaseUntil,
+     attempts, agentSessionId (memory only) }`. Activation baseline on first init (don't replay old).
+     Single daemon per repo via flock.
+   - **spawn adapter** (one per agent, a flag map) → capture the structured result → **append reply +
+     reanchor events in-process** via `appendEvents` (`src/server/comments.ts`) stamping owner-author +
+     `agent:true` + `agentMeta`. Fence the process group on reclaim.
+   - concurrency = subagents within a batch; batches serialize.
+4. **Instructions**: extend `marver init`'s `design/AGENTS.md` with the jam playbook (§15/§16 of the
+   spec) + ship a root `CLAUDE.md` that `@`-imports it.
+5. **UI** (client):
+   - **Composer** (`src/client/shell/Comments.tsx`): `<input>`→auto-grow `<textarea>`; Enter send /
+     Shift+Enter newline / Cmd-Enter send; IME + preventDefault + pending guards; send-button `Tip`.
+   - **`@marver` render + tooltip** (`Comments.tsx` `.cm-body` → `renderBody` parser; `styles.css`
+     `.cm-at`): owner bold-accent, non-owner plain + the teaching tooltip.
+   - **Notification** (`store.ts` `Toast`; `App.tsx` + `Play.tsx` render; `styles.css`): bottom-right
+     glass pill, event-id dedup, active-board, View → `revealThread`, marver avatar.
+   - **Working glow** (`store.ts` `Node.status` add `'working'`; `FrameNode.tsx` render branch;
+     `styles.css` `.sh-node.working` monochrome orbit → accent when selected), driven by an in-memory
+     activity channel (dev endpoint + ~2.5s client poll, canvas-only).
+   - **agentMeta avatar tooltip** (`Comments.tsx` ThreadCard avatar).
+6. **Q7 live-render smoke test**: with a real jam running, confirm the reply appears and the frame
+   updates live without the camera moving (the code map confirms the foundation is friendly; guard the
+   two gaps — in-frame scroll on edit, prototype/stage full-reload — as P2).
 
-**The three things to nail first (Codex's synthesis, and I agree):**
-(a) a non-replayable **owner-authorization rail** with no autonomous action on non-owner context;
-(b) **enforced write isolation + fenced crash recovery** (not prompt-level leases/idempotence);
-(c) **one daemon-owned result/event contract** covering reply, reanchor, validation, provenance, sync.
+Build order rationale: 1-2 unblock the trigger; 3 is the heart (validated in throwaway form already);
+4 makes the agent competent; 5 is the felt experience; 6 verifies the "live" promise.
 
-## Contract-closing round (v8 → v10, trial-and-error)
+---
 
-After the v8 review I spiked the safety contracts and sharpened the spec through two more Codex
-passes. State now:
-- **Owner auth (v9 #1): CLOSED by spike + design.** `origin` can't gate (syncs — proven RCE); a
-  **device-bound ledger** of locally-POSTed event ids does. Precise semantics added (keys on the
-  @marver-carrying event id; edits re-authorize; agent events never ledgered; fail-closed atomicity).
-- **Crash recovery (v9 #4): CLOSED by spike.** Files stay valid under a mid-job kill (atomic edits);
-  **fence the process group + re-run the goal-phrased job** reconciles partial state (proven). Added a
-  deterministic **completion predicate** (captured `{status:ok}` + a reply per batched thread) and
-  **target set** (the batch's thread ids).
-- **Parallelism / write isolation (v9 #3 + the UX contradiction): CLOSED by design.** The daemon
-  **batches pending mentions into ONE orchestrated job**; parallelism is subagents *within* a batch
-  (restores the drop-several-watch-several UX) and batches serialize (no blind cross-orchestrator
-  race). Same-file parallel proven a race. **Residual (honest): within-batch non-overlap is
-  orchestrator-assigned, not OS-enforced** — a P2/P3 filesystem-allowlist hardening.
-- **Proactive (v9 #2): CLOSED.** Acts only on the owner's ledgered backlog (opt-in); non-owner needs a
-  click. §1 aligned with §3.7.
-- **Result contract (v9 #5): CLOSED.** One daemon-captured `{reply, reanchors[], status}`; pull loop
-  dropped; token CLI optional (interim only).
-- **Event integration (v9 #6): mostly CLOSED (code).** Published validator rejects client
-  `agent`/`agentMeta` and unauthenticated reanchors; dev POST strips them; replay guards null anchors.
-  109 tests green. Open: whether agent replies ever publish (v1 = dev-local, decided).
-- **Also proven this round:** CLI-swap (Codex via the same daemon), session-resume continuity, and the
-  instruction-delivery mechanism (root `CLAUDE.md` `@`-imports `design/AGENTS.md`).
+## Agent adapter matrix
 
-**Revised confidence:** the "not safe to build" gate is largely **lifted** — every contract has a
-validated direction/mechanism, most spiked. Full P1, clean and safe: **~65-70%** (up from 55-60%),
-with the remainder being *ordinary implementation* (build the daemon + ledger per spec) plus one
-stated residual (OS-enforced within-batch isolation) and the unbuilt live-render UI (Q7).
+| CLI | Command shape | Note |
+|---|---|---|
+| **Claude Code** | `claude -p <goal> --permission-mode acceptEdits --allowedTools Read,Edit,Bash --output-format json` | subagents; reads CLAUDE.md |
+| **Cursor** (primary) | `cursor-agent -p --force --output-format json` | AGENTS.md+CLAUDE.md; needs `CURSOR_API_KEY` |
+| **Codex** | `codex exec --json -s workspace-write --skip-git-repo-check -o <msg>` | sequential (no subagents); reads AGENTS.md |
+| **OpenCode** | `opencode run --agent marver` | AGENTS.md; subagents |
+| **Factory Droid** | `droid exec --auto low --output-format json` | AGENTS.md; MCP; worktree parallel |
+| Antigravity `agy` | `agy -p --output-format json` | allowlist the reply cmd OR daemon posts |
+| Conductor / t3.code | — | GUI wrappers → daemon drives the underlying claude/codex CLI |
 
-## Recommended build order for P1 (de-risked)
+---
 
-1. **Event model** — done (`e07f249`). 
-2. **The daemon** — watch `design/comments/*.jsonl`, durable job store (activation baseline,
-   per-frame lease, flock, atomic write), spawn one agent per job via a one-file adapter
-   (`claude -p` first, the proven path), capture output, post the reply in-process (owner-authored
-   + `agent:true` + `agentMeta`). This is the spiked shape; hardening the queue is the work.
-3. **The POST provenance** — stamp `origin:'local'` on dev-owner writes; strip client `agent`/`origin`.
-4. **`design/AGENTS.md`** jam section (the playbook + reply contract) — extend the scaffold.
-5. **UI** — composer (textarea + keys), `@marver` render + tooltip, glass notification, working
-   glow + `agentMeta` avatar tooltip. Then the live-render smoke test (Q7).
-6. **Second agent adapter** (Cursor) + live smoke test.
+## Honest residuals + open decisions (not blockers)
 
-## Confidence (revised after the Codex review)
+- **Within-batch file non-overlap is orchestrator-assigned, not OS-enforced.** If the main agent hands
+  two subagents the same file it can still race; the goal-phrased re-run recovers. Enforcing it needs
+  per-subagent filesystem allowlists — **P2/P3**.
+- **Live parallel glow is harness-conditional** — subagent-capable agents (Claude/Cursor/OpenCode/
+  Factory) light up several frames; Codex is correct but sequential. Surface this in the UI.
+- **Publishing agent replies is P3** (v1 = dev-local; the client validator rejects agent provenance by
+  design; publishing needs a trusted sync path).
+- **Q7 live render** is the one thing spikes couldn't prove (needs the UI built); low-risk on the
+  existing camera-preservation foundation.
 
-- **Execution loop (daemon-spawn → edit → capture → reply), incl. parallel disjoint frames: ~80%** —
-  spiked with real agents against real marver.
-- **Contained UI + event-model schema: ~85%** — schema landed with tests; the POST/validator wiring
-  is small but must be done together (finding 6).
-- **The safety contracts (owner-auth rail, write isolation + fenced recovery, one result contract):
-  NOT yet safe to build** — they need a design pass first. This is the gate, not the loop.
-- **Full P1, clean and safe: ~55-60%** as specified today, held down by the three contracts — but the
-  path to raise it is now concrete (nail the three contracts, then the loop is proven under them).
-- What would push it up fastest: the owner-authorization ledger design, a write-isolation decision
-  (serialize-by-default vs enforced allowlist vs worktree-for-shared), and the fenced-recovery spike —
-  then the Q7 live-render smoke test.
+---
 
-**Net:** the risky *unknown* (does the loop even work?) is retired. What remains is *known, ordinary,
-but non-trivial* safety engineering that a night of happy-path spikes correctly could not validate —
-and Codex named it precisely. Good place to be for a morning design session.
+## The non-obvious lessons (the insight worth keeping)
 
-## Final verdict (after 3 Codex rounds + a night of spikes)
+These surprised us and shaped the design — worth remembering during the build:
+1. **No coding agent sustains a self-driven pull loop.** The daemon must spawn. (Killed the intuitive
+   "agent watches the queue" design.)
+2. **The daemon should post the reply, not the model** — a model-invoked reply CLI isn't portable
+   (Codex blocks network, Antigravity blocks shell).
+3. **Auth can't ride a synced field.** `origin:'local'` syncs byte-for-byte → a device-bound ledger is
+   the only safe gate.
+4. **"Serialize independent jobs" would kill the parallel UX.** Batch instead — parallelism lives
+   *inside* one orchestrated job, not across racing jobs.
+5. **Goal-phrased jobs are the idempotency mechanism.** Because the agent re-reads state, a re-run of a
+   goal ("make it say X") reconciles a crash; a diff wouldn't.
+6. **Live Jam targets a CLI, not a harness.** This is why every GUI (Cursor IDE, Conductor, t3.code) is
+   supported — the daemon spawns the CLI underneath.
 
-The spec is now **internally consistent** and every safety contract has a **validated design** (most
-spiked). Three Codex review rounds converged: the findings that remain are **not spec-design gaps**,
-they are **implementation** (build the daemon + auth ledger + batch journal per the spec) plus **two
-honestly-stated residuals** — within-batch file non-overlap is orchestrator-assigned not OS-enforced
-(P2/P3), and the live render/glow UI (Q7) is build-then-test. A 4th solo review round would keep
-surfacing finer nuances asymptotically; the correct next step is to **build P1 against this spec** —
-code forces the last decisions faster than more prose.
+---
 
-**What the night bought:** the risky *unknown* (does the loop work?) is retired with evidence; the
-*known* safety engineering is designed and mostly spiked; and we have a clear, agent-agnostic build
-plan. That is exactly the "all the learnings to nail this end to end" the run set out to get.
-
-_Raw log: `scratchpad/NIGHT-LOG.md`. Throwaway harnesses: `scratchpad/spike-loop/`,
-`scratchpad/marver-test/`, `scratchpad/spike-auth/`, `scratchpad/spike-crash/`, `scratchpad/spike-resume/`._
+_Spec: `SPEC-live-jam.md` v10.1. Raw run log: `scratchpad/NIGHT-LOG.md`. Throwaway harnesses:
+`scratchpad/spike-{runtime,loop,auth,crash,resume}/`, `scratchpad/marver-test/`._
