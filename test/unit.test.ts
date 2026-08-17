@@ -672,6 +672,27 @@ describe('comment event store (SPEC-M3 §1 - set-union merge, deterministic repl
     ])
     expect(off[0].reactions['👍']).toBeUndefined()
   })
+  it('Live Jam: agent + agentMeta flow onto the root and replies', () => {
+    const meta = { devUser: 'Nic', harness: 'Claude Code', model: 'claude-opus-5', effort: 'xhigh' }
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', body: '@marver bolden this' }),
+      ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'Done.', agent: true, agentMeta: meta }),
+    ])
+    expect(threads[0].agent).toBeFalsy()               // human root
+    expect(threads[0].replies[0].agent).toBe(true)     // agent reply
+    expect(threads[0].replies[0].agentMeta).toEqual(meta)
+  })
+  it('Live Jam: reanchor re-pins the whole thread to the new element', () => {
+    const oldA = { el: { cssPath: 'button#a' } }
+    const newA = { el: { cssPath: 'button#b', semantics: { testId: 'cta' } } }
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', anchor: oldA }),
+      ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'moved it' }),
+      ev('e3', 'reanchor', { commentId: 'c1', anchor: newA }),
+    ])
+    expect(threads[0].anchor).toEqual(newA)            // thread (and all its comments) now on the new element
+    expect(threads[0].replies).toHaveLength(1)         // reanchor doesn't disturb replies
+  })
   it('a torn trailing line is skipped, the rest of the log survives', () =>
     store((dir) => {
       appendEvents(dir, 'review', [ev('e1', 'create', { commentId: 'c1' })])

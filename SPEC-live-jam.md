@@ -1,4 +1,4 @@
-# SPEC — Live Jam (Phase 4) — v7
+# SPEC — Live Jam (Phase 4) — v8 (overnight-de-risked)
 
 **One line:** Tag `@marver` in a comment and the coding agent that started your local dev session
 picks it up, acts on the code, and replies in the thread. You review by pointing; it builds by
@@ -49,6 +49,52 @@ listening.
 > no secret access in the packet), and only the **owner** can start a job at all (§1). Treat "an
 > agent edits files from a comment" as it is: a local dev convenience with a human in the loop, not
 > an unattended production actuator.
+
+---
+
+## ✅ VALIDATED ARCHITECTURE (overnight de-risking, 2026-08-17) — supersedes where noted
+
+The night proved the core with real agents editing real files, and corrected the runtime model. This
+block is authoritative; older sections are kept for history but **defer to this where they conflict**.
+
+**Proven by spike (real `claude -p` / `codex exec`, real files, real `marver` project):**
+- **Headless edit works** — `claude -p "…" --permission-mode acceptEdits --allowedTools "Read,Edit,Write" --output-format json`
+  and `codex exec --json -s workspace-write -o <msg> "…"` both edit files with no prompt, return a
+  session/thread id and a final message. (Q1)
+- **The daemon-spawn micro-loop works end to end** — a daemon read a comment log, spawned **two
+  `claude -p` jobs in parallel** on disjoint frame files, both edited correctly, the daemon captured
+  each agent's final output and appended `agent:true` replies. **14s for two parallel jobs.** (Q2)
+- **Real-marver data loop works** — against a real `marver init` project: real `design/comments/<board>.jsonl`
+  → daemon → `claude -p` edited a real `design/scenes/demo/welcome.tsx` → real reply event →
+  **`marver comments list` replayed it** as a proper thread. Model `claude-opus-5` was extracted from
+  the agent output for provenance. (Q8)
+
+**Corrections to the earlier spec (these win):**
+1. **DAEMON-SPAWN-PER-JOB is the shape, not a pull loop.** No coding agent (Claude Code, Codex,
+   Cursor, OpenCode, Factory) sustains a self-driven `marver jam next` pull loop — all are one-shot
+   headless. So the daemon owns the loop and **spawns one headless agent per job**; that spawned run
+   is the "main agent" (decides, edits, and — Claude Code / Cursor / OpenCode / Factory — spawns
+   subagents). **This supersedes §3.3's `marver jam next` pull model.** Continuity across a jam via
+   `--resume <session_id>` / `codex exec resume`.
+2. **The DAEMON posts the reply** (captures the agent's final output), as the portable default —
+   because Codex `workspace-write` blocks network and Antigravity soft-denies shell, so a model-invoked
+   reply CLI is not portable. **This supersedes §3.4/§7's "worker posts via `marver jam reply` token"
+   as the *primary* path;** the token CLI stays as a Claude-Code/Cursor-only enhancement for interim /
+   subagent replies.
+3. **Instructions ship as `design/AGENTS.md`** (+ a `CLAUDE.md` that imports it for Claude Code, which
+   reads CLAUDE.md not AGENTS.md). `marver init` already scaffolds `design/AGENTS.md` + `design/instructions/`,
+   so Live Jam extends the existing convention. AGENTS.md is read natively by Codex/Cursor/OpenCode/Factory.
+4. **Parallel = spawn N; git-worktree isolation is a batch tool, NOT the live path** (a worktree needs
+   its own server, breaking the single live canvas). Same-tree parallel is safe only for **disjoint
+   frame files** under a per-frame/per-path lease (proven in Q2). Codex has no work isolation and is
+   the riskiest for same-tree parallel — enforce strict file-disjointness or serialize.
+5. **Optional MCP path** — Cursor/OpenCode/Factory/Codex support MCP, so Marver can expose the jam loop
+   as an MCP server for a first-class integration on those agents (beyond the CLI).
+
+**Agent compatibility (research + live tests):** Claude Code ✅ · Codex ✅ · **Cursor ✅ (primary)** ·
+OpenCode ✅ · Factory Droid ✅ (best drop-in) · Antigravity ✅-with-tweak (allowlist reply cmd) ·
+Conductor ❌-local (wraps `claude` → spawn `claude -p`) · t3.code ❌ (wraps Codex → drive Codex CLI).
+All ride the same daemon-spawn-per-job contract; per-agent flags differ only in one adapter.
 
 ---
 
@@ -115,16 +161,20 @@ v2 makes it a first-class rule.
 
 ---
 
-## 3. Execution — the dev-server jam daemon  **[v2, replaces the "CLI is the bridge" model]**
+## 3. Execution — the dev-server jam daemon  **[v2; corrected by the VALIDATED block above]**
 
-**[v5] Orchestration model (Nic's refinement).** The daemon is **not the brain** — it is the durable
-**gatekeeper and queue**. It catches the request, gates it (§1, §2), records a durable job (§3.2), and
-hands the details to the **main coding agent** (the powerful, context-rich one). The **main agent
-decides**: pull more of the thread / nearby comments, gather context, then either **edit the frame
-itself** or **summon subagents, one per frame**, to parallelize. This keeps the durability that made
-the daemon robust *and* puts the capable agent in charge of judgment and fan-out. It is a **hybrid**:
-a durable daemon queue (survives crashes, at-least-once) plus agent-led orchestration (uses the rich
-session and native subagents). The daemon still owns the queue; the agent owns the thinking.
+> **Read the VALIDATED ARCHITECTURE block first.** The overnight spike proved the shape:
+> **the daemon spawns one headless agent per job** (`claude -p` / `codex exec` / `cursor-agent -p` …),
+> and **the daemon captures + posts the reply**. The "main agent pulls via `marver jam next`" idea
+> below (§3.3) is superseded — no agent sustains a self-driven pull loop.
+
+**[v5] Orchestration, corrected.** The daemon is the durable **gatekeeper and queue**. It gates the
+request (§1, §2), records a durable job (§3.2), and **spawns the coding agent for that job**. That
+spawned run is the "main agent": it gathers context, then either **edits the frame itself** or
+**spawns subagents, one per frame**, to parallelize (Claude Code / Cursor / OpenCode / Factory can;
+Codex parallelism is multiple daemon-spawned jobs). Durability lives in the daemon queue
+(at-least-once, survives crashes); judgment and fan-out live in the spawned agent. The daemon owns the
+loop; the agent owns the thinking.
 
 **3.1 Watch (robust, not `fs.watch`-glob / not `--since`)**
 - Watch the **directory** `design/comments/` (dir-level, so new board files are caught), plus a
@@ -297,6 +347,19 @@ so an author mismatch would poison a board's sync batch. The fix is to stop inve
 - **Spoofing is inert regardless:** the trigger gate (§4) *excludes* `agent:true`, so even if a forged
   flag slipped through it could not start a job — the flag is only ever *rendered* specially, never
   trusted for execution, so no privilege rides on it. Stripping it at the POST is defense in depth.
+- **[v8] Agent provenance on the Marver avatar (who orchestrated the change).** Every `agent:true`
+  event carries an optional **`agentMeta`** JSON field — one extensible object, simplest + most robust:
+  `{ devUser, harness, model, effort }`. The daemon stamps it: **devUser** (local profile / git user)
+  and **harness** (`jam.agent`: Claude Code / Codex / Cursor / …) always; **model** parsed from the
+  agent's own output (**validated:** the `claude -p` JSON output carries `canonicalModel`, e.g.
+  `claude-opus-5`; Codex `--json` carries model/usage; Cursor JSON likewise) — populated best-effort,
+  shown when known; **effort** when the daemon set it (e.g. `xhigh`) or the harness reports it.
+  Rendered as a **tooltip on the Marver avatar** in the thread card:
+  > Dev user: Nic · Harness: Claude Code · Model: Opus 5 · Effort: xhigh
+
+  This gives certainty about *who orchestrated* the Marver agent's edits — the accountability layer a
+  mature harness can provide. (User-vs-AI origin is the `agent:true` flag; `agentMeta` is the extra
+  detail, AI-only.) `agentMeta` is absent on human comments.
 - **[v6] All agents post under one name: "Marver."** When `marver dev` is on, the coding agent's
   posting identity is overridden to **Marver** (the brand). The main agent and *every* subagent post
   under this single name + logo (all owner-authored + `agent:true`) — subagents get no separate
