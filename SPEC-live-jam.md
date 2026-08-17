@@ -1,4 +1,4 @@
-# SPEC — Live Jam (Phase 4) — v9 (contracts spiked + sharpened)
+# SPEC — Live Jam (Phase 4) — v10 (contracts closed: batch model + ledger semantics + retry predicate)
 
 **One line:** Tag `@marver` in a comment and the coding agent that started your local dev session
 picks it up, acts on the code, and replies in the thread. You review by pointing; it builds by
@@ -185,13 +185,21 @@ v2 makes it a first-class rule.
   present for display, but **execution keys only on the ledger.** `CommentEvent.origin` is
   informational-only (not trusted for auth) — or dropped. Non-owner `@marver` mentions **never
   auto-trigger** a job.
-- **[v7] Auto-trigger vs proactive pickup (the important distinction).** Owner `@marver` is a
-  *mechanical* trigger: it always creates a job. A non-owner `@marver` (or any untagged comment) is
-  **not** a mechanical trigger, but it is **not inert either** — it enters the accumulated volume the
-  orchestrator can read, and the orchestrator **may choose to act on it by its own judgment** (§3.7),
-  e.g. when it finishes a task and reviews what has piled up. The security property is preserved
-  because nothing *remote* mechanically starts a privileged job; a human-in-the-loop agent decides,
-  running as the owner, workspace-jailed, with the owner reviewing every diff.
+  **[v10] Precise ledger semantics** (Codex v9): (a) it keys on the **event id** of each accepted local
+  write, and the daemon matches a *trigger candidate* by the id of the specific create/reply/**edit**
+  event that carries the `@marver` text — so an **edit that adds `@marver` to an existing comment must
+  be separately ledgered** (its own edit-event id), not inherit the create's authorization; (b)
+  **agent-written events are never ledgered** (they're daemon-authored, not owner input, so they can't
+  self-authorize a next job — this also backstops the recursion guard §4); (c) **fail-closed
+  atomicity:** the dev POST appends+fsyncs the event *first*, then records its id in the ledger; a
+  crash between the two leaves the event present-but-unauthorized (won't trigger) — the safe direction,
+  the owner just re-tags. The ledger file (`design/.local/jam-ledger`) is gitignored and never synced.
+- **[v10] Trigger vs context (aligned with §3.7).** An **owner-ledgered** comment (§1 ledger) with
+  `@marver` is a trigger — it creates a job. A **non-owner** comment is **context the agent may read
+  but never act on autonomously**; turning it into a job requires **explicit owner promotion** (the
+  owner tags it or clicks "have Marver do this", which writes an owner-ledgered event). The agent's
+  own "judgment" only ranges over the **owner's** ledgered backlog (§3.7), never a stranger's text —
+  so nothing remote ever starts a privileged job.
 - **The mention styling encodes this, so it is obvious to everyone:**
   - Owner-authored `@marver` → **bold, accent-blue** (`--accent`) — a *live* trigger.
   - Anyone else's `@marver` → plain weight, muted — read like any comment, not a mechanical command.
@@ -266,21 +274,32 @@ loop; the agent owns the thinking.
   which is idempotent *because jobs are phrased as goals* ("make the CTA say X"), not diffs. Two
   requirements this pins: **the daemon must phrase jobs as goals**, and **agents must write atomically**
   (rename) — true of Claude/Codex. The reply is deduped by event id (`comments.ts:42`) regardless.
-- **[v4] Concurrency is frame-aware, not a global lock** (see §12). Multiple jobs run in parallel
-  when their working sets are disjoint; only same-path edits serialize. This is what lets several
-  frames build at once (§12).
-
-**3.3 Orchestration — daemon spawns per job; the spawned agent orchestrates  [v9, corrected]**
-(Supersedes the earlier `marver jam next` pull loop — no agent sustains one, VALIDATED block.)
+- **[v10] Completion predicate + target set** (Codex v9 asked for both). The **target set is the
+  batch's thread ids** (the packet lists exactly which mentions the job must address, §3.3). The
+  **completion predicate is a captured structured result** (§3.4) with `status:'ok'` **and a reply for
+  every batched thread**; only then does the daemon write the replies and mark `done`. A killed/failed
+  run leaves no captured result → the batch is re-run (goal-phrased, so already-done frames are
+  no-ops). This makes "done" a deterministic check on the daemon side, not a guess about file state.
+**3.3 Orchestration — the daemon BATCHES mentions into one orchestrated job  [v10, corrects the parallel-UX contradiction]**
+(Supersedes the earlier `marver jam next` pull loop AND the "one serialized job per mention" of v9.)
+> **Why batch:** Codex caught that "one job per mention, serialized across jobs" would kill the core
+> UX (drop several comments, watch several frames build at once). The fix: a **job is a BATCH of the
+> currently-pending owner mentions**, handed to ONE main agent that fans out subagents per frame. So
+> parallelism comes from **subagents *within* one orchestrated job**, not from racing independent
+> jobs — which *also* gives within-job isolation (one actor assigns disjoint frames). Batches
+> themselves run one at a time (new mentions arriving mid-batch form the next batch).
 - Config `jam.agent` selects the CLI adapter (`claude` | `codex` | `cursor` | `opencode` | `droid`);
   unset = Live Jam off. One adapter = a small flag map (Claude `--permission-mode acceptEdits
   --allowedTools … --output-format json`; Codex `codex exec --json -s workspace-write
   --skip-git-repo-check -o <msg>`; Factory `--auto low`; etc.), all **workspace-jailed, no prompts,
   never full access.**
-- **Per job, the daemon spawns ONE headless agent run** and hands it a goal-phrased packet (§5, §3.2).
-  That run is the "main agent": it reads context (`nearby`, screenshot, code, §15), then either edits
-  the frame itself or **spawns subagents, one per frame** (Claude/Cursor/OpenCode/Factory can; Codex
-  parallelism is multiple daemon-spawned jobs). The daemon delivers; the spawned agent orchestrates.
+- **The daemon spawns ONE main-agent run per batch** and hands it a goal-phrased packet with *all* the
+  batch's mentions (§5, §3.2). That run reads context (`nearby`, screenshot, code, §15), then either
+  edits a frame itself or **spawns subagents, one per frame** (Claude/Cursor/OpenCode/Factory can; the
+  orchestrator assigns each subagent a distinct frame — its job to avoid overlap, §12). **Codex has no
+  in-process subagents**, so a Codex batch runs the frames sequentially in one `codex exec` (correct,
+  slower), or the daemon spawns one `codex exec` per frame only after confirming the frames are
+  file-disjoint. The daemon delivers the batch; the spawned agent orchestrates within it.
 - **Continuity** across a jam via `--resume <session_id>` / `codex exec resume` is a **P2**
   optimization (**spiked** — `claude -p --resume` recalled a fact across two spawned runs,
   `scratchpad/spike-resume`); P1 cold-starts per job (CLAUDE.md/AGENTS.md re-load the conventions, §16).
@@ -389,12 +408,15 @@ v2 proposed a separate `agent@marver.local` principal. Codex correctly showed th
 local-only (`syncOnce` pushes all local events `sync.ts:54`; builds seed comment logs `build.ts:343`),
 so an author mismatch would poison a board's sync batch. The fix is to stop inventing a principal:
 
-- **The agent reply is a normal OWNER-authored event carrying `agent: true`.** It is the owner's own
-  agent acting on the owner's behalf, so it authenticates, validates, and **syncs exactly like any
-  owner comment** — no reserved principal, no sync poisoning. The human seeing the agent's reply on
-  the published canvas too is fine and desired. The marver name + logo avatar are a **render
-  treatment** of an owner-authored `agent:true` event, not a separate identity. *(There is no
-  "local-only, not synced" claim — earlier drafts had that contradiction; agent replies sync.)*
+- **The agent reply is a normal OWNER-authored event carrying `agent: true`** — the owner's own agent
+  acting on their behalf, so no reserved principal, no sync poisoning. The marver name + logo avatar
+  are a **render treatment** of an owner-authored `agent:true` event, not a separate identity.
+- **[v10] Sync semantics (decided for consistency): v1 agent replies are DEV-LOCAL.** `syncOnce`
+  filters out `agent:true` events (they stay on the owner's machine), and the **published client
+  validator rejects any client-set `agent`/`agentMeta`** (`collab.ts`, done) so a human can never
+  forge Marver. **Publishing agent replies is P3** — it needs a trusted dev-sync path that carries
+  `agent:true` outward (the authenticated-client POST can't, by design). This resolves the earlier
+  §7-vs-Non-goals contradiction: both now say dev-local for v1.
 - **`agent: true` is modeled end to end:** add optional `agent?: boolean` to `CommentEvent`
   (`events.ts:9`) and carry it through `replay` onto the `Thread`/reply objects (`events.ts:54`) so
   rendering, the recursion guard (§4), and notifications (§9) can all key off it — never off the name.
@@ -591,13 +613,16 @@ So:
   is the one actor with codebase knowledge to do so (exactly Nic's "the agent decides how to brief
   subagents so they don't make a mess", §16). If a change is genuinely shared (one component, edit
   once), the orchestrator does it itself, not in two subagents.
-- **Across independent `@marver` jobs → the daemon SERIALIZES by default.** Two separate top-level
-  mentions have no shared orchestrator to coordinate, and same-file parallel is a race, so **same-frame
-  jobs serialize (non-negotiable, proven), and cross-frame jobs default to serialize** unless a future
-  enforced write-allowlist (per-process filesystem jail scoped to declared files) makes true parallel
-  safe. **v1 = parallelize inside an orchestrated job (one agent, its subagents); serialize across
-  independent jobs.** This keeps the live multi-frame UX (one main agent lighting up several frames at
-  once via subagents) while never risking a blind cross-job collision.
+- **Parallelism lives INSIDE a batch, not across batches (§3.3).** The daemon batches the currently
+  pending owner mentions into ONE orchestrated job; the main agent fans out subagents per frame, so
+  **several frames build at once** — the live UX — under one actor that assigns disjoint frames.
+  **Batches run one at a time** (new mentions arriving mid-batch form the next batch), so there is
+  never a *blind* cross-orchestrator collision. This resolves the v9 contradiction Codex flagged
+  (parallel-drop UX vs. serialized independent jobs): the drops are batched, not serialized.
+- **Honest residual (stated, not hidden):** within-batch non-overlap is **orchestrator-assigned, not
+  OS-enforced** — if the main agent hands two subagents the same file it can still race. Enforcing it
+  needs per-subagent filesystem allowlists (a P2/P3 hardening); v1 relies on the orchestrator's
+  codebase knowledge + the goal-phrased re-run (§3.2) to recover if it slips.
 - The manifest is server-regenerated, never agent-written (`plugin.ts:179-183`), so no manifest race.
 - `package.json` / lockfile / board-`.json` writes always serialize (rare, high-blast-radius).
 
