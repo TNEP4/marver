@@ -2,6 +2,55 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.7.0 - 2026-08-17
+
+Prototype mode becomes a first-class review surface. The prototype (Play) now carries the same toolbar
+as the canvas, laser and comments work INSIDE it, and every comment wears the colour of the element it
+points at - the groundwork for tagging a coding agent from anywhere you review.
+
+### Added
+
+- **The prototype is a review surface, not just a viewer.** Play's top-right toolbar is now the SAME
+  controls as the canvas - device switch, theme, laser, comment - built from one shared set of
+  components so the two can never drift. Laser and comment work inside the running prototype: the stage
+  runs the same element inspector the canvas frames do, so you can point at, highlight, and comment on
+  the live app while you walk a flow. The bottom-left navigator (restart / prev / i-of-N / next) stays.
+- **Hide UI (H).** One binary toggle hides all chrome for a clean point-and-shoot frame, shared by the
+  canvas and the prototype. No auto-fade, no hover magic; a page refresh always brings the chrome back
+  (the safety net for a forgotten shortcut). It replaces the prototype's old three-state auto-hiding bar.
+- **Comments wear their element's colour.** Comment mode reuses laser's per-element depth hue: the
+  element you hover, the composer, the pin, the thread card, and the active-element highlight all take
+  that specific element's colour - a comment on a blue heading reads blue, on a green button green. The
+  avatar keeps the commenter's own colour; filled buttons use a hue-aware shade so the glyph stays legible.
+- **The commented element lights up.** Picking an element locks a persistent outline on it (the highlight
+  stops chasing the mouse while you compose), and opening a thread re-lights its anchored element - so
+  everyone sees exactly which element a comment is about. It clears on close.
+
+### Changed
+
+- **Prototype chrome is discreet and reliable.** The prototype's floating toolbar wears the same quiet
+  dark skin as the bottom-left navigator, so it recedes into the stage instead of reading as a bright
+  slab; and it no longer auto-hides or sticks under the cursor - it behaves exactly like the canvas pill
+  (explicit collapse, Hide-UI, no surprises).
+- **Prototype is an action, not a menu item.** The Prototype-view button moved into the canvas pill's
+  action group (beside comment, laser, tidy), leaving the far right purely for UI management (Hide UI,
+  collapse).
+- **The element label reads clearer.** The laser/comment element tooltip now sits below-left of the
+  cursor with a gap - clear of the element you are pointing at - and slides in from the edge instead of
+  being clipped.
+- **Escape exits laser mode**, matching comment mode.
+
+### Fixed
+
+- **Canvas comment highlight is now reliable.** A frame hosting an open thread or a draft shows its LIVE
+  app rather than the frozen lean snapshot, so the active-element highlight appears, updates, and clears
+  in real time - it used to be intermittently missing, or frozen after close, depending on snapshot
+  timing. A clean snapshot rebuilds once the thread closes.
+- **Highlights only show while a thread is active.** Closing a thread or hiding pins (Shift+C) clears the
+  element highlight; a remotely-resolved thread no longer strands one.
+- **Prototype comment overlay positions faster** after a walk and never renders behind the frame or off
+  screen. Element-hue values, message origins, and stage-swap timing are all validated.
+
 ## 0.6.0 - 2026-08-17
 
 Image-heavy boards, done right. A board full of high-resolution screenshots now zooms fast and stays

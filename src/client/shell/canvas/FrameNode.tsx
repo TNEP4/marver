@@ -81,7 +81,16 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (node.status !== 'ready' || node.missing) return
     const iframe = iframeRef.current
     if (!iframe) return
-    const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme }), 450)
+    const t = setTimeout(() => {
+      // never re-admit a cover while this frame hosts an open thread / draft: the live app
+      // must stay visible (its highlight updates in real time). A status/theme change would
+      // otherwise capture the live DOM WITH the highlight baked in and re-cover it. The
+      // hostsCard rail recaptures a clean lean once the card closes.
+      const c = useComments.getState()
+      const hosting = (!!c.active && c.threads.some((th) => th.id === c.active && th.nodeKey === node.key && !th.resolved)) || c.draft?.nodeKey === node.key
+      if (hosting) return
+      scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme })
+    }, 450)
     return () => clearTimeout(t)
     // node.theme IS a dep: baked content (mermaid SVG) can't be re-themed by the cover's attribute
     // flip, so a theme change re-captures after the live frame re-renders (key includes theme).
@@ -111,7 +120,22 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // neighbors - each node is a stacking context, so an overflowing card would
   // otherwise paint under the next frame
   const hostsCard = useComments((s) =>
-    (!!s.active && s.threads.some((t) => t.id === s.active && t.nodeKey === node.key)) || s.draft?.nodeKey === node.key)
+    (!!s.active && s.threads.some((t) => t.id === s.active && t.nodeKey === node.key && !t.resolved)) || s.draft?.nodeKey === node.key)
+  // a frame hosting an OPEN thread or a draft must show its LIVE app, not the frozen lean
+  // cover: the active-element highlight lives in the live DOM and updates in real time
+  // (open -> lit, close -> cleared). Without this the cover re-freezes the moment comment
+  // mode ends and either bakes a stale highlight or hides the live one. Mirror the interact
+  // rail: drop the cover while hosting, rebuild a fresh lean once the card closes (the
+  // highlight is cleared by then, so the recapture is clean).
+  const prevHostsCard = useRef(hostsCard)
+  useEffect(() => {
+    if (prevHostsCard.current === hostsCard) return
+    const wasHosting = prevHostsCard.current
+    prevHostsCard.current = hostsCard
+    if (hostsCard) invalidateLean(node.key)
+    else if (wasHosting && node.status === 'ready' && iframeRef.current)
+      scheduleCapture(node.key, iframeRef.current, { sourceRevision: String(node.nav ?? 0), theme: node.theme }, true)
+  }, [hostsCard, node.key, node.nav, node.theme, node.status])
   useEffect(() => {
     if (node.status === 'ready' || !laser)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, location.origin)

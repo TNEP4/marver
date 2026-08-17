@@ -3,18 +3,24 @@
  * the chosen viewport's exact CSS pixels, scaled to fit - or `fill`, where the frame IS
  * the window. The device hosts a single stage iframe that swaps frames in place.
  *
- * The shell owns everything except data-goto: chrome (top-right bar: board switcher,
- * devices + fill, theme, hide, exit), the bottom-left navigator (restart · prev · i/N ·
- * next), walk order, sizing, and the URL. Chrome auto-hides when idle and can be hidden
- * outright (H); hovering the top-right or bottom-left corner always reveals it - in fill
- * mode the stage reports those hovers, since the iframe covers the window.
+ * The prototype is a first-class review surface (prototype-review): the top-right pill is
+ * the SAME glass toolbar as the canvas (board · comment · laser · device · theme · hide ·
+ * collapse · exit), the stage runs the SAME laser/comment/anchor controller as canvas
+ * frames, and comments anchor to the walked frame. Chrome is shown unless Hide-UI (H) is
+ * on - no auto-fade, no hover magic. The bottom-left navigator (restart · prev · i/N ·
+ * next) stays prototype-only.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useStore, CONFIG, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
+import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
-import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, FrameCornersIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ReloadIcon, SunIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
+import { DraftComposer, hueVars, MarkerFace, ThreadCard } from './Comments.tsx'
+import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, PanelFilledIcon, PanelHollowIcon, ReloadIcon, XIcon } from './icons.tsx'
+
+const commentsStore = () => useComments.getState()
 
 /** Board-order frame ids playable on the stage (tsx only - html frames are their own
  *  documents and cannot mount into the persistent chain), deduped. */
@@ -82,37 +88,121 @@ export function PlayOverlay() {
   return <PlayInner key={board} />
 }
 
-/** Board switcher dropdown in the play bar. */
+/** Board switcher dropdown in the play pill - the shared glass popover. */
 function BoardMenu({ current }: { current: string }) {
-  const [open, setOpen] = useState(false)
+  const pop = usePopover()
   const [names, setNames] = useState<string[]>([current])
-  const boxRef = useRef<HTMLDivElement>(null)
   // refreshed on every open - agents create boards while you present
-  useEffect(() => { if (open) fetchBoardNames().then(setNames).catch(() => {}) }, [open])
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => { if (!boxRef.current?.contains(e.target as globalThis.Node)) setOpen(false) }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
+  useEffect(() => { if (pop.open) fetchBoardNames().then(setNames).catch(() => {}) }, [pop.open])
   return (
-    <div className="bd-wrap" ref={boxRef}>
-      <Tip inv side="bottom" label={<b>Switch board</b>}>
-        <button className="bd" onClick={() => setOpen(!open)}>
+    <div className="sh-theme" ref={pop.boxRef}>
+      <Tip side="bottom" label={<b>Switch board</b>}>
+        <button className="sh-pill-btn bd" onClick={pop.toggle}>
           {boardLabel(current)}
-          <CaretIcon size={10} style={{ transform: open ? 'rotate(180deg)' : undefined }} />
+          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
         </button>
       </Tip>
-      {open && (
-        <div className="sh-play-menu">
-          {names.map((n) => (
-            <button key={n} onClick={() => { setOpen(false); switchPlayBoard(n) }}>
-              <span>{boardLabel(n)}</span>
-              {n === current && <CheckIcon size={12} />}
-            </button>
-          ))}
-        </div>
-      )}
+      <Popover pop={pop} dark>
+        {names.map((n) => (
+          <button key={n} onClick={() => { pop.setOpen(false); switchPlayBoard(n) }}>
+            <span>{boardLabel(n)}</span>
+            {n === current && <CheckIcon size={13} className="chk" />}
+          </button>
+        ))}
+      </Popover>
+    </div>
+  )
+}
+
+/** The comment overlay over the single stage frame (prototype-review Phase 2). Per-frame:
+ *  it shows only threads on the walked frame (play.at) and follows the walk. It sits inset:0
+ *  inside the device wrapper (no JS coordinates - it tracks the centered stage for free);
+ *  pins/cards are placed in the scaled stage space, #4/#5 highlight is driven into the frame. */
+function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
+  iframe: React.RefObject<HTMLIFrameElement | null>
+  frameId: string
+  vp: { width: number; height: number }
+  dw: number; dh: number; ready: number
+}) {
+  const show = useComments((s) => s.show)
+  const active = useComments((s) => s.active)
+  const draft = useComments((s) => s.draft)
+  const allThreads = useComments((s) => s.threads)
+  const { setActive } = useComments.getState()
+  const threads = allThreads.filter((t) => t.frame === frameId && !t.resolved)
+  const anchored = threads.filter((t) => (t.anchor as any)?.el)
+  const [rects, setRects] = useState<Record<string, { x: number; y: number; w: number; h: number } | null>>({})
+  const sx = vp.width ? dw / vp.width : 1
+  const sy = vp.height ? dh / vp.height : 1
+
+  // resolve anchors against the stage's current frame; re-ask on a slow interval (the
+  // stage swaps in place, so the DOM under an anchor can change without a remount)
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win || !anchored.length) { setRects({}); return }
+    const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: anchored.map((t) => ({ key: t.id, anchor: t.anchor })) }, location.origin)
+    const onMsg = (e: MessageEvent) => {
+      // reject a reply from a frame we already walked off (data.id is the frame that resolved)
+      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.id !== frameId) return
+      const next: typeof rects = {}
+      for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.rect
+      setRects(next)
+    }
+    window.addEventListener('message', onMsg)
+    ask()
+    // a silent walk swaps the stage a frame or two AFTER frameId changes; ask again quickly
+    // so pins/highlight land within ~1s instead of waiting on the 3s poll (the frame drops
+    // stale replies by id, so an early ask against the old DOM is harmless)
+    const t1 = setTimeout(ask, 250)
+    const t2 = setTimeout(ask, 700)
+    const iv = setInterval(ask, 3000)
+    return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(iv); window.removeEventListener('message', onMsg) }
+  }, [frameId, anchored.map((t) => t.id).join(','), iframe, ready])
+
+  // #4/#5: drive the persistent element highlight into the frame - the composing draft, or
+  // the open thread's anchor. null clears it. The frame guards against a stage-swap race;
+  // `ready` re-drives it after a stage reload wiped the frame's lock.
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win) return
+    // only while the thread is active (or composing) AND pins are shown - closing or ⇧C clears it
+    const at = !show ? null : (draft?.frame === frameId ? draft.anchor
+      : (active ? (threads.find((t) => t.id === active && (t.anchor as any)?.el)?.anchor ?? null) : null))
+    win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: at ?? null }, location.origin)
+  }, [active, draft, show, frameId, iframe, rects, ready])
+
+  if (!show) return null
+
+  const pinAt = (t: typeof threads[number]) => {
+    const a = t.anchor as any
+    const r = rects[t.id]
+    if (a?.el && r) return { x: (r.x + (a.pos?.fx ?? .5) * r.w) * sx, y: (r.y + (a.pos?.fy ?? .5) * r.h) * sy, orphan: false }
+    if (a?.el && r === null) return { x: dw - 16, y: 16, orphan: true }              // orphan parks top-right
+    const p = a?.pos                                                                 // frame-level fraction
+    return { x: (p?.fx ?? .94) * dw, y: (p?.fy ?? .06) * dh, orphan: false }
+  }
+  const activeThread = threads.find((t) => t.id === active)
+  const draftAt = draft?.frame === frameId ? (() => {
+    const a = draft.anchor as any
+    return { x: ((a?.rect?.x ?? 0) + (a?.pos?.fx ?? .5) * (a?.rect?.w ?? 0)) * sx, y: ((a?.rect?.y ?? 0) + (a?.pos?.fy ?? .5) * (a?.rect?.h ?? 0)) * sy }
+  })() : null
+
+  return (
+    <div className="sh-play-comments">
+      {threads.map((t) => {
+        const { x, y, orphan } = pinAt(t)
+        return (
+          <div key={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}`}
+            style={{ left: x, top: y, ...hueVars((t.anchor as any)?.el?.hue) }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
+            title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
+            <MarkerFace threads={[t]} />
+          </div>
+        )
+      })}
+      {activeThread && <ThreadCard key={active!} thread={activeThread} at={pinAt(activeThread)} bounds={{ w: dw, h: dh }} />}
+      {draftAt && <DraftComposer at={draftAt} bounds={{ w: dw, h: dh }} hue={(draft?.anchor as any)?.el?.hue} />}
     </div>
   )
 }
@@ -126,28 +216,20 @@ function PlayInner() {
   // the stage at its current position on an explicit click.
   const playUpdateRevision = useStore((s) => s.playUpdateRevision)
   const playNav = useStore((s) => s.playNav)
+  const laser = useStore((s) => s.laser)
+  const commentMode = useComments((s) => s.commentMode)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // the src is frozen at mount - navigation happens INSIDE the stage; device and theme
   // changes must never reload it (a phone does not remount when you flip dark mode)
   const src = useRef(play ? `${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}` : '')
   const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
-  const [idle, setIdle] = useState(false)
-  // chrome has three states, like the sidebar's panel/fab ladder: open (full bar + nav),
-  // collapsed (a single chip to expand back, nav stays), hidden (immersive - nothing).
-  const [chrome, setChrome] = useState<'open' | 'collapsed' | 'hidden'>('open')
-  const chromeRef = useRef(chrome)             // handleKey lives in a mount-time closure
-  chromeRef.current = chrome
+  const [pillOpen, setPillOpen] = useState(true)          // collapse (pill -> re-open fab), like the canvas
+  const [stageReady, setStageReady] = useState(0)         // bumps on each sh:stage-ready (reload) - re-drives the highlight
   const fill = play?.device === 'fill'
-  const [over, setOver] = useState(false)          // pointer ON a chrome piece - never hide under the cursor
-  // The H coach pill: hidden mode is ABSOLUTE (no corner-hover reveal - two mutually
-  // blind pointer sources made it stick in both directions). The pill on entering hidden
-  // is the recovery path: OK snoozes it 15 minutes, "Don't show again" retires it for
-  // good; either way H is the only way back, and a fresh session opens with controls on.
-  const [neverHint, setNeverHint] = useState(() => !!localStorage.getItem('mv-play-hint-off'))
-  const [hint, setHint] = useState(false)
-  const hintTimer = useRef<number | undefined>(undefined)
 
-  const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, '*')
+  // the stage is same-origin (/__mv/stage/); a fixed target origin keeps anchor bundles
+  // from leaking if a link ever navigates the iframe cross-origin
+  const postStage = (msg: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(msg, location.origin)
 
   // apply a deferred update: reload the stage iframe at its CURRENT frame + theme on a fresh
   // rev-stamped URL. sh:stage-ready replays position; device size is shell-owned.
@@ -159,8 +241,14 @@ function PlayInner() {
   }, [playNav])
   const applyUpdate = () => useStore.getState().applyPlayUpdate()
 
+  // laser / comment ride the same rail as canvas frames, broadcast to the stage iframe.
+  // Re-sent on stage-ready (below) so a stage reload restores the mode.
+  useEffect(() => { postStage({ type: 'sh:laser', on: laser }) }, [laser])
+  useEffect(() => { postStage({ type: 'sh:pick', on: commentMode }) }, [commentMode])
+
   const exit = () => {
     const { at } = useStore.getState().play ?? {}
+    if (isHideUI()) toggleHideUI()             // never strand the canvas with its chrome hidden
     useStore.getState().setPlay(null)
     // land back on the canvas at the frame you ended on
     const n = useStore.getState().nodes.find((x) => x.frame === at && !x.missing)
@@ -232,18 +320,21 @@ function PlayInner() {
   // messages from the stage; source-validated against our one iframe
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      if (e.source !== iframeRef.current?.contentWindow) return
+      if (e.source !== iframeRef.current?.contentWindow || (e.origin && e.origin !== location.origin)) return
       const data = e.data
       if (!data || typeof data.type !== 'string') return
       const s = useStore.getState()
       if (data.type === 'sh:stage-ready') {
         // an iframe reload (registry HMR invalidation) boots at the frozen initial src -
-        // resync it to the shell's current truth so navigation and theme survive reloads
+        // resync it to the shell's current truth: navigation, theme, AND review modes
         const p = s.play
         if (p) {
           if (typeof data.at === 'string' && data.at !== p.at) postStage({ type: 'sh:stage-set', at: p.at })
           postStage({ type: 'sh:set-theme', theme: p.theme })
         }
+        postStage({ type: 'sh:laser', on: s.laser })
+        postStage({ type: 'sh:pick', on: commentsStore().commentMode })
+        setStageReady((n) => n + 1)            // a reload wiped the frame's lock; let PlayComments re-drive it
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
         if (p && typeof data.at === 'string') s.setPlay({ ...p, at: data.at })
@@ -254,45 +345,59 @@ function PlayInner() {
       } else if (data.type === 'sh:stage-key') {
         if (data.meta && data.key === '/') toggleCollapse()
         else handleKey(String(data.key), String(data.code))
+      } else if (data.type === 'sh:picked') {
+        // comment pick from the stage: stage the draft on the walked frame (its canvas
+        // node when one is on this board, so the thread also lands on the canvas). Stamp
+        // it with the frame the pick actually came FROM (data.id) and drop it if that no
+        // longer matches the shell frame - a click that landed mid-swap on stale DOM.
+        const c = commentsStore()
+        if (c.active) c.setActive(null)
+        if (!c.commentMode) return
+        const at = String(data.id ?? '')
+        if (!at || at !== s.play?.at) return
+        const n = s.nodes.find((x) => x.frame === at && !x.missing)
+        c.setDraft({ nodeKey: n?.key ?? '', frame: at, anchor: data.anchor })
+      } else if (data.type === 'sh:frame-down') {
+        const c = commentsStore()
+        if (c.active) c.setActive(null)
+      } else if (data.type === 'sh:laser-copy') {
+        // laser click in the prototype: copy the element's address (frame file + css path)
+        // and confirm in the frame's own hover label, exactly like the canvas does
+        const at = s.play?.at
+        const f = at ? s.manifest?.frames.find((x) => x.id === at) : undefined
+        if (f) {
+          const addr = `${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+          navigator.clipboard.writeText(addr).then(
+            () => postStage({ type: 'sh:copy-ok', seq: data.seq }),
+            () => s.toast('copy blocked - click the canvas first'))
+        }
       }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  /** Enter immersive mode; the coach pill teaches the way back unless snoozed/retired.
-   *  localStorage is read here, not via state - this runs in a mount-time closure. */
-  const hideAll = () => {
-    setChrome('hidden')
-    if (localStorage.getItem('mv-play-hint-off')) return
-    if (Number(localStorage.getItem('mv-play-hint-snooze') ?? 0) > Date.now()) return
-    setHint(true)
-    window.clearTimeout(hintTimer.current)
-    hintTimer.current = window.setTimeout(() => setHint(false), 6000)
-  }
-  // Both dismissals unmount the pill UNDER the pointer - its pointerleave never fires,
-  // so `over` must be cleared by hand or it sticks true and the idle fade never recovers.
-  const snoozeHint = () => {
-    localStorage.setItem('mv-play-hint-snooze', String(Date.now() + 15 * 60_000))
-    setHint(false)
-    setOver(false)
-  }
-  const dismissHintForever = () => {
-    localStorage.setItem('mv-play-hint-off', '1')
-    setNeverHint(true)
-    setHint(false)
-    setOver(false)
-  }
-
   // shared handler: keys arrive directly (focus in shell) or forwarded by the stage
   const handleKey = (key: string, code: string) => {
-    if (key === 'Escape') { exit(); return }
+    if (key === 'Escape') {
+      // a live review mode swallows Escape first (cancel), so it never ejects you from
+      // the prototype mid-comment; a second Escape (nothing live) exits
+      const c = commentsStore()
+      const s = useStore.getState()
+      if (c.commentMode || s.laser || c.active || c.draft) { c.setMode(false); c.setActive(null); c.setDraft(null); s.setLaser(false) }
+      else exit()
+      return
+    }
     if (key === 'ArrowRight') { step(1); return }
     if (key === 'ArrowLeft') { step(-1); return }
     if (key === '[') { switchVariant(-1); return }
     if (key === ']') { switchVariant(1); return }
     if (key === 'r') { restart(); return }
-    if (key === 'h') { chromeRef.current === 'hidden' ? setChrome('open') : hideAll(); return }
+    if (key === 'h') { toggleHideUI(); return }
+    if (key === 'l') { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
+    if (key === 'c') { const c = commentsStore(); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
+    if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
+
     if (/^Digit[1-9]$/.test(code)) {
       const names = Object.keys(CONFIG.viewports)
       const idx = Number(code.slice(5))
@@ -304,11 +409,8 @@ function PlayInner() {
       setTheme(CONFIG.themes[(CONFIG.themes.indexOf(p.theme) + 1) % CONFIG.themes.length])
     }
   }
-  /** ⌘/ toggles the toolbar - same shortcut as design mode (⌘\ is the sidebar's).
-   *  From hidden it reveals EVERYTHING: collapsed is a state of visible chrome, so any
-   *  chrome shortcut pressed while hidden means "show me the controls", never a silent
-   *  hop into a half-revealed state. */
-  const toggleCollapse = () => setChrome(chromeRef.current === 'open' ? 'collapsed' : 'open')
+  /** ⌘/ collapses the toolbar to a re-open fab - same shortcut + ladder as design mode. */
+  const toggleCollapse = () => setPillOpen((o) => !o)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
@@ -326,30 +428,10 @@ function PlayInner() {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // chrome auto-fades after 2.5 s of stillness; movement or a tap brings it back.
-  // Coarse pointers (touch) never idle - there is no hover to wake a faded bar with,
-  // and an unreachable close button would trap the viewer in play mode.
-  useEffect(() => {
-    if (window.matchMedia('(pointer: coarse)').matches) return
-    let t = window.setTimeout(() => setIdle(true), 2500)
-    const wake = () => { setIdle(false); window.clearTimeout(t); t = window.setTimeout(() => setIdle(true), 2500) }
-    window.addEventListener('pointermove', wake)
-    window.addEventListener('pointerdown', wake)
-    return () => { window.clearTimeout(t); window.removeEventListener('pointermove', wake); window.removeEventListener('pointerdown', wake) }
-  }, [])
-
   if (!play) return null                       // parent gates on play; belt to its braces
 
   const vp = fill ? { width: win.w, height: win.h } : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
   const scale = fill ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
-  // awake beats the idle fade; a pointer ON a chrome piece always keeps it. Hidden is
-  // absolute: nothing shows but the coach pill, and H is the only way back.
-  const awake = !idle || over
-  const barOn = chrome === 'open' && awake
-  const chipOn = chrome === 'collapsed' && awake
-  const navOn = chrome !== 'hidden' && awake
-  const hintOn = chrome === 'hidden' && !neverHint && (hint || over)
-  const chromeProps = { onPointerEnter: () => setOver(true), onPointerLeave: () => setOver(false) }
   const names = Object.keys(CONFIG.viewports)
   const list = playList()
   const pos = list.indexOf(play.at)
@@ -359,78 +441,55 @@ function PlayInner() {
   // fractional sizes left subpixel seams glowing at the corners on dark frames
   const dw = Math.round(vp.width * scale)
   const dh = Math.round(vp.height * scale)
+  const deviceHint = fill ? 'Fill window' : `${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
 
   return (
     <div className={`sh-play${fill ? ' fill' : ''}`}>
-      <div className="dev" data-theme={play.theme} style={{ width: dw, height: dh }}>
-        <iframe
-          ref={iframeRef}
-          src={src.current}
-          title="play"
-          style={{ width: vp.width, height: vp.height, transform: `scale(${dw / vp.width}, ${dh / vp.height})` }}
-        />
+      {/* device + comment overlay share ONE flex-centered box; the overlay is inset:0 over
+          it (a sibling of the clipping .dev, so a thread card is never eaten by overflow) */}
+      <div className="sh-play-stage" style={{ width: dw, height: dh }}>
+        <div className="dev" data-theme={play.theme} style={{ width: dw, height: dh }}>
+          <iframe
+            ref={iframeRef}
+            src={src.current}
+            title="play"
+            style={{ width: vp.width, height: vp.height, transform: `scale(${dw / vp.width}, ${dh / vp.height})` }}
+          />
+        </div>
+        <PlayComments iframe={iframeRef} frameId={play.at} vp={vp} dw={dw} dh={dh} ready={stageReady} />
       </div>
 
-      <div className={`sh-play-bar${barOn ? '' : ' idle'}`} {...chromeProps}>
+      <nav className={`sh-pill sh-play-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
         <BoardMenu current={board} />
         <i className="sep" />
-        {Object.entries(CONFIG.viewports).map(([name, v], i) => (
-          <Tip key={name} inv side="bottom" label={<><b>{cap(name)}</b><span>{v.width} × {v.height}</span><span className="k">{i + 1}</span></>}>
-            <button className={play.device === name ? 'on' : undefined} onClick={() => setDevice(name)}>
-              {deviceIcon(name, 15)}
-            </button>
+        <CommentButton />
+        <LaserButton />
+        <i className="sep" />
+        <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill hint={deviceHint} dark />
+        <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
+        {playUpdateRevision && <>
+          <i className="sep" />
+          <Tip side="bottom" label={<><b>Update ready</b><span>an edit landed - reload this prototype</span></>}>
+            <button className="sh-pill-btn sh-play-update" onClick={applyUpdate}><ReloadIcon size={13} /><span>Update</span></button>
           </Tip>
-        ))}
-        <Tip inv side="bottom" label={<><b>Fill window</b><span className="k">{names.length + 1}</span></>}>
-          <button className={fill ? 'on' : undefined} onClick={() => setDevice('fill')}>
-            <FrameCornersIcon size={15} />
+        </>}
+        <i className="sep" />
+        <HideUIButton />
+        <Tip side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything · ⌘/</span></>}>
+          <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
+            <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
-        <i className="sep" />
-        {CONFIG.themes.map((t) => (
-          <Tip key={t} inv side="bottom" label={<><b>{cap(t)} theme</b><span className="k">D</span></>}>
-            <button className={play.theme === t ? 'on' : undefined} onClick={() => setTheme(t)}>
-              {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
-            </button>
-          </Tip>
-        ))}
-        {playUpdateRevision && (
-          <>
-            <i className="sep" />
-            <Tip inv side="bottom" label={<><b>Update ready</b><span>an edit landed - reload this prototype</span></>}>
-              <button className="sh-play-update" onClick={applyUpdate}><ReloadIcon size={13} /><span>Update</span></button>
-            </Tip>
-          </>
-        )}
-        <i className="sep" />
-        <Tip inv side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything</span><span className="k">⌘/</span></>}>
-          <button onClick={() => setChrome('collapsed')}>
-            <PanelFilledIcon size={16} style={{ transform: 'rotate(90deg)' }} />
-          </button>
+        <Tip side="bottom" label={<><b>Exit Prototype view</b><span>Esc</span></>}>
+          <button className="sh-pill-btn" onClick={exit}><XIcon size={14} /></button>
         </Tip>
-        <Tip inv side="bottom" label={<><b>Exit Prototype view</b><span className="k">Esc</span></>}>
-          <button onClick={exit}><XIcon size={14} /></button>
-        </Tip>
-      </div>
-
-      <Tip inv side="bottom" label={<><b>Show toolbar</b><span>H hides everything</span><span className="k">⌘/</span></>}>
-        <button className={`sh-play-chip${chipOn ? '' : ' idle'}`} onClick={() => setChrome('open')} {...chromeProps}>
-          <PanelHollowIcon size={16} style={{ transform: 'rotate(90deg)' }} />
-        </button>
+      </nav>
+      <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
+        <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
+          aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
 
-      {hintOn && (
-        <div className="sh-play-hint" {...chromeProps}>
-          <span>Controls hidden - press <kbd>H</kbd> to bring them back</span>
-          <i className="sep" />
-          <Tip inv side="bottom" label="Snooze for 15 minutes">
-            <button onClick={snoozeHint}>OK</button>
-          </Tip>
-          <button className="dim" onClick={dismissHintForever}>Don't show again</button>
-        </div>
-      )}
-
-      <div className={`sh-play-nav${navOn ? '' : ' idle'}`} {...chromeProps}>
+      <div className="sh-play-nav">
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
           <button onClick={restart}><ReloadIcon size={14} /></button>
         </Tip>

@@ -1,5 +1,4 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import { useStore, CONFIG, PUBLISHED, boardLabel, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
@@ -7,9 +6,10 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController } from './Comments.tsx'
 import { useComments } from './comments-store.ts'
+import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -46,41 +46,6 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       </div>
     )
   }
-}
-
-/** Shared popover machinery: trigger position, outside-click close, portal to the app
- *  root (glass never nests - a nested backdrop-filter cannot sample the page). */
-function usePopover() {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ left: 0, top: 0 })
-  const boxRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const toggle = () => {
-    if (!open && boxRef.current) {
-      const r = boxRef.current.getBoundingClientRect()
-      setPos({ left: r.left, top: r.bottom + 10 })
-    }
-    setOpen(!open)
-  }
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => {
-      const t = e.target as globalThis.Node
-      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-  return { open, setOpen, pos, boxRef, menuRef, toggle }
-}
-
-function Popover({ pop, children }: { pop: ReturnType<typeof usePopover>; children: ReactNode }) {
-  const app = document.querySelector('.sh-app')
-  if (!pop.open || !app) return null
-  return createPortal(
-    <div className="sh-menu" ref={pop.menuRef} style={{ left: pop.pos.left, top: pop.pos.top }}>{children}</div>,
-    app,
-  )
 }
 
 /** Boards live flat in the sidebar - always visible, one click to switch. The list
@@ -213,12 +178,12 @@ function SelectionBar() {
 }
 
 /** Devices view: one click sizes frames to a device width, tidies, and fits. Scoped
- *  like the digit keys: the selection when one exists, the whole board otherwise. */
+ *  like the digit keys: the selection when one exists, the whole board otherwise. The
+ *  dropdown chrome is the shared DevicePicker; this adapter owns the canvas wiring. */
 function DeviceMenu() {
   const deviceView = useStore((s) => s.deviceView)
   const selection = useStore((s) => s.selection)
   const nodes = useStore((s) => s.nodes)
-  const pop = usePopover()
   const scoped = selection.length > 0
   const pick = (name: string | null) => {
     animateLayout()
@@ -230,7 +195,6 @@ function DeviceMenu() {
       st.setDeviceView(name)
       setTimeout(() => canvasCtl.fitAll(), 30)
     }
-    pop.setOpen(false)
   }
   const entries = Object.entries(CONFIG.viewports)
   // active check: board-wide it is the device view; scoped, the device every selected frame wears
@@ -238,31 +202,8 @@ function DeviceMenu() {
   const active = scoped
     ? entries.find(([, vp]) => selNodes.length > 0 && selNodes.every((n) => n.w === vp.width))?.[0] ?? null
     : deviceView
-  return (
-    <div className="sh-theme" ref={pop.boxRef}>
-      <Tip side="bottom" label={<><b>Device view</b><span>{scoped ? `${selection.length} selected` : deviceView ? `${cap(deviceView)} · 0 resets` : `keys 1-${entries.length}`}</span></>}>
-        <button className="sh-pill-btn" onClick={pop.toggle}>
-          {deviceIcon(active, 16)}
-          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
-        </button>
-      </Tip>
-      <Popover pop={pop}>
-        <Tip side="bottom" label={scoped ? 'Selected frames at their default sizes' : 'Every frame at its own default size'}>
-          <button onClick={() => pick(null)}>
-            <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
-            {!scoped && deviceView === null && <CheckIcon size={13} className="chk" />}
-          </button>
-        </Tip>
-        <i className="div" />
-        {entries.map(([name, vp], i) => (
-          <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
-            {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
-            {active === name && <CheckIcon size={13} className="chk" />}
-          </button>
-        ))}
-      </Popover>
-    </div>
-  )
+  const hint = scoped ? `${selection.length} selected` : deviceView ? cap(deviceView) : `keys 1-${entries.length}`
+  return <DevicePicker value={active} onSelect={pick} includeDefault hint={hint} />
 }
 
 /** Update pill (dev only): the daily registry check surfaces here - same glass, same
@@ -337,46 +278,25 @@ function ZoomMenu() {
 /** Theme dropdown, scoped like the device digits: the selection when one exists, every
  *  frame otherwise. The trigger reflects the scope's MAJORITY (per-frame overrides never
  *  flip a board-level trigger - it reports the level it acts on, same rule as the shell).
- *  The menu is PORTALED out of the pill: an element with backdrop-filter is a backdrop root,
- *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
+ *  The dropdown chrome is the shared ThemePicker; this adapter owns the canvas wiring. */
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
   const selection = useStore((s) => s.selection)
   const viewTheme = useStore((s) => s.viewTheme)
-  const pop = usePopover()
   const scoped = selection.length > 0
-  // scoped: the trigger + check reflect the selection; global: the VIEW preference
   const scope = scoped ? nodes.filter((n) => selection.includes(n.key)) : []
-  const uniform = scoped
-    ? (scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null)
-    : viewTheme
   const majority = scoped
     ? (scope.length ? [...scope.reduce((m, n) => m.set(n.theme, (m.get(n.theme) ?? 0) + 1), new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])[0][0] : viewTheme)
     : viewTheme
+  // the tick shows only a UNIFORM scope (mixed selection = no theme is "the" one), while
+  // the trigger reports the majority - the level the control acts on
+  const uniform = scoped ? (scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null) : viewTheme
   const pick = (t: string) => {
     const st = useStore.getState()
     scoped ? st.setSelectedTheme(t) : st.setTheme(t)
-    pop.setOpen(false)
   }
-  return (
-    <div className="sh-theme" ref={pop.boxRef}>
-      <Tip side="bottom" label={<><b>Theme</b><span>{scoped ? `${selection.length} selected · D` : 'all frames · D'}</span></>}>
-        <button className="sh-pill-btn" onClick={pop.toggle}>
-          {majority === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
-          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
-        </button>
-      </Tip>
-      <Popover pop={pop}>
-        {CONFIG.themes.map((t) => (
-          <button key={t} onClick={() => pick(t)}>
-            {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
-            <span>{t}</span>
-            {uniform === t && <CheckIcon size={13} className="chk" />}
-          </button>
-        ))}
-      </Popover>
-    </div>
-  )
+  const hint = scoped ? `${selection.length} selected · D` : 'all frames · D'
+  return <ThemePicker value={majority} checked={uniform} onSelect={pick} hint={hint} />
 }
 
 export function App() {
@@ -549,6 +469,7 @@ export function App() {
     const onMsg = (e: MessageEvent) => {
       const data = e.data
       if (!data || typeof data.type !== 'string' || !data.type.startsWith('sh:')) return
+      if (e.origin && e.origin !== location.origin) return   // a cross-origin-navigated frame keeps its WindowProxy; reject it
       // B0.3: O(1) registry lookup - also the security gate (unknown source = not a
       // registered frame = dropped), replacing a per-message iframe scan + DOM walk.
       const reg = frameByWindow(e.source)
@@ -649,9 +570,13 @@ export function App() {
       if (e.key === 'Escape') {
         const c = commentsStore()
         if (c.commentMode || c.active || c.draft) { c.setMode(false); c.setActive(null); c.setDraft(null) }
+        else if (s.laser) s.setLaser(false)          // Escape also exits laser mode (parity with comment)
         else s.interact ? setInteract(null) : select(null)
       }
       if (e.key === 'p') enterPlay()
+      // H hides all chrome (shared binary Hide-UI); press again to reveal. Not persisted,
+      // so a refresh always restores it (the safety net for a forgotten toggle).
+      if (e.key === 'h') { toggleHideUI(); return }
       if (e.key === 't') { animateLayout(); runTidy() }
       // laser and comment mode are one-at-a-time: comment mode already highlights
       // what you'd click, so stacking the full rainbow on top only adds noise
@@ -869,23 +794,14 @@ export function App() {
 
       {/* floating pill nav, top right; collapses to a chip (same ladder as panel/fab) */}
       <nav className={`sh-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
-        {/* far-left section: single actions - comment mode, laser, tidy */}
-        <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C hides pins</span></>}>
-          <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
-            const c = commentsStore()
-            if (!c.commentMode) useStore.getState().setLaser(false)
-            c.setMode(!c.commentMode)
-            toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
-          }}><CommentIcon size={16} /></button>
-        </Tip>
-        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
-          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
-            if (!laser) commentsStore().setMode(false)
-            useStore.getState().setLaser(!laser)
-          }}><LaserIcon size={16} /></button>
-        </Tip>
+        {/* far-left section: actions - comment mode, laser, tidy, prototype */}
+        <CommentButton />
+        <LaserButton />
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
+        </Tip>
+        <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
+          <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
         <i className="sep" />
         <DeviceMenu />
@@ -893,9 +809,8 @@ export function App() {
         <i className="sep" />
         <ZoomMenu />
         <i className="sep" />
-        <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
-          <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
-        </Tip>
+        {/* far right: UI management only - hide, collapse */}
+        <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>
           <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
             <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />

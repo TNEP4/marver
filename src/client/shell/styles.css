@@ -417,7 +417,9 @@ body.sh-commenting .sh-lean { opacity: 0 }
 
 /* dropdown menu (theme) - portaled to .sh-app (its own backdrop root), left-aligned to its trigger */
 .sh-theme { position: relative }
-.sh-menu { position: absolute; min-width: 136px; z-index: 20;
+/* z above the play backdrop (.sh-play is z-30): a dropdown portals to .sh-app, so in the
+   prototype it must clear the full-window overlay or it renders behind it, invisible */
+.sh-menu { position: absolute; min-width: 136px; z-index: 40;
   border-radius: 16px; padding: 5px; display: flex; flex-direction: column;
   transform-origin: top left; animation: sh-pop .14s ease }
 @keyframes sh-pop { from { opacity: 0; transform: scale(.95) translateY(-4px) } }
@@ -643,6 +645,57 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    divider needs a touch more air before the first chip */
 .sh-play-nav .sep + .vchip { margin-left: 5px }
 
+/* --- prototype-review: shared toolbar in play, Hide-UI, comment overlay --- */
+
+/* Hide-UI: one binary body class (canvas + prototype) drops all operating chrome. Not
+   persisted - a page refresh always restores it. Comment pins/threads (the review
+   annotations) stay; only the marver chrome hides, for a clean point-and-shoot frame. */
+body.sh-hide-ui .sh-pill,
+body.sh-hide-ui .sh-pill-fab,
+body.sh-hide-ui .sh-panel,
+body.sh-hide-ui .sh-fab,
+body.sh-hide-ui .sh-ctx,
+body.sh-hide-ui .sh-update,
+body.sh-hide-ui .sh-toasts,
+body.sh-hide-ui .sh-banner,
+body.sh-hide-ui .sh-play-nav { display: none !important }
+
+/* the prototype pill reuses the shared pill LAYOUT but wears the discreet DARK skin of the
+   bottom-left navigator (not the bright canvas glass), so it recedes into the near-black
+   stage: dark translucent fill, a faint white hairline, light-on-dark controls. */
+.sh-play-pill, .sh-play .sh-pill-fab { z-index: 32 }
+.sh-play-pill.sh-pill, .sh-play .sh-pill-fab {
+  background: rgba(18, 18, 24, .8); border: 1px solid rgba(255, 255, 255, .1);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .38) }
+.sh-play-pill::after, .sh-play .sh-pill-fab::after { display: none }   /* no light edge-light overlay */
+.sh-play-pill .sh-pill-btn, .sh-play .sh-pill-fab { color: rgba(245, 245, 247, .6) }
+.sh-play-pill .sh-pill-btn:hover, .sh-play .sh-pill-fab:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
+.sh-play-pill .sh-pill-btn.on { background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+.sh-play-pill .sep { background: rgba(255, 255, 255, .12) }
+.sh-play-pill .bd { color: rgba(245, 245, 247, .82) }
+.sh-pill-btn.bd { width: auto; gap: 6px; padding: 0 8px 0 11px; white-space: nowrap; font-weight: 600 }
+.sh-play-update { width: auto !important; gap: 5px; padding: 0 11px !important; font-size: 12px; font-weight: 600 }
+/* the picker dropdowns portal to .sh-app; in play they carry .sh-menu-dark for the dark skin */
+.sh-menu-dark { background: rgba(20, 20, 26, .97); border-color: rgba(255, 255, 255, .12); box-shadow: 0 12px 40px rgba(0, 0, 0, .5) }
+.sh-menu-dark::after { display: none }
+.sh-menu-dark button { color: rgba(245, 245, 247, .82) }
+.sh-menu-dark button:hover { background: rgba(255, 255, 255, .1) }
+.sh-menu-dark .chk { color: #6db3ff }
+.sh-menu-dark kbd { color: rgba(245, 245, 247, .5) }
+.sh-menu-dark .div { background: rgba(255, 255, 255, .1) }
+
+/* device + comment overlay share one flex-centered box; the overlay is inset:0 over it, a
+   SIBLING of the clipping .dev so a thread card is never eaten by the device's overflow.
+   overflow:visible lets a card spill past the device edge; only its markers catch the
+   pointer, the stage below stays fully interactive. */
+.sh-play-stage { position: relative; flex: none }
+/* the canvas writes --sh-inv (1/zoom) for screen-constant pins; the prototype has no
+   zoom, so neutralise it or the leaked value scales every comment pin by ~12x at overview */
+.sh-play { --sh-inv: 1 }
+.sh-play-comments { position: absolute; inset: 0; z-index: 31; overflow: visible; pointer-events: none }
+.sh-play-comments > * { pointer-events: auto }
+
 /* the current variant's name trails the chips at natural width - the chips anchor,
    so a name change grows the pill rightward without shifting any control underfoot.
    A max caps runaway titles; the Tip carries the full name. */
@@ -704,9 +757,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    outline hugging the edge, 4px ring halo - in the comment green (the pin
    is already screen-space via scale(--sh-inv), so plain px match the
    frame's calc'd screen px) */
-.cm-pin.on { border-color: var(--comment);
-  outline: 2px solid var(--comment); outline-offset: -1px;
-  box-shadow: 0 0 0 4px var(--comment-ring), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
+.cm-pin.on { border-color: var(--cm-line, var(--comment));
+  outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
 
 /* stack: the frame-corner cluster - everyone across the frame's threads */
@@ -721,9 +774,9 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   transform: scale(var(--sh-inv, 1)); transform-origin: top left;
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   /* an open card is the active selection - the frame's exact geometry, comment green */
-  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--comment);
-  outline: 2px solid var(--comment); outline-offset: -1px;
-  box-shadow: 0 0 0 4px var(--comment-ring), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
+  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--cm-line, var(--comment));
+  outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
   display: flex; flex-direction: column; gap: 12px;
   font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
@@ -760,15 +813,15 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
   transition: border-color .15s, box-shadow .15s }
 .cm-compose input::placeholder { color: var(--glass-ink-3) }
-.cm-compose input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
+.cm-compose input:focus { border-color: var(--cm-line, var(--comment)); box-shadow: 0 0 0 3px var(--cm-line-ring, var(--comment-ring)) }
 .cm-send { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
   width: 28px; height: 28px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
-  background: var(--comment); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
+  background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
 .cm-send:hover:not(:disabled) { filter: brightness(1.08) }
 .cm-send:disabled { background: var(--glass-ink-3); opacity: .5; cursor: default }
 /* signed-out viewer: one clear button in place of the composer */
 .cm-signin-cta { width: 100%; height: 40px; border: 0; border-radius: 999px;
-  background: var(--comment); color: #fff; cursor: pointer;
+  background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer;
   font: 600 13px -apple-system, system-ui, sans-serif; transition: filter .15s }
 .cm-signin-cta:hover { filter: brightness(1.06) }
 /* the draft composer is JUST the pill - no card chrome around a single input */

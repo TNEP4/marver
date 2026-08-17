@@ -14,6 +14,27 @@ import { Tip } from './Tip.tsx'
 import { ROUTE } from '../const.ts'
 import type { Thread } from '../../shared/events.ts'
 
+/** Tint the pin / composer / thread card EDGES (border, outline, focus ring) in the anchored
+ *  element's own laser hue (captured at pick as anchor.el.hue) via --cm-line/--cm-line-ring.
+ *  Deliberately NOT the button fills (--comment stays green: white text on a saturated hue
+ *  fails at yellow/green/cyan) and NOT the avatar (keeps its per-user colour). No hue -> the
+ *  CSS falls back to the green token. */
+export function hueVars(hue?: number): React.CSSProperties {
+  // guard NaN / Infinity from a bad persisted anchor - an invalid custom property would
+  // suppress the CSS fallback and leave the edge uncoloured
+  if (!Number.isFinite(hue)) return {}
+  const h = hue as number
+  // --cm-solid is the FILLED-button colour (send / sign-in): a hue-aware lightness so the
+  // white glyph keeps contrast - yellow/green/cyan read light, so they go darker.
+  const l = (h >= 40 && h < 75) ? 34 : (h >= 75 && h < 165) ? 36 : (h >= 165 && h < 200) ? 38 : 45
+  return {
+    '--cm-line': `hsl(${h} 95% 45%)`,
+    '--cm-line-ring': `hsl(${h} 95% 50% / .30)`,
+    '--cm-solid': `hsl(${h} 85% ${l}%)`,
+  } as React.CSSProperties
+}
+const anchorHue = (a: unknown): number | undefined => (a as any)?.el?.hue
+
 const rel = (ts: number) => {
   const m = Math.round((Date.now() - ts) / 60_000)
   if (m < 1) return 'now'
@@ -53,7 +74,7 @@ function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
 
 /** The face of a marker: up to `max` overlapping avatars + the total count when >1.
  *  One shape for pins (one thread, anchored) and stacks (all threads on a frame). */
-function MarkerFace({ threads, max = 3 }: { threads: Thread[]; max?: number }) {
+export function MarkerFace({ threads, max = 3 }: { threads: Thread[]; max?: number }) {
   const { faces, count } = markerDigest(threads)
   return (
     <>
@@ -78,6 +99,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
   const open = threads.filter((t) => !t.resolved)
   const anchored = open.filter((t) => (t.anchor as any)?.el)
+  // whether the ACTIVE thread is still open on this frame - a dep for the highlight effect so
+  // a remote resolve (thread leaves `open` while `active` is unchanged) still clears the lock
+  const activeShown = !!active && open.some((t) => t.id === active)
 
   // resolve anchors against the live frame whenever threads or the document change
   useEffect(() => {
@@ -85,7 +109,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     if (!win || node.status !== 'ready' || !anchored.length) return
     const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: anchored.map((t) => ({ key: t.id, anchor: t.anchor })) }, location.origin)
     const onMsg = (e: MessageEvent) => {
-      if (e.source !== win || e.data?.type !== 'sh:anchor-rects') return
+      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects') return
       const next: typeof rects = {}
       for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.rect
       setRects(next)
@@ -95,6 +119,23 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     const iv = setInterval(ask, 4000)          // re-renders, scroll, hot reloads - cheap to re-ask
     return () => { clearInterval(iv); window.removeEventListener('message', onMsg) }
   }, [node.status, anchored.map((t) => t.id).join(','), iframe])
+
+  // #4/#5: drive the persistent element highlight into this frame - the composing draft on
+  // this node (lock on pick), or the open thread anchored here (highlight on open). null
+  // clears it, so the shell owns the release; on a failed/late resolve the frame re-applies
+  // on its next anchor-resolve tick. The self-lock on pick handles the instant case.
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win || node.status !== 'ready') return
+    // ONLY light an element while its thread is the active one (or a draft is composing on
+    // it) AND pins are shown - closing the thread or hiding comments (⇧C) clears it, so a
+    // stray outline never lingers on the frame.
+    const draftHere = draft?.nodeKey === node.key ? (draft.anchor as any) : null
+    const activeHere = active ? open.find((t) => t.id === active && (t.anchor as any)?.el) : undefined
+    const anchor = show ? (draftHere ?? (activeHere ? (activeHere.anchor as any) : null)) : null
+    win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: anchor ?? null }, location.origin)
+    // active/draft/show/activeShown are the triggers; `open` is read fresh from the closure
+  }, [active, draft, show, activeShown, node.status, node.key, frameId, iframe])
 
   const drafting = draft?.nodeKey === node.key
   if (!show || (!open.length && !drafting)) return null
@@ -124,7 +165,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         const { x, y, orphan } = pinPos(t)
         return (
           <div key={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}`}
-            style={{ left: x, top: y }}
+            style={{ left: x, top: y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
             title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
@@ -133,14 +174,16 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         )
       })}
       {active && open.some((t) => t.id === active) && (
-        <ThreadCard key={active} thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} node={node} />
+        <ThreadCard key={active} thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} bounds={{ w: node.w, h: node.h }} />
       )}
-      {draft?.nodeKey === node.key && <DraftComposer at={{ x: ((draft.anchor as any)?.rect?.x ?? 0) + ((draft.anchor as any)?.pos?.fx ?? 0.5) * ((draft.anchor as any)?.rect?.w ?? 0), y: ((draft.anchor as any)?.rect?.y ?? 0) + ((draft.anchor as any)?.pos?.fy ?? 0.5) * ((draft.anchor as any)?.rect?.h ?? 0) }} node={node} />}
+      {draft?.nodeKey === node.key && <DraftComposer at={{ x: ((draft.anchor as any)?.rect?.x ?? 0) + ((draft.anchor as any)?.pos?.fx ?? 0.5) * ((draft.anchor as any)?.rect?.w ?? 0), y: ((draft.anchor as any)?.rect?.y ?? 0) + ((draft.anchor as any)?.pos?.fy ?? 0.5) * ((draft.anchor as any)?.rect?.h ?? 0) }} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />}
     </>
   )
 }
 
-function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: number }; node: Node }) {
+/** The open thread card - shared by canvas (bounds = node size, `at` in frame coords) and
+ *  prototype (bounds = the on-screen stage size, `at` in screen coords). Geometry only. */
+export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number } }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
@@ -149,7 +192,7 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
-  const flip = at.x > node.w * 0.55
+  const flip = at.x > bounds.w * 0.55
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
   const submit = async () => {
@@ -157,7 +200,7 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   return (
-    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
+    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
@@ -220,14 +263,16 @@ function ThreadCard({ thread, at, node }: { thread: Thread; at: { x: number; y: 
   )
 }
 
-function DraftComposer({ at, node }: { at: { x: number; y: number }; node: Node }) {
+/** The draft composer - shared by canvas and prototype, geometry via `bounds`, tinted with
+ *  the picked element's hue. */
+export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number }; bounds: { w: number; h: number }; hue?: number }) {
   const { create, setDraft } = useComments.getState()
   const [text, setText] = useState('')
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => { ref.current?.focus() }, [])
-  const flip = at.x > node.w * 0.55
+  const flip = at.x > bounds.w * 0.55
   return (
-    <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, node.h - 40) }}
+    <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <div className="cm-compose">
         <div className="cm-inputwrap">
