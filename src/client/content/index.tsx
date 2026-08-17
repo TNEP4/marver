@@ -97,9 +97,13 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
       </div>
     )
   }
-  // h: shared rendered height for a row of mixed-aspect images - equal widths alone never make unequal
-  // images READ equal; cover-crop to one height does.
-  const style = h ? { height: h, width: '100%', objectFit: 'cover' as const } : undefined
+  // A reference image ALWAYS shows in full: it fills its column at its natural aspect ratio, never
+  // cropped and never letterboxed. Equal-aspect images (e.g. a row of screenshots) line up on their own,
+  // and the frame auto-heights to fit. `h` is accepted for back-compat but no longer constrains size -
+  // capping height below natural would force the image narrower than its column (whitespace) or slice it
+  // (the old object-fit:cover). Width:100% + height:auto come from the .mv-img-el rule.
+  void h
+  const style = undefined
   return (
     <figure className="mv-block mv-img">
       {lodSupported
