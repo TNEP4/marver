@@ -162,7 +162,11 @@ body { margin: 0; }
    frame a frame; give the image itself a hairline edge and a whisper of shadow so it reads as a clean,
    distinct object on the page (no heavy double-border around browser mockups). */
 .mv-block.mv-img { padding: 0; border: none; background: none; }
-.mv-img .mv-img-el { border: 1px solid var(--mv-line-soft);
+/* INSET hairline: the line sits ON the image's own rounded edge (outline-offset:-1px), overriding a
+   screenshot's ragged or baked-in dark border instead of drawing a second frame outside it. It shares
+   the image's exact border-radius (same element), so the two never mismatch. Grayscale token = clean in
+   both light and dark. A whisper of drop shadow lifts it off the page. */
+.mv-img .mv-img-el { outline: 1px solid var(--mv-line); outline-offset: -1px;
   box-shadow: 0 1px 4px rgba(20, 22, 28, 0.07); }
 .mv-block figcaption, .mv-img figcaption { font-size: 12.5px; color: var(--mv-faint); padding-top: 10px; }
 .mv-diagram-svg { display: flex; justify-content: center; }
