@@ -134,6 +134,37 @@ raised six [P1]s. These are correct and mostly things this run introduced or lef
 (b) **enforced write isolation + fenced crash recovery** (not prompt-level leases/idempotence);
 (c) **one daemon-owned result/event contract** covering reply, reanchor, validation, provenance, sync.
 
+## Contract-closing round (v8 → v10, trial-and-error)
+
+After the v8 review I spiked the safety contracts and sharpened the spec through two more Codex
+passes. State now:
+- **Owner auth (v9 #1): CLOSED by spike + design.** `origin` can't gate (syncs — proven RCE); a
+  **device-bound ledger** of locally-POSTed event ids does. Precise semantics added (keys on the
+  @marver-carrying event id; edits re-authorize; agent events never ledgered; fail-closed atomicity).
+- **Crash recovery (v9 #4): CLOSED by spike.** Files stay valid under a mid-job kill (atomic edits);
+  **fence the process group + re-run the goal-phrased job** reconciles partial state (proven). Added a
+  deterministic **completion predicate** (captured `{status:ok}` + a reply per batched thread) and
+  **target set** (the batch's thread ids).
+- **Parallelism / write isolation (v9 #3 + the UX contradiction): CLOSED by design.** The daemon
+  **batches pending mentions into ONE orchestrated job**; parallelism is subagents *within* a batch
+  (restores the drop-several-watch-several UX) and batches serialize (no blind cross-orchestrator
+  race). Same-file parallel proven a race. **Residual (honest): within-batch non-overlap is
+  orchestrator-assigned, not OS-enforced** — a P2/P3 filesystem-allowlist hardening.
+- **Proactive (v9 #2): CLOSED.** Acts only on the owner's ledgered backlog (opt-in); non-owner needs a
+  click. §1 aligned with §3.7.
+- **Result contract (v9 #5): CLOSED.** One daemon-captured `{reply, reanchors[], status}`; pull loop
+  dropped; token CLI optional (interim only).
+- **Event integration (v9 #6): mostly CLOSED (code).** Published validator rejects client
+  `agent`/`agentMeta` and unauthenticated reanchors; dev POST strips them; replay guards null anchors.
+  109 tests green. Open: whether agent replies ever publish (v1 = dev-local, decided).
+- **Also proven this round:** CLI-swap (Codex via the same daemon), session-resume continuity, and the
+  instruction-delivery mechanism (root `CLAUDE.md` `@`-imports `design/AGENTS.md`).
+
+**Revised confidence:** the "not safe to build" gate is largely **lifted** — every contract has a
+validated direction/mechanism, most spiked. Full P1, clean and safe: **~65-70%** (up from 55-60%),
+with the remainder being *ordinary implementation* (build the daemon + ledger per spec) plus one
+stated residual (OS-enforced within-batch isolation) and the unbuilt live-render UI (Q7).
+
 ## Recommended build order for P1 (de-risked)
 
 1. **Event model** — done (`e07f249`). 
