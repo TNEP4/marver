@@ -171,7 +171,14 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const manifest = scanFrames(root)
   const allBoards = readBoards(root)
   const rights = resolvePublish(root, allBoards, boardsFlag, allBoardsFlag)
-  const publishedNames = Object.keys(rights)
+  // switcher order: curated boards ranked by each board's `order` (then name); all-scenes always LAST
+  // (it is the expensive everything-board, never the landing). `default` (where `/` opens) is the first.
+  const boardOrder = (n: string): number => {
+    const o = (allBoards[n] as { order?: unknown } | undefined)?.order
+    return typeof o === 'number' && Number.isFinite(o) ? o : Infinity
+  }
+  const publishedNames = Object.keys(rights).sort((a, b) =>
+    a === 'all-scenes' ? 1 : b === 'all-scenes' ? -1 : (boardOrder(a) - boardOrder(b)) || a.localeCompare(b))
   const includeAll = publishedNames.includes('all-scenes')
   const boards: Record<string, any> = {}
   for (const n of publishedNames) if (allBoards[n]) boards[n] = allBoards[n]
@@ -191,7 +198,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
   // names drives the published board switcher (all-scenes only when actually published);
   // default is where `/` opens - the first published board, never a synthesized aggregate
-  const data = { manifest: pubManifest, boards, names: publishedNames, default: publishedNames[0], rights }
+  const data = { manifest: pubManifest, boards, names: publishedNames, default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0], rights }
 
   // ---- build overrides: real sh-data + (when filtering) the generated registry ----
   const registryFile = posix(join(clientDir, 'frame-host', 'registry.ts'))

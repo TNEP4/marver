@@ -84,7 +84,11 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
           .map((f) => {
             const content = readFileSync(join(boardsDir, f), 'utf8')
-            return { name: f.replace(/\.json$/, ''), sha256: hash(content) }
+            // `order` (a number in the board file) lets the agent rank boards logically; the switcher
+            // sorts by it, so the FIRST board is the landing board and all-scenes always sinks last.
+            let order: number | undefined
+            try { const o = (JSON.parse(content) as { order?: unknown })?.order; if (typeof o === 'number' && Number.isFinite(o)) order = o } catch { /* malformed board */ }
+            return { name: f.replace(/\.json$/, ''), sha256: hash(content), order }
           })
         return json(res, 200, list)
       }
@@ -120,6 +124,13 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
             return json(res, 409, { error: 'board changed on disk', board: disk, sha256: hash(current) })
           }
           mkdirSync(boardsDir, { recursive: true })
+          // Preserve author-owned fields the shell does not manage. `order` (the board's rank in the
+          // switcher) lives in the file but never rides the shell's save shape, so a routine autosave
+          // would otherwise strip it. Carry it over from disk when the incoming board omits it.
+          const incoming = body.board as Record<string, unknown> | null
+          if (incoming && typeof incoming === 'object' && incoming.order === undefined && current) {
+            try { const o = (JSON.parse(current) as { order?: unknown }).order; if (typeof o === 'number' && Number.isFinite(o)) incoming.order = o } catch { /* malformed disk */ }
+          }
           const next2 = JSON.stringify(body.board, null, 2) + '\n'
           atomicWrite(p, next2)
           return json(res, 200, { sha256: hash(next2) })

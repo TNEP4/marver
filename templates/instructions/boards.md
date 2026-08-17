@@ -9,7 +9,7 @@ Minimal is enough - list the frames; the shell fills sizes from each frame's
 viewport and lays it out:
 
 ```json
-{ "version": 1, "name": "checkout-compare", "auto": false,
+{ "version": 1, "name": "checkout-compare", "order": 1, "auto": false,
   "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
 ```
 
@@ -18,8 +18,14 @@ viewport and lays it out:
   increasing `x`).
 - The human's tidy (`t`) and device views re-layout in frame-id order, so id
   ordering is the durable arrangement; explicit coordinates are one-off setups.
-- `auto: false` boards show exactly their list. `all-scenes` is auto-managed -
-  never write it.
+- **`"order": <n>` ranks the board in the switcher, and the LOWEST-ordered board is
+  the LANDING board the canvas opens on.** Rank them so the first is a tight, fast,
+  orienting board (an overview or the primary flow) - never a giant one. Boards
+  without an `order` sort after the ranked ones, by name. Set `order` deliberately on
+  every curated board; it is the first impression.
+- `auto: false` boards show exactly their list. `all-scenes` is auto-managed (it holds
+  EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
+  never the landing board, and never write its file.
 - Do not edit board files while the canvas is open unless asked; the shell owns
   their layout fields.
 - Use boards for comparisons: version A vs B vs C of a flow, side by side. Variant

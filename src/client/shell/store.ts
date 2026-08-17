@@ -40,12 +40,17 @@ export const CONFIG: { viewports: Record<string, { width: number; height: number
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 
-/** Board names for switchers: all-scenes first, the rest sorted. Throws on transport
- *  failure - callers keep their last known list. */
+/** Board names for switchers: the agent's curated boards FIRST (ranked by each board's `order`, then
+ *  name), and the auto `all-scenes` everything-board LAST - it is the expensive one, never the landing.
+ *  Throws on transport failure - callers keep their last known list. */
 export async function fetchBoardNames(): Promise<string[]> {
   if (DATA) return DATA.names
-  const list: { name: string }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-  return ['all-scenes', ...list.map((b) => b.name).filter((n) => n !== 'all-scenes').sort()]
+  const list: { name: string; order?: number }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
+  const curated = list
+    .filter((b) => b.name !== 'all-scenes')
+    .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity) || a.name.localeCompare(b.name))
+    .map((b) => b.name)
+  return [...curated, 'all-scenes']
 }
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 export const boardLabel = (n: string) => humanize(n)

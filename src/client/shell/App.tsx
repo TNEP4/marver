@@ -403,12 +403,21 @@ export function App() {
   useEffect(() => {
     if (booted) return
     booted = true
-    if (bootHash.board && bootHash.board !== useStore.getState().board)
-      useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
-    boot().then((ok) => {
+    const start = async () => {
+      if (bootHash.board) {
+        if (bootHash.board !== useStore.getState().board)   // a deep link wins
+          useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
+      } else if (!PUBLISHED) {
+        // fresh open, no deep link: LAND on the first curated board (a tight, fast board = a good first
+        // impression) instead of the auto all-scenes everything-board, which renders every frame at once.
+        const first = (await fetchBoardNames().catch(() => [] as string[])).find((n) => n !== 'all-scenes')
+        if (first && first !== useStore.getState().board) useStore.setState({ board: first, boardAuto: false })
+      }
+      const ok = await boot()
       urlReady.current = true
-      if (ok && bootHash.play) enterPlay(bootHash.play)   // #/p/<board> alone = board start
-    })
+      if (ok && bootHash.play) enterPlay(bootHash.play)     // #/p/<board> alone = board start
+    }
+    void start()
   }, [])
 
   // the URL is a projection of state: design views replace in place; entering play and
