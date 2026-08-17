@@ -81,9 +81,12 @@ block is authoritative; older sections are kept for history but **defer to this 
    reply CLI is not portable. **This supersedes §3.4/§7's "worker posts via `marver jam reply` token"
    as the *primary* path;** the token CLI stays as a Claude-Code/Cursor-only enhancement for interim /
    subagent replies.
-3. **Instructions ship as `design/AGENTS.md`** (+ a `CLAUDE.md` that imports it for Claude Code, which
-   reads CLAUDE.md not AGENTS.md). `marver init` already scaffolds `design/AGENTS.md` + `design/instructions/`,
-   so Live Jam extends the existing convention. AGENTS.md is read natively by Codex/Cursor/OpenCode/Factory.
+3. **Instructions ship as `design/AGENTS.md`** — **delivery spiked** (`scratchpad/marver-test`): a
+   `claude -p` job **ignored** `design/AGENTS.md` alone, but **followed** it once a **root `CLAUDE.md`
+   with `@design/AGENTS.md`** existed (Claude reads CLAUDE.md, not AGENTS.md). So marver ships a root
+   `CLAUDE.md` that `@`-imports `design/AGENTS.md` for Claude Code; Codex/Cursor/OpenCode/Factory read
+   `design/AGENTS.md` natively. `marver init` already scaffolds `design/AGENTS.md` + `design/instructions/`,
+   so Live Jam extends the existing convention.
 4. **Parallel = spawn N; git-worktree isolation is a batch tool, NOT the live path** (a worktree needs
    its own server, breaking the single live canvas). Same-tree parallel is safe only for **disjoint
    frame files** under a per-frame/per-path lease (proven in Q2). Codex has no work isolation and is
@@ -279,7 +282,8 @@ loop; the agent owns the thinking.
   the frame itself or **spawns subagents, one per frame** (Claude/Cursor/OpenCode/Factory can; Codex
   parallelism is multiple daemon-spawned jobs). The daemon delivers; the spawned agent orchestrates.
 - **Continuity** across a jam via `--resume <session_id>` / `codex exec resume` is a **P2**
-  optimization; P1 cold-starts per job (CLAUDE.md/AGENTS.md re-load the conventions, §16).
+  optimization (**spiked** — `claude -p --resume` recalled a fact across two spawned runs,
+  `scratchpad/spike-resume`); P1 cold-starts per job (CLAUDE.md/AGENTS.md re-load the conventions, §16).
 
 **3.4 The result contract — ONE daemon-captured structured output  [v9, corrected]**
 (Supersedes the "token endpoint is the only/general writer" phrasing — that is not portable: Codex
