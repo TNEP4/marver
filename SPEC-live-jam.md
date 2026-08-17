@@ -98,6 +98,30 @@ All ride the same daemon-spawn-per-job contract; per-agent flags differ only in 
 
 ---
 
+## ⚠️ OPEN CONTRACTS (Codex v8 review) — NOT ready to build P1 as written
+
+The overnight spike proved the *execution loop*; a Codex adversarial pass then showed the *safety
+contracts* are not sound yet. **These gate P1 and supersede the affected sections below.** Full detail
++ fixes in `DERISK-live-jam.md`. Do not implement §1's `origin`-gate, §3.7 proactive pickup, or §12's
+per-file leases as currently written.
+1. **Owner auth can't be a synced event field.** `origin:'local'` is stamped on any local POST and
+   syncs byte-for-byte → replace with a **daemon-local authorization ledger keyed by event id** (never
+   synced). *(Design decision for the morning.)*
+2. **Proactive pickup (§3.7) reopens RCE** under daemon-spawn: non-owner text must be **context only**,
+   acting on it requires **explicit owner promotion**. No autonomous action on others' comments.
+3. **Per-file leases (§12) are unenforceable a priori** — the daemon can't know what a model will
+   touch. Serialize unknown/shared writes, or enforce a write allowlist. *(Design decision.)*
+4. **Retry must be fenced, not prompt-idempotent** — kill the process group before reclaim, pre/post
+   file hashes, classify no-edits / applied-but-lost / safe-to-retry.
+5. **One daemon-owned result contract** `{ reply, reanchors, status }` — §3.3 (pull loop), §3.4/§7
+   (token endpoint), §11/§15 (CLI reanchor) contradict the VALIDATED "daemon captures final output".
+   Token CLI is optional/progress-only.
+6. **Event change ship-together** — partially done on the branch: `reanchor` added to the published
+   validator (`collab.ts`), dev POST now strips client `agent`/`agentMeta`/`origin` (`api.ts`),
+   replay guards null anchors. Still open: sync semantics + the `origin` replacement (item 1).
+
+---
+
 ## 0. Core insight (still small, now honest)
 
 1. **Comments are an append-only JSONL log, one file per board** (`design/comments/<board>.jsonl`),

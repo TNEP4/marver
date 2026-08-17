@@ -693,6 +693,14 @@ describe('comment event store (SPEC-M3 §1 - set-union merge, deterministic repl
     expect(threads[0].anchor).toEqual(newA)            // thread (and all its comments) now on the new element
     expect(threads[0].replies).toHaveLength(1)         // reanchor doesn't disturb replies
   })
+  it('Live Jam: a null-anchor reanchor is ignored (never un-pins)', () => {
+    const a0 = { el: { cssPath: 'button#a' } }
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', anchor: a0 }),
+      ev('e2', 'reanchor', { commentId: 'c1', anchor: null }),
+    ])
+    expect(threads[0].anchor).toEqual(a0)              // still pinned to the original
+  })
   it('a torn trailing line is skipped, the rest of the log survives', () =>
     store((dir) => {
       appendEvents(dir, 'review', [ev('e1', 'create', { commentId: 'c1' })])

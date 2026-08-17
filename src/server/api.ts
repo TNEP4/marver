@@ -175,11 +175,17 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           // CREATED, so completing them here is fine - but an event that already
           // carries board/author must pass through byte-identical, or the id-keyed
           // sync would hold two versions of "the same" event forever
-          const stamped = incoming.map((ev: any) => ({
-            ...ev,
-            board: ev.board ?? cm[1],
-            author: ev.author ?? (['create', 'reply', 'react', 'edit'].includes(ev.type) ? me : undefined),
-          }))
+          const stamped = incoming.map((ev: any) => {
+            // Live Jam: the public POST is never allowed to set agent provenance - only the
+            // daemon's in-process writer stamps agent/agentMeta. Strip any client-supplied
+            // agent/agentMeta/origin so a same-origin page cannot forge a Marver-authored event.
+            const { agent: _a, agentMeta: _am, origin: _o, ...clean } = ev
+            return {
+              ...clean,
+              board: clean.board ?? cm[1],
+              author: clean.author ?? (['create', 'reply', 'react', 'edit'].includes(clean.type) ? me : undefined),
+            }
+          })
           const fresh = appendEvents(dir, cm[1], stamped)
           // push in the background - the periodic sync catches anything this drops
           void backgroundPush(root)

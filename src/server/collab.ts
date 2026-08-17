@@ -33,7 +33,7 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
   return !!user && rights[board] === 'comment'
 }
 
-const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile'])
+const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])
 const ID_RE = /^[\w-]{8,64}$/
 const MAX_BODY_TEXT = 10_000
 
@@ -105,6 +105,12 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
       case 'reopen':
         if (!creates.has(ev.commentId!) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.commentId))
           return 'cannot resolve a thread that does not exist'
+        break
+      case 'reanchor':
+        // Live Jam: re-pin a thread (root) to a new element. Must target a real root and carry a non-null anchor.
+        if (!creates.has(ev.commentId!) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.commentId))
+          return 'cannot reanchor a thread that does not exist'
+        if (ev.anchor == null) return 'reanchor needs a new anchor'
         break
     }
   }
