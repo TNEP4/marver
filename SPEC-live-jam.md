@@ -109,9 +109,14 @@ The overnight spike proved the *execution loop*; a Codex adversarial pass then s
 contracts* are not sound yet. **These gate P1 and supersede the affected sections below.** Full detail
 + fixes in `DERISK-live-jam.md`. Do not implement §1's `origin`-gate, §3.7 proactive pickup, or §12's
 per-file leases as currently written.
-1. **Owner auth can't be a synced event field.** `origin:'local'` is stamped on any local POST and
-   syncs byte-for-byte → replace with a **daemon-local authorization ledger keyed by event id** (never
-   synced). *(Design decision for the morning.)*
+1. ✅ **RESOLVED (spiked) — owner auth is a daemon-local ledger, not a synced field.** `origin:'local'`
+   syncs byte-for-byte, so a remote comment arrives still marked `local` → trusting it is RCE (proven).
+   **Validated design:** when the dev server accepts a **local browser POST**, it records that event id
+   in a **device-bound ledger** (`design/.local/jam-ledger`, gitignored, never synced). The daemon's
+   owner-trigger check is `ledger.has(ev.id)`, not `ev.origin`. Synced-in events are never in the
+   ledger → never trigger. Spike (`scratchpad/spike-auth`): origin-gate ran a remote `rm -rf` comment;
+   the ledger-gate rejected it and allowed only the owner's real comment. `CommentEvent.origin` becomes
+   informational-only (or drops); the ledger is the auth rail. See §1.
 2. **Proactive pickup (§3.7) reopens RCE** under daemon-spawn: non-owner text must be **context only**,
    acting on it requires **explicit owner promotion**. No autonomous action on others' comments.
 3. **Per-file leases (§12) are unenforceable a priori** — the daemon can't know what a model will
@@ -123,7 +128,13 @@ per-file leases as currently written.
    Token CLI is optional/progress-only.
 6. **Event change ship-together** — partially done on the branch: `reanchor` added to the published
    validator (`collab.ts`), dev POST now strips client `agent`/`agentMeta`/`origin` (`api.ts`),
-   replay guards null anchors. Still open: sync semantics + the `origin` replacement (item 1).
+   replay guards null anchors. Still open: sync semantics for agent replies.
+
+**Empirical results this round (trial-and-error):** ✅ CLI-swap — the same daemon ran with Claude *and*
+Codex (one flag differs, §VALIDATED). ✅ Same-frame parallel is a **race** (both edits landed only by
+Claude's surgical-Edit luck) → **serialize same-frame jobs, non-negotiable**; cross-frame shared-file
+is the only open write-isolation question. ✅ Owner-auth **ledger** defeats the synced-`origin` spoof
+(item 1, spiked).
 
 ---
 
@@ -149,14 +160,17 @@ any remote collaborator drive your privileged local agent (remote code execution
 v2 makes it a first-class rule.
 
 - **Only a comment/reply authored by the local dev-session owner triggers the agent.**
-  **[v3] Owner resolution via server-stamped provenance (email is unreliable — `api.ts:204` returns
-  `email:''` for an unconnected dev session).** The dev write path (`POST /__mv/api/comments`) stamps
-  a **server-set `origin:'local'`** on every event it accepts from the local browser (client cannot
-  set or forge it — the POST strips any client-supplied `origin`, §7). Events that arrive *via sync*
-  from the published canvas do **not** carry it. So the daemon's owner-trigger rule is simply
-  **`origin === 'local'`** — provenance, not the (possibly empty) email. When the board is *connected*
-  (collab.json carries an email), that email additionally distinguishes the owner among synced
-  authors for the mention *styling*. Non-owner `@marver` mentions **never auto-trigger** a job.
+  **[v9, spiked] Owner resolution = a device-bound authorization ledger, NOT a synced field.** Email
+  is unreliable (`api.ts:204` returns `email:''` unconnected), and a synced `origin:'local'` field is a
+  spoof: sync copies it byte-for-byte, so a remote comment arrives still marked `local` (proven RCE,
+  `scratchpad/spike-auth`). So: when the dev server accepts a **local browser POST**, it records that
+  **event id** in a **device-bound ledger** (`design/.local/jam-ledger`, gitignored, **never synced**).
+  The daemon's owner-trigger check is **`ledger.has(ev.id)`** — the event was written *on this machine
+  by this session*, which sync can never fake. Synced-in events are never in the ledger → never
+  trigger. The mention *styling* (bold vs plain, §1 below) can still use the connected email when
+  present for display, but **execution keys only on the ledger.** `CommentEvent.origin` is
+  informational-only (not trusted for auth) — or dropped. Non-owner `@marver` mentions **never
+  auto-trigger** a job.
 - **[v7] Auto-trigger vs proactive pickup (the important distinction).** Owner `@marver` is a
   *mechanical* trigger: it always creates a job. A non-owner `@marver` (or any untagged comment) is
   **not** a mechanical trigger, but it is **not inert either** — it enters the accumulated volume the
