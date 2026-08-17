@@ -1,4 +1,4 @@
-# SPEC — Live Jam (Phase 4) — v8 (overnight-de-risked)
+# SPEC — Live Jam (Phase 4) — v9 (contracts spiked + sharpened)
 
 **One line:** Tag `@marver` in a comment and the coding agent that started your local dev session
 picks it up, acts on the code, and replies in the thread. You review by pointing; it builds by
@@ -103,12 +103,11 @@ differences are a single flag adapter (e.g. Codex `--skip-git-repo-check`, Facto
 
 ---
 
-## ⚠️ OPEN CONTRACTS (Codex v8 review) — NOT ready to build P1 as written
+## CONTRACTS (Codex v8 review → mostly resolved by trial-and-error) — closing on build-ready
 
-The overnight spike proved the *execution loop*; a Codex adversarial pass then showed the *safety
-contracts* are not sound yet. **These gate P1 and supersede the affected sections below.** Full detail
-+ fixes in `DERISK-live-jam.md`. Do not implement §1's `origin`-gate, §3.7 proactive pickup, or §12's
-per-file leases as currently written.
+A Codex adversarial pass on v8 found six safety-contract gaps. A night of spikes has now **resolved
+five** with validated designs (marked ✅); the last is a spec cleanup. **These supersede the affected
+sections below.** Full detail + evidence in `DERISK-live-jam.md`.
 1. ✅ **RESOLVED (spiked) — owner auth is a daemon-local ledger, not a synced field.** `origin:'local'`
    syncs byte-for-byte, so a remote comment arrives still marked `local` → trusting it is RCE (proven).
    **Validated design:** when the dev server accepts a **local browser POST**, it records that event id
@@ -117,18 +116,30 @@ per-file leases as currently written.
    ledger → never trigger. Spike (`scratchpad/spike-auth`): origin-gate ran a remote `rm -rf` comment;
    the ledger-gate rejected it and allowed only the owner's real comment. `CommentEvent.origin` becomes
    informational-only (or drops); the ledger is the auth rail. See §1.
-2. **Proactive pickup (§3.7) reopens RCE** under daemon-spawn: non-owner text must be **context only**,
-   acting on it requires **explicit owner promotion**. No autonomous action on others' comments.
-3. **Per-file leases (§12) are unenforceable a priori** — the daemon can't know what a model will
-   touch. Serialize unknown/shared writes, or enforce a write allowlist. *(Design decision.)*
-4. **Retry must be fenced, not prompt-idempotent** — kill the process group before reclaim, pre/post
+2. ✅ **RESOLVED (safety-corrected) — proactive acts only on the owner's ledgered backlog.** Reads all
+   comments as context; acts only on owner-ledgered comments (tagged or not; untagged = opt-in
+   `jam.proactive`). Non-owner comments need explicit **owner promotion** (a click that writes an
+   owner-ledgered event). No autonomous action on others' text. See §3.7.
+3. ✅ **RESOLVED (evidence-based) — two-level write isolation.** Per-file leases are unenforceable a
+   priori (Codex #3) and same-file parallel is a race (spiked). So: **within one job, the orchestrator
+   owns non-overlap** (assigns disjoint frames to subagents, does shared edits itself); **across
+   independent jobs, the daemon serializes** (same-frame non-negotiable; cross-frame defaults to
+   serialize). v1 = parallel inside an orchestrated job, serial across jobs. Keeps the live multi-frame
+   UX without a blind cross-job collision. See §12.
+4. ✅ **RESOLVED (spiked) — recovery = fence + goal-phrased re-run.** Files stay valid under a
+   mid-job kill (atomic edits); re-running the *goal-phrased* job reconciles partial state without
+   double-applying. Requirements: **kill the process group** before reclaim, and **phrase jobs as
+   goals not diffs**. (Original text below.) Kill the process group before reclaim, pre/post
    file hashes, classify no-edits / applied-but-lost / safe-to-retry.
-5. **One daemon-owned result contract** `{ reply, reanchors, status }` — §3.3 (pull loop), §3.4/§7
-   (token endpoint), §11/§15 (CLI reanchor) contradict the VALIDATED "daemon captures final output".
-   Token CLI is optional/progress-only.
-6. **Event change ship-together** — partially done on the branch: `reanchor` added to the published
-   validator (`collab.ts`), dev POST now strips client `agent`/`agentMeta`/`origin` (`api.ts`),
-   replay guards null anchors. Still open: sync semantics for agent replies.
+5. ✅ **RESOLVED — one daemon-captured result `{ reply, reanchors[], status }`.** §3.3 rewritten to the
+   spawn model (no pull loop); §3.4 rewritten to the single portable structured result the daemon
+   captures and writes (reply + reanchors) in-process; token CLI is optional (interim replies only).
+   §11/§15 reanchor now flows through the result, not a required CLI. See §3.3, §3.4.
+6. 🟡 **PARTLY DONE (branch)** — `reanchor` added to the published validator (`collab.ts`), dev POST
+   strips client `agent`/`agentMeta`/`origin` (`api.ts`), replay guards null anchors, `origin` demoted
+   to informational (auth is the ledger, item 1). **Still open: sync semantics for agent replies** —
+   decide whether `agent:true` replies sync to the published canvas (they can, owner-authored) or stay
+   local; reconcile §7 vs Non-goals. *(One small decision, not a blocker.)*
 
 **Empirical results this round (trial-and-error):** ✅ CLI-swap — the same daemon ran with Claude *and*
 Codex (one flag differs, §VALIDATED). ✅ Same-frame parallel is a **race** (both edits landed only by
@@ -243,41 +254,45 @@ loop; the agent owns the thinking.
   lock holder watches/claims. A second dev server runs without the jam loop.
 - **Lease + retry:** a claim sets `leaseUntil`; a crash past the lease reclaims the job; `attempts`
   bounds retries with backoff; terminal `failed` posts a short "couldn't do that" reply.
-- **[v3] Crash boundary.** The dangerous window is *edited files but reply/`done` not yet written*.
-  Order: (1) claim → (2) agent edits + writes its reply event (§7, idempotent by event id) → (3) mark
-  `done`. A crash between 2 and 3 reclaims the job; re-running is safe because the reply write is
-  deduped by event id (`comments.ts:42`) and the agent is instructed edits must be idempotent.
+- **[v9, spiked] Crash boundary = fence + goal-phrased re-run** (simpler than hash-classification).
+  Tested (`scratchpad/spike-crash`): killing `claude -p` mid-job left the file **valid, never corrupt**
+  (surgical edits are atomic per write), just **partially complete** (some edits landed, some not);
+  **re-running the SAME goal-phrased job reconciled it** — the agent re-read the file and finished the
+  rest without double-applying. So recovery is: (a) **fence** — kill the old job's **process group**
+  before reclaim (a lease expiry alone doesn't stop a live writer, Codex #4); (b) **re-run the job**,
+  which is idempotent *because jobs are phrased as goals* ("make the CTA say X"), not diffs. Two
+  requirements this pins: **the daemon must phrase jobs as goals**, and **agents must write atomically**
+  (rename) — true of Claude/Codex. The reply is deduped by event id (`comments.ts:42`) regardless.
 - **[v4] Concurrency is frame-aware, not a global lock** (see §12). Multiple jobs run in parallel
   when their working sets are disjoint; only same-path edits serialize. This is what lets several
   frames build at once (§12).
 
-**3.3 Orchestration — how the main agent gets and dispatches work  [v5]**
-- Config `jam.agent = "claude" | "codex"` (`ShConfig`, `config.ts:6`), explicit; unset = Live Jam off
-  (mentions surfaced, not acted on).
-- **Claude Code (default, full orchestration).** The main agent — the session that started
-  `marver dev`, the most capable and context-rich one — pulls work with a blocking **`marver jam
-  next`** that returns exactly **one already-claimed job** (or waits). It then **decides**: read more
-  of the thread / `nearby` comments, screenshot the section, read code (§15), and either **edit the
-  frame itself** or **spawn subagents, one per frame**, for parallel work (§12). When done it calls
-  `marver jam next` again. The durable queue (§3.2) means a job is never lost between pulls and a
-  late pull just waits. This is the "communicate back to the main agent" shape: **the daemon
-  delivers, the agent orchestrates.**
-- **Codex (fallback, no orchestration).** `codex exec` is single-shot with no in-headless subagents,
-  so there is no persistent orchestrator to pull. The daemon instead **spawns `codex exec` per
-  frame-job** directly. Same durability and per-frame exclusivity, without the main-agent
-  judgment/fan-out layer.
-- **Permissions (either agent): workspace-jailed, no prompts, never full access.** Claude
-  `--permission-mode acceptEdits --allowedTools Read,Edit,Bash --add-dir <repo>` (never
-  `--dangerously-skip-permissions`); Codex `-C <repo> -s workspace-write -a never --json` (never
-  `danger-full-access`).
-- **[v3] P1 = no session-resume dependency.** The Claude main agent naturally carries its session
-  context; the Codex spawn path cold-starts per job. Resume for the Codex path is a P2 optimization.
+**3.3 Orchestration — daemon spawns per job; the spawned agent orchestrates  [v9, corrected]**
+(Supersedes the earlier `marver jam next` pull loop — no agent sustains one, VALIDATED block.)
+- Config `jam.agent` selects the CLI adapter (`claude` | `codex` | `cursor` | `opencode` | `droid`);
+  unset = Live Jam off. One adapter = a small flag map (Claude `--permission-mode acceptEdits
+  --allowedTools … --output-format json`; Codex `codex exec --json -s workspace-write
+  --skip-git-repo-check -o <msg>`; Factory `--auto low`; etc.), all **workspace-jailed, no prompts,
+  never full access.**
+- **Per job, the daemon spawns ONE headless agent run** and hands it a goal-phrased packet (§5, §3.2).
+  That run is the "main agent": it reads context (`nearby`, screenshot, code, §15), then either edits
+  the frame itself or **spawns subagents, one per frame** (Claude/Cursor/OpenCode/Factory can; Codex
+  parallelism is multiple daemon-spawned jobs). The daemon delivers; the spawned agent orchestrates.
+- **Continuity** across a jam via `--resume <session_id>` / `codex exec resume` is a **P2**
+  optimization; P1 cold-starts per job (CLAUDE.md/AGENTS.md re-load the conventions, §16).
 
-**3.4 The reply path — the daemon stays the only writer of `agent:true`  [v5]**
-- A worker (the main agent, or one of its subagents) posts with **`marver jam reply <thread> <body>`**,
-  which POSTs to the daemon's **loopback** endpoint carrying the **one-time job token** the daemon
-  minted when it handed out the job. The daemon validates the token, then appends the reply
-  **in-process**, stamping owner-author + `agent:true` + `origin:'local'` (§7).
+**3.4 The result contract — ONE daemon-captured structured output  [v9, corrected]**
+(Supersedes the "token endpoint is the only/general writer" phrasing — that is not portable: Codex
+`workspace-write` blocks network and Antigravity soft-denies shell, so a model-invoked reply CLI fails
+on those agents.)
+- **The agent returns one structured result the daemon captures: `{ reply, reanchors[], status }`**
+  (`reply` = the thread message; `reanchors` = `{thread, anchor}` for any thread whose target it moved,
+  §11; `status` = ok/failed). Claude via `--output-format json`, Codex via `--output-schema`/`-o`.
+- **The daemon is the ONLY writer.** From that result it appends, **in-process**, the `agent:true`
+  reply (owner-authored + `agentMeta`, §7) and any `reanchor` events. No model-invoked write path is
+  required, so it is portable across every agent.
+- **Optional enhancement (Claude/Cursor only):** a `marver jam reply` loopback CLI with a one-time job
+  token lets a worker post **interim/progress** replies mid-run. Never the primary path; never required.
 - The public dev POST still strips any client-set `agent`/`origin` (§7), so the **token path is the
   only way an `agent:true` event is ever written** — spoofing stays impossible.
 - This also lets a worker post an interim/progress reply, not just a final message.
@@ -295,18 +310,23 @@ agent reads the whole conversation, not just the commands. Two hard rules:
 - **Signed-in authors only.** Include the owner's *and* other **authenticated, signed-in** users'
   comments; never anonymous/unauthenticated noise. The same untrusted-data framing applies (§5).
 
-**3.7 Proactive pickup — accumulate, then act when it's smart  [v7].** Comments accumulate in the
-volume. Action happens at **two** moments, not one:
-- **On an explicit owner `@marver`** — a mechanical trigger, acted on now (§2).
-- **On the orchestrator's own initiative** — at natural checkpoints (it just finished a job, or it is
-  idle), the main agent reviews the **accumulated unresolved comments** (via the context batch §3.6, or
-  a plain `marver comments list` §15) and **decides, by judgment,** whether anything is worth acting on
-  — including untagged notes or a teammate's plain `@marver`. It is not obligated to; it picks up what
-  is clearly actionable and leaves the rest.
-Keep it **smart, lean, proactive**: no busy-loop (the checkpoint is "a job just finished" or an idle
-tick, not constant polling), and the same safety envelope as any job — it runs as the owner,
-workspace-jailed, treats comment text as untrusted data, and the owner reviews the diff. Proactive
-pickups still reply as Marver (§7) so the human sees what it chose to do and why.
+**3.7 Proactive pickup — accumulate, then act, but only on the OWNER's backlog  [v9, safety-corrected].**
+Codex #2: under daemon-spawn there is no persistent human-orchestrator, so an "idle tick that acts
+because remote text exists" is *mechanically spawning a privileged model on non-owner input* — the RCE
+boundary again. Model judgment + after-the-fact diff review is **not** owner authorization. The safe,
+still-proactive design:
+- **Reads everything, acts only on the owner.** The agent may read *all* accumulated comments as
+  **context** (§3.6). But it may only **act** on comments in the **owner authorization ledger** (§1) —
+  i.e. the owner's own comments, tagged or not. Acting on the owner's *untagged* backlog is the
+  proactive part, and it is **opt-in** (`jam.proactive`, default off) since the owner didn't explicitly
+  ask.
+- **Non-owner comments never auto-act.** A teammate's `@marver` or note is context only; turning it
+  into a job requires **explicit owner promotion** — the owner tags it, or clicks a "have Marver do
+  this" affordance. That click is the authorization (it writes an owner-ledgered event).
+- **Checkpoints, not a busy-loop** (a job just finished, or idle), same job envelope (workspace-jailed,
+  untrusted text, owner reviews the diff). Proactive replies still post as Marver (§7).
+This keeps "accumulate then act when smart" for *your* backlog, while never letting someone else's
+comment drive your machine without your click.
 
 ---
 
@@ -558,15 +578,24 @@ has**: the **Marver / Live Jam instructions** (§15, §16) *and* the **repo's ow
 packet (§5) and cluster context. The orchestrator is responsible for passing this down; a subagent
 that edits a frame must know the codebase conventions exactly as the primary does.
 
-**Enforcing one-per-frame.** The daemon grants a **per-frame lease**; a second worker wanting a
-locked frame waits. The orchestrator naturally assigns distinct frames to distinct subagents, and the
-lease is the backstop that makes double-assignment impossible.
-
-**Under the hood: shared files still serialize.** Two frames may import one component
-(`design/components/**`), or a job may touch `package.json` or a board `.json`. Those shared paths
-take an exclusive lease so two frame-workers never write the same file at once. The per-frame contract
-is what the orchestrator reasons about; shared-file serialization is the safety net beneath it. (The
-manifest is server-regenerated, never agent-written, `plugin.ts:179-183`, so no manifest race.)
+**[v9, evidence-based] Write-isolation resolution — two levels, because a per-file lease is
+unenforceable a priori** (the daemon can't know what a model will touch, Codex #3). Tested: same-file
+parallel edits both landed *only by surgical-Edit luck* — a **race, not a guarantee** (`spike-loop`).
+So:
+- **Within one `@marver` job → the orchestrator owns non-overlap.** The main agent, when it fans out
+  subagents, assigns each a distinct frame *and is responsible for not overlapping shared files* — it
+  is the one actor with codebase knowledge to do so (exactly Nic's "the agent decides how to brief
+  subagents so they don't make a mess", §16). If a change is genuinely shared (one component, edit
+  once), the orchestrator does it itself, not in two subagents.
+- **Across independent `@marver` jobs → the daemon SERIALIZES by default.** Two separate top-level
+  mentions have no shared orchestrator to coordinate, and same-file parallel is a race, so **same-frame
+  jobs serialize (non-negotiable, proven), and cross-frame jobs default to serialize** unless a future
+  enforced write-allowlist (per-process filesystem jail scoped to declared files) makes true parallel
+  safe. **v1 = parallelize inside an orchestrated job (one agent, its subagents); serialize across
+  independent jobs.** This keeps the live multi-frame UX (one main agent lighting up several frames at
+  once via subagents) while never risking a blind cross-job collision.
+- The manifest is server-regenerated, never agent-written (`plugin.ts:179-183`), so no manifest race.
+- `package.json` / lockfile / board-`.json` writes always serialize (rare, high-blast-radius).
 
 **Bounded + observable.** `jam.concurrency` caps how many frames run at once; the rest queue in the
 durable store (§3.2). Every active frame is in `working` state, so the canvas itself is the live
