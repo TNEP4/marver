@@ -45,7 +45,18 @@ main agent that decides + fans out subagents) is preserved; only the delivery ch
 
 ## Agent compatibility matrix
 
-| Agent | Verdict | Shape / note |
+**Reframing (corrected after review): Live Jam integrates with a CLI, not a harness.** The daemon
+spawns an agent CLI itself; it never hooks into the user's GUI or running session. So the only real
+requirement is **a local, spawnable, file-editing agent CLI, installed and authed**. That reframes the
+two "won't work" rows: Conductor and t3.code are GUI *wrappers around exactly these CLIs* (Conductor
+spawns the real `claude` binary; t3.code is built on the Codex CLI), and CLI auth is machine-level and
+shared. So **a Conductor / t3.code / Cursor-IDE user is fully supported** — Live Jam spawns the CLI
+underneath, orthogonal to whatever GUI they use for manual work. The *only* genuinely out-of-scope case
+is a **purely-cloud agent with no local file access** — and that's physics (it can't edit your local
+files), not a Live Jam limitation. So the matrix below is really "which CLI does the daemon spawn,"
+selected by one `jam.agent` config line.
+
+| Agent CLI | Verdict | Shape / note |
 |---|---|---|
 | **Claude Code** | ✅ WORKS | `claude -p` per job. Subagents work (AGENTS.md→CLAUDE.md import). Reads CLAUDE.md. |
 | **Cursor** (primary) | ✅ WORKS | `cursor-agent -p --force --output-format json`. Reads AGENTS.md+CLAUDE.md. MCP. Needs `CURSOR_API_KEY` (paid). Watch: `--force` unattended; forum bug "CLI doesn't release terminal" → validate exit. |
@@ -53,12 +64,14 @@ main agent that decides + fans out subagents) is preserved; only the delivery ch
 | **OpenCode** | ✅ WORKS | `opencode run --agent …`; native AGENTS.md; MCP; first-class subagents; `serve`/`--attach` for warm. |
 | **Factory Droid** | ✅ WORKS (best drop-in) | `droid exec … --auto low --output-format json`; native AGENTS.md; MCP; worktree parallel. |
 | **Antigravity** (`agy`) | ⚠️ WORKS-with-tweak | `agy -p … --output-format json`; shell soft-denied headless → allowlist reply cmd OR daemon posts. AGENTS.md support unverified. |
-| **Conductor** | ❌ local GUI-only | wraps `claude` → bypass, spawn `claude -p` directly. |
-| **t3.code** | ❌ GUI wrapper | wraps Codex → drive the Codex CLI directly. |
+| **Conductor** user | ✅ via CLI | Conductor is a GUI that spawns the real `claude` binary; the daemon spawns `claude -p` directly. The user is supported; Conductor is orthogonal. |
+| **t3.code** user | ✅ via CLI | Built on the Codex CLI; the daemon spawns `codex exec` directly (same auth/subscription). Supported; t3.code is orthogonal. |
+| _(pure-cloud agent, no local CLI)_ | ❌ | Can't edit local files at all → out of scope by physics, not a Live Jam gap. |
 
 All the ✅ ride ONE contract (daemon-spawn-per-job + daemon-posts-reply); per-agent differences
-are a single adapter of flags. **Instructions ship as `design/AGENTS.md`** — which `marver init`
-already scaffolds, so Live Jam extends an existing convention rather than inventing one.
+are a single adapter of flags (e.g. Codex needs `--skip-git-repo-check` outside a git dir; Factory
+needs `--auto low`). **Instructions ship as `design/AGENTS.md`** — which `marver init` already
+scaffolds, so Live Jam extends an existing convention rather than inventing one.
 
 ## What is NOT yet proven (the remaining risk, ranked)
 

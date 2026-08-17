@@ -91,10 +91,15 @@ block is authoritative; older sections are kept for history but **defer to this 
 5. **Optional MCP path** — Cursor/OpenCode/Factory/Codex support MCP, so Marver can expose the jam loop
    as an MCP server for a first-class integration on those agents (beyond the CLI).
 
-**Agent compatibility (research + live tests):** Claude Code ✅ · Codex ✅ · **Cursor ✅ (primary)** ·
-OpenCode ✅ · Factory Droid ✅ (best drop-in) · Antigravity ✅-with-tweak (allowlist reply cmd) ·
-Conductor ❌-local (wraps `claude` → spawn `claude -p`) · t3.code ❌ (wraps Codex → drive Codex CLI).
-All ride the same daemon-spawn-per-job contract; per-agent flags differ only in one adapter.
+**Agent compatibility — Live Jam targets a CLI, not a harness.** The daemon spawns an agent CLI
+itself, so support = "a local, spawnable, file-editing agent CLI is installed + authed." Supported
+CLIs: Claude Code (`claude -p`) ✅ · Codex (`codex exec`) ✅ · **Cursor (`cursor-agent -p`) ✅ (primary)** ·
+OpenCode (`opencode run`) ✅ · Factory Droid (`droid exec`) ✅ · Antigravity (`agy -p`) ✅-with-tweak.
+**GUI harnesses are orthogonal:** a Conductor user (Conductor spawns the real `claude` binary) or a
+t3.code user (built on the Codex CLI) is **fully supported** because the daemon spawns that same CLI
+directly, on the same machine-level auth. The only out-of-scope case is a pure-cloud agent with no
+local file access (physics, not a gap). All ride one daemon-spawn-per-job contract; per-agent
+differences are a single flag adapter (e.g. Codex `--skip-git-repo-check`, Factory `--auto low`).
 
 ---
 
