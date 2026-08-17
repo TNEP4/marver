@@ -107,7 +107,11 @@ raised six [P1]s. These are correct and mostly things this run introduced or lef
    will touch (shared components, `package.json`, config) before it decides. The two-file spike only
    proves *that* disjoint run. Fix: **serialize unknown/shared writes**, or give each process an
    **enforced write allowlist** with daemon-mediated lease expansion. Optimistic per-file leasing is
-   not safe on its own.
+   not safe on its own. **Tested tonight:** two parallel jobs on the *same* frame both landed — but
+   only because Claude's Edit is surgical and the writes interleaved cleanly. That is a **race, not a
+   guarantee** (same-line edits / a whole-file-rewrite agent / different timing would clobber) — the
+   dangerous kind of pass. So **serializing same-frame jobs is non-negotiable**; the only open question
+   is shared-file-across-frames.
 4. **[P1] Retry is neither idempotent nor fenced.** FS edits aren't idempotent because the prompt
    says so; a lease expiry doesn't stop the old process. Fix: **kill/fence the process group before
    reclaim**, record **pre/post file hashes**, and classify no-edits / edits-applied-output-lost /
