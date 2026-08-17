@@ -2,7 +2,7 @@
 // channel:'chrome' - no bundled browser) to render each frame via the /__mv/compile harness and persist
 // its lean as a durable file. A FRESH, service-worker-blocked browser context per capture (isolation +
 // privacy). Bounded concurrency. The serialize + settle happen in the harness page; this drives it.
-import { chromium, type Browser } from 'playwright-core'
+import type { Browser } from 'playwright-core'
 import { ArtifactStore, buildKey, variantKey, type Variant } from './artifacts.ts'
 
 export interface CompileJob {
@@ -27,6 +27,8 @@ export class Compiler {
     if (this.browser) return this.browser
     if (this.launching) return this.launching
     this.launching = (async () => {
+      // Lazy so the dev server boots (and non-compiling users install) without playwright-core/Chrome.
+      const { chromium } = await import('playwright-core')
       const b = await chromium.launch({ channel: 'chrome', headless: true })
       this.engine = `lean/${this.opts.serializerVersion}/chrome-${b.version()}`
       await this.store.load(this.engine)   // (re)load the manifest under the real capture-engine id

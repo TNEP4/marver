@@ -155,6 +155,11 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
    a camera move (below). __mvDiag.churn(true) force-promotes it to A/B that hypothesis on a GPU. */
 .sh-content { will-change: auto }
 body.mv-churn .sh-content { will-change: transform }              /* diag A/B: force-promote (the white-frame repro) */
+/* SPEC-M8: in Shadow DOM mode the passive leans are NOT iframes, so promoting the scale surface no
+   longer blanks them - promote it permanently so a zoom scales a cached GPU texture instead of
+   re-rasterising the whole canvas (the GPU-eviction white-flash fix). Only the single live/interactive
+   frame is still an iframe; it is hidden during camera moves (below), so it is never the scaled one. */
+body.sh-shadow .sh-content { will-change: transform }
 #sh-world { position: relative; width: 1px; height: 1px }
 #sh-world.sh-gesturing .sh-live { pointer-events: none }          /* law G-4 (live iframe only; lean is always pe:none) */
 /* preset transitions: armed by animateLayout() around device/tidy mutations - nodes ease
@@ -230,8 +235,14 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
    would ghost into double text. */
 .sh-lean { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 1;
   opacity: 0; pointer-events: none; transition: none; background: var(--node-bg) }
+/* SPEC-M8: the Shadow DOM lean is a <div> (not an iframe) - it needs explicit clipping to the frame
+   box (an iframe clips for free) and it must not intercept pointer events (it is a passive cover). */
+.sh-lean-shadow { overflow: hidden; contain: strict }
 .sh-lean[data-ready] { opacity: 1 }
-.sh-node.interact .sh-lean,
+/* interact hides the lean ONLY once the live doc has booted (data-lr) - a lazily-mounted live app
+   (pool mode) then never flashes blank in the gap between "lean hidden" and "live painted". Non-pool
+   live is always ready by the time you interact, so this is a no-op there. */
+.sh-node.interact[data-lr] .sh-lean,
 body.sh-laser .sh-lean,
 body.sh-commenting .sh-lean { opacity: 0 }
 .sh-overlay { position: absolute; inset: 0; z-index: 2 }   /* above the lean (z1) so drag-by-body works; inherits the app arrow cursor */

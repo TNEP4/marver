@@ -6,7 +6,9 @@ import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import type { ShConfig } from './config.ts'
 import { scanFrames, writeManifest, affectedFrameIds, type Manifest } from './manifest.ts'
 import { apiMiddleware } from './api.ts'
-import { routesMiddleware } from './routes.ts'
+import { routesMiddleware, artifactsRoot } from './routes.ts'
+import { ArtifactStore, variantKey, type FrameArtifacts } from './artifacts.ts'
+import { Compiler, type CompileJob } from './compiler.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
@@ -32,10 +34,15 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
   const pendingInv = new Set<string>()
+  // M7: set by configureServer to recompile the board's lean artifacts (edited frames cache-miss on
+  // their new source hash and re-serialize; unchanged ones cache-hit instantly). Kept at plugin scope
+  // so the frame-invalidation flush below can fire it - a file edit auto-rebuilds the durable file.
+  let recompileArtifacts: (() => void) | null = null
   const flushInv = debounce(() => {
     if (!devServer || !pendingInv.size) return
     const frameIds = [...pendingInv]; pendingInv.clear()
     devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}` })
+    recompileArtifacts?.()   // rebuild the affected artifacts; ws 'sh:artifact' pushes the new file href
   }, 120)
 
   /** Theme resolution: design/theme.css wrapper > configured > detected > empty (spec §5.4). */
@@ -168,6 +175,50 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
           res.setHeader('cache-control', 'no-store')
           res.end(JSON.stringify({ latest, current: installedVersion() }))
         })
+      })
+
+      // M7: the artifact compiler. GET /__mv/api/artifacts returns the current manifest and kicks off a
+      // background compile of any un-built frames (playwright-core + system Chrome); each completion pings
+      // the shell over the ws so it can swap a placeholder for the prebuilt file. Lazy: no Chrome until asked.
+      // MUST be registered BEFORE apiMiddleware, whose unknown-endpoint 404 hard-ends the response (no next()).
+      const store = new ArtifactStore(join(artifactsRoot(root), 'v1'), `${ROUTE}/artifacts/v1`)
+      let compiler: Compiler | null = null
+      let baseUrl = ''
+      let compiling = false
+      const jobsFor = (f: { id: string; kind: 'tsx' | 'html'; viewport?: string; theme?: string; file: string }): CompileJob[] => {
+        if (f.kind !== 'tsx') return []                          // html frames are their own static file (later)
+        const vp = config.viewports[f.viewport ?? ''] ?? config.viewports.mobile ?? { width: 390, height: 844 }
+        let src = ''
+        try { src = readFileSync(join(root, f.file), 'utf8') } catch { /* deleted */ }
+        const depRevision = hash(src || f.id)
+        // Precompile EVERY configured theme (not just the default): a global theme flip then swaps one
+        // prebuilt file for another with zero recompile - instant, no blip. A meta.theme-pinned frame
+        // usually renders one theme, but a user pin can still flip it, so build them all (cheap: cache-hit).
+        const themes = config.themes.length ? config.themes : [f.theme ?? 'light']
+        return themes.map((theme) => ({ frameId: f.id, theme, width: vp.width, height: vp.height, kind: f.kind, depRevision }))
+      }
+      let dirty = false   // an edit landed mid-compile: re-run once the current pass drains (don't drop it)
+      async function compileBoard(): Promise<void> {
+        if (!baseUrl) return
+        if (compiling) { dirty = true; return }
+        compiling = true
+        try {
+          compiler ??= new Compiler(baseUrl, store, { concurrency: 4, globalEnvRevision: bootId, serializerVersion: 'v4' })
+          const jobs = manifest.frames.flatMap(jobsFor)
+          await compiler.compileMany(jobs, (v, j) => {
+            devServer?.ws.send('sh:artifact', { frameId: j.frameId, variant: variantKey(j.theme, String(j.width)), href: v.href, status: v.status })
+          })
+        } catch (e) { console.error('[marver] artifact compile failed:', (e as Error).message) }
+        finally { compiling = false; if (dirty) { dirty = false; void compileBoard() } }
+      }
+      recompileArtifacts = () => { void compileBoard() }
+      server.middlewares.use((req, res, next) => {
+        const u = new URL(req.url ?? '/', 'http://x')
+        if (u.pathname !== `${ROUTE}/api/artifacts`) return next()
+        if (!baseUrl) baseUrl = `http://${req.headers.host ?? `localhost:${server.config.server.port ?? 5173}`}`
+        void compileBoard()                                      // fire-and-forget background compile
+        res.setHeader('content-type', 'application/json'); res.setHeader('cache-control', 'no-store')
+        res.end(JSON.stringify({ frames: store.getManifest().frames as Record<string, FrameArtifacts> }))
       })
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.

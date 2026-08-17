@@ -1,0 +1,89 @@
+<!doctype html><html><head><meta charset=utf-8><title>white-flash isolator</title>
+<style>
+ body{margin:0;font:13px system-ui;background:#0e1017;color:#e7eaf2;overflow:hidden}
+ #bar{position:fixed;top:0;left:0;right:0;height:44px;display:flex;gap:10px;align-items:center;padding:0 14px;background:#161a24;z-index:30;box-shadow:0 1px 0 #2a3040}
+ button{font:12px system-ui;padding:6px 12px;border-radius:7px;border:1px solid #333c4f;background:#212838;color:#e7eaf2;cursor:pointer}
+ button.on{background:#5655d0;border-color:#5655d0}
+ .sep{width:1px;height:22px;background:#2a3040;margin:0 4px}
+ #stat{margin-left:auto;font-variant-numeric:tabular-nums;color:#9aa4b8}
+ #stat .big{color:#e7eaf2;font-weight:600}
+ #view{position:fixed;inset:44px 0 0 0;overflow:hidden;background:#e7e9ef;touch-action:none}
+ #stage{transform-origin:0 0;will-change:transform}
+ .fr{position:absolute;width:1280px;height:800px;background:#fff;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.15);border-radius:8px}
+ .fr iframe{width:1280px;height:800px;border:0}
+ .fr .sh{width:1280px;height:800px;overflow:hidden}
+ .hd{position:absolute;top:0;left:0;right:0;height:34px;display:flex;align-items:center;padding:0 12px;font:12px system-ui;color:#333;z-index:2;background:rgba(255,255,255,.55)}
+ /* GLASS CHROME - mimics the real shell. blur only when body.blur is set */
+ #chrome-top,#chrome-side{position:fixed;z-index:20;background:rgba(255,255,255,.62);border:1px solid rgba(0,0,0,.06)}
+ #chrome-top{top:56px;right:14px;width:360px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:space-around;color:#333;font:12px system-ui}
+ #chrome-side{top:56px;left:14px;bottom:14px;width:230px;border-radius:14px}
+ body.blur .hd{backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);background:rgba(255,255,255,.35)}
+ body.blur #chrome-top,body.blur #chrome-side{backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);background:rgba(255,255,255,.45)}
+</style></head><body>
+<div id=bar>
+ <b>white-flash isolator</b>
+ <button id=mIframe class=on>iframe</button>
+ <button id=mShadow>shadow</button>
+ <span class=sep></span>
+ <button id=bBlur>blur chrome: OFF</button>
+ <button id=stress>&#9654; stress-zoom</button>
+ <span id=stat>zoom hard &amp; fast. toggle blur. watch for the white flash.</span>
+</div>
+<div id=view><div id=stage></div></div>
+<div id=chrome-top>chat &bull; fit &bull; theme &bull; 61%</div>
+<div id=chrome-side></div>
+<script id=data type=application/json>__DATA__</script>
+<script>
+const FR=JSON.parse(document.getElementById('data').textContent);
+const stage=document.getElementById('stage'), view=document.getElementById('view');
+let mode='iframe';
+const COLS=4, GAP=120, W=1280, H=800;
+function build(){
+  stage.innerHTML='';
+  FR.forEach((f,i)=>{
+    const col=i%COLS, row=(i/COLS)|0;
+    const box=document.createElement('div'); box.className='fr';
+    box.style.left=(col*(W+GAP))+'px'; box.style.top=(row*(H+GAP+30)+30)+'px';
+    const hd=document.createElement('div'); hd.className='hd'; hd.textContent=f.id; box.appendChild(hd);
+    if(mode==='iframe'){
+      const ifr=document.createElement('iframe'); ifr.setAttribute('sandbox','allow-same-origin');
+      ifr.srcdoc=f.raw; box.appendChild(ifr);
+    }else{
+      const host=document.createElement('div'); host.className='sh'; host.setAttribute('data-theme',f.theme);
+      const sr=host.attachShadow({mode:'open'});
+      const st=document.createElement('style'); st.textContent=f.css; sr.appendChild(st);
+      const wrap=document.createElement('div'); wrap.innerHTML=f.body; sr.appendChild(wrap);
+      box.appendChild(host);
+    }
+    stage.appendChild(box);
+  });
+}
+let scale=0.35, tx=40, ty=20;
+function apply(){ stage.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')'; }
+view.addEventListener('wheel',e=>{e.preventDefault(); const d=-e.deltaY*0.0015; const ns=Math.min(2,Math.max(0.08,scale*(1+d))); const r=view.getBoundingClientRect(); const mx=e.clientX-r.left,my=e.clientY-r.top; tx=mx-(mx-tx)*(ns/scale); ty=my-(my-ty)*(ns/scale); scale=ns; apply();},{passive:false});
+let drag=null; view.addEventListener('pointerdown',e=>drag={x:e.clientX,y:e.clientY,tx,ty}); addEventListener('pointermove',e=>{if(drag){tx=drag.tx+e.clientX-drag.x; ty=drag.ty+e.clientY-drag.y; apply();}}); addEventListener('pointerup',()=>drag=null);
+function setMode(m){ mode=m; document.getElementById('mIframe').classList.toggle('on',m==='iframe'); document.getElementById('mShadow').classList.toggle('on',m==='shadow'); build(); apply(); }
+document.getElementById('mIframe').onclick=()=>setMode('iframe');
+document.getElementById('mShadow').onclick=()=>setMode('shadow');
+const bBlur=document.getElementById('bBlur');
+bBlur.onclick=()=>{ const on=document.body.classList.toggle('blur'); bBlur.textContent='blur chrome: '+(on?'ON':'OFF'); bBlur.classList.toggle('on',on); };
+function stress(){
+  const stat=document.getElementById('stat'); stat.textContent='measuring 4s...';
+  const t0=performance.now(); let last=t0, frames=0, worst=0, over50=0; const times=[];
+  const cx=view.clientWidth/2, cy=view.clientHeight/2;
+  function frame(now){
+    const dt=now-last; last=now; if(frames>0){times.push(dt); worst=Math.max(worst,dt); if(dt>50)over50++;} frames++;
+    const t=(now-t0)/2000; const s=0.12+Math.abs(Math.sin(t*Math.PI))*1.1;
+    const ns=s; tx=cx-(cx-tx)*(ns/scale); ty=cy-(cy-ty)*(ns/scale); scale=ns; apply();
+    if(now-t0<4000) requestAnimationFrame(frame);
+    else{ times.sort((a,b)=>a-b); const fps=1000/(times.reduce((a,b)=>a+b,0)/times.length);
+      const blur=document.body.classList.contains('blur')?'blur-ON':'blur-OFF';
+      stat.innerHTML='<span class=big>'+mode+' / '+blur+'</span> &middot; avg <span class=big>'+fps.toFixed(0)+' fps</span> &middot; worst <span class=big>'+worst.toFixed(0)+'ms</span> &middot; janky <span class=big>'+over50+'</span>';
+      window.__stressResult={mode:mode, blur:document.body.classList.contains('blur'), fps:+fps.toFixed(1), worstMs:+worst.toFixed(0), jankyFrames:over50};
+    }
+  }
+  requestAnimationFrame(frame);
+}
+document.getElementById('stress').onclick=stress;
+setMode('iframe');
+</script></body></html>

@@ -5,7 +5,9 @@ import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from './snapshots.ts'
-import { POOL, registerLC, unregisterLC, setInteractLC, liveMode, showPlaceholder, type LiveMode } from './lifecycle.ts'
+import { POOL, SHADOW, registerLC, unregisterLC, setInteractLC, setFileReady, liveMode, showPlaceholder, type LiveMode } from './lifecycle.ts'
+import { artifactHref, onArtifacts } from './artifacts.ts'
+import { applyShadowLean } from './shadow-lean.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -100,6 +102,37 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     return () => unregisterLC(node.key)
   }, [node.key])
   useEffect(() => { if (POOL) setInteractLC(node.key, interact) }, [interact, node.key])
+  // Promote readiness (pool): when the live layer (re)mounts for interaction (lm -> 'shown'), the fresh
+  // doc has NOT reported ready yet - but a frame interacted earlier still carries a stale status 'ready'
+  // (demote unmounts the live without resetting it). Clear it so `data-lr` waits for THIS boot's sh:ready,
+  // and the crisp file lean stays put until the live actually paints. No stale-ready reveal, no re-blip.
+  const prevLmRef = useRef<LiveMode>(POOL ? null : 'shown')
+  useEffect(() => {
+    if (POOL && prevLmRef.current !== 'shown' && lm === 'shown' && node.status === 'ready') setStatus(node.key, 'loading')
+    prevLmRef.current = lm
+  }, [lm, node.key, node.status, setStatus])
+  // SPEC-M7: does a prebuilt lean FILE exist for this frame at this theme? The server compiled it at
+  // the frame's declared viewport width; look it up by that same width. When present, the `.sh-lean`
+  // loads the file directly (below) and setFileReady tells the lifecycle to skip the in-browser compile.
+  const [artHref, setArtHref] = useState<string | null>(null)
+  useEffect(() => {
+    if (!POOL || !frame) return
+    const vpW = CONFIG.viewports[frame.viewport ?? '']?.width ?? CONFIG.viewports.mobile?.width ?? Math.round(node.w)
+    const sync = () => setArtHref(artifactHref(frame.id, node.theme, vpW))
+    const off = onArtifacts(sync); sync()
+    return off
+  }, [frame?.id, frame?.viewport, node.theme])
+  useEffect(() => { if (POOL) setFileReady(node.key, !!artHref) }, [artHref, node.key])
+  // SPEC-M8: when SHADOW mode is on, the lean is a Shadow DOM host (not an iframe). Populate/refresh it
+  // whenever the artifact href or theme changes (theme flip swaps to the other theme's prebuilt file).
+  const shadowRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!(POOL && SHADOW && artHref)) return
+    const el = shadowRef.current; if (!el) return
+    let live = true
+    void applyShadowLean(el, artHref, node.theme).then((ok) => { if (live && ok) el.setAttribute('data-ready', '1') })
+    return () => { live = false }
+  }, [artHref, node.theme])
   // a reload / file-swap / error takes the frame out of 'ready': drop its cover so a stale picture
   // never lingers (nav may not bump on a same-file reload). The next 'ready' re-captures.
   useEffect(() => { if (node.status !== 'ready') dropSnapshot(node.key) }, [node.status, node.key])
@@ -273,6 +306,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     <div
       className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}`}
       data-theme={node.theme}
+      // live-ready gate (pool promote): only let interact HIDE the crisp lean once the live doc has
+      // actually booted (sh:ready -> status 'ready'), so a lazily-mounted live app never flashes blank
+      // between "lean hidden" and "live painted". data-lr present == safe to reveal the live layer.
+      data-lr={node.status === 'ready' ? '1' : undefined}
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined }}
       data-node={node.key}
     >
@@ -307,9 +344,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             </span>
           </div>
         ) : null}
-        {/* M6 pool mode: a deterministic placeholder while a passive frame has no usable snapshot yet
-            (before/behind a compile boot). Never blank. Non-pool never shows it. */}
-        {POOL && showPlaceholder(node.key) && (
+        {/* M6/M7 pool mode: a deterministic placeholder while a frame has no usable view yet. NEVER blank.
+            The `lm===null && !artHref` term also covers the FIRST-PAINT window before the lifecycle effect
+            has registered this node (cold load): without it, a frame with no file and no live layer paints
+            blank white for a second until its artifact lands. The placeholder sits at z0 behind any lean,
+            so it is harmless once a crisp file or snapshot is admitted. Non-pool never shows it. */}
+        {POOL && (showPlaceholder(node.key) || (lm === null && !artHref)) && (
           <div className="sh-ph" style={{ width: node.w, height: node.h }} aria-hidden>
             <div className="sh-ph-bar" style={{ width: '55%' }} />
             <div className="sh-ph-bar" style={{ width: '85%' }} />
@@ -336,7 +376,19 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             so fonts/assets resolve and the shell can flip its theme + restore scroll. Never registered,
             never messaged, pointer-events:none - it is NOT the live iframe (role: .sh-lean).
             Rendered in dev AND publish (runtime client-side capture; frames are same-origin in both). */}
-        <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />
+        {POOL && artHref && SHADOW ? (
+          // SPEC-M8: the prebuilt crisp lean rendered into a Shadow DOM host (NOT an iframe) so the canvas
+          // is one compositing layer and .sh-content can be promoted = the white-flash fix. Populated by
+          // the effect above. Same .sh-lean box/opacity CSS; data-ready reveals it. Never registered.
+          <div ref={shadowRef} className="sh-lean sh-lean-shadow" aria-hidden />
+        ) : POOL && artHref ? (
+          // SPEC-M7 (iframe path): the prebuilt crisp FILE loaded straight from disk (immutable, cached).
+          // Static HTML, 0 JS (scripts stripped at compile time), so the no-scripts sandbox is safe.
+          <iframe className="sh-lean" sandbox="allow-same-origin" src={artHref} title="" aria-hidden tabIndex={-1}
+            onLoad={(e) => e.currentTarget.setAttribute('data-ready', '1')} />
+        ) : (
+          <iframe ref={bindLean} className="sh-lean" sandbox="allow-same-origin" title="" aria-hidden tabIndex={-1} />
+        )}
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}

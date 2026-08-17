@@ -25,6 +25,14 @@ export const POOL = (() => {
   catch { return false }
 })()
 
+/** SPEC-M8: render passive leans as Shadow DOM hosts (not iframes) so the canvas is ONE compositing
+ *  layer and `.sh-content` can be promoted - the GPU-eviction white-flash fix. Opt in with `?shadow`
+ *  (or localStorage.mvShadow='1') while it is A/B'd against the iframe lean path. Needs POOL (artifacts). */
+export const SHADOW = (() => {
+  try { return typeof location !== 'undefined' && (/[?&]shadow\b/.test(location.search) || localStorage.getItem('mvShadow') === '1') }
+  catch { return false }
+})()
+
 export type Artifact = 'missing' | 'compiling' | 'ready' | 'incompatible' | 'error'
 export type LiveMode = 'shown' | 'hidden' | null   // shown = live is the view; hidden = compile boot; null = snapshot/placeholder
 
@@ -33,6 +41,8 @@ interface LC {
   visible: boolean
   interact: boolean
   artifact: Artifact
+  hasFile: boolean       // a durable prebuilt FILE artifact backs this frame (SPEC-M7) - the passive view
+                         // is always available, so no in-browser compile and no two-phase recapture on demote
   leaseId: number | null
   live: LiveMode
   phase: 'idle' | 'compiling' | 'demoting'
@@ -57,7 +67,7 @@ export function __setTimers(set: typeof timer, clr: typeof clearT): void { timer
 export function registerLC(key: string, notify: () => void): void {
   const lc = nodes.get(key)
   if (lc) { lc.notify = notify; return }
-  nodes.set(key, { key, visible: false, interact: false, artifact: 'missing', leaseId: null, live: null, phase: 'idle', attempts: 0, watchdog: 0, notify })
+  nodes.set(key, { key, visible: false, interact: false, artifact: 'missing', hasFile: false, leaseId: null, live: null, phase: 'idle', attempts: 0, watchdog: 0, notify })
 }
 export function unregisterLC(key: string): void {
   const lc = nodes.get(key); if (!lc) return
@@ -87,7 +97,13 @@ export function setVisible(key: string, on: boolean): void {
 export function setInteractLC(key: string, on: boolean): void {
   const lc = nodes.get(key); if (!lc || lc.interact === on) return
   lc.interact = on
-  if (!on && lc.live === 'shown' && lc.leaseId != null) beginDemote(key)   // two-phase: hold live until recapture admits
+  if (!on && lc.live === 'shown' && lc.leaseId != null) {
+    // Leaving interact. A file-backed frame has its passive view already on disk (and durable artifacts
+    // are clean-boot, never a recapture of the live session), so drop the live doc AT ONCE - the crisp
+    // file shows with no blip. Only the in-browser-snapshot path needs the two-phase recapture handoff.
+    if (lc.hasFile) { clearT(lc.watchdog); lc.watchdog = 0; lc.phase = 'idle'; release(lc); set(lc, null) }
+    else beginDemote(key)                                                  // two-phase: hold live until recapture admits
+  }
   else reconcile(lc)
   pumpCompiler(); reconcileWaiting()
 }
@@ -187,6 +203,18 @@ export function beginDemote(key: string): void {
   lc.leaseId = requestLease(lc.key, 'handoff-out', () => onEvicted(lc)) ?? lc.leaseId
   clearT(lc.watchdog)
   lc.watchdog = timer(COMPILE_TIMEOUT, () => { if (lc.phase === 'demoting') { lc.phase = 'idle'; lc.artifact = 'incompatible'; reconcile(lc) } })
+}
+
+/** SPEC-M7: a prebuilt FILE artifact arrived (or vanished) for this frame - it's `ready` with no browser
+ *  compile and no placeholder. Aborts any in-flight browser compile for it (the file wins). */
+export function setFileReady(key: string, ready: boolean): void {
+  const lc = nodes.get(key); if (!lc) return
+  lc.hasFile = ready
+  if (ready) {
+    if (lc.phase === 'compiling') abortCompile(lc, 'missing')
+    if (lc.artifact !== 'ready') lc.artifact = 'ready'
+  } else if (lc.artifact === 'ready') lc.artifact = 'missing'
+  reconcile(lc); pumpCompiler(); reconcileWaiting()
 }
 
 /** Test/HMR reset. */

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { getCap, liveCount, setCap, __resetArbiter } from '../src/client/shell/canvas/arbiter.ts'
 import {
-  __resetLifecycle, __setTimers, artifactState, liveMode, onSnapshotAdmitted, registerLC, setInteractLC,
+  __resetLifecycle, __setTimers, artifactState, liveMode, onSnapshotAdmitted, registerLC, setFileReady, setInteractLC,
   setVisible, showPlaceholder, unregisterLC,
 } from '../src/client/shell/canvas/lifecycle.ts'
 
@@ -65,6 +65,42 @@ describe('Passive-Artifact Lifecycle (SPEC-M6 §4/§5, pool mode)', () => {
     onSnapshotAdmitted('a', true)                 // fresh snapshot admitted -> now release the live doc
     expect(liveMode('a')).toBeNull()
     expect(liveCount()).toBe(0)
+  })
+
+  // SPEC-M7: a durable FILE artifact backs the frame - the passive view is always on disk, so no
+  // in-browser compile, and demote drops the live doc AT ONCE (no two-phase recapture handoff).
+  it('a file-backed frame shows the crisp file: no compile, no placeholder, no live', () => {
+    registerLC('a', noop)
+    setFileReady('a', true)
+    setVisible('a', true)
+    expect(artifactState('a')).toBe('ready')
+    expect(liveMode('a')).toBeNull()              // the file is the view, no live doc mounted
+    expect(showPlaceholder('a')).toBe(false)      // never a placeholder - the file is ready
+    expect(liveCount()).toBe(0)
+  })
+
+  it('interacting a file-backed frame promotes to live, then leaving demotes IMMEDIATELY (no watchdog)', () => {
+    registerLC('a', noop)
+    setFileReady('a', true)
+    setVisible('a', true)
+    setInteractLC('a', true)                      // enter the real app
+    expect(liveMode('a')).toBe('shown')
+    expect(liveCount()).toBe(1)
+    setInteractLC('a', false)                     // leave -> drop the live doc at once, back to the file
+    expect(liveMode('a')).toBeNull()
+    expect(liveCount()).toBe(0)
+    expect(pending.length).toBe(0)                // NO two-phase recapture watchdog armed (unlike the snapshot path)
+    expect(showPlaceholder('a')).toBe(false)      // the crisp file is the view again - no blip
+  })
+
+  it('setFileReady(false) drops a frame back to the in-browser compile path', () => {
+    registerLC('a', noop)
+    setFileReady('a', true)
+    setVisible('a', true)
+    expect(liveMode('a')).toBeNull()              // file view, no compile
+    setFileReady('a', false)                      // the file vanished (deleted / theme with no artifact)
+    expect(artifactState('a')).toBe('compiling')  // falls back to a background compile boot
+    expect(liveMode('a')).toBe('hidden')
   })
 
   it('an incompatible frame holds a counted live lease while visible', () => {

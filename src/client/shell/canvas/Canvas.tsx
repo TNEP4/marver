@@ -4,8 +4,9 @@ import { CONFIG, useStore } from '../store.ts'
 import { bootHash } from '../hash.ts'
 import { startPerf } from '../perf.ts'
 import { startDiag } from '../diag.ts'
-import { POOL, setVisible, onSnapshotAdmitted } from './lifecycle.ts'
+import { POOL, SHADOW, setVisible, onSnapshotAdmitted } from './lifecycle.ts'
 import { onAdmit } from './snapshots.ts'
+import { initArtifacts } from './artifacts.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 
 /**
@@ -175,7 +176,11 @@ export function Canvas() {
   const scaleTimer = useRef(0)
   const camTimer = useRef(0)
 
-  useEffect(() => { startPerf(); startDiag(); if (POOL) onAdmit(onSnapshotAdmitted) }, [])   // B0.4: samplers + M6 snapshot→lifecycle admit hook
+  useEffect(() => {
+    startPerf(); startDiag()
+    if (POOL) { onAdmit(onSnapshotAdmitted); void initArtifacts() }
+    if (SHADOW) document.body.classList.add('sh-shadow')   // SPEC-M8: promote .sh-content (leans are shadow hosts, not iframes)
+  }, [])   // B0.4: samplers + M6 snapshot→lifecycle admit hook + M7 prebuilt-artifact manifest + M8 shadow-lean promote
   // re-cull when the node set changes (new frames, moves) even if the camera hasn't moved
   useEffect(() => {
     const st = ref.current?.instance.transformState

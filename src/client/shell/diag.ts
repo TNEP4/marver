@@ -32,6 +32,8 @@
  *   __mvDiag.debug()        on-screen HUD + rolling log (fps, scale, stalls, longtasks, heap, err)
  *   __mvDiag.mark('flash')  tag the instant you SEE a flash, to align the log to it
  *   __mvDiag.dump()         print the event log + a stalls-only view (the flashes, with scale)
+ *   __mvDiag.flashReport()  THE mechanism finder: per flash, is it GPU/compositor (off main thread)
+ *                           vs style+layout (blur/reflow) vs script? (uses long-animation-frame)
  *   __mvDiag.debug(false)   stop
  */
 
@@ -223,6 +225,7 @@ function debug(on = true): void {
       dbgObs = new PerformanceObserver((l) => { for (const e of l.getEntries()) { win2s.longtasks++; logEv('longtask', `${Math.round(e.duration)}ms`) } })
       dbgObs.observe({ type: 'longtask', buffered: false })
     } catch { /* Safari */ }
+    armLoaf()   // main-thread-vs-GPU attribution for flashReport()
     // log camera + wheel + gesture so stalls align to what triggered them
     const app = document.querySelector('.sh-app')
     app?.addEventListener('wheel', ((e: WheelEvent) => logEv('wheel', `${e.ctrlKey || e.metaKey ? 'ZOOM' : 'pan'} dy${Math.round(e.deltaY)} @${scaleNow().toFixed(2)}x`)) as EventListener, { capture: true, passive: true })
@@ -231,7 +234,7 @@ function debug(on = true): void {
     if (!obs) watch()
     console.log('%c[mvDiag] LIVE DEBUG ON', 'color:#0f0;font-weight:bold', '- HUD bottom-left. Interact/zoom, then run __mvDiag.dump(). Call __mvDiag.mark("flash") the instant you SEE a flash.')
   } else {
-    cancelAnimationFrame(dbgRaf); clearInterval(hudReset); dbgObs?.disconnect(); dbgObs = null
+    cancelAnimationFrame(dbgRaf); clearInterval(hudReset); dbgObs?.disconnect(); dbgObs = null; disarmLoaf()
     window.removeEventListener('error', onErr); window.removeEventListener('unhandledrejection', onRej)
     hud?.remove(); hud = null
     console.log('[mvDiag] live debug off')
@@ -240,6 +243,64 @@ function debug(on = true): void {
 
 /** Tag the instant you SEE a flash, so the log around this timestamp shows what caused it. */
 function mark(label = 'MARK'): void { logEv('👁 MARK', label); console.log(`[mvDiag] marked "${label}" @${Math.round(performance.now())}ms`) }
+
+// ------------------------------------------------------------------------------------------------
+// LoAF ATTRIBUTION (the mechanism finder). A rAF gap tells us a frame was DROPPED but not WHY. The
+// long-animation-frame API measures the MAIN THREAD's share of a slow frame (script / style+layout /
+// paint-prep). The discriminator: if a big VISUAL stall (rAF gap) has only a SMALL main-thread frame
+// beside it, the time went somewhere the main thread can't see = the compositor/GPU (tile re-raster,
+// layer eviction) = the white-out. If the main-thread frame is also big and style+layout heavy, it's
+// blur/reflow on the main thread. Needs Chrome 123+.
+// ------------------------------------------------------------------------------------------------
+type Loaf = { t: number; dur: number; blocking: number; styleLayout: number; script: number; top: string }
+const loafLog: Loaf[] = []
+let loafObs: PerformanceObserver | null = null
+function armLoaf(): void {
+  if (loafObs) return
+  try {
+    loafObs = new PerformanceObserver((l) => {
+      for (const e of l.getEntries() as unknown as Array<{ startTime: number; duration: number; renderStart: number; styleAndLayoutStart: number; blockingDuration: number; scripts?: Array<{ name?: string; invoker?: string; duration: number }> }>) {
+        const scripts = e.scripts ?? []
+        const script = scripts.reduce((s, x) => s + (x.duration || 0), 0)
+        const top = scripts.slice().sort((a, b) => b.duration - a.duration)[0]
+        const end = e.startTime + e.duration
+        loafLog.push({
+          t: Math.round(e.startTime),
+          dur: Math.round(e.duration),
+          blocking: Math.round(e.blockingDuration),
+          styleLayout: e.styleAndLayoutStart ? Math.round(end - e.styleAndLayoutStart) : 0,
+          script: Math.round(script),
+          top: top ? `${(top.invoker || top.name || '?').slice(0, 40)} ${Math.round(top.duration)}ms` : '-',
+        })
+        if (loafLog.length > 300) loafLog.shift()
+      }
+    })
+    loafObs.observe({ type: 'long-animation-frame', buffered: true } as PerformanceObserverInit)
+  } catch { console.warn('[mvDiag] long-animation-frame unsupported (needs Chrome 123+); flashReport falls back to rAF gaps only') }
+}
+function disarmLoaf(): void { loafObs?.disconnect(); loafObs = null }
+
+/** THE mechanism verdict. For each visual stall (rAF gap), find the main-thread frame beside it and
+ *  classify: GPU/compositor (main thread was mostly idle) vs style+layout (blur/reflow) vs script. */
+function flashReport(): void {
+  const stalls = evlog.filter((e) => e.kind === 'STALL!!' || e.kind === 'stall')
+  if (!stalls.length) { console.log('%c[mvDiag] no stalls captured yet - run __mvDiag.debug(), then zoom until it flashes, then flashReport()', 'color:#f80'); return }
+  const rows = stalls.slice(-40).map((s) => {
+    const visMs = parseInt(s.info) || 0
+    const win = Math.max(visMs, 80)
+    const near = loafLog.filter((x) => Math.abs(x.t - s.t) < win)
+    const mt = near.sort((a, b) => b.dur - a.dur)[0]
+    const mainMs = mt?.dur ?? 0
+    const verdict = mainMs < visMs * 0.5
+      ? '🟥 GPU/compositor (off main thread)'
+      : (mt && mt.styleLayout >= mt.script ? '🟧 style+layout (blur/reflow)' : '🟨 script')
+    return { t_ms: s.t, visualStall_ms: visMs, mainThread_ms: mainMs, verdict, styleLayout_ms: mt?.styleLayout ?? 0, script_ms: mt?.script ?? 0, topScript: mt?.top ?? '-', at: s.info.replace(/^\d+ms\s*/, '') }
+  })
+  const gpu = rows.filter((r) => r.verdict.includes('GPU')).length
+  console.log(`%c[mvDiag] ${stalls.length} stalls · ${loafLog.length} LoAF frames · ${gpu}/${rows.length} classified GPU/compositor`, 'color:#0f0;font-weight:bold')
+  console.table(rows)
+  console.log('%cVERDICT: if most rows are 🟥 GPU/compositor, the white-out is off-main-thread (tile/layer eviction) - NOT script or layout. Screenshot this table.', 'color:#f80;font-weight:bold')
+}
 
 /** Print the rolling event log (default last 60) + a summary. Stalls are the flash proxy. */
 function dump(n = 60): void {
@@ -255,5 +316,5 @@ function dump(n = 60): void {
 export function startDiag(): void {
   const g = window as unknown as { __mvDiag?: unknown }
   if (g.__mvDiag) return
-  g.__mvDiag = { watch, unwatch, layers, churn, noBlur, solid, leanOnly, disableFix, reset, debug, dump, mark }
+  g.__mvDiag = { watch, unwatch, layers, churn, noBlur, solid, leanOnly, disableFix, reset, debug, dump, mark, flashReport }
 }
