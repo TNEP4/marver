@@ -2,6 +2,51 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.6.0 - 2026-08-17
+
+Image-heavy boards, done right. A board full of high-resolution screenshots now zooms fast and stays
+crisp, images render in FULL instead of cropped, content frames size themselves to their content, and
+the switcher opens on a tight landing board instead of loading every frame at once.
+
+### Added
+
+- **Client-side image level-of-detail (LOD).** A board of 150+ high-res screenshots used to jank hard
+  on zoom - the real cost was decoded memory, not file size (a 2708x1610 PNG is ~17MB decoded, so 174 of
+  them held ~3GB of bitmaps the browser resampled every frame). Each `Img` now decodes STRAIGHT to its
+  on-screen size via `createImageBitmap` and paints on a canvas; bitmaps freeze during a pan/zoom and
+  re-pick resolution only when the gesture settles (the tldraw pattern). Result on a 174-image board:
+  ~26MB decoded at overview vs ~3GB before (~100x less), lag-free zoom, crisp detail when you stop.
+  Falls back to a plain `img` where `createImageBitmap` is unavailable.
+- **Board ranking and a fast landing board.** Boards carry an `"order"` field; the switcher ranks curated
+  boards by it and always sinks the auto `all-scenes` everything-board to the BOTTOM. A fresh open now
+  lands on the FIRST curated board - a tight, fast board and a good first impression - instead of
+  rendering every frame at once. Rank boards deliberately; the first is what people see first. `order`
+  survives the shell's autosaves.
+
+### Changed
+
+- **Reference images show in FULL.** `Img` no longer cover-crops to a fixed height (that sliced the
+  sides off every screenshot). Each image fills its column at its natural aspect ratio - never cropped,
+  never letterboxed - so same-aspect screenshots line up on their own and the frame auto-heights to fit.
+  Size an image by how many share its `Row` (fewer = bigger), not by a fixed height; `h` is accepted for
+  back-compat but no longer constrains size. A clean inset hairline (grayscale, light + dark) sits on the
+  image's own edge, overriding a screenshot's ragged or baked-in border instead of framing it twice.
+- **Content frames fit their content when you resize.** A manual WIDTH resize now keeps the HEIGHT auto:
+  the frame reflows and refits to show everything, instead of freezing at a stale height (only an explicit
+  device viewport locks it). The content-frame height cap was raised so a long reference doc renders in
+  full rather than clipping, and zoom now reaches 500% for inspecting screenshot detail.
+- **Authoring doctrine updated to match.** The scaffolded instructions now teach sizing images by row
+  grouping instead of cropping, and ranking boards with `order` (first = landing, `all-scenes` is heavy
+  and auto-last).
+
+### Fixed
+
+- **No jiggle on zoom.** An image's display aspect-ratio is pinned on first decode, so an LOD resolution
+  switch changes only the pixels, never the layout box - frames no longer drift as you zoom.
+- **Fast zoom no longer stalls frames.** The LOD re-decode is debounced past the gesture and drops queued
+  work when a new gesture starts, so oscillating zoom-in/out never stacks decode waves and times frames
+  out to a ready-timeout.
+
 ## 0.5.0 - 2026-08-15
 
 The performance & fidelity release (SPEC-M5): the canvas stops jiggling. Moving around a board no
