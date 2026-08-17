@@ -196,5 +196,19 @@ stated residual (OS-enforced within-batch isolation) and the unbuilt live-render
 but non-trivial* safety engineering that a night of happy-path spikes correctly could not validate —
 and Codex named it precisely. Good place to be for a morning design session.
 
-_See `scratchpad/NIGHT-LOG.md` for the raw run log and `scratchpad/spike-loop/`,
-`scratchpad/marver-test/` for the throwaway harnesses._
+## Final verdict (after 3 Codex rounds + a night of spikes)
+
+The spec is now **internally consistent** and every safety contract has a **validated design** (most
+spiked). Three Codex review rounds converged: the findings that remain are **not spec-design gaps**,
+they are **implementation** (build the daemon + auth ledger + batch journal per the spec) plus **two
+honestly-stated residuals** — within-batch file non-overlap is orchestrator-assigned not OS-enforced
+(P2/P3), and the live render/glow UI (Q7) is build-then-test. A 4th solo review round would keep
+surfacing finer nuances asymptotically; the correct next step is to **build P1 against this spec** —
+code forces the last decisions faster than more prose.
+
+**What the night bought:** the risky *unknown* (does the loop work?) is retired with evidence; the
+*known* safety engineering is designed and mostly spiked; and we have a clear, agent-agnostic build
+plan. That is exactly the "all the learnings to nail this end to end" the run set out to get.
+
+_Raw log: `scratchpad/NIGHT-LOG.md`. Throwaway harnesses: `scratchpad/spike-loop/`,
+`scratchpad/marver-test/`, `scratchpad/spike-auth/`, `scratchpad/spike-crash/`, `scratchpad/spike-resume/`._
