@@ -92,10 +92,10 @@ export default () => (
   shows an in-frame card: fix the source, the frame heals live. Never hand-set
   colors or `%%{init}%%` themes - marver's palette is injected and source
   overrides are stripped.
-- `Img` shows `design/assets/<src>` with an optional caption; `h={n}` cover-crops
-  to a fixed rendered height (the lever for optically aligning a mixed row - see
-  "Images and mood boards" below). Blocks carry their own padding, border, and
-  surface - never hand-manage spacing around them.
+- `Img` shows `design/assets/<src>` with an optional caption, ALWAYS in full at its
+  natural aspect ratio - never cropped, never letterboxed. Size it by how many images
+  share its `Row` (fewer = bigger), not by a fixed height. Blocks carry their own
+  padding, border, and surface - never hand-manage spacing around them.
 - `intent` (`diagram` | `spec` | `moodboard` | `notes`) is the frame's PURPOSE,
   not its content mix - a frame with two diagrams and a paragraph is still the
   "diagram frame" if diagrams are why it exists. It drives the icon the human
@@ -154,21 +154,23 @@ screenshots, official brand logos, product visuals - download into
 of described imagery every time (the full asset rules: instructions/craft.md,
 "Real assets").
 
-**Size images to be SEEN, and make rows read as one set:**
+**Size images to be SEEN - by row grouping, never by cropping:**
 
-- An image that renders as a stamp is a defect. The image IS the content of a
-  mood board - give the important one most of a row, let supporting shots share
-  a row, and never pack so many into one `Row` that each collapses below
-  legibility.
-- Equal component widths do NOT make unequal images look equal - aspect ratios
-  and internal density differ, so a row of same-width `Img` blocks can still
-  read ragged. Normalize a mixed row with a shared rendered height:
-  `<Img src="..." h={240} />` cover-crops every image in the row to one height,
-  which is what makes them READ aligned. Group similar aspects together when
-  cropping would destroy the shot.
-- Alignment is judged on the RENDER, not the props: after composing, look at the
-  actual frame (screenshot it if you can) and adjust until the rows sit
-  optically consistent. "The code says they're the same width" proves nothing.
+- The image IS the content: it always renders in FULL at its natural aspect ratio, so
+  a screenshot stays fully legible and is never sliced. You size it by how many images
+  share a `Row` - fewer per row = larger. Give a detailed screenshot its own row or a
+  pair; let small supporting shots share a row of three or four. An image that renders
+  as a stamp is a defect - pull it into a shorter row.
+- A row of same-aspect images (e.g. app screenshots, all the same window shape) lines
+  up as one set on its own: equal column width + equal aspect = equal height, with no
+  fixed-height prop. Only mixed aspects read ragged - split those into their own rows
+  by shape rather than forcing a height (forcing one would crop or letterbox the shot).
+- Reach for `layout="wide"` on image-heavy reference frames so each shot has room, and
+  never set a frame height - the frame auto-heights to fit everything the canvas
+  measures. Marver renders images crisp and zooms fast, so fine detail is one zoom away.
+- Judge on the RENDER, not the props: after composing, look at the actual frame
+  (screenshot it if you can) and adjust the per-row count until it reads well. "The code
+  says they're the same width" proves nothing.
 
 ## When Shape ends
 
