@@ -893,10 +893,9 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
   const dismiss = () => useStore.getState().dismissToast(id)
   return (
     <div className="sh-toast jam">
-      <span className="sh-jam-mark"><ParallelogramFillIcon size={13} /></span>
+      <span className="sh-jam-mark"><ParallelogramFillIcon size={17} /></span>
       <div className="sh-jam-txt">
         <b className="sh-jam-frame">
-          {note.intent ? <IntentGlyph intent={note.intent} size={11} /> : <FrameRectIcon size={11} />}
           <span className="t">{note.frameTitle ?? note.board}</span>
           <span className="age">{relAge(note.ts)}</span>
         </b>
