@@ -223,7 +223,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 body.sh-laser .sh-lean,
 body.sh-commenting .sh-lean { opacity: 0 }
 .sh-overlay { position: absolute; inset: 0; z-index: 2 }   /* above the lean (z1) so drag-by-body works; inherits the app arrow cursor */
-.sh-node.interact, .sh-node.working { border-color: var(--interact);
+.sh-node.interact { border-color: var(--interact);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
   outline-offset: calc(-1px * var(--sh-inv, 1));
   box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--interact-ring), var(--shadow-node) }
@@ -255,8 +255,7 @@ body.sh-commenting .sh-lean { opacity: 0 }
 /* one orbiting light, two intensities: a faint shimmer riding ON the solid border
    (::before, low opacity over the still outline) and the clear glow just outside
    (::after, lightly blurred, sharp glints). Same duration = perfectly in sync. */
-.sh-node.interact::before, .sh-node.interact::after,
-.sh-node.working::before, .sh-node.working::after {
+.sh-node.interact::before, .sh-node.interact::after {
   content: ''; position: absolute; border-radius: inherit; pointer-events: none;
   background: conic-gradient(from var(--sh-rot),
     var(--interact-strong) 0deg,
@@ -273,13 +272,13 @@ body.sh-commenting .sh-lean { opacity: 0 }
   mask-composite: exclude;
   animation: sh-orbit 4.2s linear infinite;
 }
-.sh-node.interact::before, .sh-node.working::before {
+.sh-node.interact::before {
   inset: calc(-2.5px * var(--sh-inv, 1));
   padding: calc(2.5px * var(--sh-inv, 1));
   border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
   opacity: .6;
 }
-.sh-node.interact::after, .sh-node.working::after {
+.sh-node.interact::after {
   inset: calc(-9px * var(--sh-inv, 1));
   padding: calc(5px * var(--sh-inv, 1));
   border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
@@ -289,18 +288,37 @@ body.sh-commenting .sh-lean { opacity: 0 }
 @keyframes sh-orbit { to { --sh-rot: 360deg } }
 @media (prefers-reduced-motion: reduce) {
   .sh-node.interact::before, .sh-node.interact::after,
-  .sh-node.working::before, .sh-node.working::after { animation: none } }
+  .sh-node.working::before { animation: none } }
 
-/* Live Jam "working" (SPEC §10): interact mode's EXACT look and feel - same border, outline, ring,
-   and orbit (the shared rules above) - recolored to Marver's accent blue by overriding the
-   --interact-* variables locally. When a human is actually IN the frame, .interact wins: the
-   :not(.interact) guard leaves the theme-level magenta variables in charge. */
-.sh-node.working:not(.interact) {
-  --interact: var(--mv-blue); --interact-ring: rgba(0, 136, 255, .16);
-  --interact-strong: rgba(0, 136, 255, 1); --interact-spark: rgba(255, 255, 255, .95) }
-.sh-app.dark .sh-node.working:not(.interact) {
-  --interact: #4db1ff; --interact-ring: rgba(0, 136, 255, .3);
-  --interact-strong: rgba(0, 136, 255, 1); --interact-spark: rgba(255, 255, 255, .9) }
+/* Live Jam "working" (SPEC §10): the SELECTED state's exact geometry - crisp border + 2px screen-px
+   outline + 4px ring, edge-light off - in fixed Marver blue, with ONLY interact's thin border
+   shimmer (::before) for motion. No outer blurred halo: that double band read as a fat bezel.
+   When a human is actually IN the frame, interact's magenta treatment wins. */
+.sh-node.working:not(.interact) { border-color: var(--mv-blue);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--mv-blue);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) rgba(0, 136, 255, .2), var(--shadow-node) }
+.sh-node.working:not(.interact)::after { display: none }   /* the blue geometry owns the edge, like .sel */
+.sh-node.working:not(.interact)::before {
+  content: ''; position: absolute; pointer-events: none;
+  inset: calc(-2.5px * var(--sh-inv, 1));
+  padding: calc(2.5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
+  background: conic-gradient(from var(--sh-rot),
+    rgba(0, 136, 255, 1) 0deg,
+    rgba(0, 136, 255, 1) 105deg,
+    rgba(255, 255, 255, .95) 135deg,
+    rgba(0, 136, 255, 1) 165deg,
+    rgba(0, 136, 255, 1) 285deg,
+    rgba(255, 255, 255, .95) 315deg,
+    rgba(0, 136, 255, 1) 345deg,
+    rgba(0, 136, 255, 1) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: .6;
+  animation: sh-orbit 4.2s linear infinite }
 
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
@@ -490,6 +508,9 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
 .sh-toast svg { color: var(--glass-good); flex: none }
+/* the jam pill's svgs are NOT the toast checkmark: the mark stays white/90 on blue, the X keeps
+   its own muted ink - undo the blanket green above */
+.sh-toast.jam svg { color: currentColor }
 .sh-toast-more { color: var(--glass-ink-3); font-size: 11px; padding: 2px 10px }
 
 /* the Live Jam reply pill: our full glass treatment, full radius, one row (§9) */
