@@ -5,6 +5,7 @@
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away.
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
@@ -328,51 +329,38 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
-  // Canvas cards DOCK OUTSIDE the frame (the pin stays on the element; the card must never cover
-  // the artwork). Side selection, in order: (1) the side NEAREST the pin, (2) not on top of a
-  // NEIGHBOURING frame, (3) enough viewport room for the 300px card. Vertically the card tracks
-  // the pin but is clamped - by its MEASURED height - to stay inside the frame's span, starting
-  // slightly below the top. Play keeps the classic at-the-pin placement.
-  const cardRef = useRef<HTMLDivElement>(null)
-  const [cardH, setCardH] = useState(420)   // world-px estimate until measured
-  const inv = 1 / (useStore((s) => s.scale) || 1)
-  const [dock] = useState<'r' | 'l' | null>(() => {
+  // Canvas: the PIN lives in the world (zooms with the frame); the OPEN CARD is UI - a fixed
+  // screen-space panel that never zooms or pans with the canvas. Positioned ONCE on open, beside
+  // the frame on the pin's side, fully clamped into the viewport; long threads scroll INSIDE the
+  // card (composer pinned, opened at the latest message). Play keeps the in-stage placement.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [float] = useState<{ x: number; y: number } | null>(() => {
     if (!nodeKey) return null
-    const s = useStore.getState()
-    const me2 = s.nodes.find((n) => n.key === nodeKey)
-    if (!me2) return 'r'
-    const iv = 1 / (s.scale || 1)
-    const cw = 300 * iv, ch = 420 * iv, gap = 18 * iv
-    const y0 = me2.y + Math.max(16 * iv, Math.min(at.y - 36 * iv, me2.h - ch))
-    const rectFor = (side: 'r' | 'l') => side === 'r'
-      ? { x: me2.x + me2.w + gap, y: y0, w: cw, h: ch }
-      : { x: me2.x - gap - cw, y: y0, w: cw, h: ch }
-    const coveredByFrame = (r: { x: number; y: number; w: number; h: number }) =>
-      s.nodes.some((n) => n.key !== nodeKey && n.x < r.x + r.w && n.x + n.w > r.x && n.y < r.y + r.h && n.y + n.h > r.y)
-    const vp = document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)?.getBoundingClientRect()
-    const room = (side: 'r' | 'l') => !vp || (side === 'r' ? window.innerWidth - vp.right : vp.left) >= 340
-    const prefer: ('r' | 'l')[] = at.x < bounds.w / 2 ? ['l', 'r'] : ['r', 'l']
-    return prefer.find((side) => room(side) && !coveredByFrame(rectFor(side)))   // free + fits
-      ?? prefer.find(room)                                                      // fits on screen
-      ?? prefer[0]                                                              // pin's side
+    const W = 320, M = 12
+    const maxH = Math.min(window.innerHeight * 0.72, 660)
+    const rect = document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)?.getBoundingClientRect()
+    if (!rect) return { x: window.innerWidth / 2 - W / 2, y: 80 }
+    const scale = useStore.getState().scale || 1
+    const pinY = rect.top + (28 + at.y) * scale
+    const roomR = window.innerWidth - rect.right >= W + 30
+    const roomL = rect.left >= W + 30
+    const side = at.x < bounds.w / 2 ? (roomL ? 'l' : 'r') : (roomR ? 'r' : 'l')   // pin's side first
+    const x = Math.min(Math.max(side === 'r' ? rect.right + 18 : rect.left - 18 - W, M), window.innerWidth - W - M)
+    const y = Math.min(Math.max(pinY - 36, M), Math.max(M, window.innerHeight - maxH - M))
+    return { x, y }
   })
-  // re-clamp with the REAL card height once rendered (est 420 was often short - bottom pins hung
-  // below the frame instead of riding up inside its span)
-  useEffect(() => {
-    if (dock && cardRef.current) setCardH(cardRef.current.offsetHeight * inv)
-  }, [dock, inv, thread.replies.length, text])
-  const flip = dock ? dock === 'l' : at.x > bounds.w * 0.55
-  const pos = dock
-    ? { left: dock === 'r' ? bounds.w : 0, top: Math.max(16 * inv, Math.min(at.y - 36 * inv, bounds.h - cardH)) }
-    : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
+  // open at the LATEST message (what you came to read); follow new replies while open
+  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight }, [thread.replies.length])
+  const flip = !float && at.x > bounds.w * 0.55
+  const pos = float ? { left: float.x, top: float.y } : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
   const submit = async () => {
     const sent = text
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
-  return (
-    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${dock ? ` dock-${dock}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+  const card = (
+    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ' floating' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
@@ -398,15 +386,17 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
           <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
       </div>
-      <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
-      <CommentBody body={thread.body} owner={isOwner(thread.author)} />
-      {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
-      {thread.replies.map((r) => (
-        <div key={r.id} className="cm-msg">
-          <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
-          <CommentBody body={r.body} owner={isOwner(r.author)} />
-        </div>
-      ))}
+      <div className="cm-scroll" ref={scrollRef}>
+        <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
+        <CommentBody body={thread.body} owner={isOwner(thread.author)} />
+        {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
+        {thread.replies.map((r) => (
+          <div key={r.id} className="cm-msg">
+            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
+            <CommentBody body={r.body} owner={isOwner(r.author)} />
+          </div>
+        ))}
+      </div>
       {canComment ? (
         <div className="cm-compose">
           <Avatar author={me ?? undefined} size={24} />
@@ -419,6 +409,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
       )}
     </div>
   )
+  return float ? createPortal(card, document.querySelector('.sh-app') ?? document.body) : card
 }
 
 /** The draft composer - shared by canvas and prototype, geometry via `bounds`, tinted with

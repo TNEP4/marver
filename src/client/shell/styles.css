@@ -840,10 +840,13 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   display: flex; flex-direction: column; gap: 12px;
   font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
-/* docked beside the frame (canvas): a screen-constant gutter off the frame's edge, so the card
-   never covers the artwork and zooming keeps it parked cleanly at the side */
-.cm-card.dock-r { margin-left: calc(18px * var(--sh-inv, 1)) }
-.cm-card.dock-l { margin-left: calc(-18px * var(--sh-inv, 1)) }
+/* the open thread on the CANVAS is UI, not artwork: a FIXED screen-space panel that never zooms or
+   pans with the canvas. Viewport-bounded; the messages scroll inside (.cm-scroll), the composer
+   stays pinned at the bottom. */
+.cm-card.floating { position: fixed; transform: none; width: 320px; max-height: min(72vh, 660px);
+  z-index: 60; overflow: hidden }
+.cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain; scrollbar-width: thin }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
