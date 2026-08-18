@@ -17,9 +17,10 @@ const SHIM_DELAYS = Array.from({ length: 18 }, (_, i) => {
   const r = Math.floor(i / 3), c = i % 3
   return (((r * 7 + c * 13) % 9) / 9) * 0.95
 })
-function WorkShimmer() {
+function WorkShimmer({ belowBadge }: { belowBadge: boolean }) {
+  // a variant badge owns the top of the left flank - the shimmer yields and sits below it
   return (
-    <div className="sh-work-ind" aria-hidden>
+    <div className={`sh-work-ind${belowBadge ? ' below-vbadge' : ''}`} aria-hidden>
       {SHIM_DELAYS.map((d, i) => (
         <ParallelogramFillIcon key={i} size={5} style={{ animationDelay: `calc(var(--mv-w0, 0s) + ${d.toFixed(2)}s)` }} />
       ))}
@@ -314,7 +315,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         ...(working ? { ['--mv-w0' as string]: `${-(Date.now() - (workingSince ?? Date.now()))}ms` } : {}) }}
       data-node={node.key}
     >
-      {working && <WorkShimmer />}
+      {working && <WorkShimmer belowBadge={!!frame.variantGroup} />}
       {frame.variantGroup && (
         <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
           onPointerDown={(e) => e.stopPropagation()}

@@ -368,6 +368,10 @@ body.sh-commenting .sh-lean { opacity: 0 }
   display: grid; grid-template-columns: repeat(3, 4.5px); gap: 2px;
   transform: scale(var(--sh-inv, 1)); transform-origin: top right;
   pointer-events: none; z-index: 5 }
+/* a variant badge (A / B / C + name) owns the top of the left flank - the shimmer sits below it.
+   The offset mirrors the badge's own zoom clamps (letter 40px-120px + label), so it tracks the
+   badge as it grows and shrinks across the zoom range. */
+.sh-work-ind.below-vbadge { top: min(clamp(64px, calc(32px * var(--sh-inv, 1)), 170px), calc(64px * var(--sh-inv, 1))) }
 .sh-work-ind svg { display: block; width: 4.5px; height: 4.5px; color: var(--work, var(--mv-blue));
   opacity: .12; animation: sh-work-shim .95s ease-in-out infinite }
 @keyframes sh-work-shim { 0%, 100% { opacity: .12; transform: scale(.75) } 35% { opacity: 1; transform: scale(1.15) } }
