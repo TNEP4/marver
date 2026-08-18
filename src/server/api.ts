@@ -25,9 +25,10 @@ export function ownerGated(req: any): boolean {
   if (!c || req.headers['x-mv-c'] !== c) return false
   const origin = req.headers.origin
   if (origin) {
+    // Full same-origin: the Origin's host:port must equal the request's Host. Cookies are not
+    // port-scoped, so a hostname-only check would let another localhost port read mv_c and pass.
     try {
-      const h = new URL(String(origin)).hostname
-      if (h !== 'localhost' && h !== '127.0.0.1' && h !== '::1' && h !== '[::1]') return false
+      if (new URL(String(origin)).host !== String(req.headers.host ?? '')) return false
     } catch { return false }
   }
   return true

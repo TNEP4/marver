@@ -41,6 +41,8 @@ export function write(root: string, j: Journal): void {
   const fd = openSync(tmp, 'w', 0o600)
   try { writeSync(fd, JSON.stringify(j)); fsyncSync(fd) } finally { closeSync(fd) }
   renameSync(tmp, file)
+  // fsync the directory so the rename (the durable step) survives a power loss, not just the bytes.
+  try { const dfd = openSync(dir, 'r'); try { fsyncSync(dfd) } finally { closeSync(dfd) } } catch { /* dir fsync unsupported */ }
 }
 
 /** First-enable safety: mark every pre-existing event id seen WITHOUT executing, so only events
@@ -71,11 +73,13 @@ export function acquireLock(root: string): boolean {
       try { writeSync(fd, String(process.pid)) } finally { closeSync(fd) }
       return true
     } catch {
-      // Lock exists: reclaim it only if the holder is dead, then retry the exclusive create.
+      // Lock exists. Read the holder and decide - never steal a lock we cannot prove is dead.
       let holder = 0
       try { holder = parseInt(readFileSync(file, 'utf8').trim(), 10) || 0 } catch { /* unreadable */ }
-      if (holder && holder !== process.pid && alive(holder)) return false
-      try { rmSync(file, { force: true }) } catch { return false }
+      if (!holder) return false               // empty/unreadable: mid-creation or foreign - back off
+      if (holder === process.pid) return true  // we already hold it (idempotent)
+      if (alive(holder)) return false          // a live foreign daemon owns it
+      try { rmSync(file, { force: true }) } catch { return false }   // dead holder: reclaim + retry
     }
   }
   return false

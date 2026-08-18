@@ -8,8 +8,9 @@ import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/
 import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { acquireLock, releaseLock, write } from '../src/server/jam/journal.ts'
+import { buildMember } from '../src/server/jam/packet.ts'
 import { record } from '../src/server/jam/ledger.ts'
-import type { JamAdapter } from '../src/server/jam/types.ts'
+import type { JamAdapter, Journal } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
 const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false }
@@ -126,13 +127,56 @@ describe('Live Jam M1: the daemon spine (SPEC-live-jam §3)', () => {
     const { root, dir, done } = setup()
     const ev = ownerMention(root, dir, 'home', '@marver ship it')
     // simulate the journal a killed daemon left behind: baselined, id seen, batch stuck claimed
-    write(root, { version: 1, baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
+    write(root, { version: 1, baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
     const jam = createJam(root, CFG, okAdapter)
     await jam.tick()
     jam.stop()
     expect(existsSync(join(root, 'edited.marker'))).toBe(true)
     expect(agentReplies(dir, 'home').length).toBe(1)
     done()
+  })
+
+  it('crash-idempotent reply: re-running the same batch posts no duplicate (deterministic reply id)', async () => {
+    const { root, dir, done } = setup()
+    const ev = ownerMention(root, dir, 'home', '@marver go')
+    const claimed = (): Journal => ({ version: 1, baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
+    write(root, claimed())
+    await createJam(root, CFG, okAdapter).tick()   // writes reply jam-b1, finishes
+    write(root, claimed())                          // simulate a crash that lost the "finish": batch back to claimed
+    await createJam(root, CFG, okAdapter).tick()    // re-runs the SAME batch id
+    expect(agentReplies(dir, 'home').length).toBe(1)   // one reply, deduped by the deterministic id
+    done()
+  })
+
+  it('resume re-validation: a claimed batch whose event is not (or no longer) ledgered is dropped, never run', async () => {
+    const { root, dir, done } = setup()
+    // the event exists in the log but was NEVER ledgered (a synced-in / de-authorized event)
+    const id = randomUUID()
+    appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'create', commentId: id, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'x@remote' }, body: '@marver do it' }])
+    write(root, { version: 1, baselined: true, seen: [id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
+    const jam = createJam(root, CFG, okAdapter)
+    await jam.tick()
+    jam.stop()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
+    expect(agentReplies(dir, 'home').length).toBe(0)
+    expect(jam.snapshot().batches.length).toBe(0)   // dropped
+    done()
+  })
+})
+
+describe('Live Jam M1: packet (SPEC-live-jam §5)', () => {
+  it('a @marver reply inherits frame/nodeKey/anchor from the root thread (replies carry none)', () => {
+    const rootId = randomUUID(), replyId = randomUUID()
+    const events: CommentEvent[] = [
+      { id: rootId, ts: 1, type: 'create', commentId: rootId, frame: 'demo/hero', nodeKey: 'demo/hero', anchor: { quote: 'Learn more' }, author: { email: 'nic@local' }, body: 'this button' },
+      { id: replyId, ts: 2, type: 'reply', commentId: randomUUID(), parentId: rootId, author: { email: 'nic@local' }, body: '@marver make it green' },
+    ]
+    const threads = replay(events)
+    const member = buildMember({ board: 'home', event: events[1] }, threads)
+    expect(member.frame).toBe('demo/hero')
+    expect(member.nodeKey).toBe('demo/hero')
+    expect(member.anchor).toEqual({ quote: 'Learn more' })
+    expect(member.threadId).toBe(rootId)
   })
 })
 

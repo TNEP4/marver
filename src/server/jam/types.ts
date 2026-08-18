@@ -18,10 +18,12 @@ export interface JamAdapter {
  *  single-member batches; M4 promotes to real multi-member batches (frozen at spawn). */
 export interface Batch {
   batchId: string
+  board: string              // the board the members live on; resume reads ONLY this board
   memberEventIds: string[]   // frozen at spawn
   state: 'pending' | 'claimed' | 'done' | 'failed'
   leaseUntil: number
   attempts: number
+  pgid?: number              // spawned process group, for fencing an orphan on resume
 }
 
 /** The on-disk journal (design/.local/jam-jobs.json). `seen` is the dedup source of truth
