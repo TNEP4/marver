@@ -16,11 +16,13 @@ export const claudeAdapter: JamAdapter = {
   name: 'claude',
   supportsSubagents: true,
   spawnArgs(goal) {
-    // No Bash: acceptEdits + Bash is not a workspace jail (arbitrary shell + network). Read/Edit/
-    // Write plus Glob/Grep let the agent find and change frame code without a shell (SPEC §1).
+    // No open Bash: acceptEdits + a full shell is not a workspace jail (SPEC §1). But great design
+    // needs the web: WebSearch/WebFetch for reference designs + brand assets, and a NARROW
+    // Bash(curl:*) so images can be downloaded into the workspace. Owner-gated triggers + the
+    // human reviewing every diff are the trust boundary; this widens capability, not authority.
     return {
       cmd: 'claude',
-      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep', '--output-format', 'json'],
+      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,Bash(curl:*)', '--output-format', 'json'],
     }
   },
   parse(stdout, code) {
