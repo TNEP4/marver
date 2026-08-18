@@ -524,7 +524,7 @@ body.sh-commenting .sh-lean { opacity: 0 }
 /* Marver is ALWAYS its own blue - never the shell accent, which swaps to magenta in interact mode
    (.sh-app.interacting). A fixed var the swap can't touch keeps the avatar + notification on-brand. */
 :root { --mv-blue: #0088ff }
-.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--mv-blue); color: rgba(255,255,255,.8);
+.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--mv-blue); color: rgba(255,255,255,.9);
   display: inline-flex; align-items: center; justify-content: center }
 .sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25 }
 .sh-jam-txt b { font-size: 12.5px; font-weight: 600; color: var(--mv-blue) }
@@ -908,7 +908,7 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
-.cm-avatar.cm-marver { background: var(--mv-blue); color: rgba(255,255,255,.8); cursor: default }   /* white/80 mark, embedded in the accent */
+.cm-avatar.cm-marver { background: var(--mv-blue); color: rgba(255,255,255,.9); cursor: default }   /* white/90 mark, embedded in the accent */
 .cm-marver-wrap { display: inline-flex; border-radius: 50% }
 .cm-marver-name { color: var(--glass-ink) }              /* black, not blue */
 /* provenance tooltip: one fact per row, LEFT-aligned tight pairs, bold bright label + readable value -
