@@ -5,7 +5,6 @@
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away.
  */
 import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
@@ -212,7 +211,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         const { x, y, orphan } = pinPos(t)
         const isActive = t.id === active
         return (
-          <div key={t.id} className={`cm-pin sh-no-pan${isActive ? ' on' : ''}${isActive && cardSide === 'l' ? ' tail-l' : ''}${orphan ? ' orphan' : ''}`}
+          <div key={t.id} className={`cm-pin sh-no-pan${isActive ? ' on' : ''}${isActive && cardSide === 'r' ? ' tail-r' : ''}${orphan ? ' orphan' : ''}`}
             style={{ left: x, top: y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
@@ -357,39 +356,24 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
-  // Canvas: the PIN lives in the world (zooms with the frame); the OPEN CARD is UI - a fixed
-  // screen-space panel that never zooms or scales. The SIDE is chosen once at open (D3) - the
-  // pin's side first, skipping a side a neighbouring frame occupies, then viewport room. The
-  // POSITION is GLUED to the frame's edge (D1): an rAF loop tracks the frame's screen rect
-  // through pan/zoom (style writes, no re-renders), clamped into the viewport - so when the
-  // frame leaves the screen the card parks at the nearest edge until closed (D2). Long threads
-  // scroll INSIDE (composer pinned, opened at the latest message); Play keeps in-stage placement.
+  // Canvas: the card is a WORLD OBJECT parked beside its frame - it stays put (panning moves
+  // frame + card together, never following the viewport). Zoom scales it with a CLAMP
+  // (0.9..1.35 of screen-constant), so it reads steady at working zooms yet never dwarfs the
+  // frame far out or shrinks away deep in. Height rules: capped at the frame's height; grows
+  // DOWNWARD from the pin until it reaches the frame's bottom, then grows UP; past the cap the
+  // messages scroll inside. The SIDE is chosen once at open (D3). Play keeps in-stage placement.
   const scrollRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const float = !!nodeKey
+  const zoom = useStore((s) => s.scale) || 1
+  const S = Math.min(Math.max(1 / zoom, 0.9), 1.35)
+  const [cardH, setCardH] = useState(320)   // measured, unscaled px
   useEffect(() => {
-    if (!float || !nodeKey) return
-    const W = 320, M = 12, GAP = 18
-    const el = () => document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)
-    let raf = 0
-    const track = () => {
-      raf = requestAnimationFrame(track)
-      const card = cardRef.current
-      const rect = el()?.getBoundingClientRect()
-      if (!card || !rect) return
-      const scale = useStore.getState().scale || 1
-      const maxH = Math.min(window.innerHeight * 0.72, 660)
-      const pinY = rect.top + (28 + at.y) * scale
-      const x = Math.min(Math.max(side === 'r' ? rect.right + GAP : rect.left - GAP - W, M), window.innerWidth - W - M)
-      const y = Math.min(Math.max(pinY - 36, M), Math.max(M, window.innerHeight - maxH - M))
-      // write only on change - zero layout churn while idle
-      const lx = `${Math.round(x)}px`, ly = `${Math.round(y)}px`
-      if (card.style.left !== lx) card.style.left = lx
-      if (card.style.top !== ly) card.style.top = ly
+    if (float && cardRef.current) {
+      const h = cardRef.current.offsetHeight
+      setCardH((c) => (Math.abs(c - h) > 2 ? h : c))
     }
-    raf = requestAnimationFrame(track)
-    return () => cancelAnimationFrame(raf)
-  }, [float, nodeKey, side, at.y])
+  })
   // scroll shadows: "there is more" above/below - recomputed on scroll + content growth
   const [shadows, setShadows] = useState({ top: false, bot: false })
   const syncShadows = () => {
@@ -406,7 +390,19 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
     syncShadows()
   }, [thread.replies.length])
   const flip = !float && at.x > bounds.w * 0.55
-  const pos = float ? {} : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
+  // gutters (world px): the LEFT one is wider - it must clear the working shimmer strip that
+  // lives on the frame's left flank, plus the ring
+  const pos = float
+    ? {
+        left: side === 'r' ? bounds.w + 28 : -56,
+        // grow down from the pin, then up once the bottom hits the frame's bottom
+        top: Math.max(0, Math.min(at.y - 36 * S, bounds.h - cardH * S)),
+        maxHeight: Math.max(220, Math.min(660, bounds.h / S)),
+        minHeight: 150,
+        transform: side === 'r' ? `scale(${S})` : `translateX(-100%) scale(${S})`,
+        transformOrigin: side === 'r' ? 'top left' : 'top right',
+      }
+    : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
   const submit = async () => {
@@ -414,7 +410,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   const card = (
-    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ' floating' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
@@ -467,7 +463,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
       )}
     </div>
   )
-  return float ? createPortal(card, document.querySelector('.sh-app') ?? document.body) : card
+  return card
 }
 
 /** The draft composer - shared by canvas and prototype, geometry via `bounds`, tinted with

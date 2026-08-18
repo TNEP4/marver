@@ -841,15 +841,6 @@ export function App() {
   )
 }
 
-/** Relative age for notification pills: now, 45s, 3m, 2h. */
-function relAge(ts: number): string {
-  const s = Math.max(0, (Date.now() - ts) / 1000)
-  if (s < 20) return 'now'
-  if (s < 60) return `${Math.round(s)}s`
-  if (s < 3600) return `${Math.round(s / 60)}m`
-  return `${Math.round(s / 3600)}h`
-}
-
 /** The bottom-right notification corner (SPEC-live-jam §9). Plain toasts render as before.
  *  Jam pills are FRAME-FIRST (icon + frame title, then Marver · preview) and stack as a DECK:
  *  1-2 show in full; 3+ collapse to the newest pill with two card edges peeking beneath and a
@@ -895,11 +886,8 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
     <div className="sh-toast jam">
       <span className="sh-jam-mark"><ParallelogramFillIcon size={17} /></span>
       <div className="sh-jam-txt">
-        <b className="sh-jam-frame">
-          <span className="t">{note.frameTitle ?? note.board}</span>
-          <span className="age">{relAge(note.ts)}</span>
-        </b>
-        <span className="sh-jam-prev"><b>Marver</b> · {note.preview}</span>
+        <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>
+        <span className="sh-jam-prev">{note.preview}</span>
       </div>
       {badge != null
         ? <span className="sh-jam-badge">+{badge}</span>
