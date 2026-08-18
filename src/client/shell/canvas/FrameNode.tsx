@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
-import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
+import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
@@ -9,6 +9,23 @@ import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from
 
 export const HEADER = 28
 const SNAP = 12
+
+/** Live Jam working shimmer (SPEC §10): a 3x6 matrix of tiny marver marks on the frame's left
+ *  flank, top-aligned - each mark twinkles on its own scattered beat, phased per frame by
+ *  --mv-w0 (set on the node) so parallel frames never pulse in sync. */
+const SHIM_DELAYS = Array.from({ length: 18 }, (_, i) => {
+  const r = Math.floor(i / 3), c = i % 3
+  return (((r * 7 + c * 13) % 9) / 9) * 0.95
+})
+function WorkShimmer() {
+  return (
+    <div className="sh-work-ind" aria-hidden>
+      {SHIM_DELAYS.map((d, i) => (
+        <ParallelogramFillIcon key={i} size={5} style={{ animationDelay: `calc(var(--mv-w0, 0s) + ${d.toFixed(2)}s)` }} />
+      ))}
+    </div>
+  )
+}
 
 /**
  * One frame on the canvas. Iframe laws (spec §7): the iframe element is created once per node key
@@ -24,6 +41,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
   const working = useStore((s) => s.working.includes(node.frame))   // Live Jam: Marver is editing this frame
+  const workingSince = useStore((s) => s.workingSince[node.frame])
   // B0.1: no reactive scale subscription - it re-rendered every FrameNode on every
   // pan/zoom tick. gestureScale below measures the world rect (the canonical source,
   // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
@@ -290,9 +308,13 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     <div
       className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}${working ? ' working' : ''}`}
       data-theme={node.theme}
-      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined }}
+      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined,
+        // phase every working animation by when THIS frame's job started (SPEC §10) - parallel
+        // frames pulsing in sync would read as one fake choreography
+        ...(working ? { ['--mv-w0' as string]: `${-(Date.now() - (workingSince ?? Date.now()))}ms` } : {}) }}
       data-node={node.key}
     >
+      {working && <WorkShimmer />}
       {frame.variantGroup && (
         <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
           onPointerDown={(e) => e.stopPropagation()}
@@ -349,6 +371,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
           />
         )}
+        {working && <div className="sh-work-wave" />}
       </div>
 
       {/* comments live OUTSIDE the clipped body: a card or pin near the frame edge

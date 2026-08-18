@@ -291,16 +291,18 @@ body.sh-commenting .sh-lean { opacity: 0 }
   .sh-node.working::before { animation: none } }
 
 /* Live Jam "working" (SPEC §10): the SELECTED state's exact geometry - crisp border + 2px screen-px
-   outline + 4px ring, edge-light off - in WORKING YELLOW (clearly "being built on", visible on both
-   themes), with ONLY interact's thin border shimmer (::before) for motion. No outer blurred halo.
+   outline + 4px ring, edge-light off - in MARVER BLUE (Nic's pick over yellow), composed of three
+   layers: the border shimmer (::before orbit), the periodic content WAVE (.sh-work-wave), and the
+   shimmer MATRIX of tiny marks on the left flank (.sh-work-ind). Every animated layer is phased by
+   --mv-w0 (negative ms since THIS frame's job started), so parallel frames never pulse in sync.
    When a human is actually IN the frame, interact's magenta treatment wins. */
-.sh-node.working { --work: #ffcc00; --work-ring: rgba(255, 204, 0, .28) }
-.sh-app.dark .sh-node.working { --work: #ffd60a; --work-ring: rgba(255, 214, 10, .3) }
+.sh-node.working { --work: var(--mv-blue); --work-ring: rgba(0, 136, 255, .2) }
+.sh-app.dark .sh-node.working { --work: #4db1ff; --work-ring: rgba(0, 136, 255, .3) }
 .sh-node.working:not(.interact) { border-color: var(--work);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--work);
   outline-offset: calc(-1px * var(--sh-inv, 1));
   box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--work-ring), var(--shadow-node) }
-.sh-node.working:not(.interact)::after { display: none }   /* the yellow geometry owns the edge, like .sel */
+.sh-node.working:not(.interact)::after { display: none }   /* the blue geometry owns the edge, like .sel */
 .sh-node.working:not(.interact)::before {
   content: ''; position: absolute; pointer-events: none;
   inset: calc(-2.5px * var(--sh-inv, 1));
@@ -320,7 +322,57 @@ body.sh-commenting .sh-lean { opacity: 0 }
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
   opacity: .6;
-  animation: sh-orbit 4.2s linear infinite }
+  animation: sh-orbit 4.2s linear infinite;
+  animation-delay: var(--mv-w0, 0s) }
+
+/* THE WAVE (Option A: content sweep). One 36s cycle holds five ~1.7s sweeps - dense right after
+   the trigger (0s, 5s, 10s), then spaced (19s, 29s) - so a fresh job announces itself and a long
+   one keeps a calmer heartbeat. Jumps between sweeps happen at opacity 0 (invisible). */
+.sh-work-wave { position: absolute; inset: 0; overflow: hidden; border-radius: inherit;
+  pointer-events: none; z-index: 4 }
+.sh-work-wave::before { content: ''; position: absolute; left: 0; right: 0; top: -55%; height: 55%;
+  opacity: 0;
+  background: linear-gradient(180deg,
+    rgba(0, 136, 255, 0) 0%, rgba(0, 136, 255, .07) 30%, rgba(0, 136, 255, .16) 52%,
+    rgba(0, 136, 255, .07) 74%, rgba(0, 136, 255, 0) 100%);
+  animation: sh-work-wave 36s linear infinite;
+  animation-delay: var(--mv-w0, 0s) }
+@keyframes sh-work-wave {
+  0%     { transform: translateY(0); opacity: 0 }
+  0.4%   { opacity: 1 }
+  3.9%   { opacity: 1 }
+  4.7%   { transform: translateY(282%); opacity: 0 }
+  13.8%  { transform: translateY(0); opacity: 0 }
+  14.2%  { opacity: 1 }
+  17.7%  { opacity: 1 }
+  18.5%  { transform: translateY(282%); opacity: 0 }
+  27.7%  { transform: translateY(0); opacity: 0 }
+  28.1%  { opacity: 1 }
+  31.6%  { opacity: 1 }
+  32.4%  { transform: translateY(282%); opacity: 0 }
+  52.7%  { transform: translateY(0); opacity: 0 }
+  53.1%  { opacity: 1 }
+  56.6%  { opacity: 1 }
+  57.4%  { transform: translateY(282%); opacity: 0 }
+  80.5%  { transform: translateY(0); opacity: 0 }
+  80.9%  { opacity: 1 }
+  84.4%  { opacity: 1 }
+  85.2%  { transform: translateY(282%); opacity: 0 }
+  100%   { transform: translateY(282%); opacity: 0 }
+}
+
+/* THE SHIMMER MATRIX: 3 x 6 tiny marver marks on the left flank, top-aligned (the vbadge lane).
+   Screen-constant via --sh-inv (tight at every zoom); each mark twinkles on its own scattered
+   beat, phased per frame by --mv-w0. */
+.sh-work-ind { position: absolute; top: 0; right: calc(100% + 10px * var(--sh-inv, 1));
+  display: grid; grid-template-columns: repeat(3, 4.5px); gap: 2px;
+  transform: scale(var(--sh-inv, 1)); transform-origin: top right;
+  pointer-events: none; z-index: 5 }
+.sh-work-ind svg { display: block; width: 4.5px; height: 4.5px; color: var(--work, var(--mv-blue));
+  opacity: .12; animation: sh-work-shim .95s ease-in-out infinite }
+@keyframes sh-work-shim { 0%, 100% { opacity: .12; transform: scale(.75) } 35% { opacity: 1; transform: scale(1.15) } }
+@media (prefers-reduced-motion: reduce) {
+  .sh-work-wave::before, .sh-work-ind svg { animation: none } }
 
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
