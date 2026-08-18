@@ -158,6 +158,10 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
   // the open card's frozen side (D3) - a HOOK, so it must live above the early returns
   const sideRef = useRef<{ id: string; side: 'l' | 'r' } | null>(null)
+  // what occupies this frame's LEFT flank (drives the docked card's left gutter): a variant
+  // badge is widest, the working shimmer next. Reactive, so a job starting mid-read adjusts.
+  const flankBadge = useStore((s) => !!s.frameFor(node)?.variantGroup)
+  const flankShim = useStore((s) => s.working.includes(frameId))
   const drafting = draft?.nodeKey === node.key
   if (!show || (!open.length && !drafting)) return null
 
@@ -221,7 +225,8 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         )
       })}
       {activeThread2 && (
-        <ThreadCard key={active} thread={activeThread2} at={pinPos(activeThread2)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} side={cardSide} />
+        <ThreadCard key={active} thread={activeThread2} at={pinPos(activeThread2)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} side={cardSide}
+          flank={cardSide === 'l' ? (flankBadge ? 'badge' : flankShim ? 'shim' : null) : null} />
       )}
       {draft?.nodeKey === node.key && <DraftComposer at={{ x: ((draft.anchor as any)?.rect?.x ?? 0) + ((draft.anchor as any)?.pos?.fx ?? 0.5) * ((draft.anchor as any)?.rect?.w ?? 0), y: ((draft.anchor as any)?.rect?.y ?? 0) + ((draft.anchor as any)?.pos?.fy ?? 0.5) * ((draft.anchor as any)?.rect?.h ?? 0) }} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />}
     </>
@@ -344,7 +349,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   )
 }
 
-export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r' }) {
+export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r'; flank?: 'badge' | 'shim' | null }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
@@ -411,7 +416,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   const card = (
-    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}${float && flank ? ` flank-${flank}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}

@@ -942,9 +942,15 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    .cm-card scale(--sh-inv) - so it zooms smoothly with the board and stays readable at any zoom.
    Screen-constant gutters via margins (the left one wider - it clears the working shimmer). */
 .cm-card.parked { width: 320px; overflow: hidden; z-index: 50 }
-.cm-card.parked.dock-r { transform-origin: top left; margin-left: clamp(14px, calc(22px * var(--sh-inv, 1)), 64px) }
+.cm-card.parked:hover { z-index: 60 }   /* reading/replying wins over neighbouring chrome */
+/* gutters: SNUG by default (~12px screen), and only as wide as what actually occupies the flank -
+   the working shimmer strip (.flank-shim) or a variant badge (.flank-badge, the widest). All
+   screen-targeted with world caps so they stay sane at both zoom extremes. */
+.cm-card.parked.dock-r { transform-origin: top left; margin-left: clamp(8px, calc(12px * var(--sh-inv, 1)), 36px) }
 .cm-card.parked.dock-l { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right;
-  margin-left: calc(-1 * clamp(24px, calc(42px * var(--sh-inv, 1)), 110px)) }
+  margin-left: calc(-1 * clamp(8px, calc(12px * var(--sh-inv, 1)), 36px)) }
+.cm-card.parked.dock-l.flank-shim { margin-left: calc(-1 * clamp(18px, calc(28px * var(--sh-inv, 1)), 68px)) }
+.cm-card.parked.dock-l.flank-badge { margin-left: calc(-1 * clamp(26px, calc(44px * var(--sh-inv, 1)), 108px)) }
 .cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
   overscroll-behavior: contain; scrollbar-width: thin }
 /* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of
