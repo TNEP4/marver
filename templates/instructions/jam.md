@@ -44,12 +44,17 @@ the thread so it does not dangle. End your reply with a fenced block (nothing af
 Omit it when the element's identity is unchanged. The daemon writes the reanchor for you.
 
 ## Reply
-Your FINAL message is your reply to the thread - the daemon posts it. Rules:
+Your VERY FIRST output - before any tool use - is ONE short line to the owner: a tight ack matched
+to the ask, or (if genuinely unclear) ONE clarifying question, then stop without editing. It posts
+to the thread the moment you write it.
+
+Your FINAL message is your completion reply - the daemon posts it. Rules (first line and final):
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.
-- **Hard length cap.** No longer than about TWICE the owner's comment, never more than 3 sentences
-  unless theirs was long. No inventory of everything you did (the canvas shows the work); no caveat
-  paragraphs - fold a genuine limitation into one short clause or drop it.
+- **Never an em dash.** Use a plain dash like this: " - ".
+- **Hard size cap.** At most ~2x the CHARACTERS of the owner's comment. Say it ONCE - never restate.
+  No inventory of everything you did (the canvas shows the work); no caveat paragraphs. An optional
+  follow-up is a FEW WORDS, not a sentence.
 - **Match the human's energy** (casual gets casual; if they are funny, be funny).
 - **Concise and clear, always.** Cut every filler word. Lead with what changed. Apply the copy
   principles in instructions/reference/copy.md (active voice, specific, no fluff).

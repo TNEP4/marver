@@ -14,6 +14,13 @@ export const codexAdapter: JamAdapter = {
     // --skip-git-repo-check: the workspace may not be a git root; workspace-write jails edits.
     return { cmd: 'codex', args: ['exec', '--json', '-s', 'workspace-write', '--skip-git-repo-check', goal] }
   },
+  earlyText(line) {
+    try {
+      const o = JSON.parse(line) as Record<string, any>
+      if (o.type === 'item.completed' && o.item?.type === 'agent_message' && typeof o.item.text === 'string' && o.item.text.trim()) return o.item.text.trim()
+    } catch { /* not JSON */ }
+    return null
+  },
   parse(stdout, code) {
     let text = ''
     let model: string | undefined

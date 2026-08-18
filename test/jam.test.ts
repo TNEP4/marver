@@ -324,6 +324,62 @@ describe('Live Jam M1: packet (SPEC-live-jam §5)', () => {
   })
 })
 
+describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
+  const streamScript = (lines: string[]) =>
+    `const L=${JSON.stringify(lines)};process.stdout.write(L[0]+'\\n');setTimeout(()=>{for(let i=1;i<L.length;i++)process.stdout.write(L[i]+'\\n')},80)`
+  const ackLine = JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5', content: [{ type: 'text', text: 'On it - swapping the marks.' }] } })
+
+  it('posts the agent\'s first line as an early reply, then the final as its own message', async () => {
+    const { root, dir, done } = setup()
+    const resultLine = JSON.stringify({ type: 'result', result: 'Done - real marks are in.', modelUsage: { 'claude-opus-5': {} } })
+    const streamAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', streamScript([ackLine, resultLine])] } },
+      parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText,
+    }
+    const jam = createJam(root, CFG, streamAdapter)
+    ownerMention(root, dir, 'home', '@marver add the real marks')
+    await jam.tick(); jam.stop()
+    const replies = agentReplies(dir, 'home')
+    expect(replies.map((r) => r.body)).toEqual(['On it - swapping the marks.', 'Done - real marks are in.'])
+    done()
+  })
+
+  it('clarify-and-stop: the question posts once, never twice', async () => {
+    const { root, dir, done } = setup()
+    const q = 'Which field - card number or CVC?'
+    const qLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: q }] } })
+    const resultLine = JSON.stringify({ type: 'result', result: q, modelUsage: {} })
+    const clarifyAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', streamScript([qLine, resultLine])] } },
+      parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText,
+    }
+    const jam = createJam(root, CFG, clarifyAdapter)
+    ownerMention(root, dir, 'home', '@marver fix it')
+    await jam.tick(); jam.stop()
+    const replies = agentReplies(dir, 'home')
+    expect(replies.length).toBe(1)
+    expect(replies[0].body).toBe(q)
+    done()
+  })
+
+  it('em/en dashes are normalized to plain dashes in every posted reply', async () => {
+    const { root, dir, done } = setup()
+    const resultLine = JSON.stringify({ type: 'result', result: 'Marks are in — official SVGs – no lookalikes.', modelUsage: {} })
+    const dashAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(resultLine)})`] } },
+      parse: claudeAdapter.parse,
+    }
+    const jam = createJam(root, CFG, dashAdapter)
+    ownerMention(root, dir, 'home', '@marver add marks')
+    await jam.tick(); jam.stop()
+    expect(agentReplies(dir, 'home')[0]?.body).toBe('Marks are in - official SVGs - no lookalikes.')
+    done()
+  })
+})
+
 describe('Live Jam M1: claude adapter parse (real envelope shape, claude 2.1.234)', () => {
   it('pulls reply from .result and a clean model from modelUsage (strips the [1m] variant tag)', () => {
     const env = JSON.stringify({ result: 'Done — CTA now reads Get Started.', modelUsage: { 'claude-opus-5[1m]': { input: 1 } } })

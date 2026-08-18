@@ -291,28 +291,30 @@ body.sh-commenting .sh-lean { opacity: 0 }
   .sh-node.working::before { animation: none } }
 
 /* Live Jam "working" (SPEC §10): the SELECTED state's exact geometry - crisp border + 2px screen-px
-   outline + 4px ring, edge-light off - in fixed Marver blue, with ONLY interact's thin border
-   shimmer (::before) for motion. No outer blurred halo: that double band read as a fat bezel.
+   outline + 4px ring, edge-light off - in WORKING YELLOW (clearly "being built on", visible on both
+   themes), with ONLY interact's thin border shimmer (::before) for motion. No outer blurred halo.
    When a human is actually IN the frame, interact's magenta treatment wins. */
-.sh-node.working:not(.interact) { border-color: var(--mv-blue);
-  outline: calc(2px * var(--sh-inv, 1)) solid var(--mv-blue);
+.sh-node.working { --work: #ffcc00; --work-ring: rgba(255, 204, 0, .28) }
+.sh-app.dark .sh-node.working { --work: #ffd60a; --work-ring: rgba(255, 214, 10, .3) }
+.sh-node.working:not(.interact) { border-color: var(--work);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--work);
   outline-offset: calc(-1px * var(--sh-inv, 1));
-  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) rgba(0, 136, 255, .2), var(--shadow-node) }
-.sh-node.working:not(.interact)::after { display: none }   /* the blue geometry owns the edge, like .sel */
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--work-ring), var(--shadow-node) }
+.sh-node.working:not(.interact)::after { display: none }   /* the yellow geometry owns the edge, like .sel */
 .sh-node.working:not(.interact)::before {
   content: ''; position: absolute; pointer-events: none;
   inset: calc(-2.5px * var(--sh-inv, 1));
   padding: calc(2.5px * var(--sh-inv, 1));
   border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
   background: conic-gradient(from var(--sh-rot),
-    rgba(0, 136, 255, 1) 0deg,
-    rgba(0, 136, 255, 1) 105deg,
+    var(--work) 0deg,
+    var(--work) 105deg,
     rgba(255, 255, 255, .95) 135deg,
-    rgba(0, 136, 255, 1) 165deg,
-    rgba(0, 136, 255, 1) 285deg,
+    var(--work) 165deg,
+    var(--work) 285deg,
     rgba(255, 255, 255, .95) 315deg,
-    rgba(0, 136, 255, 1) 345deg,
-    rgba(0, 136, 255, 1) 360deg);
+    var(--work) 345deg,
+    var(--work) 360deg);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);

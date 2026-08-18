@@ -1,9 +1,8 @@
 /**
  * The Claude Code adapter (SPEC-live-jam §3.3, Validated Architecture). Spawns
- * `claude -p` headless, workspace-jailed (acceptEdits, a bounded tool set, never full
- * access), and reads the JSON envelope: `.result` is the agent's final message (its reply).
- * The model id lives under `modelUsage` (verified against claude 2.1.234, e.g.
- * `claude-opus-5[1m]`); we strip the `[..]` context-variant tag for a clean tooltip value.
+ * `claude -p` headless with STREAM-JSON output, so the daemon can post the agent's first
+ * message the moment it exists (the real quick ack / clarifying question - not a canned fake),
+ * and the final `result` event as the completion reply.
  */
 import { extractReanchors } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
@@ -11,6 +10,9 @@ import type { JamAdapter } from '../types.ts'
 /** First key of an object, or undefined. */
 const firstKey = (o: unknown): string | undefined =>
   o && typeof o === 'object' ? Object.keys(o as object)[0] : undefined
+
+const cleanModel = (raw: unknown): string | undefined =>
+  typeof raw === 'string' ? raw.replace(/\[[^\]]*\]$/, '') || undefined : undefined   // drop the [1m] variant tag
 
 export const claudeAdapter: JamAdapter = {
   name: 'claude',
@@ -20,21 +22,50 @@ export const claudeAdapter: JamAdapter = {
     // needs the web: WebSearch/WebFetch for reference designs + brand assets, and a NARROW
     // Bash(curl:*) so images can be downloaded into the workspace. Owner-gated triggers + the
     // human reviewing every diff are the trust boundary; this widens capability, not authority.
+    // stream-json (requires --verbose) lets the daemon deliver the agent's first line live.
     return {
       cmd: 'claude',
-      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,Bash(curl:*)', '--output-format', 'json'],
+      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,Bash(curl:*)', '--output-format', 'stream-json', '--verbose'],
     }
   },
-  parse(stdout, code) {
-    let text = stdout.trim()
-    let model: string | undefined
+  earlyText(line) {
     try {
-      const j = JSON.parse(stdout) as Record<string, any>
-      if (typeof j.result === 'string') text = j.result.trim()
-      const raw = (typeof j.model === 'string' ? j.model : undefined) ?? j.canonicalModel ?? firstKey(j.modelUsage)
-      model = typeof raw === 'string' ? raw.replace(/\[[^\]]*\]$/, '') || undefined : undefined   // drop the [1m] variant tag
-    } catch { /* not JSON (older CLI / error) - fall back to raw stdout as the reply */ }
+      const o = JSON.parse(line) as Record<string, any>
+      if (o.type !== 'assistant') return null
+      const text = (o.message?.content ?? []).find((c: any) => c?.type === 'text' && typeof c.text === 'string' && c.text.trim())
+      return text ? String(text.text).trim() : null
+    } catch { return null }
+  },
+  parse(stdout, code) {
+    let text = ''
+    let model: string | undefined
+    let failed = false
+    let sawEvents = false
+    for (const line of stdout.split('\n')) {
+      const t = line.trim()
+      if (!t) continue
+      try {
+        const o = JSON.parse(t) as Record<string, any>
+        sawEvents = true
+        if (o.type === 'result') {
+          if (typeof o.result === 'string') text = o.result.trim()
+          if (o.is_error) failed = true
+          model ??= cleanModel(firstKey(o.modelUsage))
+        } else if (o.type === 'assistant') {
+          model ??= cleanModel(o.message?.model)
+        }
+      } catch { /* non-JSON line - skip */ }
+    }
+    if (!text) {
+      // fallback: the old single-JSON envelope (no `type` field), or raw text from an ancient CLI.
+      // A typed stream that ended without a result (killed mid-run) stays empty -> not ok.
+      try {
+        const j = JSON.parse(stdout) as Record<string, any>
+        if (typeof j.result === 'string') text = j.result.trim()
+        model ??= cleanModel((typeof j.model === 'string' ? j.model : undefined) ?? j.canonicalModel ?? firstKey(j.modelUsage))
+      } catch { if (!sawEvents) text = stdout.trim() }
+    }
     const { reply, reanchors } = extractReanchors(text)
-    return { reply, model, reanchors, ok: code === 0 && !!reply }
+    return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

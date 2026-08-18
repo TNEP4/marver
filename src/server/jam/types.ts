@@ -15,6 +15,10 @@ export interface JamAdapter {
   spawnArgs(goal: string): { cmd: string; args: string[] }
   /** Parse the agent's stdout + exit code into the reply, best-effort model id, and any reanchors. */
   parse(stdout: string, code: number): { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
+  /** Streaming: given ONE stdout line, return the agent's message text if this line carries one.
+   *  The daemon posts the FIRST such text immediately - the agent's own quick ack (or its
+   *  clarifying question), live, not a canned fake. Optional; absent = no early reply. */
+  earlyText?(line: string): string | null
 }
 
 /** A durable unit of work: the owner mentions batched into one orchestrated job. M1 forms

@@ -64,7 +64,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
   type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
-  const runAgent = (goal: string, onSpawn: (pid?: number) => void): Promise<AgentRun> =>
+  const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const { cmd, args } = adapter.spawnArgs(goal)
       let child: ChildProcess
@@ -74,24 +74,41 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       activeChildren.add(child)
       try { onSpawn(child.pid) } catch { /* pgid persist failed; the run still proceeds, fencing degrades */ }
       let out = ''
+      let lineBuf = ''          // scan complete stdout lines for the agent's FIRST message
+      let earlyFired = !onEarly || !adapter.earlyText
       let settled = false
       const settle = (r: AgentRun) => {
         if (settled) return
         settled = true; clearTimeout(to); activeChildren.delete(child); resolve(r)
       }
       const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', ok: false, reanchors: [] }) }, JOB_TIMEOUT_MS)
-      child.stdout?.on('data', (d: Buffer) => { out += d; if (out.length > MAX_OUT) out = out.slice(-MAX_OUT) })
+      child.stdout?.on('data', (d: Buffer) => {
+        out += d; if (out.length > MAX_OUT) out = out.slice(-MAX_OUT)
+        if (earlyFired) return
+        lineBuf += d
+        const lines = lineBuf.split('\n')
+        lineBuf = lines.pop() ?? ''
+        for (const line of lines) {
+          const text = adapter.earlyText!(line)
+          if (text) { earlyFired = true; try { onEarly!(text) } catch { /* early delivery is best-effort */ } break }
+        }
+      })
       child.on('close', (code) => settle(adapter.parse(out, code ?? 1)))
       child.on('error', () => settle({ reply: '', ok: false, reanchors: [] }))
     })
 
-  const writeReply = (b: Batch, p: Pending, body: string, model?: string) => {
+  /** Nic's rule: never an em/en dash in a reply - a plain dash reads human. */
+  const plainDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ' - ')
+
+  const writeReply = (b: Batch, p: Pending, body: string, model?: string, kind: 'reply' | 'early' = 'reply') => {
     const me = localProfile(root)
     // Deterministic ids: a re-run produces the SAME reply, so appendEvents dedups it (crash-safe).
+    // The early ack gets its own id, so ack + final coexist as two thread messages.
+    const suffix = kind === 'early' ? `e-${b.batchId}` : b.batchId
     const reply: CommentEvent = {
-      id: `jam-${b.batchId}`, ts: Date.now(), type: 'reply',
-      commentId: `jam-c-${b.batchId}`, parentId: threadId(p.event),
-      board: b.board, author: me, body,
+      id: `jam-${suffix}`, ts: Date.now(), type: 'reply',
+      commentId: `jam-c-${suffix}`, parentId: threadId(p.event),
+      board: b.board, author: me, body: plainDashes(body),
       agent: true, agentMeta: { devUser: me.name, harness: adapter.name, model },
     }
     appendEvents(commentsDir, b.board, [reply])
@@ -128,10 +145,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // Presence glow (SPEC §10/§13): the frame is "working" for the whole run. For a net-new frame
     // the node appears only once the agent scaffolds it, then picks up the glow from this set.
     hooks.work?.(member.frame, true)
-    const run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() })
+    // The agent's FIRST line streams out within seconds - post it live (its own ack, or its
+    // clarifying question). Real output, not a canned placeholder.
+    let earlyBody: string | undefined
+    const run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text) => {
+      earlyBody = text
+      writeReply(b, p, text, undefined, 'early')
+      hooks.changed?.(b.board)
+    })
     if (stopped) { hooks.work?.(member.frame, false); return }
     if (run.ok) {
-      writeReply(b, p, run.reply, run.model)
+      // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
+      // one, so don't post it twice.
+      if (run.reply !== earlyBody) writeReply(b, p, run.reply, run.model)
       emitReanchors(b, run.reanchors)
       hooks.changed?.(b.board)
       hooks.work?.(member.frame, false)
