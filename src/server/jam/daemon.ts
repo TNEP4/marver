@@ -29,7 +29,7 @@ import { codexAdapter } from './adapter/codex.ts'
 import { createActivity } from './activity.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, goalText, threadId } from './packet.ts'
-import { scanPending, triggers, allEventIds } from './watch.ts'
+import { scanPending, triggers, engagedThreads, allEventIds } from './watch.ts'
 import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
 
 const LEASE_MS = 12 * 60_000
@@ -132,7 +132,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  keeping the first occurrence (the owner's, written first), so a colliding synced id cannot win,
    *  and `triggers` re-confirms ledger/agent/type/mention - the job can never drift to other content. */
   const resolveMember = (board: string, id: string): Pending | null => {
-    for (const ev of readLog(commentsDir, board)) if (ev.id === id) return triggers(root, board, ev) ? { board, event: ev } : null
+    const events = readLog(commentsDir, board)
+    const engaged = engagedThreads(events)
+    for (const ev of events) if (ev.id === id) return triggers(root, board, ev, engaged) ? { board, event: ev } : null
     return null
   }
 

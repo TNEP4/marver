@@ -9,16 +9,28 @@
  */
 import { listBoards, readLog, type CommentEvent } from '../comments.ts'
 import { has } from './ledger.ts'
+import { threadId } from './packet.ts'
 import type { Journal, Pending } from './types.ts'
 
 const MENTION = /@marver\b/i
 
+/** Threads Marver is already ENGAGED in (it has replied there). An owner follow-up in one of
+ *  these is a conversation turn - it triggers without re-tagging @marver. */
+export function engagedThreads(events: CommentEvent[]): Set<string> {
+  const s = new Set<string>()
+  for (const ev of events) if (ev.agent && ev.type === 'reply' && ev.parentId) s.add(ev.parentId)
+  return s
+}
+
 /** The one gate. An event on `board` triggers a job iff it passes every clause. Keyed on
- *  (board, id) in the ledger, so a synced event reusing a ledgered id on another board fails. */
-export function triggers(root: string, board: string, ev: CommentEvent): boolean {
+ *  (board, id) in the ledger, so a synced event reusing a ledgered id on another board fails.
+ *  Trigger = an explicit @marver, OR an owner REPLY in an engaged thread (answering Marver is
+ *  a trigger - you don't re-tag someone mid-conversation). New threads always need the tag. */
+export function triggers(root: string, board: string, ev: CommentEvent, engaged?: Set<string>): boolean {
   if (ev.agent) return false
   if (ev.type !== 'create' && ev.type !== 'reply') return false
-  if (!MENTION.test(ev.body ?? '')) return false
+  const followUp = ev.type === 'reply' && !!engaged?.has(threadId(ev))
+  if (!MENTION.test(ev.body ?? '') && !followUp) return false
   return has(root, board, ev.id)
 }
 
@@ -26,8 +38,10 @@ export function scanPending(root: string, commentsDir: string, journal: Journal)
   const seen = new Set(journal.seen)
   const out: Pending[] = []
   for (const board of listBoards(commentsDir)) {
-    for (const ev of readLog(commentsDir, board)) {
-      if (seen.has(ev.id) || !triggers(root, board, ev)) continue
+    const events = readLog(commentsDir, board)
+    const engaged = engagedThreads(events)
+    for (const ev of events) {
+      if (seen.has(ev.id) || !triggers(root, board, ev, engaged)) continue
       out.push({ board, event: ev })
     }
   }

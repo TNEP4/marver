@@ -86,6 +86,39 @@ describe('Live Jam M1: the daemon spine (SPEC-live-jam §3)', () => {
     done()
   })
 
+  it('engaged thread: an owner follow-up WITHOUT @marver triggers once Marver has replied there', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, okAdapter)
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'gloss it up @marver' },
+      // Marver already replied in this thread -> engaged
+      { id: 'ag1', ts: 2, type: 'reply', commentId: 'agc1', parentId: tid, author: { email: 'nic@local', name: 'Marver' }, body: 'Done - glossed.', agent: true },
+    ])
+    // the follow-up: no tag at all
+    const fu: CommentEvent = { id: 'fu1', ts: Date.now(), type: 'reply', commentId: 'fuc1', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now keep refining - dark mode too' }
+    appendEvents(dir, 'home', [fu])
+    record(root, 'home', 'fu1')
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(true)   // it ran
+    done()
+  })
+
+  it('non-engaged thread: an owner reply without @marver never triggers', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, okAdapter)
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'a plain note, no tag' },
+    ])
+    const fu: CommentEvent = { id: 'fu2', ts: Date.now(), type: 'reply', commentId: 'fuc2', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'still just talking to myself' }
+    appendEvents(dir, 'home', [fu])
+    record(root, 'home', 'fu2')
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
+    done()
+  })
+
   it('collision defense: a synced event reusing a ledgered id on ANOTHER board never triggers', async () => {
     const { root, dir, done } = setup()
     const jam = createJam(root, CFG, okAdapter)
