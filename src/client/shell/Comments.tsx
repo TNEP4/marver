@@ -156,8 +156,11 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     // active/draft/show/activeShown are the triggers; `open` is read fresh from the closure
   }, [active, draft, show, activeShown, node.status, node.key, frameId, iframe])
 
-  // the open card's frozen side (D3) - a HOOK, so it must live above the early returns
+  // the open card's frozen side (D3) - a HOOK, so it must live above the early returns; and the
+  // reset must too: a card can close via the inactive-frame early return (clicking another frame),
+  // which never reaches the render tail - reopen must still RE-PICK the side (Codex P2)
   const sideRef = useRef<{ id: string; side: 'l' | 'r' } | null>(null)
+  if (sideRef.current && sideRef.current.id !== active) sideRef.current = null
   // what occupies this frame's LEFT flank (drives the docked card's left gutter): a variant
   // badge is widest, the working shimmer next. Reactive, so a job starting mid-read adjusts.
   const flankBadge = useStore((s) => !!s.frameFor(node)?.variantGroup)
@@ -188,7 +191,6 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // side of the frame first, skipping a side another frame's screen rect occupies, then wherever
   // the viewport has room. The active pin's teardrop tail flips toward this side.
   const activeThread2 = active ? open.find((t) => t.id === active) : undefined
-  if (!activeThread2) sideRef.current = null   // D3: close + reopen RE-PICKS the side
   if (activeThread2 && sideRef.current?.id !== activeThread2.id) {
     const compute = (): 'l' | 'r' => {
       const W = 320, GAP = 30

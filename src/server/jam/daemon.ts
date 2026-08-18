@@ -19,6 +19,7 @@
  * injected adapter); `startJam` wraps it with the repo lock, dir-watch, and rescan interval.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
@@ -76,12 +77,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       let lineBuf = ''          // scan complete stdout lines for the agent's FIRST message
       let earlyFired = !onEarly || !adapter.earlyText
       let settled = false
+      // a UTF-8 char split across chunks must not become replacement bytes mid-JSONL (Codex P2)
+      const decoder = new StringDecoder('utf8')
       const settle = (r: AgentRun) => {
         if (settled) return
         settled = true; clearTimeout(to); activeChildren.delete(child); resolve(r)
       }
       const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', ok: false, reanchors: [] }) }, JOB_TIMEOUT_MS)
-      child.stdout?.on('data', (d: Buffer) => {
+      child.stdout?.on('data', (chunk: Buffer) => {
+        const d = decoder.write(chunk)
         out += d; if (out.length > MAX_OUT) out = out.slice(-MAX_OUT)
         if (earlyFired) return
         lineBuf += d
@@ -117,7 +121,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const me = localProfile(root)
     // Deterministic ids: a re-run produces the SAME reply, so appendEvents dedups it (crash-safe).
     // The early ack gets its own id, so ack + final coexist as two thread messages.
-    const suffix = kind === 'early' ? `e-${b.batchId}` : b.batchId
+    // early ids are per-ATTEMPT: attempt 2's ack must not dedup against attempt 1's (which said
+    // something else) - a suppressed ack also poisoned the final's clarify-dedup (Codex P1)
+    const suffix = kind === 'early' ? `e${b.attempts}-${b.batchId}` : b.batchId
     const reply: CommentEvent = {
       id: `jam-${suffix}`, ts: Date.now(), type: 'reply',
       commentId: `jam-c-${suffix}`, parentId: threadId(p.event),
@@ -169,8 +175,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     let run: Awaited<ReturnType<typeof runAgent>>
     try {
       run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text) => {
-        earlyBody = text
+        // write FIRST, remember after: if the append throws, the final must not be suppressed
+        // as a "duplicate" of an ack that never actually posted (Codex P1)
         writeReply(b, p, text, undefined, 'early')
+        earlyBody = text
         hooks.changed?.(b.board)
       })
     } finally { clearInterval(beat) }
@@ -234,7 +242,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         try {
           while (!stopped && q.items.length) {
             const job = q.items.shift()!
-            try { await runBatch(job.b, job.p) } catch (err) { log(`  jam: batch error - ${(err as Error).message}`) }
+            try { await runBatch(job.b, job.p) } catch (err) {
+              // a THROW must not strand the batch as `claimed` outside every queue (rescans skip
+              // seen ids; resume runs once) - mark pending so the re-push below retries it, still
+              // bounded by MAX_ATTEMPTS (Codex P1)
+              log(`  jam: batch error - ${(err as Error).message}`)
+              if (job.b.attempts < MAX_ATTEMPTS) { job.b.state = 'pending'; try { persist() } catch { /* retried in-memory regardless */ } }
+              else finish(job.b)
+            }
             if (job.b.state === 'pending') q.items.push(job)   // failed attempt - retry after the rest of the chain
           }
         } finally {

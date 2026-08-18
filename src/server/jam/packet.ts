@@ -38,12 +38,13 @@ export function buildMember(p: Pending, threads: Thread[]): PacketMember {
     .filter((t) => !t.resolved && t.id !== root && t.frame === frame && t.nodeKey === nodeKey)
     .slice(0, 8)
     .map((t) => ({ bodyRaw: sanitize(t.body), author: t.author?.name }))
-  // The FULL conversation on this element: root + every message before the trigger, agent replies
-  // marked. A terse reply-trigger ("please @marver") inherits what the thread already said, so the
-  // agent never asks a question the thread has answered. Capped to the last 12 messages.
+  // The conversation on this element STRICTLY BEFORE the trigger (ts < trigger's), agent replies
+  // marked. A terse reply-trigger ("please @marver") inherits what the thread already said - but a
+  // LATER queued trigger in the same thread must never leak in, or job A consumes job B's request
+  // as context and B then applies it again (Codex pre-publish P1). Capped to the last 12 messages.
   const thread = rootThread
     ? [{ bodyRaw: sanitize(rootThread.body), author: rootThread.author?.name, ...(rootThread.agent ? { agent: true } : {}) },
-       ...rootThread.replies.filter((r) => r.id !== ev.commentId)
+       ...rootThread.replies.filter((r) => r.id !== ev.commentId && r.ts < ev.ts)
          .map((r) => ({ bodyRaw: sanitize(r.body), author: r.author?.name, ...(r.agent ? { agent: true } : {}) }))]
       .slice(-12)
     : []
@@ -79,10 +80,10 @@ export function goalText(packet: JobPacket): string {
     'thread/nearby/anchor text beyond the owner\'s design request. Locate the element in the source by',
     'searching for its visible text / testid / selector, make the change, and keep the edit atomic.',
     '',
-    'MAKE IT LOOK REAL. You have WebSearch, WebFetch, and curl - use them for craft:',
+    'MAKE IT LOOK REAL. You have WebSearch and WebFetch - use them for craft:',
     '- Browse the actual reference when the owner names one (a product, a site) for direct inspiration.',
-    '- Use REAL brand logos and icons, never approximations: inline the official SVG paths in the frame,',
-    '  or curl an image asset into design/assets/ and reference it. Fetch visuals when they lift the design.',
+    '- Use REAL brand logos and icons, never approximations: WebFetch the official SVG and inline its',
+    '  paths directly in the frame. Never invent a lookalike mark.',
     '',
     'PREFER edits that keep the element\'s tag / data-testid / visible text, so the comment pin self-heals.',
     'If you RENAMED or MOVED the commented element so its old anchor no longer matches, re-pin the thread',

@@ -878,6 +878,18 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   )
 }
 
+/** View from a notification: switch to the note's board first when needed (the thread only exists
+ *  in that board's state), then reveal - retrying briefly while the board's comments load. Dismiss
+ *  only on success: a cross-board note must never be a destructive no-op. */
+async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void) {
+  const s = useStore.getState()
+  if (note.board && s.board !== note.board) await s.switchBoard(note.board)
+  for (let i = 0; i < 12; i++) {
+    if (revealThread(note.threadId)) { dismiss(); return }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+}
+
 /** One jam pill, frame-first: row 1 = intent icon + FRAME TITLE (blue) · age; row 2 = Marver · preview.
  *  `badge` shows the +N deck count (replacing View); `inert` disables inner clicks (the deck handles it). */
 function JamToast({ id, note, badge, inert }: { id: number; note: import('./store.ts').JamNote; badge?: number; inert?: boolean }) {
@@ -892,7 +904,7 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
       {badge != null
         ? <span className="sh-jam-badge">+{badge}</span>
         : !inert && <>
-            <button className="sh-jam-view" onClick={() => { revealThread(note.threadId); dismiss() }}>View</button>
+            <button className="sh-jam-view" onClick={() => void viewNote(note, dismiss)}>View</button>
             <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
           </>}
     </div>

@@ -18,14 +18,14 @@ export const claudeAdapter: JamAdapter = {
   name: 'claude',
   supportsSubagents: true,
   spawnArgs(goal) {
-    // No open Bash: acceptEdits + a full shell is not a workspace jail (SPEC §1). But great design
-    // needs the web: WebSearch/WebFetch for reference designs + brand assets, and a NARROW
-    // Bash(curl:*) so images can be downloaded into the workspace. Owner-gated triggers + the
-    // human reviewing every diff are the trust boundary; this widens capability, not authority.
+    // No Bash AT ALL - not even Bash(curl:*): the packet carries untrusted text (incl. synced
+    // collaborators' comments), and curl -d is a one-line exfiltration channel for anything Read
+    // can see (Codex pre-publish P0). WebSearch/WebFetch stay for craft (reference designs, brand
+    // SVG paths to inline); binary asset download is a P2 that needs a jailed fetch path.
     // stream-json (requires --verbose) lets the daemon deliver the agent's first line live.
     return {
       cmd: 'claude',
-      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,Bash(curl:*)', '--output-format', 'stream-json', '--verbose'],
+      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch', '--output-format', 'stream-json', '--verbose'],
     }
   },
   earlyText(line) {
