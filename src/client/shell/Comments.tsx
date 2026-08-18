@@ -188,6 +188,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // side of the frame first, skipping a side another frame's screen rect occupies, then wherever
   // the viewport has room. The active pin's teardrop tail flips toward this side.
   const activeThread2 = active ? open.find((t) => t.id === active) : undefined
+  if (!activeThread2) sideRef.current = null   // D3: close + reopen RE-PICKS the side
   if (activeThread2 && sideRef.current?.id !== activeThread2.id) {
     const compute = (): 'l' | 'r' => {
       const W = 320, GAP = 30

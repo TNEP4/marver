@@ -255,11 +255,21 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     pump()
   }
 
-  /** All work idle - every chain drained. Lets `tick()` stay awaitable (tests, orderly shutdown). */
-  const idle = () => new Promise<void>((res) => {
-    const check = () => { if (stopped || (activeChains === 0 && chains.size === 0)) res(); else setTimeout(check, 25) }
-    check()
-  })
+  /** All work idle - every chain drained. Lets `tick()` stay awaitable (tests, orderly shutdown).
+   *  ONE shared waiter: overlapping ticks (the 5s rescan during a 10-min job) join the same
+   *  promise instead of each spinning its own poll loop. */
+  let idleP: Promise<void> | null = null
+  const idle = () => {
+    if (activeChains === 0 && chains.size === 0) return Promise.resolve()
+    idleP ??= new Promise<void>((res) => {
+      const check = () => {
+        if (stopped || (activeChains === 0 && chains.size === 0)) { idleP = null; res() }
+        else setTimeout(check, 50)
+      }
+      check()
+    })
+    return idleP
+  }
 
   let resumed = false
   const tick = async () => {
