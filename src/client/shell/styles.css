@@ -292,8 +292,12 @@ body.sh-commenting .sh-lean { opacity: 0 }
 /* Live Jam "working" glow (SPEC §10): the SAME orbit motion as interact, but MONOCHROME silver -
    "the system is acting" (distinct from interact's magenta "a human is here"). Selected-while-working
    swaps to accent blue. Interact always wins (a human in the frame), so working yields to it. */
-:root { --work-line: rgba(150,158,172,.9); --work-ring: rgba(150,158,172,.22);
-  --work-strong: rgba(160,168,182,.5); --work-spark: rgba(228,234,244,.97) }
+/* theme-aware + STRONG: the agent at work is the main event, so it must read clearly on both. A
+   graphite glow on light frames (visible on white), a bright silver glow on dark frames. */
+.sh-node.working { --work-line: rgba(228,233,242,.95); --work-ring: rgba(228,233,242,.32);
+  --work-strong: rgba(198,206,222,.85); --work-spark: #ffffff }
+.sh-node.working[data-theme="light"] { --work-line: #475569; --work-ring: rgba(51,65,85,.34);
+  --work-strong: rgba(51,65,85,.85); --work-spark: rgba(100,116,139,1) }
 .sh-node.working:not(.interact) { border-color: var(--work-line);
   outline: calc(2px * var(--sh-inv, 1)) solid var(--work-line);
   outline-offset: calc(-1px * var(--sh-inv, 1));
@@ -310,14 +314,14 @@ body.sh-commenting .sh-lean { opacity: 0 }
   animation: sh-orbit 4.2s linear infinite }
 .sh-node.working:not(.interact)::before {
   inset: calc(-2.5px * var(--sh-inv, 1)); padding: calc(2.5px * var(--sh-inv, 1));
-  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1)); opacity: .55 }
+  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1)); opacity: .8 }
 .sh-node.working:not(.interact)::after {
-  inset: calc(-9px * var(--sh-inv, 1)); padding: calc(5px * var(--sh-inv, 1));
-  border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
-  filter: blur(calc(2px * var(--sh-inv, 1))); opacity: .9 }
-/* selected while working -> accent blue ("you're here, the agent is cooking") */
-.sh-node.working.sel:not(.interact) { --work-line: var(--accent); --work-ring: var(--accent-ring);
-  --work-strong: var(--accent-ring); --work-spark: var(--accent) }
+  inset: calc(-11px * var(--sh-inv, 1)); padding: calc(6px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 10px * var(--sh-inv, 1));
+  filter: blur(calc(2.5px * var(--sh-inv, 1))); opacity: 1 }
+/* selected while working -> marver blue ("you're here, the agent is cooking") */
+.sh-node.working.sel:not(.interact) { --work-line: var(--mv-blue); --work-ring: rgba(0,136,255,.32);
+  --work-strong: rgba(0,136,255,.5); --work-spark: #4db1ff }
 @media (prefers-reduced-motion: reduce) {
   .sh-node.working::before, .sh-node.working::after { animation: none } }
 
@@ -517,13 +521,16 @@ body.sh-commenting .sh-lean { opacity: 0 }
   border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass), 0 12px 32px -12px rgba(24,24,27,.4);
   color: var(--glass-ink); animation: sh-jam-in .18s ease }
 @keyframes sh-jam-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
-.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: rgba(255,255,255,.8);
+/* Marver is ALWAYS its own blue - never the shell accent, which swaps to magenta in interact mode
+   (.sh-app.interacting). A fixed var the swap can't touch keeps the avatar + notification on-brand. */
+:root { --mv-blue: #0088ff }
+.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--mv-blue); color: rgba(255,255,255,.8);
   display: inline-flex; align-items: center; justify-content: center }
 .sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25 }
-.sh-jam-txt b { font-size: 12.5px; font-weight: 600; color: var(--accent) }
+.sh-jam-txt b { font-size: 12.5px; font-weight: 600; color: var(--mv-blue) }
 .sh-jam-prev { font-size: 11.5px; color: var(--glass-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .sh-jam-view { flex: none; border: 0; border-radius: 999px; padding: 5px 12px; cursor: pointer;
-  background: var(--accent); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; transition: filter .15s }
+  background: var(--mv-blue); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; transition: filter .15s }
 .sh-jam-view:hover { filter: brightness(1.08) }
 .sh-jam-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
   border: 0; border-radius: 50%; background: none; color: var(--glass-ink-3); cursor: pointer; transition: background .12s, color .12s }
@@ -897,11 +904,11 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* Live Jam: @marver mention styling. Owner-authored = a live trigger (bold accent-blue);
    anyone else's = plain-weight, read like any comment, with a teaching tooltip (§1). */
 .cm-at { color: var(--glass-ink-2, var(--glass-ink)); font-weight: 500 }
-.cm-at.owner { color: var(--accent); font-weight: 700 }
+.cm-at.owner { color: var(--mv-blue); font-weight: 700 }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
-.cm-avatar.cm-marver { background: var(--accent); color: rgba(255,255,255,.8); cursor: default }   /* white/80 mark, embedded in the accent */
+.cm-avatar.cm-marver { background: var(--mv-blue); color: rgba(255,255,255,.8); cursor: default }   /* white/80 mark, embedded in the accent */
 .cm-marver-wrap { display: inline-flex; border-radius: 50% }
 .cm-marver-name { color: var(--glass-ink) }              /* black, not blue */
 /* provenance tooltip: one fact per row, LEFT-aligned tight pairs, bold bright label + readable value -
