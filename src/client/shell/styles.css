@@ -945,14 +945,13 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-card.parked.dock-r { transform-origin: top left; margin-left: clamp(14px, calc(22px * var(--sh-inv, 1)), 64px) }
 .cm-card.parked.dock-l { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right;
   margin-left: calc(-1 * clamp(24px, calc(42px * var(--sh-inv, 1)), 110px)) }
-.cm-scrollwrap { position: relative; display: flex; flex-direction: column; min-height: 0 }
 .cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
   overscroll-behavior: contain; scrollbar-width: thin }
-/* scroll shadows: the "there is more" affordance, theme-aware (fade from the card's glass tone) */
-.cm-shadow { position: absolute; left: 0; right: 0; height: 26px; pointer-events: none; z-index: 2 }
-.cm-shadow.top { top: 0; background: linear-gradient(180deg, var(--cm-fade, rgba(252,252,253,.96)), transparent) }
-.cm-shadow.bot { bottom: 0; background: linear-gradient(0deg, var(--cm-fade, rgba(252,252,253,.96)), transparent) }
-.sh-app.dark .cm-shadow { --cm-fade: rgba(24,24,28,.94) }
+/* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of
+   the text itself, theme-proof (no paint layer fighting the glass) */
+.cm-scroll.fade-top { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px); mask-image: linear-gradient(180deg, transparent, #000 30px) }
+.cm-scroll.fade-bot { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 30px), transparent) }
+.cm-scroll.fade-top.fade-bot { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent) }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }

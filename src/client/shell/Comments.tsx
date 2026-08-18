@@ -398,7 +398,10 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
     ? {
         left: side === 'r' ? bounds.w : 0,
         top: `max(-28px, min(${Math.round(at.y)}px - 36px * var(--sh-inv, 1), ${bounds.h}px - ${cardH}px * var(--sh-inv, 1)))`,
-        maxHeight: `max(140px, calc(${bounds.h + 28}px * var(--sh-s, 1)))`,
+        // capped at the whole frame's on-screen height, with a REAL readability floor: zoomed way
+        // out the card still shows a meaningful slice of conversation (~3 messages), even if that
+        // makes it taller than the tiny frame
+        maxHeight: `max(320px, calc(${bounds.h + 28}px * var(--sh-s, 1)))`,
       }
     : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
@@ -434,20 +437,18 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
           <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
       </div>
-      <div className="cm-scrollwrap">
-        {shadows.top && <div className="cm-shadow top" aria-hidden />}
-        <div className="cm-scroll" ref={scrollRef} onScroll={syncShadows}>
-          <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
-          <CommentBody body={thread.body} owner={isOwner(thread.author)} />
-          {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
-          {thread.replies.map((r) => (
-            <div key={r.id} className="cm-msg">
-              <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
-              <CommentBody body={r.body} owner={isOwner(r.author)} />
-            </div>
-          ))}
-        </div>
-        {shadows.bot && <div className="cm-shadow bot" aria-hidden />}
+      {/* "there is more": the scroller MASKS its own content at the overflowing edge - a soft fade
+          of the text itself, not a paint layer over the glass */}
+      <div className={`cm-scroll${shadows.top ? ' fade-top' : ''}${shadows.bot ? ' fade-bot' : ''}`} ref={scrollRef} onScroll={syncShadows}>
+        <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
+        <CommentBody body={thread.body} owner={isOwner(thread.author)} />
+        {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
+        {thread.replies.map((r) => (
+          <div key={r.id} className="cm-msg">
+            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
+            <CommentBody body={r.body} owner={isOwner(r.author)} />
+          </div>
+        ))}
       </div>
       {canComment ? (
         <div className="cm-compose">
