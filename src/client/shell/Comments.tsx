@@ -238,9 +238,11 @@ function AgentMetaTip({ meta }: { meta?: AgentMeta }) {
     meta?.effort && ['Effort', meta.effort],
   ].filter(Boolean) as [string, string][]
   if (!rows.length) return <b>Marver</b>
+  // Toolbar-tooltip treatment: the VALUE is bold + bright (what you scan), the label is a muted
+  // qualifier after it - like "Hide all UI  press H to reveal".
   return (
     <span className="cm-meta-tip">
-      {rows.map(([k, v]) => <span key={k} className="cm-meta-row"><b>{k}</b><span className="v">{v}</span></span>)}
+      {rows.map(([label, value]) => <span key={label} className="cm-meta-row"><b>{value}</b><span className="k">{label}</span></span>)}
     </span>
   )
 }
