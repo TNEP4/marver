@@ -11,8 +11,9 @@ import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
+import { parseMentions } from './mentions.ts'
 import { ROUTE } from '../const.ts'
-import type { Thread } from '../../shared/events.ts'
+import type { AgentMeta, Thread } from '../../shared/events.ts'
 
 /** Tint the pin / composer / thread card EDGES (border, outline, focus ring) in the anchored
  *  element's own laser hue (captured at pick as anchor.el.hue) via --cm-line/--cm-line-ring.
@@ -183,11 +184,111 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
 /** The open thread card - shared by canvas (bounds = node size, `at` in frame coords) and
  *  prototype (bounds = the on-screen stage size, `at` in screen coords). Geometry only. */
+// ---- Live Jam: @marver rendering + Marver identity (SPEC-live-jam §1, §7) ----------------------
+
+const AT_TIP = "Read like any other comment. Marver won't act on this unless the owner promotes it."
+
+/** A comment body with @marver mentions styled: owner-authored → bold accent (a live trigger);
+ *  anyone else's → plain + a teaching tooltip (context, not a command). */
+function CommentBody({ body, owner }: { body?: string; owner: boolean }) {
+  if (!body) return null
+  return (
+    <p className="cm-body">
+      {parseMentions(body).map((s, i) => !s.mention
+        ? <span key={i}>{s.text}</span>
+        : owner
+          ? <span key={i} className="cm-at owner">{s.text}</span>
+          : <Tip key={i} side="top" label={<span className="cm-at-tip">{AT_TIP}</span>}><span className="cm-at">{s.text}</span></Tip>)}
+    </p>
+  )
+}
+
+const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', opencode: 'OpenCode', droid: 'Factory Droid' }
+/** claude-opus-5 → Opus 5; gpt-5.1-codex → Gpt 5.1 Codex; unknown → as-is. */
+function prettyModel(m: string): string {
+  const cleaned = m.replace(/^claude-/, '').replace(/-/g, ' ')
+  return cleaned.replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/** The provenance tooltip on the Marver avatar: who orchestrated the change (SPEC §7). */
+function AgentMetaTip({ meta }: { meta?: AgentMeta }) {
+  const rows = [
+    meta?.devUser && `Dev user: ${meta.devUser}`,
+    meta?.harness && `Harness: ${HARNESS[meta.harness] ?? meta.harness}`,
+    meta?.model && `Model: ${prettyModel(meta.model)}`,
+    meta?.effort && `Effort: ${meta.effort}`,
+  ].filter(Boolean) as string[]
+  if (!rows.length) return <b>Marver</b>
+  return <span className="cm-meta-tip">{rows.map((r, i) => <span key={i}>{r}</span>)}</span>
+}
+
+/** A message header. Agent messages render as "Marver" with the mark + provenance tooltip;
+ *  human messages keep their avatar + name. */
+function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author']; agent?: boolean; agentMeta?: AgentMeta; ts: number }) {
+  if (agent) return (
+    <header>
+      <Tip side="top" label={<AgentMetaTip meta={agentMeta} />}>
+        <span className="cm-avatar cm-marver" aria-label="Marver">M</span>
+      </Tip>
+      <b className="cm-marver-name">Marver</b>
+      <span className="dim">{rel(ts)}</span>
+    </header>
+  )
+  return (
+    <header>
+      <Avatar author={author} size={24} />
+      <b>{author?.name ?? 'Someone'}</b>
+      <span className="dim">{rel(ts)}</span>
+    </header>
+  )
+}
+
+/** An auto-growing composer with the full keybindings: Enter send, Shift+Enter newline,
+ *  Cmd/Ctrl+Enter send, Escape cancel; IME-guarded, disabled while a send is in flight. */
+function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFocus, sendLabel }: {
+  value: string; onChange: (v: string) => void; onSubmit: () => void | Promise<unknown>
+  onCancel?: () => void; placeholder: string; autoFocus?: boolean; sendLabel: string
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const [busy, setBusy] = useState(false)
+  const grow = () => { const el = ref.current; if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 132) + 'px' } }
+  useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
+  useEffect(grow, [value])
+  const submit = async () => {
+    if (busy || !value.trim()) return
+    setBusy(true)
+    try { await onSubmit() } finally { setBusy(false) }
+  }
+  return (
+    <div className="cm-inputwrap">
+      <textarea ref={ref} rows={1} value={value} placeholder={placeholder} disabled={busy}
+        onChange={(e) => onChange(e.target.value)} onInput={grow}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === 'Escape') { onCancel?.(); return }
+          if (e.key === 'Enter') {
+            if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return   // IME: mid-composition Enter must not send
+            if (e.shiftKey) return                                                            // newline
+            e.preventDefault(); void submit()                                                 // Enter / Cmd·Ctrl+Enter send
+          }
+        }} />
+      <Tip side="top" label={<b>⏎ send · ⇧⏎ new line</b>}>
+        <button className="cm-send" disabled={busy || !value.trim()} aria-label={sendLabel} onClick={() => void submit()}>
+          <ArrowUpIcon size={15} />
+        </button>
+      </Tip>
+    </div>
+  )
+}
+
 export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number } }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
   const canComment = local || !!me      // dev is always "me"; published needs a session
+  // Owner-authored @marver is a live trigger (bold accent); anyone else's is context (plain + tooltip).
+  // Match by email when we know the owner's; in dev without a profile, local writes are the owner.
+  const isOwner = (a?: { email?: string }) => (me?.email ? a?.email === me.email : local)
   const [text, setText] = useState('')
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -226,33 +327,19 @@ export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: nu
           <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
       </div>
-      <header>
-        <Avatar author={thread.author} size={24} />
-        <b>{thread.author?.name ?? 'Someone'}</b>
-        <span className="dim">{rel(thread.ts)}</span>
-      </header>
-      <p className="cm-body">{thread.body}</p>
+      <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
+      <CommentBody body={thread.body} owner={isOwner(thread.author)} />
       {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
       {thread.replies.map((r) => (
         <div key={r.id} className="cm-msg">
-          <header>
-            <Avatar author={r.author} size={24} />
-            <b>{r.author?.name ?? 'Someone'}</b>
-            <span className="dim">{rel(r.ts)}</span>
-          </header>
-          <p className="cm-body">{r.body}</p>
+          <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
+          <CommentBody body={r.body} owner={isOwner(r.author)} />
         </div>
       ))}
       {canComment ? (
         <div className="cm-compose">
           <Avatar author={me ?? undefined} size={24} />
-          <div className="cm-inputwrap">
-            <input value={text} placeholder="Reply…" onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void submit(); if (e.key === 'Escape') setActive(null) }} />
-            <button className="cm-send" disabled={!text.trim()} aria-label="Send" onClick={() => void submit()}>
-              <ArrowUpIcon size={15} />
-            </button>
-          </div>
+          <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={() => setActive(null)} placeholder="Reply…" sendLabel="Send" />
         </div>
       ) : (
         <button className="cm-signin-cta" onClick={() => useComments.setState({ needsIdentity: true })}>
@@ -268,24 +355,12 @@ export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: nu
 export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number }; bounds: { w: number; h: number }; hue?: number }) {
   const { create, setDraft } = useComments.getState()
   const [text, setText] = useState('')
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => { ref.current?.focus() }, [])
   const flip = at.x > bounds.w * 0.55
   return (
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <div className="cm-compose">
-        <div className="cm-inputwrap">
-          <input ref={ref} value={text} placeholder="Comment on this element…" onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') void create(text)
-              if (e.key === 'Escape') setDraft(null)
-            }} />
-          <button className="cm-send" disabled={!text.trim()} aria-label="Comment" onClick={() => void create(text)}>
-            <ArrowUpIcon size={15} />
-          </button>
-        </div>
+        <CommentInput value={text} onChange={setText} onSubmit={() => create(text)} onCancel={() => setDraft(null)} placeholder="Comment on this element…" autoFocus sendLabel="Comment" />
       </div>
     </div>
   )
@@ -421,7 +496,7 @@ export function IdentityDialog() {
 }
 
 /** Open a thread by id: activate, select its node, fit the camera. True on success. */
-function revealThread(c: string): boolean {
+export function revealThread(c: string): boolean {
   const t = useComments.getState().threads.find((t) => t.id === c)
   if (!t) return false
   useComments.getState().setActive(c)

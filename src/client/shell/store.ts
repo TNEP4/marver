@@ -33,7 +33,10 @@ export interface Node {
   sizeMode?: 'auto' | 'manual' | 'device'
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
 }
-export interface Toast { id: number; text: string }
+/** A Live Jam notification (SPEC-live-jam §9): a persistent bottom-right glass pill for a Marver
+ *  reply, carrying the thread it points at so "View" can reveal it. */
+export interface JamNote { threadId: string; board: string; preview: string }
+export interface Toast { id: number; text: string; jam?: JamNote }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string } = shConfig
 
@@ -169,6 +172,8 @@ interface State {
   setTheme(theme: string): void
   runTidy(): void
   toast(text: string): void
+  jamToast(note: JamNote): void
+  dismissToast(id: number): void
   spawn(frameId: string): Node | null
   save(): Promise<boolean>
 }
@@ -833,6 +838,13 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({ toasts: [...s.toasts, { id, text }] }))
       setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4000)
     },
+    /** A Live Jam reply notification: persistent (no auto-dismiss), one per thread (a newer reply
+     *  supersedes), capped so the stack stays small. */
+    jamToast(note) {
+      const id = ++toastSeq
+      set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text: 'Marver replied', jam: note }].slice(-8) }))
+    },
+    dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
     spawn(frameId) {
       const { manifest, nodes, deviceView, baseLayout } = get()
       const f = manifest?.frames.find((x) => x.id === frameId)

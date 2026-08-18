@@ -471,10 +471,31 @@ body.sh-commenting .sh-lean { opacity: 0 }
   transition: color .15s, background .15s }
 .sh-update .x:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
-.sh-toasts { position: absolute; left: var(--edge); bottom: var(--edge); z-index: 12; display: flex; flex-direction: column; gap: 6px }
+/* bottom-RIGHT now (SPEC-live-jam §9): jam reply pills live here; plain toasts ride along */
+.sh-toasts { position: absolute; right: var(--edge); bottom: var(--edge); z-index: 32; display: flex;
+  flex-direction: column; align-items: flex-end; gap: 8px; max-width: min(360px, 40vw) }
 .sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
 .sh-toast svg { color: var(--glass-good); flex: none }
+.sh-toast-more { color: var(--glass-ink-3); font-size: 11px; padding: 2px 10px }
+
+/* the Live Jam reply pill: our full glass treatment, full radius, one row (§9) */
+.sh-toast.jam { gap: 10px; padding: 9px 10px 9px 12px; width: 340px; max-width: 100%; border-radius: 999px;
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass), 0 12px 32px -12px rgba(24,24,27,.4);
+  color: var(--glass-ink); animation: sh-jam-in .18s ease }
+@keyframes sh-jam-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font: 700 13px -apple-system, system-ui, sans-serif }
+.sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25 }
+.sh-jam-txt b { font-size: 12.5px; font-weight: 600; color: var(--accent) }
+.sh-jam-prev { font-size: 11.5px; color: var(--glass-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-jam-view { flex: none; border: 0; border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  background: var(--accent); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; transition: filter .15s }
+.sh-jam-view:hover { filter: brightness(1.08) }
+.sh-jam-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  border: 0; border-radius: 50%; background: none; color: var(--glass-ink-3); cursor: pointer; transition: background .12s, color .12s }
+.sh-jam-x:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
 /* ---- Play mode (SPEC-M2 §1): near-black stage, one centered device, auto-hiding bar.
    Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
@@ -805,16 +826,19 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-copy .b { transform: scale(.4); opacity: 0; color: var(--comment) }
 .cm-copy.ok .a { transform: scale(.4); opacity: 0 }
 .cm-copy.ok .b { transform: scale(1); opacity: 1 }
-/* composer row: my avatar (list size) + a pill input with a round send button inside */
-.cm-compose { display: flex; align-items: center; gap: 8px }
+/* composer row: my avatar (list size) + an auto-growing textarea with a round send button inside.
+   Multiline: Enter sends, Shift+Enter is a newline (Live Jam §6). The textarea grows 1-6 rows. */
+.cm-compose { display: flex; align-items: flex-end; gap: 8px }
 .cm-inputwrap { position: relative; flex: 1; min-width: 0 }
-.cm-compose input { width: 100%; height: 36px; padding: 0 42px 0 15px; border-radius: 999px;
+.cm-inputwrap textarea { display: block; width: 100%; min-height: 36px; max-height: 132px; box-sizing: border-box;
+  padding: 8px 42px 8px 15px; border-radius: 18px; resize: none; overflow-y: auto;
   border: 1px solid var(--glass-brd); background: var(--cm-field); color: var(--glass-ink);
-  font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
+  font: 400 13px/1.4 -apple-system, system-ui, sans-serif; outline: none;
   transition: border-color .15s, box-shadow .15s }
-.cm-compose input::placeholder { color: var(--glass-ink-3) }
-.cm-compose input:focus { border-color: var(--cm-line, var(--comment)); box-shadow: 0 0 0 3px var(--cm-line-ring, var(--comment-ring)) }
-.cm-send { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+.cm-inputwrap textarea::placeholder { color: var(--glass-ink-3) }
+.cm-inputwrap textarea:focus { border-color: var(--cm-line, var(--comment)); box-shadow: 0 0 0 3px var(--cm-line-ring, var(--comment-ring)) }
+.cm-inputwrap textarea:disabled { opacity: .6; cursor: default }
+.cm-send { position: absolute; right: 4px; bottom: 4px;
   width: 28px; height: 28px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
   background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
 .cm-send:hover:not(:disabled) { filter: brightness(1.08) }
@@ -827,8 +851,19 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* the draft composer is JUST the pill - no card chrome around a single input */
 .cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
   backdrop-filter: none; -webkit-backdrop-filter: none }
-.cm-draft input { height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
+.cm-draft textarea { min-height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
 .cm-draft .cm-send { right: 6px }   /* nudge in for the taller draft pill */
+
+/* Live Jam: @marver mention styling. Owner-authored = a live trigger (bold accent-blue);
+   anyone else's = plain-weight, read like any comment, with a teaching tooltip (§1). */
+.cm-at { color: var(--glass-ink-2, var(--glass-ink)); font-weight: 500 }
+.cm-at.owner { color: var(--accent); font-weight: 700 }
+.cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
+
+/* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
+.cm-avatar.cm-marver { width: 24px; height: 24px; background: var(--accent); color: #fff; font-size: 13px; letter-spacing: -.02em; cursor: default }
+.cm-marver-name { color: var(--accent) }
+.cm-meta-tip { display: flex; flex-direction: column; gap: 2px; line-height: 1.35; text-align: left; font-weight: 500 }
 /* identity modal - same glass family */
 .cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.45); backdrop-filter: blur(5px) }

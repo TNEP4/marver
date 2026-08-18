@@ -194,6 +194,23 @@ describe('loadConfig (spec §4)', async () => {
   })
 })
 
+describe('Live Jam M3: parseMentions (@marver rendering, SPEC-live-jam §1)', async () => {
+  const { parseMentions } = await import('../src/client/shell/mentions.ts')
+  it('splits a body into text + @marver mention segments (case-insensitive)', () => {
+    expect(parseMentions('hey @marver fix this')).toEqual([
+      { text: 'hey ', mention: false }, { text: '@marver', mention: true }, { text: ' fix this', mention: false },
+    ])
+    expect(parseMentions('@Marver at the start').filter((s) => s.mention).map((s) => s.text)).toEqual(['@Marver'])
+  })
+  it('a body with no mention is one plain segment', () => {
+    expect(parseMentions('just a note')).toEqual([{ text: 'just a note', mention: false }])
+  })
+  it('does not match @marvers or @marvel (word boundary)', () => {
+    expect(parseMentions('@marvel movie').some((s) => s.mention)).toBe(false)
+    expect(parseMentions('email @marver.design').some((s) => s.mention)).toBe(true)   // @marver then .design
+  })
+})
+
 describe('Live Jam M0: config.jam (SPEC-live-jam §M0)', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')

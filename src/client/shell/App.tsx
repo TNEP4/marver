@@ -7,7 +7,7 @@ import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
-import { CommentsController } from './Comments.tsx'
+import { CommentsController, revealThread } from './Comments.tsx'
 import { useComments } from './comments-store.ts'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
@@ -831,8 +831,27 @@ export function App() {
       <UpdatePill />
 
       <div className="sh-toasts">
-        {toasts.map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
+        {toasts.slice(-3).map((t) => t.jam
+          ? <JamToast key={t.id} id={t.id} note={t.jam} />
+          : <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
+        {toasts.length > 3 && <div className="sh-toast sh-toast-more">+{toasts.length - 3} more</div>}
       </div>
+    </div>
+  )
+}
+
+/** The Live Jam reply pill (SPEC-live-jam §9): a compact glass card, marver mark + preview, View + close. */
+function JamToast({ id, note }: { id: number; note: import('./store.ts').JamNote }) {
+  const dismiss = () => useStore.getState().dismissToast(id)
+  return (
+    <div className="sh-toast jam">
+      <span className="sh-jam-mark">M</span>
+      <div className="sh-jam-txt">
+        <b>Marver replied</b>
+        <span className="sh-jam-prev">{note.preview}</span>
+      </div>
+      <button className="sh-jam-view" onClick={() => { revealThread(note.threadId); dismiss() }}>View</button>
+      <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
     </div>
   )
 }

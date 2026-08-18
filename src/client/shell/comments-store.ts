@@ -52,10 +52,22 @@ const api = async (path: string, body?: unknown) => {
 
 export const useComments = create<CommentsState>((set, get) => {
   const derive = (events: CommentEvent[]) => ({ events, threads: replay(events) })
+  // Live Jam (SPEC §9): a Marver reply that arrives AFTER the initial load (load() baselines via
+  // derive, so pre-existing replies never notify) raises a persistent bottom-right pill. Keyed on
+  // the event id via `union`'s fresh filter, so it fires exactly once; active-board only by
+  // construction (union runs against the active board's poll).
+  const notifyAgent = (fresh: CommentEvent[]) => {
+    const replies = fresh.filter((e) => e.agent && e.type === 'reply')
+    if (!replies.length) return
+    void import('./store.ts').then(({ useStore }) => {
+      const board = get().board ?? ''
+      for (const e of replies) useStore.getState().jamToast({ threadId: e.parentId ?? e.commentId ?? '', board, preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90) })
+    })
+  }
   const union = (events: CommentEvent[]) => {
     const have = new Set(get().events.map((e) => e.id))
     const fresh = events.filter((e) => !have.has(e.id))
-    if (fresh.length) set(derive([...get().events, ...fresh]))
+    if (fresh.length) { set(derive([...get().events, ...fresh])); notifyAgent(fresh) }
   }
 
   return {
