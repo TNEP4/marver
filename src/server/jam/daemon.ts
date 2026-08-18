@@ -66,7 +66,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'] }) }
       catch { return resolve({ reply: '', ok: false, reanchors: [] }) }
       activeChildren.add(child)
-      onSpawn(child.pid)
+      try { onSpawn(child.pid) } catch { /* pgid persist failed; the run still proceeds, fencing degrades */ }
       let out = ''
       let settled = false
       const settle = (r: AgentRun) => {
@@ -110,7 +110,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  keeping the first occurrence (the owner's, written first), so a colliding synced id cannot win,
    *  and `triggers` re-confirms ledger/agent/type/mention - the job can never drift to other content. */
   const resolveMember = (board: string, id: string): Pending | null => {
-    for (const ev of readLog(commentsDir, board)) if (ev.id === id) return triggers(root, ev) ? { board, event: ev } : null
+    for (const ev of readLog(commentsDir, board)) if (ev.id === id) return triggers(root, board, ev) ? { board, event: ev } : null
     return null
   }
 
@@ -161,14 +161,24 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (p) await runBatch(b, p)
         else finish(b)   // no longer authorized/present → drop, never run stale/foreign content
       }
-      // 2. claim new owner-ledgered mentions, grouped into per-frame serial chains that run
+      // 2. claim new owner-ledgered mentions, grouped into per-FRAME serial chains that run
       //    bounded-parallel (SPEC §12): several frames build at once (multi-frame glow), but the
-      //    SAME frame never has two agents (non-negotiable). Honest residual: two concurrent jobs
-      //    could still touch a shared component file - the goal-phrased re-run reconciles if so.
+      //    SAME frame FILE never has two agents (non-negotiable). The key is the EFFECTIVE frame
+      //    (a reply inherits the root thread's frame, and a frame file is global across boards),
+      //    so replies on one thread and the same file shown on two boards both serialize.
+      //    Honest residual: two concurrent jobs on DIFFERENT frames could still touch a shared
+      //    component file - the goal-phrased re-run reconciles if so.
       if (!stopped) {
+        const boardThreads = new Map<string, ReturnType<typeof replay>>()
+        const threadsOf = (b: string) => boardThreads.get(b) ?? (boardThreads.set(b, replay(readLog(commentsDir, b))).get(b)!)
+        const frameKey = (p: Pending): string => {
+          if (p.event.frame) return `f:${p.event.frame}`
+          const rt = threadsOf(p.board).find((t) => t.id === threadId(p.event))
+          return rt?.frame ? `f:${rt.frame}` : `t:${threadId(p.event) || p.event.id}`
+        }
         const chains = new Map<string, Pending[]>()
         for (const p of scanPending(root, commentsDir, journal)) {
-          const key = `${p.board}:${p.event.frame ?? p.event.id}`   // same explicit frame → one chain (serial)
+          const key = frameKey(p)
           const arr = chains.get(key) ?? []
           arr.push(p); chains.set(key, arr)
         }
@@ -188,10 +198,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 }
 
-/** Run thunks with a concurrency cap. Same-frame chains are already serial within a thunk. */
+/** Run thunks with a concurrency cap. Same-frame chains are already serial within a thunk. A
+ *  thunk that throws is caught (its batch stays claimed and resumes next tick); the pool ALWAYS
+ *  drains every worker before returning, so the tick never releases while a job is still live. */
 async function runPool(thunks: (() => Promise<void>)[], limit: number): Promise<void> {
   const q = [...thunks]
-  const worker = async () => { while (q.length) { const t = q.shift(); if (t) await t() } }
+  const worker = async () => { while (q.length) { const t = q.shift(); if (t) { try { await t() } catch { /* batch resumes next tick */ } } } }
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, q.length || 1)) }, worker))
 }
 

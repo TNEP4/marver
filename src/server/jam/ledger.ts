@@ -7,31 +7,38 @@
  * but it can never appear in a file that is written only on THIS machine by the gated
  * POST and never synced. Synced-in events are never in the ledger, so they never trigger.
  *
- * One id per line, append-only, gitignored, never synced (design/.local/ is watch-ignored
- * and sync-excluded). Agent-written events are never recorded (they are daemon-authored,
- * not owner input, so they cannot self-authorize a next job).
+ * One `<board>\t<id>` per line, append-only, gitignored, never synced (design/.local/ is
+ * watch-ignored and sync-excluded). Agent-written events are never recorded (they are
+ * daemon-authored, not owner input, so they cannot self-authorize a next job).
+ *
+ * The key is (board, id), NOT id alone: event ids are client UUIDs that sync copies verbatim,
+ * so a remote collaborator could reuse an owner's ledgered id in a NEW malicious event. Binding
+ * to the board it was gate-written on defeats that - the forged copy lands on some board the
+ * ledger never authorized for that id, so it never triggers.
  */
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const ledgerFile = (root: string) => join(root, 'design', '.local', 'jam-ledger')
+const line = (board: string, id: string) => `${board}\t${id}`
 
-/** Was this event id authorized on this device by the gated dev POST? */
-export function has(root: string, id: string): boolean {
-  if (!id) return false
+/** Was this (board, id) authorized on this device by the gated dev POST? */
+export function has(root: string, board: string, id: string): boolean {
+  if (!board || !id) return false
   const file = ledgerFile(root)
   if (!existsSync(file)) return false
+  const want = line(board, id)
   // Line-exact match; a torn final line (interrupted append) just won't match - safe.
-  for (const line of readFileSync(file, 'utf8').split('\n')) if (line === id) return true
+  for (const l of readFileSync(file, 'utf8').split('\n')) if (l === want) return true
   return false
 }
 
-/** Authorize an event id. fsync'd (a 200-acked, ledgered write must survive a crash) and
+/** Authorize a (board, id). fsync'd (a 200-acked, ledgered write must survive a crash) and
  *  0600 (owner-only). Idempotent enough: a duplicate line is harmless, `has` matches either. */
-export function record(root: string, id: string): void {
-  if (!id) return
+export function record(root: string, board: string, id: string): void {
+  if (!board || !id) return
   const file = ledgerFile(root)
   mkdirSync(dirname(file), { recursive: true })
   const fd = openSync(file, 'a', 0o600)
-  try { writeSync(fd, id + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
+  try { writeSync(fd, line(board, id) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
 }

@@ -229,7 +229,7 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           // Agent events never reach here (they go through the daemon's in-process writer), so the
           // ledger only ever holds owner input. (SPEC-live-jam §1, fail-closed atomicity.)
           const { record } = await import('./jam/ledger.ts')
-          for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply') record(root, ev.id)
+          for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply') record(root, cm[1], ev.id)
           // push in the background - the periodic sync catches anything this drops
           void backgroundPush(root)
           return json(res, 200, { accepted: fresh.length })

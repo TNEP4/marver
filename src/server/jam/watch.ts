@@ -13,12 +13,13 @@ import type { Journal, Pending } from './types.ts'
 
 const MENTION = /@marver\b/i
 
-/** The one gate. An event triggers a job iff it passes every clause. */
-export function triggers(root: string, ev: CommentEvent): boolean {
+/** The one gate. An event on `board` triggers a job iff it passes every clause. Keyed on
+ *  (board, id) in the ledger, so a synced event reusing a ledgered id on another board fails. */
+export function triggers(root: string, board: string, ev: CommentEvent): boolean {
   if (ev.agent) return false
   if (ev.type !== 'create' && ev.type !== 'reply') return false
   if (!MENTION.test(ev.body ?? '')) return false
-  return has(root, ev.id)
+  return has(root, board, ev.id)
 }
 
 export function scanPending(root: string, commentsDir: string, journal: Journal): Pending[] {
@@ -26,7 +27,7 @@ export function scanPending(root: string, commentsDir: string, journal: Journal)
   const out: Pending[] = []
   for (const board of listBoards(commentsDir)) {
     for (const ev of readLog(commentsDir, board)) {
-      if (seen.has(ev.id) || !triggers(root, ev)) continue
+      if (seen.has(ev.id) || !triggers(root, board, ev)) continue
       out.push({ board, event: ev })
     }
   }

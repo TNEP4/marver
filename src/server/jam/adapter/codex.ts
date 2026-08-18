@@ -17,16 +17,19 @@ export const codexAdapter: JamAdapter = {
   parse(stdout, code) {
     let text = ''
     let model: string | undefined
+    let failed = false
     for (const line of stdout.split('\n')) {
       const t = line.trim()
       if (!t) continue
       try {
         const o = JSON.parse(t) as Record<string, any>
         if (o.type === 'item.completed' && o.item?.type === 'agent_message' && typeof o.item.text === 'string') text = o.item.text.trim()
+        else if (o.type === 'turn.failed' || o.type === 'error') failed = true
         if (typeof o.model === 'string') model = o.model
       } catch { /* non-JSON line (banner) - skip */ }
     }
-    const { reply, reanchors } = extractReanchors(text || stdout.trim())
-    return { reply, model, reanchors, ok: code === 0 && !!reply }
+    // NO fallback to raw stdout: a status-only or error stream must not become a bogus reply.
+    const { reply, reanchors } = extractReanchors(text)
+    return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

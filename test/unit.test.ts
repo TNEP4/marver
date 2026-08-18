@@ -249,32 +249,33 @@ describe('Live Jam M0: authorization ledger (SPEC-live-jam §1)', async () => {
   const { join } = await import('node:path')
   const { has, record } = await import('../src/server/jam/ledger.ts')
 
-  it('record then has → true; an unrecorded (e.g. synced-in) id → false', () => {
+  it('record then has → true; the SAME id on another board → false (anti-spoof), unrecorded → false', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
-    record(root, 'evt-owner-1')
-    expect(has(root, 'evt-owner-1')).toBe(true)
-    expect(has(root, 'evt-synced-remote')).toBe(false)   // the anti-spoof invariant
-    expect(has(root, '')).toBe(false)
+    record(root, 'home', 'evt-owner-1')
+    expect(has(root, 'home', 'evt-owner-1')).toBe(true)
+    expect(has(root, 'other-board', 'evt-owner-1')).toBe(false)   // same id, different board: a synced spoof cannot ride
+    expect(has(root, 'home', 'evt-synced-remote')).toBe(false)
+    expect(has(root, 'home', '')).toBe(false)
     rmSync(root, { recursive: true, force: true })
   })
   it('has() on a fresh repo (no ledger file) → false, never throws', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
-    expect(has(root, 'anything')).toBe(false)
+    expect(has(root, 'home', 'anything')).toBe(false)
     rmSync(root, { recursive: true, force: true })
   })
   it('ledger file is 0600 (owner-only)', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
-    record(root, 'evt-1')
+    record(root, 'home', 'evt-1')
     const mode = statSync(join(root, 'design', '.local', 'jam-ledger')).mode & 0o777
     expect(mode).toBe(0o600)
     rmSync(root, { recursive: true, force: true })
   })
   it('a torn final line (interrupted append) is tolerated, real ids still match', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
-    record(root, 'evt-1')
-    appendFileSync(join(root, 'design', '.local', 'jam-ledger'), 'evt-2-torn-no-newline')  // no trailing \n
-    expect(has(root, 'evt-1')).toBe(true)
-    expect(has(root, 'evt-2-torn-no-newline')).toBe(true)   // last line, no newline, still exact-matches
+    record(root, 'home', 'evt-1')
+    appendFileSync(join(root, 'design', '.local', 'jam-ledger'), 'home\tevt-2-torn-no-newline')  // no trailing \n
+    expect(has(root, 'home', 'evt-1')).toBe(true)
+    expect(has(root, 'home', 'evt-2-torn-no-newline')).toBe(true)   // last line, no newline, still exact-matches
     rmSync(root, { recursive: true, force: true })
   })
 })
