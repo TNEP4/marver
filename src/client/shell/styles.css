@@ -517,9 +517,8 @@ body.sh-commenting .sh-lean { opacity: 0 }
   border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass), 0 12px 32px -12px rgba(24,24,27,.4);
   color: var(--glass-ink); animation: sh-jam-in .18s ease }
 @keyframes sh-jam-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
-.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff;
+.sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: rgba(255,255,255,.8);
   display: inline-flex; align-items: center; justify-content: center }
-.sh-jam-mark svg { width: 16px; height: 16px }
 .sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25 }
 .sh-jam-txt b { font-size: 12.5px; font-weight: 600; color: var(--accent) }
 .sh-jam-prev { font-size: 11.5px; color: var(--glass-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
@@ -902,7 +901,7 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
-.cm-avatar.cm-marver { background: var(--accent); color: #fff; cursor: default }   /* the marver mark, solid white on accent */
+.cm-avatar.cm-marver { background: var(--accent); color: rgba(255,255,255,.8); cursor: default }   /* white/80 mark, embedded in the accent */
 .cm-marver-wrap { display: inline-flex; border-radius: 50% }
 .cm-marver-name { color: var(--glass-ink) }              /* black, not blue */
 /* provenance tooltip: one fact per row, LEFT-aligned tight pairs, bold bright label + readable value -

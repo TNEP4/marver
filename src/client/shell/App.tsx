@@ -848,7 +848,7 @@ function JamToast({ id, note }: { id: number; note: import('./store.ts').JamNote
   const dismiss = () => useStore.getState().dismissToast(id)
   return (
     <div className="sh-toast jam">
-      <span className="sh-jam-mark"><ParallelogramFillIcon size={15} /></span>
+      <span className="sh-jam-mark"><ParallelogramFillIcon size={13} /></span>
       <div className="sh-jam-txt">
         <b>Marver replied</b>
         <span className="sh-jam-prev">{note.preview}</span>

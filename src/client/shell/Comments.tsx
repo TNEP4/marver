@@ -47,9 +47,11 @@ const rel = (ts: number) => {
 /** The Marver mark avatar: accent-blue disc + the solid white parallelogram. One place, reused
  *  by the thread header, the pin/stack marker, and the notification pill. */
 export function MarverAvatar({ size = 24 }: { size?: number }) {
+  // 0.5 keeps clear blue padding around the mark even in the marker, where a 2px white border
+  // shrinks the visible disc (a bigger mark looked nearly cut there).
   return (
     <span className="cm-avatar cm-marver" style={{ width: size, height: size }} aria-label="Marver">
-      <ParallelogramFillIcon size={Math.round(size * 0.6)} />
+      <ParallelogramFillIcon size={Math.round(size * 0.5)} />
     </span>
   )
 }
