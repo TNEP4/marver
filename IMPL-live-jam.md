@@ -1,5 +1,24 @@
 # IMPL — Live Jam — the build plan (testable milestones)
 
+> ## ✅ BUILT (2026-08-18) — M0–M5 all shipped
+> The whole feature is implemented, tested (**156 tests green**), Codex-reviewed twice on the code, and
+> real-world verified (real `claude` editing real frames + a live `marver dev` server + full browser QA
+> of the composer, `@marver` styling, Marver identity, working glow, and notification pill). Commits on
+> `feat/live-jam`: M0 `6ae8317`, M1 `5b71e50`/`c9fe6ab`/`f1d61e5`, M2 `2ca6d75`, M3 `7ae37af`,
+> M4 `d47c993`, M5 `be5037d`/`ba286a0`. **Divergences from the plan below, all deliberate:**
+> - **Owner gate** reuses the existing `mv_c` double-submit cookie (open decision #3) rather than a new
+>   token; and the ledger keys on **(board, id)** not id alone (Codex 2 found the cross-board id-reuse spoof).
+> - **M5 parallelism** = bounded **parallel jobs** (one per effective frame, same-frame serialized,
+>   `jam.concurrency` cap) rather than the heavier one-orchestrator-emits-per-member-replies model —
+>   same multi-frame-glow UX, reuses the proven single-job path, and Codex flagged the universal parser
+>   as premature. Same-frame key is the **effective frame** (replies inherit the root's frame; frame files
+>   are global across boards).
+> - **Notification** rides the existing ~30s comment poll (per §9's "two latencies"); the **glow** rides
+>   the HMR broadcast rail for the first-second feel.
+> - Tests are **vitest**, not `node --test`. The `codex` adapter shipped in M5 (not deferred).
+> - **P2/P3 as planned:** proactive pickup, context batch, owner promotion, cursor/opencode/droid
+>   adapters, published agent replies, OS-enforced within-job isolation.
+>
 > **What this is.** The implementation companion to `SPEC-live-jam.md` (v10.1). The spec answers *what
 > and why*; this answers *build it in this order, and prove each step*. Every milestone ends **green** —
 > a named test that passes before the next begins. Ethos, unchanged: **lean code that works.**
