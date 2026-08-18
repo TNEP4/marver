@@ -40,8 +40,14 @@ const RESCAN_MS = 5_000
 
 export interface JamDaemon { stop(): void }
 export interface JamCore { tick(): Promise<void>; stop(): void; snapshot(): Journal }
-/** Side-effect hooks the dev server wires up (presence glow). Optional, so tests stay pure. */
-export interface JamHooks { work?(frame: string | undefined, on: boolean): void }
+/** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
+ *  Optional, so tests stay pure. */
+export interface JamHooks {
+  work?(frame: string | undefined, on: boolean): void
+  /** The daemon wrote events (reply/reanchor) to `board` - nudge clients to fetch NOW
+   *  instead of waiting out the 30s comment poll. */
+  changed?(board: string): void
+}
 
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
 const fenceGroup = (pid?: number) => { try { if (pid) process.kill(-pid, 'SIGKILL') } catch { /* already gone */ } }
@@ -127,11 +133,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (run.ok) {
       writeReply(b, p, run.reply, run.model)
       emitReanchors(b, run.reanchors)
+      hooks.changed?.(b.board)
       hooks.work?.(member.frame, false)
       finish(b)
       log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${run.reanchors.length ? ` · re-pinned ${run.reanchors.length}` : ''}`)
     } else if (b.attempts >= MAX_ATTEMPTS) {
       writeReply(b, p, "I couldn't finish that one. Try rephrasing, or check the dev logs.", run.model)
+      hooks.changed?.(b.board)
       hooks.work?.(member.frame, false)
       finish(b)
       log(`  jam: gave up on ${b.board} after ${b.attempts} attempts`)
@@ -210,7 +218,7 @@ async function runPool(thunks: (() => Promise<void>)[], limit: number): Promise<
 /** Start the daemon inside the dev server. `onActivity` receives the set of frames currently being
  *  worked, for the presence glow (SPEC §10). Returns null when the adapter is unavailable or another
  *  dev server already holds the repo lock (that one runs the loop; this one watches without it). */
-export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onActivity: (frames: string[]) => void = () => {}): JamDaemon | null {
+export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onActivity: (frames: string[]) => void = () => {}, onChanged: (board: string) => void = () => {}): JamDaemon | null {
   const adapter: JamAdapter | null = cfg.agent === 'claude' ? claudeAdapter : cfg.agent === 'codex' ? codexAdapter : null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
@@ -219,7 +227,10 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   mkdirSync(commentsDir, { recursive: true })   // so the watcher always attaches (not just after the first comment)
   const activity = createActivity()
   activity.onChange(onActivity)
-  const core = createJam(root, cfg, adapter, log, { work: (f, on) => (on ? activity.mark(f ?? '') : activity.clear(f ?? '')) })
+  const core = createJam(root, cfg, adapter, log, {
+    work: (f, on) => (on ? activity.mark(f ?? '') : activity.clear(f ?? '')),
+    changed: onChanged,
+  })
   let stopped = false
   let scheduled: ReturnType<typeof setTimeout> | null = null
   const schedule = () => { if (!scheduled && !stopped) scheduled = setTimeout(() => { scheduled = null; void core.tick() }, 150) }

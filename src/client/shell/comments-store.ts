@@ -25,6 +25,9 @@ interface CommentsState {
 
   load(board: string): Promise<void>
   live(board: string): () => void
+  /** Fetch the active board's log NOW (Live Jam: the daemon just wrote a reply) - same union path
+   *  as the poll, so dedup + the reply notification behave identically. */
+  poke(board?: string): void
   send(events: CommentEvent[]): Promise<boolean>
   create(body: string): Promise<void>
   reply(threadId: string, body: string): Promise<void>
@@ -73,6 +76,12 @@ export const useComments = create<CommentsState>((set, get) => {
   return {
     events: [], threads: [], board: null, me: null, local: false,
     commentMode: false, show: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
+
+    poke(board) {
+      const b = get().board
+      if (!b || (board && board !== b)) return   // only the active board renders; others load on switch
+      void api(`comments/${b}`).then((r) => { if (r.ok && get().board === b) union(r.data.events ?? []) })
+    },
 
     async load(board) {
       set({ board })
