@@ -442,6 +442,9 @@ export function App() {
   useEffect(() => {
     if (!import.meta.hot) return
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // Live Jam presence (SPEC §10): the daemon broadcasts the set of frames Marver is editing.
+    // Camera-safe by construction - this only toggles a glow class, never moves the view.
+    import.meta.hot.on('sh:jam-activity', (m: any) => useStore.getState().setWorking(Array.isArray(m?.frames) ? m.frames.filter((x: unknown) => typeof x === 'string') : []))
     // A7 controlled HMR: a frame file changed. Reload exactly the affected frames through the
     // lease-aware path (idle frames now, leased ones deferred to a safe point) - never a shell
     // reload, never a React Fast Refresh yanking a frame the user is in.

@@ -164,6 +164,38 @@ describe('Live Jam M1: the daemon spine (SPEC-live-jam §3)', () => {
   })
 })
 
+describe('Live Jam M4: activity presence (SPEC-live-jam §10)', () => {
+  it('mark/clear emits the active frame set; expired entries are swept', async () => {
+    const { createActivity } = await import('../src/server/jam/activity.ts')
+    const seen: string[][] = []
+    const a = createActivity(20)   // 20ms lease
+    a.onChange((frames) => seen.push(frames))
+    a.mark('demo/hero')
+    expect(a.active()).toEqual(['demo/hero'])
+    a.mark('demo/pricing')
+    expect(a.active().sort()).toEqual(['demo/hero', 'demo/pricing'])
+    a.clear('demo/hero')
+    expect(a.active()).toEqual(['demo/pricing'])
+    expect(seen.at(-1)).toEqual(['demo/pricing'])
+    await new Promise((r) => setTimeout(r, 40))
+    a.sweep()                      // lease expired
+    expect(a.active()).toEqual([])
+    expect(seen.at(-1)).toEqual([])
+  })
+  it('the daemon marks a frame working during a job and clears it after (via hooks)', async () => {
+    const { root, dir, done } = setup()
+    const marks: [string | undefined, boolean][] = []
+    const jam = createJam(root, CFG, okAdapter, undefined, { work: (f, on) => marks.push([f, on]) })
+    appendEvents(dir, 'home', [{ id: 'w1', ts: Date.now(), type: 'create', commentId: 'w1', frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'nic@local' }, body: '@marver tweak it' }])
+    record(root, 'w1')
+    await jam.tick(); jam.stop()
+    expect(marks).toContainEqual(['demo/hero', true])
+    expect(marks).toContainEqual(['demo/hero', false])
+    expect(marks.at(-1)).toEqual(['demo/hero', false])   // cleared last
+    done()
+  })
+})
+
 describe('Live Jam M2: reanchor (SPEC-live-jam §11)', () => {
   it('extractReanchors pulls a trailing block and strips it from the visible reply', async () => {
     const { extractReanchors } = await import('../src/server/jam/packet.ts')

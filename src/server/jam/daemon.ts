@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
 import { claudeAdapter } from './adapter/claude.ts'
+import { createActivity } from './activity.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, goalText, threadId } from './packet.ts'
 import { scanPending, triggers, allEventIds } from './watch.ts'
@@ -38,13 +39,15 @@ const RESCAN_MS = 5_000
 
 export interface JamDaemon { stop(): void }
 export interface JamCore { tick(): Promise<void>; stop(): void; snapshot(): Journal }
+/** Side-effect hooks the dev server wires up (presence glow). Optional, so tests stay pure. */
+export interface JamHooks { work?(frame: string | undefined, on: boolean): void }
 
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
 const fenceGroup = (pid?: number) => { try { if (pid) process.kill(-pid, 'SIGKILL') } catch { /* already gone */ } }
 
 /** The loop, without timers/watch/lock. Baselines on creation, then each `tick()` resumes any
  *  leftover batches (re-validate + fence + re-run) and claims new owner-ledgered mentions. */
-export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log: (m: string) => void = () => {}): JamCore {
+export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log: (m: string) => void = () => {}, hooks: JamHooks = {}): JamCore {
   const commentsDir = join(root, 'design', 'comments')
   let journal: Journal = baseline(root, allEventIds(commentsDir))
   const persist = () => write(root, (journal = { ...journal }))
@@ -113,20 +116,26 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const runBatch = async (b: Batch, p: Pending) => {
     b.attempts += 1; b.state = 'claimed'; b.leaseUntil = Date.now() + LEASE_MS; persist()
     const threads = replay(readLog(commentsDir, b.board))
-    const packet = buildPacket(b.batchId, [buildMember(p, threads)])
+    const member = buildMember(p, threads)
+    const packet = buildPacket(b.batchId, [member])
+    // Presence glow (SPEC §10/§13): the frame is "working" for the whole run. For a net-new frame
+    // the node appears only once the agent scaffolds it, then picks up the glow from this set.
+    hooks.work?.(member.frame, true)
     const run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() })
-    if (stopped) return
+    if (stopped) { hooks.work?.(member.frame, false); return }
     if (run.ok) {
       writeReply(b, p, run.reply, run.model)
       emitReanchors(b, run.reanchors)
+      hooks.work?.(member.frame, false)
       finish(b)
       log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${run.reanchors.length ? ` · re-pinned ${run.reanchors.length}` : ''}`)
     } else if (b.attempts >= MAX_ATTEMPTS) {
       writeReply(b, p, "I couldn't finish that one. Try rephrasing, or check the dev logs.", run.model)
+      hooks.work?.(member.frame, false)
       finish(b)
       log(`  jam: gave up on ${b.board} after ${b.attempts} attempts`)
     } else {
-      b.state = 'pending'; persist()   // retry on the next tick
+      b.state = 'pending'; persist()   // retry on the next tick; keep the glow (still in progress)
     }
   }
 
@@ -168,16 +177,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 }
 
-/** Start the daemon inside the dev server. Returns null when the adapter is unavailable or another
+/** Start the daemon inside the dev server. `onActivity` receives the set of frames currently being
+ *  worked, for the presence glow (SPEC §10). Returns null when the adapter is unavailable or another
  *  dev server already holds the repo lock (that one runs the loop; this one watches without it). */
-export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}): JamDaemon | null {
+export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onActivity: (frames: string[]) => void = () => {}): JamDaemon | null {
   const adapter: JamAdapter | null = cfg.agent === 'claude' ? claudeAdapter : null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
 
   const commentsDir = join(root, 'design', 'comments')
   mkdirSync(commentsDir, { recursive: true })   // so the watcher always attaches (not just after the first comment)
-  const core = createJam(root, cfg, adapter, log)
+  const activity = createActivity()
+  activity.onChange(onActivity)
+  const core = createJam(root, cfg, adapter, log, { work: (f, on) => (on ? activity.mark(f ?? '') : activity.clear(f ?? '')) })
   let stopped = false
   let scheduled: ReturnType<typeof setTimeout> | null = null
   const schedule = () => { if (!scheduled && !stopped) scheduled = setTimeout(() => { scheduled = null; void core.tick() }, 150) }
@@ -186,6 +198,8 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   try { watcher = fsWatch(commentsDir, { persistent: false }, schedule) } catch { /* rescan is the backstop */ }
   const interval = setInterval(() => void core.tick(), RESCAN_MS)
   interval.unref?.()
+  const sweep = setInterval(() => activity.sweep(), 30_000)   // expire stale glows if a job died
+  sweep.unref?.()
   void core.tick()
 
   log(`  jam: watching for @marver (${adapter.name})`)
@@ -194,6 +208,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       stopped = true
       if (scheduled) clearTimeout(scheduled)
       clearInterval(interval)
+      clearInterval(sweep)
       watcher?.close()
       core.stop()
       releaseLock(root)

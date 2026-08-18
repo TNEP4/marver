@@ -289,6 +289,38 @@ body.sh-commenting .sh-lean { opacity: 0 }
 @media (prefers-reduced-motion: reduce) {
   .sh-node.interact::before, .sh-node.interact::after { animation: none } }
 
+/* Live Jam "working" glow (SPEC §10): the SAME orbit motion as interact, but MONOCHROME silver -
+   "the system is acting" (distinct from interact's magenta "a human is here"). Selected-while-working
+   swaps to accent blue. Interact always wins (a human in the frame), so working yields to it. */
+:root { --work-line: rgba(150,158,172,.9); --work-ring: rgba(150,158,172,.22);
+  --work-strong: rgba(160,168,182,.5); --work-spark: rgba(228,234,244,.97) }
+.sh-node.working:not(.interact) { border-color: var(--work-line);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--work-line);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--work-ring), var(--shadow-node) }
+.sh-node.working:not(.interact)::before, .sh-node.working:not(.interact)::after {
+  content: ''; position: absolute; border-radius: inherit; pointer-events: none; display: block;
+  background: conic-gradient(from var(--sh-rot),
+    var(--work-strong) 0deg, var(--work-strong) 105deg, var(--work-spark) 135deg, var(--work-strong) 165deg,
+    var(--work-strong) 285deg, var(--work-spark) 315deg, var(--work-strong) 345deg, var(--work-strong) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: sh-orbit 4.2s linear infinite }
+.sh-node.working:not(.interact)::before {
+  inset: calc(-2.5px * var(--sh-inv, 1)); padding: calc(2.5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1)); opacity: .55 }
+.sh-node.working:not(.interact)::after {
+  inset: calc(-9px * var(--sh-inv, 1)); padding: calc(5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
+  filter: blur(calc(2px * var(--sh-inv, 1))); opacity: .9 }
+/* selected while working -> accent blue ("you're here, the agent is cooking") */
+.sh-node.working.sel:not(.interact) { --work-line: var(--accent); --work-ring: var(--accent-ring);
+  --work-strong: var(--accent-ring); --work-spark: var(--accent) }
+@media (prefers-reduced-motion: reduce) {
+  .sh-node.working::before, .sh-node.working::after { animation: none } }
+
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
   border-radius: 999px; padding: 4px; z-index: 9; white-space: nowrap;

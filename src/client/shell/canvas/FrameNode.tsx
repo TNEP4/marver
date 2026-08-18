@@ -23,6 +23,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const frame = useStore((s) => s.frameFor(node))
   const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
+  const working = useStore((s) => s.working.includes(node.frame))   // Live Jam: Marver is editing this frame
   // B0.1: no reactive scale subscription - it re-rendered every FrameNode on every
   // pan/zoom tick. gestureScale below measures the world rect (the canonical source,
   // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
@@ -287,7 +288,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
 
   return (
     <div
-      className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}`}
+      className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}${working ? ' working' : ''}`}
       data-theme={node.theme}
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined }}
       data-node={node.key}

@@ -174,6 +174,9 @@ interface State {
   toast(text: string): void
   jamToast(note: JamNote): void
   dismissToast(id: number): void
+  /** Frames Marver is editing right now (Live Jam presence, SPEC §10) - drives the working glow. */
+  working: string[]
+  setWorking(frames: string[]): void
   spawn(frameId: string): Node | null
   save(): Promise<boolean>
 }
@@ -425,7 +428,7 @@ export const useStore = create<State>((set, get) => {
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
+    panelOpen: true, scale: 1, toasts: [], working: [], boardHash: null, dirty: false,
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0,
 
     async boot() {
@@ -845,6 +848,7 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text: 'Marver replied', jam: note }].slice(-8) }))
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
+    setWorking(frames) { set({ working: frames }) },
     spawn(frameId) {
       const { manifest, nodes, deviceView, baseLayout } = get()
       const f = manifest?.frames.find((x) => x.id === frameId)
