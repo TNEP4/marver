@@ -51,6 +51,9 @@ export interface PacketMember {
   frame?: string
   nodeKey?: string
   comment: { bodyRaw: string; author?: { name?: string; email?: string } }
+  /** The FULL conversation on this element (root + every prior message, agent replies marked) -
+   *  so a short reply-trigger like "please @marver" inherits what the thread already said. */
+  thread: { bodyRaw: string; author?: string; agent?: boolean }[]
   nearby: { bodyRaw: string; author?: string }[]
   anchor?: unknown
 }

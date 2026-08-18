@@ -341,6 +341,18 @@ describe('Live Jam M1: packet (SPEC-live-jam §5)', () => {
     expect(member.anchor).toEqual({ quote: 'Learn more' })
     expect(member.threadId).toBe(rootId)
   })
+
+  it('a reply-trigger carries the FULL thread ("please @marver" inherits what the thread said)', () => {
+    const rootId = randomUUID()
+    const events: CommentEvent[] = [
+      { id: rootId, ts: 1, type: 'create', commentId: rootId, frame: 'onboarding/done', nodeKey: 'k1', author: { email: 'nic@local', name: 'Nic' }, body: 'Make this nicer and high fi' },
+      { id: 'r1', ts: 2, type: 'reply', commentId: 'rc1', parentId: rootId, author: { email: 'nic@local', name: 'Nic' }, body: 'like the welcome screen' },
+      { id: 'r2', ts: 3, type: 'reply', commentId: 'rc2', parentId: rootId, author: { email: 'nic@local', name: 'Nic' }, body: 'Please @marver' },
+    ]
+    const member = buildMember({ board: 'home', event: events[2] }, replay(events))
+    expect(member.comment.bodyRaw).toBe('Please @marver')
+    expect(member.thread.map((m) => m.bodyRaw)).toEqual(['Make this nicer and high fi', 'like the welcome screen'])
+  })
 })
 
 describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
