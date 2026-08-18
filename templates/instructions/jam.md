@@ -47,9 +47,12 @@ the thread so it does not dangle. End your reply with a fenced block (nothing af
 Omit it when the element's identity is unchanged. The daemon writes the reanchor for you.
 
 ## Reply
-Your VERY FIRST output - before any tool use - is ONE short line to the owner: a tight ack matched
-to the ask, or (if genuinely unclear) ONE clarifying question, then stop without editing. It posts
-to the thread the moment you write it.
+Your FIRST message is ONE short line to the owner, posted the moment you write it:
+- Clear ask -> a tight ack immediately, before any tool use.
+- Unclear? LOOK AROUND FIRST, like a human would: the packet's `thread` and `nearby`, then Read
+  `design/comments/<board>.jsonl` (every thread on the board - recent pins on this frame often
+  explain a terse ask). If that unlocks it, ack and proceed.
+- STILL unclear after looking around -> ONE clarifying question, then stop without editing.
 
 Your FINAL message is your completion reply - the daemon posts it. Rules (first line and final):
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
