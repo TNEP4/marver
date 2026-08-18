@@ -352,7 +352,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   )
 }
 
-export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r'; flank?: 'badge' | 'shim' | null }) {
+export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, stage }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r'; flank?: 'badge' | 'shim' | null; stage?: boolean }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
@@ -395,23 +395,41 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank }: {
     if (el) el.scrollTop = el.scrollHeight
     syncShadows()
   }, [thread.replies.length])
-  const flip = !float && at.x > bounds.w * 0.55
+  // PLAY: one static centered device, no zoom - the card docks FIXED beside it on the pin's side
+  // (falling back to the roomier side), fully viewport-clamped so the composer is ALWAYS reachable
+  // whatever the device layout or theme (SPEC §14). Computed once at open; play never pans.
+  const [stagePos] = useState<React.CSSProperties | null>(() => {
+    if (!stage) return null
+    const W = 320, M = 12, maxH = Math.min(660, window.innerHeight - 2 * M)
+    const rect = document.querySelector('.sh-play-stage')?.getBoundingClientRect()
+    if (!rect) return { position: 'fixed', left: M, top: 72, maxHeight: maxH }
+    const roomR = window.innerWidth - rect.right >= W + 30
+    const roomL = rect.left >= W + 30
+    const s: 'l' | 'r' = at.x < bounds.w / 2 ? (roomL ? 'l' : 'r') : (roomR ? 'r' : 'l')
+    const x = Math.min(Math.max(s === 'r' ? rect.right + 18 : rect.left - 18 - W, M), window.innerWidth - W - M)
+    // worst-case clamp (content = maxH): even a full-height thread keeps its composer on screen
+    const y = Math.min(Math.max(rect.top + at.y - 36, M), Math.max(M, window.innerHeight - maxH - M))
+    return { position: 'fixed', left: x, top: y, maxHeight: maxH }
+  })
+  const flip = !float && !stage && at.x > bounds.w * 0.55
   // Nic's revision: the card scales EXACTLY like the pins - screen-constant via --sh-inv, pure
   // CSS, smooth per zoom tick with zero re-renders. Geometry in CSS math over the live vars:
   //   top: grows DOWN from the pin, then UP once its bottom reaches the frame's bottom; floor
   //        at -28 (the layer starts below the header - -28 = the frame's TOP border).
   //   maxHeight: the visual height never exceeds the WHOLE frame (body + 28px header).
   // Gutters live in CSS (dock margins, screen-constant; wider on the left for the shimmer).
-  const pos = float
-    ? {
-        left: side === 'r' ? bounds.w : 0,
-        top: `max(-28px, min(${Math.round(at.y)}px - 36px * var(--sh-inv, 1), ${bounds.h}px - ${cardH}px * var(--sh-inv, 1)))`,
-        // capped at the whole frame's on-screen height, with a REAL readability floor: zoomed way
-        // out the card still shows a meaningful slice of conversation (~3 messages), even if that
-        // makes it taller than the tiny frame
-        maxHeight: `max(320px, calc(${bounds.h + 28}px * var(--sh-s, 1)))`,
-      }
-    : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
+  const pos: React.CSSProperties = stage && stagePos
+    ? stagePos
+    : float
+      ? {
+          left: side === 'r' ? bounds.w : 0,
+          top: `max(-28px, min(${Math.round(at.y)}px - 36px * var(--sh-inv, 1), ${bounds.h}px - ${cardH}px * var(--sh-inv, 1)))`,
+          // capped at the whole frame's on-screen height, with a REAL readability floor: zoomed way
+          // out the card still shows a meaningful slice of conversation (~3 messages), even if that
+          // makes it taller than the tiny frame
+          maxHeight: `max(320px, calc(${bounds.h + 28}px * var(--sh-s, 1)))`,
+        }
+      : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
   const submit = async () => {
@@ -419,7 +437,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank }: {
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   const card = (
-    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}${float && flank ? ` flank-${flank}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}${float && flank ? ` flank-${flank}` : ''}${stage ? ' stage-dock' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}

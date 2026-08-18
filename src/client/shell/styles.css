@@ -951,6 +951,11 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   margin-left: calc(-1 * clamp(8px, calc(12px * var(--sh-inv, 1)), 36px)) }
 .cm-card.parked.dock-l.flank-shim { margin-left: calc(-1 * clamp(18px, calc(28px * var(--sh-inv, 1)), 68px)) }
 .cm-card.parked.dock-l.flank-badge { margin-left: calc(-1 * clamp(26px, calc(44px * var(--sh-inv, 1)), 108px)) }
+/* PLAY: fixed beside the static device, viewport-clamped (position comes inline). Near-solid
+   ground - the stage floats the card over arbitrary artwork on a dark room, glass is unreadable
+   there. No transform: play has no zoom, and a leaked --sh-inv must never scale it. */
+.cm-card.stage-dock { width: 320px; overflow: hidden; z-index: 60; transform: none;
+  background: var(--cm-modal-bg, var(--glass)) }
 .cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
   overscroll-behavior: contain; scrollbar-width: thin }
 /* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of

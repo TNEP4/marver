@@ -201,7 +201,7 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
           </div>
         )
       })}
-      {activeThread && <ThreadCard key={active!} thread={activeThread} at={pinAt(activeThread)} bounds={{ w: dw, h: dh }} />}
+      {activeThread && <ThreadCard key={active!} thread={activeThread} at={pinAt(activeThread)} bounds={{ w: dw, h: dh }} stage />}
       {draftAt && <DraftComposer at={draftAt} bounds={{ w: dw, h: dh }} hue={(draft?.anchor as any)?.el?.hue} />}
     </div>
   )
