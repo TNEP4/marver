@@ -365,9 +365,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
   const scrollRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const float = !!nodeKey
-  const zoom = useStore((s) => s.scale) || 1
-  const S = Math.min(Math.max(1 / zoom, 0.9), 1.35)
-  const [cardH, setCardH] = useState(320)   // measured, unscaled px
+  const [cardH, setCardH] = useState(320)   // measured layout px (pre-transform)
   useEffect(() => {
     if (float && cardRef.current) {
       const h = cardRef.current.offsetHeight
@@ -390,17 +388,17 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread
     syncShadows()
   }, [thread.replies.length])
   const flip = !float && at.x > bounds.w * 0.55
-  // gutters (world px): the LEFT one is wider - it must clear the working shimmer strip that
-  // lives on the frame's left flank, plus the ring
+  // Nic's revision: the card scales EXACTLY like the pins - screen-constant via --sh-inv, pure
+  // CSS, smooth per zoom tick with zero re-renders. Geometry in CSS math over the live vars:
+  //   top: grows DOWN from the pin, then UP once its bottom reaches the frame's bottom; floor
+  //        at -28 (the layer starts below the header - -28 = the frame's TOP border).
+  //   maxHeight: the visual height never exceeds the WHOLE frame (body + 28px header).
+  // Gutters live in CSS (dock margins, screen-constant; wider on the left for the shimmer).
   const pos = float
     ? {
-        left: side === 'r' ? bounds.w + 28 : -56,
-        // grow down from the pin, then up once the bottom hits the frame's bottom
-        top: Math.max(0, Math.min(at.y - 36 * S, bounds.h - cardH * S)),
-        maxHeight: Math.max(220, Math.min(660, bounds.h / S)),
-        minHeight: 150,
-        transform: side === 'r' ? `scale(${S})` : `translateX(-100%) scale(${S})`,
-        transformOrigin: side === 'r' ? 'top left' : 'top right',
+        left: side === 'r' ? bounds.w : 0,
+        top: `max(-28px, min(${Math.round(at.y)}px - 36px * var(--sh-inv, 1), ${bounds.h}px - ${cardH}px * var(--sh-inv, 1)))`,
+        maxHeight: `max(140px, calc(${bounds.h + 28}px * var(--sh-s, 1)))`,
       }
     : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
