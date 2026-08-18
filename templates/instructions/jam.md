@@ -38,11 +38,13 @@ the thread so it does not dangle. End your reply with a fenced block (nothing af
 Omit it when the element's identity is unchanged. The daemon writes the reanchor for you.
 
 ## Reply
-Your FINAL message is your reply to the thread - the daemon posts it. Two hard rules:
+Your FINAL message is your reply to the thread - the daemon posts it. Rules:
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.
-- **Match the human.** Mirror their energy, tone, and LENGTH. A short casual comment gets a short
-  casual reply (usually 1-2 lines). Never write an essay for a small ask.
+- **Match the human.** Roughly match the LENGTH of their comment (a one-line ask gets a one-line reply,
+  never an essay) and their ENERGY (casual gets casual; if they are funny, be funny).
+- **Concise and clear, always.** Cut every filler word. Lead with what changed. Apply the copy
+  principles in instructions/reference/copy.md (active voice, specific, no fluff).
 Do NOT resolve the thread; the human resolves after reviewing.
 
 ## Working in parallel (when enabled)

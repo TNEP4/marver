@@ -915,7 +915,9 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    muted qualifier label after it, one fact per row, left-aligned. Overrides the house single-row
    `.sh-tip span` dim/right-drift so nothing washes out. */
 .sh-tip:has(.cm-meta-tip) { padding: 8px 12px }
-.sh-tip .cm-meta-tip { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; line-height: 1.2 }
+/* opacity:1 is the fix - .cm-meta-tip is a <span>, so the house `.sh-tip span{opacity:.55}` was
+   dimming the ENTIRE tooltip, and a child's opacity:1 can't undo a parent's reduced opacity. */
+.sh-tip .cm-meta-tip { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; line-height: 1.2; opacity: 1; font-size: 12.5px }
 .sh-tip .cm-meta-row { display: flex; gap: 8px; align-items: baseline; margin: 0; opacity: 1; font-size: 12.5px; white-space: nowrap }
 .sh-tip .cm-meta-row b { font-weight: 600; opacity: 1; margin: 0; color: var(--tip-ink) }        /* value: bold, full-bright */
 .sh-tip .cm-meta-row .k { margin: 0; opacity: .5; font-weight: 500; color: var(--tip-ink) }       /* label: muted qualifier */
