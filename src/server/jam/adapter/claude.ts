@@ -5,6 +5,7 @@
  * The model id lives under `modelUsage` (verified against claude 2.1.234, e.g.
  * `claude-opus-5[1m]`); we strip the `[..]` context-variant tag for a clean tooltip value.
  */
+import { extractReanchors } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 /** First key of an object, or undefined. */
@@ -23,14 +24,15 @@ export const claudeAdapter: JamAdapter = {
     }
   },
   parse(stdout, code) {
-    let reply = stdout.trim()
+    let text = stdout.trim()
     let model: string | undefined
     try {
       const j = JSON.parse(stdout) as Record<string, any>
-      if (typeof j.result === 'string') reply = j.result.trim()
+      if (typeof j.result === 'string') text = j.result.trim()
       const raw = (typeof j.model === 'string' ? j.model : undefined) ?? j.canonicalModel ?? firstKey(j.modelUsage)
       model = typeof raw === 'string' ? raw.replace(/\[[^\]]*\]$/, '') || undefined : undefined   // drop the [1m] variant tag
     } catch { /* not JSON (older CLI / error) - fall back to raw stdout as the reply */ }
-    return { reply, model, ok: code === 0 && !!reply }
+    const { reply, reanchors } = extractReanchors(text)
+    return { reply, model, reanchors, ok: code === 0 && !!reply }
   },
 }

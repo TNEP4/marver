@@ -4,14 +4,17 @@
  */
 import type { CommentEvent } from '../../shared/events.ts'
 
+/** A re-pin: the agent moved the commented element, so the whole thread follows (SPEC §11). */
+export interface Reanchor { thread: string; anchor: unknown }
+
 /** One agent CLI the daemon can spawn. M1 ships `claude`; M5 adds `codex`. */
 export interface JamAdapter {
   name: 'claude' | 'codex'
   supportsSubagents: boolean
   /** argv for a goal-phrased, workspace-jailed run over `goal`. Never full-access, never prompts. */
   spawnArgs(goal: string): { cmd: string; args: string[] }
-  /** Parse the agent's stdout + exit code into the reply text and best-effort model id. */
-  parse(stdout: string, code: number): { reply: string; model?: string; ok: boolean }
+  /** Parse the agent's stdout + exit code into the reply, best-effort model id, and any reanchors. */
+  parse(stdout: string, code: number): { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
 }
 
 /** A durable unit of work: the owner mentions batched into one orchestrated job. M1 forms

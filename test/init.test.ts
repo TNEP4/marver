@@ -22,6 +22,29 @@ afterEach(() => {
 const OPTS = { mode: 'studio' as const, demo: false }
 const read = (rel: string) => readFileSync(join(root, 'design', rel), 'utf8')
 
+describe('init: Live Jam scaffolding (SPEC-live-jam §M2)', () => {
+  it('scaffolds the jam playbook and routes to it from AGENTS.md', () => {
+    init(root, OPTS)
+    expect(existsSync(join(root, 'design', 'instructions', 'jam.md'))).toBe(true)
+    expect(read('instructions/jam.md')).toContain('marver-reanchor')
+    expect(read('AGENTS.md')).toContain('instructions/jam.md')
+  })
+  it('creates a root CLAUDE.md that @-imports design/AGENTS.md (Claude reads CLAUDE.md)', () => {
+    init(root, OPTS)
+    expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toContain('@design/AGENTS.md')
+  })
+  it('appends the import to an existing CLAUDE.md without clobbering it; idempotent on re-run', () => {
+    writeFileSync(join(root, 'CLAUDE.md'), '# My project\n\nMy own rules.\n')
+    init(root, OPTS)
+    const after = readFileSync(join(root, 'CLAUDE.md'), 'utf8')
+    expect(after).toContain('My own rules.')        // human bytes preserved
+    expect(after).toContain('@design/AGENTS.md')     // import appended
+    init(root, OPTS)                                  // re-run
+    const again = readFileSync(join(root, 'CLAUDE.md'), 'utf8')
+    expect((again.match(/@design\/AGENTS\.md/g) ?? []).length).toBe(1)   // not duplicated
+  })
+})
+
 describe('init: the method layer (0.2.2)', () => {
   it('scaffolds instructions/ with hashed markers, and setup.md in a no-app repo', () => {
     init(root, OPTS)

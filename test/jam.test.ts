@@ -164,6 +164,45 @@ describe('Live Jam M1: the daemon spine (SPEC-live-jam §3)', () => {
   })
 })
 
+describe('Live Jam M2: reanchor (SPEC-live-jam §11)', () => {
+  it('extractReanchors pulls a trailing block and strips it from the visible reply', async () => {
+    const { extractReanchors } = await import('../src/server/jam/packet.ts')
+    const text = 'Renamed the button.\n```marver-reanchor\n[{"thread":"t1","anchor":{"quote":"Get Started"}}]\n```'
+    const out = extractReanchors(text)
+    expect(out.reply).toBe('Renamed the button.')
+    expect(out.reanchors).toEqual([{ thread: 't1', anchor: { quote: 'Get Started' } }])
+  })
+  it('no block → the reply passes through unchanged, no reanchors', async () => {
+    const { extractReanchors } = await import('../src/server/jam/packet.ts')
+    expect(extractReanchors('just a reply')).toEqual({ reply: 'just a reply', reanchors: [] })
+  })
+  it('malformed block is dropped, the reply stays readable', async () => {
+    const { extractReanchors } = await import('../src/server/jam/packet.ts')
+    expect(extractReanchors('done\n```marver-reanchor\nnot json\n```')).toEqual({ reply: 'done', reanchors: [] })
+  })
+  it('the daemon writes a reanchor event and replay re-pins the whole thread', async () => {
+    const { root, dir, done } = setup()
+    const tid = 'thread-fixed-1'
+    const envelope = JSON.stringify({ result: 'Renamed + re-pinned.\n```marver-reanchor\n[{"thread":"thread-fixed-1","anchor":{"quote":"Get Started","semantics":{"tag":"button","testId":"cta2"}}}]\n```', modelUsage: { 'claude-opus-5': {} } })
+    const reanchorAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(envelope)})`] } },
+      parse: claudeAdapter.parse,
+    }
+    const jam = createJam(root, CFG, reanchorAdapter)   // baseline over the empty log, THEN post
+    appendEvents(dir, 'home', [{ id: tid, ts: Date.now(), type: 'create', commentId: tid, frame: 'demo/hero', nodeKey: 'demo/hero', anchor: { quote: 'Learn more' }, author: { email: 'nic@local', name: 'Nic' }, body: '@marver rename this button' }])
+    record(root, tid)
+    await jam.tick(); jam.stop()
+    const events = readLog(dir, 'home')
+    expect(events.some((e) => e.type === 'reanchor' && e.commentId === tid)).toBe(true)
+    const thread = replay(events).find((t) => t.id === tid)
+    expect(thread?.anchor).toEqual({ quote: 'Get Started', semantics: { tag: 'button', testId: 'cta2' } })
+    // the reply itself has the block stripped
+    expect(thread?.replies[0]?.body).toBe('Renamed + re-pinned.')
+    done()
+  })
+})
+
 describe('Live Jam M1: packet (SPEC-live-jam §5)', () => {
   it('a @marver reply inherits frame/nodeKey/anchor from the root thread (replies carry none)', () => {
     const rootId = randomUUID(), replyId = randomUUID()
@@ -183,11 +222,11 @@ describe('Live Jam M1: packet (SPEC-live-jam §5)', () => {
 describe('Live Jam M1: claude adapter parse (real envelope shape, claude 2.1.234)', () => {
   it('pulls reply from .result and a clean model from modelUsage (strips the [1m] variant tag)', () => {
     const env = JSON.stringify({ result: 'Done — CTA now reads Get Started.', modelUsage: { 'claude-opus-5[1m]': { input: 1 } } })
-    expect(claudeAdapter.parse(env, 0)).toEqual({ reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true })
+    expect(claudeAdapter.parse(env, 0)).toEqual({ reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true, reanchors: [] })
   })
   it('non-JSON stdout falls back to raw text; exit code drives ok', () => {
-    expect(claudeAdapter.parse('plain text reply', 0)).toEqual({ reply: 'plain text reply', model: undefined, ok: true })
-    expect(claudeAdapter.parse('', 1)).toEqual({ reply: '', model: undefined, ok: false })
+    expect(claudeAdapter.parse('plain text reply', 0)).toEqual({ reply: 'plain text reply', model: undefined, ok: true, reanchors: [] })
+    expect(claudeAdapter.parse('', 1)).toEqual({ reply: '', model: undefined, ok: false, reanchors: [] })
   })
 })
 

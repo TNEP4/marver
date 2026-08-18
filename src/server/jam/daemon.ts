@@ -28,7 +28,7 @@ import { claudeAdapter } from './adapter/claude.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, goalText, threadId } from './packet.ts'
 import { scanPending, triggers, allEventIds } from './watch.ts'
-import type { Batch, JamAdapter, Journal, Pending } from './types.ts'
+import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
 
 const LEASE_MS = 5 * 60_000
 const JOB_TIMEOUT_MS = 5 * 60_000
@@ -53,25 +53,26 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let stopped = false
   let activeChild: ChildProcess | null = null
 
-  const runAgent = (goal: string, onSpawn: (pid?: number) => void): Promise<{ reply: string; model?: string; ok: boolean }> =>
+  type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
+  const runAgent = (goal: string, onSpawn: (pid?: number) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const { cmd, args } = adapter.spawnArgs(goal)
       let child: ChildProcess
       // stderr is discarded at the OS level: an undrained pipe would fill and block the child.
       try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'] }) }
-      catch { return resolve({ reply: '', ok: false }) }
+      catch { return resolve({ reply: '', ok: false, reanchors: [] }) }
       activeChild = child
       onSpawn(child.pid)
       let out = ''
       let settled = false
-      const settle = (r: { reply: string; model?: string; ok: boolean }) => {
+      const settle = (r: AgentRun) => {
         if (settled) return
         settled = true; clearTimeout(to); if (activeChild === child) activeChild = null; resolve(r)
       }
-      const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', ok: false }) }, JOB_TIMEOUT_MS)
+      const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', ok: false, reanchors: [] }) }, JOB_TIMEOUT_MS)
       child.stdout?.on('data', (d: Buffer) => { out += d; if (out.length > MAX_OUT) out = out.slice(-MAX_OUT) })
       child.on('close', (code) => settle(adapter.parse(out, code ?? 1)))
-      child.on('error', () => settle({ reply: '', ok: false }))
+      child.on('error', () => settle({ reply: '', ok: false, reanchors: [] }))
     })
 
   const writeReply = (b: Batch, p: Pending, body: string, model?: string) => {
@@ -84,6 +85,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       agent: true, agentMeta: { devUser: me.name, harness: adapter.name, model },
     }
     appendEvents(commentsDir, b.board, [reply])
+  }
+
+  /** Emit reanchor events for threads the agent re-pinned (SPEC §11). Owner-authored + agent:true
+   *  (attributable, never re-triggers), deterministic ids so a re-run dedups. */
+  const emitReanchors = (b: Batch, reanchors: Reanchor[]) => {
+    if (!reanchors.length) return
+    const me = localProfile(root)
+    const events: CommentEvent[] = reanchors.map((r, i) => ({
+      id: `jam-ra-${b.batchId}-${i}`, ts: Date.now(), type: 'reanchor',
+      commentId: r.thread, anchor: r.anchor, board: b.board, author: me,
+      agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
+    }))
+    appendEvents(commentsDir, b.board, events)
   }
 
   const finish = (b: Batch) => { journal.batches = journal.batches.filter((x) => x.batchId !== b.batchId); persist() }
@@ -104,8 +118,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) return
     if (run.ok) {
       writeReply(b, p, run.reply, run.model)
+      emitReanchors(b, run.reanchors)
       finish(b)
-      log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}`)
+      log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${run.reanchors.length ? ` · re-pinned ${run.reanchors.length}` : ''}`)
     } else if (b.attempts >= MAX_ATTEMPTS) {
       writeReply(b, p, "I couldn't finish that one. Try rephrasing, or check the dev logs.", run.model)
       finish(b)
