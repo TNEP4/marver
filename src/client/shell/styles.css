@@ -902,15 +902,15 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
-.cm-avatar.cm-marver { width: 24px; height: 24px; background: var(--accent); color: #fff; cursor: default }
-.cm-avatar.cm-marver svg { width: 15px; height: 15px }   /* the marver mark, white duotone on accent */
+.cm-avatar.cm-marver { background: var(--accent); color: #fff; cursor: default }   /* the marver mark, solid white on accent */
+.cm-marver-wrap { display: inline-flex; border-radius: 50% }
 .cm-marver-name { color: var(--glass-ink) }              /* black, not blue */
-/* provenance tooltip: one row per fact, left-aligned, bold label + regular value - overrides the
-   house single-row `.sh-tip span` treatment (which dims + right-drifts every span). */
-.sh-tip .cm-meta-tip { display: flex; flex-direction: column; align-items: stretch; gap: 4px; line-height: 1.4 }
-.sh-tip .cm-meta-row { display: flex; gap: 16px; width: 100%; margin: 0; opacity: 1; font-size: 12px }
-.sh-tip .cm-meta-row b { font-weight: 600; opacity: 1; margin: 0 }
-.sh-tip .cm-meta-row .v { margin-left: auto; opacity: .72; font-weight: 400; font-size: 12px }
+/* provenance tooltip: one fact per row, LEFT-aligned tight pairs, bold bright label + readable value -
+   matches the house menu tooltip's contrast. Overrides the single-row `.sh-tip span` dim/right-drift. */
+.sh-tip .cm-meta-tip { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; line-height: 1.25 }
+.sh-tip .cm-meta-row { display: flex; gap: 10px; align-items: baseline; margin: 0; opacity: 1; font-size: 12.5px; white-space: nowrap }
+.sh-tip .cm-meta-row b { font-weight: 600; opacity: 1; margin: 0; color: var(--tip-ink) }
+.sh-tip .cm-meta-row .v { margin: 0 0 0 auto; padding-left: 14px; opacity: .68; font-weight: 500; color: var(--tip-ink) }
 /* identity modal - same glass family */
 .cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.45); backdrop-filter: blur(5px) }

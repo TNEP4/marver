@@ -6,7 +6,7 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { useComments } from './comments-store.ts'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
@@ -848,7 +848,7 @@ function JamToast({ id, note }: { id: number; note: import('./store.ts').JamNote
   const dismiss = () => useStore.getState().dismissToast(id)
   return (
     <div className="sh-toast jam">
-      <span className="sh-jam-mark"><ParallelogramDuoIcon size={15} /></span>
+      <span className="sh-jam-mark"><ParallelogramFillIcon size={15} /></span>
       <div className="sh-jam-txt">
         <b>Marver replied</b>
         <span className="sh-jam-prev">{note.preview}</span>

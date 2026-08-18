@@ -9,7 +9,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
-import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramDuoIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { parseMentions } from './mentions.ts'
 import { ROUTE } from '../const.ts'
@@ -44,7 +44,18 @@ const rel = (ts: number) => {
   return `${Math.round(m / 1440)}d`
 }
 
-export function Avatar({ author, size = 22 }: { author?: { email?: string; name?: string; avatar?: string }; size?: number }) {
+/** The Marver mark avatar: accent-blue disc + the solid white parallelogram. One place, reused
+ *  by the thread header, the pin/stack marker, and the notification pill. */
+export function MarverAvatar({ size = 24 }: { size?: number }) {
+  return (
+    <span className="cm-avatar cm-marver" style={{ width: size, height: size }} aria-label="Marver">
+      <ParallelogramFillIcon size={Math.round(size * 0.6)} />
+    </span>
+  )
+}
+
+export function Avatar({ author, size = 22 }: { author?: { email?: string; name?: string; avatar?: string; agent?: boolean }; size?: number }) {
+  if (author?.agent) return <MarverAvatar size={size} />   // Marver shows as its own participant
   if (author?.avatar) return <img className="cm-avatar" src={author.avatar} width={size} height={size} alt="" />
   const { initials, hue } = avatarFallback(author)
   return (
@@ -54,7 +65,7 @@ export function Avatar({ author, size = 22 }: { author?: { email?: string; name?
   )
 }
 
-type Face = { email?: string; name?: string; avatar?: string }
+type Face = { email?: string; name?: string; avatar?: string; agent?: boolean }
 
 /** The signal a marker (pin or stack) carries: WHO took part and HOW MANY comments
  *  in total - root + every reply, across all the given threads. Unique participants
@@ -62,13 +73,18 @@ type Face = { email?: string; name?: string; avatar?: string }
 function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
   const seen = new Map<string, Face>()
   let count = 0
-  // namespace the identity key so an email can never collide with someone's name,
-  // and normalize email case; authorless comments collapse to one 'anon' face
-  const add = (a?: Face) => { if (a) { const k = a.email ? `e:${a.email.toLowerCase()}` : a.name ? `n:${a.name}` : 'anon'; if (!seen.has(k)) seen.set(k, a) } }
+  // namespace the identity key so an email can never collide with someone's name, and normalize
+  // email case; authorless comments collapse to one 'anon' face. An AGENT message is its own
+  // participant ("Marver"), NOT the owner who authored it - so the marker shows N + Marver.
+  const add = (a: Face | undefined, agent?: boolean) => {
+    const face: Face | undefined = agent ? { agent: true } : a
+    const k = agent ? 'marver' : a?.email ? `e:${a.email.toLowerCase()}` : a?.name ? `n:${a.name}` : 'anon'
+    if (face && !seen.has(k)) seen.set(k, face)
+  }
   for (const t of threads) {
     count += 1 + t.replies.length
-    add(t.author)
-    for (const r of t.replies) add(r.author)
+    add(t.author, t.agent)
+    for (const r of t.replies) add(r.author, r.agent)
   }
   return { faces: [...seen.values()], count }
 }
@@ -233,7 +249,7 @@ function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author
   if (agent) return (
     <header>
       <Tip side="top" label={<AgentMetaTip meta={agentMeta} />}>
-        <span className="cm-avatar cm-marver" aria-label="Marver"><ParallelogramDuoIcon size={15} /></span>
+        <span className="cm-marver-wrap"><MarverAvatar size={24} /></span>
       </Tip>
       <b className="cm-marver-name">Marver</b>
       <span className="dim">{rel(ts)}</span>
