@@ -147,11 +147,12 @@ sections below.** Full detail + evidence in `DERISK-live-jam.md`.
    spawn model (no pull loop); §3.4 rewritten to the single portable structured result the daemon
    captures and writes (reply + reanchors) in-process; token CLI is optional (interim replies only).
    §11/§15 reanchor now flows through the result, not a required CLI. See §3.3, §3.4.
-6. 🟡 **PARTLY DONE (branch)** — `reanchor` added to the published validator (`collab.ts`), dev POST
-   strips client `agent`/`agentMeta`/`origin` (`api.ts`), replay guards null anchors, `origin` demoted
-   to informational (auth is the ledger, item 1). **Still open: sync semantics for agent replies** —
-   decide whether `agent:true` replies sync to the published canvas (they can, owner-authored) or stay
-   local; reconcile §7 vs Non-goals. *(One small decision, not a blocker.)*
+6. ✅ **RESOLVED (branch + decided)** — `reanchor` added to the published validator (`collab.ts`), dev
+   POST strips client `agent`/`agentMeta`/`origin` (`api.ts`), replay guards null anchors, `origin`
+   demoted to informational (auth is the ledger, item 1). **Sync semantics decided (§7 [v10]): v1 agent
+   replies are DEV-LOCAL** — `syncOnce` filters `agent:true`, the published validator rejects client-set
+   `agent`/`agentMeta`, and publishing agent replies is **P3** (needs a trusted dev-sync path). §7 and
+   Non-goals now agree; nothing open.
 
 **Empirical results this round (trial-and-error):** ✅ CLI-swap — the same daemon ran with Claude *and*
 Codex (one flag differs, §VALIDATED). ✅ Same-frame parallel is a **race** (both edits landed only by
@@ -334,13 +335,14 @@ on those agents.)
   required, so it is portable across every agent.
 - **Optional enhancement (Claude/Cursor only):** a `marver jam reply` loopback CLI with a one-time job
   token lets a worker post **interim/progress** replies mid-run. Never the primary path; never required.
-- The public dev POST still strips any client-set `agent`/`origin` (§7), so the **token path is the
-  only way an `agent:true` event is ever written** — spoofing stays impossible.
-- This also lets a worker post an interim/progress reply, not just a final message.
+- The public dev POST still strips any client-set `agent`/`origin` (§7), so the **daemon's in-process
+  writer is the only way an `agent:true` event is ever written** — spoofing stays impossible.
 
-**3.5 What wakes the work.** The daemon holds the durable queue; in the Claude path the main agent
-pulls (`marver jam next`), in the Codex path the daemon spawns. Either way the durable queue
-guarantees **at-least-once** delivery — the fix to the old "bridge is not an executor" gap.
+**3.5 What wakes the work.** The daemon holds the durable batch journal (§3.2) and **spawns one main
+agent per batch** (§3.3) — there is no agent-side pull loop for any adapter (VALIDATED correction #1).
+A dir-watch + ~5s rescan wakes it; it reconciles the logs against the journal by event id and forms the
+next batch from unclaimed owner mentions. The durable journal guarantees **at-least-once** delivery —
+the fix to the old "bridge is not an executor" gap.
 
 **3.6 Context batch — awareness, not a trigger  [v6].** Alongside the `@marver` action jobs, the
 daemon can hand the main agent a **batch of new / unresolved comments that are NOT tagged**, so the

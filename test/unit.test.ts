@@ -194,6 +194,94 @@ describe('loadConfig (spec §4)', async () => {
   })
 })
 
+describe('Live Jam M0: config.jam (SPEC-live-jam §M0)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { loadConfig } = await import('../src/server/config.ts')
+  const load = async (src: string) => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-jam-'))
+    mkdirSync(join(root, 'design'))
+    writeFileSync(join(root, 'design/config.ts'), src)
+    const c = await loadConfig(root)
+    rmSync(root, { recursive: true, force: true })
+    return c
+  }
+  it('no jam block → Live Jam stays off (undefined)', async () => {
+    expect((await load(`export default { port: 6001 }\n`)).jam).toBeUndefined()
+  })
+  it('jam without an agent → off (a stray jam:{} never arms the daemon)', async () => {
+    expect((await load(`export default { jam: {} }\n`)).jam).toBeUndefined()
+  })
+  it('bad agent → off', async () => {
+    expect((await load(`export default { jam: { agent: 'gpt' } }\n`)).jam).toBeUndefined()
+  })
+  it('agent set → armed with lean defaults', async () => {
+    expect((await load(`export default { jam: { agent: 'claude' } }\n`)).jam)
+      .toEqual({ agent: 'claude', concurrency: 3, subagents: true, proactive: false })
+  })
+  it('explicit fields respected; out-of-range concurrency falls back; proactive opt-in', async () => {
+    expect((await load(`export default { jam: { agent: 'codex', concurrency: 99, subagents: false, proactive: true } }\n`)).jam)
+      .toEqual({ agent: 'codex', concurrency: 3, subagents: false, proactive: true })
+  })
+})
+
+describe('Live Jam M0: authorization ledger (SPEC-live-jam §1)', async () => {
+  const { mkdtempSync, rmSync, statSync, appendFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { has, record } = await import('../src/server/jam/ledger.ts')
+
+  it('record then has → true; an unrecorded (e.g. synced-in) id → false', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'evt-owner-1')
+    expect(has(root, 'evt-owner-1')).toBe(true)
+    expect(has(root, 'evt-synced-remote')).toBe(false)   // the anti-spoof invariant
+    expect(has(root, '')).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('has() on a fresh repo (no ledger file) → false, never throws', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    expect(has(root, 'anything')).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('ledger file is 0600 (owner-only)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'evt-1')
+    const mode = statSync(join(root, 'design', '.local', 'jam-ledger')).mode & 0o777
+    expect(mode).toBe(0o600)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('a torn final line (interrupted append) is tolerated, real ids still match', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'evt-1')
+    appendFileSync(join(root, 'design', '.local', 'jam-ledger'), 'evt-2-torn-no-newline')  // no trailing \n
+    expect(has(root, 'evt-1')).toBe(true)
+    expect(has(root, 'evt-2-torn-no-newline')).toBe(true)   // last line, no newline, still exact-matches
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('Live Jam M0: owner gate (SPEC-live-jam §1, CSRF double-submit + Origin)', async () => {
+  const { ownerGated } = await import('../src/server/api.ts')
+  const req = (headers: Record<string, string>) => ({ headers })
+  it('cookie mv_c echoed as x-mv-c, same-origin → allowed', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok123', 'x-mv-c': 'tok123', origin: 'http://localhost:5200' }))).toBe(true)
+  })
+  it('no cookie → rejected (the drive-by that never got mv_c)', () => {
+    expect(ownerGated(req({ 'x-mv-c': 'tok123', origin: 'http://localhost:5200' }))).toBe(false)
+  })
+  it('header does not match cookie → rejected (cannot forge without reading the cookie)', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=real', 'x-mv-c': 'guess', origin: 'http://localhost:5200' }))).toBe(false)
+  })
+  it('foreign Origin → rejected even with a matching double-submit', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'https://evil.example.com' }))).toBe(false)
+  })
+  it('absent Origin falls back to the cookie proof (same-origin requests may omit Origin)', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok' }))).toBe(true)
+  })
+})
+
 describe('variant groups (SPEC-023 §1)', () => {
   const mk = (id: string, extra: Record<string, unknown> = {}) =>
     ({ id, file: `design/scenes/${id}.tsx`, kind: 'tsx', scene: id.split('/')[0], ...extra }) as any

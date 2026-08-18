@@ -3,6 +3,13 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export interface Viewport { width: number; height: number }
+/** Live Jam (SPEC-live-jam): the dev-server daemon config. `agent` unset = Live Jam off. */
+export interface JamConfig {
+  agent?: 'claude' | 'codex'   // which CLI the daemon spawns; unset = off
+  concurrency: number          // frames built at once within a batch (default 3)
+  subagents: boolean           // fan-out one subagent per frame (default true)
+  proactive: boolean           // P2, inert in v1: act on the owner's untagged backlog (default false)
+}
 export interface ShConfig {
   mode: 'studio' | 'embedded'
   theme: string | null
@@ -15,6 +22,8 @@ export interface ShConfig {
    *  name/logo override the auto-detected gate identity (host package.json name;
    *  design/logo.svg|png → public/logo.* → public/favicon.svg → the Marver mark). */
   share: { branding: boolean; name?: string; logo?: string }
+  /** Live Jam daemon; undefined until the user opts in with a `jam.agent`. */
+  jam?: JamConfig
 }
 
 export const DEFAULTS: ShConfig = {
@@ -53,6 +62,7 @@ export async function loadConfig(root: string): Promise<ShConfig> {
         name: typeof (user.share as any)?.name === 'string' ? (user.share as any).name : undefined,
         logo: typeof (user.share as any)?.logo === 'string' ? (user.share as any).logo : undefined,
       },
+      jam: validJam(user.jam),
     }
     return cfg
   } catch (err) {
@@ -69,6 +79,21 @@ function validPort(n: unknown): number | null {
 
 function validZoom(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) && n >= 0.1 && n <= 10 ? n : null
+}
+
+/** Normalize the jam block. An unknown/missing `agent` means Live Jam stays OFF (returns undefined),
+ *  so a stray `jam: {}` never silently arms the daemon. Other fields fall back to lean defaults. */
+function validJam(v: unknown): JamConfig | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const j = v as Partial<JamConfig>
+  if (j.agent !== 'claude' && j.agent !== 'codex') return undefined
+  const concurrency = typeof j.concurrency === 'number' && Number.isInteger(j.concurrency) && j.concurrency >= 1 && j.concurrency <= 16 ? j.concurrency : 3
+  return {
+    agent: j.agent,
+    concurrency,
+    subagents: j.subagents !== false,   // default on
+    proactive: j.proactive === true,    // default off (and inert in v1)
+  }
 }
 
 function validViewports(v: unknown): Record<string, Viewport> | null {
