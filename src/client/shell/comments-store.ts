@@ -64,7 +64,18 @@ export const useComments = create<CommentsState>((set, get) => {
     if (!replies.length) return
     void import('./store.ts').then(({ useStore }) => {
       const board = get().board ?? ''
-      for (const e of replies) useStore.getState().jamToast({ threadId: e.parentId ?? e.commentId ?? '', board, preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90) })
+      const s = useStore.getState()
+      for (const e of replies) {
+        const threadId = e.parentId ?? e.commentId ?? ''
+        // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
+        const frame = get().threads.find((t) => t.id === threadId)?.frame
+        const entry = frame ? s.manifest?.frames.find((f) => f.id === frame) : undefined
+        s.jamToast({
+          threadId, board, ts: e.ts,
+          preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
+          frame, frameTitle: entry?.title ?? frame, intent: entry?.intent,
+        })
+      }
     })
   }
   const union = (events: CommentEvent[]) => {

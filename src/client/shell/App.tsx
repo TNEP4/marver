@@ -836,28 +836,78 @@ export function App() {
         : CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
       <UpdatePill />
 
-      <div className="sh-toasts">
-        {toasts.slice(-3).map((t) => t.jam
-          ? <JamToast key={t.id} id={t.id} note={t.jam} />
-          : <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
-        {toasts.length > 3 && <div className="sh-toast sh-toast-more">+{toasts.length - 3} more</div>}
-      </div>
+      <JamToasts toasts={toasts} />
     </div>
   )
 }
 
-/** The Live Jam reply pill (SPEC-live-jam §9): a compact glass card, marver mark + preview, View + close. */
-function JamToast({ id, note }: { id: number; note: import('./store.ts').JamNote }) {
+/** Relative age for notification pills: now, 45s, 3m, 2h. */
+function relAge(ts: number): string {
+  const s = Math.max(0, (Date.now() - ts) / 1000)
+  if (s < 20) return 'now'
+  if (s < 60) return `${Math.round(s)}s`
+  if (s < 3600) return `${Math.round(s / 60)}m`
+  return `${Math.round(s / 3600)}h`
+}
+
+/** The bottom-right notification corner (SPEC-live-jam §9). Plain toasts render as before.
+ *  Jam pills are FRAME-FIRST (icon + frame title, then Marver · preview) and stack as a DECK:
+ *  1-2 show in full; 3+ collapse to the newest pill with two card edges peeking beneath and a
+ *  +N badge - click to expand the full list (newest first, timestamps, Clear all). */
+function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const plain = toasts.filter((t) => !t.jam)
+  const jams = toasts.filter((t) => t.jam)
+  useEffect(() => { if (jams.length <= 2) setExpanded(false) }, [jams.length])
+  const deck = jams.length > 2 && !expanded
+  const newest = jams[jams.length - 1]
+  return (
+    <div className="sh-toasts">
+      {plain.slice(-2).map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
+      {expanded && jams.length > 2 && (
+        <div className="sh-jam-list">
+          <div className="sh-jam-listhead">
+            <span>{jams.length} NOTIFICATIONS</span>
+            <button onClick={() => { useStore.getState().clearJamToasts(); setExpanded(false) }}>Clear all</button>
+            <button aria-label="Collapse" onClick={() => setExpanded(false)}><XIcon size={12} /></button>
+          </div>
+          {[...jams].reverse().map((t) => <JamToast key={t.id} id={t.id} note={t.jam!} />)}
+        </div>
+      )}
+      {!expanded && (deck
+        ? (
+          <div className="sh-jam-deck" onClick={() => setExpanded(true)} role="button" aria-label={`${jams.length} notifications - expand`}>
+            <div className="sh-jam-ghost g2" />
+            <div className="sh-jam-ghost g1" />
+            {newest?.jam && <JamToast id={newest.id} note={newest.jam} badge={jams.length - 1} inert />}
+          </div>
+        )
+        : jams.map((t) => <JamToast key={t.id} id={t.id} note={t.jam!} />))}
+    </div>
+  )
+}
+
+/** One jam pill, frame-first: row 1 = intent icon + FRAME TITLE (blue) · age; row 2 = Marver · preview.
+ *  `badge` shows the +N deck count (replacing View); `inert` disables inner clicks (the deck handles it). */
+function JamToast({ id, note, badge, inert }: { id: number; note: import('./store.ts').JamNote; badge?: number; inert?: boolean }) {
   const dismiss = () => useStore.getState().dismissToast(id)
   return (
     <div className="sh-toast jam">
       <span className="sh-jam-mark"><ParallelogramFillIcon size={13} /></span>
       <div className="sh-jam-txt">
-        <b>Marver replied</b>
-        <span className="sh-jam-prev">{note.preview}</span>
+        <b className="sh-jam-frame">
+          {note.intent ? <IntentGlyph intent={note.intent} size={11} /> : <FrameRectIcon size={11} />}
+          <span className="t">{note.frameTitle ?? note.board}</span>
+          <span className="age">{relAge(note.ts)}</span>
+        </b>
+        <span className="sh-jam-prev"><b>Marver</b> · {note.preview}</span>
       </div>
-      <button className="sh-jam-view" onClick={() => { revealThread(note.threadId); dismiss() }}>View</button>
-      <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
+      {badge != null
+        ? <span className="sh-jam-badge">+{badge}</span>
+        : !inert && <>
+            <button className="sh-jam-view" onClick={() => { revealThread(note.threadId); dismiss() }}>View</button>
+            <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
+          </>}
     </div>
   )
 }

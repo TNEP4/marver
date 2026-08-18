@@ -588,9 +588,36 @@ body.sh-commenting .sh-lean { opacity: 0 }
 :root { --mv-blue: #0088ff }
 .sh-jam-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--mv-blue); color: rgba(255,255,255,.9);
   display: inline-flex; align-items: center; justify-content: center }
-.sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25 }
-.sh-jam-txt b { font-size: 12.5px; font-weight: 600; color: var(--mv-blue) }
+.sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.3 }
+/* row 1: the FRAME is the news - intent icon + title in blue, age at the end */
+.sh-jam-frame { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--mv-blue); min-width: 0 }
+.sh-jam-frame svg { flex: none }
+.sh-jam-frame .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-jam-frame .age { margin-left: auto; flex: none; font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+/* row 2: Marver (black) · the message, one line */
 .sh-jam-prev { font-size: 11.5px; color: var(--glass-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-jam-prev b { font-weight: 600; color: var(--glass-ink) }
+
+/* the DECK (3+): newest pill on top, two card edges peeking beneath; +N badge; click to expand */
+.sh-jam-deck { position: relative; cursor: pointer }
+.sh-jam-deck .sh-toast.jam { position: relative; margin: 0 }
+.sh-jam-ghost { position: absolute; left: 0; right: 0; height: 100%; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass) }
+.sh-jam-ghost.g1 { top: 6px; left: 5px; right: 5px; opacity: .8 }
+.sh-jam-ghost.g2 { top: 12px; left: 11px; right: 11px; opacity: .5 }
+.sh-jam-deck { margin-bottom: 12px }   /* room for the peeking edges */
+.sh-jam-badge { flex: none; font: 700 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink);
+  background: var(--glass-hover); border-radius: 999px; padding: 4px 9px }
+
+/* the EXPANDED list: newest first, header with count + Clear all, scrolls past ~6 */
+.sh-jam-list { display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+  max-height: min(60vh, 520px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  padding: 2px }
+.sh-jam-listhead { display: flex; align-items: center; gap: 8px; padding: 0 6px;
+  font: 700 10px -apple-system, system-ui, sans-serif; letter-spacing: .06em; color: var(--glass-ink-3) }
+.sh-jam-listhead button { margin-left: auto; border: 0; background: none; cursor: pointer;
+  font: 600 11px -apple-system, system-ui, sans-serif; color: var(--mv-blue); padding: 3px 6px }
+.sh-jam-listhead button + button { margin-left: 0; color: var(--glass-ink-3); display: inline-flex }
 .sh-jam-view { flex: none; border: 0; border-radius: 999px; padding: 5px 12px; cursor: pointer;
   background: var(--mv-blue); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; transition: filter .15s }
 .sh-jam-view:hover { filter: brightness(1.08) }
@@ -883,6 +910,8 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
   box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
+/* the open pin's tail flips TOWARD its card: card on the left -> tail bottom-right (mirrored) */
+.cm-pin.tail-l { border-radius: 18px 18px 4px 18px }
 
 /* stack: the frame-corner cluster - everyone across the frame's threads */
 .cm-stack { position: absolute; top: 10px; right: 10px; z-index: 30;
@@ -907,8 +936,14 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    stays pinned at the bottom. */
 .cm-card.floating { position: fixed; transform: none; width: 320px; max-height: min(72vh, 660px);
   z-index: 60; overflow: hidden }
+.cm-scrollwrap { position: relative; display: flex; flex-direction: column; min-height: 0 }
 .cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
   overscroll-behavior: contain; scrollbar-width: thin }
+/* scroll shadows: the "there is more" affordance, theme-aware (fade from the card's glass tone) */
+.cm-shadow { position: absolute; left: 0; right: 0; height: 26px; pointer-events: none; z-index: 2 }
+.cm-shadow.top { top: 0; background: linear-gradient(180deg, var(--cm-fade, rgba(252,252,253,.96)), transparent) }
+.cm-shadow.bot { bottom: 0; background: linear-gradient(0deg, var(--cm-fade, rgba(252,252,253,.96)), transparent) }
+.sh-app.dark .cm-shadow { --cm-fade: rgba(24,24,28,.94) }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }

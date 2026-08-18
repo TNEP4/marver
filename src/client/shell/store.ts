@@ -34,8 +34,8 @@ export interface Node {
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
 }
 /** A Live Jam notification (SPEC-live-jam §9): a persistent bottom-right glass pill for a Marver
- *  reply, carrying the thread it points at so "View" can reveal it. */
-export interface JamNote { threadId: string; board: string; preview: string }
+ *  reply. Frame-first: the FRAME is the news (icon + title, blue), Marver + preview below. */
+export interface JamNote { threadId: string; board: string; preview: string; ts: number; frame?: string; frameTitle?: string; intent?: string }
 export interface Toast { id: number; text: string; jam?: JamNote }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string } = shConfig
@@ -174,6 +174,7 @@ interface State {
   toast(text: string): void
   jamToast(note: JamNote): void
   dismissToast(id: number): void
+  clearJamToasts(): void
   /** Frames Marver is editing right now (Live Jam presence, SPEC §10) - drives the working glow. */
   working: string[]
   /** When each working frame's job started (ms epoch) - phases the animations so parallel
@@ -851,6 +852,7 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text: 'Marver replied', jam: note }].slice(-8) }))
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
+    clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
     setWorking(frames) {
       // preserve each frame's original start time; stamp now() only for newly-working frames -
       // the start phases the working animations so parallel frames never pulse in sync

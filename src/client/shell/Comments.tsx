@@ -157,6 +157,8 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     // active/draft/show/activeShown are the triggers; `open` is read fresh from the closure
   }, [active, draft, show, activeShown, node.status, node.key, frameId, iframe])
 
+  // the open card's frozen side (D3) - a HOOK, so it must live above the early returns
+  const sideRef = useRef<{ id: string; side: 'l' | 'r' } | null>(null)
   const drafting = draft?.nodeKey === node.key
   if (!show || (!open.length && !drafting)) return null
 
@@ -179,12 +181,38 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     return { x: (p?.fx ?? 0.94) * node.w, y: (p?.fy ?? 0.06) * node.h, orphan: false }
   }
 
+  // The card's SIDE, chosen ONCE per open and frozen (D3 - never switches mid-read): the pin's
+  // side of the frame first, skipping a side another frame's screen rect occupies, then wherever
+  // the viewport has room. The active pin's teardrop tail flips toward this side.
+  const activeThread2 = active ? open.find((t) => t.id === active) : undefined
+  if (activeThread2 && sideRef.current?.id !== activeThread2.id) {
+    const compute = (): 'l' | 'r' => {
+      const W = 320, GAP = 30
+      const rect = document.querySelector(`[data-node="${CSS.escape(node.key)}"]`)?.getBoundingClientRect()
+      if (!rect) return 'r'
+      const occupied = (s: 'l' | 'r') => {
+        const rx = s === 'r' ? rect.right + 10 : rect.left - 10 - W
+        return [...document.querySelectorAll('.sh-node')].some((n) => {
+          if (n.getAttribute('data-node') === node.key) return false
+          const r = n.getBoundingClientRect()
+          return r.left < rx + W && r.right > rx && r.top < rect.bottom && r.bottom > rect.top
+        })
+      }
+      const room = (s: 'l' | 'r') => (s === 'r' ? window.innerWidth - rect.right : rect.left) >= W + GAP
+      const prefer: ('l' | 'r')[] = pinPos(activeThread2).x < node.w / 2 ? ['l', 'r'] : ['r', 'l']
+      return prefer.find((s) => room(s) && !occupied(s)) ?? prefer.find(room) ?? prefer[0]
+    }
+    sideRef.current = { id: activeThread2.id, side: compute() }
+  }
+  const cardSide: 'l' | 'r' = sideRef.current?.side ?? 'r'
+
   return (
     <>
       {open.map((t) => {
         const { x, y, orphan } = pinPos(t)
+        const isActive = t.id === active
         return (
-          <div key={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}`}
+          <div key={t.id} className={`cm-pin sh-no-pan${isActive ? ' on' : ''}${isActive && cardSide === 'l' ? ' tail-l' : ''}${orphan ? ' orphan' : ''}`}
             style={{ left: x, top: y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
@@ -193,8 +221,8 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
           </div>
         )
       })}
-      {active && open.some((t) => t.id === active) && (
-        <ThreadCard key={active} thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} />
+      {activeThread2 && (
+        <ThreadCard key={active} thread={activeThread2} at={pinPos(activeThread2)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} side={cardSide} />
       )}
       {draft?.nodeKey === node.key && <DraftComposer at={{ x: ((draft.anchor as any)?.rect?.x ?? 0) + ((draft.anchor as any)?.pos?.fx ?? 0.5) * ((draft.anchor as any)?.rect?.w ?? 0), y: ((draft.anchor as any)?.rect?.y ?? 0) + ((draft.anchor as any)?.pos?.fy ?? 0.5) * ((draft.anchor as any)?.rect?.h ?? 0) }} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />}
     </>
@@ -317,7 +345,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   )
 }
 
-export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string }) {
+export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r' }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r' }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
@@ -330,29 +358,55 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
   // Canvas: the PIN lives in the world (zooms with the frame); the OPEN CARD is UI - a fixed
-  // screen-space panel that never zooms or pans with the canvas. Positioned ONCE on open, beside
-  // the frame on the pin's side, fully clamped into the viewport; long threads scroll INSIDE the
-  // card (composer pinned, opened at the latest message). Play keeps the in-stage placement.
+  // screen-space panel that never zooms or scales. The SIDE is chosen once at open (D3) - the
+  // pin's side first, skipping a side a neighbouring frame occupies, then viewport room. The
+  // POSITION is GLUED to the frame's edge (D1): an rAF loop tracks the frame's screen rect
+  // through pan/zoom (style writes, no re-renders), clamped into the viewport - so when the
+  // frame leaves the screen the card parks at the nearest edge until closed (D2). Long threads
+  // scroll INSIDE (composer pinned, opened at the latest message); Play keeps in-stage placement.
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [float] = useState<{ x: number; y: number } | null>(() => {
-    if (!nodeKey) return null
-    const W = 320, M = 12
-    const maxH = Math.min(window.innerHeight * 0.72, 660)
-    const rect = document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)?.getBoundingClientRect()
-    if (!rect) return { x: window.innerWidth / 2 - W / 2, y: 80 }
-    const scale = useStore.getState().scale || 1
-    const pinY = rect.top + (28 + at.y) * scale
-    const roomR = window.innerWidth - rect.right >= W + 30
-    const roomL = rect.left >= W + 30
-    const side = at.x < bounds.w / 2 ? (roomL ? 'l' : 'r') : (roomR ? 'r' : 'l')   // pin's side first
-    const x = Math.min(Math.max(side === 'r' ? rect.right + 18 : rect.left - 18 - W, M), window.innerWidth - W - M)
-    const y = Math.min(Math.max(pinY - 36, M), Math.max(M, window.innerHeight - maxH - M))
-    return { x, y }
-  })
+  const cardRef = useRef<HTMLDivElement>(null)
+  const float = !!nodeKey
+  useEffect(() => {
+    if (!float || !nodeKey) return
+    const W = 320, M = 12, GAP = 18
+    const el = () => document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)
+    let raf = 0
+    const track = () => {
+      raf = requestAnimationFrame(track)
+      const card = cardRef.current
+      const rect = el()?.getBoundingClientRect()
+      if (!card || !rect) return
+      const scale = useStore.getState().scale || 1
+      const maxH = Math.min(window.innerHeight * 0.72, 660)
+      const pinY = rect.top + (28 + at.y) * scale
+      const x = Math.min(Math.max(side === 'r' ? rect.right + GAP : rect.left - GAP - W, M), window.innerWidth - W - M)
+      const y = Math.min(Math.max(pinY - 36, M), Math.max(M, window.innerHeight - maxH - M))
+      // write only on change - zero layout churn while idle
+      const lx = `${Math.round(x)}px`, ly = `${Math.round(y)}px`
+      if (card.style.left !== lx) card.style.left = lx
+      if (card.style.top !== ly) card.style.top = ly
+    }
+    raf = requestAnimationFrame(track)
+    return () => cancelAnimationFrame(raf)
+  }, [float, nodeKey, side, at.y])
+  // scroll shadows: "there is more" above/below - recomputed on scroll + content growth
+  const [shadows, setShadows] = useState({ top: false, bot: false })
+  const syncShadows = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const top = el.scrollTop > 4
+    const bot = el.scrollTop + el.clientHeight < el.scrollHeight - 4
+    setShadows((s) => (s.top === top && s.bot === bot ? s : { top, bot }))
+  }
   // open at the LATEST message (what you came to read); follow new replies while open
-  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight }, [thread.replies.length])
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+    syncShadows()
+  }, [thread.replies.length])
   const flip = !float && at.x > bounds.w * 0.55
-  const pos = float ? { left: float.x, top: float.y } : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
+  const pos = float ? {} : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
   const submit = async () => {
@@ -360,7 +414,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   const card = (
-    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ' floating' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ' floating' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
@@ -386,16 +440,20 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
           <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
       </div>
-      <div className="cm-scroll" ref={scrollRef}>
-        <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
-        <CommentBody body={thread.body} owner={isOwner(thread.author)} />
-        {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
-        {thread.replies.map((r) => (
-          <div key={r.id} className="cm-msg">
-            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
-            <CommentBody body={r.body} owner={isOwner(r.author)} />
-          </div>
-        ))}
+      <div className="cm-scrollwrap">
+        {shadows.top && <div className="cm-shadow top" aria-hidden />}
+        <div className="cm-scroll" ref={scrollRef} onScroll={syncShadows}>
+          <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
+          <CommentBody body={thread.body} owner={isOwner(thread.author)} />
+          {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
+          {thread.replies.map((r) => (
+            <div key={r.id} className="cm-msg">
+              <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
+              <CommentBody body={r.body} owner={isOwner(r.author)} />
+            </div>
+          ))}
+        </div>
+        {shadows.bot && <div className="cm-shadow bot" aria-hidden />}
       </div>
       {canComment ? (
         <div className="cm-compose">
