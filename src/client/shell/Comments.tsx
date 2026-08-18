@@ -193,7 +193,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         )
       })}
       {active && open.some((t) => t.id === active) && (
-        <ThreadCard key={active} thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} bounds={{ w: node.w, h: node.h }} />
+        <ThreadCard key={active} thread={open.find((t) => t.id === active)!} at={pinPos(open.find((t) => t.id === active)!)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} />
       )}
       {draft?.nodeKey === node.key && <DraftComposer at={{ x: ((draft.anchor as any)?.rect?.x ?? 0) + ((draft.anchor as any)?.pos?.fx ?? 0.5) * ((draft.anchor as any)?.rect?.w ?? 0), y: ((draft.anchor as any)?.rect?.y ?? 0) + ((draft.anchor as any)?.pos?.fy ?? 0.5) * ((draft.anchor as any)?.rect?.h ?? 0) }} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />}
     </>
@@ -316,7 +316,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   )
 }
 
-export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number } }) {
+export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
@@ -328,7 +328,22 @@ export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: nu
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
-  const flip = at.x > bounds.w * 0.55
+  // Canvas cards DOCK OUTSIDE the frame (the pin stays on the element; the card must never cover
+  // the artwork). Side is VIEWPORT-aware: measured once per open - whichever side of the frame has
+  // room for the 300px card on screen wins (more-room side when neither fits). Play keeps the
+  // classic at-the-pin placement (one centered device, nothing to cover).
+  const [dock] = useState<'r' | 'l' | null>(() => {
+    if (!nodeKey) return null
+    const rect = document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)?.getBoundingClientRect()
+    if (!rect) return 'r'
+    const spaceR = window.innerWidth - rect.right
+    const spaceL = rect.left
+    return spaceR >= 340 || spaceR >= spaceL ? 'r' : 'l'
+  })
+  const flip = dock ? dock === 'l' : at.x > bounds.w * 0.55
+  const pos = dock
+    ? { left: dock === 'r' ? bounds.w : 0, top: Math.max(0, Math.min(at.y - 8, bounds.h - 160)) }
+    : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
   const submit = async () => {
@@ -336,7 +351,7 @@ export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: nu
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   return (
-    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(anchorHue(thread.anchor)) }}
+    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${dock ? ` dock-${dock}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
