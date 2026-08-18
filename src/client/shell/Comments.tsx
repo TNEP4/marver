@@ -9,7 +9,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
-import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramDuoIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { parseMentions } from './mentions.ts'
 import { ROUTE } from '../const.ts'
@@ -210,16 +210,21 @@ function prettyModel(m: string): string {
   return cleaned.replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/** The provenance tooltip on the Marver avatar: who orchestrated the change (SPEC §7). */
+/** The provenance tooltip on the Marver avatar: who orchestrated the change (SPEC §7).
+ *  One row per fact, left-aligned, bold label + regular value - the house tooltip treatment. */
 function AgentMetaTip({ meta }: { meta?: AgentMeta }) {
   const rows = [
-    meta?.devUser && `Dev user: ${meta.devUser}`,
-    meta?.harness && `Harness: ${HARNESS[meta.harness] ?? meta.harness}`,
-    meta?.model && `Model: ${prettyModel(meta.model)}`,
-    meta?.effort && `Effort: ${meta.effort}`,
-  ].filter(Boolean) as string[]
+    meta?.devUser && ['Dev user', meta.devUser],
+    meta?.harness && ['Harness', HARNESS[meta.harness] ?? meta.harness],
+    meta?.model && ['Model', prettyModel(meta.model)],
+    meta?.effort && ['Effort', meta.effort],
+  ].filter(Boolean) as [string, string][]
   if (!rows.length) return <b>Marver</b>
-  return <span className="cm-meta-tip">{rows.map((r, i) => <span key={i}>{r}</span>)}</span>
+  return (
+    <span className="cm-meta-tip">
+      {rows.map(([k, v]) => <span key={k} className="cm-meta-row"><b>{k}</b><span className="v">{v}</span></span>)}
+    </span>
+  )
 }
 
 /** A message header. Agent messages render as "Marver" with the mark + provenance tooltip;
@@ -228,7 +233,7 @@ function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author
   if (agent) return (
     <header>
       <Tip side="top" label={<AgentMetaTip meta={agentMeta} />}>
-        <span className="cm-avatar cm-marver" aria-label="Marver">M</span>
+        <span className="cm-avatar cm-marver" aria-label="Marver"><ParallelogramDuoIcon size={15} /></span>
       </Tip>
       <b className="cm-marver-name">Marver</b>
       <span className="dim">{rel(ts)}</span>
