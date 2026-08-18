@@ -10,11 +10,11 @@ import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from
 export const HEADER = 28
 const SNAP = 12
 
-/** Live Jam working shimmer (SPEC §10): a 3x6 matrix of tiny marver marks on the frame's left
+/** Live Jam working shimmer (SPEC §10): a slim 2x6 strip of tiny marver marks on the frame's left
  *  flank, top-aligned - each mark twinkles on its own scattered beat, phased per frame by
  *  --mv-w0 (set on the node) so parallel frames never pulse in sync. */
-const SHIM_DELAYS = Array.from({ length: 18 }, (_, i) => {
-  const r = Math.floor(i / 3), c = i % 3
+const SHIM_DELAYS = Array.from({ length: 12 }, (_, i) => {
+  const r = Math.floor(i / 2), c = i % 2
   return (((r * 7 + c * 13) % 9) / 9) * 0.95
 })
 function WorkShimmer({ belowBadge }: { belowBadge: boolean }) {
