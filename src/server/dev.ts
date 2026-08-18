@@ -158,5 +158,15 @@ export async function dev(root: string, portFlag?: number) {
   }
   void tick()
   setInterval(tick, 30_000).unref()
+
+  // Live Jam (SPEC-live-jam §3): the dev server IS the daemon. Off unless the user set jam.agent.
+  if (config.jam?.agent) {
+    const { startJam } = await import('./jam/daemon.ts')
+    const jam = startJam(root, config.jam, (m) => console.log(m))
+    if (jam) {
+      const close = server.close.bind(server)
+      server.close = (async () => { jam.stop(); return close() }) as typeof server.close
+    }
+  }
   return server
 }
