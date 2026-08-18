@@ -250,13 +250,15 @@ function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author
 
 /** An auto-growing composer with the full keybindings: Enter send, Shift+Enter newline,
  *  Cmd/Ctrl+Enter send, Escape cancel; IME-guarded, disabled while a send is in flight. */
-function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFocus, sendLabel }: {
+function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFocus, sendLabel, owner }: {
   value: string; onChange: (v: string) => void; onSubmit: () => void | Promise<unknown>
-  onCancel?: () => void; placeholder: string; autoFocus?: boolean; sendLabel: string
+  onCancel?: () => void; placeholder: string; autoFocus?: boolean; sendLabel: string; owner: boolean
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
+  const hlRef = useRef<HTMLDivElement>(null)
   const [busy, setBusy] = useState(false)
   const grow = () => { const el = ref.current; if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 132) + 'px' } }
+  const syncScroll = () => { if (hlRef.current && ref.current) hlRef.current.scrollTop = ref.current.scrollTop }
   useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
   useEffect(grow, [value])
   const submit = async () => {
@@ -266,8 +268,16 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   }
   return (
     <div className="cm-inputwrap">
-      <textarea ref={ref} rows={1} value={value} placeholder={placeholder} disabled={busy}
-        onChange={(e) => onChange(e.target.value)} onInput={grow}
+      {/* Live mention highlight: a mirror layer behind the transparent-text textarea, so @marver shows
+          its trigger colour AS YOU TYPE (owner = accent-blue "this will run"; else muted). SPEC §1. */}
+      <div className="cm-hl" ref={hlRef} aria-hidden>
+        {parseMentions(value).map((s, i) => s.mention
+          ? <span key={i} className={owner ? 'cm-at owner' : 'cm-at'}>{s.text}</span>
+          : <span key={i}>{s.text}</span>)}
+        {value.endsWith('\n') ? '​' : ''}
+      </div>
+      <textarea ref={ref} rows={1} value={value} placeholder={placeholder} disabled={busy} spellCheck={false}
+        onChange={(e) => onChange(e.target.value)} onInput={grow} onScroll={syncScroll}
         onKeyDown={(e) => {
           e.stopPropagation()
           if (e.key === 'Escape') { onCancel?.(); return }
@@ -344,7 +354,7 @@ export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: nu
       {canComment ? (
         <div className="cm-compose">
           <Avatar author={me ?? undefined} size={24} />
-          <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={() => setActive(null)} placeholder="Reply…" sendLabel="Send" />
+          <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={() => setActive(null)} placeholder="Reply…" sendLabel="Send" owner={local} />
         </div>
       ) : (
         <button className="cm-signin-cta" onClick={() => useComments.setState({ needsIdentity: true })}>
@@ -359,13 +369,14 @@ export function ThreadCard({ thread, at, bounds }: { thread: Thread; at: { x: nu
  *  the picked element's hue. */
 export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number }; bounds: { w: number; h: number }; hue?: number }) {
   const { create, setDraft } = useComments.getState()
+  const local = useComments((s) => s.local)
   const [text, setText] = useState('')
   const flip = at.x > bounds.w * 0.55
   return (
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <div className="cm-compose">
-        <CommentInput value={text} onChange={setText} onSubmit={() => create(text)} onCancel={() => setDraft(null)} placeholder="Comment on this element…" autoFocus sendLabel="Comment" />
+        <CommentInput value={text} onChange={setText} onSubmit={() => create(text)} onCancel={() => setDraft(null)} placeholder="Comment on this element…" autoFocus sendLabel="Comment" owner={local} />
       </div>
     </div>
   )

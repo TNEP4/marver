@@ -863,11 +863,18 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    Multiline: Enter sends, Shift+Enter is a newline (Live Jam §6). The textarea grows 1-6 rows. */
 .cm-compose { display: flex; align-items: flex-end; gap: 8px }
 .cm-inputwrap { position: relative; flex: 1; min-width: 0 }
-.cm-inputwrap textarea { display: block; width: 100%; min-height: 36px; max-height: 132px; box-sizing: border-box;
-  padding: 8px 42px 8px 15px; border-radius: 18px; resize: none; overflow-y: auto;
-  border: 1px solid var(--glass-brd); background: var(--cm-field); color: var(--glass-ink);
-  font: 400 13px/1.4 -apple-system, system-ui, sans-serif; outline: none;
-  transition: border-color .15s, box-shadow .15s }
+/* the mirror layer (.cm-hl) and the textarea share an IDENTICAL box so the caret + styled text align
+   exactly. The textarea sits on top with TRANSPARENT text + bg (caret visible); .cm-hl behind paints the
+   field + the styled text, so @marver shows its trigger colour live as you type (Live Jam §1). */
+.cm-inputwrap textarea, .cm-hl { box-sizing: border-box; width: 100%; min-height: 36px; max-height: 132px;
+  margin: 0; padding: 8px 42px 8px 15px; border: 1px solid transparent; border-radius: 18px;
+  font: 400 13px/1.4 -apple-system, system-ui, sans-serif; letter-spacing: normal;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word }
+.cm-hl { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  background: var(--cm-field); color: var(--glass-ink) }
+.cm-inputwrap textarea { position: relative; z-index: 1; display: block; resize: none; overflow-y: auto;
+  background: transparent; color: transparent; caret-color: var(--glass-ink);
+  border-color: var(--glass-brd); outline: none; transition: border-color .15s, box-shadow .15s }
 .cm-inputwrap textarea::placeholder { color: var(--glass-ink-3) }
 .cm-inputwrap textarea:focus { border-color: var(--cm-line, var(--comment)); box-shadow: 0 0 0 3px var(--cm-line-ring, var(--comment-ring)) }
 .cm-inputwrap textarea:disabled { opacity: .6; cursor: default }
@@ -884,7 +891,8 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* the draft composer is JUST the pill - no card chrome around a single input */
 .cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
   backdrop-filter: none; -webkit-backdrop-filter: none }
-.cm-draft textarea { min-height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
+.cm-draft textarea, .cm-draft .cm-hl { min-height: 40px }
+.cm-draft textarea { box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
 .cm-draft .cm-send { right: 6px }   /* nudge in for the taller draft pill */
 
 /* Live Jam: @marver mention styling. Owner-authored = a live trigger (bold accent-blue);
