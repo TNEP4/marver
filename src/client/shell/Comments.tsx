@@ -329,20 +329,41 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(copyTimer.current), [])
   // Canvas cards DOCK OUTSIDE the frame (the pin stays on the element; the card must never cover
-  // the artwork). Side is VIEWPORT-aware: measured once per open - whichever side of the frame has
-  // room for the 300px card on screen wins (more-room side when neither fits). Play keeps the
-  // classic at-the-pin placement (one centered device, nothing to cover).
+  // the artwork). Side selection, in order: (1) the side NEAREST the pin, (2) not on top of a
+  // NEIGHBOURING frame, (3) enough viewport room for the 300px card. Vertically the card tracks
+  // the pin but is clamped - by its MEASURED height - to stay inside the frame's span, starting
+  // slightly below the top. Play keeps the classic at-the-pin placement.
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [cardH, setCardH] = useState(420)   // world-px estimate until measured
+  const inv = 1 / (useStore((s) => s.scale) || 1)
   const [dock] = useState<'r' | 'l' | null>(() => {
     if (!nodeKey) return null
-    const rect = document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)?.getBoundingClientRect()
-    if (!rect) return 'r'
-    const spaceR = window.innerWidth - rect.right
-    const spaceL = rect.left
-    return spaceR >= 340 || spaceR >= spaceL ? 'r' : 'l'
+    const s = useStore.getState()
+    const me2 = s.nodes.find((n) => n.key === nodeKey)
+    if (!me2) return 'r'
+    const iv = 1 / (s.scale || 1)
+    const cw = 300 * iv, ch = 420 * iv, gap = 18 * iv
+    const y0 = me2.y + Math.max(16 * iv, Math.min(at.y - 36 * iv, me2.h - ch))
+    const rectFor = (side: 'r' | 'l') => side === 'r'
+      ? { x: me2.x + me2.w + gap, y: y0, w: cw, h: ch }
+      : { x: me2.x - gap - cw, y: y0, w: cw, h: ch }
+    const coveredByFrame = (r: { x: number; y: number; w: number; h: number }) =>
+      s.nodes.some((n) => n.key !== nodeKey && n.x < r.x + r.w && n.x + n.w > r.x && n.y < r.y + r.h && n.y + n.h > r.y)
+    const vp = document.querySelector(`[data-node="${CSS.escape(nodeKey)}"]`)?.getBoundingClientRect()
+    const room = (side: 'r' | 'l') => !vp || (side === 'r' ? window.innerWidth - vp.right : vp.left) >= 340
+    const prefer: ('r' | 'l')[] = at.x < bounds.w / 2 ? ['l', 'r'] : ['r', 'l']
+    return prefer.find((side) => room(side) && !coveredByFrame(rectFor(side)))   // free + fits
+      ?? prefer.find(room)                                                      // fits on screen
+      ?? prefer[0]                                                              // pin's side
   })
+  // re-clamp with the REAL card height once rendered (est 420 was often short - bottom pins hung
+  // below the frame instead of riding up inside its span)
+  useEffect(() => {
+    if (dock && cardRef.current) setCardH(cardRef.current.offsetHeight * inv)
+  }, [dock, inv, thread.replies.length, text])
   const flip = dock ? dock === 'l' : at.x > bounds.w * 0.55
   const pos = dock
-    ? { left: dock === 'r' ? bounds.w : 0, top: Math.max(0, Math.min(at.y - 8, bounds.h - 160)) }
+    ? { left: dock === 'r' ? bounds.w : 0, top: Math.max(16 * inv, Math.min(at.y - 36 * inv, bounds.h - cardH)) }
     : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
@@ -351,7 +372,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey }: { thread: Thread; at
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   return (
-    <div data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${dock ? ` dock-${dock}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${dock ? ` dock-${dock}` : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
