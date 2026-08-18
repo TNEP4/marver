@@ -265,20 +265,23 @@ describe('Live Jam M0: authorization ledger (SPEC-live-jam §1)', async () => {
 describe('Live Jam M0: owner gate (SPEC-live-jam §1, CSRF double-submit + Origin)', async () => {
   const { ownerGated } = await import('../src/server/api.ts')
   const req = (headers: Record<string, string>) => ({ headers })
-  it('cookie mv_c echoed as x-mv-c, same-origin → allowed', () => {
-    expect(ownerGated(req({ cookie: 'mv_c=tok123', 'x-mv-c': 'tok123', origin: 'http://localhost:5200' }))).toBe(true)
+  it('cookie mv_c echoed as x-mv-c, same-origin (host:port matches) → allowed', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok123', 'x-mv-c': 'tok123', origin: 'http://localhost:5200', host: 'localhost:5200' }))).toBe(true)
   })
   it('no cookie → rejected (the drive-by that never got mv_c)', () => {
-    expect(ownerGated(req({ 'x-mv-c': 'tok123', origin: 'http://localhost:5200' }))).toBe(false)
+    expect(ownerGated(req({ 'x-mv-c': 'tok123', origin: 'http://localhost:5200', host: 'localhost:5200' }))).toBe(false)
   })
   it('header does not match cookie → rejected (cannot forge without reading the cookie)', () => {
-    expect(ownerGated(req({ cookie: 'mv_c=real', 'x-mv-c': 'guess', origin: 'http://localhost:5200' }))).toBe(false)
+    expect(ownerGated(req({ cookie: 'mv_c=real', 'x-mv-c': 'guess', origin: 'http://localhost:5200', host: 'localhost:5200' }))).toBe(false)
   })
   it('foreign Origin → rejected even with a matching double-submit', () => {
-    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'https://evil.example.com' }))).toBe(false)
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'https://evil.example.com', host: 'localhost:5200' }))).toBe(false)
+  })
+  it('another localhost PORT → rejected (cookies are not port-scoped; the same-origin host:port check catches it)', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'http://localhost:9999', host: 'localhost:5200' }))).toBe(false)
   })
   it('absent Origin falls back to the cookie proof (same-origin requests may omit Origin)', () => {
-    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok' }))).toBe(true)
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', host: 'localhost:5200' }))).toBe(true)
   })
 })
 
