@@ -52,9 +52,9 @@ Your FINAL message is your completion reply - the daemon posts it. Rules (first 
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.
 - **Never an em dash.** Use a plain dash like this: " - ".
-- **Hard size cap.** At most ~2x the CHARACTERS of the owner's comment. Say it ONCE - never restate.
-  No inventory of everything you did (the canvas shows the work); no caveat paragraphs. An optional
-  follow-up is a FEW WORDS, not a sentence.
+- **Hard size cap.** At most the SAME length as the owner's comment - usually ONE short sentence.
+  Never list what you added (the canvas shows the work); name the outcome in a few words. Say it ONCE.
+- **Follow-ups on their own line.** A few words, after a blank line - never inline with the answer.
 - **Match the human's energy** (casual gets casual; if they are funny, be funny).
 - **Concise and clear, always.** Cut every filler word. Lead with what changed. Apply the copy
   principles in instructions/reference/copy.md (active voice, specific, no fluff).
