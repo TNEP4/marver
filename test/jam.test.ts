@@ -216,6 +216,25 @@ describe('Live Jam M5: bounded parallelism + codex adapter (SPEC-live-jam §12, 
     done()
   })
 
+  it('a mention arriving MID-RUN starts immediately - never waits for the running job', async () => {
+    const { root, dir, done } = setup()
+    const active = new Set<string | undefined>()
+    let overlapped = false
+    const jam = createJam(root, { ...CFG, concurrency: 4 }, slowAdapter, undefined,
+      { work: (f, on) => { on ? active.add(f) : active.delete(f); if (active.size >= 2) overlapped = true } })
+    appendEvents(dir, 'home', [owner('m1', 'demo/hero', '@marver first')])
+    record(root, 'home', 'm1')
+    const first = jam.tick()                    // starts the slow job (~120ms)
+    await new Promise((r) => setTimeout(r, 30)) // mid-run...
+    appendEvents(dir, 'home', [owner('m2', 'demo/pricing', '@marver second')])
+    record(root, 'home', 'm2')
+    const second = jam.tick()                   // the wake for the new mention
+    await Promise.all([first, second]); jam.stop()
+    expect(agentReplies(dir, 'home').length).toBe(2)
+    expect(overlapped).toBe(true)               // both frames were working AT THE SAME TIME
+    done()
+  })
+
   it('codex adapter parses JSONL - the last agent_message is the reply', () => {
     const jsonl = [
       JSON.stringify({ type: 'thread.started', thread_id: 't1' }),

@@ -32,8 +32,8 @@ import { buildMember, buildPacket, goalText, threadId } from './packet.ts'
 import { scanPending, triggers, allEventIds } from './watch.ts'
 import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
 
-const LEASE_MS = 5 * 60_000
-const JOB_TIMEOUT_MS = 5 * 60_000
+const LEASE_MS = 12 * 60_000
+const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
 const MAX_ATTEMPTS = 2
 const MAX_OUT = 2_000_000
 const RESCAN_MS = 5_000
@@ -59,7 +59,6 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let journal: Journal = baseline(root, allEventIds(commentsDir))
   const persist = () => write(root, (journal = { ...journal }))
 
-  let running = false
   let stopped = false
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
@@ -142,17 +141,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const threads = replay(readLog(commentsDir, b.board))
     const member = buildMember(p, threads)
     const packet = buildPacket(b.batchId, [member])
-    // Presence glow (SPEC §10/§13): the frame is "working" for the whole run. For a net-new frame
-    // the node appears only once the agent scaffolds it, then picks up the glow from this set.
+    // Presence glow (SPEC §10/§13): the frame is "working" for the WHOLE run - a heartbeat keeps
+    // the activity lease alive (long jobs run many minutes; a one-shot mark lapsed at 90s and the
+    // glow died mid-job). The glow clears ONLY when the job ends (done or terminal failure).
     hooks.work?.(member.frame, true)
+    const beat = setInterval(() => hooks.work?.(member.frame, true), 30_000)
+    beat.unref?.()
     // The agent's FIRST line streams out within seconds - post it live (its own ack, or its
     // clarifying question). Real output, not a canned placeholder.
     let earlyBody: string | undefined
-    const run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text) => {
-      earlyBody = text
-      writeReply(b, p, text, undefined, 'early')
-      hooks.changed?.(b.board)
-    })
+    let run: Awaited<ReturnType<typeof runAgent>>
+    try {
+      run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text) => {
+        earlyBody = text
+        writeReply(b, p, text, undefined, 'early')
+        hooks.changed?.(b.board)
+      })
+    } finally { clearInterval(beat) }
     if (stopped) { hooks.work?.(member.frame, false); return }
     if (run.ok) {
       // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
@@ -170,7 +175,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       finish(b)
       log(`  jam: gave up on ${b.board} after ${b.attempts} attempts`)
     } else {
-      b.state = 'pending'; persist()   // retry on the next tick; keep the glow (still in progress)
+      b.state = 'pending'; persist()   // retried by the chain; keep the glow (still in progress)
     }
   }
 
@@ -182,47 +187,84 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return b
   }
 
+  // ---- the continuous scheduler (SPEC §12) --------------------------------------------------
+  // Claim-on-sight, per-FRAME serial chains, a GLOBAL concurrency cap, and a pump that starts a
+  // new chain the moment a mention lands - even while other agents are mid-run. (The old
+  // single-flight tick made a new ask wait for the ENTIRE current run to finish - Nic hit a
+  // 6.5-minute stall firing a second comment during a long job.) The same frame file never has
+  // two agents (per-key queue = strict serial); different frames run concurrently up to
+  // jam.concurrency. Claiming is SYNCHRONOUS (scan -> claim -> enqueue with no await between),
+  // so overlapping wakes can never double-claim an event.
+  const chains = new Map<string, { items: { b: Batch; p: Pending }[]; running: boolean }>()
+  let activeChains = 0
+
+  const frameKey = (p: Pending): string => {
+    // the EFFECTIVE frame: a reply inherits the root thread's frame, and a frame file is global
+    // across boards - so replies on one thread and the same file on two boards both serialize
+    if (p.event.frame) return `f:${p.event.frame}`
+    const rt = replay(readLog(commentsDir, p.board)).find((t) => t.id === threadId(p.event))
+    return rt?.frame ? `f:${rt.frame}` : `t:${threadId(p.event) || p.event.id}`
+  }
+
+  const pump = () => {
+    if (stopped) return
+    for (const [key, q] of chains) {
+      if (activeChains >= Math.max(1, cfg.concurrency)) break
+      if (q.running || !q.items.length) continue
+      q.running = true
+      activeChains += 1
+      void (async () => {
+        try {
+          while (!stopped && q.items.length) {
+            const job = q.items.shift()!
+            try { await runBatch(job.b, job.p) } catch (err) { log(`  jam: batch error - ${(err as Error).message}`) }
+            if (job.b.state === 'pending') q.items.push(job)   // failed attempt - retry after the rest of the chain
+          }
+        } finally {
+          q.running = false
+          activeChains -= 1
+          if (!q.items.length) chains.delete(key)
+          pump()
+        }
+      })()
+    }
+  }
+
+  const enqueue = (b: Batch, p: Pending) => {
+    const key = frameKey(p)
+    const q = chains.get(key) ?? { items: [], running: false }
+    q.items.push({ b, p })
+    chains.set(key, q)
+    pump()
+  }
+
+  /** All work idle - every chain drained. Lets `tick()` stay awaitable (tests, orderly shutdown). */
+  const idle = () => new Promise<void>((res) => {
+    const check = () => { if (stopped || (activeChains === 0 && chains.size === 0)) res(); else setTimeout(check, 25) }
+    check()
+  })
+
+  let resumed = false
   const tick = async () => {
-    if (running || stopped) return
-    running = true
+    if (stopped) return
     try {
-      // 1. resume batches a dead process left behind (fence the orphan, re-validate, re-run, §3.2)
-      for (const b of [...journal.batches]) {
-        if (stopped) break
-        if (b.state !== 'claimed' && b.state !== 'pending') continue
-        if (b.state === 'claimed') fenceGroup(b.pgid)   // an orphan may still be editing
-        const p = resolveMember(b.board, b.memberEventIds[0])
-        if (p) await runBatch(b, p)
-        else finish(b)   // no longer authorized/present → drop, never run stale/foreign content
-      }
-      // 2. claim new owner-ledgered mentions, grouped into per-FRAME serial chains that run
-      //    bounded-parallel (SPEC §12): several frames build at once (multi-frame glow), but the
-      //    SAME frame FILE never has two agents (non-negotiable). The key is the EFFECTIVE frame
-      //    (a reply inherits the root thread's frame, and a frame file is global across boards),
-      //    so replies on one thread and the same file shown on two boards both serialize.
-      //    Honest residual: two concurrent jobs on DIFFERENT frames could still touch a shared
-      //    component file - the goal-phrased re-run reconciles if so.
-      if (!stopped) {
-        const boardThreads = new Map<string, ReturnType<typeof replay>>()
-        const threadsOf = (b: string) => boardThreads.get(b) ?? (boardThreads.set(b, replay(readLog(commentsDir, b))).get(b)!)
-        const frameKey = (p: Pending): string => {
-          if (p.event.frame) return `f:${p.event.frame}`
-          const rt = threadsOf(p.board).find((t) => t.id === threadId(p.event))
-          return rt?.frame ? `f:${rt.frame}` : `t:${threadId(p.event) || p.event.id}`
+      // 1. once per daemon life: resume batches a dead process left behind (fence + re-validate, §3.2)
+      if (!resumed) {
+        resumed = true
+        for (const b of [...journal.batches]) {
+          if (b.state !== 'claimed' && b.state !== 'pending') continue
+          if (b.state === 'claimed') fenceGroup(b.pgid)   // an orphan may still be editing
+          const p = resolveMember(b.board, b.memberEventIds[0])
+          if (p) enqueue(b, p)
+          else finish(b)   // no longer authorized/present → drop, never run stale/foreign content
         }
-        const chains = new Map<string, Pending[]>()
-        for (const p of scanPending(root, commentsDir, journal)) {
-          const key = frameKey(p)
-          const arr = chains.get(key) ?? []
-          arr.push(p); chains.set(key, arr)
-        }
-        await runPool([...chains.values()].map((ps) => async () => {
-          for (const p of ps) { if (stopped) break; await runBatch(claim(p), p) }
-        }), Math.max(1, cfg.concurrency))
       }
+      // 2. claim new owner-ledgered mentions IMMEDIATELY (sync) and pump
+      for (const p of scanPending(root, commentsDir, journal)) enqueue(claim(p), p)
     } catch (err) {
       log(`  jam: tick error - ${(err as Error).message}`)
-    } finally { running = false }
+    }
+    await idle()
   }
 
   return {
@@ -230,15 +272,6 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     stop() { stopped = true; for (const c of activeChildren) fenceGroup(c.pid) },
     snapshot() { return journal },
   }
-}
-
-/** Run thunks with a concurrency cap. Same-frame chains are already serial within a thunk. A
- *  thunk that throws is caught (its batch stays claimed and resumes next tick); the pool ALWAYS
- *  drains every worker before returning, so the tick never releases while a job is still live. */
-async function runPool(thunks: (() => Promise<void>)[], limit: number): Promise<void> {
-  const q = [...thunks]
-  const worker = async () => { while (q.length) { const t = q.shift(); if (t) { try { await t() } catch { /* batch resumes next tick */ } } } }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, q.length || 1)) }, worker))
 }
 
 /** Start the daemon inside the dev server. `onActivity` receives the set of frames currently being
