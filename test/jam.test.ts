@@ -428,6 +428,22 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     done()
   })
 
+  it('marver-reply block: ONLY the block is posted - narration around it is discarded', async () => {
+    const { root, dir, done } = setup()
+    const final = 'I explored the theme system and rewrote the aurora gradients with per-step hue tints, then added the Tailwind dark variant hook...\n\n```marver-reply\nDone - both themes now, dark keeps the aurora.\n\nWant profile matched?\n```'
+    const resultLine = JSON.stringify({ type: 'result', result: final, modelUsage: {} })
+    const blockAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(resultLine)})`] } },
+      parse: claudeAdapter.parse,
+    }
+    const jam = createJam(root, CFG, blockAdapter)
+    ownerMention(root, dir, 'home', '@marver keep refining - both themes')
+    await jam.tick(); jam.stop()
+    expect(agentReplies(dir, 'home')[0]?.body).toBe('Done - both themes now, dark keeps the aurora.\n\nWant profile matched?')
+    done()
+  })
+
   it('em/en dashes are normalized to plain dashes in every posted reply', async () => {
     const { root, dir, done } = setup()
     const resultLine = JSON.stringify({ type: 'result', result: 'Marks are in — official SVGs – no lookalikes.', modelUsage: {} })

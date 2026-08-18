@@ -4,7 +4,7 @@
  * the final agent_message is the reply. Codex has no in-process subagents, so a Codex job edits
  * its frames sequentially - correct, just no parallel-frame glow within one job.
  */
-import { extractReanchors } from '../packet.ts'
+import { extractReanchors, extractReplyBlock } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 export const codexAdapter: JamAdapter = {
@@ -36,7 +36,8 @@ export const codexAdapter: JamAdapter = {
       } catch { /* non-JSON line (banner) - skip */ }
     }
     // NO fallback to raw stdout: a status-only or error stream must not become a bogus reply.
-    const { reply, reanchors } = extractReanchors(text)
+    const { reply: visible, reanchors } = extractReanchors(text)
+    const reply = extractReplyBlock(visible)
     return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

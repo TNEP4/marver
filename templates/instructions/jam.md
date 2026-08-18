@@ -54,7 +54,14 @@ Your FIRST message is ONE short line to the owner, posted the moment you write i
   explain a terse ask). If that unlocks it, ack and proceed.
 - STILL unclear after looking around -> ONE clarifying question, then stop without editing.
 
-Your FINAL message is your completion reply - the daemon posts it. Rules (first line and final):
+Your completion reply goes in a fenced block at the end of your run - the daemon posts ONLY what
+is inside it and discards everything else you say (narration never reaches the thread):
+```
+```marver-reply
+<your reply>
+```
+```
+Rules (first line and the marver-reply block):
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.
 - **Never an em dash.** Use a plain dash like this: " - ".

@@ -85,8 +85,8 @@ export function goalText(packet: JobPacket): string {
     '  or curl an image asset into design/assets/ and reference it. Fetch visuals when they lift the design.',
     '',
     'PREFER edits that keep the element\'s tag / data-testid / visible text, so the comment pin self-heals.',
-    'If you RENAMED or MOVED the commented element so its old anchor no longer matches, re-pin the thread:',
-    'end your reply with a fenced block (nothing after it) listing the new anchor per thread, e.g.',
+    'If you RENAMED or MOVED the commented element so its old anchor no longer matches, re-pin the thread',
+    'with a fenced block (after your marver-reply block) listing the new anchor per thread, e.g.',
     '```marver-reanchor',
     '[{"thread":"<threadId from the packet>","anchor":{"selector":"...","quote":"visible text","semantics":{"tag":"button","testId":"..."}}}]',
     '```',
@@ -100,10 +100,16 @@ export function goalText(packet: JobPacket): string {
     '  thread on the board - recent pins and asks on this frame often explain a terse one). If that',
     '  unlocks it, post your ack and proceed.',
     '- STILL unclear after looking around: your first line is ONE clarifying question, then STOP',
-    '  without editing (end the run; your final message must be exactly that question).',
+    '  without editing (end the run; put that same question in your marver-reply block).',
     '',
-    'Your FINAL message is your completion reply to the thread (the system posts it for you).',
-    'REPLY RULES (both the first line and the final reply):',
+    'YOUR COMPLETION REPLY: end your run with this block - the system posts ONLY what is inside it,',
+    'and DISCARDS everything else in your final message (any narration or explanation never reaches',
+    'the thread):',
+    '```marver-reply',
+    '<your reply>',
+    '```',
+    '(a marver-reanchor block, if needed, goes after it)',
+    'REPLY RULES (both the first line and the marver-reply block):',
     '- PLAIN TEXT ONLY. The thread renders raw text, so markdown shows as literal characters. No **bold**,',
     '  no `backticks`, no #headings, no bullet lists, no tables. Line breaks are your only formatting.',
     '- NEVER an em dash. Use a plain dash like this: " - ".',
@@ -120,6 +126,14 @@ export function goalText(packet: JobPacket): string {
     'JOB PACKET:',
     JSON.stringify(packet),
   ].join('\n')
+}
+
+/** Post ONLY what the agent put in its ```marver-reply``` block - everything else in the final
+ *  message (narration, self-explanation) is discarded. Deterministic, so a chatty model can never
+ *  leak an essay into the thread. No block = the whole text (backward compatible). */
+export function extractReplyBlock(text: string): string {
+  const m = /```marver-reply\s*([\s\S]*?)```/.exec(text)
+  return (m ? m[1] : text).trim()
 }
 
 /** Pull a trailing ```marver-reanchor``` block out of an agent reply: returns the visible reply

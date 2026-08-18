@@ -4,7 +4,7 @@
  * message the moment it exists (the real quick ack / clarifying question - not a canned fake),
  * and the final `result` event as the completion reply.
  */
-import { extractReanchors } from '../packet.ts'
+import { extractReanchors, extractReplyBlock } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 /** First key of an object, or undefined. */
@@ -65,7 +65,8 @@ export const claudeAdapter: JamAdapter = {
         model ??= cleanModel((typeof j.model === 'string' ? j.model : undefined) ?? j.canonicalModel ?? firstKey(j.modelUsage))
       } catch { if (!sawEvents) text = stdout.trim() }
     }
-    const { reply, reanchors } = extractReanchors(text)
+    const { reply: visible, reanchors } = extractReanchors(text)
+    const reply = extractReplyBlock(visible)
     return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

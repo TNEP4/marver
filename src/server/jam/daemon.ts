@@ -20,7 +20,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, watch as fsWatch, type FSWatcher } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
@@ -62,7 +62,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let stopped = false
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
-  type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
+  type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
   const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const { cmd, args } = adapter.spawnArgs(goal)
@@ -92,9 +92,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           if (text) { earlyFired = true; try { onEarly!(text) } catch { /* early delivery is best-effort */ } break }
         }
       })
-      child.on('close', (code) => settle(adapter.parse(out, code ?? 1)))
+      child.on('close', (code) => settle({ ...adapter.parse(out, code ?? 1), raw: out }))
       child.on('error', () => settle({ reply: '', ok: false, reanchors: [] }))
     })
+
+  /** Persist each run's raw stream to design/.local/jam-logs/ (gitignored, last 10 kept) - so
+   *  "why did it reply THAT" is always answerable from the actual agent output. */
+  const logRun = (batchId: string, raw?: string) => {
+    if (!raw) return
+    try {
+      const dir = join(root, 'design', '.local', 'jam-logs')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, `${batchId}.log`), raw, { mode: 0o600 })
+      const files = readdirSync(dir).filter((f) => f.endsWith('.log'))
+        .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t)
+      for (const { f } of files.slice(10)) rmSync(join(dir, f), { force: true })
+    } catch { /* diagnostics only - never fail the job over a log */ }
+  }
 
   /** Nic's rule: never an em/en dash in a reply - a plain dash reads human. */
   const plainDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ' - ')
@@ -160,6 +174,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         hooks.changed?.(b.board)
       })
     } finally { clearInterval(beat) }
+    logRun(b.batchId, run.raw)
     if (stopped) { hooks.work?.(member.frame, false); return }
     if (run.ok) {
       // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
