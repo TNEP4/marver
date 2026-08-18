@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
+import { codexAdapter } from '../src/server/jam/adapter/codex.ts'
 import { acquireLock, releaseLock, write } from '../src/server/jam/journal.ts'
 import { buildMember } from '../src/server/jam/packet.ts'
 import { record } from '../src/server/jam/ledger.ts'
@@ -161,6 +162,55 @@ describe('Live Jam M1: the daemon spine (SPEC-live-jam §3)', () => {
     expect(agentReplies(dir, 'home').length).toBe(0)
     expect(jam.snapshot().batches.length).toBe(0)   // dropped
     done()
+  })
+})
+
+describe('Live Jam M5: bounded parallelism + codex adapter (SPEC-live-jam §12, §3.3)', () => {
+  const owner = (id: string, frame: string, body: string): CommentEvent =>
+    ({ id, ts: Date.parse('2026-01-01') + id.charCodeAt(id.length - 1), type: 'create', commentId: id, frame, nodeKey: frame, author: { email: 'nic@local' }, body })
+  // a slow fake agent so overlap is observable
+  const slowAdapter: JamAdapter = {
+    name: 'claude', supportsSubagents: true,
+    spawnArgs() { return { cmd: process.execPath, args: ['-e', `setTimeout(()=>process.stdout.write(JSON.stringify({result:'done',modelUsage:{m:{}}})),120)`] } },
+    parse: claudeAdapter.parse,
+  }
+
+  it('several frames build at once (the work hook shows overlap), all get replies', async () => {
+    const { root, dir, done } = setup()
+    const active = new Set<string | undefined>()
+    let maxActive = 0
+    const jam = createJam(root, { ...CFG, concurrency: 4 }, slowAdapter, undefined,
+      { work: (f, on) => { on ? active.add(f) : active.delete(f); maxActive = Math.max(maxActive, active.size) } })
+    appendEvents(dir, 'home', [owner('a', 'demo/hero', '@marver A'), owner('b', 'demo/pricing', '@marver B'), owner('c', 'demo/footer', '@marver C')])
+    for (const id of ['a', 'b', 'c']) record(root, id)
+    await jam.tick(); jam.stop()
+    expect(agentReplies(dir, 'home').length).toBe(3)
+    expect(maxActive).toBeGreaterThanOrEqual(2)   // frames worked concurrently, not one-at-a-time
+    done()
+  })
+
+  it('the SAME frame never runs two agents at once (serialized); both still get replies', async () => {
+    const { root, dir, done } = setup()
+    const seq: boolean[] = []
+    const jam = createJam(root, { ...CFG, concurrency: 4 }, slowAdapter, undefined, { work: (_f, on) => seq.push(on) })
+    appendEvents(dir, 'home', [owner('x', 'demo/hero', '@marver first'), owner('y', 'demo/hero', '@marver second')])
+    record(root, 'x'); record(root, 'y')
+    await jam.tick(); jam.stop()
+    expect(agentReplies(dir, 'home').length).toBe(2)
+    expect(seq).toEqual([true, false, true, false])   // strictly alternating = serial, never [true,true,...]
+    done()
+  })
+
+  it('codex adapter parses JSONL - the last agent_message is the reply', () => {
+    const jsonl = [
+      JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done — changed the CTA.' } }),
+      JSON.stringify({ type: 'turn.completed', model: 'gpt-5-codex', usage: {} }),
+    ].join('\n')
+    expect(codexAdapter.parse(jsonl, 0)).toEqual({ reply: 'Done — changed the CTA.', model: 'gpt-5-codex', reanchors: [], ok: true })
+  })
+  it('codex adapter: no subagents (sequential frames)', () => {
+    expect(codexAdapter.supportsSubagents).toBe(false)
   })
 })
 

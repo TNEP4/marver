@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
 import { claudeAdapter } from './adapter/claude.ts'
+import { codexAdapter } from './adapter/codex.ts'
 import { createActivity } from './activity.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, goalText, threadId } from './packet.ts'
@@ -54,7 +55,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   let running = false
   let stopped = false
-  let activeChild: ChildProcess | null = null
+  const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
   type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
   const runAgent = (goal: string, onSpawn: (pid?: number) => void): Promise<AgentRun> =>
@@ -64,13 +65,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // stderr is discarded at the OS level: an undrained pipe would fill and block the child.
       try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'] }) }
       catch { return resolve({ reply: '', ok: false, reanchors: [] }) }
-      activeChild = child
+      activeChildren.add(child)
       onSpawn(child.pid)
       let out = ''
       let settled = false
       const settle = (r: AgentRun) => {
         if (settled) return
-        settled = true; clearTimeout(to); if (activeChild === child) activeChild = null; resolve(r)
+        settled = true; clearTimeout(to); activeChildren.delete(child); resolve(r)
       }
       const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', ok: false, reanchors: [] }) }, JOB_TIMEOUT_MS)
       child.stdout?.on('data', (d: Buffer) => { out += d; if (out.length > MAX_OUT) out = out.slice(-MAX_OUT) })
@@ -160,10 +161,20 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (p) await runBatch(b, p)
         else finish(b)   // no longer authorized/present → drop, never run stale/foreign content
       }
-      // 2. claim new owner-ledgered mentions
-      if (!stopped) for (const p of scanPending(root, commentsDir, journal)) {
-        if (stopped) break
-        await runBatch(claim(p), p)
+      // 2. claim new owner-ledgered mentions, grouped into per-frame serial chains that run
+      //    bounded-parallel (SPEC §12): several frames build at once (multi-frame glow), but the
+      //    SAME frame never has two agents (non-negotiable). Honest residual: two concurrent jobs
+      //    could still touch a shared component file - the goal-phrased re-run reconciles if so.
+      if (!stopped) {
+        const chains = new Map<string, Pending[]>()
+        for (const p of scanPending(root, commentsDir, journal)) {
+          const key = `${p.board}:${p.event.frame ?? p.event.id}`   // same explicit frame → one chain (serial)
+          const arr = chains.get(key) ?? []
+          arr.push(p); chains.set(key, arr)
+        }
+        await runPool([...chains.values()].map((ps) => async () => {
+          for (const p of ps) { if (stopped) break; await runBatch(claim(p), p) }
+        }), Math.max(1, cfg.concurrency))
       }
     } catch (err) {
       log(`  jam: tick error - ${(err as Error).message}`)
@@ -172,16 +183,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   return {
     tick,
-    stop() { stopped = true; fenceGroup(activeChild?.pid) },
+    stop() { stopped = true; for (const c of activeChildren) fenceGroup(c.pid) },
     snapshot() { return journal },
   }
+}
+
+/** Run thunks with a concurrency cap. Same-frame chains are already serial within a thunk. */
+async function runPool(thunks: (() => Promise<void>)[], limit: number): Promise<void> {
+  const q = [...thunks]
+  const worker = async () => { while (q.length) { const t = q.shift(); if (t) await t() } }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, q.length || 1)) }, worker))
 }
 
 /** Start the daemon inside the dev server. `onActivity` receives the set of frames currently being
  *  worked, for the presence glow (SPEC §10). Returns null when the adapter is unavailable or another
  *  dev server already holds the repo lock (that one runs the loop; this one watches without it). */
 export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onActivity: (frames: string[]) => void = () => {}): JamDaemon | null {
-  const adapter: JamAdapter | null = cfg.agent === 'claude' ? claudeAdapter : null
+  const adapter: JamAdapter | null = cfg.agent === 'claude' ? claudeAdapter : cfg.agent === 'codex' ? codexAdapter : null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
 
