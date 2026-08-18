@@ -136,6 +136,17 @@ describe('Live Jam M1: the daemon spine (SPEC-live-jam §3)', () => {
   })
 })
 
+describe('Live Jam M1: claude adapter parse (real envelope shape, claude 2.1.234)', () => {
+  it('pulls reply from .result and a clean model from modelUsage (strips the [1m] variant tag)', () => {
+    const env = JSON.stringify({ result: 'Done — CTA now reads Get Started.', modelUsage: { 'claude-opus-5[1m]': { input: 1 } } })
+    expect(claudeAdapter.parse(env, 0)).toEqual({ reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true })
+  })
+  it('non-JSON stdout falls back to raw text; exit code drives ok', () => {
+    expect(claudeAdapter.parse('plain text reply', 0)).toEqual({ reply: 'plain text reply', model: undefined, ok: true })
+    expect(claudeAdapter.parse('', 1)).toEqual({ reply: '', model: undefined, ok: false })
+  })
+})
+
 describe('Live Jam M1: single-daemon repo lock (SPEC-live-jam §3.2)', () => {
   it('fresh acquire succeeds, release frees it', () => {
     const { root, done } = setup()

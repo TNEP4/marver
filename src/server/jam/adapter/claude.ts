@@ -1,10 +1,15 @@
 /**
  * The Claude Code adapter (SPEC-live-jam §3.3, Validated Architecture). Spawns
  * `claude -p` headless, workspace-jailed (acceptEdits, a bounded tool set, never full
- * access), and reads the JSON envelope: `.result` is the agent's final message (its reply),
- * and the model id rides `canonicalModel` (validated in the overnight spike).
+ * access), and reads the JSON envelope: `.result` is the agent's final message (its reply).
+ * The model id lives under `modelUsage` (verified against claude 2.1.234, e.g.
+ * `claude-opus-5[1m]`); we strip the `[..]` context-variant tag for a clean tooltip value.
  */
 import type { JamAdapter } from '../types.ts'
+
+/** First key of an object, or undefined. */
+const firstKey = (o: unknown): string | undefined =>
+  o && typeof o === 'object' ? Object.keys(o as object)[0] : undefined
 
 export const claudeAdapter: JamAdapter = {
   name: 'claude',
@@ -21,7 +26,8 @@ export const claudeAdapter: JamAdapter = {
     try {
       const j = JSON.parse(stdout) as Record<string, any>
       if (typeof j.result === 'string') reply = j.result.trim()
-      model = j.canonicalModel ?? j.model ?? (j.modelUsage && typeof j.modelUsage === 'object' ? Object.keys(j.modelUsage)[0] : undefined)
+      const raw = (typeof j.model === 'string' ? j.model : undefined) ?? j.canonicalModel ?? firstKey(j.modelUsage)
+      model = typeof raw === 'string' ? raw.replace(/\[[^\]]*\]$/, '') || undefined : undefined   // drop the [1m] variant tag
     } catch { /* not JSON (older CLI / error) - fall back to raw stdout as the reply */ }
     return { reply, model, ok: code === 0 && !!reply }
   },
