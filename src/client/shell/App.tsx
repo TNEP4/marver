@@ -808,14 +808,11 @@ export function App() {
 
       {/* floating pill nav, top right; collapses to a chip (same ladder as panel/fab) */}
       <nav className={`sh-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
-        {/* far-left section: actions - comment mode, laser, tidy, prototype */}
+        {/* far-left section: actions - comment mode, laser, tidy */}
         <CommentButton />
         <LaserButton />
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
-        </Tip>
-        <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
-          <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
         <i className="sep" />
         <DeviceMenu />
@@ -823,7 +820,10 @@ export function App() {
         <i className="sep" />
         <ZoomMenu />
         <i className="sep" />
-        {/* far right: UI management only - hide, collapse */}
+        {/* far right: view management - prototype, hide, collapse */}
+        <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
+          <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
+        </Tip>
         <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>
           <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
