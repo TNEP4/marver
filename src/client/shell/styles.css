@@ -1111,9 +1111,18 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-me { position: relative; display: inline-flex; flex: none }
 .cm-mebtn { position: relative; display: inline-flex; padding: 0; border: 0; background: none;
   cursor: pointer; border-radius: 50% }
-.cm-plus { position: absolute; right: -4px; bottom: -3px; width: 13px; height: 13px; border-radius: 50%;
-  background: var(--mv-blue, #0088ff); color: #fff; font: 700 10px/13px -apple-system, system-ui, sans-serif;
-  text-align: center; box-shadow: 0 0 0 2px var(--glass); pointer-events: none }
+/* unset: a GLASS placeholder, not a fake identity - translucent gray + blur with a quiet user
+   silhouette, and a small blue pen badge saying "set yourself up" */
+.cm-ghost { width: 24px; height: 24px; box-sizing: border-box; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--glass-hover); color: var(--glass-ink-3);
+  border: 1px solid var(--glass-brd);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px) }
+.cm-mebtn:hover .cm-ghost { color: var(--glass-ink) }
+.cm-pen { position: absolute; right: -4px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--mv-blue, #0088ff); color: #fff;
+  box-shadow: 0 0 0 2px var(--glass); pointer-events: none }
 
 /* the unclipped comment plane over each frame: itself transparent to the pointer,
    its children (pins, cards, stacks) fully interactive */

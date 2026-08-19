@@ -48,6 +48,8 @@ export const PanelFilledIcon = icon(<><rect x="32" y="48" width="192" height="16
 
 /** Plain UI frame - the rectangle every non-content sidebar row leads with. */
 export const FrameRectIcon = icon(<rect x="40" y="52" width="176" height="152" rx="20" fill="none" stroke="currentColor" strokeWidth="16" />)
+export const UserIcon = icon(<path d="M230.92,212c-15.23-26.33-38.7-45.21-66.09-54.16a72,72,0,1,0-73.66,0C63.78,166.78,40.31,185.66,25.08,212a8,8,0,1,0,13.85,8c18.84-32.56,52.14-52,89.07-52s70.23,19.44,89.07,52a8,8,0,1,0,13.85-8ZM72,96a56,56,0,1,1,56,56A56.06,56.06,0,0,1,72,96Z" />)
+export const PencilSimpleIcon = icon(<path d="M227.31,73.37,182.63,28.68a16,16,0,0,0-22.63,0L36.69,152A15.86,15.86,0,0,0,32,163.31V208a16,16,0,0,0,16,16H92.69A15.86,15.86,0,0,0,104,219.31L227.31,96a16,16,0,0,0,0-22.63ZM92.69,208H48V163.31l88-88L180.69,120ZM192,108.68,147.31,64l24-24L216,84.68Z" />)
 export const LinkIcon = icon(<path d="M137.54,186.36a8,8,0,0,1,0,11.31l-9.94,10A56,56,0,0,1,48.38,128.4L72.5,104.28A56,56,0,0,1,149.31,102a8,8,0,1,1-10.64,12,40,40,0,0,0-54.85,1.63L59.7,139.72a40,40,0,0,0,56.58,56.58l9.94-9.94A8,8,0,0,1,137.54,186.36Zm70.08-138a56.08,56.08,0,0,0-79.22,0l-9.94,9.95a8,8,0,0,0,11.32,11.31l9.94-9.94a40,40,0,0,1,56.58,56.58L172.18,140.4a40,40,0,0,1-54.85,1.6,8,8,0,1,0-10.64,12,56,56,0,0,0,76.81-2.26l24.12-24.12A56.08,56.08,0,0,0,207.62,48.38Z" />)
 export const LaserIcon = icon(<><circle cx="128" cy="128" r="56" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M128 24 V56 M128 200 V232 M24 128 H56 M200 128 H232" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" /><circle cx="128" cy="128" r="12" /></>)
 

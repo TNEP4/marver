@@ -10,7 +10,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
-import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, UserIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { parseMentions } from './mentions.ts'
 import { ROUTE } from '../const.ts'
@@ -416,8 +416,10 @@ function ComposeAvatar() {
     <span className="cm-me">
       <Tip side="top" label={<b>{unset ? 'Set your name & photo' : 'Edit your profile'}</b>}>
         <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => setOpen(true)}>
-          <Avatar author={me ?? undefined} size={24} />
-          {unset && <span className="cm-plus">+</span>}
+          {unset
+            ? <span className="cm-ghost"><UserIcon size={13} /></span>
+            : <Avatar author={me ?? undefined} size={24} />}
+          {unset && <span className="cm-pen"><PencilSimpleIcon size={8} /></span>}
         </button>
       </Tip>
       {open && <ProfileDialog onClose={() => setOpen(false)} />}
