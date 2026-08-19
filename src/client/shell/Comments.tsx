@@ -385,8 +385,11 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   const syncShadows = () => {
     const el = scrollRef.current
     if (!el) return
-    const top = el.scrollTop > 4
-    const bot = el.scrollTop + el.clientHeight < el.scrollHeight - 4
+    // gate on MEANINGFUL overflow - a thread that overflows by a few px must not smear a
+    // 30px fade over its last line ("looks scrollable" when it isn't, really)
+    const overflow = el.scrollHeight - el.clientHeight > 12
+    const top = overflow && el.scrollTop > 4
+    const bot = overflow && el.scrollTop + el.clientHeight < el.scrollHeight - 4
     setShadows((s) => (s.top === top && s.bot === bot ? s : { top, bot }))
   }
   // open at the LATEST message (what you came to read); follow new replies while open
@@ -395,6 +398,16 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     if (el) el.scrollTop = el.scrollHeight
     syncShadows()
   }, [thread.replies.length])
+  // ...and when the scroller RESIZES without a scroll event (zoom changing the height cap, the
+  // composer growing) - a stale fade would otherwise claim "more below" at the bottom of a
+  // thread that no longer overflows
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver(syncShadows)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   // PLAY: one static centered device, no zoom - the card docks FIXED beside it on the pin's side
   // (falling back to the roomier side), fully viewport-clamped so the composer is ALWAYS reachable
   // whatever the device layout or theme (SPEC §14). Computed once at open; play never pans.

@@ -957,7 +957,8 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-card.stage-dock { width: 320px; overflow: hidden; z-index: 60; transform: none;
   background: var(--cm-modal-bg, var(--glass)) }
 .cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
-  overscroll-behavior: contain; scrollbar-width: thin }
+  overscroll-behavior: contain; scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--glass-ink-3) 55%, transparent) transparent }
 /* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of
    the text itself, theme-proof (no paint layer fighting the glass) */
 .cm-scroll.fade-top { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px); mask-image: linear-gradient(180deg, transparent, #000 30px) }
@@ -966,8 +967,13 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
+/* pinned above the scroller so the close button always wins the click. Its ground is GLASS,
+   not a solid chip: a faint wash of the card tone + its own backdrop blur, so text scrolling
+   underneath melts away instead of clipping against a white/black box. */
 .cm-actions { position: absolute; top: 13px; right: 12px; display: flex; gap: 2px; z-index: 5;
-  background: var(--glass); border-radius: 10px }   /* above the scroller + its scrollbar - the close button must always win the click */
+  padding: 1px; border-radius: 10px;
+  background: color-mix(in srgb, var(--glass) 45%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px) }
 /* the root header shares its line with the pinned actions - reserve their width
    so a long display name ellipsizes instead of running under the icons */
 .cm-card > header { padding-right: 84px }
