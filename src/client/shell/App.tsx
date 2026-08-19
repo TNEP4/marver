@@ -599,12 +599,13 @@ export function App() {
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
       }
       if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); c.setShow(!c.show) }
-      // Shift+L = element focus: the laser-sharp border+wash on the element a thread tags.
-      // Pins and cards stay - this only dims the lighting inside the artwork.
+      // Shift+L = laser comment: the laser-sharp lighting on the element a comment tags
+      // (pick hover, compose lock, open-thread highlight). Pins and cards stay - this
+      // only dims the lighting inside the artwork.
       if (e.key === 'L' && e.shiftKey) {
         const c = commentsStore()
         c.setShowAnchor(!c.showAnchor)
-        toast(c.showAnchor ? 'element focus off' : 'element focus on')
+        toast(c.showAnchor ? 'laser comment off' : 'laser comment on')
       }
       if (e.key === 'P' && e.shiftKey && s.selection.length) {
         const files = s.selection

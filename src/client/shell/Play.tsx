@@ -220,6 +220,7 @@ function PlayInner() {
   const playNav = useStore((s) => s.playNav)
   const laser = useStore((s) => s.laser)
   const commentMode = useComments((s) => s.commentMode)
+  const playShowAnchor = useComments((s) => s.showAnchor)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // the src is frozen at mount - navigation happens INSIDE the stage; device and theme
   // changes must never reload it (a phone does not remount when you flip dark mode)
@@ -246,7 +247,7 @@ function PlayInner() {
   // laser / comment ride the same rail as canvas frames, broadcast to the stage iframe.
   // Re-sent on stage-ready (below) so a stage reload restores the mode.
   useEffect(() => { postStage({ type: 'sh:laser', on: laser }) }, [laser])
-  useEffect(() => { postStage({ type: 'sh:pick', on: commentMode }) }, [commentMode])
+  useEffect(() => { postStage({ type: 'sh:pick', on: commentMode, quiet: !useComments.getState().showAnchor }) }, [commentMode, playShowAnchor])
 
   const exit = () => {
     const { at } = useStore.getState().play ?? {}
@@ -335,7 +336,7 @@ function PlayInner() {
           postStage({ type: 'sh:set-theme', theme: p.theme })
         }
         postStage({ type: 'sh:laser', on: s.laser })
-        postStage({ type: 'sh:pick', on: commentsStore().commentMode })
+        postStage({ type: 'sh:pick', on: commentsStore().commentMode, quiet: !commentsStore().showAnchor })
         setStageReady((n) => n + 1)            // a reload wiped the frame's lock; let PlayComments re-drive it
       } else if (data.type === 'sh:stage-at') {
         const p = s.play

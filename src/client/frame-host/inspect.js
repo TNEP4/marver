@@ -52,6 +52,9 @@ const DEPTH_HUE = (() => {
 
 export function createInspect({ post, getId, onModeChange }) {
   let laserOn = false, pickOn = false
+  // quiet pick (⇧L laser comment off): clicks still anchor comments, but NO hover outline,
+  // label, or lock lighting inside the artwork - the shell decides, the frame obeys
+  let pickQuiet = false
   let hoverEl = null, labelEl = null
   let lockedEl = null, highlightAnchor = null   // the persistent outline (#4 lock / #5 open)
   let copiedTimer = null, copySeq = 0, copyEl = null
@@ -177,6 +180,7 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
   // being discussed, not whatever the pointer grazes.
   on(document, 'mousemove', (e) => {
     if (!modeActive() || lockedEl) return
+    if (pickOn && pickQuiet) return   // quiet pick: no hover visuals, clicks still land
     const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
     if (!el || el === hoverEl) { if (labelEl && hoverEl) place(labelEl, e); return }
     clearHover()
@@ -245,7 +249,8 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     if (pickOn) {
       // #4: lock the chosen element the instant it is picked - no round-trip flicker.
       // The shell re-confirms via sh:highlight-anchor once the draft is staged.
-      applyLock(el, hueOf(el))
+      // Quiet pick (⇧L off) anchors WITHOUT lighting the element.
+      if (!pickQuiet) applyLock(el, hueOf(el))
       clearHover()
       post({ type: 'sh:picked', id: getId(), anchor: anchorBundle(el, e) })
     } else {
@@ -299,7 +304,8 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     if (!m || typeof m !== 'object') return
     if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes(); onModeChange?.(laserOn, pickOn) }
     else if (m.type === 'sh:pick') {
-      pickOn = !!m.on; applyModes()
+      pickOn = !!m.on; pickQuiet = !!m.quiet; applyModes()
+      if (pickQuiet) clearHover()   // a hover lit before the toggle landed must not linger
       // leaving comment mode drops a provisional self-lock the shell never confirmed;
       // a shell-owned highlight (highlightAnchor set, e.g. #5) survives
       if (!pickOn && !highlightAnchor) clearLock()

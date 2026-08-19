@@ -160,11 +160,13 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (node.status === 'ready' || !laser)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, location.origin)
   }, [laser, node.status])
-  // comment mode = pick mode in the frame (late loaders join like laser does)
+  // comment mode = pick mode in the frame (late loaders join like laser does); quiet when
+  // laser comment (⇧L) is off - clicks still anchor, no lighting in the artwork
+  const showAnchor = useComments((s) => s.showAnchor)
   useEffect(() => {
     if (node.status === 'ready' || !commentMode)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
-  }, [commentMode, node.status])
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !showAnchor }, location.origin)
+  }, [commentMode, showAnchor, node.status])
   // B0.2: the interact target owns its own wheel (app scrolls); passive frames forward
   // wheel to the canvas. Replayed on ready like laser/pick so a reload restores truth.
   useEffect(() => {

@@ -766,6 +766,7 @@ export function revealThread(c: string): boolean {
 let bootThreadConsumed = false
 let pendingThread: string | null = null   // cross-board deep link awaiting its board's comments
 export function CommentsController() {
+  const ctlShowAnchor = useComments((s) => s.showAnchor)
   const board = useStore((s) => s.board)
   const commentMode = useComments((s) => s.commentMode)
   const active = useComments((s) => s.active)
@@ -831,8 +832,8 @@ export function CommentsController() {
   // .sh-live so the SPEC-M5 lean cover (.sh-lean, a scriptless snapshot) is never messaged.
   useEffect(() => {
     for (const f of document.querySelectorAll('iframe.sh-live'))
-      (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
-  }, [commentMode])
+      (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !ctlShowAnchor }, location.origin)
+  }, [commentMode, ctlShowAnchor])
 
   return <IdentityDialog />
 }

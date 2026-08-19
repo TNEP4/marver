@@ -78,8 +78,9 @@ export function useHideUI() {
  *  since the two are one-at-a-time). */
 export function LaserButton() {
   const laser = useStore((s) => s.laser)
+  const showAnchor = useComments((s) => s.showAnchor)
   return (
-    <Tip side="bottom" label={<><b>Laser mode</b><span>L · ⇧L element focus</span></>}>
+    <Tip side="bottom" label={<><b>Laser mode</b><span>L · ⇧L {showAnchor ? 'deactivates' : 'activates'} laser comment</span></>}>
       <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
         if (!laser) commentsStore().setMode(false)
         useStore.getState().setLaser(!laser)
@@ -91,8 +92,9 @@ export function LaserButton() {
 /** Comment toggle - store-level, identical on canvas and prototype. */
 export function CommentButton() {
   const commentMode = useComments((s) => s.commentMode)
+  const show = useComments((s) => s.show)
   return (
-    <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C hides pins</span></>}>
+    <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C {show ? 'hides' : 'shows'} pins</span></>}>
       <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
         const c = commentsStore()
         if (!c.commentMode) useStore.getState().setLaser(false)
