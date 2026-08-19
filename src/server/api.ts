@@ -179,6 +179,9 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         return json(res, 200, { user: prof, role: 'owner', local: true, connected: isConnected(root) })
       }
       if (path === 'profile' && req.method === 'POST') {
+        // same gate as the comments POST: identity feeds the published push author, so a
+        // drive-by page must never be able to rewrite it
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const raw = await readBody(req)
         if (raw == null) return json(res, 400, { error: 'body too large' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
