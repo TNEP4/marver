@@ -1051,6 +1051,10 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    anyone else's = plain-weight, read like any comment, with a teaching tooltip (§1). */
 .cm-at { color: var(--glass-ink-2, var(--glass-ink)); font-weight: 500 }
 .cm-at.owner { color: var(--mv-blue); font-weight: 700 }
+/* IN THE COMPOSER MIRROR the mention may change COLOR ONLY, never metrics: bold glyphs are
+   wider than the invisible textarea's regular ones, so any weight change drifts the caret
+   further off with every mention. A soft accent wash carries the emphasis instead. */
+.cm-hl .cm-at { font-weight: inherit; background: var(--accent-wash); border-radius: 4px }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
