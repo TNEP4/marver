@@ -90,7 +90,7 @@ export function LaserButton() {
   const laser = useStore((s) => s.laser)
   const showAnchor = useComments((s) => s.showAnchor)
   return (
-    <Tip side="bottom" label={<TipRows rows={[['Laser mode', 'L'], [showAnchor ? 'Deactivate laser comment' : 'Activate laser comment', '⇧L']]} />}>
+    <Tip side="bottom" label={<TipRows rows={[['Laser mode', 'L'], [showAnchor ? 'Hide laser comment' : 'Show laser comment', '⇧L']]} />}>
       <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
         if (!laser) commentsStore().setMode(false)
         useStore.getState().setLaser(!laser)
