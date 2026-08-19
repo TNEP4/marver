@@ -79,7 +79,7 @@ export function useHideUI() {
 export function LaserButton() {
   const laser = useStore((s) => s.laser)
   return (
-    <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
+    <Tip side="bottom" label={<><b>Laser mode</b><span>L · ⇧L element focus</span></>}>
       <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
         if (!laser) commentsStore().setMode(false)
         useStore.getState().setLaser(!laser)

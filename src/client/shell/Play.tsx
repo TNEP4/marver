@@ -125,6 +125,7 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
   dw: number; dh: number; ready: number
 }) {
   const show = useComments((s) => s.show)
+  const showAnchor = useComments((s) => s.showAnchor)
   const active = useComments((s) => s.active)
   const draft = useComments((s) => s.draft)
   const allThreads = useComments((s) => s.threads)
@@ -165,11 +166,12 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
   useEffect(() => {
     const win = iframe.current?.contentWindow
     if (!win) return
-    // only while the thread is active (or composing) AND pins are shown - closing or ⇧C clears it
-    const at = !show ? null : (draft?.frame === frameId ? draft.anchor
+    // only while the thread is active (or composing) AND pins are shown AND element focus is
+    // on (⇧L) - closing, ⇧C, or dimming focus clears it
+    const at = !show || !showAnchor ? null : (draft?.frame === frameId ? draft.anchor
       : (active ? (threads.find((t) => t.id === active && (t.anchor as any)?.el)?.anchor ?? null) : null))
     win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: at ?? null }, location.origin)
-  }, [active, draft, show, frameId, iframe, rects, ready])
+  }, [active, draft, show, showAnchor, frameId, iframe, rects, ready])
 
   if (!show) return null
 
@@ -397,6 +399,7 @@ function PlayInner() {
     if (key === 'l') { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
     if (key === 'c') { const c = commentsStore(); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
     if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
+    if (key === 'L') { const c = commentsStore(); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus
 
     if (/^Digit[1-9]$/.test(code)) {
       const names = Object.keys(CONFIG.viewports)

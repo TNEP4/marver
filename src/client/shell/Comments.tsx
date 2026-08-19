@@ -112,6 +112,7 @@ export function MarkerFace({ threads, max = 3 }: { threads: Thread[]; max?: numb
 /** Lives inside FrameNode's body, over the iframe. Owns anchor resolution for its frame. */
 export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: string; iframe: React.RefObject<HTMLIFrameElement | null> }) {
   const show = useComments((s) => s.show)
+  const showAnchor = useComments((s) => s.showAnchor)
   const active = useComments((s) => s.active)
   const draft = useComments((s) => s.draft)
   // select the stable array, filter in render - a selector returning a fresh
@@ -153,14 +154,14 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     const win = iframe.current?.contentWindow
     if (!win || node.status !== 'ready') return
     // ONLY light an element while its thread is the active one (or a draft is composing on
-    // it) AND pins are shown - closing the thread or hiding comments (⇧C) clears it, so a
-    // stray outline never lingers on the frame.
+    // it) AND pins are shown AND element focus is on (⇧L) - closing the thread, hiding
+    // comments (⇧C), or dimming focus clears it, so a stray outline never lingers.
     const draftHere = draft?.nodeKey === node.key ? (draft.anchor as any) : null
     const activeHere = active ? open.find((t) => t.id === active && (t.anchor as any)?.el) : undefined
-    const anchor = show ? (draftHere ?? (activeHere ? (activeHere.anchor as any) : null)) : null
+    const anchor = show && showAnchor ? (draftHere ?? (activeHere ? (activeHere.anchor as any) : null)) : null
     win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: anchor ?? null }, location.origin)
-    // active/draft/show/activeShown are the triggers; `open` is read fresh from the closure
-  }, [active, draft, show, activeShown, node.status, node.key, frameId, iframe])
+    // active/draft/show/showAnchor/activeShown are the triggers; `open` is read fresh from the closure
+  }, [active, draft, show, showAnchor, activeShown, node.status, node.key, frameId, iframe])
 
   // the open card's frozen side (D3) - a HOOK, so it must live above the early returns; and the
   // reset must too: a card can close via the inactive-frame early return (clicking another frame),

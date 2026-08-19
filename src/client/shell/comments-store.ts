@@ -19,6 +19,7 @@ interface CommentsState {
   connected: boolean                  // dev only: a connect account provides name/email (read-only here)
   commentMode: boolean                // C - picking + composing
   show: boolean                       // Shift+C - pins visible at all
+  showAnchor: boolean                 // Shift+L - light the tagged ELEMENT while its thread is open
   active: string | null               // open thread id
   draft: { nodeKey: string; frame: string; anchor: unknown } | null   // picked, composing
   needsIdentity: boolean              // published viewer tried to comment while signed out
@@ -36,6 +37,7 @@ interface CommentsState {
   resolve(threadId: string, reopen?: boolean): Promise<void>
   setMode(on: boolean): void
   setShow(show: boolean): void
+  setShowAnchor(on: boolean): void
   setActive(id: string | null): void
   setDraft(d: CommentsState['draft']): void
   signIn(email: string, password: string): Promise<string | null>
@@ -87,7 +89,7 @@ export const useComments = create<CommentsState>((set, get) => {
 
   return {
     events: [], threads: [], board: null, me: null, local: false, connected: false,
-    commentMode: false, show: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
+    commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
 
     poke(board) {
       const b = get().board
@@ -177,6 +179,7 @@ export const useComments = create<CommentsState>((set, get) => {
 
     setMode(on) { set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
     setShow(show) { set({ show }) },
+    setShowAnchor(showAnchor) { set({ showAnchor }) },
     setActive(active) { set({ active }) },
     setDraft(draft) { set({ draft }) },
     dismissIdentity() { set({ needsIdentity: false }) },   // inviteToken survives dismissal - commenting later reopens the claim
