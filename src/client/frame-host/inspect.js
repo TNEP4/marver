@@ -175,6 +175,13 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     label.style.top = y + 'px'
   }
 
+  // the pointer LEAVING this frame takes its hover lighting with it: each frame is its own
+  // document, so once the cursor is gone no mousemove ever fires here again - without this,
+  // the last hovered outline + label fossilize on every frame the cursor crossed.
+  // (relatedTarget null = left the window/iframe, not just moved between elements)
+  on(document, 'mouseout', (e) => { if (!e.relatedTarget) clearHover() })
+  on(window, 'blur', clearHover)
+
   // hover-follow: the label chases the cursor while a mode is on - BUT a locked
   // element (#4 composing / #5 thread open) freezes it: the lit element is the one
   // being discussed, not whatever the pointer grazes.
