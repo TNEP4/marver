@@ -10,7 +10,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
-import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { parseMentions } from './mentions.ts'
 import { ROUTE } from '../const.ts'
@@ -638,10 +638,11 @@ function AvatarPick({ value, onPick }: { value: string; onPick: (dataUri: string
   }
   return (
     <>
-      <Tip side="top" label={<b>{value ? 'Change your photo' : 'Select your profile picture'}</b>}>
-        <button className={`cm-pfp${value ? ' set' : ''}`} aria-label="Select your profile picture"
-          style={value ? { backgroundImage: `url(${value})` } : undefined}
-          onClick={() => fileRef.current?.click()}>{value ? '' : '+'}</button>
+      <Tip side="top" label={<b>{value ? 'Change your photo' : 'Select or upload a profile picture'}</b>}>
+        <button className={`cm-pfp${value ? ' set' : ''}`} aria-label="Select or upload a profile picture"
+          onClick={() => fileRef.current?.click()}>
+          {value ? <img src={value} alt="" /> : <PlusIcon size={16} />}
+        </button>
       </Tip>
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
     </>

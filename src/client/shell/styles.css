@@ -528,7 +528,7 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
 
 /* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
-.sh-tip { position: absolute; z-index: 40; pointer-events: none; padding: 5px 10px; border-radius: 8px;
+.sh-tip { position: absolute; z-index: 400; pointer-events: none; padding: 5px 10px; border-radius: 8px;   /* topmost ephemeral chrome - above modals (300) or in-dialog tips vanish */
   font: 500 12px -apple-system, system-ui, sans-serif; white-space: nowrap; transform: translate(-50%, -100%);
   display: flex; flex-direction: row; align-items: center; gap: 10px;
   background: var(--tip-bg); color: var(--tip-ink);
@@ -1096,11 +1096,14 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--glass-ink-3); flex: none }
 .cm-idrow { display: flex; align-items: center; gap: 10px }
 .cm-pfp { width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed var(--glass-ink-3);
-  background: var(--cm-field) center/cover no-repeat; color: var(--glass-ink-3); font-size: 18px; flex: none;
+  background: var(--cm-field); color: var(--glass-ink-3); flex: none; overflow: hidden;
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
   transition: border-color .15s, color .15s }
 .cm-pfp:hover { border-color: var(--comment); color: var(--comment) }
-.cm-pfp.set { border-style: solid; border-color: var(--glass-brd); color: transparent }
+.cm-pfp.set { border-style: solid; border-color: var(--glass-brd) }
+/* the photo is a REAL img filling the clipped circle - background-image layering left
+   uncovered edges */
+.cm-pfp img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block }
 .cm-row { display: flex; gap: 8px; margin-top: 12px }
 .cm-row button:disabled, .cm-row button.cm-primary:disabled {
   background: var(--glass-ink-3); color: var(--glass); cursor: default; opacity: 1 }
