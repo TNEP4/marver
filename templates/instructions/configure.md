@@ -76,7 +76,7 @@ edit these by hand; point the human at the UI instead:
   avatar next to any comment input, fill name + photo. Stays on this machine.
 - `collab.json` - once connected, the connect account wins name + email (the
   published server validates authors); the local photo still applies.
-- Unset → comments render as "Designer" with an initials avatar.
+- Unset → comments render as "You" with a green Y avatar.
 
 The same identity stamps Live Jam: Marver's replies are authored by this
 profile + `agent:true`, and the provenance tooltip's "Dev user" row shows the

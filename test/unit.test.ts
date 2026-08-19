@@ -1034,4 +1034,14 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
     expect(localProfile(root).name).toBe('You')
     rmSync(root, { recursive: true, force: true })
   })
+  it('survives VALID json that is not an object (null / array / primitive)', () => {
+    for (const body of ['null', '[1,2]', '"hi"', '42']) {
+      const root = make({})
+      writeFileSync(join(root, 'design', '.local', 'profile.json'), body)
+      writeFileSync(join(root, 'design', '.local', 'collab.json'), body)
+      expect(localProfile(root)).toEqual({ email: '', name: 'You', avatar: undefined })
+      expect(isConnected(root)).toBe(false)
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

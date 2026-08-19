@@ -42,7 +42,7 @@ interface CommentsState {
   setDraft(d: CommentsState['draft']): void
   signIn(email: string, password: string): Promise<string | null>
   claim(token: string, password: string, name: string, avatar?: string): Promise<string | null>
-  saveProfile(patch: Partial<Me>): Promise<void>
+  saveProfile(patch: Partial<Me>): Promise<string | null>
   dismissIdentity(): void
 }
 
@@ -198,7 +198,9 @@ export const useComments = create<CommentsState>((set, get) => {
     },
     async saveProfile(patch) {
       const res = await api('profile', patch)
-      if (res.ok) set({ me: res.data.user })
+      if (!res.ok) return res.data?.error ?? 'could not save - try again'
+      set({ me: res.data.user })
+      return null
     },
   }
 })

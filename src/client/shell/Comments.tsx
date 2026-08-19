@@ -82,11 +82,13 @@ function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
   const seen = new Map<string, Face>()
   let count = 0
   // namespace the identity key so an email can never collide with someone's name, and normalize
-  // email case; authorless comments collapse to one 'anon' face. An AGENT message is its own
-  // participant ("Marver"), NOT the owner who authored it - so the marker shows N + Marver.
+  // email case. An AGENT message is its own participant ("Marver"), NOT the owner who authored
+  // it - so the marker shows N + Marver. Every email-less human face collapses to ONE key: in
+  // dev those snapshots ("Designer", "You", nothing) are all the person at this keyboard, and
+  // Avatar renders them all as the live identity - two keys would show identical twin faces.
   const add = (a: Face | undefined, agent?: boolean) => {
     const face: Face | undefined = agent ? { agent: true } : a
-    const k = agent ? 'marver' : a?.email ? `e:${a.email.toLowerCase()}` : a?.name ? `n:${a.name}` : 'anon'
+    const k = agent ? 'marver' : a?.email ? `e:${a.email.toLowerCase()}` : 'local'
     if (face && !seen.has(k)) seen.set(k, face)
   }
   for (const t of threads) {
@@ -383,12 +385,14 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState(unset ? '' : me?.name ?? '')
   const [avatar, setAvatar] = useState(me?.avatar ?? '')
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
   const ready = connected || !!name.trim()
   const save = async () => {
     if (busy || !ready) return
     setBusy(true)
     try {
-      await useComments.getState().saveProfile({ ...(connected ? {} : { name: name.trim() }), avatar })
+      const e = await useComments.getState().saveProfile({ ...(connected ? {} : { name: name.trim() }), avatar })
+      if (e) return setErr(e)                  // a failed save must not close as if it worked
       onClose()
     } finally { setBusy(false) }
   }
@@ -412,6 +416,7 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
                   onKeyDown={(e) => e.key === 'Enter' && void save()} />}
           </div>
         </div>
+        {err && <span className="cm-err">{err}</span>}
         <div className="cm-row">
           <button className="cm-primary" disabled={busy || !ready} onClick={() => void save()}>Save</button>
           <button onClick={onClose}>Not now</button>
@@ -505,10 +510,14 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  // ...and after EVERY render: an edited message changes scrollHeight without resizing the
+  // height-capped box or the reply count (Codex P3). setShadows dedups, so this is free.
+  useEffect(syncShadows)
   // PLAY: one static centered device, no zoom - the card docks FIXED beside it on the pin's side
   // (falling back to the roomier side), fully viewport-clamped so the composer is ALWAYS reachable
-  // whatever the device layout or theme (SPEC §14). Computed once at open; play never pans.
-  const [stagePos] = useState<React.CSSProperties | null>(() => {
+  // whatever the device layout or theme (SPEC §14). Recomputed when the stage moves under it:
+  // a device/theme switch resizes .sh-play-stage and a window resize shifts it (Codex P2).
+  const computeStagePos = (): React.CSSProperties | null => {
     if (!stage) return null
     const W = 320, M = 12, maxH = Math.min(660, window.innerHeight - 2 * M)
     const rect = document.querySelector('.sh-play-stage')?.getBoundingClientRect()
@@ -520,7 +529,18 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     // worst-case clamp (content = maxH): even a full-height thread keeps its composer on screen
     const y = Math.min(Math.max(rect.top + at.y - 36, M), Math.max(M, window.innerHeight - maxH - M))
     return { position: 'fixed', left: x, top: y, maxHeight: maxH }
-  })
+  }
+  const [stagePos, setStagePos] = useState<React.CSSProperties | null>(computeStagePos)
+  useEffect(() => {
+    if (!stage) return
+    const re = () => setStagePos(computeStagePos())
+    re()                                       // bounds changed (device/theme switch) -> re-dock
+    window.addEventListener('resize', re)
+    const el = document.querySelector('.sh-play-stage')
+    const ro = el ? new ResizeObserver(re) : null
+    if (el && ro) ro.observe(el)
+    return () => { window.removeEventListener('resize', re); ro?.disconnect() }
+  }, [stage, bounds.w, bounds.h])
   const flip = !float && !stage && at.x > bounds.w * 0.55
   // Nic's revision: the card scales EXACTLY like the pins - screen-constant via --sh-inv, pure
   // CSS, smooth per zoom tick with zero re-renders. Geometry in CSS math over the live vars:

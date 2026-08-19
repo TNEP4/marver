@@ -15,7 +15,12 @@ import { join } from 'node:path'
 export interface LocalProfile { email: string; name: string; avatar?: string }
 
 const readJson = (path: string): Record<string, unknown> => {
-  try { return JSON.parse(readFileSync(path, 'utf8')) } catch { return {} }
+  // `null`, arrays, and primitives are VALID JSON that would blow up property access
+  // downstream - only a plain object counts as a profile file
+  try {
+    const v = JSON.parse(readFileSync(path, 'utf8'))
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  } catch { return {} }
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
