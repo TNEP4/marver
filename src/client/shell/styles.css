@@ -606,10 +606,12 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-jam-badge { flex: none; font: 700 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink);
   background: var(--glass-hover); border-radius: 999px; padding: 4px 9px }
 
-/* the EXPANDED list: newest first, header with count + Clear all, scrolls past ~6 */
+/* the EXPANDED list: newest first, header with count + Clear all, scrolls past ~6.
+   The scroller CLIPS at its box - pad it out to the pills' shadow reach (12px drop, 32px
+   blur) and cancel with negative margins, so the shadows breathe and nothing moves. */
 .sh-jam-list { display: flex; flex-direction: column; gap: 8px; align-items: stretch;
   max-height: min(60vh, 520px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
-  padding: 2px }
+  padding: 22px 26px 32px; margin: -22px -26px -32px }
 .sh-jam-listhead { display: flex; align-items: center; gap: 8px; padding: 0 6px;
   font: 700 10px -apple-system, system-ui, sans-serif; letter-spacing: .06em; color: var(--glass-ink-3) }
 .sh-jam-listhead button { margin-left: auto; border: 0; background: none; cursor: pointer;
@@ -1051,10 +1053,12 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    anyone else's = plain-weight, read like any comment, with a teaching tooltip (§1). */
 .cm-at { color: var(--glass-ink-2, var(--glass-ink)); font-weight: 500 }
 .cm-at.owner { color: var(--mv-blue); font-weight: 700 }
-/* IN THE COMPOSER MIRROR the mention may change COLOR ONLY, never metrics: bold glyphs are
-   wider than the invisible textarea's regular ones, so any weight change drifts the caret
-   further off with every mention. A soft accent wash carries the emphasis instead. */
-.cm-hl .cm-at { font-weight: inherit; background: var(--accent-wash); border-radius: 4px }
+/* IN THE COMPOSER MIRROR the mention may change COLOR + PAINT, never METRICS: real bold
+   glyphs are WIDER than the invisible textarea's regular ones, so any font-weight change
+   drifts the caret further off with every mention. The bold LOOK comes from a hairline
+   text-stroke instead - it thickens the glyph paint without touching a single advance
+   width, so the mirror stays pixel-locked to the textarea and the caret never lies. */
+.cm-hl .cm-at { font-weight: inherit; -webkit-text-stroke: .4px currentColor }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
