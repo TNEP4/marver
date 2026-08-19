@@ -10,7 +10,7 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
-import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, UserIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { parseMentions } from './mentions.ts'
 import { ROUTE } from '../const.ts'
@@ -285,8 +285,13 @@ function AgentMetaTip({ meta }: { meta?: AgentMeta }) {
 }
 
 /** A message header. Agent messages render as "Marver" with the mark + provenance tooltip;
- *  human messages keep their avatar + name. */
+ *  human messages keep their avatar + name. While the dev profile is still UNSET, every own
+ *  message avatar invites editing on hover (discoverability); once set, only the composer's
+ *  avatar is the door. */
 function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author']; agent?: boolean; agentMeta?: AgentMeta; ts: number }) {
+  const me = useComments((s) => s.me)
+  const local = useComments((s) => s.local)
+  const connected = useComments((s) => s.connected)
   if (agent) return (
     <header>
       <Tip side="top" label={<AgentMetaTip meta={agentMeta} />}>
@@ -296,9 +301,12 @@ function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author
       <span className="dim">{rel(ts)}</span>
     </header>
   )
+  // own = born on this machine without an account (no email); unset = identity still the default
+  const unset = local && !connected && (!me?.name || me.name === 'You')
+  const own = local && !author?.email
   return (
     <header>
-      <Avatar author={author} size={24} />
+      {unset && own ? <EditableAvatar author={author} size={24} /> : <Avatar author={author} size={24} />}
       <b>{author?.name ?? 'Someone'}</b>
       <span className="dim">{rel(ts)}</span>
     </header>
@@ -378,7 +386,7 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
     <div className="cm-modal-wrap" onClick={onClose} onPointerDown={(e) => e.stopPropagation()}>
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}>
-        <h2>How you’ll appear</h2>
+        <h2>{unset ? 'Set up your profile' : 'Edit your profile'}</h2>
         <p className="dim">
           {connected
             ? <>Your name comes from your connect account. The photo stays on this machine.</>
@@ -389,7 +397,7 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
             <AvatarPick value={avatar} onPick={setAvatar} />
             {connected
               ? <div className="cm-chip" style={{ flex: 1 }}><b>{me?.name}</b><span>CONNECT</span></div>
-              : <input placeholder="Set a display name" style={{ flex: 1 }} value={name} autoFocus
+              : <input placeholder="Set a display name" style={{ flex: 1 }} value={name}
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && void save()} />}
           </div>
@@ -405,28 +413,30 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
     document.querySelector('.sh-app') ?? document.body)
 }
 
-/** Your avatar in the composer is the door to your identity (dev only - published viewers
- *  already have accounts). Unset profile shows a quiet + badge inviting the first setup. */
-function ComposeAvatar() {
-  const me = useComments((s) => s.me)
-  const local = useComments((s) => s.local)
-  const connected = useComments((s) => s.connected)
+/** An avatar that IS the door to your profile: hover morphs it into a pen on gray, click opens
+ *  the modal. The composer's own avatar is always this door (dev only); while the profile is
+ *  still unset, every own message avatar is too - discoverability until identity is real. */
+function EditableAvatar({ author, size = 24 }: { author?: Thread['author']; size?: number }) {
   const [open, setOpen] = useState(false)
-  if (!local) return <Avatar author={me ?? undefined} size={24} />
-  const unset = !connected && !me?.avatar && (!me?.name || me.name === 'You')
   return (
     <span className="cm-me">
-      <Tip side="top" label={<b>{unset ? 'Set your name & photo' : 'Edit your profile'}</b>}>
+      <Tip side="top" label={<b>Edit your profile</b>}>
         <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => setOpen(true)}>
-          {unset
-            ? <span className="cm-ghost"><UserIcon size={13} /></span>
-            : <Avatar author={me ?? undefined} size={24} />}
-          {unset && <span className="cm-pen"><PencilSimpleIcon size={8} /></span>}
+          <Avatar author={author} size={size} />
+          <span className="cm-pen-face"><PencilSimpleIcon size={Math.round(size * 0.55)} /></span>
         </button>
       </Tip>
       {open && <ProfileDialog onClose={() => setOpen(false)} />}
     </span>
   )
+}
+
+/** The composer's own avatar (dev only - published viewers already have accounts). */
+function ComposeAvatar() {
+  const me = useComments((s) => s.me)
+  const local = useComments((s) => s.local)
+  if (!local) return <Avatar author={me ?? undefined} size={24} />
+  return <EditableAvatar author={me ?? undefined} size={24} />
 }
 
 export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, stage }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r'; flank?: 'badge' | 'shim' | null; stage?: boolean }) {
