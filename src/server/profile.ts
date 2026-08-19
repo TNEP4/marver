@@ -30,7 +30,9 @@ export function localProfile(root: string): LocalProfile {
   const prof = readJson(join(dir, 'profile.json'))
   const collab = readJson(join(dir, 'collab.json'))
   return {
-    name: str(collab.name) || str(prof.name) || 'Designer',
+    // the unset default is "You" - the person at the keyboard, whatever their role
+    // (the client renders it as the green Y avatar until a real profile is set)
+    name: str(collab.name) || str(prof.name) || 'You',
     email: str(collab.email) || str(prof.email),
     avatar: str(prof.avatar) || undefined,
   }

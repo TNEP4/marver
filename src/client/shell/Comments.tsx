@@ -361,7 +361,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
 function ProfileDialog({ onClose }: { onClose: () => void }) {
   const me = useComments((s) => s.me)
   const connected = useComments((s) => s.connected)
-  const unset = !connected && (!me?.name || me.name === 'Designer')
+  const unset = !connected && (!me?.name || me.name === 'You')
   const [name, setName] = useState(unset ? '' : me?.name ?? '')
   const [avatar, setAvatar] = useState(me?.avatar ?? '')
   const [busy, setBusy] = useState(false)
@@ -400,7 +400,9 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>,
-    document.body)
+    // into .sh-app, NOT body: every theme token (--cm-modal-bg, inks) lives on .sh-app,
+    // and a body-portaled modal renders transparent outside that scope
+    document.querySelector('.sh-app') ?? document.body)
 }
 
 /** Your avatar in the composer is the door to your identity (dev only - published viewers
@@ -411,7 +413,7 @@ function ComposeAvatar() {
   const connected = useComments((s) => s.connected)
   const [open, setOpen] = useState(false)
   if (!local) return <Avatar author={me ?? undefined} size={24} />
-  const unset = !connected && !me?.avatar && (!me?.name || me.name === 'Designer')
+  const unset = !connected && !me?.avatar && (!me?.name || me.name === 'You')
   return (
     <span className="cm-me">
       <Tip side="top" label={<b>{unset ? 'Set your name & photo' : 'Edit your profile'}</b>}>

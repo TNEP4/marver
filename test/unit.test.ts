@@ -1000,9 +1000,9 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
       writeFileSync(join(root, 'design', '.local', name), JSON.stringify(body))
     return root
   }
-  it('falls back to Designer with nothing on disk', () => {
+  it("falls back to 'You' with nothing on disk", () => {
     const root = make({})
-    expect(localProfile(root)).toEqual({ email: '', name: 'Designer', avatar: undefined })
+    expect(localProfile(root)).toEqual({ email: '', name: 'You', avatar: undefined })
     expect(isConnected(root)).toBe(false)
     rmSync(root, { recursive: true, force: true })
   })
@@ -1031,7 +1031,7 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
   it('survives malformed json on disk', () => {
     const root = make({})
     writeFileSync(join(root, 'design', '.local', 'profile.json'), '{nope')
-    expect(localProfile(root).name).toBe('Designer')
+    expect(localProfile(root).name).toBe('You')
     rmSync(root, { recursive: true, force: true })
   })
 })

@@ -206,6 +206,9 @@ if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as a
 /** Initials + deterministic hue for avatarless authors - the whole fallback ladder. */
 export const avatarFallback = (author?: { email?: string; name?: string }) => {
   const name = author?.name || author?.email || '?'
+  // the unset dev default ("You", no account) renders in the COMMENT green - it's the mode's
+  // own hue, not a fake identity color, until a real profile is set
+  if (name === 'You' && !author?.email) return { initials: 'Y', hue: 131 }
   const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   let h = 0
   for (const c of (author?.email || name)) h = (h * 31 + c.charCodeAt(0)) % 360
