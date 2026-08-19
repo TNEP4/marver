@@ -2,6 +2,101 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.8.0 - 2026-08-19
+
+Live Jam: tag `@marver` in a canvas comment and a local coding agent picks it up, edits the real
+frame source, and replies in the thread - live. Plus a dev identity system and a full polish pass
+on the comment thread experience.
+
+### Added
+
+- **Live Jam - the agent in the thread.** A daemon inside `marver dev` watches the comment logs:
+  an owner-authored `@marver` spawns a headless agent (`jam: { agent: "claude" }` or `"codex"`)
+  that reads the whole thread, edits the real frame source, and replies live - a streamed
+  first-line ack within seconds (model provenance included), a look-around-before-asking clarify
+  ladder, replies matched to your message's energy and length, follow-ups in an engaged thread
+  triggering WITHOUT re-tagging, parallel jobs across frames, and crash-safe recovery: a batch
+  killed mid-run (even by a server restart) resumes on the next boot from a durable journal.
+  Every reply carries a provenance tooltip - dev user, harness, model.
+- **A hard trust boundary.** Only the owner's device triggers: a device-bound ledger (keyed per
+  board + comment id, never synced), a same-origin + cookie gate on every dev write (comments AND
+  profile), and a recursion guard so agent replies never re-trigger. The agent gets no shell -
+  Read/Edit/Write/Glob/Grep + WebSearch/WebFetch only - and its reply is extracted structurally
+  (the `marver-reply` block), so narration can never leak into a thread. Comment text is framed
+  as untrusted data end to end.
+- **The felt surface.** A frame being worked on wears the selection geometry in marver blue with
+  a rotating shimmer, a top-to-bottom content wave, and a parallelogram shimmer matrix on its
+  flank - phased per frame so parallel jams don't pulse in sync, held alive by a heartbeat for
+  the whole job. Replies land as minimal notification pills (frame title + preview) that stack
+  into a card deck at 3+, expand, clear, and jump you to the thread - delivered instantly over
+  the dev websocket. Marver renders as its own participant with the blue mark avatar everywhere.
+- **Dev identity + review controls.** Comments in dev render as "You" (green Y) until you set a
+  profile - hover your avatar (pen on gray), "Set up your profile": name + photo, saved to
+  `design/.local/` on your machine only; a connect account takes over name + email automatically,
+  and account-less history re-renders as the live you. New shortcuts: ⇧L toggles "laser comment"
+  (the element lighting comments paint in the artwork - anchoring stays precise with it off),
+  ⇧C hides pins, both in stateful two-row tooltips; Prototype view moved beside Hide UI.
+
+### Changed
+
+- **The thread card grew up.** World-parked beside its frame with pin-style screen-constant
+  scaling, height rules that respect the frame, content-mask scroll fades, a custom glass
+  scrollbar riding the card's far edge (action buttons never collide), and a stage-docked
+  position in Play that re-docks on device switches. The composer centers its text exactly,
+  renders `@marver` bold WITHOUT caret drift (metrics-safe text-stroke), and the send button is
+  reliably clickable.
+- Laser/comment hover lighting leaves a frame together with the pointer - no fossilized outlines
+  on frames the cursor crossed; the expanded notification list no longer clips pill shadows.
+
+## 0.7.0 - 2026-08-17
+
+Prototype mode becomes a first-class review surface. The prototype (Play) now carries the same toolbar
+as the canvas, laser and comments work INSIDE it, and every comment wears the colour of the element it
+points at - the groundwork for tagging a coding agent from anywhere you review.
+
+### Added
+
+- **The prototype is a review surface, not just a viewer.** Play's top-right toolbar is now the SAME
+  controls as the canvas - device switch, theme, laser, comment - built from one shared set of
+  components so the two can never drift. Laser and comment work inside the running prototype: the stage
+  runs the same element inspector the canvas frames do, so you can point at, highlight, and comment on
+  the live app while you walk a flow. The bottom-left navigator (restart / prev / i-of-N / next) stays.
+- **Hide UI (H).** One binary toggle hides all chrome for a clean point-and-shoot frame, shared by the
+  canvas and the prototype. No auto-fade, no hover magic; a page refresh always brings the chrome back
+  (the safety net for a forgotten shortcut). It replaces the prototype's old three-state auto-hiding bar.
+- **Comments wear their element's colour.** Comment mode reuses laser's per-element depth hue: the
+  element you hover, the composer, the pin, the thread card, and the active-element highlight all take
+  that specific element's colour - a comment on a blue heading reads blue, on a green button green. The
+  avatar keeps the commenter's own colour; filled buttons use a hue-aware shade so the glyph stays legible.
+- **The commented element lights up.** Picking an element locks a persistent outline on it (the highlight
+  stops chasing the mouse while you compose), and opening a thread re-lights its anchored element - so
+  everyone sees exactly which element a comment is about. It clears on close.
+
+### Changed
+
+- **Prototype chrome is discreet and reliable.** The prototype's floating toolbar wears the same quiet
+  dark skin as the bottom-left navigator, so it recedes into the stage instead of reading as a bright
+  slab; and it no longer auto-hides or sticks under the cursor - it behaves exactly like the canvas pill
+  (explicit collapse, Hide-UI, no surprises).
+- **Prototype is an action, not a menu item.** The Prototype-view button moved into the canvas pill's
+  action group (beside comment, laser, tidy), leaving the far right purely for UI management (Hide UI,
+  collapse).
+- **The element label reads clearer.** The laser/comment element tooltip now sits below-left of the
+  cursor with a gap - clear of the element you are pointing at - and slides in from the edge instead of
+  being clipped.
+- **Escape exits laser mode**, matching comment mode.
+
+### Fixed
+
+- **Canvas comment highlight is now reliable.** A frame hosting an open thread or a draft shows its LIVE
+  app rather than the frozen lean snapshot, so the active-element highlight appears, updates, and clears
+  in real time - it used to be intermittently missing, or frozen after close, depending on snapshot
+  timing. A clean snapshot rebuilds once the thread closes.
+- **Highlights only show while a thread is active.** Closing a thread or hiding pins (Shift+C) clears the
+  element highlight; a remotely-resolved thread no longer strands one.
+- **Prototype comment overlay positions faster** after a walk and never renders behind the frame or off
+  screen. Element-hue values, message origins, and stage-swap timing are all validated.
+
 ## 0.6.0 - 2026-08-17
 
 Image-heavy boards, done right. A board full of high-resolution screenshots now zooms fast and stays

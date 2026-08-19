@@ -194,6 +194,115 @@ describe('loadConfig (spec §4)', async () => {
   })
 })
 
+describe('Live Jam M3: parseMentions (@marver rendering, SPEC-live-jam §1)', async () => {
+  const { parseMentions } = await import('../src/client/shell/mentions.ts')
+  it('splits a body into text + @marver mention segments (case-insensitive)', () => {
+    expect(parseMentions('hey @marver fix this')).toEqual([
+      { text: 'hey ', mention: false }, { text: '@marver', mention: true }, { text: ' fix this', mention: false },
+    ])
+    expect(parseMentions('@Marver at the start').filter((s) => s.mention).map((s) => s.text)).toEqual(['@Marver'])
+  })
+  it('a body with no mention is one plain segment', () => {
+    expect(parseMentions('just a note')).toEqual([{ text: 'just a note', mention: false }])
+  })
+  it('does not match @marvers or @marvel (word boundary)', () => {
+    expect(parseMentions('@marvel movie').some((s) => s.mention)).toBe(false)
+    expect(parseMentions('email @marver.design').some((s) => s.mention)).toBe(true)   // @marver then .design
+  })
+})
+
+describe('Live Jam M0: config.jam (SPEC-live-jam §M0)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { loadConfig } = await import('../src/server/config.ts')
+  const load = async (src: string) => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-jam-'))
+    mkdirSync(join(root, 'design'))
+    writeFileSync(join(root, 'design/config.ts'), src)
+    const c = await loadConfig(root)
+    rmSync(root, { recursive: true, force: true })
+    return c
+  }
+  it('no jam block → Live Jam stays off (undefined)', async () => {
+    expect((await load(`export default { port: 6001 }\n`)).jam).toBeUndefined()
+  })
+  it('jam without an agent → off (a stray jam:{} never arms the daemon)', async () => {
+    expect((await load(`export default { jam: {} }\n`)).jam).toBeUndefined()
+  })
+  it('bad agent → off', async () => {
+    expect((await load(`export default { jam: { agent: 'gpt' } }\n`)).jam).toBeUndefined()
+  })
+  it('agent set → armed with lean defaults', async () => {
+    expect((await load(`export default { jam: { agent: 'claude' } }\n`)).jam)
+      .toEqual({ agent: 'claude', concurrency: 3, subagents: true, proactive: false })
+  })
+  it('explicit fields respected; out-of-range concurrency falls back; proactive opt-in', async () => {
+    expect((await load(`export default { jam: { agent: 'codex', concurrency: 99, subagents: false, proactive: true } }\n`)).jam)
+      .toEqual({ agent: 'codex', concurrency: 3, subagents: false, proactive: true })
+  })
+})
+
+describe('Live Jam M0: authorization ledger (SPEC-live-jam §1)', async () => {
+  const { mkdtempSync, rmSync, statSync, appendFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { has, record } = await import('../src/server/jam/ledger.ts')
+
+  it('record then has → true; the SAME id on another board → false (anti-spoof), unrecorded → false', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'home', 'evt-owner-1')
+    expect(has(root, 'home', 'evt-owner-1')).toBe(true)
+    expect(has(root, 'other-board', 'evt-owner-1')).toBe(false)   // same id, different board: a synced spoof cannot ride
+    expect(has(root, 'home', 'evt-synced-remote')).toBe(false)
+    expect(has(root, 'home', '')).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('has() on a fresh repo (no ledger file) → false, never throws', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    expect(has(root, 'home', 'anything')).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('ledger file is 0600 (owner-only)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'home', 'evt-1')
+    const mode = statSync(join(root, 'design', '.local', 'jam-ledger')).mode & 0o777
+    expect(mode).toBe(0o600)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('a torn final line (interrupted append) is tolerated, real ids still match', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'home', 'evt-1')
+    appendFileSync(join(root, 'design', '.local', 'jam-ledger'), 'home\tevt-2-torn-no-newline')  // no trailing \n
+    expect(has(root, 'home', 'evt-1')).toBe(true)
+    expect(has(root, 'home', 'evt-2-torn-no-newline')).toBe(true)   // last line, no newline, still exact-matches
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('Live Jam M0: owner gate (SPEC-live-jam §1, CSRF double-submit + Origin)', async () => {
+  const { ownerGated } = await import('../src/server/api.ts')
+  const req = (headers: Record<string, string>) => ({ headers })
+  it('cookie mv_c echoed as x-mv-c, same-origin (host:port matches) → allowed', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok123', 'x-mv-c': 'tok123', origin: 'http://localhost:5200', host: 'localhost:5200' }))).toBe(true)
+  })
+  it('no cookie → rejected (the drive-by that never got mv_c)', () => {
+    expect(ownerGated(req({ 'x-mv-c': 'tok123', origin: 'http://localhost:5200', host: 'localhost:5200' }))).toBe(false)
+  })
+  it('header does not match cookie → rejected (cannot forge without reading the cookie)', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=real', 'x-mv-c': 'guess', origin: 'http://localhost:5200', host: 'localhost:5200' }))).toBe(false)
+  })
+  it('foreign Origin → rejected even with a matching double-submit', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'https://evil.example.com', host: 'localhost:5200' }))).toBe(false)
+  })
+  it('another localhost PORT → rejected (cookies are not port-scoped; the same-origin host:port check catches it)', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'http://localhost:9999', host: 'localhost:5200' }))).toBe(false)
+  })
+  it('absent Origin falls back to the cookie proof (same-origin requests may omit Origin)', () => {
+    expect(ownerGated(req({ cookie: 'mv_c=tok', 'x-mv-c': 'tok', host: 'localhost:5200' }))).toBe(true)
+  })
+})
+
 describe('variant groups (SPEC-023 §1)', () => {
   const mk = (id: string, extra: Record<string, unknown> = {}) =>
     ({ id, file: `design/scenes/${id}.tsx`, kind: 'tsx', scene: id.split('/')[0], ...extra }) as any
@@ -672,6 +781,35 @@ describe('comment event store (SPEC-M3 §1 - set-union merge, deterministic repl
     ])
     expect(off[0].reactions['👍']).toBeUndefined()
   })
+  it('Live Jam: agent + agentMeta flow onto the root and replies', () => {
+    const meta = { devUser: 'Nic', harness: 'Claude Code', model: 'claude-opus-5', effort: 'xhigh' }
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', body: '@marver bolden this' }),
+      ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'Done.', agent: true, agentMeta: meta }),
+    ])
+    expect(threads[0].agent).toBeFalsy()               // human root
+    expect(threads[0].replies[0].agent).toBe(true)     // agent reply
+    expect(threads[0].replies[0].agentMeta).toEqual(meta)
+  })
+  it('Live Jam: reanchor re-pins the whole thread to the new element', () => {
+    const oldA = { el: { cssPath: 'button#a' } }
+    const newA = { el: { cssPath: 'button#b', semantics: { testId: 'cta' } } }
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', anchor: oldA }),
+      ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'moved it' }),
+      ev('e3', 'reanchor', { commentId: 'c1', anchor: newA }),
+    ])
+    expect(threads[0].anchor).toEqual(newA)            // thread (and all its comments) now on the new element
+    expect(threads[0].replies).toHaveLength(1)         // reanchor doesn't disturb replies
+  })
+  it('Live Jam: a null-anchor reanchor is ignored (never un-pins)', () => {
+    const a0 = { el: { cssPath: 'button#a' } }
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', anchor: a0 }),
+      ev('e2', 'reanchor', { commentId: 'c1', anchor: null }),
+    ])
+    expect(threads[0].anchor).toEqual(a0)              // still pinned to the original
+  })
   it('a torn trailing line is skipped, the rest of the log survives', () =>
     store((dir) => {
       appendEvents(dir, 'review', [ev('e1', 'create', { commentId: 'c1' })])
@@ -848,5 +986,62 @@ describe('validateEvents (SPEC-M3 - acceptance is forever, validate hard)', asyn
     expect(validateEvents([
       { id: 'e-aaaaaaaa', ts: now(), type: 'create', commentId: 'c-n1000000', author: mine, body: 'x', board: 'other-board' },
     ], log, me, 'review')).toMatch(/board/)
+  })
+})
+
+describe('localProfile (the ONE dev identity resolver)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { localProfile, isConnected } = await import('../src/server/profile.ts')
+  const make = (files: Record<string, unknown>) => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-prof-'))
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    for (const [name, body] of Object.entries(files))
+      writeFileSync(join(root, 'design', '.local', name), JSON.stringify(body))
+    return root
+  }
+  it("falls back to 'You' with nothing on disk", () => {
+    const root = make({})
+    expect(localProfile(root)).toEqual({ email: '', name: 'You', avatar: undefined })
+    expect(isConnected(root)).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('reads profile.json (name, email, avatar)', () => {
+    const root = make({ 'profile.json': { name: 'Nic', email: 'n@x.co', avatar: 'data:image/png;base64,AA' } })
+    expect(localProfile(root)).toEqual({ email: 'n@x.co', name: 'Nic', avatar: 'data:image/png;base64,AA' })
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('connect account wins name+email; the avatar stays local', () => {
+    const root = make({
+      'profile.json': { name: 'Local Me', email: 'old@x.co', avatar: 'data:image/png;base64,AA' },
+      'collab.json': { url: 'https://c.example', token: 't', email: 'me@team.co', name: 'Team Me' },
+    })
+    expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,AA' })
+    expect(isConnected(root)).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('a connect account without a name keeps the local display name', () => {
+    const root = make({
+      'profile.json': { name: 'Local Me' },
+      'collab.json': { url: 'https://c.example', token: 't', email: 'me@team.co' },
+    })
+    expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Local Me', avatar: undefined })
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('survives malformed json on disk', () => {
+    const root = make({})
+    writeFileSync(join(root, 'design', '.local', 'profile.json'), '{nope')
+    expect(localProfile(root).name).toBe('You')
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('survives VALID json that is not an object (null / array / primitive)', () => {
+    for (const body of ['null', '[1,2]', '"hi"', '42']) {
+      const root = make({})
+      writeFileSync(join(root, 'design', '.local', 'profile.json'), body)
+      writeFileSync(join(root, 'design', '.local', 'collab.json'), body)
+      expect(localProfile(root)).toEqual({ email: '', name: 'You', avatar: undefined })
+      expect(isConnected(root)).toBe(false)
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

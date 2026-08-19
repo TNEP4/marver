@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
-import { CopyIcon, IntentGlyph, ReloadIcon, XIcon } from '../icons.tsx'
+import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
@@ -9,6 +9,24 @@ import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from
 
 export const HEADER = 28
 const SNAP = 12
+
+/** Live Jam working shimmer (SPEC §10): a slim 2x6 strip of tiny marver marks on the frame's left
+ *  flank, top-aligned - each mark twinkles on its own scattered beat, phased per frame by
+ *  --mv-w0 (set on the node) so parallel frames never pulse in sync. */
+const SHIM_DELAYS = Array.from({ length: 12 }, (_, i) => {
+  const r = Math.floor(i / 2), c = i % 2
+  return (((r * 7 + c * 13) % 9) / 9) * 0.95
+})
+function WorkShimmer({ belowBadge }: { belowBadge: boolean }) {
+  // a variant badge owns the top of the left flank - the shimmer yields and sits below it
+  return (
+    <div className={`sh-work-ind${belowBadge ? ' below-vbadge' : ''}`} aria-hidden>
+      {SHIM_DELAYS.map((d, i) => (
+        <ParallelogramFillIcon key={i} size={5} style={{ animationDelay: `calc(var(--mv-w0, 0s) + ${d.toFixed(2)}s)` }} />
+      ))}
+    </div>
+  )
+}
 
 /**
  * One frame on the canvas. Iframe laws (spec §7): the iframe element is created once per node key
@@ -23,6 +41,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const frame = useStore((s) => s.frameFor(node))
   const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
+  const working = useStore((s) => s.working.includes(node.frame))   // Live Jam: Marver is editing this frame
+  const workingSince = useStore((s) => s.workingSince[node.frame])
   // B0.1: no reactive scale subscription - it re-rendered every FrameNode on every
   // pan/zoom tick. gestureScale below measures the world rect (the canonical source,
   // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
@@ -81,7 +101,16 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (node.status !== 'ready' || node.missing) return
     const iframe = iframeRef.current
     if (!iframe) return
-    const t = setTimeout(() => scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme }), 450)
+    const t = setTimeout(() => {
+      // never re-admit a cover while this frame hosts an open thread / draft: the live app
+      // must stay visible (its highlight updates in real time). A status/theme change would
+      // otherwise capture the live DOM WITH the highlight baked in and re-cover it. The
+      // hostsCard rail recaptures a clean lean once the card closes.
+      const c = useComments.getState()
+      const hosting = (!!c.active && c.threads.some((th) => th.id === c.active && th.nodeKey === node.key && !th.resolved)) || c.draft?.nodeKey === node.key
+      if (hosting) return
+      scheduleCapture(node.key, iframe, { sourceRevision: String(node.nav ?? 0), theme: node.theme })
+    }, 450)
     return () => clearTimeout(t)
     // node.theme IS a dep: baked content (mermaid SVG) can't be re-themed by the cover's attribute
     // flip, so a theme change re-captures after the live frame re-renders (key includes theme).
@@ -111,16 +140,33 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // neighbors - each node is a stacking context, so an overflowing card would
   // otherwise paint under the next frame
   const hostsCard = useComments((s) =>
-    (!!s.active && s.threads.some((t) => t.id === s.active && t.nodeKey === node.key)) || s.draft?.nodeKey === node.key)
+    (!!s.active && s.threads.some((t) => t.id === s.active && t.nodeKey === node.key && !t.resolved)) || s.draft?.nodeKey === node.key)
+  // a frame hosting an OPEN thread or a draft must show its LIVE app, not the frozen lean
+  // cover: the active-element highlight lives in the live DOM and updates in real time
+  // (open -> lit, close -> cleared). Without this the cover re-freezes the moment comment
+  // mode ends and either bakes a stale highlight or hides the live one. Mirror the interact
+  // rail: drop the cover while hosting, rebuild a fresh lean once the card closes (the
+  // highlight is cleared by then, so the recapture is clean).
+  const prevHostsCard = useRef(hostsCard)
+  useEffect(() => {
+    if (prevHostsCard.current === hostsCard) return
+    const wasHosting = prevHostsCard.current
+    prevHostsCard.current = hostsCard
+    if (hostsCard) invalidateLean(node.key)
+    else if (wasHosting && node.status === 'ready' && iframeRef.current)
+      scheduleCapture(node.key, iframeRef.current, { sourceRevision: String(node.nav ?? 0), theme: node.theme }, true)
+  }, [hostsCard, node.key, node.nav, node.theme, node.status])
   useEffect(() => {
     if (node.status === 'ready' || !laser)
       iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, location.origin)
   }, [laser, node.status])
-  // comment mode = pick mode in the frame (late loaders join like laser does)
+  // comment mode = pick mode in the frame (late loaders join like laser does); quiet when
+  // laser comment (⇧L) is off - clicks still anchor, no lighting in the artwork
+  const showAnchor = useComments((s) => s.showAnchor)
   useEffect(() => {
     if (node.status === 'ready' || !commentMode)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode }, location.origin)
-  }, [commentMode, node.status])
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !showAnchor }, location.origin)
+  }, [commentMode, showAnchor, node.status])
   // B0.2: the interact target owns its own wheel (app scrolls); passive frames forward
   // wheel to the canvas. Replayed on ready like laser/pick so a reload restores truth.
   useEffect(() => {
@@ -263,11 +309,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
 
   return (
     <div
-      className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}`}
+      className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}${working ? ' working' : ''}`}
       data-theme={node.theme}
-      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined }}
+      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined,
+        // phase every working animation by when THIS frame's job started (SPEC §10) - parallel
+        // frames pulsing in sync would read as one fake choreography
+        ...(working ? { ['--mv-w0' as string]: `${-(Date.now() - (workingSince ?? Date.now()))}ms` } : {}) }}
       data-node={node.key}
     >
+      {working && <WorkShimmer belowBadge={!!frame.variantGroup} />}
       {frame.variantGroup && (
         <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
           onPointerDown={(e) => e.stopPropagation()}
@@ -324,6 +374,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
           />
         )}
+        {working && <div className="sh-work-wave" />}
       </div>
 
       {/* comments live OUTSIDE the clipped body: a card or pin near the frame edge

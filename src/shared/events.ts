@@ -4,7 +4,11 @@
  * fetched events). No node imports here, ever.
  */
 
-export type EventType = 'create' | 'reply' | 'edit' | 'resolve' | 'reopen' | 'react' | 'profile'
+// 'reanchor' (Live Jam): re-pin a thread to a new element after the agent moved it.
+export type EventType = 'create' | 'reply' | 'edit' | 'resolve' | 'reopen' | 'react' | 'profile' | 'reanchor'
+
+// Live Jam: provenance stamped by the daemon on agent-authored events (who orchestrated the change).
+export interface AgentMeta { devUser?: string; harness?: string; model?: string; effort?: string }
 
 export interface CommentEvent {
   id: string                      // client-generated UUID - the idempotency key
@@ -15,11 +19,15 @@ export interface CommentEvent {
   board?: string
   nodeKey?: string                // a frame can sit on a board twice - comments are node-scoped
   frame?: string
-  anchor?: unknown                // SPEC-M3 §5 bundle; absent = frame-level comment
+  anchor?: unknown                // SPEC-M3 §5 bundle; absent = frame-level comment; on 'reanchor' = the new anchor
   author?: { email: string; name?: string; avatar?: string }
   body?: string                   // plain text in v1
   emoji?: string                  // react events
   addressedIn?: string            // resolve events: the variant frame that answered
+  // --- Live Jam additions ---
+  agent?: boolean                 // true = written by the Marver agent (never trusted for execution; render + guard only)
+  agentMeta?: AgentMeta           // provenance for the Marver avatar tooltip (agent events only)
+  origin?: string                 // server-stamped 'local' on dev-owner writes; the daemon's owner-trigger key
 }
 
 export interface Thread {
@@ -31,7 +39,9 @@ export interface Thread {
   ts: number
   resolved: boolean
   addressedIn?: string
-  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number }[]
+  agent?: boolean                 // root authored by the agent
+  agentMeta?: AgentMeta
+  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta }[]
   reactions: Record<string, string[]>   // emoji -> author emails (toggle semantics)
 }
 
@@ -54,7 +64,7 @@ export function replay(events: CommentEvent[]): Thread[] {
     threads.set(ev.commentId, {
       id: ev.commentId, board: ev.board, nodeKey: ev.nodeKey, frame: ev.frame,
       anchor: ev.anchor, author: ev.author, body: ev.body, ts: ev.ts,
-      resolved: false, replies: [], reactions: {},
+      resolved: false, agent: ev.agent, agentMeta: ev.agentMeta, replies: [], reactions: {},
     })
   }
   for (const ev of ordered) {
@@ -62,7 +72,7 @@ export function replay(events: CommentEvent[]): Thread[] {
       case 'reply': {
         const t = ev.parentId ? threads.get(ev.parentId) : undefined
         if (!t || !ev.commentId || t.replies.some((r) => r.id === ev.commentId)) break
-        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts })
+        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta })
         break
       }
       case 'edit': {
@@ -83,6 +93,13 @@ export function replay(events: CommentEvent[]): Thread[] {
       case 'reopen': {
         const t = ev.commentId ? threads.get(ev.commentId) : undefined
         if (t) { t.resolved = false; t.addressedIn = undefined }
+        break
+      }
+      case 'reanchor': {
+        // Live Jam: re-pin the whole thread to a new element (the agent moved the target).
+        // Only a root (thread) can be re-pinned, and a null/absent anchor is ignored (never un-pins).
+        const t = ev.commentId ? threads.get(ev.commentId) : undefined
+        if (t && ev.anchor != null) t.anchor = ev.anchor
         break
       }
       case 'react': {

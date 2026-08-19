@@ -143,6 +143,23 @@ export function init(root: string, opts: InitOpts) {
     && agentsNow.includes('# Design canvas - agent contract') && !agentsNow.includes('## The method (binding)'))
     console.warn(`  note: design/AGENTS.md predates managed regeneration - if you never edited it, delete it and re-run init to get the current contract (incl. the design/instructions routing).`)
 
+  // Root CLAUDE.md: Claude Code reads CLAUDE.md, not AGENTS.md, so a root CLAUDE.md that @-imports
+  // design/AGENTS.md is what delivers the contract to a spawned `claude -p` (Live Jam) and to the
+  // human's own Claude Code sessions. Idempotent and never clobbers: create it, or append the one
+  // import line to an existing file - the human's own bytes are left exactly as they are.
+  const claudeMd = join(root, 'CLAUDE.md')
+  const importLine = '@design/AGENTS.md'
+  if (!existsSync(claudeMd)) {
+    writeFileSync(claudeMd, `# ${NAME}\n\nThis repo designs with ${NAME}. The agent contract for the canvas lives in design/AGENTS.md:\n\n${importLine}\n`)
+    created.push('CLAUDE.md')
+  } else {
+    const cur = readFileSync(claudeMd, 'utf8')
+    if (!cur.includes(importLine)) {
+      writeFileSync(claudeMd, cur.replace(/\n*$/, '') + `\n\n${importLine}\n`)
+      created.push('CLAUDE.md (updated)')
+    }
+  }
+
   // The Method: short, strict, phase-scoped instruction files AGENTS.md routes into,
   // plus the reference/ shelf of deep guides pulled on demand (stuck, disappointed
   // human, review pass, brand-new work). Managed like the contract itself.

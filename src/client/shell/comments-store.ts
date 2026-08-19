@@ -16,8 +16,10 @@ interface CommentsState {
   board: string | null
   me: Me | null                       // null on published until signed in
   local: boolean                      // dev mirror (identity is the local profile)
+  connected: boolean                  // dev only: a connect account provides name/email (read-only here)
   commentMode: boolean                // C - picking + composing
   show: boolean                       // Shift+C - pins visible at all
+  showAnchor: boolean                 // Shift+L - light the tagged ELEMENT while its thread is open
   active: string | null               // open thread id
   draft: { nodeKey: string; frame: string; anchor: unknown } | null   // picked, composing
   needsIdentity: boolean              // published viewer tried to comment while signed out
@@ -25,6 +27,9 @@ interface CommentsState {
 
   load(board: string): Promise<void>
   live(board: string): () => void
+  /** Fetch the active board's log NOW (Live Jam: the daemon just wrote a reply) - same union path
+   *  as the poll, so dedup + the reply notification behave identically. */
+  poke(board?: string): void
   send(events: CommentEvent[]): Promise<boolean>
   create(body: string): Promise<void>
   reply(threadId: string, body: string): Promise<void>
@@ -32,11 +37,12 @@ interface CommentsState {
   resolve(threadId: string, reopen?: boolean): Promise<void>
   setMode(on: boolean): void
   setShow(show: boolean): void
+  setShowAnchor(on: boolean): void
   setActive(id: string | null): void
   setDraft(d: CommentsState['draft']): void
   signIn(email: string, password: string): Promise<string | null>
   claim(token: string, password: string, name: string, avatar?: string): Promise<string | null>
-  saveProfile(patch: Partial<Me>): Promise<void>
+  saveProfile(patch: Partial<Me>): Promise<string | null>
   dismissIdentity(): void
 }
 
@@ -52,20 +58,49 @@ const api = async (path: string, body?: unknown) => {
 
 export const useComments = create<CommentsState>((set, get) => {
   const derive = (events: CommentEvent[]) => ({ events, threads: replay(events) })
+  // Live Jam (SPEC §9): a Marver reply that arrives AFTER the initial load (load() baselines via
+  // derive, so pre-existing replies never notify) raises a persistent bottom-right pill. Keyed on
+  // the event id via `union`'s fresh filter, so it fires exactly once; active-board only by
+  // construction (union runs against the active board's poll).
+  const notifyAgent = (fresh: CommentEvent[]) => {
+    const replies = fresh.filter((e) => e.agent && e.type === 'reply')
+    if (!replies.length) return
+    void import('./store.ts').then(({ useStore }) => {
+      const board = get().board ?? ''
+      const s = useStore.getState()
+      for (const e of replies) {
+        const threadId = e.parentId ?? e.commentId ?? ''
+        // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
+        const frame = get().threads.find((t) => t.id === threadId)?.frame
+        const entry = frame ? s.manifest?.frames.find((f) => f.id === frame) : undefined
+        s.jamToast({
+          threadId, board, ts: e.ts,
+          preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
+          frame, frameTitle: entry?.title ?? frame, intent: entry?.intent,
+        })
+      }
+    })
+  }
   const union = (events: CommentEvent[]) => {
     const have = new Set(get().events.map((e) => e.id))
     const fresh = events.filter((e) => !have.has(e.id))
-    if (fresh.length) set(derive([...get().events, ...fresh]))
+    if (fresh.length) { set(derive([...get().events, ...fresh])); notifyAgent(fresh) }
   }
 
   return {
-    events: [], threads: [], board: null, me: null, local: false,
-    commentMode: false, show: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
+    events: [], threads: [], board: null, me: null, local: false, connected: false,
+    commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
+
+    poke(board) {
+      const b = get().board
+      if (!b || (board && board !== b)) return   // only the active board renders; others load on switch
+      void api(`comments/${b}`).then((r) => { if (r.ok && get().board === b) union(r.data.events ?? []) })
+    },
 
     async load(board) {
       set({ board })
       const me = await api('me')
-      if (me.ok) set({ me: me.data.user ?? null, local: !!me.data.local })
+      if (me.ok) set({ me: me.data.user ?? null, local: !!me.data.local, connected: !!me.data.connected })
       const res = await api(`comments/${board}`)
       if (res.ok && get().board === board) set(derive(res.data.events ?? []))
     },
@@ -144,6 +179,7 @@ export const useComments = create<CommentsState>((set, get) => {
 
     setMode(on) { set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
     setShow(show) { set({ show }) },
+    setShowAnchor(showAnchor) { set({ showAnchor }) },
     setActive(active) { set({ active }) },
     setDraft(draft) { set({ draft }) },
     dismissIdentity() { set({ needsIdentity: false }) },   // inviteToken survives dismissal - commenting later reopens the claim
@@ -162,7 +198,9 @@ export const useComments = create<CommentsState>((set, get) => {
     },
     async saveProfile(patch) {
       const res = await api('profile', patch)
-      if (res.ok) set({ me: res.data.user })
+      if (!res.ok) return res.data?.error ?? 'could not save - try again'
+      set({ me: res.data.user })
+      return null
     },
   }
 })
@@ -173,6 +211,9 @@ if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as a
 /** Initials + deterministic hue for avatarless authors - the whole fallback ladder. */
 export const avatarFallback = (author?: { email?: string; name?: string }) => {
   const name = author?.name || author?.email || '?'
+  // the unset dev default ("You", no account) renders in the COMMENT green - it's the mode's
+  // own hue, not a fake identity color, until a real profile is set
+  if (name === 'You' && !author?.email) return { initials: 'Y', hue: 131 }
   const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   let h = 0
   for (const c of (author?.email || name)) h = (h * 31 + c.charCodeAt(0)) % 360

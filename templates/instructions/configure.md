@@ -67,6 +67,21 @@ If collaboration is deployed, each engineer runs `marver comments connect
 cloud sync on top of git. Git carries the committed comments; `connect` adds
 the real-time stream from published viewers.
 
+## Dev identity (who comments render as)
+
+`marver dev` resolves the local author from `design/.local/` - never invent or
+edit these by hand; point the human at the UI instead:
+
+- `profile.json` `{name, email?, avatar?}` - set from the composer: click your
+  avatar next to any comment input, fill name + photo. Stays on this machine.
+- `collab.json` - once connected, the connect account wins name + email (the
+  published server validates authors); the local photo still applies.
+- Unset → comments render as "You" with a green Y avatar.
+
+The same identity stamps Live Jam: Marver's replies are authored by this
+profile + `agent:true`, and the provenance tooltip's "Dev user" row shows the
+profile name - so a proper profile makes agent work attributable too.
+
 ## When it breaks mid-project
 
 Frames suddenly unstyled → the theme import path moved: fix `design/theme.css`.

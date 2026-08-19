@@ -14,6 +14,7 @@ import { Component, createElement, useEffect, useRef, useState, type ComponentTy
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { frameFile, frames, layoutChain, layouts, providers } from '../frame-host/registry.ts'
+import { createInspect } from '../frame-host/inspect.js'
 
 const params = new URLSearchParams(location.search)
 // Both signals, always - same pair as the frame host: [data-theme] for attribute-keyed
@@ -24,7 +25,9 @@ document.documentElement.dataset.theme = bootTheme
 document.documentElement.classList.toggle('dark', bootTheme === 'dark')
 const startId = params.get('at') ?? ''
 
-const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
+// same-origin parent (the shell): fixed target origin so anchor bundles never leak if a
+// data-goto ever navigates the stage cross-origin
+const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, location.origin) }
 
 window.addEventListener('error', (e) => post({ type: 'sh:stage-error', message: String(e.message || e.error) }))
 window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:stage-error', message: `unhandled rejection: ${e.reason}` }))
@@ -77,6 +80,7 @@ function Stage() {
   const [err, setErr] = useState<{ id: string; message: string } | null>(null)
   const current = useRef(startId)
   const swapSeq = useRef(0)
+  const readySent = useRef(false)
 
   /** Swap to a frame. `announce` posts sh:stage-at (user-driven); history restores stay silent. */
   const goto = async (id: string, announce: boolean) => {
@@ -85,10 +89,13 @@ function Stage() {
     try {
       const next = await resolve(id)
       if (seq !== swapSeq.current) return       // a newer swap superseded this one
-      current.current = id
       // startViewTransition runs its callback async - recheck the seq there too, or an
-      // older pending transition could commit stale state over a newer navigation
-      const apply = () => { if (seq === swapSeq.current) flushSync(() => { setErr(null); setMounted(next) }) }
+      // older pending transition could commit stale state over a newer navigation.
+      // current.current is advanced INSIDE apply (once the new DOM is committed), so
+      // inspect.getId() never reports the new frame while the old DOM is still live -
+      // a pick / anchor-resolve landing mid-swap then carries the old id and the shell
+      // guards drop it instead of stamping it onto the wrong frame.
+      const apply = () => { if (seq === swapSeq.current) { flushSync(() => { setErr(null); setMounted(next) }); current.current = id } }
       if (document.startViewTransition) document.startViewTransition(apply)
       else { apply(); document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' }) }
       if (announce) post({ type: 'sh:stage-at', at: id })
@@ -101,13 +108,27 @@ function Stage() {
     }
   }
 
+  // sh:stage-ready fires ONCE, after the first frame actually commits to the DOM (not when
+  // goto is merely scheduled) - the shell re-drives the review highlight on it, which must
+  // resolve against a live document
+  useEffect(() => {
+    if (mounted && !readySent.current) { readySent.current = true; post({ type: 'sh:stage-ready', at: current.current }) }
+  }, [mounted])
+
   useEffect(() => {
     goto(startId, false)
-    post({ type: 'sh:stage-ready', at: startId })
+
+    // laser / comment-pick / anchor / highlight - the SAME controller the canvas
+    // frames run, so review works identically in the prototype. getId reports the
+    // CURRENT frame (the stage swaps in place). It self-installs its own listeners;
+    // we only borrow modeActive() to keep a review click from ALSO navigating.
+    const inspect = createInspect({ post, getId: () => current.current })
 
     // data-goto is handled HERE, in place - never posted up as sh:go (capture phase
-    // beats any frame handler; preventDefault stops real <a href> navigations)
+    // beats any frame handler; preventDefault stops real <a href> navigations). A
+    // laser/comment click owns the press instead - it must not navigate.
     const onClick = (e: MouseEvent) => {
+      if (inspect.modeActive()) return
       const el = e.target instanceof Element ? e.target.closest('[data-goto]') : null
       if (!el) return
       e.preventDefault()
@@ -118,19 +139,21 @@ function Stage() {
     document.addEventListener('click', onClick, true)
 
     const onKey = (e: KeyboardEvent) => {
-      // Escape always exits, even mid-typing (matches the canvas bridge)
-      if (e.key === 'Escape') { post({ type: 'sh:stage-exit' }); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); post({ type: 'sh:stage-key', key: '/', code: e.code, meta: true }); return }
       if (e.metaKey || e.ctrlKey) return       // ⌘D is the browser's bookmark, not our theme
+      // Escape always reaches the shell, even mid-typing: it decides (cancel a
+      // comment/laser first, else exit) - the stage can't see review mode
+      if (e.key === 'Escape') { post({ type: 'sh:stage-key', key: 'Escape', code: e.code }); return }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      // every play shortcut belongs to the shell (it owns walk order + chrome) - forward
-      if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', '[', ']', 'ArrowRight', 'ArrowLeft'].includes(e.key))
+      // every play shortcut belongs to the shell (it owns walk order + chrome) - forward.
+      // l/c toggle laser/comment, C (shift+c) hides pins; the shell acts and broadcasts back.
+      if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'l', 'c', 'C', '[', ']', 'ArrowRight', 'ArrowLeft'].includes(e.key))
         post({ type: 'sh:stage-key', key: e.key, code: e.code })
     }
     window.addEventListener('keydown', onKey)
 
     const onMsg = (e: MessageEvent) => {
-      if (e.source !== window.parent) return
+      if (e.source !== window.parent || (e.origin && e.origin !== location.origin)) return
       const data = e.data
       if (data?.type === 'sh:set-theme') {
         document.documentElement.dataset.theme = data.theme
@@ -144,6 +167,7 @@ function Stage() {
       document.removeEventListener('click', onClick, true)
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('message', onMsg)
+      inspect.dispose()
     }
   }, [])
 

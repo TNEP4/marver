@@ -33,7 +33,10 @@ export interface Node {
   sizeMode?: 'auto' | 'manual' | 'device'
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
 }
-export interface Toast { id: number; text: string }
+/** A Live Jam notification (SPEC-live-jam §9): a persistent bottom-right glass pill for a Marver
+ *  reply. Frame-first: the FRAME is the news (icon + title, blue), Marver + preview below. */
+export interface JamNote { threadId: string; board: string; preview: string; ts: number; frame?: string; frameTitle?: string; intent?: string }
+export interface Toast { id: number; text: string; jam?: JamNote }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string } = shConfig
 
@@ -169,6 +172,15 @@ interface State {
   setTheme(theme: string): void
   runTidy(): void
   toast(text: string): void
+  jamToast(note: JamNote): void
+  dismissToast(id: number): void
+  clearJamToasts(): void
+  /** Frames Marver is editing right now (Live Jam presence, SPEC §10) - drives the working glow. */
+  working: string[]
+  /** When each working frame's job started (ms epoch) - phases the animations so parallel
+   *  frames never pulse in sync. */
+  workingSince: Record<string, number>
+  setWorking(frames: string[]): void
   spawn(frameId: string): Node | null
   save(): Promise<boolean>
 }
@@ -420,7 +432,7 @@ export const useStore = create<State>((set, get) => {
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], boardHash: null, dirty: false,
+    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false,
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0,
 
     async boot() {
@@ -832,6 +844,22 @@ export const useStore = create<State>((set, get) => {
       const id = ++toastSeq
       set((s) => ({ toasts: [...s.toasts, { id, text }] }))
       setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4000)
+    },
+    /** A Live Jam reply notification: persistent (no auto-dismiss), one per thread (a newer reply
+     *  supersedes), capped so the stack stays small. */
+    jamToast(note) {
+      const id = ++toastSeq
+      set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text: 'Marver replied', jam: note }].slice(-8) }))
+    },
+    dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
+    clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
+    setWorking(frames) {
+      // preserve each frame's original start time; stamp now() only for newly-working frames -
+      // the start phases the working animations so parallel frames never pulse in sync
+      const prev = get().workingSince
+      const workingSince: Record<string, number> = {}
+      for (const f of frames) workingSince[f] = prev[f] ?? Date.now()
+      set({ working: frames, workingSince })
     },
     spawn(frameId) {
       const { manifest, nodes, deviceView, baseLayout } = get()

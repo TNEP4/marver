@@ -51,7 +51,10 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     const pulled = appendEvents(dir, board, remote).length
     let pushed = 0
     if (rights[board] === 'comment') {
-      const missing = diffEvents(readLog(dir, board), remote.map((e) => e.id))
+      // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
+      // (the published client validator rejects agent provenance; publishing them is a P3 feature
+      // needing a trusted path). Filter them out of the push set.
+      const missing = diffEvents(readLog(dir, board), remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent)
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },

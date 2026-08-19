@@ -287,7 +287,102 @@ body.sh-commenting .sh-lean { opacity: 0 }
 }
 @keyframes sh-orbit { to { --sh-rot: 360deg } }
 @media (prefers-reduced-motion: reduce) {
-  .sh-node.interact::before, .sh-node.interact::after { animation: none } }
+  .sh-node.interact::before, .sh-node.interact::after,
+  .sh-node.working::before { animation: none } }
+
+/* Live Jam "working" (SPEC §10): the SELECTED state's exact geometry - crisp border + 2px screen-px
+   outline + 4px ring, edge-light off - in MARVER BLUE (Nic's pick over yellow), composed of three
+   layers: the border shimmer (::before orbit), the periodic content WAVE (.sh-work-wave), and the
+   shimmer MATRIX of tiny marks on the left flank (.sh-work-ind). Every animated layer is phased by
+   --mv-w0 (negative ms since THIS frame's job started), so parallel frames never pulse in sync.
+   When a human is actually IN the frame, interact's magenta treatment wins. */
+.sh-node.working { --work: var(--mv-blue); --work-ring: rgba(0, 136, 255, .2) }
+.sh-app.dark .sh-node.working { --work: #4db1ff; --work-ring: rgba(0, 136, 255, .3) }
+.sh-node.working:not(.interact) { border-color: var(--work);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--work);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--work-ring), var(--shadow-node) }
+.sh-node.working:not(.interact)::after { display: none }   /* the blue geometry owns the edge, like .sel */
+.sh-node.working:not(.interact)::before {
+  content: ''; position: absolute; pointer-events: none;
+  inset: calc(-2.5px * var(--sh-inv, 1));
+  padding: calc(2.5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
+  background: conic-gradient(from var(--sh-rot),
+    var(--work) 0deg,
+    var(--work) 105deg,
+    rgba(255, 255, 255, .95) 135deg,
+    var(--work) 165deg,
+    var(--work) 285deg,
+    rgba(255, 255, 255, .95) 315deg,
+    var(--work) 345deg,
+    var(--work) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: .6;
+  animation: sh-orbit 4.2s linear infinite;
+  animation-delay: var(--mv-w0, 0s) }
+
+/* THE WAVE (Option A: content sweep). One 36s cycle holds five ~1.7s sweeps - dense right after
+   the trigger (0s, 5s, 10s), then spaced (19s, 29s) - so a fresh job announces itself and a long
+   one keeps a calmer heartbeat. Jumps between sweeps happen at opacity 0 (invisible). */
+.sh-work-wave { position: absolute; inset: 0; overflow: hidden; border-radius: inherit;
+  pointer-events: none; z-index: 4 }
+.sh-work-wave::before { content: ''; position: absolute; left: 0; right: 0; top: -55%; height: 55%;
+  opacity: 0;
+  background: linear-gradient(180deg,
+    rgba(0, 136, 255, 0) 0%, rgba(0, 136, 255, .07) 30%, rgba(0, 136, 255, .16) 52%,
+    rgba(0, 136, 255, .07) 74%, rgba(0, 136, 255, 0) 100%);
+  animation: sh-work-wave 36s linear infinite;
+  animation-delay: var(--mv-w0, 0s) }
+@keyframes sh-work-wave {
+  0%     { transform: translateY(0); opacity: 0 }
+  0.4%   { opacity: 1 }
+  3.9%   { opacity: 1 }
+  4.7%   { transform: translateY(282%); opacity: 0 }
+  13.8%  { transform: translateY(0); opacity: 0 }
+  14.2%  { opacity: 1 }
+  17.7%  { opacity: 1 }
+  18.5%  { transform: translateY(282%); opacity: 0 }
+  27.7%  { transform: translateY(0); opacity: 0 }
+  28.1%  { opacity: 1 }
+  31.6%  { opacity: 1 }
+  32.4%  { transform: translateY(282%); opacity: 0 }
+  52.7%  { transform: translateY(0); opacity: 0 }
+  53.1%  { opacity: 1 }
+  56.6%  { opacity: 1 }
+  57.4%  { transform: translateY(282%); opacity: 0 }
+  80.5%  { transform: translateY(0); opacity: 0 }
+  80.9%  { opacity: 1 }
+  84.4%  { opacity: 1 }
+  85.2%  { transform: translateY(282%); opacity: 0 }
+  100%   { transform: translateY(282%); opacity: 0 }
+}
+
+/* THE SHIMMER MATRIX: 3 x 6 tiny marver marks on the left flank, top-aligned (the vbadge lane).
+   Screen-constant via --sh-inv (tight at every zoom); each mark twinkles on its own scattered
+   beat, phased per frame by --mv-w0. */
+/* CLAMPED scaling (the vbadge pattern): screen-constant ~4px marks in the working zoom band,
+   but floored at 3 world px (deep zoom-in: grows slightly on screen instead of vanishing) and
+   capped at 13 world px (far zoom-out: shrinks with the canvas instead of dominating the frame
+   and bleeding onto the left neighbor). No transform scale - the sizes ARE the clamp. */
+.sh-work-ind { position: absolute; top: 0;
+  --shm: clamp(3px, calc(4px * var(--sh-inv, 1)), 13px);
+  --shg: clamp(1px, calc(1.5px * var(--sh-inv, 1)), 4px);
+  right: calc(100% + clamp(6px, calc(10px * var(--sh-inv, 1)), 26px));
+  display: grid; grid-template-columns: repeat(2, var(--shm)); gap: var(--shg);
+  pointer-events: none; z-index: 5 }
+/* a variant badge (A / B / C + name) owns the top of the left flank - the shimmer sits below it.
+   The offset mirrors the badge's own zoom clamps (letter 40px-120px + label), so it tracks the
+   badge as it grows and shrinks across the zoom range. */
+.sh-work-ind.below-vbadge { top: min(clamp(64px, calc(32px * var(--sh-inv, 1)), 170px), calc(64px * var(--sh-inv, 1))) }
+.sh-work-ind svg { display: block; width: var(--shm); height: var(--shm); color: var(--work, var(--mv-blue));
+  opacity: .12; animation: sh-work-shim .95s ease-in-out infinite }
+@keyframes sh-work-shim { 0%, 100% { opacity: .12; transform: scale(.75) } 35% { opacity: 1; transform: scale(1.15) } }
+@media (prefers-reduced-motion: reduce) {
+  .sh-work-wave::before, .sh-work-ind svg { animation: none } }
 
 /* selection toolbar: screen-space overlay, constant size at any zoom */
 .sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
@@ -417,7 +512,9 @@ body.sh-commenting .sh-lean { opacity: 0 }
 
 /* dropdown menu (theme) - portaled to .sh-app (its own backdrop root), left-aligned to its trigger */
 .sh-theme { position: relative }
-.sh-menu { position: absolute; min-width: 136px; z-index: 20;
+/* z above the play backdrop (.sh-play is z-30): a dropdown portals to .sh-app, so in the
+   prototype it must clear the full-window overlay or it renders behind it, invisible */
+.sh-menu { position: absolute; min-width: 136px; z-index: 40;
   border-radius: 16px; padding: 5px; display: flex; flex-direction: column;
   transform-origin: top left; animation: sh-pop .14s ease }
 @keyframes sh-pop { from { opacity: 0; transform: scale(.95) translateY(-4px) } }
@@ -431,7 +528,7 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
 
 /* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
-.sh-tip { position: absolute; z-index: 40; pointer-events: none; padding: 5px 10px; border-radius: 8px;
+.sh-tip { position: absolute; z-index: 400; pointer-events: none; padding: 5px 10px; border-radius: 8px;   /* topmost ephemeral chrome - above modals (300) or in-dialog tips vanish */
   font: 500 12px -apple-system, system-ui, sans-serif; white-space: nowrap; transform: translate(-50%, -100%);
   display: flex; flex-direction: row; align-items: center; gap: 10px;
   background: var(--tip-bg); color: var(--tip-ink);
@@ -469,10 +566,63 @@ body.sh-commenting .sh-lean { opacity: 0 }
   transition: color .15s, background .15s }
 .sh-update .x:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
-.sh-toasts { position: absolute; left: var(--edge); bottom: var(--edge); z-index: 12; display: flex; flex-direction: column; gap: 6px }
+/* bottom-RIGHT now (SPEC-live-jam §9): jam reply pills live here; plain toasts ride along */
+.sh-toasts { position: absolute; right: var(--edge); bottom: var(--edge); z-index: 32; display: flex;
+  flex-direction: column; align-items: flex-end; gap: 8px; max-width: min(360px, 40vw) }
 .sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
 .sh-toast svg { color: var(--glass-good); flex: none }
+/* the jam pill's svgs are NOT the toast checkmark: the mark stays white/90 on blue, the X keeps
+   its own muted ink - undo the blanket green above */
+.sh-toast.jam svg { color: currentColor }
+.sh-toast-more { color: var(--glass-ink-3); font-size: 11px; padding: 2px 10px }
+
+/* the Live Jam reply pill: our full glass treatment, full radius, one row (§9) */
+.sh-toast.jam { gap: 12px; padding: 12px 12px 12px 14px; width: 380px; max-width: 100%; border-radius: 999px;
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass), 0 12px 32px -12px rgba(24,24,27,.4);
+  color: var(--glass-ink); animation: sh-jam-in .18s ease }
+@keyframes sh-jam-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+/* Marver is ALWAYS its own blue - never the shell accent, which swaps to magenta in interact mode
+   (.sh-app.interacting). A fixed var the swap can't touch keeps the avatar + notification on-brand. */
+:root { --mv-blue: #0088ff }
+.sh-jam-mark { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--mv-blue); color: rgba(255,255,255,.9);
+  display: inline-flex; align-items: center; justify-content: center }
+.sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; line-height: 1.25 }
+/* row 1: the FRAME is the news - its title in blue (the mark already says it is Marver) */
+.sh-jam-frame { display: flex; align-items: center; font-size: 13.5px; font-weight: 600; color: var(--mv-blue); min-width: 0 }
+.sh-jam-frame .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* row 2: the message alone, darker for readability */
+.sh-jam-prev { font-size: 12.5px; color: var(--glass-ink-2, var(--glass-ink)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+/* the DECK (3+): newest pill on top, two card edges peeking beneath; +N badge; click to expand */
+.sh-jam-deck { position: relative; cursor: pointer }
+.sh-jam-deck .sh-toast.jam { position: relative; margin: 0 }
+.sh-jam-ghost { position: absolute; left: 0; right: 0; height: 100%; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass) }
+.sh-jam-ghost.g1 { top: 6px; left: 5px; right: 5px; opacity: .8 }
+.sh-jam-ghost.g2 { top: 12px; left: 11px; right: 11px; opacity: .5 }
+.sh-jam-deck { margin-bottom: 12px }   /* room for the peeking edges */
+.sh-jam-badge { flex: none; font: 700 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink);
+  background: var(--glass-hover); border-radius: 999px; padding: 4px 9px }
+
+/* the EXPANDED list: newest first, header with count + Clear all, scrolls past ~6.
+   The scroller CLIPS at its box - pad it out to the pills' shadow reach (12px drop, 32px
+   blur) and cancel with negative margins, so the shadows breathe and nothing moves. */
+.sh-jam-list { display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+  max-height: min(60vh, 520px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  padding: 22px 26px 32px; margin: -22px -26px -32px }
+.sh-jam-listhead { display: flex; align-items: center; gap: 8px; padding: 0 6px;
+  font: 700 10px -apple-system, system-ui, sans-serif; letter-spacing: .06em; color: var(--glass-ink-3) }
+.sh-jam-listhead button { margin-left: auto; border: 0; background: none; cursor: pointer;
+  font: 600 11px -apple-system, system-ui, sans-serif; color: var(--mv-blue); padding: 3px 6px }
+.sh-jam-listhead button + button { margin-left: 0; color: var(--glass-ink-3); display: inline-flex }
+.sh-jam-view { flex: none; border: 0; border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  background: var(--mv-blue); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; transition: filter .15s }
+.sh-jam-view:hover { filter: brightness(1.08) }
+.sh-jam-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  border: 0; border-radius: 50%; background: none; color: var(--glass-ink-3); cursor: pointer; transition: background .12s, color .12s }
+.sh-jam-x:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
 /* ---- Play mode (SPEC-M2 §1): near-black stage, one centered device, auto-hiding bar.
    Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
@@ -643,6 +793,57 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    divider needs a touch more air before the first chip */
 .sh-play-nav .sep + .vchip { margin-left: 5px }
 
+/* --- prototype-review: shared toolbar in play, Hide-UI, comment overlay --- */
+
+/* Hide-UI: one binary body class (canvas + prototype) drops all operating chrome. Not
+   persisted - a page refresh always restores it. Comment pins/threads (the review
+   annotations) stay; only the marver chrome hides, for a clean point-and-shoot frame. */
+body.sh-hide-ui .sh-pill,
+body.sh-hide-ui .sh-pill-fab,
+body.sh-hide-ui .sh-panel,
+body.sh-hide-ui .sh-fab,
+body.sh-hide-ui .sh-ctx,
+body.sh-hide-ui .sh-update,
+body.sh-hide-ui .sh-toasts,
+body.sh-hide-ui .sh-banner,
+body.sh-hide-ui .sh-play-nav { display: none !important }
+
+/* the prototype pill reuses the shared pill LAYOUT but wears the discreet DARK skin of the
+   bottom-left navigator (not the bright canvas glass), so it recedes into the near-black
+   stage: dark translucent fill, a faint white hairline, light-on-dark controls. */
+.sh-play-pill, .sh-play .sh-pill-fab { z-index: 32 }
+.sh-play-pill.sh-pill, .sh-play .sh-pill-fab {
+  background: rgba(18, 18, 24, .8); border: 1px solid rgba(255, 255, 255, .1);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .38) }
+.sh-play-pill::after, .sh-play .sh-pill-fab::after { display: none }   /* no light edge-light overlay */
+.sh-play-pill .sh-pill-btn, .sh-play .sh-pill-fab { color: rgba(245, 245, 247, .6) }
+.sh-play-pill .sh-pill-btn:hover, .sh-play .sh-pill-fab:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
+.sh-play-pill .sh-pill-btn.on { background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+.sh-play-pill .sep { background: rgba(255, 255, 255, .12) }
+.sh-play-pill .bd { color: rgba(245, 245, 247, .82) }
+.sh-pill-btn.bd { width: auto; gap: 6px; padding: 0 8px 0 11px; white-space: nowrap; font-weight: 600 }
+.sh-play-update { width: auto !important; gap: 5px; padding: 0 11px !important; font-size: 12px; font-weight: 600 }
+/* the picker dropdowns portal to .sh-app; in play they carry .sh-menu-dark for the dark skin */
+.sh-menu-dark { background: rgba(20, 20, 26, .97); border-color: rgba(255, 255, 255, .12); box-shadow: 0 12px 40px rgba(0, 0, 0, .5) }
+.sh-menu-dark::after { display: none }
+.sh-menu-dark button { color: rgba(245, 245, 247, .82) }
+.sh-menu-dark button:hover { background: rgba(255, 255, 255, .1) }
+.sh-menu-dark .chk { color: #6db3ff }
+.sh-menu-dark kbd { color: rgba(245, 245, 247, .5) }
+.sh-menu-dark .div { background: rgba(255, 255, 255, .1) }
+
+/* device + comment overlay share one flex-centered box; the overlay is inset:0 over it, a
+   SIBLING of the clipping .dev so a thread card is never eaten by the device's overflow.
+   overflow:visible lets a card spill past the device edge; only its markers catch the
+   pointer, the stage below stays fully interactive. */
+.sh-play-stage { position: relative; flex: none }
+/* the canvas writes --sh-inv (1/zoom) for screen-constant pins; the prototype has no
+   zoom, so neutralise it or the leaked value scales every comment pin by ~12x at overview */
+.sh-play { --sh-inv: 1 }
+.sh-play-comments { position: absolute; inset: 0; z-index: 31; overflow: visible; pointer-events: none }
+.sh-play-comments > * { pointer-events: auto }
+
 /* the current variant's name trails the chips at natural width - the chips anchor,
    so a name change grows the pill rightward without shifting any control underfoot.
    A max caps runaway titles; the Tip carries the full name. */
@@ -704,10 +905,16 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
    outline hugging the edge, 4px ring halo - in the comment green (the pin
    is already screen-space via scale(--sh-inv), so plain px match the
    frame's calc'd screen px) */
-.cm-pin.on { border-color: var(--comment);
-  outline: 2px solid var(--comment); outline-offset: -1px;
-  box-shadow: 0 0 0 4px var(--comment-ring), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
+.cm-pin.on { border-color: var(--cm-line, var(--comment));
+  outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
+/* the open pin's tail leans TOWARD its card. Default (sharp bottom-left) already reads "left";
+   card on the RIGHT mirrors the pin around its anchor - sharp corner bottom-right, box extending
+   left+up, so the tail points right at the conversation. */
+.cm-pin.tail-r { border-radius: 18px 18px 4px 18px;
+  transform: translate(calc(-100% + 2px), -100%) scale(var(--sh-inv, 1));
+  transform-origin: bottom right }
 
 /* stack: the frame-corner cluster - everyone across the frame's threads */
 .cm-stack { position: absolute; top: 10px; right: 10px; z-index: 30;
@@ -721,25 +928,73 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
   transform: scale(var(--sh-inv, 1)); transform-origin: top left;
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   /* an open card is the active selection - the frame's exact geometry, comment green */
-  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--comment);
-  outline: 2px solid var(--comment); outline-offset: -1px;
-  box-shadow: 0 0 0 4px var(--comment-ring), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
+  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--cm-line, var(--comment));
+  outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
   display: flex; flex-direction: column; gap: 12px;
   font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
 .cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
+/* the open thread on the CANVAS is UI, not artwork: a FIXED screen-space panel that never zooms or
+   pans with the canvas. Viewport-bounded; the messages scroll inside (.cm-scroll), the composer
+   stays pinned at the bottom. */
+/* parked beside the frame (canvas): a WORLD object - it stays put with its frame through panning.
+   Scale + max-height come inline (clamped 0.9..1.35 of screen-constant; height capped at the
+   frame's). A screen-ish gutter separates card from frame. Long threads scroll inside. */
+/* parked beside the frame (canvas): a world object that scales EXACTLY like the pins - the base
+   .cm-card scale(--sh-inv) - so it zooms smoothly with the board and stays readable at any zoom.
+   Screen-constant gutters via margins (the left one wider - it clears the working shimmer). */
+.cm-card.parked { width: 320px; overflow: hidden; z-index: 50 }
+.cm-card.parked:hover { z-index: 60 }   /* reading/replying wins over neighbouring chrome */
+/* gutters: SNUG by default (~12px screen), and only as wide as what actually occupies the flank -
+   the working shimmer strip (.flank-shim) or a variant badge (.flank-badge, the widest). All
+   screen-targeted with world caps so they stay sane at both zoom extremes. */
+.cm-card.parked.dock-r { transform-origin: top left; margin-left: clamp(8px, calc(12px * var(--sh-inv, 1)), 36px) }
+.cm-card.parked.dock-l { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right;
+  margin-left: calc(-1 * clamp(8px, calc(12px * var(--sh-inv, 1)), 36px)) }
+.cm-card.parked.dock-l.flank-shim { margin-left: calc(-1 * clamp(18px, calc(28px * var(--sh-inv, 1)), 68px)) }
+.cm-card.parked.dock-l.flank-badge { margin-left: calc(-1 * clamp(26px, calc(44px * var(--sh-inv, 1)), 108px)) }
+/* PLAY: fixed beside the static device, viewport-clamped (position comes inline). Near-solid
+   ground - the stage floats the card over arbitrary artwork on a dark room, glass is unreadable
+   there. No transform: play has no zoom, and a leaked --sh-inv must never scale it. */
+.cm-card.stage-dock { width: 320px; overflow: hidden; z-index: 60; transform: none;
+  background: var(--cm-modal-bg, var(--glass)) }
+/* the scroller reaches INTO the card's right padding so its scrollbar rides the card's far
+   edge - right of the close button, 3px off the border, a 13px gap to the text. The bar is
+   OURS: a slim glass-gray thumb on a transparent track, and it only exists when the thread
+   actually overflows. Text width never shifts when it appears. */
+.cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain; margin-right: -13px; padding-right: 13px }
+.cm-scroll::-webkit-scrollbar { width: 6px }
+.cm-scroll::-webkit-scrollbar-track { background: transparent }
+.cm-scroll::-webkit-scrollbar-thumb { border-radius: 99px;
+  background: color-mix(in srgb, var(--glass-ink-3) 50%, transparent) }
+.cm-scroll::-webkit-scrollbar-thumb:hover { background: var(--glass-ink-3) }
+@supports not selector(::-webkit-scrollbar) {
+  .cm-scroll { scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--glass-ink-3) 50%, transparent) transparent }
+}
+/* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of
+   the text itself, theme-proof (no paint layer fighting the glass) */
+.cm-scroll.fade-top { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px); mask-image: linear-gradient(180deg, transparent, #000 30px) }
+.cm-scroll.fade-bot { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 30px), transparent) }
+.cm-scroll.fade-top.fade-bot { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent) }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
-.cm-actions { position: absolute; top: 13px; right: 12px; display: flex; gap: 2px }
+/* pinned above the scroller so the close button always wins the click - bare buttons on the
+   card's own glass, no chip: the custom scrollbar lives at the card's far edge, right of the
+   X, so the two never collide. */
+.cm-actions { position: absolute; top: 13px; right: 12px; display: flex; gap: 2px; z-index: 5 }
 /* the root header shares its line with the pinned actions - reserve their width
-   so a long display name ellipsizes instead of running under the icons */
-.cm-card > header { padding-right: 84px }
-.cm-card > header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+   so a long display name ellipsizes instead of running under the icons.
+   (root header + body live INSIDE .cm-scroll - scope there, not .cm-card >) */
+.cm-scroll > header { padding-right: 84px }
+.cm-scroll > header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 /* every message - root and replies - is the same unit: avatar + name + time,
    body indented to the name column (24px avatar + 9px gap) */
 .cm-card .cm-body { margin: 0; padding-left: 33px; font-size: 13px; line-height: 1.55;
   color: var(--glass-ink); white-space: pre-wrap; overflow-wrap: break-word }
-.cm-card > .cm-body { margin-top: -10px }  /* pulls against the card's 12px gap -> 2px under the header */
+.cm-scroll > .cm-body { margin-top: -10px }  /* pulls against the scroller's 12px gap -> the same 2px replies get */
 .cm-msg { display: flex; flex-direction: column; gap: 2px }
 .cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
   border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
@@ -752,30 +1007,85 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-copy .b { transform: scale(.4); opacity: 0; color: var(--comment) }
 .cm-copy.ok .a { transform: scale(.4); opacity: 0 }
 .cm-copy.ok .b { transform: scale(1); opacity: 1 }
-/* composer row: my avatar (list size) + a pill input with a round send button inside */
-.cm-compose { display: flex; align-items: center; gap: 8px }
+/* composer row: my avatar (list size) + an auto-growing textarea with a round send button inside.
+   Multiline: Enter sends, Shift+Enter is a newline (Live Jam §6). The textarea grows 1-6 rows. */
+.cm-compose { display: flex; align-items: flex-end; gap: 8px }
+/* the row bottom-aligns (the avatar holds still while the textarea grows), so the avatar
+   needs a lift to sit optically centered against a ONE-LINE pill: (38-24)/2 */
+.cm-compose > .cm-me, .cm-compose > .cm-avatar { margin-bottom: 7px }
 .cm-inputwrap { position: relative; flex: 1; min-width: 0 }
-.cm-compose input { width: 100%; height: 36px; padding: 0 42px 0 15px; border-radius: 999px;
-  border: 1px solid var(--glass-brd); background: var(--cm-field); color: var(--glass-ink);
-  font: 400 13px -apple-system, system-ui, sans-serif; outline: none;
-  transition: border-color .15s, box-shadow .15s }
-.cm-compose input::placeholder { color: var(--glass-ink-3) }
-.cm-compose input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
-.cm-send { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+/* the mirror layer (.cm-hl) and the textarea share an IDENTICAL box so the caret + styled text align
+   exactly. The textarea sits on top with TRANSPARENT text + bg (caret visible); .cm-hl behind paints the
+   field + the styled text, so @marver shows its trigger colour live as you type (Live Jam §1). */
+.cm-inputwrap textarea, .cm-hl { box-sizing: border-box; width: 100%; min-height: 38px; max-height: 132px;
+  margin: 0; padding: 9px 42px 9px 15px; border: 1px solid transparent; border-radius: 19px;
+  /* the math must CLOSE: 1 + 9 + 18 + 9 + 1 = 38 exactly, so a single line sits dead-center
+     in the pill (a fractional line box + uncounted borders left the text riding off-center) */
+  font: 400 13px/18px -apple-system, system-ui, sans-serif; letter-spacing: normal;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word }
+.cm-hl { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  background: var(--cm-field); color: var(--glass-ink) }
+.cm-inputwrap textarea { position: relative; z-index: 1; display: block; resize: none; overflow-y: auto;
+  background: transparent; color: transparent; caret-color: var(--glass-ink);
+  border-color: var(--glass-brd); outline: none; transition: border-color .15s, box-shadow .15s }
+.cm-inputwrap textarea::placeholder { color: var(--glass-ink-3) }
+.cm-inputwrap textarea:focus { border-color: var(--cm-line, var(--comment)); box-shadow: 0 0 0 3px var(--cm-line-ring, var(--comment-ring)) }
+.cm-inputwrap textarea:disabled { opacity: .6; cursor: default }
+.cm-send { position: absolute; right: 5px; bottom: 5px;   /* (38 - 28) / 2 - centered in the one-line pill */
+  z-index: 2;   /* above the textarea (z1, the @marver mirror stack) - or clicks land on the field, not the button */
   width: 28px; height: 28px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
-  background: var(--comment); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
+  background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
 .cm-send:hover:not(:disabled) { filter: brightness(1.08) }
 .cm-send:disabled { background: var(--glass-ink-3); opacity: .5; cursor: default }
 /* signed-out viewer: one clear button in place of the composer */
 .cm-signin-cta { width: 100%; height: 40px; border: 0; border-radius: 999px;
-  background: var(--comment); color: #fff; cursor: pointer;
+  background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer;
   font: 600 13px -apple-system, system-ui, sans-serif; transition: filter .15s }
 .cm-signin-cta:hover { filter: brightness(1.06) }
 /* the draft composer is JUST the pill - no card chrome around a single input */
 .cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
   backdrop-filter: none; -webkit-backdrop-filter: none }
-.cm-draft input { height: 40px; box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
-.cm-draft .cm-send { right: 6px }   /* nudge in for the taller draft pill */
+.cm-draft textarea, .cm-draft .cm-hl { min-height: 40px; padding-top: 10px; padding-bottom: 10px }   /* 1+10+18+10+1 = 40, same closed math */
+.cm-draft textarea { box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
+.cm-draft .cm-send { right: 6px; bottom: 6px }   /* (40 - 28) / 2 for the taller draft pill */
+
+/* Live Jam: @marver mention styling. Owner-authored = a live trigger (bold accent-blue);
+   anyone else's = plain-weight, read like any comment, with a teaching tooltip (§1). */
+.cm-at { color: var(--glass-ink-2, var(--glass-ink)); font-weight: 500 }
+.cm-at.owner { color: var(--mv-blue); font-weight: 700 }
+/* IN THE COMPOSER MIRROR the mention may change COLOR + PAINT, never METRICS: real bold
+   glyphs are WIDER than the invisible textarea's regular ones, so any font-weight change
+   drifts the caret further off with every mention. The bold LOOK comes from a hairline
+   text-stroke instead - it thickens the glyph paint without touching a single advance
+   width, so the mirror stays pixel-locked to the textarea and the caret never lies. */
+.cm-hl .cm-at { font-weight: inherit; -webkit-text-stroke: .4px currentColor }
+.cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
+
+/* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
+.cm-avatar.cm-marver { background: var(--mv-blue); color: rgba(255,255,255,.9); cursor: default }   /* white/90 mark, embedded in the accent */
+.cm-marver-wrap { display: inline-flex; border-radius: 50% }
+.cm-marver-name { color: var(--glass-ink) }              /* black, not blue */
+/* provenance tooltip: matches the toolbar-button tooltip - a BOLD BRIGHT value (what you scan) + a
+   muted qualifier label after it, one fact per row, left-aligned. Overrides the house single-row
+   `.sh-tip span` dim/right-drift so nothing washes out. */
+/* two-row shortcut tooltip (toolbar): one action per row, key right-aligned - the same
+   bold-value/muted-key language as the provenance tooltip below. opacity:1 overrides the
+   house `.sh-tip span` dim so the wrapper rows stay full-bright; only keys mute. */
+.sh-tip:has(.sh-tip-rows) { padding: 7px 11px }
+.sh-tip .sh-tip-rows { display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+  opacity: 1; margin: 0; font-size: 12px; line-height: 1.2 }
+.sh-tip .sh-tip-rows .r { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 18px; opacity: 1; margin: 0; font-size: 12px; white-space: nowrap }
+.sh-tip .sh-tip-rows .r b { font-weight: 600 }
+.sh-tip .sh-tip-rows .r span { opacity: .55; font-size: 11px; font-weight: 600; margin-left: auto }
+
+.sh-tip:has(.cm-meta-tip) { padding: 8px 12px }
+/* opacity:1 is the fix - .cm-meta-tip is a <span>, so the house `.sh-tip span{opacity:.55}` was
+   dimming the ENTIRE tooltip, and a child's opacity:1 can't undo a parent's reduced opacity. */
+.sh-tip .cm-meta-tip { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; line-height: 1.2; opacity: 1; font-size: 12.5px }
+.sh-tip .cm-meta-row { display: flex; gap: 8px; align-items: baseline; margin: 0; opacity: 1; font-size: 12.5px; white-space: nowrap }
+.sh-tip .cm-meta-row b { font-weight: 600; opacity: 1; margin: 0; color: var(--tip-ink) }        /* value: bold, full-bright */
+.sh-tip .cm-meta-row .k { margin: 0; opacity: .5; font-weight: 500; color: var(--tip-ink) }       /* label: muted qualifier */
 /* identity modal - same glass family */
 .cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.45); backdrop-filter: blur(5px) }
@@ -801,11 +1111,14 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--glass-ink-3); flex: none }
 .cm-idrow { display: flex; align-items: center; gap: 10px }
 .cm-pfp { width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed var(--glass-ink-3);
-  background: var(--cm-field) center/cover no-repeat; color: var(--glass-ink-3); font-size: 18px; flex: none;
+  background: var(--cm-field); color: var(--glass-ink-3); flex: none; overflow: hidden;
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
   transition: border-color .15s, color .15s }
 .cm-pfp:hover { border-color: var(--comment); color: var(--comment) }
-.cm-pfp.set { border-style: solid; border-color: var(--glass-brd); color: transparent }
+.cm-pfp.set { border-style: solid; border-color: var(--glass-brd) }
+/* the photo is a REAL img filling the clipped circle - background-image layering left
+   uncovered edges */
+.cm-pfp img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block }
 .cm-row { display: flex; gap: 8px; margin-top: 12px }
 .cm-row button:disabled, .cm-row button.cm-primary:disabled {
   background: var(--glass-ink-3); color: var(--glass); cursor: default; opacity: 1 }
@@ -817,6 +1130,19 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 .cm-row button:hover { background: var(--glass-hover) }
 .cm-row button.cm-primary { background: var(--glass-ink); color: var(--glass); border-color: transparent; flex: 1 }
 .cm-row button.cm-primary:hover { opacity: .88 }
+
+/* the dev identity door: your avatar in the composer opens the profile popover. Unset shows a
+   quiet + badge - the whole first-comment nudge, no modal in the way. */
+.cm-me { position: relative; display: inline-flex; flex: none }
+.cm-mebtn { position: relative; display: inline-flex; padding: 0; border: 0; background: none;
+  cursor: pointer; border-radius: 50% }
+/* hover morphs the avatar into a pen on quiet gray - "this is editable" without a badge */
+.cm-pen-face { position: absolute; inset: 0; border-radius: 50%; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--glass-ink) 10%, var(--cm-field));
+  border: 1px solid var(--glass-brd); color: var(--glass-ink-2);
+  opacity: 0; transition: opacity .12s; pointer-events: none }
+.cm-mebtn:hover .cm-pen-face, .cm-mebtn:focus-visible .cm-pen-face { opacity: 1 }
 
 /* the unclipped comment plane over each frame: itself transparent to the pointer,
    its children (pins, cards, stacks) fully interactive */

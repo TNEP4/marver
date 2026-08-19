@@ -23,6 +23,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
+| Live Jam | responding to an `@marver` comment (a spawned job), or setting up so work shows live | instructions/jam.md |
 
 Refining an existing screen: Configure must hold, then Build + Review. New work runs
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a

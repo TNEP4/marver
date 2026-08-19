@@ -1,5 +1,4 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import { useStore, CONFIG, PUBLISHED, boardLabel, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
@@ -7,9 +6,10 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, CommentIcon, DevicesIcon, FrameRectIcon, IntentGlyph, LaserIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
-import { CommentsController } from './Comments.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CommentsController, revealThread } from './Comments.tsx'
 import { useComments } from './comments-store.ts'
+import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -46,41 +46,6 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       </div>
     )
   }
-}
-
-/** Shared popover machinery: trigger position, outside-click close, portal to the app
- *  root (glass never nests - a nested backdrop-filter cannot sample the page). */
-function usePopover() {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ left: 0, top: 0 })
-  const boxRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const toggle = () => {
-    if (!open && boxRef.current) {
-      const r = boxRef.current.getBoundingClientRect()
-      setPos({ left: r.left, top: r.bottom + 10 })
-    }
-    setOpen(!open)
-  }
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => {
-      const t = e.target as globalThis.Node
-      if (!boxRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-  return { open, setOpen, pos, boxRef, menuRef, toggle }
-}
-
-function Popover({ pop, children }: { pop: ReturnType<typeof usePopover>; children: ReactNode }) {
-  const app = document.querySelector('.sh-app')
-  if (!pop.open || !app) return null
-  return createPortal(
-    <div className="sh-menu" ref={pop.menuRef} style={{ left: pop.pos.left, top: pop.pos.top }}>{children}</div>,
-    app,
-  )
 }
 
 /** Boards live flat in the sidebar - always visible, one click to switch. The list
@@ -213,12 +178,12 @@ function SelectionBar() {
 }
 
 /** Devices view: one click sizes frames to a device width, tidies, and fits. Scoped
- *  like the digit keys: the selection when one exists, the whole board otherwise. */
+ *  like the digit keys: the selection when one exists, the whole board otherwise. The
+ *  dropdown chrome is the shared DevicePicker; this adapter owns the canvas wiring. */
 function DeviceMenu() {
   const deviceView = useStore((s) => s.deviceView)
   const selection = useStore((s) => s.selection)
   const nodes = useStore((s) => s.nodes)
-  const pop = usePopover()
   const scoped = selection.length > 0
   const pick = (name: string | null) => {
     animateLayout()
@@ -230,7 +195,6 @@ function DeviceMenu() {
       st.setDeviceView(name)
       setTimeout(() => canvasCtl.fitAll(), 30)
     }
-    pop.setOpen(false)
   }
   const entries = Object.entries(CONFIG.viewports)
   // active check: board-wide it is the device view; scoped, the device every selected frame wears
@@ -238,31 +202,8 @@ function DeviceMenu() {
   const active = scoped
     ? entries.find(([, vp]) => selNodes.length > 0 && selNodes.every((n) => n.w === vp.width))?.[0] ?? null
     : deviceView
-  return (
-    <div className="sh-theme" ref={pop.boxRef}>
-      <Tip side="bottom" label={<><b>Device view</b><span>{scoped ? `${selection.length} selected` : deviceView ? `${cap(deviceView)} · 0 resets` : `keys 1-${entries.length}`}</span></>}>
-        <button className="sh-pill-btn" onClick={pop.toggle}>
-          {deviceIcon(active, 16)}
-          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
-        </button>
-      </Tip>
-      <Popover pop={pop}>
-        <Tip side="bottom" label={scoped ? 'Selected frames at their default sizes' : 'Every frame at its own default size'}>
-          <button onClick={() => pick(null)}>
-            <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>
-            {!scoped && deviceView === null && <CheckIcon size={13} className="chk" />}
-          </button>
-        </Tip>
-        <i className="div" />
-        {entries.map(([name, vp], i) => (
-          <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
-            {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
-            {active === name && <CheckIcon size={13} className="chk" />}
-          </button>
-        ))}
-      </Popover>
-    </div>
-  )
+  const hint = scoped ? `${selection.length} selected` : deviceView ? cap(deviceView) : `keys 1-${entries.length}`
+  return <DevicePicker value={active} onSelect={pick} includeDefault hint={hint} />
 }
 
 /** Update pill (dev only): the daily registry check surfaces here - same glass, same
@@ -337,46 +278,25 @@ function ZoomMenu() {
 /** Theme dropdown, scoped like the device digits: the selection when one exists, every
  *  frame otherwise. The trigger reflects the scope's MAJORITY (per-frame overrides never
  *  flip a board-level trigger - it reports the level it acts on, same rule as the shell).
- *  The menu is PORTALED out of the pill: an element with backdrop-filter is a backdrop root,
- *  so a nested backdrop-filter samples the pill's surface instead of the page - flat grey. */
+ *  The dropdown chrome is the shared ThemePicker; this adapter owns the canvas wiring. */
 function ThemeMenu() {
   const nodes = useStore((s) => s.nodes)
   const selection = useStore((s) => s.selection)
   const viewTheme = useStore((s) => s.viewTheme)
-  const pop = usePopover()
   const scoped = selection.length > 0
-  // scoped: the trigger + check reflect the selection; global: the VIEW preference
   const scope = scoped ? nodes.filter((n) => selection.includes(n.key)) : []
-  const uniform = scoped
-    ? (scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null)
-    : viewTheme
   const majority = scoped
     ? (scope.length ? [...scope.reduce((m, n) => m.set(n.theme, (m.get(n.theme) ?? 0) + 1), new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])[0][0] : viewTheme)
     : viewTheme
+  // the tick shows only a UNIFORM scope (mixed selection = no theme is "the" one), while
+  // the trigger reports the majority - the level the control acts on
+  const uniform = scoped ? (scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null) : viewTheme
   const pick = (t: string) => {
     const st = useStore.getState()
     scoped ? st.setSelectedTheme(t) : st.setTheme(t)
-    pop.setOpen(false)
   }
-  return (
-    <div className="sh-theme" ref={pop.boxRef}>
-      <Tip side="bottom" label={<><b>Theme</b><span>{scoped ? `${selection.length} selected · D` : 'all frames · D'}</span></>}>
-        <button className="sh-pill-btn" onClick={pop.toggle}>
-          {majority === 'dark' ? <MoonIcon size={16} /> : <SunIcon size={16} />}
-          <CaretIcon size={11} style={{ transform: pop.open ? 'rotate(180deg)' : undefined }} />
-        </button>
-      </Tip>
-      <Popover pop={pop}>
-        {CONFIG.themes.map((t) => (
-          <button key={t} onClick={() => pick(t)}>
-            {t === 'dark' ? <MoonIcon size={15} /> : <SunIcon size={15} />}
-            <span>{t}</span>
-            {uniform === t && <CheckIcon size={13} className="chk" />}
-          </button>
-        ))}
-      </Popover>
-    </div>
-  )
+  const hint = scoped ? `${selection.length} selected · D` : 'all frames · D'
+  return <ThemePicker value={majority} checked={uniform} onSelect={pick} hint={hint} />
 }
 
 export function App() {
@@ -522,6 +442,12 @@ export function App() {
   useEffect(() => {
     if (!import.meta.hot) return
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // Live Jam presence (SPEC §10): the daemon broadcasts the set of frames Marver is editing.
+    // Camera-safe by construction - this only toggles a glow class, never moves the view.
+    import.meta.hot.on('sh:jam-activity', (m: any) => useStore.getState().setWorking(Array.isArray(m?.frames) ? m.frames.filter((x: unknown) => typeof x === 'string') : []))
+    // Live Jam reply delivery: the daemon just wrote to a board's log - fetch it NOW instead of
+    // waiting out the 30s comment poll, so the reply + notification land within a second.
+    import.meta.hot.on('sh:jam-comment', (m: any) => { if (typeof m?.board === 'string') useComments.getState().poke(m.board) })
     // A7 controlled HMR: a frame file changed. Reload exactly the affected frames through the
     // lease-aware path (idle frames now, leased ones deferred to a safe point) - never a shell
     // reload, never a React Fast Refresh yanking a frame the user is in.
@@ -549,6 +475,7 @@ export function App() {
     const onMsg = (e: MessageEvent) => {
       const data = e.data
       if (!data || typeof data.type !== 'string' || !data.type.startsWith('sh:')) return
+      if (e.origin && e.origin !== location.origin) return   // a cross-origin-navigated frame keeps its WindowProxy; reject it
       // B0.3: O(1) registry lookup - also the security gate (unknown source = not a
       // registered frame = dropped), replacing a per-message iframe scan + DOM walk.
       const reg = frameByWindow(e.source)
@@ -649,9 +576,13 @@ export function App() {
       if (e.key === 'Escape') {
         const c = commentsStore()
         if (c.commentMode || c.active || c.draft) { c.setMode(false); c.setActive(null); c.setDraft(null) }
+        else if (s.laser) s.setLaser(false)          // Escape also exits laser mode (parity with comment)
         else s.interact ? setInteract(null) : select(null)
       }
       if (e.key === 'p') enterPlay()
+      // H hides all chrome (shared binary Hide-UI); press again to reveal. Not persisted,
+      // so a refresh always restores it (the safety net for a forgotten toggle).
+      if (e.key === 'h') { toggleHideUI(); return }
       if (e.key === 't') { animateLayout(); runTidy() }
       // laser and comment mode are one-at-a-time: comment mode already highlights
       // what you'd click, so stacking the full rainbow on top only adds noise
@@ -668,6 +599,14 @@ export function App() {
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
       }
       if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); c.setShow(!c.show) }
+      // Shift+L = laser comment: the laser-sharp lighting on the element a comment tags
+      // (pick hover, compose lock, open-thread highlight). Pins and cards stay - this
+      // only dims the lighting inside the artwork.
+      if (e.key === 'L' && e.shiftKey) {
+        const c = commentsStore()
+        c.setShowAnchor(!c.showAnchor)
+        toast(c.showAnchor ? 'laser comment off' : 'laser comment on')
+      }
       if (e.key === 'P' && e.shiftKey && s.selection.length) {
         const files = s.selection
           .map((k) => { const n = s.nodes.find((x) => x.key === k); return n ? s.frameFor(n)?.file : undefined })
@@ -869,21 +808,9 @@ export function App() {
 
       {/* floating pill nav, top right; collapses to a chip (same ladder as panel/fab) */}
       <nav className={`sh-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
-        {/* far-left section: single actions - comment mode, laser, tidy */}
-        <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C hides pins</span></>}>
-          <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
-            const c = commentsStore()
-            if (!c.commentMode) useStore.getState().setLaser(false)
-            c.setMode(!c.commentMode)
-            toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
-          }}><CommentIcon size={16} /></button>
-        </Tip>
-        <Tip side="bottom" label={<><b>Laser mode</b><span>L</span></>}>
-          <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
-            if (!laser) commentsStore().setMode(false)
-            useStore.getState().setLaser(!laser)
-          }}><LaserIcon size={16} /></button>
-        </Tip>
+        {/* far-left section: actions - comment mode, laser, tidy */}
+        <CommentButton />
+        <LaserButton />
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
         </Tip>
@@ -893,9 +820,11 @@ export function App() {
         <i className="sep" />
         <ZoomMenu />
         <i className="sep" />
+        {/* far right: view management - prototype, hide, collapse */}
         <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
           <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
         </Tip>
+        <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>
           <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
             <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
@@ -915,9 +844,77 @@ export function App() {
         : CONFIG.noTheme && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
       <UpdatePill />
 
-      <div className="sh-toasts">
-        {toasts.map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
+      <JamToasts toasts={toasts} />
+    </div>
+  )
+}
+
+/** The bottom-right notification corner (SPEC-live-jam §9). Plain toasts render as before.
+ *  Jam pills are FRAME-FIRST (icon + frame title, then Marver · preview) and stack as a DECK:
+ *  1-2 show in full; 3+ collapse to the newest pill with two card edges peeking beneath and a
+ *  +N badge - click to expand the full list (newest first, timestamps, Clear all). */
+function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const plain = toasts.filter((t) => !t.jam)
+  const jams = toasts.filter((t) => t.jam)
+  useEffect(() => { if (jams.length <= 2) setExpanded(false) }, [jams.length])
+  const deck = jams.length > 2 && !expanded
+  const newest = jams[jams.length - 1]
+  return (
+    <div className="sh-toasts">
+      {plain.slice(-2).map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
+      {expanded && jams.length > 2 && (
+        <div className="sh-jam-list">
+          <div className="sh-jam-listhead">
+            <span>{jams.length} NOTIFICATIONS</span>
+            <button onClick={() => { useStore.getState().clearJamToasts(); setExpanded(false) }}>Clear all</button>
+            <button aria-label="Collapse" onClick={() => setExpanded(false)}><XIcon size={12} /></button>
+          </div>
+          {[...jams].reverse().map((t) => <JamToast key={t.id} id={t.id} note={t.jam!} />)}
+        </div>
+      )}
+      {!expanded && (deck
+        ? (
+          <div className="sh-jam-deck" onClick={() => setExpanded(true)} role="button" aria-label={`${jams.length} notifications - expand`}>
+            <div className="sh-jam-ghost g2" />
+            <div className="sh-jam-ghost g1" />
+            {newest?.jam && <JamToast id={newest.id} note={newest.jam} badge={jams.length - 1} inert />}
+          </div>
+        )
+        : jams.map((t) => <JamToast key={t.id} id={t.id} note={t.jam!} />))}
+    </div>
+  )
+}
+
+/** View from a notification: switch to the note's board first when needed (the thread only exists
+ *  in that board's state), then reveal - retrying briefly while the board's comments load. Dismiss
+ *  only on success: a cross-board note must never be a destructive no-op. */
+async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void) {
+  const s = useStore.getState()
+  if (note.board && s.board !== note.board) await s.switchBoard(note.board)
+  for (let i = 0; i < 12; i++) {
+    if (revealThread(note.threadId)) { dismiss(); return }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+}
+
+/** One jam pill, frame-first: row 1 = intent icon + FRAME TITLE (blue) · age; row 2 = Marver · preview.
+ *  `badge` shows the +N deck count (replacing View); `inert` disables inner clicks (the deck handles it). */
+function JamToast({ id, note, badge, inert }: { id: number; note: import('./store.ts').JamNote; badge?: number; inert?: boolean }) {
+  const dismiss = () => useStore.getState().dismissToast(id)
+  return (
+    <div className="sh-toast jam">
+      <span className="sh-jam-mark"><ParallelogramFillIcon size={17} /></span>
+      <div className="sh-jam-txt">
+        <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>
+        <span className="sh-jam-prev">{note.preview}</span>
       </div>
+      {badge != null
+        ? <span className="sh-jam-badge">+{badge}</span>
+        : !inert && <>
+            <button className="sh-jam-view" onClick={() => void viewNote(note, dismiss)}>View</button>
+            <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
+          </>}
     </div>
   )
 }

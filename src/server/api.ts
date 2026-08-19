@@ -4,9 +4,36 @@ import { randomBytes } from 'node:crypto'
 import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash } from './manifest.ts'
+import { isConnected, localProfile } from './profile.ts'
 
 const BOARD_NAME = /^[a-z0-9][a-z0-9-]*$/
 const BODY_LIMIT = 1_000_000
+const CSRF_MAX_AGE = 30 * 24 * 3600
+
+/** Read one cookie value off the request. */
+function cookie(req: any, name: string): string {
+  const m = new RegExp(`(?:^|;\\s*)${name}=([^;]+)`).exec(String(req.headers.cookie ?? ''))
+  return m ? m[1] : ''
+}
+
+/** The owner gate (SPEC-live-jam §1). The dev server is 127.0.0.1-only, so the live threat is a
+ *  cross-origin drive-by page firing a POST at localhost. Two defenses, mirroring the published
+ *  side (collab.ts:206): a double-submit cookie (mv_c is JS-readable same-origin, so a cross-origin
+ *  page cannot read it to echo x-mv-c), plus an Origin allowlist. Only a POST that passes this is
+ *  eligible to be ledgered, so a forged @marver can never authorize the local agent. */
+export function ownerGated(req: any): boolean {
+  const c = cookie(req, 'mv_c')
+  if (!c || req.headers['x-mv-c'] !== c) return false
+  const origin = req.headers.origin
+  if (origin) {
+    // Full same-origin: the Origin's host:port must equal the request's Host. Cookies are not
+    // port-scoped, so a hostname-only check would let another localhost port read mv_c and pass.
+    try {
+      if (new URL(String(origin)).host !== String(req.headers.host ?? '')) return false
+    } catch { return false }
+  }
+  return true
+}
 
 function json(res: any, status: number, body: unknown) {
   res.statusCode = status
@@ -77,6 +104,13 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
     if (!url.pathname.startsWith(`${ROUTE}/api/`)) return next()
     const path = url.pathname.slice(`${ROUTE}/api/`.length)
 
+    // Prime the double-submit cookie on the shell's first GET so csrf() has a value to echo
+    // (the published side sets mv_c at sign-in; dev has no sign-in, so we set it here). JS-readable
+    // by design - a same-origin page can read it, a cross-origin page cannot.
+    if (req.method === 'GET' && !cookie(req, 'mv_c')) {
+      res.setHeader('set-cookie', `mv_c=${randomBytes(16).toString('base64url')}; Path=/; Max-Age=${CSRF_MAX_AGE}; SameSite=Lax`)
+    }
+
     try {
       if (path === 'boards' && req.method === 'GET') {
         mkdirSync(boardsDir, { recursive: true })
@@ -142,17 +176,30 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
       // designer's machine); rights are 'comment' everywhere locally.
       if (path === 'me' && req.method === 'GET') {
         const prof = localProfile(root)
-        return json(res, 200, { user: prof, role: 'owner', local: true })
+        return json(res, 200, { user: prof, role: 'owner', local: true, connected: isConnected(root) })
       }
       if (path === 'profile' && req.method === 'POST') {
+        // same gate as the comments POST: identity feeds the published push author, so a
+        // drive-by page must never be able to rewrite it
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const raw = await readBody(req)
         if (raw == null) return json(res, 400, { error: 'body too large' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         const dir = join(root, 'design', '.local')
         mkdirSync(dir, { recursive: true })
-        const prof = { ...localProfile(root), ...(typeof b.name === 'string' && b.name.trim() ? { name: b.name.trim() } : {}), ...(typeof b.email === 'string' ? { email: b.email.trim() } : {}), ...(typeof b.avatar === 'string' ? { avatar: b.avatar || undefined } : {}) }
+        // patch over profile.json ONLY (never bake the connect identity into the local file);
+        // avatars must be small raster data-URIs - same bar the published server holds
+        const { validAvatar } = await import('./collab.ts')
+        let cur: Record<string, unknown> = {}
+        try { cur = JSON.parse(readFileSync(join(dir, 'profile.json'), 'utf8')) } catch { /* first save */ }
+        const prof = {
+          ...cur,
+          ...(typeof b.name === 'string' && b.name.trim() ? { name: b.name.trim() } : {}),
+          ...(typeof b.email === 'string' ? { email: b.email.trim() } : {}),
+          ...(b.avatar === '' ? { avatar: undefined } : validAvatar(b.avatar) ? { avatar: b.avatar } : {}),
+        }
         atomicWrite(join(dir, 'profile.json'), JSON.stringify(prof, null, 2) + '\n')
-        return json(res, 200, { user: prof })
+        return json(res, 200, { user: localProfile(root) })
       }
       if (path === 'boards.rights' && req.method === 'GET') {
         // every board is commentable in dev; the published policy applies out there
@@ -166,6 +213,9 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         const dir = join(root, 'design', 'comments')
         if (req.method === 'GET') return json(res, 200, { events: readLog(dir, cm[1]) })
         if (req.method === 'POST') {
+          // Owner gate: only a same-origin, cookie-proving POST may write - and be ledgered as
+          // an authorization for the Live Jam daemon (SPEC-live-jam §1).
+          if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
           const raw = await readBody(req)
           if (raw == null) return json(res, 400, { error: 'body too large' })
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
@@ -175,12 +225,25 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           // CREATED, so completing them here is fine - but an event that already
           // carries board/author must pass through byte-identical, or the id-keyed
           // sync would hold two versions of "the same" event forever
-          const stamped = incoming.map((ev: any) => ({
-            ...ev,
-            board: ev.board ?? cm[1],
-            author: ev.author ?? (['create', 'reply', 'react', 'edit'].includes(ev.type) ? me : undefined),
-          }))
+          const stamped = incoming.map((ev: any) => {
+            // Live Jam: the public POST is never allowed to set agent provenance - only the
+            // daemon's in-process writer stamps agent/agentMeta. Strip any client-supplied
+            // agent/agentMeta/origin so a same-origin page cannot forge a Marver-authored event.
+            const { agent: _a, agentMeta: _am, origin: _o, ...clean } = ev
+            return {
+              ...clean,
+              board: clean.board ?? cm[1],
+              author: clean.author ?? (['create', 'reply', 'react', 'edit'].includes(clean.type) ? me : undefined),
+            }
+          })
           const fresh = appendEvents(dir, cm[1], stamped)
+          // Authorize the owner's fresh create/reply events for the Live Jam daemon. Order is the
+          // contract: appendEvents fsync'd the event FIRST (above), then we ledger it - a crash
+          // between leaves the event present-but-unauthorized (won't trigger), the safe direction.
+          // Agent events never reach here (they go through the daemon's in-process writer), so the
+          // ledger only ever holds owner input. (SPEC-live-jam §1, fail-closed atomicity.)
+          const { record } = await import('./jam/ledger.ts')
+          for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply') record(root, cm[1], ev.id)
           // push in the background - the periodic sync catches anything this drops
           void backgroundPush(root)
           return json(res, 200, { accepted: fresh.length })
@@ -201,19 +264,6 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
   }
 }
 
-function localProfile(root: string): { email: string; name: string; avatar?: string } {
-  // the connect account IS the dev identity once connected - events born here must
-  // carry an author the published server will accept (it validates author == session)
-  try {
-    const c = JSON.parse(readFileSync(join(root, 'design', '.local', 'collab.json'), 'utf8'))
-    if (typeof c?.email === 'string' && c.email) return { email: c.email, name: c.name ?? 'Designer' }
-  } catch { /* not connected */ }
-  try {
-    const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
-    if (typeof p?.name === 'string') return { email: p.email ?? '', name: p.name, avatar: p.avatar }
-  } catch { /* no profile yet */ }
-  return { email: '', name: 'Designer' }
-}
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null
 /** Debounced fire-and-forget push after a local write; failures are silent - the

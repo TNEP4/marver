@@ -33,7 +33,7 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
   return !!user && rights[board] === 'comment'
 }
 
-const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile'])
+const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])
 const ID_RE = /^[\w-]{8,64}$/
 const MAX_BODY_TEXT = 10_000
 
@@ -72,13 +72,18 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     if (!ev || typeof ev !== 'object') return 'malformed event'
     if (typeof ev.id !== 'string' || !ID_RE.test(ev.id)) return 'event id must be an 8-64 char token'
     if (!EVENT_TYPES.has(ev.type as string)) return `unknown event type "${ev.type}"`
+    // Live Jam: agent provenance is daemon-only. A published client must never forge it
+    // (would render a human comment as Marver). Synced agent replies, if ever enabled, take a
+    // separate trusted path, not this authenticated-client validator.
+    if ((ev as { agent?: unknown }).agent !== undefined || (ev as { agentMeta?: unknown }).agentMeta !== undefined)
+      return 'agent provenance is daemon-only'
     // past timestamps are legitimate (sync carries repo history); the FUTURE is the
     // attack surface - a far-future edit would win replay forever
     if (typeof ev.ts !== 'number' || ev.ts < 1_577_836_800_000 || ev.ts > now + 60_000)
       return 'event timestamp out of bounds'
     if (ev.board !== undefined && ev.board !== board) return 'event board does not match the endpoint'
     if (ev.body !== undefined && (typeof ev.body !== 'string' || ev.body.length > MAX_BODY_TEXT)) return 'body too long'
-    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit'
+    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor'
     if (needsAuthor && ev.author?.email?.toLowerCase() !== me)
       return 'event author must be the signed-in account'
     if (typeof ev.commentId !== 'string' || !ID_RE.test(ev.commentId)) {
@@ -106,6 +111,16 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
         if (!creates.has(ev.commentId!) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.commentId))
           return 'cannot resolve a thread that does not exist'
         break
+      case 'reanchor': {
+        // Live Jam: re-pin a thread (root) to a new element. Must target a real root, carry a
+        // non-null anchor, and only the thread's author may move its pin (not any commenter).
+        if (!creates.has(ev.commentId!) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.commentId))
+          return 'cannot reanchor a thread that does not exist'
+        if (ev.anchor == null) return 'reanchor needs a new anchor'
+        const owner = authors.get(ev.commentId!)
+        if (owner && owner !== me) return 'only the thread author can reanchor'
+        break
+      }
     }
   }
   return null
