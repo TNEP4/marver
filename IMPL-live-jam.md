@@ -318,6 +318,10 @@ rather than shipping half-built machinery.**
 - **P2 (other):** in-frame scroll/form capture-restore across edits; prototype/stage scroll preservation;
   session-resume (`--resume`, spiked, works); finer sub-frame activity leasing; emoji reactions (rails are
   event-type-neutral, §17).
+- **P2 (identity):** one account across dev + publish — the hosted volume as the home for profiles
+  (photo sync through `connect`, dev claim/sign-up against the published serve), later reactions and
+  other shared social state. Groundwork shipped 0.8.0: shared `localProfile` resolver, dev profile
+  popover, `connected` flag on `/api/me`.
 - **P3:** publishing agent replies (trusted dev-sync path); allowlisted collaborators beyond the owner;
   all-board inbox / cross-board notifications; **OS-enforced per-subagent filesystem allowlists** (the
   within-batch isolation residual); Cursor / OpenCode / Droid / Antigravity adapters (each with its own
