@@ -608,8 +608,8 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
   return (
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      {/* the draft is JUST the tight pill - no avatar chrome on a first comment */}
       <div className="cm-compose">
-        <ComposeAvatar />
         <CommentInput value={text} onChange={setText} onSubmit={() => create(text)} onCancel={() => setDraft(null)} placeholder="Comment on this element…" autoFocus sendLabel="Comment" owner={local} />
       </div>
     </div>
