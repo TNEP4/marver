@@ -5,6 +5,7 @@
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away.
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
@@ -352,11 +353,12 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   )
 }
 
-/** The dev identity, edited in place: a small glass popover off the composer's avatar - display
- *  name + photo, saved to design/.local/profile.json (this machine only). When a connect account
- *  provides name/email (the published server validates authors), those are read-only here and
- *  only the photo is editable. */
-function ProfilePopover({ onClose }: { onClose: () => void }) {
+/** The dev identity: a full-screen modal (the IdentityDialog treatment - same classes, same
+ *  weight) with display name + photo, saved to design/.local/profile.json (this machine only).
+ *  When a connect account provides name/email (the published server validates authors), the name
+ *  is read-only here and only the photo is editable. Portaled to body: the thread card is
+ *  transformed + overflow-hidden, so anything anchored inside it clips. */
+function ProfileDialog({ onClose }: { onClose: () => void }) {
   const me = useComments((s) => s.me)
   const connected = useComments((s) => s.connected)
   const unset = !connected && (!me?.name || me.name === 'Designer')
@@ -372,24 +374,33 @@ function ProfilePopover({ onClose }: { onClose: () => void }) {
       onClose()
     } finally { setBusy(false) }
   }
-  return (
-    <div className="cm-profile" onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}>
-      <div className="cm-idrow">
-        <AvatarPick value={avatar} onPick={setAvatar} />
-        {connected
-          ? <span className="cm-conn"><b>{me?.name}</b><span className="dim">your connect account</span></span>
-          : <input placeholder="Your display name" value={name} autoFocus
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void save()} />}
+  return createPortal(
+    <div className="cm-modal-wrap" onClick={onClose} onPointerDown={(e) => e.stopPropagation()}>
+      <div className="cm-modal" onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}>
+        <h2>How you’ll appear</h2>
+        <p className="dim">
+          {connected
+            ? <>Your name comes from your connect account. The photo stays on this machine.</>
+            : <>Comments carry your name and photo. Saved to design/.local on this machine - yours, nowhere else.</>}
+        </p>
+        <div className="cm-fields">
+          <div className="cm-idrow">
+            <AvatarPick value={avatar} onPick={setAvatar} />
+            {connected
+              ? <div className="cm-chip" style={{ flex: 1 }}><b>{me?.name}</b><span>CONNECT</span></div>
+              : <input placeholder="Set a display name" style={{ flex: 1 }} value={name} autoFocus
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void save()} />}
+          </div>
+        </div>
+        <div className="cm-row">
+          <button className="cm-primary" disabled={busy || !ready} onClick={() => void save()}>Save</button>
+          <button onClick={onClose}>Not now</button>
+        </div>
       </div>
-      <p className="dim">
-        {connected
-          ? 'Your photo, on your comments here. Name comes from the connect account.'
-          : 'Shown on your comments. Saved to design/.local on this machine - yours, nowhere else.'}
-      </p>
-      <button className="cm-primary" disabled={busy || !ready} onClick={() => void save()}>Save</button>
-    </div>
-  )
+    </div>,
+    document.body)
 }
 
 /** Your avatar in the composer is the door to your identity (dev only - published viewers
@@ -399,25 +410,17 @@ function ComposeAvatar() {
   const local = useComments((s) => s.local)
   const connected = useComments((s) => s.connected)
   const [open, setOpen] = useState(false)
-  const wrapRef = useRef<HTMLSpanElement>(null)
-  // click-away closes; capture phase, because the card stops propagation before document sees it
-  useEffect(() => {
-    if (!open) return
-    const away = (e: PointerEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('pointerdown', away, true)
-    return () => document.removeEventListener('pointerdown', away, true)
-  }, [open])
   if (!local) return <Avatar author={me ?? undefined} size={24} />
   const unset = !connected && !me?.avatar && (!me?.name || me.name === 'Designer')
   return (
-    <span className="cm-me" ref={wrapRef}>
+    <span className="cm-me">
       <Tip side="top" label={<b>{unset ? 'Set your name & photo' : 'Edit your profile'}</b>}>
-        <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => setOpen((o) => !o)}>
+        <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => setOpen(true)}>
           <Avatar author={me ?? undefined} size={24} />
           {unset && <span className="cm-plus">+</span>}
         </button>
       </Tip>
-      {open && <ProfilePopover onClose={() => setOpen(false)} />}
+      {open && <ProfileDialog onClose={() => setOpen(false)} />}
     </span>
   )
 }
