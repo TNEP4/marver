@@ -454,7 +454,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
-      <div className={`cm-actions${shadows.can ? ' scr' : ''}`}>
+      <div className="cm-actions">
         <Tip side="bottom" label={<b>{copied ? 'Copied' : 'Copy link'}</b>}>
           <button className={`cm-icon cm-copy${copied ? ' ok' : ''}`} onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
@@ -473,7 +473,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
           <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckSquareOffsetIcon size={16} /></button>
         </Tip>
         <Tip side="bottom" label={<b>Close</b>}>
-          <button className="cm-icon cm-close" onClick={() => setActive(null)}><XIcon size={15} /></button>
+          <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
       </div>
       {/* "there is more": the scroller MASKS its own content at the overflowing edge - a soft fade

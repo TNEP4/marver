@@ -956,9 +956,21 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
    there. No transform: play has no zoom, and a leaked --sh-inv must never scale it. */
 .cm-card.stage-dock { width: 320px; overflow: hidden; z-index: 60; transform: none;
   background: var(--cm-modal-bg, var(--glass)) }
+/* the scroller reaches INTO the card's right padding so its scrollbar rides the card's far
+   edge - right of the close button, 3px off the border, a 13px gap to the text. The bar is
+   OURS: a slim glass-gray thumb on a transparent track, and it only exists when the thread
+   actually overflows. Text width never shifts when it appears. */
 .cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
-  overscroll-behavior: contain; scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--glass-ink-3) 55%, transparent) transparent }
+  overscroll-behavior: contain; margin-right: -13px; padding-right: 13px }
+.cm-scroll::-webkit-scrollbar { width: 6px }
+.cm-scroll::-webkit-scrollbar-track { background: transparent }
+.cm-scroll::-webkit-scrollbar-thumb { border-radius: 99px;
+  background: color-mix(in srgb, var(--glass-ink-3) 50%, transparent) }
+.cm-scroll::-webkit-scrollbar-thumb:hover { background: var(--glass-ink-3) }
+@supports not selector(::-webkit-scrollbar) {
+  .cm-scroll { scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--glass-ink-3) 50%, transparent) transparent }
+}
 /* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of
    the text itself, theme-proof (no paint layer fighting the glass) */
 .cm-scroll.fade-top { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px); mask-image: linear-gradient(180deg, transparent, #000 30px) }
@@ -967,13 +979,10 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
-/* pinned above the scroller so the close button always wins the click. STEALTH ground: bare
-   buttons on the card's own glass - only the X grows a whisper of blur, and only while the
-   thread actually scrolls (.scr), so text sliding under it stays legible without a chip. */
+/* pinned above the scroller so the close button always wins the click - bare buttons on the
+   card's own glass, no chip: the custom scrollbar lives at the card's far edge, right of the
+   X, so the two never collide. */
 .cm-actions { position: absolute; top: 13px; right: 12px; display: flex; gap: 2px; z-index: 5 }
-.cm-actions.scr .cm-close { background: color-mix(in srgb, var(--glass) 26%, transparent);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px) }
-.cm-actions.scr .cm-close:hover { background: var(--glass-hover) }
 /* the root header shares its line with the pinned actions - reserve their width
    so a long display name ellipsizes instead of running under the icons */
 .cm-card > header { padding-right: 84px }
