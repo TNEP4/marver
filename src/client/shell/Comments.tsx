@@ -329,7 +329,9 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   const ref = useRef<HTMLTextAreaElement>(null)
   const hlRef = useRef<HTMLDivElement>(null)
   const [busy, setBusy] = useState(false)
-  const grow = () => { const el = ref.current; if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 132) + 'px' } }
+  // +2: scrollHeight excludes the 1px borders, but border-box height includes them - without
+  // it every line is squeezed 2px and the single-line pill renders off-center
+  const grow = () => { const el = ref.current; if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, 132) + 'px' } }
   const syncScroll = () => { if (hlRef.current && ref.current) hlRef.current.scrollTop = ref.current.scrollTop }
   useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
   useEffect(grow, [value])
