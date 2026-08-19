@@ -381,16 +381,16 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     }
   })
   // scroll shadows: "there is more" above/below - recomputed on scroll + content growth
-  const [shadows, setShadows] = useState({ top: false, bot: false })
+  const [shadows, setShadows] = useState({ top: false, bot: false, can: false })
   const syncShadows = () => {
     const el = scrollRef.current
     if (!el) return
     // gate on MEANINGFUL overflow - a thread that overflows by a few px must not smear a
     // 30px fade over its last line ("looks scrollable" when it isn't, really)
-    const overflow = el.scrollHeight - el.clientHeight > 12
-    const top = overflow && el.scrollTop > 4
-    const bot = overflow && el.scrollTop + el.clientHeight < el.scrollHeight - 4
-    setShadows((s) => (s.top === top && s.bot === bot ? s : { top, bot }))
+    const can = el.scrollHeight - el.clientHeight > 12
+    const top = can && el.scrollTop > 4
+    const bot = can && el.scrollTop + el.clientHeight < el.scrollHeight - 4
+    setShadows((s) => (s.top === top && s.bot === bot && s.can === can ? s : { top, bot, can }))
   }
   // open at the LATEST message (what you came to read); follow new replies while open
   useEffect(() => {
@@ -454,7 +454,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}
-      <div className="cm-actions">
+      <div className={`cm-actions${shadows.can ? ' scr' : ''}`}>
         <Tip side="bottom" label={<b>{copied ? 'Copied' : 'Copy link'}</b>}>
           <button className={`cm-icon cm-copy${copied ? ' ok' : ''}`} onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
@@ -473,7 +473,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
           <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckSquareOffsetIcon size={16} /></button>
         </Tip>
         <Tip side="bottom" label={<b>Close</b>}>
-          <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
+          <button className="cm-icon cm-close" onClick={() => setActive(null)}><XIcon size={15} /></button>
         </Tip>
       </div>
       {/* "there is more": the scroller MASKS its own content at the overflowing edge - a soft fade
