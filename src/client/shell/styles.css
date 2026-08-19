@@ -1007,6 +1007,10 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* composer row: my avatar (list size) + an auto-growing textarea with a round send button inside.
    Multiline: Enter sends, Shift+Enter is a newline (Live Jam §6). The textarea grows 1-6 rows. */
 .cm-compose { display: flex; align-items: flex-end; gap: 8px }
+/* the row bottom-aligns (the avatar holds still while the textarea grows), so the avatar
+   needs a lift to sit optically centered against a ONE-LINE pill: (36-24)/2, draft (40-24)/2 */
+.cm-compose > .cm-me, .cm-compose > .cm-avatar { margin-bottom: 6px }
+.cm-draft .cm-compose > .cm-me, .cm-draft .cm-compose > .cm-avatar { margin-bottom: 8px }
 .cm-inputwrap { position: relative; flex: 1; min-width: 0 }
 /* the mirror layer (.cm-hl) and the textarea share an IDENTICAL box so the caret + styled text align
    exactly. The textarea sits on top with TRANSPARENT text + bg (caret visible); .cm-hl behind paints the
