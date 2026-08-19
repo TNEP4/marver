@@ -12,11 +12,11 @@
  */
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
 import { connect, connectClaim, loadCollab, syncOnce } from '../server/sync.ts'
+import { localProfile } from '../server/profile.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -139,11 +139,6 @@ const pushIfConnected = async (root: string) => {
  *  authors against the session - an authorless push would be rejected), else the
  *  local dev profile. */
 const localAuthor = (root: string): { email: string; name?: string } | undefined => {
-  const collab = loadCollab(root)
-  if (collab?.email) return { email: collab.email, name: collab.name }
-  try {
-    const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
-    if (p?.email) return { email: p.email, name: p.name }
-  } catch { /* no profile */ }
-  return undefined
+  const p = localProfile(root)
+  return p.email ? { email: p.email, name: p.name } : undefined
 }

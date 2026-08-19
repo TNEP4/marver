@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash } from './manifest.ts'
+import { isConnected, localProfile } from './profile.ts'
 
 const BOARD_NAME = /^[a-z0-9][a-z0-9-]*$/
 const BODY_LIMIT = 1_000_000
@@ -175,7 +176,7 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
       // designer's machine); rights are 'comment' everywhere locally.
       if (path === 'me' && req.method === 'GET') {
         const prof = localProfile(root)
-        return json(res, 200, { user: prof, role: 'owner', local: true })
+        return json(res, 200, { user: prof, role: 'owner', local: true, connected: isConnected(root) })
       }
       if (path === 'profile' && req.method === 'POST') {
         const raw = await readBody(req)
@@ -183,9 +184,19 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         const dir = join(root, 'design', '.local')
         mkdirSync(dir, { recursive: true })
-        const prof = { ...localProfile(root), ...(typeof b.name === 'string' && b.name.trim() ? { name: b.name.trim() } : {}), ...(typeof b.email === 'string' ? { email: b.email.trim() } : {}), ...(typeof b.avatar === 'string' ? { avatar: b.avatar || undefined } : {}) }
+        // patch over profile.json ONLY (never bake the connect identity into the local file);
+        // avatars must be small raster data-URIs - same bar the published server holds
+        const { validAvatar } = await import('./collab.ts')
+        let cur: Record<string, unknown> = {}
+        try { cur = JSON.parse(readFileSync(join(dir, 'profile.json'), 'utf8')) } catch { /* first save */ }
+        const prof = {
+          ...cur,
+          ...(typeof b.name === 'string' && b.name.trim() ? { name: b.name.trim() } : {}),
+          ...(typeof b.email === 'string' ? { email: b.email.trim() } : {}),
+          ...(b.avatar === '' ? { avatar: undefined } : validAvatar(b.avatar) ? { avatar: b.avatar } : {}),
+        }
         atomicWrite(join(dir, 'profile.json'), JSON.stringify(prof, null, 2) + '\n')
-        return json(res, 200, { user: prof })
+        return json(res, 200, { user: localProfile(root) })
       }
       if (path === 'boards.rights' && req.method === 'GET') {
         // every board is commentable in dev; the published policy applies out there
@@ -250,19 +261,6 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
   }
 }
 
-function localProfile(root: string): { email: string; name: string; avatar?: string } {
-  // the connect account IS the dev identity once connected - events born here must
-  // carry an author the published server will accept (it validates author == session)
-  try {
-    const c = JSON.parse(readFileSync(join(root, 'design', '.local', 'collab.json'), 'utf8'))
-    if (typeof c?.email === 'string' && c.email) return { email: c.email, name: c.name ?? 'Designer' }
-  } catch { /* not connected */ }
-  try {
-    const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
-    if (typeof p?.name === 'string') return { email: p.email ?? '', name: p.name, avatar: p.avatar }
-  } catch { /* no profile yet */ }
-  return { email: '', name: 'Designer' }
-}
 
 let pushTimer: ReturnType<typeof setTimeout> | null = null
 /** Debounced fire-and-forget push after a local write; failures are silent - the

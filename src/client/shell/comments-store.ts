@@ -16,6 +16,7 @@ interface CommentsState {
   board: string | null
   me: Me | null                       // null on published until signed in
   local: boolean                      // dev mirror (identity is the local profile)
+  connected: boolean                  // dev only: a connect account provides name/email (read-only here)
   commentMode: boolean                // C - picking + composing
   show: boolean                       // Shift+C - pins visible at all
   active: string | null               // open thread id
@@ -85,7 +86,7 @@ export const useComments = create<CommentsState>((set, get) => {
   }
 
   return {
-    events: [], threads: [], board: null, me: null, local: false,
+    events: [], threads: [], board: null, me: null, local: false, connected: false,
     commentMode: false, show: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
 
     poke(board) {
@@ -97,7 +98,7 @@ export const useComments = create<CommentsState>((set, get) => {
     async load(board) {
       set({ board })
       const me = await api('me')
-      if (me.ok) set({ me: me.data.user ?? null, local: !!me.data.local })
+      if (me.ok) set({ me: me.data.user ?? null, local: !!me.data.local, connected: !!me.data.connected })
       const res = await api(`comments/${board}`)
       if (res.ok && get().board === board) set(derive(res.data.events ?? []))
     },

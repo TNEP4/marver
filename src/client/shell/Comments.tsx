@@ -352,6 +352,76 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   )
 }
 
+/** The dev identity, edited in place: a small glass popover off the composer's avatar - display
+ *  name + photo, saved to design/.local/profile.json (this machine only). When a connect account
+ *  provides name/email (the published server validates authors), those are read-only here and
+ *  only the photo is editable. */
+function ProfilePopover({ onClose }: { onClose: () => void }) {
+  const me = useComments((s) => s.me)
+  const connected = useComments((s) => s.connected)
+  const unset = !connected && (!me?.name || me.name === 'Designer')
+  const [name, setName] = useState(unset ? '' : me?.name ?? '')
+  const [avatar, setAvatar] = useState(me?.avatar ?? '')
+  const [busy, setBusy] = useState(false)
+  const ready = connected || !!name.trim()
+  const save = async () => {
+    if (busy || !ready) return
+    setBusy(true)
+    try {
+      await useComments.getState().saveProfile({ ...(connected ? {} : { name: name.trim() }), avatar })
+      onClose()
+    } finally { setBusy(false) }
+  }
+  return (
+    <div className="cm-profile" onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}>
+      <div className="cm-idrow">
+        <AvatarPick value={avatar} onPick={setAvatar} />
+        {connected
+          ? <span className="cm-conn"><b>{me?.name}</b><span className="dim">your connect account</span></span>
+          : <input placeholder="Your display name" value={name} autoFocus
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void save()} />}
+      </div>
+      <p className="dim">
+        {connected
+          ? 'Your photo, on your comments here. Name comes from the connect account.'
+          : 'Shown on your comments. Saved to design/.local on this machine - yours, nowhere else.'}
+      </p>
+      <button className="cm-primary" disabled={busy || !ready} onClick={() => void save()}>Save</button>
+    </div>
+  )
+}
+
+/** Your avatar in the composer is the door to your identity (dev only - published viewers
+ *  already have accounts). Unset profile shows a quiet + badge inviting the first setup. */
+function ComposeAvatar() {
+  const me = useComments((s) => s.me)
+  const local = useComments((s) => s.local)
+  const connected = useComments((s) => s.connected)
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLSpanElement>(null)
+  // click-away closes; capture phase, because the card stops propagation before document sees it
+  useEffect(() => {
+    if (!open) return
+    const away = (e: PointerEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('pointerdown', away, true)
+    return () => document.removeEventListener('pointerdown', away, true)
+  }, [open])
+  if (!local) return <Avatar author={me ?? undefined} size={24} />
+  const unset = !connected && !me?.avatar && (!me?.name || me.name === 'Designer')
+  return (
+    <span className="cm-me" ref={wrapRef}>
+      <Tip side="top" label={<b>{unset ? 'Set your name & photo' : 'Edit your profile'}</b>}>
+        <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => setOpen((o) => !o)}>
+          <Avatar author={me ?? undefined} size={24} />
+          {unset && <span className="cm-plus">+</span>}
+        </button>
+      </Tip>
+      {open && <ProfilePopover onClose={() => setOpen(false)} />}
+    </span>
+  )
+}
+
 export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, stage }: { thread: Thread; at: { x: number; y: number }; bounds: { w: number; h: number }; nodeKey?: string; side?: 'l' | 'r'; flank?: 'badge' | 'shim' | null; stage?: boolean }) {
   const { resolve, setActive } = useComments.getState()
   const me = useComments((s) => s.me)
@@ -491,7 +561,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       </div>
       {canComment ? (
         <div className="cm-compose">
-          <Avatar author={me ?? undefined} size={24} />
+          <ComposeAvatar />
           <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={() => setActive(null)} placeholder="Reply…" sendLabel="Send" owner={local} />
         </div>
       ) : (
@@ -515,6 +585,7 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       <div className="cm-compose">
+        <ComposeAvatar />
         <CommentInput value={text} onChange={setText} onSubmit={() => create(text)} onCancel={() => setDraft(null)} placeholder="Comment on this element…" autoFocus sendLabel="Comment" owner={local} />
       </div>
     </div>

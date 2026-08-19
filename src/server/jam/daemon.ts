@@ -21,10 +21,11 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
+import { mkdirSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
+import { localProfile } from '../profile.ts'
 import { claudeAdapter } from './adapter/claude.ts'
 import { codexAdapter } from './adapter/codex.ts'
 import { createActivity } from './activity.ts'
@@ -358,16 +359,3 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   }
 }
 
-/** The dev-session owner identity (same source as api.ts's localProfile). The reply is authored
- *  by the owner + `agent:true`; the client renders it as "Marver" (SPEC §7). */
-function localProfile(root: string): { email: string; name: string; avatar?: string } {
-  try {
-    const c = JSON.parse(readFileSync(join(root, 'design', '.local', 'collab.json'), 'utf8'))
-    if (typeof c?.email === 'string' && c.email) return { email: c.email, name: c.name ?? 'Designer' }
-  } catch { /* not connected */ }
-  try {
-    const p = JSON.parse(readFileSync(join(root, 'design', '.local', 'profile.json'), 'utf8'))
-    if (typeof p?.name === 'string') return { email: p.email ?? '', name: p.name, avatar: p.avatar }
-  } catch { /* no profile */ }
-  return { email: '', name: 'Designer' }
-}

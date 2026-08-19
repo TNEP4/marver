@@ -988,3 +988,50 @@ describe('validateEvents (SPEC-M3 - acceptance is forever, validate hard)', asyn
     ], log, me, 'review')).toMatch(/board/)
   })
 })
+
+describe('localProfile (the ONE dev identity resolver)', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { localProfile, isConnected } = await import('../src/server/profile.ts')
+  const make = (files: Record<string, unknown>) => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-prof-'))
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    for (const [name, body] of Object.entries(files))
+      writeFileSync(join(root, 'design', '.local', name), JSON.stringify(body))
+    return root
+  }
+  it('falls back to Designer with nothing on disk', () => {
+    const root = make({})
+    expect(localProfile(root)).toEqual({ email: '', name: 'Designer', avatar: undefined })
+    expect(isConnected(root)).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('reads profile.json (name, email, avatar)', () => {
+    const root = make({ 'profile.json': { name: 'Nic', email: 'n@x.co', avatar: 'data:image/png;base64,AA' } })
+    expect(localProfile(root)).toEqual({ email: 'n@x.co', name: 'Nic', avatar: 'data:image/png;base64,AA' })
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('connect account wins name+email; the avatar stays local', () => {
+    const root = make({
+      'profile.json': { name: 'Local Me', email: 'old@x.co', avatar: 'data:image/png;base64,AA' },
+      'collab.json': { url: 'https://c.example', token: 't', email: 'me@team.co', name: 'Team Me' },
+    })
+    expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,AA' })
+    expect(isConnected(root)).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('a connect account without a name keeps the local display name', () => {
+    const root = make({
+      'profile.json': { name: 'Local Me' },
+      'collab.json': { url: 'https://c.example', token: 't', email: 'me@team.co' },
+    })
+    expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Local Me', avatar: undefined })
+    rmSync(root, { recursive: true, force: true })
+  })
+  it('survives malformed json on disk', () => {
+    const root = make({})
+    writeFileSync(join(root, 'design', '.local', 'profile.json'), '{nope')
+    expect(localProfile(root).name).toBe('Designer')
+    rmSync(root, { recursive: true, force: true })
+  })
+})
