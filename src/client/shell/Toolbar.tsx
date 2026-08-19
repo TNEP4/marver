@@ -73,6 +73,16 @@ export function useHideUI() {
 
 // ---- shared controls ----------------------------------------------------------------
 
+/** Two-row shortcut tooltip: one action per row, key right-aligned - the provenance
+ *  tooltip's bold-value/muted-key language, shared by every two-shortcut button. */
+function TipRows({ rows }: { rows: [string, string][] }) {
+  return (
+    <span className="sh-tip-rows">
+      {rows.map(([label, key]) => <span className="r" key={key}><b>{label}</b><span>{key}</span></span>)}
+    </span>
+  )
+}
+
 /** Laser toggle - store-level, identical on canvas and prototype. The per-surface code
  *  broadcasts sh:laser to its frame(s); this only flips the flag (and drops comment mode,
  *  since the two are one-at-a-time). */
@@ -80,7 +90,7 @@ export function LaserButton() {
   const laser = useStore((s) => s.laser)
   const showAnchor = useComments((s) => s.showAnchor)
   return (
-    <Tip side="bottom" label={<><b>Laser mode</b><span>L · ⇧L {showAnchor ? 'deactivates' : 'activates'} laser comment</span></>}>
+    <Tip side="bottom" label={<TipRows rows={[['Laser mode', 'L'], [showAnchor ? 'Deactivate laser comment' : 'Activate laser comment', '⇧L']]} />}>
       <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
         if (!laser) commentsStore().setMode(false)
         useStore.getState().setLaser(!laser)
@@ -94,7 +104,7 @@ export function CommentButton() {
   const commentMode = useComments((s) => s.commentMode)
   const show = useComments((s) => s.show)
   return (
-    <Tip side="bottom" label={<><b>Comment</b><span>C · ⇧C {show ? 'hides' : 'shows'} pins</span></>}>
+    <Tip side="bottom" label={<TipRows rows={[['Comment', 'C'], [show ? 'Hide pins' : 'Show pins', '⇧C']]} />}>
       <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
         const c = commentsStore()
         if (!c.commentMode) useStore.getState().setLaser(false)

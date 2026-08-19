@@ -1064,6 +1064,17 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* provenance tooltip: matches the toolbar-button tooltip - a BOLD BRIGHT value (what you scan) + a
    muted qualifier label after it, one fact per row, left-aligned. Overrides the house single-row
    `.sh-tip span` dim/right-drift so nothing washes out. */
+/* two-row shortcut tooltip (toolbar): one action per row, key right-aligned - the same
+   bold-value/muted-key language as the provenance tooltip below. opacity:1 overrides the
+   house `.sh-tip span` dim so the wrapper rows stay full-bright; only keys mute. */
+.sh-tip:has(.sh-tip-rows) { padding: 7px 11px }
+.sh-tip .sh-tip-rows { display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+  opacity: 1; margin: 0; font-size: 12px; line-height: 1.2 }
+.sh-tip .sh-tip-rows .r { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 18px; opacity: 1; margin: 0; font-size: 12px; white-space: nowrap }
+.sh-tip .sh-tip-rows .r b { font-weight: 600 }
+.sh-tip .sh-tip-rows .r span { opacity: .55; font-size: 11px; font-weight: 600; margin-left: auto }
+
 .sh-tip:has(.cm-meta-tip) { padding: 8px 12px }
 /* opacity:1 is the fix - .cm-meta-tip is a <span>, so the house `.sh-tip span{opacity:.55}` was
    dimming the ENTIRE tooltip, and a child's opacity:1 can't undo a parent's reduced opacity. */
