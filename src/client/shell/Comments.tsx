@@ -58,9 +58,14 @@ export function MarverAvatar({ size = 24 }: { size?: number }) {
 }
 
 export function Avatar({ author, size = 22 }: { author?: { email?: string; name?: string; avatar?: string; agent?: boolean }; size?: number }) {
+  const me = useComments((s) => s.me)
+  const local = useComments((s) => s.local)
   if (author?.agent) return <MarverAvatar size={size} />   // Marver shows as its own participant
-  if (author?.avatar) return <img className="cm-avatar" src={author.avatar} width={size} height={size} alt="" />
-  const { initials, hue } = avatarFallback(author)
+  // dev: an account-less author IS the person at this keyboard - render the CURRENT identity,
+  // not the snapshot the event happened to store (old "Designer" events become you, live)
+  const a = local && me && !author?.email ? { ...author, ...me } : author
+  if (a?.avatar) return <img className="cm-avatar" src={a.avatar} width={size} height={size} alt="" />
+  const { initials, hue } = avatarFallback(a)
   return (
     <span className="cm-avatar" style={{ width: size, height: size, fontSize: size * 0.42, background: `hsl(${hue} 55% 45%)` }}>
       {initials}
@@ -301,13 +306,15 @@ function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author
       <span className="dim">{rel(ts)}</span>
     </header>
   )
-  // own = born on this machine without an account (no email); unset = identity still the default
+  // own = born on this machine without an account (no email); unset = identity still the default.
+  // Own messages render the CURRENT identity, not the stored snapshot - same rule as Avatar.
   const unset = local && !connected && (!me?.name || me.name === 'You')
   const own = local && !author?.email
+  const shown = own && me ? { ...author, ...me } : author
   return (
     <header>
       {unset && own ? <EditableAvatar author={author} size={24} /> : <Avatar author={author} size={24} />}
-      <b>{author?.name ?? 'Someone'}</b>
+      <b>{shown?.name ?? 'Someone'}</b>
       <span className="dim">{rel(ts)}</span>
     </header>
   )
