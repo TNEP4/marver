@@ -17,7 +17,7 @@ export const codexAdapter: JamAdapter = {
   earlyText(line) {
     try {
       const o = JSON.parse(line) as Record<string, any>
-      if (o.type === 'item.completed' && o.item?.type === 'agent_message' && typeof o.item.text === 'string' && o.item.text.trim()) return o.item.text.trim()
+      if (o.type === 'item.completed' && o.item?.type === 'agent_message' && typeof o.item.text === 'string' && o.item.text.trim()) return { text: o.item.text.trim() }
     } catch { /* not JSON */ }
     return null
   },

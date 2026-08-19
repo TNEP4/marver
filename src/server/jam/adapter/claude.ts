@@ -33,7 +33,8 @@ export const claudeAdapter: JamAdapter = {
       const o = JSON.parse(line) as Record<string, any>
       if (o.type !== 'assistant') return null
       const text = (o.message?.content ?? []).find((c: any) => c?.type === 'text' && typeof c.text === 'string' && c.text.trim())
-      return text ? String(text.text).trim() : null
+      // the assistant event names its model - carry it so the ack's tooltip matches the final's
+      return text ? { text: String(text.text).trim(), model: cleanModel(o.message?.model) } : null
     } catch { return null }
   },
   parse(stdout, code) {

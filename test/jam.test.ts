@@ -406,6 +406,9 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     await jam.tick(); jam.stop()
     const replies = agentReplies(dir, 'home')
     expect(replies.map((r) => r.body)).toEqual(['On it - swapping the marks.', 'Done - real marks are in.'])
+    // the EARLY ack carries the model too - the stream's assistant event names it, so the
+    // provenance tooltip must not go blank until the final lands
+    expect(replies.map((r) => (r as any).agentMeta?.model)).toEqual(['claude-opus-5', 'claude-opus-5'])
     done()
   })
 

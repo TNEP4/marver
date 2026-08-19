@@ -65,7 +65,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
   type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
-  const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string) => void): Promise<AgentRun> =>
+  const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const { cmd, args } = adapter.spawnArgs(goal)
       let child: ChildProcess
@@ -93,8 +93,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const lines = lineBuf.split('\n')
         lineBuf = lines.pop() ?? ''
         for (const line of lines) {
-          const text = adapter.earlyText!(line)
-          if (text) { earlyFired = true; try { onEarly!(text) } catch { /* early delivery is best-effort */ } break }
+          const hit = adapter.earlyText!(line)
+          if (hit) { earlyFired = true; try { onEarly!(hit.text, hit.model) } catch { /* early delivery is best-effort */ } break }
         }
       })
       child.on('close', (code) => settle({ ...adapter.parse(out, code ?? 1), raw: out }))
@@ -175,10 +175,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     let earlyBody: string | undefined
     let run: Awaited<ReturnType<typeof runAgent>>
     try {
-      run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text) => {
+      run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text, model) => {
         // write FIRST, remember after: if the append throws, the final must not be suppressed
         // as a "duplicate" of an ack that never actually posted (Codex P1)
-        writeReply(b, p, text, undefined, 'early')
+        writeReply(b, p, text, model, 'early')
         earlyBody = text
         hooks.changed?.(b.board)
       })

@@ -18,7 +18,9 @@ export interface JamAdapter {
   /** Streaming: given ONE stdout line, return the agent's message text if this line carries one.
    *  The daemon posts the FIRST such text immediately - the agent's own quick ack (or its
    *  clarifying question), live, not a canned fake. Optional; absent = no early reply. */
-  earlyText?(line: string): string | null
+  /** The agent's first message from one stdout line - with the model when the stream
+   *  already names it, so the early ack's provenance matches the final reply's. */
+  earlyText?(line: string): { text: string; model?: string } | null
 }
 
 /** A durable unit of work: the owner mentions batched into one orchestrated job. M1 forms
