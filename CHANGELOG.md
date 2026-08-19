@@ -2,6 +2,49 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.8.0 - 2026-08-19
+
+Live Jam: tag `@marver` in a canvas comment and a local coding agent picks it up, edits the real
+frame source, and replies in the thread - live. Plus a dev identity system and a full polish pass
+on the comment thread experience.
+
+### Added
+
+- **Live Jam.** A daemon inside `marver dev` watches the comment logs: an owner-authored `@marver`
+  spawns a headless agent (`jam: { agent: "claude" }` or `"codex"` in marver.config) that reads the
+  thread, edits the frame source, and replies - with a streamed first-line ack within seconds, a
+  clarify-before-asking ladder, and replies capped to the energy and length of your message.
+  Follow-ups in a thread Marver has replied to trigger WITHOUT re-tagging.
+- **Trust boundary.** Only the owner's device triggers: a device-bound ledger (keyed per board +
+  comment id, never synced), a same-origin + cookie gate on the dev comments API, and a recursion
+  guard so agent replies never re-trigger. The agent gets no shell - Read/Edit/Write/Glob/Grep +
+  WebSearch/WebFetch only, and its reply is extracted structurally (a `marver-reply` block), so
+  narration can never leak into the thread.
+- **The working state.** A frame being worked on wears the selection geometry in marver blue with a
+  rotating shimmer, a top-to-bottom content wave, and a parallelogram shimmer matrix on its flank -
+  phased per frame, so parallel jams don't pulse in sync. Marver appears as its own participant
+  (blue mark avatar) with a provenance tooltip: dev user, harness, model.
+- **Notifications.** A minimal pill (frame title + reply preview) with card-deck stacking at 3+,
+  expand, Clear all; clicking switches boards and reveals the thread. Delivery is instant over the
+  dev websocket.
+- **Dev identity.** Comments in dev render as "You" (green Y) until you set a profile: click your
+  avatar by the reply box - name + photo, saved to `design/.local/` on your machine only. A connect
+  account (published canvas) takes over name + email automatically. The agent's provenance shows
+  the same identity.
+- **Laser comment (⇧L).** Toggle the element lighting that comments paint inside the artwork
+  (hover preview, compose lock, open-thread highlight) - anchoring stays precise with it off.
+  ⇧C still hides pins; both live in stateful two-row tooltips on the toolbar.
+
+### Changed
+
+- **The thread card grew up.** World-parked beside its frame with pin-style screen-constant
+  scaling, height rules that respect the frame, content-mask scroll fades, a custom glass
+  scrollbar on the card's far edge, and a stage-docked position in Play that re-docks on device
+  switches. The composer centers its text exactly, keeps the caret honest after `@marver`
+  (metrics-safe mention highlight), and the send button is reliably clickable.
+- Laser/comment hover lighting now leaves a frame together with the pointer - no fossilized
+  outlines on frames the cursor crossed.
+
 ## 0.7.0 - 2026-08-17
 
 Prototype mode becomes a first-class review surface. The prototype (Play) now carries the same toolbar
