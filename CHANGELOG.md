@@ -2,6 +2,16 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Changed
+
+- **Comments wear the brand blue.** Pins, thread cards, the comment-mode pick cursor and
+  the anchored-thread chrome move off systemGreen. Interact keeps purple, and green is now
+  reserved for the done state alone - in dark mode the comment and done greens had drifted
+  to the same value, so a frame carrying threads and a frame that had just landed a change
+  looked alike. A pin, a thread card and a selected frame are told apart by shape.
+
 ## 0.8.1 - 2026-08-19
 
 ### Added
