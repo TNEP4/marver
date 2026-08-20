@@ -12,6 +12,7 @@
       "welcome": {
         "rows": [
           [
+            "cover",
             "hello",
             "drive-it",
             "philosophy",
@@ -24,9 +25,17 @@
   },
   "nodes": [
     {
+      "key": "n_cov001",
+      "frame": "welcome/cover",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
       "key": "n_2tnrwy",
       "frame": "welcome/hello",
-      "x": 0,
+      "x": 1434,
       "y": 0,
       "w": 1280,
       "h": 800
@@ -34,7 +43,7 @@
     {
       "key": "n_eck9kv",
       "frame": "welcome/drive-it",
-      "x": 1434,
+      "x": 2868,
       "y": 0,
       "w": 1280,
       "h": 800
@@ -42,7 +51,7 @@
     {
       "key": "n_xjnw6z",
       "frame": "welcome/philosophy",
-      "x": 2867,
+      "x": 4301,
       "y": 0,
       "w": 1280,
       "h": 800
@@ -50,7 +59,7 @@
     {
       "key": "n_d22na1",
       "frame": "welcome/around-you",
-      "x": 4301,
+      "x": 5735,
       "y": 0,
       "w": 1280,
       "h": 800
@@ -58,7 +67,7 @@
     {
       "key": "n_euxfbd",
       "frame": "welcome/next-stop",
-      "x": 5734,
+      "x": 7168,
       "y": 0,
       "w": 1280,
       "h": 800

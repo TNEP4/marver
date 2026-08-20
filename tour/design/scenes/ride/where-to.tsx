@@ -4,7 +4,7 @@ import { cn } from '../../../src/components/kit'
 export const meta = { title: 'Ride - where to', viewport: 'mobile' }
 
 const SAVED = [
-  { name: 'Home', addr: 'Calder & 3rd' },
+  { name: 'Home', addr: 'Calder St' },
   { name: 'Work', addr: '990 Marsh' },
 ]
 
@@ -18,7 +18,7 @@ export default function WhereTo() {
   return (
     <Screen>
       <StatusBar />
-      <CityMap here className="h-[400px] shrink-0" />
+      <CityMap here className="h-[360px] shrink-0" />
       <Sheet>
         <h1 className="text-[24px] font-bold tracking-[-0.02em]">Where to?</h1>
         <button
@@ -47,7 +47,7 @@ export default function WhereTo() {
               <svg viewBox="0 0 20 20" className="size-4 shrink-0 text-brand-ink" fill="currentColor" aria-hidden>
                 <path d="M10 2.2 2.5 8.4V17a1 1 0 0 0 1 1h4v-5h5v5h4a1 1 0 0 0 1-1V8.4Z" />
               </svg>
-              <span className="min-w-0 truncate text-[13.5px] font-semibold">{s.name}</span>
+              <span className="shrink-0 text-[13.5px] font-semibold">{s.name}</span>
               <span className="min-w-0 truncate text-[12.5px] text-muted-soft">{s.addr}</span>
             </button>
           ))}

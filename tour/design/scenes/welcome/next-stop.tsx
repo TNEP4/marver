@@ -35,7 +35,7 @@ export default function NextStop() {
   return (
     <Slide
       eyebrow="Welcome"
-      step="5 of 5"
+      step="6 of 6"
       title="You can drive."
       lead={
         <>
@@ -47,7 +47,7 @@ export default function NextStop() {
       hint={
         <>
           <Kbd className="mr-1">Esc</Kbd> steps back out to the canvas. The same boards wait
-          in the left rail.
+          in the sidebar.
         </>
       }
     >

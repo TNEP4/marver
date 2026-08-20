@@ -141,7 +141,7 @@ export default function AroundYou() {
   return (
     <Slide
       eyebrow="Welcome"
-      step="4 of 5"
+      step="5 of 6"
       title="A quick look around."
       lead={
         <>
@@ -176,9 +176,11 @@ export default function AroundYou() {
             <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Prototype" />
             <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Collaborate" />
             <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Jam" />
+            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Thanks" />
             <Row icon={<Ico d={P.cardsThree} className="mx-px text-glass-ink/40" />} label="All Scenes" />
             <div className="mt-2.5 mb-[5px] px-2.5 text-[11px] font-semibold tracking-[0.02em] text-glass-ink/40">Scenes</div>
-            <Row icon={<Ico d={P.caret} size={11} className="mx-[2.5px] text-glass-ink/40" />} label="Welcome" count={5} />
+            <Row icon={<Ico d={P.caret} size={11} className="mx-[2.5px] text-glass-ink/40" />} label="Welcome" count={6} />
+            <Row icon={<Ico d={P.frameRect} size={13} stroke className="opacity-[0.72]" />} label="Cover" indent />
             <Row icon={<Ico d={P.frameRect} size={13} stroke className="opacity-[0.72]" />} label="Hello" indent />
             <Row icon={<Ico d={P.frameRect} size={13} stroke className="opacity-[0.72]" />} label="Drive-it" indent />
             <Row icon={<Ico d={P.frameRect} size={13} stroke className="opacity-[0.72]" />} label="Philosophy" indent />

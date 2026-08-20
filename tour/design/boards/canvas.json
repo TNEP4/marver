@@ -27,7 +27,7 @@
       "recipe": {
         "rows": [
           [
-            "variants",
+            "directions",
             {
               "space": 2
             },
@@ -48,7 +48,7 @@
     },
     {
       "key": "n_uhprku1yyxvzw",
-      "frame": "recipe/variants",
+      "frame": "recipe/directions",
       "x": 6684,
       "y": 0,
       "w": 1280,

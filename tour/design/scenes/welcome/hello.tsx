@@ -6,7 +6,7 @@ export default function Hello() {
   return (
     <Slide
       eyebrow="Welcome"
-      step="1 of 5"
+      step="2 of 6"
       title="Your design canvas is a folder in your repo."
       lead={
         <>

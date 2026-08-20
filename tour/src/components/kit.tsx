@@ -86,13 +86,13 @@ export function Slide({
   className?: string
 }) {
   return (
-    <div className={cn('flex h-full min-h-screen flex-col bg-background px-16 pt-14 pb-10 text-foreground', className)}>
+    <div className={cn('flex h-full min-h-screen flex-col bg-background px-6 pt-10 pb-8 text-foreground sm:px-10 lg:px-16 lg:pt-14 lg:pb-10', className)}>
       <div className="flex items-center gap-2.5">
         <MarverMark className="size-[18px] text-brand" />
         <span className="text-[13px] font-semibold tracking-[0.08em] text-brand uppercase">{eyebrow}</span>
         {step && <span className="text-[13px] font-medium tracking-[0.02em] text-muted-soft">· {step}</span>}
       </div>
-      <h1 className="mt-5 max-w-[24ch] text-[44px] leading-[1.06] font-semibold tracking-[-0.03em]">{title}</h1>
+      <h1 className="mt-5 max-w-[24ch] text-[32px] leading-[1.06] font-semibold tracking-[-0.03em] sm:text-[38px] lg:text-[44px]">{title}</h1>
       {lead && (
         <p className="mt-5 max-w-[62ch] text-[18px] leading-[1.55] font-[450] tracking-[-0.01em] text-muted-foreground">{lead}</p>
       )}

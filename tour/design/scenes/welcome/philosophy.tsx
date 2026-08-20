@@ -99,7 +99,7 @@ export default function Philosophy() {
   return (
     <Slide
       eyebrow="Welcome"
-      step="3 of 5"
+      step="4 of 6"
       title="None of this is a design artifact."
       lead={
         <>

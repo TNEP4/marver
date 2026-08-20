@@ -7,13 +7,13 @@ export default function Themes() {
     <Slide
       eyebrow="The canvas"
       step="3 of 4"
-      title="Dark is not an afterthought."
+      title="Both themes, from one set of tokens."
       lead={
         <>
-          Press <Ink>d</Ink> and the canvas flips between light and dark - same components,
-          same tokens, both real. Notice this frame does not flip: it is{' '}
-          <Ink>pinned dark</Ink> in its own file, the way a frame can insist on the state it
-          was designed to show.
+          Press <Ink>d</Ink> and every frame re-renders from the same components, so dark is a
+          state your design really has, not a filter over a picture of it. Notice this frame
+          does not flip: it is <Ink>pinned dark</Ink> in its own file, the way a frame can
+          insist on the state it was designed to show.
         </>
       }
       hint={

@@ -55,7 +55,7 @@ export default function Editorial() {
         ))}
       </div>
 
-      <ol className="mt-7 space-y-[15px]">
+      <ol className="mt-6 space-y-[13px]">
         {STEPS.map((s, i) => (
           <li key={i} className="flex gap-4 text-[15px] leading-[1.5]">
             <span className="w-[22px] shrink-0 text-[15px] font-semibold text-muted-soft tnum" style={serif}>

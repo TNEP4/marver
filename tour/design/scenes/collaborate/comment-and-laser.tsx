@@ -162,7 +162,7 @@ export default function CommentAndLaser() {
     <Slide
       eyebrow="Collaborate"
       step="1 of 4"
-      title="The canvas is where feedback lives."
+      title="Comment on the exact element."
       lead={
         <>
           Drop a pin on the exact element and the thread stays anchored to it - design review

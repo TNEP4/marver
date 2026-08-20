@@ -144,8 +144,8 @@
       "variant": "c"
     },
     {
-      "id": "recipe/variants",
-      "file": "design/scenes/recipe/variants.tsx",
+      "id": "recipe/directions",
+      "file": "design/scenes/recipe/directions.tsx",
       "kind": "tsx",
       "scene": "recipe",
       "title": "What variants are",
@@ -216,6 +216,14 @@
       "viewport": "laptop"
     },
     {
+      "id": "welcome/cover",
+      "file": "design/scenes/welcome/cover.tsx",
+      "kind": "tsx",
+      "scene": "welcome",
+      "title": "The marver tour",
+      "viewport": "laptop"
+    },
+    {
       "id": "welcome/drive-it",
       "file": "design/scenes/welcome/drive-it.tsx",
       "kind": "tsx",
@@ -279,7 +287,7 @@
     },
     {
       "name": "welcome",
-      "frames": 5
+      "frames": 6
     }
   ]
 }

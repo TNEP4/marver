@@ -263,7 +263,7 @@ export default function BoardsAndTidy() {
     <Slide
       eyebrow="The canvas"
       step="4 of 4"
-      title="Boards are the curation."
+      title="Boards decide what sits where."
       lead={
         <>
           A board is a saved arrangement - which frames, in what composition: the

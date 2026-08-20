@@ -33,7 +33,7 @@ export default function Trust() {
     <Slide
       eyebrow="Live Jam"
       step="2 of 3"
-      title="Powerful, because the boundaries are strict."
+      title="What the agent can touch, and what it cannot."
       lead={
         <>
           A comment that edits your codebase should make you ask hard questions. The answers

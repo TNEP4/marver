@@ -241,7 +241,7 @@ export default function DriveIt() {
   return (
     <Slide
       eyebrow="Welcome"
-      step="2 of 5"
+      step="3 of 6"
       title="You already know how to drive this."
       lead={
         <>
