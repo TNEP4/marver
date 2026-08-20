@@ -49,9 +49,10 @@ export default function Cover() {
 
       <ThreadCard className="mt-9 w-full max-w-[520px]">
         <ThreadMsg agent time="now">
-          Hello. Five more frames sit to your right on this board, then five more boards wait
-          in the sidebar, one idea each. Take them in order and you will have seen the whole
-          tool.
+          Hello and welcome! 👋 Make yourself at home - everything here is live, so poke at
+          anything you like. Five more frames sit to your right on this board, then five more
+          boards in the sidebar, one idea each. Go through them in order and you will have
+          seen the whole tool by the end.
         </ThreadMsg>
       </ThreadCard>
 

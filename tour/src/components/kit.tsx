@@ -41,6 +41,25 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   )
 }
 
+/** The shift arrow, drawn: the interface font carries no ⇧ glyph, so the
+ *  character alone renders as a tofu box on every shortcut chip. */
+export function ShiftGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={cn('size-[13px]', className)}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.9}
+      strokeLinejoin="round"
+      role="img"
+      aria-label="Shift"
+    >
+      <path d="M12 3.8 19.8 11.6h-4.3v6.6H8.5v-6.6H4.2Z" />
+    </svg>
+  )
+}
+
 /** "shift+L" -> chips joined by a quiet plus. */
 export function Keys({ combo, className }: { combo: string; className?: string }) {
   const parts = combo.split('+')
@@ -49,7 +68,7 @@ export function Keys({ combo, className }: { combo: string; className?: string }
       {parts.map((p, i) => (
         <span key={i} className="inline-flex items-center gap-1">
           {i > 0 && <span className="text-[12px] text-muted-soft">+</span>}
-          <Kbd>{p === 'shift' ? '⇧' : p}</Kbd>
+          <Kbd>{p === 'shift' ? <ShiftGlyph /> : p}</Kbd>
         </span>
       ))}
     </span>
@@ -307,7 +326,7 @@ export function DemoBars({ tight }: { tight?: boolean }) {
 const DEMO_RING: Record<string, string> = {
   selected: 'border-brand outline-2 outline-brand -outline-offset-1 shadow-[0_0_0_3px_var(--brand-ring)]',
   interact: 'border-interact outline-2 outline-interact -outline-offset-1 shadow-[0_0_0_3px_rgba(219,53,242,0.18)]',
-  comment: 'border-comment outline-2 outline-comment -outline-offset-1 shadow-[0_0_0_3px_rgba(52,199,89,0.18)]',
+  comment: 'border-comment outline-2 outline-comment -outline-offset-1 shadow-[0_0_0_3px_rgba(0,136,255,0.18)]',
 }
 
 /** A frame node at demo scale: name bar above, card below, state ring. */

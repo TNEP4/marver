@@ -28,9 +28,9 @@
   --interact: #db35f2; --interact-ring: rgba(219, 53, 242, .16);
   --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
   --interact-deep: rgba(176, 47, 194, .85); --interact-spark: rgba(255, 255, 255, .95);
-  /* comments own a third mode color (Apple systemGreen): selection = blue,
-     interact = purple, comments = green - same geometry, unique hue per mode */
-  --comment: #34c759; --comment-ring: rgba(52, 199, 89, .22);
+  /* comments ride the brand blue: interact keeps purple, and a pin, a thread card
+     and a selected frame are told apart by shape, not by hue */
+  --comment: #0088ff; --comment-ring: rgba(0, 136, 255, .22);
   /* comment-card field surface: APP-scoped on purpose - the card keys to the board
      theme, and node-scoped --node-bg would flip with the frame underneath it */
   --cm-field: #fff;
@@ -67,7 +67,7 @@
   --interact: #ea8dff; --interact-ring: rgba(219, 53, 242, .3);
   --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
   --interact-deep: rgba(203, 48, 224, .8); --interact-spark: rgba(255, 255, 255, .9);
-  --comment: #30d158; --comment-ring: rgba(48, 209, 88, .34);
+  --comment: #4da6ff; --comment-ring: rgba(77, 166, 255, .34);
   --cm-field: #0f1015;
   --cm-modal-bg: rgba(22, 22, 27, .96);
 
