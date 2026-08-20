@@ -1,0 +1,59 @@
+# Discover - understand before you draw
+
+Run this phase for any NEW surface, feature, or project. Skip it only when a brief
+already answers everything below. Its output is a written brief; nothing gets designed
+until the brief has a human nod. (One exception: the first-session draft
+(welcome.md) skips the brief - the human just said what they are building.)
+
+## 1. Read the repo, then interview
+
+First inspect what exists: the app's screens, components, theme, copy, and any brief
+or README - questions the repo answers are never asked. THEN ask at most five
+questions, in one message; never CSS values or aesthetic lanes. Ask what changes the
+work:
+
+1. **Who** must this serve, and in what scene (device, ambient light, attention level)?
+2. **The one job**: what should a visitor be able to decide, complete, understand, or
+   feel? (One job. If you get three, ask which one wins.)
+3. **The core flow**: entry → the moment of value → done. What are the 3-6 screens?
+4. **What exists**: real content, brand assets, an app, competitors they respect,
+   any screenshots or sites they LOVE? (A visual reference beats a paragraph of
+   description - ask for one when the direction matters.)
+5. **Out of scope**: what must NOT be touched or built?
+
+## 2. Pick the mode - it drives every later decision
+
+Name the surface's mode in the brief. The mode is the visitor's success:
+
+- **Persuade** - the visitor decides and acts (landing, pricing, campaign). The offer
+  and the action must be legible in the first viewport.
+- **Operate** - the visitor completes a task (app UI, dashboard, settings). Scanability
+  and native expectations outrank expression.
+- **Read** - the visitor understands (docs, guides). Structure for comprehension.
+- **Experience** - the visitor is inside the work (portfolio, gallery). The artifact
+  leads; the interface recedes.
+
+A tool's landing page is Persuade. A fashion house's docs are Read. The mode belongs
+to the SURFACE, not the product.
+
+## 3. Write the brief
+
+Create `design/scenes/<scene>/_brief.md`: audience + scene, the one job, mode, the
+flow as a numbered list, content sources, out-of-scope. Ten lines, not a document.
+Show it. Get the nod.
+
+**Unattended?** When the human is away or has said "don't ask", the interview and
+the nod convert to obligations, not blockers: answer the five questions yourself
+from the repo and reasonable product judgment, mark the brief `UNCONFIRMED` at the
+top, proceed - and surface the brief FIRST when the human returns. Never stall on
+an absent human; never hide that the brief was self-answered.
+
+## 4. Align on flow with a diagram frame
+
+When the flow has branches or more than four screens, draw it before wireframing:
+one content frame (`<scene>/flow.tsx`) with a mermaid `Diagram` block - the how lives
+in instructions/shape.md. Each node names a future frame. The human can look at one
+picture and say "step 3 is wrong" before step 3 costs anything.
+
+Then move to Wireframe. Do not brand, do not pick type, do not open the craft rules
+yet - those phases come after the flow and words are agreed.

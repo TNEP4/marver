@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "name": "modes",
+  "auto": false,
+  "layout": {
+    "rows": [
+      [
+        "modes"
+      ]
+    ],
+    "scenes": {
+      "modes": {
+        "rows": [
+          [
+            "play",
+            "comment-and-laser"
+          ]
+        ]
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "n_gqe0e61cito7w",
+      "frame": "modes/play",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_1fbqe971ggqxe1",
+      "frame": "modes/comment-and-laser",
+      "x": 1434,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    }
+  ],
+  "order": 3
+}

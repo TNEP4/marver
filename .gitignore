@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tgz
+*.log
+.DS_Store
+/tmp-smoke/
+.gstack/
+
+# local-only archive (dev harnesses etc, never shipped)
+.archive/
+spike/
+*.tar.gz
+.env
+.env.*

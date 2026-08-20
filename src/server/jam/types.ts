@@ -1,0 +1,71 @@
+/**
+ * Live Jam shared types. No node imports beyond types - kept small
+ * so the adapter, packet, journal, watch, and daemon modules share one vocabulary.
+ */
+import type { CommentEvent } from '../../shared/events.ts'
+
+/** A re-pin: the agent moved the commented element, so the whole thread follows. */
+export interface Reanchor { thread: string; anchor: unknown }
+
+/** One agent CLI the daemon can spawn. M1 ships `claude`; M5 adds `codex`. */
+export interface JamAdapter {
+  name: 'claude' | 'codex'
+  supportsSubagents: boolean
+  /** argv for a goal-phrased, workspace-jailed run over `goal`. Never full-access, never prompts. */
+  spawnArgs(goal: string): { cmd: string; args: string[] }
+  /** Parse the agent's stdout + exit code into the reply, best-effort model id, and any reanchors. */
+  parse(stdout: string, code: number): { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
+  /** Streaming: given ONE stdout line, return the agent's message text if this line carries one.
+   *  The daemon posts the FIRST such text immediately - the agent's own quick ack (or its
+   *  clarifying question), live, not a canned fake. Optional; absent = no early reply. */
+  /** The agent's first message from one stdout line - with the model when the stream
+   *  already names it, so the early ack's provenance matches the final reply's. */
+  earlyText?(line: string): { text: string; model?: string } | null
+}
+
+/** A durable unit of work: the owner mentions batched into one orchestrated job. M1 forms
+ *  single-member batches; M4 promotes to real multi-member batches (frozen at spawn). */
+export interface Batch {
+  batchId: string
+  board: string              // the board the members live on; resume reads ONLY this board
+  memberEventIds: string[]   // frozen at spawn
+  state: 'pending' | 'claimed' | 'done' | 'failed'
+  leaseUntil: number
+  attempts: number
+  pgid?: number              // spawned process group, for fencing an orphan on resume
+}
+
+/** The on-disk journal (design/.local/jam-jobs.json). `seen` is the dedup source of truth
+ *  (an event id enters it the moment it is batched); terminal batches are pruned, their ids
+ *  stay in `seen`. `baselined` guards the activation baseline (never replay pre-existing logs). */
+export interface Journal {
+  version: 1
+  baselined: boolean
+  seen: string[]
+  batches: Batch[]
+}
+
+/** What the daemon hands one member to the agent - untrusted user data, framed as such (§5). */
+export interface PacketMember {
+  eventId: string
+  threadId: string
+  board: string
+  frame?: string
+  nodeKey?: string
+  comment: { bodyRaw: string; author?: { name?: string; email?: string } }
+  /** The FULL conversation on this element (root + every prior message, agent replies marked) -
+   *  so a short reply-trigger like "please @marver" inherits what the thread already said. */
+  thread: { bodyRaw: string; author?: string; agent?: boolean }[]
+  nearby: { bodyRaw: string; author?: string }[]
+  anchor?: unknown
+}
+
+export interface JobPacket {
+  v: 1
+  kind: 'marver.jam.job'
+  batchId: string
+  members: PacketMember[]
+}
+
+/** The triggering event plus the board it lives on. */
+export interface Pending { board: string; event: CommentEvent }

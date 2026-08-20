@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "name": "welcome",
+  "auto": false,
+  "layout": {
+    "rows": [
+      [
+        "welcome"
+      ]
+    ],
+    "scenes": {
+      "welcome": {
+        "rows": [
+          [
+            "hello",
+            "drive-it",
+            "philosophy",
+            "around-you",
+            "next-stop"
+          ]
+        ]
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "n_2tnrwy",
+      "frame": "welcome/hello",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_eck9kv",
+      "frame": "welcome/drive-it",
+      "x": 1434,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_xjnw6z",
+      "frame": "welcome/philosophy",
+      "x": 2867,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_d22na1",
+      "frame": "welcome/around-you",
+      "x": 4301,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_euxfbd",
+      "frame": "welcome/next-stop",
+      "x": 5734,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    }
+  ],
+  "order": 1
+}

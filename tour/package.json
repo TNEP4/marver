@@ -1,0 +1,27 @@
+{
+  "name": "marver-tour",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The hosted onboarding canvas - tour.marver.design",
+  "type": "module",
+  "scripts": {
+    "dev": "marver dev",
+    "build": "marver build",
+    "serve": "marver serve"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@marver-design/marver": "^0.8.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

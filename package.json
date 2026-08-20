@@ -1,0 +1,81 @@
+{
+  "name": "@marver-design/marver",
+  "version": "0.8.1",
+  "description": "The agent-native design canvas. A design/ folder, one command, a canvas of live frames built from your repo's real components. The tool ships no AI - your coding agent is the designer.",
+  "type": "module",
+  "private": false,
+  "license": "Apache-2.0",
+  "author": "Nic Touron (https://github.com/TNEP4)",
+  "keywords": [
+    "design",
+    "canvas",
+    "agent",
+    "prototyping",
+    "design-tool",
+    "react",
+    "vite",
+    "tailwind"
+  ],
+  "bugs": {
+    "url": "https://github.com/TNEP4/marver/issues"
+  },
+  "bin": {
+    "marver": "dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "src/client",
+    "src/shared",
+    "templates",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    "./runtime": "./src/client/runtime/index.ts",
+    "./content": "./src/client/content/index.tsx",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "cac": "^7.0.0",
+    "html-to-image": "^1.11.13",
+    "marked": "^16.0.0",
+    "mermaid": "^11.6.0",
+    "react-zoom-pan-pinch": "^3.6.1",
+    "vite": "^8.0.0",
+    "zustand": "^5.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsdown": "^0.22.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "packageManager": "pnpm@11.0.8",
+  "homepage": "https://marver.design",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TNEP4/marver.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

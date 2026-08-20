@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "collaborate",
+  "auto": false,
+  "layout": {
+    "rows": [
+      [
+        "collaborate"
+      ]
+    ],
+    "scenes": {
+      "collaborate": {
+        "rows": [
+          [
+            "publish",
+            "invite",
+            "comments"
+          ]
+        ]
+      }
+    }
+  },
+  "nodes": [
+    {
+      "frame": "collaborate/publish"
+    },
+    {
+      "frame": "collaborate/invite"
+    },
+    {
+      "frame": "collaborate/comments"
+    }
+  ],
+  "order": 6
+}

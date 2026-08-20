@@ -1,0 +1,1150 @@
+/* Theme-aware glass shell. Tokens live on .sh-app; .sh-app.dark overrides them.
+   Light board -> light glass chrome over a paper canvas; dark board -> dark glass
+   chrome over a dark canvas. Frames are cards; chrome is glass. */
+
+.sh-app {
+  --ground: #e7e9ef; --dot: #c9cbd5;
+  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2); --beam: rgba(0, 136, 255, .42); --beam-blur: 6px; --beam-bottom: -13px; --beam-h: 12px; --beam-inset: 12%; --edge-accent: rgba(0, 136, 255, .8); --inner-tint: rgba(0, 136, 255, .13); --tip-bg: #18181b; --tip-ink: #fafafa; --accent-wash: rgba(0, 136, 255, .07);
+
+  --glass: rgba(255, 255, 255, .64);
+  --glass-brd: rgba(24, 24, 27, .1);
+  --glass-ink: #18181b;
+  --glass-ink-2: rgba(24, 24, 27, .66);
+  --glass-ink-3: rgba(24, 24, 27, .4);
+  --glass-hover: rgba(24, 24, 27, .06);
+  --glass-accent: #0077e6;
+  --glass-accent-bg: rgba(0, 136, 255, .13);
+  --glass-good: #0e6b57;
+  --glass-warn: #7a4a00;
+  --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 4px 12px -6px rgba(24, 24, 27, .12);
+
+  --node-bg: #fff; --node-brd: #dddee5;
+  --head-bg: rgba(255, 255, 255, .55);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .85), rgba(255, 255, 255, .1) 45%, rgba(255, 255, 255, .45));
+  --edge-light: linear-gradient(155deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .2) 30%, rgba(24, 24, 27, .04) 65%, rgba(255, 255, 255, .55));
+  --head-ink: #18181b; --head-dim: rgba(24, 24, 27, .4);
+  --card-err-ink: #b3261e; --card-err-bg: #fceceb;
+  --card-warn-ink: #7a4a00; --card-warn-bg: #fdf3e1;
+  --interact: #db35f2; --interact-ring: rgba(219, 53, 242, .16);
+  --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
+  --interact-deep: rgba(176, 47, 194, .85); --interact-spark: rgba(255, 255, 255, .95);
+  /* comments own a third mode color (Apple systemGreen): selection = blue,
+     interact = purple, comments = green - same geometry, unique hue per mode */
+  --comment: #34c759; --comment-ring: rgba(52, 199, 89, .22);
+  /* comment-card field surface: APP-scoped on purpose - the card keys to the board
+     theme, and node-scoped --node-bg would flip with the frame underneath it */
+  --cm-field: #fff;
+  --cm-modal-bg: rgba(255, 255, 255, .95);
+
+  --r-node: 10px; --r-panel: 24px; --edge: 10px;
+  --blur: blur(20px) saturate(150%);
+  --shadow-node: 0 1px 2px rgba(24, 24, 27, .05);   /* tailwind shadow-sm: present, not loud */
+  --morph: .26s cubic-bezier(.32, .72, .35, 1);
+}
+.sh-app.dark {
+  --ground: #1b1c23; --dot: #35363f;
+  --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .32); --beam: rgba(0, 136, 255, .5); --beam-blur: 3px; --beam-bottom: -13px; --beam-h: 16px; --beam-inset: 20%; --edge-accent: rgba(92, 179, 255, .85); --inner-tint: rgba(92, 179, 255, .16); --tip-bg: #f4f4f5; --tip-ink: #18181b; --accent-wash: rgba(0, 136, 255, .14);
+
+  --glass: rgba(12, 12, 17, .72);
+  --glass-brd: rgba(255, 255, 255, .16);
+  --glass-ink: #f5f5f7;
+  --glass-ink-2: rgba(245, 245, 247, .64);
+  --glass-ink-3: rgba(245, 245, 247, .4);
+  --glass-hover: rgba(255, 255, 255, .1);
+  --glass-accent: #5cb3ff;
+  --glass-accent-bg: rgba(0, 136, 255, .28);
+  --glass-good: #7fe0c3;
+  --glass-warn: #ffd9a0;
+  --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .2), 0 4px 14px -8px rgba(10, 10, 16, .4);
+
+  --node-bg: #0f1015; --node-brd: #2c2d38;
+  --head-bg: rgba(22, 23, 30, .6);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .015) 45%, rgba(255, 255, 255, .06));
+  --edge-light: linear-gradient(155deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .02) 65%, rgba(255, 255, 255, .16));
+  --head-ink: #ececf1; --head-dim: rgba(236, 236, 241, .42);
+  --card-err-ink: #ff9d94; --card-err-bg: #2a1512;
+  --card-warn-ink: #ffd9a0; --card-warn-bg: #2a2113;
+  --interact: #ea8dff; --interact-ring: rgba(219, 53, 242, .3);
+  --interact-strong: rgba(219, 53, 242, 1); --interact-soft: rgba(234, 141, 255, .95);
+  --interact-deep: rgba(203, 48, 224, .8); --interact-spark: rgba(255, 255, 255, .9);
+  --comment: #30d158; --comment-ring: rgba(48, 209, 88, .34);
+  --cm-field: #0f1015;
+  --cm-modal-bg: rgba(22, 22, 27, .96);
+
+  --shadow-node: 0 1px 2px rgba(0, 0, 0, .35);   /* shadow-sm, alpha raised to read on dark */
+}
+
+@property --ground { syntax: '<color>'; inherits: true; initial-value: #e7e9ef; }
+@property --dot { syntax: '<color>'; inherits: true; initial-value: #c9cbd5; }
+@property --glass { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, .64); }
+@property --glass-brd { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .1); }
+@property --glass-ink { syntax: '<color>'; inherits: true; initial-value: #18181b; }
+@property --glass-ink-2 { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .66); }
+@property --glass-ink-3 { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .4); }
+@property --glass-hover { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .06); }
+@property --node-bg { syntax: '<color>'; inherits: true; initial-value: #ffffff; }
+@property --node-brd { syntax: '<color>'; inherits: true; initial-value: #dddee5; }
+@property --head-bg { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, .55); }
+@property --head-ink { syntax: '<color>'; inherits: true; initial-value: #18181b; }
+@property --head-dim { syntax: '<color>'; inherits: true; initial-value: rgba(24, 24, 27, .4); }
+@property --tip-bg { syntax: '<color>'; inherits: true; initial-value: #18181b; }
+@property --tip-ink { syntax: '<color>'; inherits: true; initial-value: #fafafa; }
+@property --accent { syntax: '<color>'; inherits: true; initial-value: #0088ff; }
+@property --accent-ring { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .2); }
+@property --beam { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .42); }
+@property --edge-accent { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .8); }
+@property --inner-tint { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .13); }
+@property --accent-wash { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .07); }
+@property --glass-accent { syntax: '<color>'; inherits: true; initial-value: #0077e6; }
+@property --glass-accent-bg { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .13); }
+
+/* interact mode: the whole shell shifts to the interactive purple - one token override,
+   and every accent-derived surface (mark, sidebar actives, selection bar, beams, rings,
+   handles, device chips) follows without knowing the mode exists */
+.sh-app.interacting {
+  --accent: #db35f2; --accent-ring: rgba(219, 53, 242, .2); --beam: rgba(219, 53, 242, .42);
+  --edge-accent: rgba(219, 53, 242, .8); --inner-tint: rgba(219, 53, 242, .13);
+  --accent-wash: rgba(219, 53, 242, .07);
+  --glass-accent: #b02fc2; --glass-accent-bg: rgba(219, 53, 242, .13);
+}
+.sh-app.dark.interacting {
+  --accent: #db35f2; --accent-ring: rgba(219, 53, 242, .32); --beam: rgba(219, 53, 242, .5);
+  --edge-accent: rgba(234, 141, 255, .85); --inner-tint: rgba(234, 141, 255, .16);
+  --accent-wash: rgba(219, 53, 242, .14);
+  --glass-accent: #ea8dff; --glass-accent-bg: rgba(219, 53, 242, .28);
+}
+
+* { box-sizing: border-box }
+html, body, #root { height: 100%; margin: 0 }
+body { font-family: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; overflow: hidden }
+button { font-family: inherit }
+button svg { pointer-events: none }   /* event targets stay on the button - pan exclusion depends on it */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important } }
+
+/* Default app pointer: the marver arrowhead (tilted left, rounded, thick border, soft shadow),
+   theme-adaptive - black/white on light, white/dark on dark. Hotspot at its tip (5,2). Overridden by
+   the state cursors: grab (space-pan), resize handles, comment-pin / laser-crosshair (set in-frame by
+   the bridge), and a normal pointer in interact / prototype mode. */
+.sh-app { --sh-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 26 26'%3E%3Cdefs%3E%3Cfilter id='s' x='-40%' y='-40%' width='180%' height='180%'%3E%3CfeDropShadow dx='0.4' dy='0.9' stdDeviation='0.7' flood-color='%23000000' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23s)'%3E%3Cg transform='rotate(-20 6 3)'%3E%3Cpath fill='%23000000' stroke='%23FFFFFF' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round' d='M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a1 1 0 0 1 .7-.3h6.87a1 1 0 0 0 .7-1.7L6.35 2.85a.5.5 0 0 0-.85.35Z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") 5 2, default; cursor: var(--sh-cursor) }
+.sh-app.dark { --sh-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 26 26'%3E%3Cdefs%3E%3Cfilter id='s' x='-40%' y='-40%' width='180%' height='180%'%3E%3CfeDropShadow dx='0.4' dy='0.9' stdDeviation='0.7' flood-color='%23000000' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23s)'%3E%3Cg transform='rotate(-20 6 3)'%3E%3Cpath fill='%23FFFFFF' stroke='%2318181b' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round' d='M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a1 1 0 0 1 .7-.3h6.87a1 1 0 0 0 .7-1.7L6.35 2.85a.5.5 0 0 0-.85.35Z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") 5 2, default }
+.sh-app.interacting { cursor: auto }
+.sh-app { position: relative; height: 100%; color: var(--glass-ink); outline: none;
+  transition: --accent .4s ease, --accent-ring .4s ease, --beam .4s ease,
+    --edge-accent .4s ease, --inner-tint .4s ease, --accent-wash .4s ease,
+    --glass-accent .4s ease, --glass-accent-bg .4s ease,
+    --ground .4s ease, --dot .4s ease, --glass .4s ease, --glass-brd .4s ease,
+    --glass-ink .4s ease, --glass-ink-2 .4s ease, --glass-ink-3 .4s ease,
+    --glass-hover .4s ease, --node-bg .4s ease, --node-brd .4s ease,
+    --head-bg .4s ease, --head-ink .4s ease, --head-dim .4s ease,
+    --tip-bg .4s ease, --tip-ink .4s ease }
+.sh-canvas { width: 100% !important; height: 100% !important;
+  background-color: var(--ground) }
+/* world-space dot grid: size/position/alpha driven per-frame from the transform */
+.sh-canvas::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: var(--grid-size, 20px 20px);
+  background-position: var(--grid-pos, 0 0);
+  opacity: var(--grid-alpha, 1) }
+.sh-content { will-change: auto }
+#sh-world { position: relative; width: 1px; height: 1px }
+#sh-world.sh-gesturing .sh-live { pointer-events: none }          /* law G-4 (live iframe only; lean is always pe:none) */
+.sh-gesturing .sh-content { will-change: transform }              /* law G-3: gesture-scoped only */
+/* preset transitions: armed by animateLayout() around device/tidy mutations - nodes ease
+   to their new frame on the same 320ms ease-out the camera fit animates with */
+#sh-world.sh-preset .sh-node { transition: transform .32s cubic-bezier(.25,.46,.45,.94),
+  width .32s cubic-bezier(.25,.46,.45,.94), height .32s cubic-bezier(.25,.46,.45,.94) }
+#sh-world.sh-preset .sh-node-body,
+#sh-world.sh-preset .sh-node .sh-live { transition: width .32s cubic-bezier(.25,.46,.45,.94),
+  height .32s cubic-bezier(.25,.46,.45,.94) }
+/* Device-sweep: a frame WITH a ready lean cover jumps its LIVE iframe straight to the final
+   width (ONE reflow, hidden under the cover) while the lean cover - being width:100% of the animating
+   body - reflows smoothly every frame (real CSS, the device-sweep fix). A frame WITHOUT a usable
+   cover keeps the live width animation above. */
+body:not(.sh-laser):not(.sh-commenting) #sh-world.sh-preset .sh-node:has(.sh-lean[data-ready]):not(.interact) .sh-live { transition: none }
+
+/* cursor conventions (Figma): arrow everywhere; grab only while space is held */
+body.sh-space .sh-canvas { cursor: grab }
+body.sh-space.sh-panning .sh-canvas { cursor: grabbing }
+body.sh-space .sh-node { pointer-events: none }                   /* space-drag pans from anywhere */
+
+/* frame nodes: theme-aware cards with a glass header strip. Each node re-declares its
+   card tokens from its OWN theme, so a dark frame on a light board wears a dark header
+   (easier on the eyes than light chrome over a dark page) - and vice versa. */
+.sh-node { position: absolute; top: 0; left: 0; border-radius: var(--r-node); background: transparent;
+  border: 1px solid var(--node-brd); box-shadow: var(--shadow-node); display: flex; flex-direction: column;
+  transition: border-color .3s ease, --node-bg .4s ease, --node-brd .4s ease,
+    --head-bg .4s ease, --head-ink .4s ease, --head-dim .4s ease }
+.sh-node[data-theme="light"] {
+  --node-bg: #fff; --node-brd: #dddee5;
+  --head-bg: rgba(255, 255, 255, .55);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .85), rgba(255, 255, 255, .1) 45%, rgba(255, 255, 255, .45));
+  --head-ink: #18181b; --head-dim: rgba(24, 24, 27, .4);
+}
+.sh-node[data-theme="dark"] {
+  --node-bg: #0f1015; --node-brd: #2c2d38;
+  --head-bg: rgba(22, 23, 30, .6);
+  --head-sheen: linear-gradient(100deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .015) 45%, rgba(255, 255, 255, .06));
+  --head-ink: #ececf1; --head-dim: rgba(236, 236, 241, .42);
+}
+/* selection + interact indicators live in world space but keep constant SCREEN width
+   via --sh-inv (1/zoom): 2 screen px at every zoom level */
+.sh-node.sel { border-color: var(--accent);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--accent);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--accent-ring), var(--shadow-node) }
+.sh-node-head { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 11px;
+  font-size: 11px; color: var(--head-dim);
+  border-bottom: 1px solid var(--node-brd); user-select: none;
+  border-radius: var(--r-node) var(--r-node) 0 0;
+  background-color: var(--head-bg); background-image: var(--head-sheen);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
+.sh-node-head .id { font-weight: 600; color: var(--head-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* frame icons: every sidebar row leads with one */
+.sh-node-head .iicon { flex: none; color: var(--head-dim) }
+.sh-panel .sub .iicon { flex: none; margin-right: 7px; opacity: .72 }
+/* variant members sit visibly INSIDE their group: the letter chip starts
+   exactly on the parent rows' 51px text column (31 pad + 13 icon + 7 gap) */
+.sh-panel .sub.vrow { padding-left: 51px }
+.sh-node-head .dim { margin-left: auto; color: var(--head-dim); flex: none; font-variant-numeric: tabular-nums }
+.sh-node-body { position: relative; background: var(--node-bg); border-radius: 0 0 var(--r-node) var(--r-node); overflow: hidden }
+.sh-node iframe { border: 0; display: block }
+/* LEAN-PRIMARY: the lean DOM-snapshot <iframe> (static html, 0 JS) is what you SEE for a
+   passive frame - at rest AND during pan/zoom/resize. There is NO per-gesture swap between the lean
+   and the live iframe (the swap shifted text ~1-2px = "jiggle", and flashed mermaid/theme colors,
+   because two documents never render pixel-identically). The live app (.sh-live) sits underneath and
+   shows ONLY when: the frame is interacted (.interact), laser/comment mode is on, or the lean is not
+   yet built (no data-ready = live-fallback). Hard cut, never a crossfade - two ~1px-offset text docs
+   would ghost into double text. */
+.sh-lean { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; z-index: 1;
+  opacity: 0; pointer-events: none; transition: none; background: var(--node-bg) }
+.sh-lean[data-ready] { opacity: 1 }
+.sh-node.interact .sh-lean,
+body.sh-laser .sh-lean,
+body.sh-commenting .sh-lean { opacity: 0 }
+.sh-overlay { position: absolute; inset: 0; z-index: 2 }   /* above the lean (z1) so drag-by-body works; inherits the app arrow cursor */
+.sh-node.interact { border-color: var(--interact);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--interact);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--interact-ring), var(--shadow-node) }
+
+.sh-handle { position: absolute; background: var(--node-bg); border: 1.5px solid var(--accent); border-radius: 4px; z-index: 3;
+  transform: scale(var(--sh-inv, 1)) }   /* constant screen size; hit target grows as you zoom out */
+.sh-handle.e { right: -5px; top: 50%; width: 9px; height: 26px; margin-top: -13px; cursor: ew-resize }
+.sh-handle.s { bottom: -5px; left: 50%; width: 26px; height: 9px; margin-left: -13px; cursor: ns-resize }
+.sh-handle.se { right: -5px; bottom: -5px; width: 11px; height: 11px; cursor: nwse-resize }
+
+/* glass surfaces share one recipe; chrome text is never selectable (shift-click = multi-select) */
+.sh-ctx, .sh-panel, .sh-fab, .sh-pill, .sh-pill-fab, .sh-menu, .sh-banner, .sh-toast, .sh-update {
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
+  user-select: none; -webkit-user-select: none }
+
+/* edge light: a 1px gradient ring over the border, so glass reads as glass even
+   with nothing behind it to blur (masked-border technique) */
+.sh-ctx::after, .sh-panel::after, .sh-fab::after, .sh-pill::after, .sh-pill-fab::after,
+.sh-menu::after, .sh-banner::after, .sh-toast::after, .sh-update::after, .sh-node::after {
+  content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
+  background: var(--edge-light); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude }
+.sh-node.sel::after { display: none }   /* the accent ring owns the selected edge */
+@property --sh-rot { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+/* one orbiting light, two intensities: a faint shimmer riding ON the solid border
+   (::before, low opacity over the still outline) and the clear glow just outside
+   (::after, lightly blurred, sharp glints). Same duration = perfectly in sync. */
+.sh-node.interact::before, .sh-node.interact::after {
+  content: ''; position: absolute; border-radius: inherit; pointer-events: none;
+  background: conic-gradient(from var(--sh-rot),
+    var(--interact-strong) 0deg,
+    var(--interact-strong) 105deg,
+    var(--interact-spark) 135deg,
+    var(--interact-strong) 165deg,
+    var(--interact-strong) 285deg,
+    var(--interact-spark) 315deg,
+    var(--interact-strong) 345deg,
+    var(--interact-strong) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: sh-orbit 4.2s linear infinite;
+}
+.sh-node.interact::before {
+  inset: calc(-2.5px * var(--sh-inv, 1));
+  padding: calc(2.5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
+  opacity: .6;
+}
+.sh-node.interact::after {
+  inset: calc(-9px * var(--sh-inv, 1));
+  padding: calc(5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 8px * var(--sh-inv, 1));
+  filter: blur(calc(2px * var(--sh-inv, 1)));
+  opacity: .95;
+}
+@keyframes sh-orbit { to { --sh-rot: 360deg } }
+@media (prefers-reduced-motion: reduce) {
+  .sh-node.interact::before, .sh-node.interact::after,
+  .sh-node.working::before { animation: none } }
+
+/* Live Jam "working": the SELECTED state's exact geometry - crisp border + 2px screen-px
+   outline + 4px ring, edge-light off - in MARVER BLUE, composed of three
+   layers: the border shimmer (::before orbit), the periodic content WAVE (.sh-work-wave), and the
+   shimmer MATRIX of tiny marks on the left flank (.sh-work-ind). Every animated layer is phased by
+   --mv-w0 (negative ms since THIS frame's job started), so parallel frames never pulse in sync.
+   When a human is actually IN the frame, interact's magenta treatment wins. */
+.sh-node.working { --work: var(--mv-blue); --work-ring: rgba(0, 136, 255, .2) }
+.sh-app.dark .sh-node.working { --work: #4db1ff; --work-ring: rgba(0, 136, 255, .3) }
+.sh-node.working:not(.interact) { border-color: var(--work);
+  outline: calc(2px * var(--sh-inv, 1)) solid var(--work);
+  outline-offset: calc(-1px * var(--sh-inv, 1));
+  box-shadow: 0 0 0 calc(4px * var(--sh-inv, 1)) var(--work-ring), var(--shadow-node) }
+.sh-node.working:not(.interact)::after { display: none }   /* the blue geometry owns the edge, like .sel */
+.sh-node.working:not(.interact)::before {
+  content: ''; position: absolute; pointer-events: none;
+  inset: calc(-2.5px * var(--sh-inv, 1));
+  padding: calc(2.5px * var(--sh-inv, 1));
+  border-radius: calc(var(--r-node) + 2px * var(--sh-inv, 1));
+  background: conic-gradient(from var(--sh-rot),
+    var(--work) 0deg,
+    var(--work) 105deg,
+    rgba(255, 255, 255, .95) 135deg,
+    var(--work) 165deg,
+    var(--work) 285deg,
+    rgba(255, 255, 255, .95) 315deg,
+    var(--work) 345deg,
+    var(--work) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: .6;
+  animation: sh-orbit 4.2s linear infinite;
+  animation-delay: var(--mv-w0, 0s) }
+
+/* THE WAVE (Option A: content sweep). One 36s cycle holds five ~1.7s sweeps - dense right after
+   the trigger (0s, 5s, 10s), then spaced (19s, 29s) - so a fresh job announces itself and a long
+   one keeps a calmer heartbeat. Jumps between sweeps happen at opacity 0 (invisible). */
+.sh-work-wave { position: absolute; inset: 0; overflow: hidden; border-radius: inherit;
+  pointer-events: none; z-index: 4 }
+.sh-work-wave::before { content: ''; position: absolute; left: 0; right: 0; top: -55%; height: 55%;
+  opacity: 0;
+  background: linear-gradient(180deg,
+    rgba(0, 136, 255, 0) 0%, rgba(0, 136, 255, .07) 30%, rgba(0, 136, 255, .16) 52%,
+    rgba(0, 136, 255, .07) 74%, rgba(0, 136, 255, 0) 100%);
+  animation: sh-work-wave 36s linear infinite;
+  animation-delay: var(--mv-w0, 0s) }
+@keyframes sh-work-wave {
+  0%     { transform: translateY(0); opacity: 0 }
+  0.4%   { opacity: 1 }
+  3.9%   { opacity: 1 }
+  4.7%   { transform: translateY(282%); opacity: 0 }
+  13.8%  { transform: translateY(0); opacity: 0 }
+  14.2%  { opacity: 1 }
+  17.7%  { opacity: 1 }
+  18.5%  { transform: translateY(282%); opacity: 0 }
+  27.7%  { transform: translateY(0); opacity: 0 }
+  28.1%  { opacity: 1 }
+  31.6%  { opacity: 1 }
+  32.4%  { transform: translateY(282%); opacity: 0 }
+  52.7%  { transform: translateY(0); opacity: 0 }
+  53.1%  { opacity: 1 }
+  56.6%  { opacity: 1 }
+  57.4%  { transform: translateY(282%); opacity: 0 }
+  80.5%  { transform: translateY(0); opacity: 0 }
+  80.9%  { opacity: 1 }
+  84.4%  { opacity: 1 }
+  85.2%  { transform: translateY(282%); opacity: 0 }
+  100%   { transform: translateY(282%); opacity: 0 }
+}
+
+/* THE SHIMMER MATRIX: 3 x 6 tiny marver marks on the left flank, top-aligned (the vbadge lane).
+   Screen-constant via --sh-inv (tight at every zoom); each mark twinkles on its own scattered
+   beat, phased per frame by --mv-w0. */
+/* CLAMPED scaling (the vbadge pattern): screen-constant ~4px marks in the working zoom band,
+   but floored at 3 world px (deep zoom-in: grows slightly on screen instead of vanishing) and
+   capped at 13 world px (far zoom-out: shrinks with the canvas instead of dominating the frame
+   and bleeding onto the left neighbor). No transform scale - the sizes ARE the clamp. */
+.sh-work-ind { position: absolute; top: 0;
+  --shm: clamp(3px, calc(4px * var(--sh-inv, 1)), 13px);
+  --shg: clamp(1px, calc(1.5px * var(--sh-inv, 1)), 4px);
+  right: calc(100% + clamp(6px, calc(10px * var(--sh-inv, 1)), 26px));
+  display: grid; grid-template-columns: repeat(2, var(--shm)); gap: var(--shg);
+  pointer-events: none; z-index: 5 }
+/* a variant badge (A / B / C + name) owns the top of the left flank - the shimmer sits below it.
+   The offset mirrors the badge's own zoom clamps (letter 40px-120px + label), so it tracks the
+   badge as it grows and shrinks across the zoom range. */
+.sh-work-ind.below-vbadge { top: min(clamp(64px, calc(32px * var(--sh-inv, 1)), 170px), calc(64px * var(--sh-inv, 1))) }
+.sh-work-ind svg { display: block; width: var(--shm); height: var(--shm); color: var(--work, var(--mv-blue));
+  opacity: .12; animation: sh-work-shim .95s ease-in-out infinite }
+@keyframes sh-work-shim { 0%, 100% { opacity: .12; transform: scale(.75) } 35% { opacity: 1; transform: scale(1.15) } }
+@media (prefers-reduced-motion: reduce) {
+  .sh-work-wave::before, .sh-work-ind svg { animation: none } }
+
+/* selection toolbar: screen-space overlay, constant size at any zoom */
+.sh-ctx { position: absolute; display: flex; align-items: center; gap: 1px;
+  border-radius: 999px; padding: 4px; z-index: 9; white-space: nowrap;
+  /* a teeny inner glow hugging the bottom edge - 8px tall, cannot climb into the body */
+  background-image: radial-gradient(46% 8px at 50% calc(100% + 1px), var(--inner-tint), transparent 80%) }
+/* the accent lives ON the border line, not in the body: layered into the masked 1px
+   edge ring, so the bottom border glows blue at center and fades along the arc -
+   the bar's surface stays untouched */
+.sh-ctx::after {
+  background:
+    radial-gradient(52% 16px at 50% 100%, var(--edge-accent), transparent 75%),
+    var(--edge-light) }
+/* connection glow: a soft accent beam under the middle ~60% of the bar - deepest and
+   tallest at the center, fading to nothing at the edges - ties the bar to its frame */
+.sh-ctx::before { content: ''; position: absolute; left: var(--beam-inset); right: var(--beam-inset);
+  bottom: var(--beam-bottom); height: var(--beam-h);
+  background: radial-gradient(50% 100% at 50% 0%, var(--beam), transparent 70%);
+  filter: blur(var(--beam-blur, 4px)); pointer-events: none; z-index: -1 }
+.sh-ctx button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px;
+  font: 600 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); background: none; border: 0;
+  padding: 0 11px; border-radius: 999px; cursor: pointer }
+.sh-ctx button.icon { min-width: 28px; width: 30px; padding: 0 }
+.sh-ctx .cnt { font: 600 11px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--glass-ink-2); background: var(--glass-hover);
+  border-radius: 999px; min-width: 22px; height: 22px; display: inline-flex; align-items: center;
+  justify-content: center; padding: 0 6px; margin: 0 2px 0 3px }
+.sh-ctx button.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
+.sh-ctx button:hover:not(.on) { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-ctx .sep { width: 1px; height: 14px; background: var(--glass-brd); margin: 0 3px }
+
+/* error / missing cards (inside the frame body) */
+.sh-card { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 6px;
+  padding: 14px; font-size: 12px; background: var(--node-bg) }
+.sh-card.err { color: var(--card-err-ink); background: var(--card-err-bg) }
+.sh-card.warn { color: var(--card-warn-ink); background: var(--card-warn-bg) }
+.sh-card b { font-size: 12px }
+.sh-card .msg { white-space: pre-wrap; overflow: auto }
+.sh-card .dim { opacity: .55 }
+.sh-card .row { display: flex; gap: 6px; margin-top: auto }
+.sh-card button { display: inline-flex; align-items: center; gap: 5px; font: 600 11px -apple-system, system-ui, sans-serif;
+  border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 999px;
+  padding: 4px 10px; cursor: pointer }
+
+/* shared icon button (glass surfaces) */
+.sh-ibtn { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 999px;
+  border: 0; background: none; color: var(--glass-ink-3); cursor: pointer }
+.sh-ibtn:hover { background: var(--glass-hover); color: var(--glass-ink) }
+
+/* floating glass panel; collapses into the fab with a scale-fade morph */
+.sh-panel { position: absolute; left: var(--edge); top: var(--edge); width: 236px;
+  max-height: calc(100% - 2 * var(--edge)); z-index: 10;
+  border-radius: var(--r-panel); padding: 10px; display: flex; flex-direction: column;
+  font-size: 13px; color: var(--glass-ink);
+  transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
+.sh-panel.closed { transform: scale(.16); opacity: 0; pointer-events: none }
+.sh-panel-top { display: flex; align-items: center; gap: 8px; padding: 2px 2px 8px 8px }
+.sh-panel-top .mark-link { flex: none; display: flex; border-radius: 6px; outline-offset: 2px; transition: opacity .15s ease }
+.sh-panel-top .mark-link:hover { opacity: .72 }
+.sh-panel-top .mark { flex: none; color: var(--accent); display: block }
+.sh-panel-top .name { margin-right: auto; min-width: 0; font-weight: 700; font-size: 15px; letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-panel-scroll { overflow-y: auto; min-height: 0; padding-bottom: 2px; scrollbar-width: thin;
+  scrollbar-color: var(--glass-ink-3) transparent }
+/* Sidebar list system (macOS-sidebar conventions): every row is 28px tall with an
+   8px radius and a fixed 16px icon column, so all labels share one vertical line.
+   Hierarchy is carried by section labels + indent + ink - never bold-on-bold:
+   boards and scene folders read at 500/primary, frames at 400/secondary one indent
+   in, counts and idle icons tertiary. Actives use the accent wash + accent ink. */
+.sh-panel .hd { font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .02em;
+  color: var(--glass-ink-3); margin: 16px 10px 5px }
+.sh-panel .hd:first-child { margin-top: 2px }
+.sh-panel .it { width: 100%; height: 28px; padding: 0 8px; border-radius: 8px; color: var(--glass-ink);
+  font: 500 13px -apple-system, system-ui, sans-serif; background: none; border: 0; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 7px; margin-bottom: 1px }
+/* a scene holding a selected frame keeps a half-strength wash (Xcode-style ancestor
+   highlight) so the selection's home stays visible even with the group collapsed;
+   same specificity as :hover but declared first, so hover still wins under pointer */
+.sh-panel .it.held { background: color-mix(in srgb, var(--glass-hover) 55%, transparent) }
+.sh-panel .it:hover { background: var(--glass-hover) }
+.sh-panel .it .tw { color: var(--glass-ink-3); flex: none; margin: 0 2.5px; transition: transform .15s ease }
+.sh-panel .it span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sh-panel .it small { color: var(--glass-ink-3); font: 500 11px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
+/* board rows: places, not folders - icon idles tertiary, lights accent when active */
+.sh-panel .it.board svg { color: var(--glass-ink-3); flex: none; margin: 0 1px; transition: color .2s ease }
+.sh-panel .it.board.cur { background: var(--accent-wash); color: var(--glass-accent); font-weight: 600 }
+.sh-panel .it.board.cur svg { color: var(--glass-accent) }
+/* frame rows: one indent in (aligned to the label line), quieter ink */
+.sh-panel .sub { display: flex; align-items: center; height: 28px; padding: 0 8px 0 31px; margin-bottom: 1px;
+  color: var(--glass-ink-2); font-size: 13px; font-weight: 400; border-radius: 8px; cursor: pointer }
+.sh-panel .sub:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-panel .sub.on { background: var(--accent-wash); color: var(--glass-accent); font-weight: 500 }
+.sh-panel .sub.dim { color: var(--glass-ink-3); cursor: default; line-height: 1.4; height: auto; padding-top: 4px; padding-bottom: 4px }
+.sh-panel .sub.dim:hover { background: none; color: var(--glass-ink-3) }
+
+/* collapsed panel: a round glass button; morphs against the panel */
+.sh-fab { position: absolute; left: var(--edge); top: var(--edge); z-index: 11; width: 44px; height: 44px;
+  display: grid; place-items: center; border-radius: 999px;
+  color: var(--glass-ink-2); cursor: pointer;
+  transition: transform var(--morph), opacity .2s ease }
+.sh-fab:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.sh-fab.hidden { transform: scale(.5); opacity: 0; pointer-events: none }
+
+/* pill nav */
+/* uniform 5px inset on every side: 34px buttons + 2*5px = 44px, same as the fab */
+.sh-pill { position: absolute; right: var(--edge); top: var(--edge); z-index: 10; display: flex; align-items: center; gap: 1px;
+  border-radius: 999px; padding: 5px;
+  transform-origin: calc(100% - 22px) 22px; transition: transform var(--morph), opacity .2s ease }
+.sh-pill.closed { transform: scale(.16); opacity: 0; pointer-events: none }
+/* the pill's expand chip - the sidebar fab, mirrored top-right: same glass (shared
+   surface rule above), same morph, the bar shrinking into the chip's spot */
+.sh-pill-fab { position: absolute; right: var(--edge); top: var(--edge); z-index: 11; width: 44px; height: 44px;
+  display: grid; place-items: center; border-radius: 999px;
+  color: var(--glass-ink-2); cursor: pointer;
+  transition: transform var(--morph), opacity .2s ease }
+.sh-pill-fab:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.sh-pill-fab.hidden { transform: scale(.5); opacity: 0; pointer-events: none }
+.sh-pill-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 34px;
+  min-width: 34px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); background: none; border: 0;
+  padding: 0 10px; border-radius: 999px; cursor: pointer; white-space: nowrap }
+.sh-pill-btn:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-pill-btn.pct { font-variant-numeric: tabular-nums; min-width: 46px }
+.sh-pill-btn.off { color: var(--glass-ink-3); cursor: default }
+.sh-pill-btn.off:hover { background: none; color: var(--glass-ink-3) }
+.sh-pill-btn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent) }
+.sh-pill-btn.on:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent) }
+.sh-pill .sep { width: 1px; height: 16px; background: var(--glass-brd); margin: 0 3px }
+
+/* dropdown menu (theme) - portaled to .sh-app (its own backdrop root), left-aligned to its trigger */
+.sh-theme { position: relative }
+/* z above the play backdrop (.sh-play is z-30): a dropdown portals to .sh-app, so in the
+   prototype it must clear the full-window overlay or it renders behind it, invisible */
+.sh-menu { position: absolute; min-width: 136px; z-index: 40;
+  border-radius: 16px; padding: 5px; display: flex; flex-direction: column;
+  transform-origin: top left; animation: sh-pop .14s ease }
+@keyframes sh-pop { from { opacity: 0; transform: scale(.95) translateY(-4px) } }
+.sh-menu button { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px;
+  font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink); background: none; border: 0; border-radius: 12px;
+  cursor: pointer; text-align: left }
+.sh-menu button:hover { background: var(--glass-hover) }
+.sh-menu button span { flex: 1; text-transform: capitalize }
+.sh-menu .chk { color: var(--glass-accent) }
+.sh-menu kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0 }
+.sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
+
+/* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
+.sh-tip { position: absolute; z-index: 400; pointer-events: none; padding: 5px 10px; border-radius: 8px;   /* topmost ephemeral chrome - above modals (300) or in-dialog tips vanish */
+  font: 500 12px -apple-system, system-ui, sans-serif; white-space: nowrap; transform: translate(-50%, -100%);
+  display: flex; flex-direction: row; align-items: center; gap: 10px;
+  background: var(--tip-bg); color: var(--tip-ink);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, .25);
+  animation: sh-tip-pop .12s ease }
+@keyframes sh-tip-pop { from { opacity: 0; transform: translate(-50%, -100%) scale(.95) } }
+/* top-of-screen chrome flips its tooltip below the trigger */
+.sh-tip.below { transform: translate(-50%, 0); animation-name: sh-tip-pop-b }
+@keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
+/* play chrome is fixed dark glass regardless of board theme - its tips pin the light bubble */
+.sh-tip.inv { background: #f4f4f5; color: #18181b }
+.sh-tip b { font-weight: 600 }
+.sh-tip span { opacity: .55; font-size: 11px; margin-left: auto }
+.sh-tip span.k { opacity: .4; margin-left: 0; font-weight: 600 }
+
+.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 12px -apple-system, system-ui, sans-serif;
+  color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
+
+/* update pill: bottom-center, the quietest possible member of the pill family.
+   The command IS the button - one click copies it for the terminal or the agent. */
+.sh-update { position: absolute; left: 50%; bottom: var(--edge); transform: translateX(-50%); z-index: 10;
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 7px 0 16px; border-radius: 999px;
+  max-width: min(92vw, 620px); white-space: nowrap;
+  font: 500 12.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2);
+  animation: sh-update-in .35s cubic-bezier(.2, .9, .3, 1.2) }
+@keyframes sh-update-in { from { opacity: 0; transform: translate(-50%, 8px) scale(.96) } }
+.sh-update b { font-weight: 650; color: var(--glass-ink) }
+.sh-update .cmd { border: 1px solid var(--glass-brd); background: var(--glass-hover); border-radius: 999px;
+  padding: 4px 11px; cursor: pointer; min-width: 0; overflow: hidden; transition: color .15s }
+.sh-update .cmd code { font: 500 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--glass-ink-2);
+  display: block; overflow: hidden; text-overflow: ellipsis }
+.sh-update .cmd:hover code { color: var(--glass-ink) }
+.sh-update .x { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border: 0; background: none; border-radius: 999px; color: var(--glass-ink-3); cursor: pointer;
+  transition: color .15s, background .15s }
+.sh-update .x:hover { background: var(--glass-hover); color: var(--glass-ink) }
+
+/* bottom-RIGHT now: jam reply pills live here; plain toasts ride along */
+.sh-toasts { position: absolute; right: var(--edge); bottom: var(--edge); z-index: 32; display: flex;
+  flex-direction: column; align-items: flex-end; gap: 8px; max-width: min(360px, 40vw) }
+.sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
+  color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
+.sh-toast svg { color: var(--glass-good); flex: none }
+/* the jam pill's svgs are NOT the toast checkmark: the mark stays white/90 on blue, the X keeps
+   its own muted ink - undo the blanket green above */
+.sh-toast.jam svg { color: currentColor }
+.sh-toast-more { color: var(--glass-ink-3); font-size: 11px; padding: 2px 10px }
+
+/* the Live Jam reply pill: our full glass treatment, full radius, one row (§9) */
+.sh-toast.jam { gap: 12px; padding: 12px 12px 12px 14px; width: 380px; max-width: 100%; border-radius: 999px;
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass), 0 12px 32px -12px rgba(24,24,27,.4);
+  color: var(--glass-ink); animation: sh-jam-in .18s ease }
+@keyframes sh-jam-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+/* Marver is ALWAYS its own blue - never the shell accent, which swaps to magenta in interact mode
+   (.sh-app.interacting). A fixed var the swap can't touch keeps the avatar + notification on-brand. */
+:root { --mv-blue: #0088ff }
+.sh-jam-mark { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--mv-blue); color: rgba(255,255,255,.9);
+  display: inline-flex; align-items: center; justify-content: center }
+.sh-jam-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; line-height: 1.25 }
+/* row 1: the FRAME is the news - its title in blue (the mark already says it is Marver) */
+.sh-jam-frame { display: flex; align-items: center; font-size: 13.5px; font-weight: 600; color: var(--mv-blue); min-width: 0 }
+.sh-jam-frame .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* row 2: the message alone, darker for readability */
+.sh-jam-prev { font-size: 12.5px; color: var(--glass-ink-2, var(--glass-ink)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+
+/* the DECK (3+): newest pill on top, two card edges peeking beneath; +N badge; click to expand */
+.sh-jam-deck { position: relative; cursor: pointer }
+.sh-jam-deck .sh-toast.jam { position: relative; margin: 0 }
+.sh-jam-ghost { position: absolute; left: 0; right: 0; height: 100%; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass) }
+.sh-jam-ghost.g1 { top: 6px; left: 5px; right: 5px; opacity: .8 }
+.sh-jam-ghost.g2 { top: 12px; left: 11px; right: 11px; opacity: .5 }
+.sh-jam-deck { margin-bottom: 12px }   /* room for the peeking edges */
+.sh-jam-badge { flex: none; font: 700 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink);
+  background: var(--glass-hover); border-radius: 999px; padding: 4px 9px }
+
+/* the EXPANDED list: newest first, header with count + Clear all, scrolls past ~6.
+   The scroller CLIPS at its box - pad it out to the pills' shadow reach (12px drop, 32px
+   blur) and cancel with negative margins, so the shadows breathe and nothing moves. */
+.sh-jam-list { display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+  max-height: min(60vh, 520px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  padding: 22px 26px 32px; margin: -22px -26px -32px }
+.sh-jam-listhead { display: flex; align-items: center; gap: 8px; padding: 0 6px;
+  font: 700 10px -apple-system, system-ui, sans-serif; letter-spacing: .06em; color: var(--glass-ink-3) }
+.sh-jam-listhead button { margin-left: auto; border: 0; background: none; cursor: pointer;
+  font: 600 11px -apple-system, system-ui, sans-serif; color: var(--mv-blue); padding: 3px 6px }
+.sh-jam-listhead button + button { margin-left: 0; color: var(--glass-ink-3); display: inline-flex }
+.sh-jam-view { flex: none; border: 0; border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  background: var(--mv-blue); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; transition: filter .15s }
+.sh-jam-view:hover { filter: brightness(1.08) }
+.sh-jam-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  border: 0; border-radius: 50%; background: none; color: var(--glass-ink-3); cursor: pointer; transition: background .12s, color .12s }
+.sh-jam-x:hover { background: var(--glass-hover); color: var(--glass-ink) }
+
+/* ---- Play mode: near-black stage, one centered device, auto-hiding bar.
+   Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
+.sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex;
+  align-items: center; justify-content: center; animation: sh-play-in .28s ease-out; cursor: auto }
+@keyframes sh-play-in { from { opacity: 0 } }
+/* the device wears the frame-node card language: same theme border tokens, the same
+   masked 1px edge-light gradient ring (glass catching light), and a real drop shadow
+   below. Radius + clipping live on the WRAPPER at whole pixels - the iframe is
+   transparent and scaled to land exactly on its edges, which killed the corner seams.
+   The ring is an inside overlay, not a border: border-box would clip a pixel of content. */
+/* LIGHT device: its own treatment, fully separate from dark - no masked border, just a
+   soft gray RING hugging the outside edge plus the luminous halo lifting it off black */
+.sh-play .dev { position: relative; overflow: hidden; border-radius: 14px;
+  --pdev-bg: #fff;
+  background: var(--pdev-bg);
+  box-shadow: 0 0 0 1px rgba(148, 152, 164, .6), 0 0 54px rgba(255, 255, 255, .12),
+    0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45);
+  transition: width .28s ease, height .28s ease }
+/* DARK device: the original glint recipe, verbatim - do not touch */
+.sh-play .dev[data-theme="dark"] { --pdev-bg: #0f1015;
+  box-shadow: 0 30px 70px -16px rgba(0, 0, 0, .85), 0 8px 24px rgba(0, 0, 0, .45) }
+.sh-play .dev[data-theme="dark"]::after { content: ''; position: absolute; inset: 0; padding: 1px; border-radius: inherit;
+  background-color: #2c2d38;
+  background-image: linear-gradient(155deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, .05) 30%, rgba(255, 255, 255, .02) 65%, rgba(255, 255, 255, .16));
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude }
+.sh-play .dev iframe { display: block; border: 0; background: transparent; transform-origin: 0 0 }
+.sh-play.fill .dev { border-radius: 0; box-shadow: none; transition: none }
+.sh-play.fill .dev::after { display: none }
+
+/* the two floating chrome pieces share one glass language and one idle behavior */
+.sh-play-bar, .sh-play-nav { position: absolute; display: flex; align-items: center; gap: 1px;
+  padding: 4px; border-radius: 999px;
+  background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  transition: opacity .35s ease; font: 500 12px -apple-system, system-ui, sans-serif; color: #f5f5f7 }
+.sh-play-bar { top: 14px; right: 16px }
+.sh-play-nav { bottom: 16px; left: 16px }
+.sh-play-bar.idle, .sh-play-nav.idle { opacity: 0; pointer-events: none }
+.sh-play-bar .sep, .sh-play-nav .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 4px }
+.sh-play-bar button, .sh-play-nav button { display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 0; border-radius: 999px; background: transparent;
+  color: rgba(245, 245, 247, .64); cursor: pointer }
+.sh-play-bar button:hover, .sh-play-nav button:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
+.sh-play-bar button.on { background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+
+/* board switcher */
+.sh-play-bar .bd-wrap { position: relative }
+.sh-play-bar .bd { width: auto; gap: 6px; padding: 0 10px 0 12px; white-space: nowrap; font: inherit }
+.sh-play-bar .sh-play-update { width: auto; gap: 5px; padding: 0 11px; font-size: 12px; font-weight: 600; color: #6db3ff; white-space: nowrap }
+.sh-play-bar .sh-play-update:hover { background: rgba(109, 179, 255, .16); color: #8ec5ff }
+/* no backdrop-filter here: the menu nests inside the blurred bar, and glass never nests
+   (a nested backdrop-filter samples the bar, not the page) - near-opaque ink instead */
+.sh-play-menu { position: absolute; top: calc(100% + 10px); left: 0; min-width: 150px; padding: 4px;
+  border-radius: 12px; background: rgba(20, 20, 26, .97); border: 1px solid rgba(255, 255, 255, .12);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5); display: flex; flex-direction: column; gap: 1px }
+.sh-play-menu button { width: 100%; height: 28px; justify-content: flex-start; gap: 8px; padding: 0 10px;
+  border-radius: 8px; font: inherit }
+.sh-play-menu button span { flex: 1; text-align: left; white-space: nowrap }
+
+/* walk position readout */
+.sh-play-nav .pos { padding: 0 8px; color: rgba(245, 245, 247, .64); font-variant-numeric: tabular-nums; white-space: nowrap }
+.sh-play-nav .pos em { font-style: normal; opacity: .45; margin: 0 2px }
+
+/* collapsed chip - the bar's fab. Always mounted so collapse/expand crossfades. */
+.sh-play-chip { position: absolute; top: 14px; right: 16px; width: 38px; height: 38px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  color: rgba(245, 245, 247, .64); cursor: pointer;
+  transition: opacity .35s ease, transform .35s ease }
+.sh-play-chip:hover { color: #f5f5f7 }
+.sh-play-chip.idle { opacity: 0; pointer-events: none; transform: scale(.6) }
+
+/* the H coach bubble: hairline, translucent, teaches the way back from immersive mode.
+   Same pill geometry and separators as the bar it stands in for. */
+.sh-play-hint { position: absolute; top: 14px; right: 16px; display: flex; align-items: center; gap: 3px;
+  padding: 4px 4px 4px 14px; border-radius: 999px;
+  background: rgba(18, 18, 24, .6); border: 1px solid rgba(255, 255, 255, .14);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .85);
+  animation: sh-play-in .3s ease-out }
+.sh-play-hint .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 8px }
+.sh-play-hint kbd { font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 6px; border-radius: 5px;
+  background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16) }
+.sh-play-hint button { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer;
+  font: 600 11px -apple-system, system-ui, sans-serif; background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+.sh-play-hint button:hover { background: rgba(255, 255, 255, .22) }
+.sh-play-hint button.dim { background: transparent; color: rgba(245, 245, 247, .5); font-weight: 500 }
+.sh-play-hint button.dim:hover { color: rgba(245, 245, 247, .8); background: rgba(255, 255, 255, .08) }
+
+/* ---- Focus: silent for pointer + shortcut use; ONE branded inset ring, and only while
+   the user is actually Tab-navigating (body.sh-kbd, armed by Tab, disarmed by pointer).
+   Inset so scroll containers can never clip it; outline follows the border radius. */
+.sh-app :focus { outline: none }
+body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
+
+/* ---- Variant groups: badge left of grouped frames + group caption.
+   Both live in WORLD space (scale with the canvas) with a screen-space
+   minimum via --sh-inv, the resize-handle trick - legible at overview zoom, proportionate
+   up close. Colors are on-canvas ink (the dot-grid's world), not chrome glass. */
+/* gap to the frame is ~12px screen at working zooms, capped at 40 world px far out:
+   a pure world gap reads ever wider zoomed in, an uncapped screen gap outgrows the
+   gutter zoomed out */
+.sh-vbadge { position: absolute; right: 100%; top: 0;
+  /* margin caps at 40 WORLD px: below ~30% zoom an uncapped screen-constant margin
+     alone would outgrow the gutter and push the badge onto the left neighbor */
+  margin-right: clamp(6px, calc(12px * var(--sh-inv, 1)), 40px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  text-align: right; user-select: none; -webkit-user-select: none;
+  font-family: -apple-system, system-ui, sans-serif }
+.sh-vbadge b { font-size: min(clamp(40px, calc(20px * var(--sh-inv, 1)), 120px), calc(40px * var(--sh-inv, 1))); line-height: 1; font-weight: 750;
+  /* world cap 120px: past ~17% zoom the letter stops growing (in world terms) and
+     shrinks with the canvas instead of bleeding across the gutter onto the neighbor */
+  letter-spacing: -0.02em; color: rgba(24, 24, 27, .55);
+  /* the letter OUTLIVES the name (drive feedback 2026-08-12): the name leaves at
+     ~30%, the letter stays useful until ~10-16% - the world cap keeps it inside the
+     gutter down there - and then hands identity to the group caption */
+  opacity: clamp(0, calc((var(--sh-s, 1) - 0.1) * 15), 1) }
+.sh-vbadge span { font-size: min(max(15px, calc(10px * var(--sh-inv, 1))), calc(15px * var(--sh-inv, 1))); font-weight: 550;
+  color: rgba(24, 24, 27, .38); max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* the letter is the identity at overview zoom; the name earns pixels only close up */
+  opacity: clamp(0, calc((var(--sh-s, 1) - 0.3) * 6), 1) }
+.sh-app.dark .sh-vbadge b { color: rgba(245, 245, 247, .6) }
+.sh-app.dark .sh-vbadge span { color: rgba(245, 245, 247, .4) }
+
+.sh-gcaption { position: absolute; top: 0; left: 0; user-select: none; -webkit-user-select: none;
+  /* screen-clamped both ways: 12px floor at overview, 18px ceiling zoomed in - world
+     text that keeps growing past 100% zoom dwarfs the fixed-size floating menu above */
+  font: 600 clamp(calc(12px * var(--sh-inv, 1)), 17px, calc(18px * var(--sh-inv, 1)))/1.2 -apple-system, system-ui, sans-serif;
+  letter-spacing: .01em; color: rgba(24, 24, 27, .45); white-space: nowrap }
+.sh-app.dark .sh-gcaption { color: rgba(245, 245, 247, .45) }
+
+/* sidebar variant rows: group header carries the experimentation mark; each variant
+   row carries its letter CHIP (accent-filled when selected) + name */
+/* gap 0: the leading .iicon's margin-right carries the spacing, so the group
+   label lands on the SAME 51px text column as every sibling row */
+.sub.vgroup { display: flex; align-items: center; gap: 0 }
+.sub.vgroup .glabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sub.vgroup .gicon { margin-left: auto; flex: none; color: var(--glass-ink-3); transition: color .15s }
+.sub.vgroup:hover .gicon { color: var(--glass-ink) }
+.sub.vgroup.on .gicon { color: var(--accent) }
+.sub .chip { width: 20px; height: 20px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--glass-brd); border-radius: 7px; background: none; cursor: pointer;
+  font: 700 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3);
+  /* optical centering: trim the text box to CAP height so flex centers the glyph
+     itself, not the em box (whose descender space floats caps high) */
+  line-height: 1; letter-spacing: 0; text-box: trim-both cap alphabetic;
+  transition: color .15s, background .15s, border-color .15s }
+.sub .chip:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.sub .chip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
+
+/* play-mode variant chips: the SAME badge language as the sidebar's
+   variant rows (20px, 7px-radius square, one consistent shape in every state) so the
+   two surfaces read as one concept - but in the pill's own dark-glass inks, never
+   theme tokens (the nav is always dark; theme ink goes invisible in light mode). */
+.sh-play-nav .vchip { width: 20px; height: 20px; min-width: 0; flex: none; margin: 0 1px;
+  border: 1px solid rgba(255, 255, 255, .14); border-radius: 7px;
+  font: 700 10px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .6);
+  line-height: 1; letter-spacing: 0; text-box: trim-both cap alphabetic }
+.sh-play-nav .vchip:hover { color: #f5f5f7; background: rgba(255, 255, 255, .1) }
+.sh-play-nav .vchip.on { color: #fff; background: var(--accent); border-color: var(--accent) }
+/* bordered chips read tighter than borderless icons at the same distance - the
+   divider needs a touch more air before the first chip */
+.sh-play-nav .sep + .vchip { margin-left: 5px }
+
+/* --- prototype-review: shared toolbar in play, Hide-UI, comment overlay --- */
+
+/* Hide-UI: one binary body class (canvas + prototype) drops all operating chrome. Not
+   persisted - a page refresh always restores it. Comment pins/threads (the review
+   annotations) stay; only the marver chrome hides, for a clean point-and-shoot frame. */
+body.sh-hide-ui .sh-pill,
+body.sh-hide-ui .sh-pill-fab,
+body.sh-hide-ui .sh-panel,
+body.sh-hide-ui .sh-fab,
+body.sh-hide-ui .sh-ctx,
+body.sh-hide-ui .sh-update,
+body.sh-hide-ui .sh-toasts,
+body.sh-hide-ui .sh-banner,
+body.sh-hide-ui .sh-play-nav { display: none !important }
+
+/* the prototype pill reuses the shared pill LAYOUT but wears the discreet DARK skin of the
+   bottom-left navigator (not the bright canvas glass), so it recedes into the near-black
+   stage: dark translucent fill, a faint white hairline, light-on-dark controls. */
+.sh-play-pill, .sh-play .sh-pill-fab { z-index: 32 }
+.sh-play-pill.sh-pill, .sh-play .sh-pill-fab {
+  background: rgba(18, 18, 24, .8); border: 1px solid rgba(255, 255, 255, .1);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .38) }
+.sh-play-pill::after, .sh-play .sh-pill-fab::after { display: none }   /* no light edge-light overlay */
+.sh-play-pill .sh-pill-btn, .sh-play .sh-pill-fab { color: rgba(245, 245, 247, .6) }
+.sh-play-pill .sh-pill-btn:hover, .sh-play .sh-pill-fab:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
+.sh-play-pill .sh-pill-btn.on { background: rgba(255, 255, 255, .14); color: #f5f5f7 }
+.sh-play-pill .sep { background: rgba(255, 255, 255, .12) }
+.sh-play-pill .bd { color: rgba(245, 245, 247, .82) }
+.sh-pill-btn.bd { width: auto; gap: 6px; padding: 0 8px 0 11px; white-space: nowrap; font-weight: 600 }
+.sh-play-update { width: auto !important; gap: 5px; padding: 0 11px !important; font-size: 12px; font-weight: 600 }
+/* the picker dropdowns portal to .sh-app; in play they carry .sh-menu-dark for the dark skin */
+.sh-menu-dark { background: rgba(20, 20, 26, .97); border-color: rgba(255, 255, 255, .12); box-shadow: 0 12px 40px rgba(0, 0, 0, .5) }
+.sh-menu-dark::after { display: none }
+.sh-menu-dark button { color: rgba(245, 245, 247, .82) }
+.sh-menu-dark button:hover { background: rgba(255, 255, 255, .1) }
+.sh-menu-dark .chk { color: #6db3ff }
+.sh-menu-dark kbd { color: rgba(245, 245, 247, .5) }
+.sh-menu-dark .div { background: rgba(255, 255, 255, .1) }
+
+/* device + comment overlay share one flex-centered box; the overlay is inset:0 over it, a
+   SIBLING of the clipping .dev so a thread card is never eaten by the device's overflow.
+   overflow:visible lets a card spill past the device edge; only its markers catch the
+   pointer, the stage below stays fully interactive. */
+.sh-play-stage { position: relative; flex: none }
+/* the canvas writes --sh-inv (1/zoom) for screen-constant pins; the prototype has no
+   zoom, so neutralise it or the leaked value scales every comment pin by ~12x at overview */
+.sh-play { --sh-inv: 1 }
+.sh-play-comments { position: absolute; inset: 0; z-index: 31; overflow: visible; pointer-events: none }
+.sh-play-comments > * { pointer-events: auto }
+
+/* the current variant's name trails the chips at natural width - the chips anchor,
+   so a name change grows the pill rightward without shifting any control underfoot.
+   A max caps runaway titles; the Tip carries the full name. */
+.sh-play-nav .vname { font-size: 11px; font-weight: 600; color: rgba(245, 245, 247, .78);
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-transform: capitalize; padding: 0 11px 0 5px }
+
+/* variant chrome goes LIVE with selection (drive feedback 2026-08-12): accent when the
+   frame is selected, the interact purple when it is being interacted with - the badge,
+   name, caption, and frame title all agree with the frame's state */
+.sh-vbadge { cursor: pointer }
+/* children stay click-transparent: rzpp's pan exclusion and the select handler both
+   need the BADGE DIV to be the event target (same pattern as button svg) */
+.sh-vbadge b, .sh-vbadge span { pointer-events: none }
+.sh-node.sel .sh-vbadge b, .sh-node.sel .sh-vbadge span { color: var(--accent) }
+.sh-node.interact .sh-vbadge b, .sh-node.interact .sh-vbadge span { color: var(--interact) }
+/* the frame header sits INSIDE the selection border - tinting its title too would
+   double-signal (drive feedback 2026-08-12); the badge/caption/sidebar carry state */
+.sh-gcaption { cursor: pointer }
+.sh-gcaption.on { color: var(--accent) }
+.sh-gcaption:hover { color: var(--glass-ink-2) }
+.sh-gcaption.on:hover { color: var(--accent) }
+
+/* per-variant sidebar rows under the group header */
+/* variant rows read one level QUIETER than frame rows: shorter, smaller, lighter -
+   the scannable hierarchy is scene > frame/surface > variants */
+.sub.vrow { display: flex; align-items: center; gap: 7px; padding-left: 31px; height: 24px; font-size: 12px }
+.sub.vrow .chip { width: 16px; height: 16px; border-radius: 5px; font-size: 8.5px }
+.sub.vrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sub.vgroup { cursor: pointer }
+.sub.vgroup.held { background: color-mix(in srgb, var(--glass-hover) 55%, transparent) }
+.sub.vgroup.held .gicon { color: var(--glass-ink-2) }
+
+/* ---- comments ----------------------------------------------------------
+   The marker family (pins, stacks) is SOLID with the Figma teardrop silhouette - a
+   marker must hold contrast on any artwork. The surfaces (card, composer, dialog)
+   are OUR glass - the shell's own token language, theme-aware where Figma is flat. */
+.cm-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
+  color: #fff; font-weight: 700; font-family: -apple-system, system-ui, sans-serif;
+  object-fit: cover; flex: none; user-select: none }
+
+/* markers - pins and stacks share one face: overlapping avatars + a total count.
+   A pin shows one thread's participants (tail points at its div); a stack shows
+   everyone across the frame's threads (tail points up-right at the frame corner). */
+.cm-pin, .cm-stack { display: inline-flex; align-items: center; padding: 4px;
+  background: #fff; border: 1px solid rgba(24,24,27,.1); cursor: pointer;
+  font: 700 11px -apple-system, system-ui, sans-serif; color: #18181b }
+.cm-pin .cm-avatar, .cm-stack .cm-avatar { border: 2px solid #fff }
+.cm-pin .cm-avatar + .cm-avatar, .cm-stack .cm-avatar + .cm-avatar { margin-left: -8px }
+.cm-pin b, .cm-stack b { padding: 0 8px 0 6px }
+
+/* pin: the teardrop. Bottom-left tail points at the anchored element. */
+.cm-pin { position: absolute; z-index: 30; transform: translate(-2px, -100%) scale(var(--sh-inv, 1));
+  transform-origin: bottom left; border-radius: 18px 18px 18px 4px;
+  box-shadow: 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35);
+  transition: box-shadow .15s, transform .15s }
+.cm-pin:hover { box-shadow: 0 1px 3px rgba(24,24,27,.22), 0 10px 24px -6px rgba(24,24,27,.45) }
+/* selected pin wears the selected frame's exact geometry - border, 2px
+   outline hugging the edge, 4px ring halo - in the comment green (the pin
+   is already screen-space via scale(--sh-inv), so plain px match the
+   frame's calc'd screen px) */
+.cm-pin.on { border-color: var(--cm-line, var(--comment));
+  outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
+.cm-pin.orphan { border-style: dashed; opacity: .75 }
+/* the open pin's tail leans TOWARD its card. Default (sharp bottom-left) already reads "left";
+   card on the RIGHT mirrors the pin around its anchor - sharp corner bottom-right, box extending
+   left+up, so the tail points right at the conversation. */
+.cm-pin.tail-r { border-radius: 18px 18px 4px 18px;
+  transform: translate(calc(-100% + 2px), -100%) scale(var(--sh-inv, 1));
+  transform-origin: bottom right }
+
+/* stack: the frame-corner cluster - everyone across the frame's threads */
+.cm-stack { position: absolute; top: 10px; right: 10px; z-index: 30;
+  transform: scale(var(--sh-inv, 1)); transform-origin: top right; border-radius: 18px 18px 4px 18px;
+  box-shadow: 0 1px 2px rgba(24,24,27,.15), 0 6px 16px -6px rgba(24,24,27,.3);
+  transition: box-shadow .15s }
+.cm-stack:hover { box-shadow: 0 1px 3px rgba(24,24,27,.2), 0 10px 24px -6px rgba(24,24,27,.4) }
+
+/* card: OUR glass - the floating-menu language, theme-aware */
+.cm-card { position: absolute; z-index: 40; width: 300px; padding: 16px;
+  transform: scale(var(--sh-inv, 1)); transform-origin: top left;
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  /* an open card is the active selection - the frame's exact geometry, comment green */
+  color: var(--glass-ink); border-radius: 20px; border: 1px solid var(--cm-line, var(--comment));
+  outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
+  box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), var(--shadow-glass), 0 16px 40px -12px rgba(24,24,27,.35);
+  display: flex; flex-direction: column; gap: 12px;
+  font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; text-align: left }
+.cm-card.flip { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right }
+/* the open thread on the CANVAS is UI, not artwork: a FIXED screen-space panel that never zooms or
+   pans with the canvas. Viewport-bounded; the messages scroll inside (.cm-scroll), the composer
+   stays pinned at the bottom. */
+/* parked beside the frame (canvas): a WORLD object - it stays put with its frame through panning.
+   Scale + max-height come inline (clamped 0.9..1.35 of screen-constant; height capped at the
+   frame's). A screen-ish gutter separates card from frame. Long threads scroll inside. */
+/* parked beside the frame (canvas): a world object that scales EXACTLY like the pins - the base
+   .cm-card scale(--sh-inv) - so it zooms smoothly with the board and stays readable at any zoom.
+   Screen-constant gutters via margins (the left one wider - it clears the working shimmer). */
+.cm-card.parked { width: 320px; overflow: hidden; z-index: 50 }
+.cm-card.parked:hover { z-index: 60 }   /* reading/replying wins over neighbouring chrome */
+/* gutters: SNUG by default (~12px screen), and only as wide as what actually occupies the flank -
+   the working shimmer strip (.flank-shim) or a variant badge (.flank-badge, the widest). All
+   screen-targeted with world caps so they stay sane at both zoom extremes. */
+.cm-card.parked.dock-r { transform-origin: top left; margin-left: clamp(8px, calc(12px * var(--sh-inv, 1)), 36px) }
+.cm-card.parked.dock-l { transform: translateX(-100%) scale(var(--sh-inv, 1)); transform-origin: top right;
+  margin-left: calc(-1 * clamp(8px, calc(12px * var(--sh-inv, 1)), 36px)) }
+.cm-card.parked.dock-l.flank-shim { margin-left: calc(-1 * clamp(18px, calc(28px * var(--sh-inv, 1)), 68px)) }
+.cm-card.parked.dock-l.flank-badge { margin-left: calc(-1 * clamp(26px, calc(44px * var(--sh-inv, 1)), 108px)) }
+/* PLAY: fixed beside the static device, viewport-clamped (position comes inline). Near-solid
+   ground - the stage floats the card over arbitrary artwork on a dark room, glass is unreadable
+   there. No transform: play has no zoom, and a leaked --sh-inv must never scale it. */
+.cm-card.stage-dock { width: 320px; overflow: hidden; z-index: 60; transform: none;
+  background: var(--cm-modal-bg, var(--glass)) }
+/* the scroller reaches INTO the card's right padding so its scrollbar rides the card's far
+   edge - right of the close button, 3px off the border, a 13px gap to the text. The bar is
+   OURS: a slim glass-gray thumb on a transparent track, and it only exists when the thread
+   actually overflows. Text width never shifts when it appears. */
+.cm-scroll { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain; margin-right: -13px; padding-right: 13px }
+.cm-scroll::-webkit-scrollbar { width: 6px }
+.cm-scroll::-webkit-scrollbar-track { background: transparent }
+.cm-scroll::-webkit-scrollbar-thumb { border-radius: 99px;
+  background: color-mix(in srgb, var(--glass-ink-3) 50%, transparent) }
+.cm-scroll::-webkit-scrollbar-thumb:hover { background: var(--glass-ink-3) }
+@supports not selector(::-webkit-scrollbar) {
+  .cm-scroll { scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--glass-ink-3) 50%, transparent) transparent }
+}
+/* "there is more": the scroller masks its OWN content at the overflowing edge - a clean fade of
+   the text itself, theme-proof (no paint layer fighting the glass) */
+.cm-scroll.fade-top { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px); mask-image: linear-gradient(180deg, transparent, #000 30px) }
+.cm-scroll.fade-bot { -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 30px), transparent) }
+.cm-scroll.fade-top.fade-bot { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent) }
+.cm-card header { display: flex; align-items: center; gap: 9px }
+.cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
+.cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
+/* pinned above the scroller so the close button always wins the click - bare buttons on the
+   card's own glass, no chip: the custom scrollbar lives at the card's far edge, right of the
+   X, so the two never collide. */
+.cm-actions { position: absolute; top: 13px; right: 12px; display: flex; gap: 2px; z-index: 5 }
+/* the root header shares its line with the pinned actions - reserve their width
+   so a long display name ellipsizes instead of running under the icons.
+   (root header + body live INSIDE .cm-scroll - scope there, not .cm-card >) */
+.cm-scroll > header { padding-right: 84px }
+.cm-scroll > header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* every message - root and replies - is the same unit: avatar + name + time,
+   body indented to the name column (24px avatar + 9px gap) */
+.cm-card .cm-body { margin: 0; padding-left: 33px; font-size: 13px; line-height: 1.55;
+  color: var(--glass-ink); white-space: pre-wrap; overflow-wrap: break-word }
+.cm-scroll > .cm-body { margin-top: -10px }  /* pulls against the scroller's 12px gap -> the same 2px replies get */
+.cm-msg { display: flex; flex-direction: column; gap: 2px }
+.cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
+  transition: background .12s, color .12s }
+.cm-icon:hover { background: var(--glass-hover); color: var(--glass-ink) }
+/* copy-link morphs into a check on the shell's morph curve, then reverts */
+.cm-copy { position: relative }
+.cm-copy .a, .cm-copy .b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  transition: transform var(--morph), opacity .2s ease }
+.cm-copy .b { transform: scale(.4); opacity: 0; color: var(--comment) }
+.cm-copy.ok .a { transform: scale(.4); opacity: 0 }
+.cm-copy.ok .b { transform: scale(1); opacity: 1 }
+/* composer row: my avatar (list size) + an auto-growing textarea with a round send button inside.
+   Multiline: Enter sends, Shift+Enter is a newline (Live Jam §6). The textarea grows 1-6 rows. */
+.cm-compose { display: flex; align-items: flex-end; gap: 8px }
+/* the row bottom-aligns (the avatar holds still while the textarea grows), so the avatar
+   needs a lift to sit optically centered against a ONE-LINE pill: (38-24)/2 */
+.cm-compose > .cm-me, .cm-compose > .cm-avatar { margin-bottom: 7px }
+.cm-inputwrap { position: relative; flex: 1; min-width: 0 }
+/* the mirror layer (.cm-hl) and the textarea share an IDENTICAL box so the caret + styled text align
+   exactly. The textarea sits on top with TRANSPARENT text + bg (caret visible); .cm-hl behind paints the
+   field + the styled text, so @marver shows its trigger colour live as you type (Live Jam §1). */
+.cm-inputwrap textarea, .cm-hl { box-sizing: border-box; width: 100%; min-height: 38px; max-height: 132px;
+  margin: 0; padding: 9px 42px 9px 15px; border: 1px solid transparent; border-radius: 19px;
+  /* the math must CLOSE: 1 + 9 + 18 + 9 + 1 = 38 exactly, so a single line sits dead-center
+     in the pill (a fractional line box + uncounted borders left the text riding off-center) */
+  font: 400 13px/18px -apple-system, system-ui, sans-serif; letter-spacing: normal;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word }
+.cm-hl { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  background: var(--cm-field); color: var(--glass-ink) }
+.cm-inputwrap textarea { position: relative; z-index: 1; display: block; resize: none; overflow-y: auto;
+  background: transparent; color: transparent; caret-color: var(--glass-ink);
+  border-color: var(--glass-brd); outline: none; transition: border-color .15s, box-shadow .15s }
+.cm-inputwrap textarea::placeholder { color: var(--glass-ink-3) }
+.cm-inputwrap textarea:focus { border-color: var(--cm-line, var(--comment)); box-shadow: 0 0 0 3px var(--cm-line-ring, var(--comment-ring)) }
+.cm-inputwrap textarea:disabled { opacity: .6; cursor: default }
+.cm-send { position: absolute; right: 5px; bottom: 5px;   /* (38 - 28) / 2 - centered in the one-line pill */
+  z-index: 2;   /* above the textarea (z1, the @marver mirror stack) - or clicks land on the field, not the button */
+  width: 28px; height: 28px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer; transition: background .15s, opacity .15s }
+.cm-send:hover:not(:disabled) { filter: brightness(1.08) }
+.cm-send:disabled { background: var(--glass-ink-3); opacity: .5; cursor: default }
+/* signed-out viewer: one clear button in place of the composer */
+.cm-signin-cta { width: 100%; height: 40px; border: 0; border-radius: 999px;
+  background: var(--cm-solid, var(--comment)); color: #fff; cursor: pointer;
+  font: 600 13px -apple-system, system-ui, sans-serif; transition: filter .15s }
+.cm-signin-cta:hover { filter: brightness(1.06) }
+/* the draft composer is JUST the pill - no card chrome around a single input */
+.cm-draft { padding: 0; width: 272px; background: none; border: none; box-shadow: none; outline: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none }
+.cm-draft textarea, .cm-draft .cm-hl { min-height: 40px; padding-top: 10px; padding-bottom: 10px }   /* 1+10+18+10+1 = 40, same closed math */
+.cm-draft textarea { box-shadow: 0 2px 6px rgba(24,24,27,.15), 0 12px 32px -8px rgba(24,24,27,.35) }
+.cm-draft .cm-send { right: 6px; bottom: 6px }   /* (40 - 28) / 2 for the taller draft pill */
+
+/* Live Jam: @marver mention styling. Owner-authored = a live trigger (bold accent-blue);
+   anyone else's = plain-weight, read like any comment, with a teaching tooltip (§1). */
+.cm-at { color: var(--glass-ink-2, var(--glass-ink)); font-weight: 500 }
+.cm-at.owner { color: var(--mv-blue); font-weight: 700 }
+/* IN THE COMPOSER MIRROR the mention may change COLOR + PAINT, never METRICS: real bold
+   glyphs are WIDER than the invisible textarea's regular ones, so any font-weight change
+   drifts the caret further off with every mention. The bold LOOK comes from a hairline
+   text-stroke instead - it thickens the glyph paint without touching a single advance
+   width, so the mirror stays pixel-locked to the textarea and the caret never lies. */
+.cm-hl .cm-at { font-weight: inherit; -webkit-text-stroke: .4px currentColor }
+.cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
+
+/* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
+.cm-avatar.cm-marver { background: var(--mv-blue); color: rgba(255,255,255,.9); cursor: default }   /* white/90 mark, embedded in the accent */
+.cm-marver-wrap { display: inline-flex; border-radius: 50% }
+.cm-marver-name { color: var(--glass-ink) }              /* black, not blue */
+/* provenance tooltip: matches the toolbar-button tooltip - a BOLD BRIGHT value (what you scan) + a
+   muted qualifier label after it, one fact per row, left-aligned. Overrides the house single-row
+   `.sh-tip span` dim/right-drift so nothing washes out. */
+/* two-row shortcut tooltip (toolbar): one action per row, key right-aligned - the same
+   bold-value/muted-key language as the provenance tooltip below. opacity:1 overrides the
+   house `.sh-tip span` dim so the wrapper rows stay full-bright; only keys mute. */
+.sh-tip:has(.sh-tip-rows) { padding: 7px 11px }
+.sh-tip .sh-tip-rows { display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+  opacity: 1; margin: 0; font-size: 12px; line-height: 1.2 }
+.sh-tip .sh-tip-rows .r { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 18px; opacity: 1; margin: 0; font-size: 12px; white-space: nowrap }
+.sh-tip .sh-tip-rows .r b { font-weight: 600 }
+.sh-tip .sh-tip-rows .r span { opacity: .55; font-size: 11px; font-weight: 600; margin-left: auto }
+
+.sh-tip:has(.cm-meta-tip) { padding: 8px 12px }
+/* opacity:1 is the fix - .cm-meta-tip is a <span>, so the house `.sh-tip span{opacity:.55}` was
+   dimming the ENTIRE tooltip, and a child's opacity:1 can't undo a parent's reduced opacity. */
+.sh-tip .cm-meta-tip { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; line-height: 1.2; opacity: 1; font-size: 12.5px }
+.sh-tip .cm-meta-row { display: flex; gap: 8px; align-items: baseline; margin: 0; opacity: 1; font-size: 12.5px; white-space: nowrap }
+.sh-tip .cm-meta-row b { font-weight: 600; opacity: 1; margin: 0; color: var(--tip-ink) }        /* value: bold, full-bright */
+.sh-tip .cm-meta-row .k { margin: 0; opacity: .5; font-weight: 500; color: var(--tip-ink) }       /* label: muted qualifier */
+/* identity modal - same glass family */
+.cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
+  background: rgba(24,24,27,.45); backdrop-filter: blur(5px) }
+/* the auth modal is a focused surface, not a floating glass panel - near-solid so
+   the canvas behind never bleeds through the fields */
+.cm-modal { width: 344px; padding: 26px; border-radius: 24px;
+  background: var(--cm-modal-bg); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  color: var(--glass-ink); border: 1px solid var(--glass-brd);
+  display: flex; flex-direction: column; gap: 8px; font: 400 13px -apple-system, system-ui, sans-serif;
+  box-shadow: 0 1px 2px rgba(24,24,27,.1), 0 20px 60px -12px rgba(24,24,27,.5) }
+.cm-modal h2 { margin: 0; font-size: 16px; letter-spacing: -.01em }
+.cm-modal .dim { margin: 0 0 8px; color: var(--glass-ink-2); font-size: 12.5px; line-height: 1.5 }
+.cm-fields { display: flex; flex-direction: column; gap: 9px }
+.cm-modal input { height: 38px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--glass-brd);
+  background: var(--cm-field); color: var(--glass-ink); font: inherit; outline: none }
+.cm-modal input:focus { border-color: var(--comment); box-shadow: 0 0 0 3px var(--comment-ring) }
+.cm-err { color: #b42318; font-size: 12px }
+.cm-chip { height: 38px; box-sizing: border-box; padding: 0 14px; border-radius: 999px;
+  border: 1px solid transparent; background: var(--glass-hover);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; overflow: hidden }
+.cm-div { border: 0; height: 1px; background: var(--glass-brd); margin: 1px 2px; align-self: stretch }
+.cm-chip b { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.cm-chip span { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--glass-ink-3); flex: none }
+.cm-idrow { display: flex; align-items: center; gap: 10px }
+.cm-pfp { width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed var(--glass-ink-3);
+  background: var(--cm-field); color: var(--glass-ink-3); flex: none; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  transition: border-color .15s, color .15s }
+.cm-pfp:hover { border-color: var(--comment); color: var(--comment) }
+.cm-pfp.set { border-style: solid; border-color: var(--glass-brd) }
+/* the photo is a REAL img filling the clipped circle - background-image layering left
+   uncovered edges */
+.cm-pfp img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block }
+.cm-row { display: flex; gap: 8px; margin-top: 12px }
+.cm-row button:disabled, .cm-row button.cm-primary:disabled {
+  background: var(--glass-ink-3); color: var(--glass); cursor: default; opacity: 1 }
+.cm-switch { margin: 2px auto 0; border: 0; background: none; padding: 4px 8px; cursor: pointer;
+  font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); border-radius: 999px }
+.cm-switch:hover { color: var(--glass-ink); background: var(--glass-hover) }
+.cm-row button { height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--glass-brd);
+  background: none; color: var(--glass-ink); font: 600 12.5px -apple-system, system-ui, sans-serif; cursor: pointer }
+.cm-row button:hover { background: var(--glass-hover) }
+.cm-row button.cm-primary { background: var(--glass-ink); color: var(--glass); border-color: transparent; flex: 1 }
+.cm-row button.cm-primary:hover { opacity: .88 }
+
+/* the dev identity door: your avatar in the composer opens the profile popover. Unset shows a
+   quiet + badge - the whole first-comment nudge, no modal in the way. */
+.cm-me { position: relative; display: inline-flex; flex: none }
+.cm-mebtn { position: relative; display: inline-flex; padding: 0; border: 0; background: none;
+  cursor: pointer; border-radius: 50% }
+/* hover morphs the avatar into a pen on quiet gray - "this is editable" without a badge */
+.cm-pen-face { position: absolute; inset: 0; border-radius: 50%; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--glass-ink) 10%, var(--cm-field));
+  border: 1px solid var(--glass-brd); color: var(--glass-ink-2);
+  opacity: 0; transition: opacity .12s; pointer-events: none }
+.cm-mebtn:hover .cm-pen-face, .cm-mebtn:focus-visible .cm-pen-face { opacity: 1 }
+
+/* the unclipped comment plane over each frame: itself transparent to the pointer,
+   its children (pins, cards, stacks) fully interactive */
+.cm-layer { position: absolute; left: 0; width: 100%; pointer-events: none; z-index: 25 }
+.cm-layer > * { pointer-events: auto }

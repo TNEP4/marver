@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "name": "prototype",
+  "auto": false,
+  "layout": {
+    "rows": [
+      [
+        "prototype",
+        {
+          "space": 2
+        },
+        "ride"
+      ]
+    ],
+    "scenes": {
+      "prototype": {
+        "rows": [
+          [
+            "press-play"
+          ]
+        ]
+      },
+      "ride": {
+        "rows": [
+          [
+            "start",
+            "where-to",
+            "choose",
+            "arriving",
+            "on-trip"
+          ]
+        ]
+      }
+    }
+  },
+  "nodes": [
+    {
+      "frame": "prototype/press-play"
+    },
+    {
+      "frame": "ride/start"
+    },
+    {
+      "frame": "ride/where-to"
+    },
+    {
+      "frame": "ride/choose"
+    },
+    {
+      "frame": "ride/arriving"
+    },
+    {
+      "frame": "ride/on-trip"
+    }
+  ],
+  "order": 4
+}

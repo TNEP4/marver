@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "name": "canvas",
+  "auto": false,
+  "layout": {
+    "rows": [
+      [
+        "canvas",
+        {
+          "space": 2
+        },
+        "recipe"
+      ]
+    ],
+    "scenes": {
+      "canvas": {
+        "rows": [
+          [
+            "frames-are-code",
+            "devices",
+            "themes",
+            "boards-and-tidy",
+            "shortcuts"
+          ]
+        ]
+      },
+      "recipe": {
+        "rows": [
+          [
+            "variants",
+            {
+              "space": 2
+            },
+            "recipe"
+          ]
+        ]
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "n_79lfdbowrn59",
+      "frame": "canvas/frames-are-code",
+      "x": 0,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_uhprku1yyxvzw",
+      "frame": "recipe/variants",
+      "x": 6684,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_11wlhki1ugtaxc",
+      "frame": "recipe/a-classic",
+      "x": 8272,
+      "y": 0,
+      "w": 390,
+      "h": 844
+    },
+    {
+      "key": "n_qf1qogpqnq9e",
+      "frame": "recipe/b-editorial",
+      "x": 8802,
+      "y": 0,
+      "w": 390,
+      "h": 844
+    },
+    {
+      "key": "n_11aaekm1l36dus",
+      "frame": "recipe/c-brutalist",
+      "x": 9332,
+      "y": 0,
+      "w": 390,
+      "h": 844
+    },
+    {
+      "key": "n_1w4rjddse10z7",
+      "frame": "canvas/devices",
+      "x": 1434,
+      "y": 0,
+      "w": 390,
+      "h": 844
+    },
+    {
+      "key": "n_2hrzkoltji62",
+      "frame": "canvas/themes",
+      "x": 1977,
+      "y": 0,
+      "w": 1280,
+      "h": 800,
+      "themeUser": "light"
+    },
+    {
+      "key": "n_i94ryw1xycq2i",
+      "frame": "canvas/boards-and-tidy",
+      "x": 3411,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    },
+    {
+      "key": "n_cvc13t1nznz7f",
+      "frame": "canvas/shortcuts",
+      "x": 4844,
+      "y": 0,
+      "w": 1280,
+      "h": 800
+    }
+  ],
+  "order": 2
+}

@@ -1,0 +1,114 @@
+import { Ink, Kbd, MarverMark, Slide, cn } from '../../../src/components/kit'
+
+export const meta = { title: 'Next stop', viewport: 'laptop' }
+
+const BOARDS = [
+  {
+    name: 'canvas',
+    body: 'Boards, scenes, frames - and how a canvas is arranged.',
+    goto: 'canvas/frames-are-code',
+    next: true,
+  },
+  {
+    name: 'modes',
+    body: 'Comment, laser, play. The three ways you talk back.',
+    goto: 'modes/play',
+  },
+  {
+    name: 'prototype',
+    body: 'Press P and a wired ride flow runs like the real app.',
+    goto: 'prototype/press-play',
+  },
+  {
+    name: 'jam',
+    body: 'Tag @marver in a comment and your agent picks up the work.',
+    goto: 'jam/the-loop',
+  },
+  {
+    name: 'collaborate',
+    body: 'Publish it, invite the team, and let comments become work.',
+    goto: 'collaborate/publish',
+  },
+  {
+    name: 'thanks',
+    body: 'The end of the tour, and the start of yours.',
+    goto: 'thanks/end-of-tour',
+  },
+]
+
+export default function NextStop() {
+  return (
+    <Slide
+      eyebrow="Welcome"
+      step="5 of 5"
+      title="You can drive."
+      lead={
+        <>
+          That is the whole idea: <Ink>a canvas of real frames</Ink>, driven by your agent,
+          steered by you. Select this frame and press <Ink>p</Ink> to make it live, then
+          click a board below - the canvas takes you there.
+        </>
+      }
+      hint={
+        <>
+          <Kbd className="mr-1">Esc</Kbd> steps back out to the canvas. The same six boards
+          wait in the left rail.
+        </>
+      }
+    >
+      <div className="grid max-w-[1080px] grid-cols-3 gap-4">
+        {BOARDS.map((b) => (
+          <button
+            key={b.name}
+            type="button"
+            data-goto={b.goto}
+            className={cn(
+              'group cursor-pointer rounded-card border p-5 text-left transition duration-150',
+              'hover:-translate-y-0.5 hover:border-brand hover:bg-brand-wash hover:shadow-lift',
+              'active:translate-y-0 active:scale-[0.985] active:bg-brand-wash active:shadow-node',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+              b.next ? 'border-brand bg-brand-wash' : 'border-border bg-surface-2',
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <MarverMark
+                className={cn(
+                  'size-[15px] transition-colors duration-150 group-hover:text-brand',
+                  b.next ? 'text-brand' : 'text-muted-soft',
+                )}
+              />
+              <span
+                className={cn(
+                  'text-[13px] font-semibold tracking-[0.08em] uppercase transition-colors duration-150 group-hover:text-brand-ink',
+                  b.next ? 'text-brand-ink' : 'text-muted-soft',
+                )}
+              >
+                {b.name}
+              </span>
+              {b.next && (
+                <span className="ml-auto text-[11.5px] font-semibold tracking-[0.04em] text-brand-ink/70 uppercase group-hover:hidden">
+                  next
+                </span>
+              )}
+              <span className="ml-auto hidden items-center gap-1 text-[11.5px] font-semibold tracking-[0.04em] text-brand-ink uppercase group-hover:flex group-active:flex">
+                open
+                <svg viewBox="0 0 16 16" className="size-3.5" fill="none" aria-hidden>
+                  <path
+                    d="m6 3.5 4.5 4.5L6 12.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+            </div>
+            <p className="mt-2.5 text-[14.5px] leading-[1.55] text-muted-foreground transition-colors duration-150 group-hover:text-foreground">
+              {b.body}
+            </p>
+          </button>
+        ))}
+      </div>
+    </Slide>
+  )
+}

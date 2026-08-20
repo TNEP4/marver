@@ -1,0 +1,364 @@
+/**
+ * The tour's brand: marver's own canvas world, values lifted from the mother
+ * site (marver-site globals.css), trimmed to what the tour frames use.
+ * Dark rides the `.dark` class marver sets on each frame document.
+ */
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ground: var(--ground);
+  --color-dot: var(--dot);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted-soft: var(--muted-soft);
+  --color-border: var(--border);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-wash: var(--brand-wash);
+  --color-interact: var(--interact);
+  --color-interact-ink: var(--interact-ink);
+  --color-comment: var(--comment);
+  --color-comment-ink: var(--comment-ink);
+  --color-pick: var(--pick);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-glass: var(--glass);
+  --color-glass-brd: var(--glass-brd);
+  --color-glass-ink: var(--glass-ink);
+  --color-tip: var(--tip-bg);
+  --color-tip-ink: var(--tip-ink);
+  --color-map-land: var(--map-land);
+  --color-map-road: var(--map-road);
+  --color-map-building: var(--map-building);
+  --color-map-park: var(--map-park);
+  --color-map-water: var(--map-water);
+  --radius-card: 18px;
+  --radius-panel: 24px;
+  --shadow-node: var(--shadow-node);
+  --shadow-glass: var(--shadow-glass);
+  --shadow-lift: var(--shadow-lift);
+  --font-sans: var(--font-system-sans);
+  --font-mono: var(--font-system-mono);
+}
+
+:root {
+  --font-system-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    system-ui, sans-serif;
+  --font-system-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo,
+    "Cascadia Mono", "Roboto Mono", monospace;
+
+  --ground: #e7e9ef;
+  --dot: #c9cbd5;
+  --surface: #ffffff;
+  --surface-2: #f4f5f8;
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --muted: #eeeff4;
+  --muted-foreground: #5c5e6b;
+  --muted-soft: #86868b;
+  --border: #dddee5;
+
+  --brand: #0088ff;
+  --brand-ink: #0069c9;
+  --brand-wash: rgba(0, 136, 255, 0.07);
+  --brand-ring: rgba(0, 136, 255, 0.2);
+  --interact: #db35f2;
+  --interact-ink: #a527b8;
+  --comment: #34c759;
+  --comment-ink: #1c8b3c;
+  --comment-ring: rgba(52, 199, 89, 0.22);
+  --work: #0088ff;
+  --pick: #00c2d4;
+  --good: #248a3d;
+  --warn: #b25000;
+
+  --glass: rgba(255, 255, 255, 0.64);
+  --glass-brd: rgba(24, 24, 27, 0.1);
+  --glass-ink: #18181b;
+  --tip-bg: #18181b;
+  --tip-ink: #fafafa;
+
+  --node-bg: #ffffff;
+  --node-brd: #dddee5;
+
+  --map-land: #e2e6ee;
+  --map-road: #ffffff;
+  --map-building: #c9cfdd;
+  --map-park: #d4e8d0;
+  --map-water: #b9d8ef;
+
+  --shadow-node: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    0 1px 2px rgba(24, 24, 27, 0.05), 0 4px 12px -6px rgba(24, 24, 27, 0.12);
+  --shadow-lift: 0 1px 2px rgba(24, 24, 27, 0.06),
+    0 18px 40px -22px rgba(24, 24, 27, 0.35);
+}
+
+.dark {
+  --ground: #1b1c23;
+  --dot: #35363f;
+  --surface: #0d0e12;
+  --surface-2: #15161c;
+  --background: #0d0e12;
+  --foreground: #ececf1;
+  --card: #0f1015;
+  --card-foreground: #f5f5f7;
+  --muted: #22232c;
+  --muted-foreground: #9fa0ac;
+  --muted-soft: #86868b;
+  --border: #2c2d38;
+
+  --brand: #0088ff;
+  --brand-ink: #5cb3ff;
+  --brand-wash: rgba(0, 136, 255, 0.14);
+  --brand-ring: rgba(0, 136, 255, 0.32);
+  --interact: #db35f2;
+  --interact-ink: #ea8dff;
+  --comment: #30d158;
+  --comment-ink: #5ce07d;
+  --comment-ring: rgba(48, 209, 88, 0.34);
+  --work: #4db1ff;
+  --pick: #2ad4e4;
+  --good: #30d158;
+  --warn: #ff9f0a;
+
+  --glass: rgba(12, 12, 17, 0.72);
+  --glass-brd: rgba(255, 255, 255, 0.16);
+  --glass-ink: #f5f5f7;
+  --tip-bg: #f4f4f5;
+  --tip-ink: #18181b;
+
+  --node-bg: #0f1015;
+  --node-brd: #2c2d38;
+
+  --map-land: #0a0b10;
+  --map-road: #1d212b;
+  --map-building: #171b24;
+  --map-park: #0d1a11;
+  --map-water: #0b1e30;
+
+  --shadow-node: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 1px 2px rgba(10, 10, 16, 0.2), 0 4px 14px -8px rgba(10, 10, 16, 0.4);
+  --shadow-lift: 0 1px 2px rgba(0, 0, 0, 0.4),
+    0 18px 40px -22px rgba(0, 0, 0, 0.75);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+  html {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@layer components {
+  /* The canvas ground: marver's dot grid, for frames that depict the canvas. */
+  .canvas-ground {
+    background-color: var(--ground);
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-position: -11px -11px;
+  }
+  .glass {
+    background: var(--glass);
+    border: 1px solid var(--glass-brd);
+    color: var(--glass-ink);
+    box-shadow: var(--shadow-glass);
+    backdrop-filter: blur(20px) saturate(150%);
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── The Live Jam working state, exactly as the canvas wears it ──────────
+     Three layers over the SELECTED geometry in marver blue: the orbiting
+     border shimmer, the wave sweeping down the content, and the matrix of
+     tiny marver marks twinkling on the left flank. Copied from the shell
+     (styles.css §10) - the tour must not invent its own version. */
+  .work-node {
+    border: 1px solid var(--work);
+    outline: 2px solid var(--work);
+    outline-offset: -1px;
+    box-shadow: 0 0 0 4px var(--brand-ring), var(--shadow-node);
+  }
+  .work-node::before {
+    content: "";
+    position: absolute;
+    inset: -2.5px;
+    padding: 2.5px;
+    border-radius: calc(var(--work-r, 10px) + 2px);
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--work-rot),
+      var(--work) 0deg,
+      var(--work) 105deg,
+      rgba(255, 255, 255, 0.95) 135deg,
+      var(--work) 165deg,
+      var(--work) 285deg,
+      rgba(255, 255, 255, 0.95) 315deg,
+      var(--work) 345deg,
+      var(--work) 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0.6;
+    animation: work-orbit 4.2s linear infinite;
+  }
+
+  /* the content sweep. The shell spaces five of these across 36s; the tour
+     shows the fresh-job cadence - one sweep every 5s - so the beat reads. */
+  .work-wave {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 4;
+  }
+  .work-wave::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -55%;
+    height: 55%;
+    opacity: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(0, 136, 255, 0) 0%,
+      rgba(0, 136, 255, 0.07) 30%,
+      rgba(0, 136, 255, 0.16) 52%,
+      rgba(0, 136, 255, 0.07) 74%,
+      rgba(0, 136, 255, 0) 100%
+    );
+    animation: work-wave 5s linear infinite;
+  }
+
+  /* the shimmer matrix: 2 x 6 marks in the left flank, top-aligned */
+  .work-shim {
+    position: absolute;
+    top: 0;
+    right: calc(100% + 10px);
+    display: grid;
+    grid-template-columns: repeat(2, 5px);
+    gap: 2px;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .work-shim svg {
+    display: block;
+    width: 5px;
+    height: 5px;
+    color: var(--work);
+    opacity: 0.12;
+    animation: work-shim 0.95s ease-in-out infinite;
+  }
+
+  /* the comment thread card: our glass wearing the selected geometry in
+     comment green - the surface every @marver conversation lives on */
+  .thread-card {
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(150%);
+    color: var(--glass-ink);
+    border: 1px solid var(--comment);
+    outline: 2px solid var(--comment);
+    outline-offset: -1px;
+    box-shadow:
+      0 0 0 4px var(--comment-ring),
+      var(--shadow-glass),
+      0 16px 40px -12px rgba(24, 24, 27, 0.35);
+  }
+}
+
+@property --work-rot {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes work-orbit {
+  to {
+    --work-rot: 360deg;
+  }
+}
+@keyframes work-wave {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  2.9% {
+    opacity: 1;
+  }
+  28% {
+    opacity: 1;
+  }
+  33.8% {
+    transform: translateY(282%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(282%);
+    opacity: 0;
+  }
+}
+@keyframes work-shim {
+  0%,
+  100% {
+    opacity: 0.12;
+    transform: scale(0.75);
+  }
+  35% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "builder": "NIXPACKS", "buildCommand": "npm install && npx marver build" },
+  "deploy": { "startCommand": "npx marver serve" }
+}

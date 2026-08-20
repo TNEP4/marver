@@ -1,0 +1,32 @@
+# Trusted publishing (OIDC): activates once the repo is public and this workflow is
+# registered as the trusted publisher for @marver-design/marver on npmjs.com.
+# Release = npm version <patch|minor> && git push --follow-tags
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # npm trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@latest
+      - name: Tag must match package.json version
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$PKG" ] || { echo "tag $GITHUB_REF_NAME != package version $PKG"; exit 1; }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm smoke
+      - run: npm publish

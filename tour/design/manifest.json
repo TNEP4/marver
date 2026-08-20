@@ -1,0 +1,289 @@
+{
+  "frames": [
+    {
+      "id": "canvas/boards-and-tidy",
+      "file": "design/scenes/canvas/boards-and-tidy.tsx",
+      "kind": "tsx",
+      "scene": "canvas",
+      "title": "Boards + tidy",
+      "viewport": "laptop"
+    },
+    {
+      "id": "canvas/devices",
+      "file": "design/scenes/canvas/devices.tsx",
+      "kind": "tsx",
+      "scene": "canvas",
+      "title": "Devices",
+      "viewport": "tablet"
+    },
+    {
+      "id": "canvas/frames-are-code",
+      "file": "design/scenes/canvas/frames-are-code.tsx",
+      "kind": "tsx",
+      "scene": "canvas",
+      "title": "Frames are code",
+      "viewport": "laptop"
+    },
+    {
+      "id": "canvas/shortcuts",
+      "file": "design/scenes/canvas/shortcuts.tsx",
+      "kind": "tsx",
+      "scene": "canvas",
+      "title": "Shortcuts",
+      "viewport": "laptop"
+    },
+    {
+      "id": "canvas/themes",
+      "file": "design/scenes/canvas/themes.tsx",
+      "kind": "tsx",
+      "scene": "canvas",
+      "title": "Themes",
+      "viewport": "laptop",
+      "theme": "dark"
+    },
+    {
+      "id": "collaborate/comments",
+      "file": "design/scenes/collaborate/comments.tsx",
+      "kind": "tsx",
+      "scene": "collaborate",
+      "title": "Comments that act",
+      "viewport": "laptop"
+    },
+    {
+      "id": "collaborate/invite",
+      "file": "design/scenes/collaborate/invite.tsx",
+      "kind": "tsx",
+      "scene": "collaborate",
+      "title": "Invite the team",
+      "viewport": "laptop"
+    },
+    {
+      "id": "collaborate/publish",
+      "file": "design/scenes/collaborate/publish.tsx",
+      "kind": "tsx",
+      "scene": "collaborate",
+      "title": "Publish it",
+      "viewport": "laptop"
+    },
+    {
+      "id": "jam/beyond",
+      "file": "design/scenes/jam/beyond.tsx",
+      "kind": "tsx",
+      "scene": "jam",
+      "title": "And beyond",
+      "viewport": "mobile"
+    },
+    {
+      "id": "jam/the-loop",
+      "file": "design/scenes/jam/the-loop.tsx",
+      "kind": "tsx",
+      "scene": "jam",
+      "title": "Live Jam",
+      "viewport": "laptop"
+    },
+    {
+      "id": "jam/trust",
+      "file": "design/scenes/jam/trust.tsx",
+      "kind": "tsx",
+      "scene": "jam",
+      "title": "Trust shape",
+      "viewport": "laptop"
+    },
+    {
+      "id": "modes/comment-and-laser",
+      "file": "design/scenes/modes/comment-and-laser.tsx",
+      "kind": "tsx",
+      "scene": "modes",
+      "title": "Comments + laser",
+      "viewport": "laptop"
+    },
+    {
+      "id": "modes/play",
+      "file": "design/scenes/modes/play.tsx",
+      "kind": "tsx",
+      "scene": "modes",
+      "title": "Play mode",
+      "viewport": "laptop"
+    },
+    {
+      "id": "prototype/press-play",
+      "file": "design/scenes/prototype/press-play.tsx",
+      "kind": "tsx",
+      "scene": "prototype",
+      "title": "Press play",
+      "viewport": "laptop"
+    },
+    {
+      "id": "recipe/a-classic",
+      "file": "design/scenes/recipe/a-classic.tsx",
+      "kind": "tsx",
+      "scene": "recipe",
+      "title": "Recipe - classic",
+      "viewport": "mobile",
+      "variantGroup": "recipe",
+      "variant": "a"
+    },
+    {
+      "id": "recipe/b-editorial",
+      "file": "design/scenes/recipe/b-editorial.tsx",
+      "kind": "tsx",
+      "scene": "recipe",
+      "title": "Recipe - editorial",
+      "viewport": "mobile",
+      "variantGroup": "recipe",
+      "variant": "b"
+    },
+    {
+      "id": "recipe/c-brutalist",
+      "file": "design/scenes/recipe/c-brutalist.tsx",
+      "kind": "tsx",
+      "scene": "recipe",
+      "title": "Recipe - brutalist",
+      "viewport": "mobile",
+      "variantGroup": "recipe",
+      "variant": "c"
+    },
+    {
+      "id": "recipe/variants",
+      "file": "design/scenes/recipe/variants.tsx",
+      "kind": "tsx",
+      "scene": "recipe",
+      "title": "What variants are",
+      "viewport": "laptop"
+    },
+    {
+      "id": "ride/arriving",
+      "file": "design/scenes/ride/arriving.tsx",
+      "kind": "tsx",
+      "scene": "ride",
+      "title": "Ride - arriving",
+      "viewport": "mobile"
+    },
+    {
+      "id": "ride/choose",
+      "file": "design/scenes/ride/choose.tsx",
+      "kind": "tsx",
+      "scene": "ride",
+      "title": "Ride - choose",
+      "viewport": "mobile"
+    },
+    {
+      "id": "ride/on-trip",
+      "file": "design/scenes/ride/on-trip.tsx",
+      "kind": "tsx",
+      "scene": "ride",
+      "title": "Ride - on trip",
+      "viewport": "mobile"
+    },
+    {
+      "id": "ride/start",
+      "file": "design/scenes/ride/start.tsx",
+      "kind": "tsx",
+      "scene": "ride",
+      "title": "Ride - start here",
+      "viewport": "mobile"
+    },
+    {
+      "id": "ride/where-to",
+      "file": "design/scenes/ride/where-to.tsx",
+      "kind": "tsx",
+      "scene": "ride",
+      "title": "Ride - where to",
+      "viewport": "mobile"
+    },
+    {
+      "id": "thanks/end-of-tour",
+      "file": "design/scenes/thanks/end-of-tour.tsx",
+      "kind": "tsx",
+      "scene": "thanks",
+      "title": "End of the tour",
+      "viewport": "laptop"
+    },
+    {
+      "id": "thanks/take-it-home",
+      "file": "design/scenes/thanks/take-it-home.tsx",
+      "kind": "tsx",
+      "scene": "thanks",
+      "title": "Take it home",
+      "viewport": "laptop"
+    },
+    {
+      "id": "welcome/around-you",
+      "file": "design/scenes/welcome/around-you.tsx",
+      "kind": "tsx",
+      "scene": "welcome",
+      "title": "A look around",
+      "viewport": "laptop"
+    },
+    {
+      "id": "welcome/drive-it",
+      "file": "design/scenes/welcome/drive-it.tsx",
+      "kind": "tsx",
+      "scene": "welcome",
+      "title": "Drive it",
+      "viewport": "laptop"
+    },
+    {
+      "id": "welcome/hello",
+      "file": "design/scenes/welcome/hello.tsx",
+      "kind": "tsx",
+      "scene": "welcome",
+      "title": "Welcome",
+      "viewport": "laptop"
+    },
+    {
+      "id": "welcome/next-stop",
+      "file": "design/scenes/welcome/next-stop.tsx",
+      "kind": "tsx",
+      "scene": "welcome",
+      "title": "Next stop",
+      "viewport": "laptop"
+    },
+    {
+      "id": "welcome/philosophy",
+      "file": "design/scenes/welcome/philosophy.tsx",
+      "kind": "tsx",
+      "scene": "welcome",
+      "title": "Why code-native",
+      "viewport": "laptop"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "canvas",
+      "frames": 5
+    },
+    {
+      "name": "collaborate",
+      "frames": 3
+    },
+    {
+      "name": "jam",
+      "frames": 3
+    },
+    {
+      "name": "modes",
+      "frames": 2
+    },
+    {
+      "name": "prototype",
+      "frames": 1
+    },
+    {
+      "name": "recipe",
+      "frames": 4
+    },
+    {
+      "name": "ride",
+      "frames": 5
+    },
+    {
+      "name": "thanks",
+      "frames": 2
+    },
+    {
+      "name": "welcome",
+      "frames": 5
+    }
+  ]
+}

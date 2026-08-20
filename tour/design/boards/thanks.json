@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "thanks",
+  "auto": false,
+  "layout": {
+    "rows": [
+      [
+        "thanks"
+      ]
+    ],
+    "scenes": {
+      "thanks": {
+        "rows": [
+          [
+            "end-of-tour",
+            "take-it-home"
+          ]
+        ]
+      }
+    }
+  },
+  "nodes": [
+    {
+      "frame": "thanks/end-of-tour"
+    },
+    {
+      "frame": "thanks/take-it-home"
+    }
+  ],
+  "order": 7
+}
