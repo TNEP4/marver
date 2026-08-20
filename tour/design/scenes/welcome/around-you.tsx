@@ -171,11 +171,12 @@ export default function AroundYou() {
               <PanelIco size={17} className="text-glass-ink/40" />
             </div>
             <div className="mt-0.5 mb-[5px] px-2.5 text-[11px] font-semibold tracking-[0.02em] text-glass-ink/40">Boards</div>
-            <Row icon={<Ico d={P.cardsThree} className="mx-px text-glass-ink/40" />} label="All Scenes" />
-            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Canvas" />
-            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Jam" />
-            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Modes" />
             <Row icon={<Ico d={P.cards} className="text-brand-ink" />} label="Welcome" cur />
+            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Canvas" />
+            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Prototype" />
+            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Collaborate" />
+            <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Jam" />
+            <Row icon={<Ico d={P.cardsThree} className="mx-px text-glass-ink/40" />} label="All Scenes" />
             <div className="mt-2.5 mb-[5px] px-2.5 text-[11px] font-semibold tracking-[0.02em] text-glass-ink/40">Scenes</div>
             <Row icon={<Ico d={P.caret} size={11} className="mx-[2.5px] text-glass-ink/40" />} label="Welcome" count={5} />
             <Row icon={<Ico d={P.frameRect} size={13} stroke className="opacity-[0.72]" />} label="Hello" indent />

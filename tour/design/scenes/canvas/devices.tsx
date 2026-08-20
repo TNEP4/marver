@@ -29,7 +29,7 @@ export default function Devices() {
     <Slide
       className="max-md:px-6 max-md:pt-9 max-md:pb-6"
       eyebrow="The canvas"
-      step="6 of 8"
+      step="2 of 4"
       title="One design, every device."
       lead={
         <>

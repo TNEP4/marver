@@ -10,24 +10,19 @@ const BOARDS = [
     next: true,
   },
   {
-    name: 'modes',
-    body: 'Comment, laser, play. The three ways you talk back.',
-    goto: 'modes/play',
-  },
-  {
     name: 'prototype',
     body: 'Press P and a wired ride flow runs like the real app.',
     goto: 'prototype/press-play',
   },
   {
+    name: 'collaborate',
+    body: 'Comment on the exact element, publish, invite the team.',
+    goto: 'collaborate/comment-and-laser',
+  },
+  {
     name: 'jam',
     body: 'Tag @marver in a comment and your agent picks up the work.',
     goto: 'jam/the-loop',
-  },
-  {
-    name: 'collaborate',
-    body: 'Publish it, invite the team, and let comments become work.',
-    goto: 'collaborate/publish',
   },
   {
     name: 'thanks',
@@ -51,8 +46,8 @@ export default function NextStop() {
       }
       hint={
         <>
-          <Kbd className="mr-1">Esc</Kbd> steps back out to the canvas. The same six boards
-          wait in the left rail.
+          <Kbd className="mr-1">Esc</Kbd> steps back out to the canvas. The same boards wait
+          in the left rail.
         </>
       }
     >

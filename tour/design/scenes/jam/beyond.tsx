@@ -10,15 +10,10 @@ export const meta = { title: 'And beyond', viewport: 'mobile' }
 
 const NEXT = [
   {
-    name: 'collaborate',
-    body: 'Publish the canvas, invite the team, and let every pinned comment become work.',
-    goto: 'collaborate/publish',
-    next: true,
-  },
-  {
     name: 'thanks',
     body: 'The end of the tour - and the two commands that start yours.',
     goto: 'thanks/end-of-tour',
+    next: true,
   },
 ]
 
@@ -30,11 +25,11 @@ export default function Beyond() {
         <span className="text-[12px] font-semibold tracking-[0.08em] text-brand uppercase">Live Jam · 3 of 3</span>
       </div>
       <h1 className="mt-4 text-[30px] leading-[1.12] font-semibold tracking-[-0.025em]">
-        Two boards to go.
+        One board to go.
       </h1>
       <p className="mt-4 text-[15px] leading-[1.55] text-muted-foreground">
-        The loop you just watched is only worth anything with other people in it. That is
-        the next board.
+        The loop you just watched is the whole tool in one motion - designs, feedback and
+        your agent on the same canvas. One stop left.
       </p>
 
       <div className="mt-8 space-y-3.5">

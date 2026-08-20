@@ -105,14 +105,14 @@ export default function Shortcuts() {
   return (
     <Slide
       eyebrow="The canvas"
-      title="Every key the tour taught."
+      title="Every key, one card."
       lead={
         <>
           One card to keep. The keys are polite about scope: digits and <Ink>d</Ink> act on{' '}
           <Ink>the selection</Ink> when one exists, the whole board otherwise.
         </>
       }
-      hint={<>All of it works right now - this tour is a live canvas, not a slideshow.</>}
+      hint={<>Everything here works right now - this is a live canvas, not a slideshow. Next board: <Ink>prototype</Ink>.</>}
     >
       <div className="grid max-w-[1080px] grid-cols-1 gap-x-12 gap-y-8 lg:grid-cols-3">
         <Group label="The board" icon={BoardIcon} tone="board">

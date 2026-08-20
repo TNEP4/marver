@@ -1,1 +1,1 @@
-{ "boards": { "welcome": "read", "canvas": "read", "modes": "read", "prototype": "read", "jam": "read", "collaborate": "read", "thanks": "read" } }
+{"boards": {"welcome": "read", "canvas": "read", "prototype": "read", "jam": "read", "collaborate": "read", "thanks": "read"}}

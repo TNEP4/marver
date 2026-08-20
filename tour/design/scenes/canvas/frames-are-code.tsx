@@ -45,7 +45,7 @@ export default function FramesAreCode() {
   return (
     <Slide
       eyebrow="The canvas"
-      step="1 of 8"
+      step="1 of 4"
       title="Every frame is a file."
       lead={
         <>
@@ -54,7 +54,7 @@ export default function FramesAreCode() {
           IS the app work. This is why handing a canvas to a coding agent works.
         </>
       }
-      hint={<>The three phone frames nearby are one screen designed three ways - go compare them.</>}
+      hint={<>Head right: devices, themes, boards - and at the end of the row, one screen designed three ways.</>}
     >
       <div className="flex items-center gap-7">
         {/* The file */}

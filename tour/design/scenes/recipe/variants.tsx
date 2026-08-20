@@ -13,7 +13,6 @@ export default function WhatVariantsAre() {
   return (
     <Slide
       eyebrow="The canvas"
-      step="2 of 8"
       title="Letter the file, get a variant."
       lead={
         <>

@@ -262,7 +262,7 @@ export default function BoardsAndTidy() {
   return (
     <Slide
       eyebrow="The canvas"
-      step="8 of 8"
+      step="4 of 4"
       title="Boards are the curation."
       lead={
         <>
@@ -274,8 +274,8 @@ export default function BoardsAndTidy() {
       }
       hint={
         <>
-          <Keys combo="t" className="mr-2" /> Next board: <Ink>modes</Ink> - where the canvas
-          starts doing things.
+          <Keys combo="t" className="mr-2" /> One card left - every key in one place - then
+          the recipe phones are yours to play with.
         </>
       }
     >

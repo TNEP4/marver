@@ -42,6 +42,14 @@
       "theme": "dark"
     },
     {
+      "id": "collaborate/comment-and-laser",
+      "file": "design/scenes/collaborate/comment-and-laser.tsx",
+      "kind": "tsx",
+      "scene": "collaborate",
+      "title": "Comments + laser",
+      "viewport": "laptop"
+    },
+    {
       "id": "collaborate/comments",
       "file": "design/scenes/collaborate/comments.tsx",
       "kind": "tsx",
@@ -87,22 +95,6 @@
       "kind": "tsx",
       "scene": "jam",
       "title": "Trust shape",
-      "viewport": "laptop"
-    },
-    {
-      "id": "modes/comment-and-laser",
-      "file": "design/scenes/modes/comment-and-laser.tsx",
-      "kind": "tsx",
-      "scene": "modes",
-      "title": "Comments + laser",
-      "viewport": "laptop"
-    },
-    {
-      "id": "modes/play",
-      "file": "design/scenes/modes/play.tsx",
-      "kind": "tsx",
-      "scene": "modes",
-      "title": "Play mode",
       "viewport": "laptop"
     },
     {
@@ -255,15 +247,11 @@
     },
     {
       "name": "collaborate",
-      "frames": 3
+      "frames": 4
     },
     {
       "name": "jam",
       "frames": 3
-    },
-    {
-      "name": "modes",
-      "frames": 2
     },
     {
       "name": "prototype",

@@ -45,7 +45,7 @@ export default function Publish() {
   return (
     <Slide
       eyebrow="Collaborate"
-      step="1 of 3"
+      step="2 of 4"
       title="Two commands and the canvas has a URL."
       lead={
         <>

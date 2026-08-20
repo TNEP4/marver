@@ -104,7 +104,7 @@ const Enter = (
 
 /** Every tap is a data-goto - five screens, one graph, no build. */
 const Flow = (
-  <div className="flex h-full items-center justify-center gap-[9px] px-2">
+  <div className="flex h-full items-center justify-center gap-[7px] px-1.5">
     {[0, 1, 2, 3, 4].map((i) => (
       <div key={i} className="flex items-center gap-[9px]">
         {i > 0 && (
@@ -112,7 +112,7 @@ const Flow = (
             <path d="M1 5h12m0 0-3.5-3.5M13 5l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
-        <Slab w={34} h={64} live={i === 1} className={cn(i !== 1 && 'opacity-55')}>
+        <Slab w={30} h={60} live={i === 1} className={cn(i !== 1 && 'opacity-55')}>
           <PhoneRide tapped={i === 1} />
         </Slab>
       </div>
@@ -120,21 +120,39 @@ const Flow = (
   </div>
 )
 
+/** [ ] - sibling directions of one screen, swapping inside the same device. */
+const Variants = (
+  <>
+    <div className="flex h-full items-center justify-center gap-2.5">
+      {(['A', 'B', 'C'] as const).map((l) => (
+        <div key={l} className="flex flex-col items-center gap-1.5">
+          <Slab w={34} h={64} live={l === 'B'} className={cn(l !== 'B' && 'opacity-50')}>
+            <PhoneRide tapped={l === 'B'} />
+          </Slab>
+          <span className={cn('text-[10px] font-bold', l === 'B' ? 'text-interact-ink' : 'text-muted-soft')}>{l}</span>
+        </div>
+      ))}
+    </div>
+    <Tag className="top-1/2 left-2 -translate-y-1/2">[</Tag>
+    <Tag className="top-1/2 right-2 -translate-y-1/2">]</Tag>
+  </>
+)
+
 /** 1 to 4 - the device changes and the design re-lays itself around it. */
 const Devices = (
   <div className="flex h-full items-center justify-center gap-5">
     <div className="flex flex-col items-center gap-2">
-      <Slab w={44} h={84} live>
+      <Slab w={40} h={78} live>
         <PhoneRide />
       </Slab>
       <Kbd className="h-[18px] min-w-[18px] px-1 text-[10px]">1</Kbd>
     </div>
     <div className="flex flex-col items-center gap-2">
       <div className="flex flex-col items-center">
-        <Slab w={126} h={76} live>
+        <Slab w={108} h={68} live>
           <WideRide />
         </Slab>
-        <span className="h-[3px] w-[146px] rounded-b-[3px] bg-(--node-brd)" />
+        <span className="h-[3px] w-[126px] rounded-b-[3px] bg-(--node-brd)" />
       </div>
       <Kbd className="h-[18px] min-w-[18px] px-1 text-[10px]">3</Kbd>
     </div>
@@ -159,11 +177,11 @@ export default function PressPlay() {
       hint={
         <>
           Start on <Ink>Start here</Ink>, the white frame beside this one.{' '}
-          <Kbd className="mx-1">Esc</Kbd> drops you back on the board.
+          <Kbd className="mx-1">Esc</Kbd> drops you back on the board. After the ride, the <Ink>collaborate</Ink> board is next.
         </>
       }
     >
-      <div className="grid max-w-[1140px] grid-cols-3 gap-4">
+      <div className="grid max-w-[1240px] grid-cols-4 gap-4">
         <Move
           keys={
             <span className="inline-flex items-center gap-1.5">
@@ -177,7 +195,6 @@ export default function PressPlay() {
           }
           action="Start it."
           demo={Enter}
-          wide
         >
           No double-click needed. The board falls away and the frame runs.
         </Move>
@@ -185,9 +202,20 @@ export default function PressPlay() {
           keys={<span className="text-[12.5px] font-semibold tracking-[0.04em] text-brand uppercase">tap through</span>}
           action="Every tap goes somewhere."
           demo={Flow}
-          wide
         >
           Search, pick a ride, meet the driver, ride it. Five screens, one graph - dead ends show up immediately.
+        </Move>
+        <Move
+          keys={
+            <span className="inline-flex items-center gap-1">
+              <Kbd>[</Kbd>
+              <Kbd>]</Kbd>
+            </span>
+          }
+          action="Flip variants in place."
+          demo={Variants}
+        >
+          Sibling a- / b- / c- files of one screen swap live mid-ride - the recipe phones on the canvas board are wired for exactly this.
         </Move>
         <Move
           keys={
@@ -199,7 +227,6 @@ export default function PressPlay() {
           }
           action="Flip the device under it."
           demo={Devices}
-          wide
         >
           Phone stacks the sheet under the map; laptop docks it beside a full-bleed one. Same frame, laid out for the screen it landed on.
         </Move>

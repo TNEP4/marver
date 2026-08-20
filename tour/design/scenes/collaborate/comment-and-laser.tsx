@@ -160,8 +160,8 @@ const LaserComments = (
 export default function CommentAndLaser() {
   return (
     <Slide
-      eyebrow="The modes"
-      step="2 of 2"
+      eyebrow="Collaborate"
+      step="1 of 4"
       title="The canvas is where feedback lives."
       lead={
         <>
@@ -170,7 +170,7 @@ export default function CommentAndLaser() {
           preview; on your own canvas the loop is live and your agent reads every thread.
         </>
       }
-      hint={<>Next board: <Ink>prototype</Ink> - where you drive a real flow yourself.</>}
+      hint={<>The rest of this board: publish the canvas, invite the team, and watch a thread become work.</>}
     >
       <div className="flex items-center gap-7">
         {/* a thread, as the canvas draws one */}

@@ -18,7 +18,7 @@ export default function Invite() {
   return (
     <Slide
       eyebrow="Collaborate"
-      step="2 of 3"
+      step="3 of 4"
       title="One link. Everyone gets their own account."
       lead={
         <>

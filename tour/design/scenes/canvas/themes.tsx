@@ -6,7 +6,7 @@ export default function Themes() {
   return (
     <Slide
       eyebrow="The canvas"
-      step="7 of 8"
+      step="3 of 4"
       title="Dark is not an afterthought."
       lead={
         <>

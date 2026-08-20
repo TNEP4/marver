@@ -2,6 +2,7 @@
   "version": 1,
   "name": "collaborate",
   "auto": false,
+  "order": 4,
   "layout": {
     "rows": [
       [
@@ -12,6 +13,7 @@
       "collaborate": {
         "rows": [
           [
+            "comment-and-laser",
             "publish",
             "invite",
             "comments"
@@ -22,6 +24,9 @@
   },
   "nodes": [
     {
+      "frame": "collaborate/comment-and-laser"
+    },
+    {
       "frame": "collaborate/publish"
     },
     {
@@ -30,6 +35,5 @@
     {
       "frame": "collaborate/comments"
     }
-  ],
-  "order": 6
+  ]
 }

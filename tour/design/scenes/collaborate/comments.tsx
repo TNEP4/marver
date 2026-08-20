@@ -33,7 +33,7 @@ export default function Comments() {
   return (
     <Slide
       eyebrow="Collaborate"
-      step="3 of 3"
+      step="4 of 4"
       title="Every comment is pinned to an element."
       lead={
         <>
@@ -44,7 +44,7 @@ export default function Comments() {
           the comment starts it without you leaving the board.
         </>
       }
-      hint={<>Feedback, work and receipt in one place - the iteration loop gets very short.</>}
+      hint={<>Feedback, work and receipt in one place - and the next board, <Ink>jam</Ink>, is that loop running live.</>}
     >
       <div className="flex max-w-[1140px] items-stretch gap-7">
         {/* what a person sees */}
