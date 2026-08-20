@@ -281,7 +281,7 @@ export default function BoardsAndTidy() {
     >
       <div className="flex flex-col gap-3">
         {/* The board: three columns - inspiration, thinking, screens */}
-        <div className="overflow-x-auto rounded-card border border-border bg-surface-2 px-5 py-4">
+        <div className="overflow-x-auto rounded-card border border-border bg-surface-2 px-5 py-3">
           <div className="flex items-start gap-4">
             {/* left column - what the work looks up to */}
             <div className="flex shrink-0 flex-col">

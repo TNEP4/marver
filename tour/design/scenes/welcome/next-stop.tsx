@@ -11,8 +11,8 @@ const BOARDS = [
   },
   {
     name: 'prototype',
-    body: 'Press P and a wired ride flow runs like the real app.',
-    goto: 'prototype/press-play',
+    body: 'Run a wired flow in place on the canvas, or full screen.',
+    goto: 'prototype/two-ways',
   },
   {
     name: 'collaborate',

@@ -46,7 +46,7 @@ export default function Comments() {
       }
       hint={<>Feedback, work and receipt in one place - and the next board, <Ink>jam</Ink>, is that loop running live.</>}
     >
-      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 lg:flex-row">
         {/* what a person sees */}
         <div className="flex w-full max-w-[560px] shrink-0 flex-wrap items-start gap-4 rounded-card border border-border bg-surface-2 p-5">
           <div className="relative shrink-0">

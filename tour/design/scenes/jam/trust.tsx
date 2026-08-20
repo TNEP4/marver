@@ -42,7 +42,7 @@ export default function Trust() {
         </>
       }
     >
-      <div className="flex max-w-[1120px] flex-col items-stretch gap-6 xl:flex-row">
+      <div className="flex max-w-[1120px] flex-col items-stretch gap-6 lg:flex-row">
         <div className="grid flex-1 grid-cols-1 gap-6 md:grid-cols-3">
           {SHAPE.map((s) => (
             <div key={s.title} className="rounded-card border border-border bg-surface-2 p-6">

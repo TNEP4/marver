@@ -49,16 +49,15 @@ export default function Publish() {
       title="Two commands and the canvas has a URL."
       lead={
         <>
-          <Ink>marver build</Ink> bundles only the boards you listed in{' '}
-          <Ink>publish.json</Ink> - anything unlisted is not even in the bundle.{' '}
-          <Ink>marver serve</Ink> runs it on any Node host. Point a volume at it and the
-          published canvas grows accounts and live comments; leave it out and it stays a
-          static, read-only canvas. <Ink>This tour is that command.</Ink>
+          <Ink>marver build</Ink> bundles only the boards you list in{' '}
+          <Ink>publish.json</Ink> - anything unlisted is not in the bundle.{' '}
+          <Ink>marver serve</Ink> runs it on any Node host; point a volume at it and the
+          canvas grows accounts and live comments. <Ink>This tour is that command.</Ink>
         </>
       }
       hint={<>Re-publishing never clobbers feedback - the server unions the logs on boot.</>}
     >
-      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 lg:flex-row">
         <Term title="your repo" className="w-full max-w-[540px] shrink-0">
           <Cmd note="which boards, what rights">cat design/publish.json</Cmd>
           <Out className="text-foreground/70">
@@ -75,7 +74,7 @@ export default function Publish() {
           <Out className="text-comment-ink">→ live on https://tour.marver.design</Out>
         </Term>
 
-        <div className="flex min-w-0 flex-1 flex-col rounded-card border border-border bg-surface-2 p-6">
+        <div className="flex min-w-0 flex-1 flex-col rounded-card border border-border bg-surface-2 p-5">
           <div className="flex items-center gap-2.5">
             <span className="flex size-[30px] items-center justify-center rounded-[9px] bg-brand-wash text-brand ring-1 ring-brand/15">
               <Key className="size-[17px]" />
@@ -84,9 +83,9 @@ export default function Publish() {
               The gate has three doors
             </h2>
           </div>
-          <div className="mt-5 divide-y divide-border">
+          <div className="mt-4 divide-y divide-border">
             {DOORS.map((d) => (
-              <div key={d.key} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3.5 first:pt-0 last:pb-0">
+              <div key={d.key} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3 first:pt-0 last:pb-0">
                 <span className="w-[74px] shrink-0 text-[14.5px] font-semibold">{d.key}</span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-medium">{d.who}</p>
@@ -103,7 +102,7 @@ export default function Publish() {
               </div>
             ))}
           </div>
-          <p className="mt-auto pt-6 text-[13.5px] leading-[1.5] text-muted-soft">
+          <p className="mt-auto pt-4 text-[13.5px] leading-[1.5] text-muted-soft">
             You are standing behind door one right now - which is why this canvas reads but
             does not answer back.
           </p>

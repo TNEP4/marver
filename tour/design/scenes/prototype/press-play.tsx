@@ -164,7 +164,7 @@ export default function PressPlay() {
   return (
     <Slide
       eyebrow="Prototype"
-      step="1 of 6"
+      step="2 of 7"
       title="Press P. The board becomes the product."
       lead={
         <>
@@ -181,7 +181,7 @@ export default function PressPlay() {
         </>
       }
     >
-      <div className="grid max-w-[1240px] grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid max-w-[1240px] grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Move
           keys={
             <span className="inline-flex items-center gap-1.5">

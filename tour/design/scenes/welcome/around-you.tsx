@@ -151,7 +151,7 @@ export default function AroundYou() {
       }
       hint={<>One more frame in this board, then you are driving.</>}
     >
-      <div className="flex flex-col items-start gap-10 xl:flex-row">
+      <div className="flex flex-col items-start gap-10 lg:flex-row">
         {/* The canvas, in miniature - this board, drawn at the shell's measurements. */}
         <div
           data-testid="canvas-mock"

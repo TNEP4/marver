@@ -16,6 +16,7 @@
       "prototype": {
         "rows": [
           [
+            "two-ways",
             "press-play"
           ]
         ]
@@ -34,6 +35,9 @@
     }
   },
   "nodes": [
+    {
+      "frame": "prototype/two-ways"
+    },
     {
       "frame": "prototype/press-play"
     },

@@ -30,7 +30,7 @@ export default function WhatVariantsAre() {
         </>
       }
     >
-      <div className="flex flex-col items-start gap-8 xl:flex-row xl:items-center">
+      <div className="flex flex-col items-start gap-8 lg:flex-row lg:items-center">
         {/* The files */}
         <div className="w-full max-w-[430px] shrink-0 overflow-hidden rounded-card border border-border bg-surface-2">
           <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
@@ -51,7 +51,7 @@ export default function WhatVariantsAre() {
         </div>
 
         {/* Becomes one group */}
-        <svg viewBox="0 0 48 24" className="hidden w-12 shrink-0 text-brand xl:block" fill="none" aria-hidden>
+        <svg viewBox="0 0 48 24" className="hidden w-12 shrink-0 text-brand lg:block" fill="none" aria-hidden>
           <path d="M2 12h40m0 0-8-8m8 8-8 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
 

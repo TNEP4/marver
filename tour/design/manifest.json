@@ -106,6 +106,14 @@
       "viewport": "laptop"
     },
     {
+      "id": "prototype/two-ways",
+      "file": "design/scenes/prototype/two-ways.tsx",
+      "kind": "tsx",
+      "scene": "prototype",
+      "title": "Two ways to run it",
+      "viewport": "laptop"
+    },
+    {
       "id": "recipe/a-classic",
       "file": "design/scenes/recipe/a-classic.tsx",
       "kind": "tsx",
@@ -255,7 +263,7 @@
     },
     {
       "name": "prototype",
-      "frames": 1
+      "frames": 2
     },
     {
       "name": "recipe",

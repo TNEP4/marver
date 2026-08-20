@@ -30,7 +30,7 @@ export default function Invite() {
       }
       hint={<>Every thread carries who wrote it, so the board stays accountable.</>}
     >
-      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 lg:flex-row">
         <Term title="your repo" className="w-full max-w-[560px] shrink-0">
           <Cmd note="once, from the deploy logs">
             marver comments connect &lt;url&gt; --invite &lt;token&gt;
@@ -48,36 +48,36 @@ export default function Invite() {
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           {/* what the colleague opens */}
-          <div className="rounded-card border border-border bg-surface-2 p-5">
+          <div className="rounded-card border border-border bg-surface-2 p-4">
             <p className="text-[12.5px] font-semibold tracking-[0.06em] text-muted-soft uppercase">
               What they open
             </p>
-            <div className="mt-3.5 rounded-[14px] border border-border bg-card p-5 shadow-(--shadow-lift)">
+            <div className="mt-3 rounded-[14px] border border-border bg-card p-4 shadow-(--shadow-lift)">
               <p className="text-[16px] font-semibold tracking-[-0.015em]">Join marver tour</p>
               <p className="mt-1 text-[13.5px] text-muted-foreground">
                 Invited by Nic · read and comment
               </p>
-              <div className="mt-4 flex items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-[11px] font-medium text-muted-soft">
+              <div className="mt-3 flex items-center gap-3">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-[11px] font-medium text-muted-soft">
                   add
                 </span>
-                <div className="min-w-0 flex-1 space-y-2">
-                  <div className="flex h-[34px] items-center rounded-[10px] border border-border bg-surface px-3 text-[13.5px] text-foreground/80">
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="flex h-[30px] items-center rounded-[10px] border border-border bg-surface px-3 text-[13.5px] text-foreground/80">
                     Aeliana Rossi
                   </div>
-                  <div className="flex h-[34px] items-center rounded-[10px] border border-border bg-surface px-3 text-[13.5px] text-muted-soft">
+                  <div className="flex h-[30px] items-center rounded-[10px] border border-border bg-surface px-3 text-[13.5px] text-muted-soft">
                     ••••••••••
                   </div>
                 </div>
               </div>
-              <div className="mt-4 flex h-[40px] items-center justify-center rounded-full bg-brand text-[14.5px] font-semibold text-white">
+              <div className="mt-3 flex h-[36px] items-center justify-center rounded-full bg-brand text-[14.5px] font-semibold text-white">
                 Claim my account
               </div>
             </div>
           </div>
 
           {/* and then they are simply on the board */}
-          <div className="flex items-center gap-4 rounded-card border border-border bg-surface-2 px-5 py-4">
+          <div className="flex items-center gap-4 rounded-card border border-border bg-surface-2 px-5 py-3">
             <div className="flex -space-x-2">
               {TEAM.map((t) => (
                 <Face key={t.name} name={t.name} hue={t.hue} className="ring-2 ring-surface-2" />

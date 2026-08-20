@@ -172,7 +172,7 @@ export default function CommentAndLaser() {
       }
       hint={<>The rest of this board: publish the canvas, invite the team, and watch a thread become work.</>}
     >
-      <div className="flex flex-col items-start gap-7 xl:flex-row xl:items-center">
+      <div className="flex flex-col items-start gap-7 lg:flex-row lg:items-center">
         {/* a thread, as the canvas draws one */}
         <div className="w-full max-w-[340px] shrink-0 rounded-panel border border-border bg-card p-5 shadow-(--shadow-lift)">
           <div className="flex items-start gap-3">
