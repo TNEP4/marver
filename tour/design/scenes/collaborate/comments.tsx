@@ -46,9 +46,9 @@ export default function Comments() {
       }
       hint={<>Feedback, work and receipt in one place - and the next board, <Ink>jam</Ink>, is that loop running live.</>}
     >
-      <div className="flex max-w-[1140px] items-stretch gap-7">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
         {/* what a person sees */}
-        <div className="flex w-[560px] shrink-0 items-start gap-4 rounded-card border border-border bg-surface-2 p-5">
+        <div className="flex w-full max-w-[560px] shrink-0 flex-wrap items-start gap-4 rounded-card border border-border bg-surface-2 p-5">
           <div className="relative shrink-0">
             <MiniFrame title="ride/choose" badge="mobile" state="comment" className="w-[186px]">
               <div className="space-y-2">

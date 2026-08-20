@@ -30,9 +30,9 @@ export default function WhatVariantsAre() {
         </>
       }
     >
-      <div className="flex items-center gap-8">
+      <div className="flex flex-col items-start gap-8 xl:flex-row xl:items-center">
         {/* The files */}
-        <div className="w-[430px] shrink-0 overflow-hidden rounded-card border border-border bg-surface-2">
+        <div className="w-full max-w-[430px] shrink-0 overflow-hidden rounded-card border border-border bg-surface-2">
           <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
             <span className="size-2.5 rounded-full bg-muted-foreground/30" />
             <span className="font-mono text-[12px] font-medium text-muted-foreground">design/scenes/recipe/</span>
@@ -51,12 +51,12 @@ export default function WhatVariantsAre() {
         </div>
 
         {/* Becomes one group */}
-        <svg viewBox="0 0 48 24" className="w-12 shrink-0 text-brand" fill="none" aria-hidden>
+        <svg viewBox="0 0 48 24" className="hidden w-12 shrink-0 text-brand xl:block" fill="none" aria-hidden>
           <path d="M2 12h40m0 0-8-8m8 8-8 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
 
         <div className="rounded-[14px] border border-dashed border-brand/45 bg-brand-wash p-3.5">
-          <div className="flex items-start gap-2.5">
+          <div className="flex flex-wrap items-start gap-2.5">
             <MiniFrame title="a-classic" badge="A" state="selected" className="w-[118px]">
               <div className="space-y-2">
                 <MiniBlock className="h-[34px] rounded-[8px]" />

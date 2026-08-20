@@ -30,8 +30,8 @@ export default function Invite() {
       }
       hint={<>Every thread carries who wrote it, so the board stays accountable.</>}
     >
-      <div className="flex max-w-[1140px] items-stretch gap-7">
-        <Term title="your repo" className="w-[560px] shrink-0">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
+        <Term title="your repo" className="w-full max-w-[560px] shrink-0">
           <Cmd note="once, from the deploy logs">
             marver comments connect &lt;url&gt; --invite &lt;token&gt;
           </Cmd>

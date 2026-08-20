@@ -110,7 +110,7 @@ export default function Philosophy() {
       }
       hint={<>Next: a quick look around the canvas UI itself.</>}
     >
-      <div className="grid max-w-[1080px] grid-cols-3 gap-5">
+      <div className="grid max-w-[1080px] grid-cols-1 gap-5 md:grid-cols-3">
         {POINTS.map((p) => (
           <Move key={p.title} action={p.title} demo={p.demo} stageH={150} wide>
             {p.body}

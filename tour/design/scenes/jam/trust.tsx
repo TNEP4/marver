@@ -42,8 +42,8 @@ export default function Trust() {
         </>
       }
     >
-      <div className="flex max-w-[1120px] items-stretch gap-6">
-        <div className="grid flex-1 grid-cols-3 gap-6">
+      <div className="flex max-w-[1120px] flex-col items-stretch gap-6 xl:flex-row">
+        <div className="grid flex-1 grid-cols-1 gap-6 md:grid-cols-3">
           {SHAPE.map((s) => (
             <div key={s.title} className="rounded-card border border-border bg-surface-2 p-6">
               <span className="mb-4 flex size-[38px] items-center justify-center rounded-[11px] bg-brand-wash text-brand ring-1 ring-brand/15">

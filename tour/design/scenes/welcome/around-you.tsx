@@ -151,11 +151,11 @@ export default function AroundYou() {
       }
       hint={<>One more frame in this board, then you are driving.</>}
     >
-      <div className="flex items-start gap-10">
+      <div className="flex flex-col items-start gap-10 xl:flex-row">
         {/* The canvas, in miniature - this board, drawn at the shell's measurements. */}
         <div
           data-testid="canvas-mock"
-          className="canvas-ground relative h-[440px] w-[760px] shrink-0 overflow-hidden rounded-card border border-border"
+          className="canvas-ground relative h-[440px] w-[760px] max-w-full shrink-0 overflow-x-auto rounded-card border border-border"
         >
           {/* 3 - frames on the ground: welcome.json, five laptop frames in one row */}
           <Node title="Why code-native" w={1280} style={{ left: 268, top: 195, width: 190 }} />

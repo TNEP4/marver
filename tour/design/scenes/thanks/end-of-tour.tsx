@@ -10,7 +10,7 @@ export const meta = { title: 'End of the tour', viewport: 'laptop' }
 
 export default function EndOfTour() {
   return (
-    <div className="relative flex h-full min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-16 text-center text-foreground">
+    <div className="relative flex h-full min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-6 text-center md:px-16 text-foreground">
       {/* a quiet halo, the send-off's one flourish */}
       <div className="pointer-events-none absolute top-1/2 left-1/2 size-[620px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-wash blur-3xl" />
 
@@ -19,7 +19,7 @@ export default function EndOfTour() {
         That is the end of the tour.
       </h1>
 
-      <ThreadCard className="mt-9 w-[520px]">
+      <ThreadCard className="mt-9 w-full max-w-[520px]">
         <ThreadMsg agent time="now">
           Thanks for taking it. If you kicked off an install before you started, go back to
           your coding agent now - it has either finished, or it is waiting on an answer from

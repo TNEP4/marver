@@ -130,7 +130,7 @@ export function Cmd({ children, note }: { children: ReactNode; note?: string }) 
     <div className="flex items-baseline gap-2">
       <span className="shrink-0 text-brand select-none">$</span>
       <span className="min-w-0 text-foreground/90">{children}</span>
-      {note && <span className="ml-auto shrink-0 pl-4 text-muted-soft">{note}</span>}
+      {note && <span className="ml-auto hidden shrink-0 pl-4 text-muted-soft sm:inline">{note}</span>}
     </div>
   )
 }

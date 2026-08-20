@@ -51,7 +51,7 @@ export default function NextStop() {
         </>
       }
     >
-      <div className="grid max-w-[1080px] grid-cols-3 gap-4">
+      <div className="grid max-w-[1080px] grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {BOARDS.map((b) => (
           <button
             key={b.name}

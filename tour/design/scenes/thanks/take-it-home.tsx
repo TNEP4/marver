@@ -38,8 +38,8 @@ export default function TakeItHome() {
       }
       hint={<>That is the whole pitch. Go and see.</>}
     >
-      <div className="flex max-w-[1140px] items-stretch gap-7">
-        <Term title="your repo" className="w-[520px] shrink-0">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
+        <Term title="your repo" className="w-full max-w-[520px] shrink-0">
           <Cmd note="reads the codebase, writes design/">npx marver init</Cmd>
           <Out className="text-comment-ink">✓ canvas configured from your components</Out>
           <div className="h-3" />

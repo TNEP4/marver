@@ -58,8 +58,8 @@ export default function Publish() {
       }
       hint={<>Re-publishing never clobbers feedback - the server unions the logs on boot.</>}
     >
-      <div className="flex max-w-[1140px] items-stretch gap-7">
-        <Term title="your repo" className="w-[540px] shrink-0">
+      <div className="flex max-w-[1140px] flex-col items-stretch gap-7 xl:flex-row">
+        <Term title="your repo" className="w-full max-w-[540px] shrink-0">
           <Cmd note="which boards, what rights">cat design/publish.json</Cmd>
           <Out className="text-foreground/70">
             {'{ "boards": { "welcome": "read", "prototype": "comment" } }'}
@@ -86,7 +86,7 @@ export default function Publish() {
           </div>
           <div className="mt-5 divide-y divide-border">
             {DOORS.map((d) => (
-              <div key={d.key} className="flex items-baseline gap-4 py-3.5 first:pt-0 last:pb-0">
+              <div key={d.key} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3.5 first:pt-0 last:pb-0">
                 <span className="w-[74px] shrink-0 text-[14.5px] font-semibold">{d.key}</span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-medium">{d.who}</p>

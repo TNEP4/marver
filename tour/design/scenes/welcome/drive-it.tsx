@@ -251,7 +251,7 @@ export default function DriveIt() {
       }
       hint={<>Done playing? The next frame explains why any of this matters.</>}
     >
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
         <Move combo="click" action="Select a frame." demo={Select}>
           Shift-click adds more. Click the ground to clear.
         </Move>

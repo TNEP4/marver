@@ -172,9 +172,9 @@ export default function CommentAndLaser() {
       }
       hint={<>The rest of this board: publish the canvas, invite the team, and watch a thread become work.</>}
     >
-      <div className="flex items-center gap-7">
+      <div className="flex flex-col items-start gap-7 xl:flex-row xl:items-center">
         {/* a thread, as the canvas draws one */}
-        <div className="w-[340px] shrink-0 rounded-panel border border-border bg-card p-5 shadow-(--shadow-lift)">
+        <div className="w-full max-w-[340px] shrink-0 rounded-panel border border-border bg-card p-5 shadow-(--shadow-lift)">
           <div className="flex items-start gap-3">
             <Face name="A" hue="#ff9500" />
             <div className="min-w-0">
@@ -199,7 +199,7 @@ export default function CommentAndLaser() {
           </div>
         </div>
 
-        <div className="grid min-w-0 flex-1 grid-cols-2 gap-3.5">
+        <div className="grid min-w-0 flex-1 grid-cols-1 gap-3.5 sm:grid-cols-2">
           <Move combo="c" action="Comment mode." demo={Comment} stageH={84}>
             Click an element; the pin holds the thread.
           </Move>

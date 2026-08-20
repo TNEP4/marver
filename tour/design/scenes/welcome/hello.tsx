@@ -23,8 +23,8 @@ export default function Hello() {
         </>
       }
     >
-      <div className="flex items-end justify-between gap-10">
-        <div className="grid w-[440px] grid-cols-[1.3fr_1fr] items-start gap-4">
+      <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between lg:gap-10">
+        <div className="grid w-full max-w-[440px] grid-cols-[1.3fr_1fr] items-start gap-4">
           <MiniFrame title="landing/hero" badge="laptop" state="selected">
             <div className="space-y-2">
               <MiniBar w="36%" tone="ink" />
@@ -61,7 +61,7 @@ export default function Hello() {
           </div>
         </div>
 
-        <div className="glass w-[420px] rounded-panel p-6">
+        <div className="glass w-full max-w-[420px] rounded-panel p-6">
           <p className="text-[13px] font-semibold tracking-[0.08em] text-brand uppercase">Meanwhile</p>
           <p className="mt-2.5 text-[15.5px] leading-[1.55] text-glass-ink/85">
             Your coding agent is setting up your own workspace right now. It may ask you a

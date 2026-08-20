@@ -56,9 +56,9 @@ export default function FramesAreCode() {
       }
       hint={<>Head right: devices, themes, boards - and at the end of the row, one screen designed three ways.</>}
     >
-      <div className="flex items-center gap-7">
+      <div className="flex flex-col items-start gap-7 lg:flex-row lg:items-center">
         {/* The file */}
-        <div className="w-[470px] shrink-0 overflow-hidden rounded-card border border-border bg-surface-2">
+        <div className="w-full max-w-[470px] shrink-0 overflow-hidden rounded-card border border-border bg-surface-2">
           <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
             <span className="size-2.5 rounded-full bg-muted-foreground/30" />
             <span className="font-mono text-[12px] font-medium text-muted-foreground">design/scenes/checkout/cart.tsx</span>
@@ -86,7 +86,7 @@ export default function FramesAreCode() {
         </div>
 
         {/* The arrow */}
-        <div className="flex shrink-0 flex-col items-center gap-1.5">
+        <div className="hidden shrink-0 flex-col items-center gap-1.5 lg:flex">
           <svg viewBox="0 0 48 24" className="w-11 text-brand" fill="none" aria-hidden>
             <path d="M2 12h40m0 0-8-8m8 8-8 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>

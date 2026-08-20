@@ -19,7 +19,7 @@ function Beat({ n, label, note, children }: { n: number; label: string; note: st
 
 function Arrow() {
   return (
-    <svg viewBox="0 0 32 16" className="mt-[3px] w-8 shrink-0 text-muted-soft opacity-35" fill="none" aria-hidden>
+    <svg viewBox="0 0 32 16" className="mt-[3px] hidden w-8 shrink-0 text-muted-soft opacity-35 lg:block" fill="none" aria-hidden>
       <path d="M2 8h26m0 0-6-6m6 6-6 6" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
@@ -42,7 +42,7 @@ export default function TheLoop() {
       }
       hint={<>No round trip to the terminal. The board is the workbench.</>}
     >
-      <div className="flex max-w-[1120px] items-start gap-8">
+      <div className="flex max-w-[1120px] flex-col items-stretch gap-8 lg:flex-row lg:items-start">
         <Beat
           n={1}
           label="The ask"
