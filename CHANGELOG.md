@@ -6,6 +6,60 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Changed
 
+- **Live Jam is on by default, at concurrency 6.** Tagging `@marver` in a comment was the
+  headline workflow and a config edit stood in front of it. Now it arms itself: the tool
+  RUNNING the process wins (its env markers are evidence, and `init` is usually run by the
+  agent), then whatever is on PATH, claude first. That last tie-break is a guess, which is
+  why the answer is made visible rather than clever - `init` prints the agent it chose and
+  writes it into `design/config.ts` in plain sight as
+  `jam: { agent: "claude", concurrency: 6 }`, and the generated instructions have the agent
+  confirm that line names the tool it actually is. One word to correct, once per repo.
+  Workspaces that predate the block need no re-init; they resolve the same way at every
+  dev boot. `jam: false` is the off switch, and `jam: "codex"` is shorthand for naming the
+  agent. Six frames at once replaces three - at three, half of a multi-frame ask sat
+  waiting on the other half while the human watched. With no agent CLI installed, jam stays
+  off and both `init` and `marver dev` say so instead of going quiet.
+- **A named agent is never quietly swapped, nor armed when it cannot run.** `jam.agent`
+  naming something marver cannot spawn turns Live Jam off with a printed reason rather than
+  detecting some other tool and answering the human's comments with it; the same applies
+  when the named CLI is not on PATH, which used to claim every mention and then fail it. A
+  `design/config.ts` that fails to parse also leaves jam off - it may have said `jam: false`,
+  and arming a process spawn against intent we cannot read is the one wrong-way error worth
+  avoiding.
+- **`jam.subagents` does something now, and Codex fans out too.** The setting existed but never
+  reached the spawned agent, which reads no config - so the parallel-frame policy is stated in
+  the job prompt, and turning it off keeps a job on a single agent. The Codex adapter had also
+  been marked as having no subagents; `codex exec` carries `collaboration.spawn_agent`, so a
+  multi-frame Codex job now fans out the way a Claude Code one does. The prompt only ever says
+  "you MAY", so an older CLI without those tools just works serially instead of failing.
+- **Worth knowing, now that it is on by default:** the two agents are locked down differently,
+  because their CLIs differ. Claude Code is spawned with shell access removed entirely
+  (`--disallowedTools Bash`); Codex runs in its own `workspace-write` sandbox, which bounds
+  what commands can *touch* but still lets the model run them. Both are confined to the
+  workspace, and every change is a diff you review.
+
+### Fixed
+
+- **A one-message agent no longer posts the raw reply fence into the thread.** Live Jam posts
+  the agent's first streamed message as an immediate ack. Codex emits a single message at the
+  very end, carrying the completion block, and a fast Claude Code run can do the same - so the
+  ack was the finished reply, fence and all, followed by a second message with the same words.
+  The early path now normalizes exactly like the final one, which also makes the existing
+  duplicate check catch it: one clean reply.
+
+- **The jam ledger and journal are bound to the machine that wrote them.** Both live in
+  `design/.local/`, which is gitignored and never synced - but gitignore is a convention,
+  not provenance: a repo can force-add its own `.local/` and hand a clone a pre-authorized
+  ledger plus a pre-baselined journal. Each line and file now carries a device stamp, so
+  jam state that arrived with a clone is read as absent. The stamp is derived from the
+  machine, not stored (marver writes nothing outside `design/`), so it stops one repo
+  published to everyone rather than someone who already knows your machine - and the larger
+  caution is unchanged either way: `marver dev` imports and executes `design/config.ts`, so
+  running a dev server in a repo you do not trust is already running its code.
+  One-time upgrade cost: an existing journal predates the stamp, so the first boot after
+  upgrading rebaselines - any `@marver` mention left unprocessed while the server was down
+  is marked seen instead of run. Re-comment to pick it up.
+
 - **Comments wear the brand blue.** Pins, thread cards, the comment-mode pick cursor and
   the anchored-thread chrome move off systemGreen. Interact keeps purple, and green is now
   reserved for the done state alone - in dark mode the comment and done greens had drifted

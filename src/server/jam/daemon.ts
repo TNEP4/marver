@@ -30,7 +30,7 @@ import { claudeAdapter } from './adapter/claude.ts'
 import { codexAdapter } from './adapter/codex.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
-import { buildMember, buildPacket, goalText, threadId } from './packet.ts'
+import { buildMember, buildPacket, extractReanchors, extractReplyBlock, goalText, threadId } from './packet.ts'
 import { scanPending, triggers, engagedThreads, allEventIds } from './watch.ts'
 import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
 
@@ -102,7 +102,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         lineBuf = lines.pop() ?? ''
         for (const line of lines) {
           const hit = adapter.earlyText!(line)
-          if (hit && !metaNarration(hit.text)) { earlyFired = true; try { onEarly!(hit.text, hit.model) } catch { /* early delivery is best-effort */ } break }
+          if (!hit) continue
+          // A first message that already carries the completion fence IS the completion, not an
+          // ack: codex streams a single message at the very end, and a fast claude run can do the
+          // same. Post what is INSIDE the block - never the raw fence - and since that equals what
+          // parse() will return, the final reply dedupes itself instead of doubling up.
+          const text = extractReplyBlock(extractReanchors(hit.text).reply)
+          if (!text || metaNarration(text)) continue
+          earlyFired = true
+          try { onEarly!(text, hit.model) } catch { /* early delivery is best-effort */ }
+          break
         }
       })
       child.on('close', (code) => settle({ ...adapter.parse(out, code ?? 1), raw: out }))
@@ -183,7 +192,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     let earlyBody: string | undefined
     let run: Awaited<ReturnType<typeof runAgent>>
     try {
-      run = await runAgent(goalText(packet), (pid) => { b.pgid = pid; persist() }, (text, model) => {
+      run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; persist() }, (text, model) => {
         // write FIRST, remember after: if the append throws, the final must not be suppressed
         // as a "duplicate" of an ack that never actually posted
         writeReply(b, p, text, model, 'early')
@@ -354,7 +363,9 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   // stale-glow expiry (a dead job's lease) is swept by the dev server, which owns the shared set
   void core.tick()
 
-  log(`  jam: watching for @marver (${adapter.name})`)
+  // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
+  // it has to name the agent AND the way out.
+  log(`  jam: on (${adapter.name}) - tag @marver in a comment and it does the work; \`jam: false\` in design/config.ts turns it off`)
   return {
     stop() {
       stopped = true

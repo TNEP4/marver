@@ -33,11 +33,11 @@ export default function TheLoop() {
       title="Tag @marver. Your agent does the rest."
       lead={
         <>
-          On your own canvas, while <Ink>marver dev</Ink> runs with a jam agent configured,
-          any comment that tags <Ink>@marver</Ink> becomes a job:{' '}
-          <Ink>your local coding agent</Ink> picks it up, lights the frame while it edits
-          the real source files, and replies in the thread - everyone watching the board
-          sees the work happen.
+          On your own canvas, while <Ink>marver dev</Ink> runs, any comment that tags{' '}
+          <Ink>@marver</Ink> becomes a job: <Ink>your local coding agent</Ink> picks it up,
+          lights the frame while it edits the real source files, and replies in the thread -
+          everyone watching the board sees the work happen. It is on out of the box, and the
+          agent doing the work is your own - marver ships none.
         </>
       }
       hint={<>No round trip to the terminal. The board is the workbench.</>}

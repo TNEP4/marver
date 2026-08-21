@@ -1,15 +1,18 @@
 /**
  * The Codex adapter. Spawns `codex exec --json`
  * workspace-jailed. Codex emits JSONL events (thread.started, item.completed, turn.completed);
- * the final agent_message is the reply. Codex has no in-process subagents, so a Codex job edits
- * its frames sequentially - correct, just no parallel-frame glow within one job.
+ * the final agent_message is the reply.
+ *
+ * Subagents are ON: `codex exec` carries collaboration.spawn_agent / list_agents / wait_agent,
+ * so a multi-frame job fans out the same way Claude Code's does. The job prompt only ever says
+ * "you MAY", so an older codex without those tools simply works serially instead of failing.
  */
 import { extractReanchors, extractReplyBlock } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 export const codexAdapter: JamAdapter = {
   name: 'codex',
-  supportsSubagents: false,
+  supportsSubagents: true,
   spawnArgs(goal) {
     // --skip-git-repo-check: the workspace may not be a git root; workspace-write jails edits.
     return { cmd: 'codex', args: ['exec', '--json', '-s', 'workspace-write', '--skip-git-repo-check', goal] }

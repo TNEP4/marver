@@ -13,22 +13,27 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { deviceId } from './device.ts'
 import type { Journal } from './types.ts'
 
 const localDir = (root: string) => join(root, 'design', '.local')
 const journalFile = (root: string) => join(localDir(root), 'jam-jobs.json')
 const lockFile = (root: string) => join(localDir(root), 'jam.lock')
 
-const fresh = (): Journal => ({ version: 1, baselined: false, seen: [], batches: [] })
+const fresh = (): Journal => ({ version: 1, device: deviceId(), baselined: false, seen: [], batches: [] })
 
-/** Load the journal, tolerating a missing or corrupt file (→ a fresh, unbaselined journal). */
+/** Load the journal, tolerating a missing or corrupt file (→ a fresh, unbaselined journal).
+ *  A journal stamped by ANOTHER machine is treated as absent: a repo that ships its own
+ *  design/.local/ would otherwise hand a clone a pre-baselined journal whose `seen` omits the
+ *  attacker's own comments, and the daemon would run them. Rebaselining is the safe read -
+ *  every event already on disk becomes seen, so nothing pre-existing executes. */
 export function read(root: string): Journal {
   const file = journalFile(root)
   if (!existsSync(file)) return fresh()
   try {
     const j = JSON.parse(readFileSync(file, 'utf8')) as Journal
-    if (j?.version !== 1 || !Array.isArray(j.seen) || !Array.isArray(j.batches)) return fresh()
-    return { version: 1, baselined: !!j.baselined, seen: j.seen, batches: j.batches }
+    if (j?.version !== 1 || j.device !== deviceId() || !Array.isArray(j.seen) || !Array.isArray(j.batches)) return fresh()
+    return { version: 1, device: j.device, baselined: !!j.baselined, seen: j.seen, batches: j.batches }
   } catch { return fresh() }
 }
 

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
 import { detectHost, readJson, type HostInfo } from '../server/detect.ts'
 import { DEFAULTS } from '../server/config.ts'
+import { detectAgent } from '../server/jam/agent.ts'
 import { scanFrames, writeManifest } from '../server/manifest.ts'
 
 interface InitOpts { mode: 'studio' | 'embedded'; demo: boolean }
@@ -113,7 +114,12 @@ export function init(root: string, opts: InitOpts) {
 
   // config (commented defaults + native-TS sharp edges). Theme is deliberately absent:
   // design/theme.css (the wrapper) is the source of truth and always wins over config.
-  write('config.ts', configTemplate(opts.mode))
+  // Live Jam arms itself at every dev boot, but init writes the agent it detected in
+  // plain sight: init is usually run BY the agent, so this is the most accurate answer
+  // anyone will get to "which tool is this human using" - and a visible line is one the
+  // human can correct, which a silent default is not.
+  const jamAgent = detectAgent()
+  write('config.ts', configTemplate(opts.mode, jamAgent))
 
   // theme wrapper (spec §5.4) - the host CSS build stays byte-identical
   if (host.themeCss) {
@@ -299,6 +305,12 @@ export function init(root: string, opts: InitOpts) {
   // letting the first session discover the gap.
   if (!noApp(host) && !existsSync(join(design, 'DESIGN.md')))
     console.log(`\n  note: design/DESIGN.md (the brand doc) does not exist yet - have your agent create it from the app's tokens (instructions/brand.md, Path A) to reach the idle state.`)
+  // Jam is only claimed ON when init actually WROTE the config: on a re-run the file that was
+  // already there decides, and it may say `jam: false` or name an agent this machine lacks -
+  // announcing detection would be announcing something that is not going to happen. `marver dev`
+  // prints the truth at boot in every case. The no-CLI note is machine truth, so it always holds.
+  if (!jamAgent) console.log(`\n  note: Live Jam found no agent CLI on PATH (claude or codex) - install one and it arms itself on the next \`${NAME} dev\`.`)
+  else if (created.includes('design/config.ts')) console.log(`\n  Live Jam is on (${jamAgent}): tag @${NAME} in a canvas comment and your agent does the work, then replies in the thread.`)
   console.log(`\n  next: npx ${NAME} dev   (or: npx ${NAME} canvas - same thing; canvas on http://localhost:${DEFAULTS.port} by default)\n`)
   if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)
 }
@@ -468,8 +480,10 @@ npx ${NAME} init
 
 init is idempotent: it detects the real stack, deletes this file, and
 regenerates AGENTS.md against reality. Verify the wiring (instructions/
-configure.md): frames render styled, one app component imports cleanly.
-DESIGN.md comes next, as part of the first draft.
+configure.md): frames render styled, one app component imports cleanly, and
+\`jam.agent\` in design/config.ts names the tool you actually are - Live Jam is
+on by default and init guessed it (instructions/jam.md). DESIGN.md comes next,
+as part of the first draft.
 
 
 ## 6. The path they chose at the fork
@@ -588,7 +602,19 @@ function firstJsonBrace(src: string): number {
   return -1
 }
 
-const configTemplate = (mode: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
+/** The jam block, written with the agent init detected - or commented out, with the way
+ *  to arm it, when this machine has no agent CLI at all. */
+const jamBlock = (agent?: string) => agent
+  ? `  // Live Jam - tag @${NAME} in a canvas comment and this agent picks the job up, edits the
+  // real frame, and replies in the thread. Detected at init; change the agent if it named
+  // the wrong tool, raise concurrency for more frames at once, \`jam: false\` to turn it off.
+  jam: { agent: ${JSON.stringify(agent)}, concurrency: 6 },`
+  : `  // Live Jam - tag @${NAME} in a canvas comment and your coding agent picks the job up,
+  // edits the real frame, and replies in the thread. No agent CLI was on PATH when init ran;
+  // install claude or codex and it arms itself, or name one here. \`jam: false\` turns it off.
+  // jam: { agent: "claude", concurrency: 6 },`
+
+const configTemplate = (mode: string, jamAgent?: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
 // Theme lives in design/theme.css (it imports your app's real stylesheet) - not here.
 // Sharp edges (native Node TS import): erasable syntax only (no enums/namespaces),
 // relative imports need extensions, tsconfig paths are ignored here.
@@ -606,6 +632,7 @@ export default {
   port: ${DEFAULTS.port},
   // Canvas zoom feel: 1 = default, 1.2 = 20% faster, 0.8 = 20% slower.
   // zoomSpeed: 1,
+${jamBlock(jamAgent)}
   // Publishing (\`${NAME} build\` + \`${NAME} serve\`): gate identity + branding footer.
   // name/logo default to the host package.json name and design/logo.svg (then public/).
   // branding is the small "Powered by Marver.design" line under the gate. Marver is

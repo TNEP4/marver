@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -23,6 +23,50 @@ const OPTS = { mode: 'studio' as const, demo: false }
 const read = (rel: string) => readFileSync(join(root, 'design', rel), 'utf8')
 
 describe('init: Live Jam scaffolding', () => {
+  /** A PATH holding exactly these executables - init detects the agent off the real
+   *  filesystem, so pin it or the assertion depends on what the machine has installed. */
+  const bins: string[] = []
+  const withBins = (...names: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), 'mv-bin-'))
+    bins.push(dir)
+    for (const n of names) { writeFileSync(join(dir, n), '#!/bin/sh\n'); chmodSync(join(dir, n), 0o755) }
+    vi.stubEnv('PATH', dir)
+    for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_THREAD_ID']) vi.stubEnv(k, '')
+    return dir
+  }
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    for (const d of bins.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+
+  it('writes the detected agent into config.ts, armed, at concurrency 6', () => {
+    withBins('codex')
+    init(root, OPTS)
+    expect(read('config.ts')).toContain('jam: { agent: "codex", concurrency: 6 },')
+  })
+  it('the tool RUNNING init wins - it is the most accurate answer to "which agent is this"', () => {
+    withBins('claude', 'codex')
+    vi.stubEnv('CODEX_THREAD_ID', 'abc')
+    init(root, OPTS)
+    expect(read('config.ts')).toContain('jam: { agent: "codex", concurrency: 6 },')
+  })
+  it('a re-run never claims Live Jam is on - the config already there decides, not fresh detection', () => {
+    withBins('claude')
+    init(root, OPTS)
+    writeFileSync(join(root, 'design', 'config.ts'), 'export default { jam: false }\n')
+    const log = vi.mocked(console.log)
+    log.mockClear()
+    init(root, OPTS)                                  // init preserves the existing config...
+    expect(read('config.ts')).toContain('jam: false')  // ...so announcing detection would be a lie
+    expect(log.mock.calls.flat().join('\n')).not.toContain('Live Jam is on')
+  })
+  it('no agent CLI → the block ships commented out, never a broken agent name', () => {
+    withBins()
+    init(root, OPTS)
+    const cfg = read('config.ts')
+    expect(cfg).toContain('// jam: { agent: "claude", concurrency: 6 },')
+    expect(cfg).not.toMatch(/^\s*jam: \{/m)
+  })
   it('scaffolds the jam playbook and routes to it from AGENTS.md', () => {
     init(root, OPTS)
     expect(existsSync(join(root, 'design', 'instructions', 'jam.md'))).toBe(true)

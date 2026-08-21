@@ -24,7 +24,7 @@ const SHAPE = [
   {
     icon: ICON.seal,
     title: 'Provenance on every reply',
-    body: 'Each agent reply carries its receipt - which agent, which model, which dev user ran it. Hover the badge and the whole chain is there.',
+    body: 'Each agent reply carries its receipt - which agent ran it, as which dev user, on which model when the agent names one. Hover the badge and the chain is there.',
   },
 ]
 

@@ -129,9 +129,15 @@ features:
   glance. The cheap way to diverge on a direction before committing.
 - **Compose.** `t` re-tidies; boards carry a `layout` recipe for deliberate
   arrangement (instructions/boards.md).
+- **Point at it and ask.** Comment on any element, and tag `@marver` in the
+  comment. I pick the job up, edit that frame's real source while it wears a
+  live working glow, and reply in the thread when it is done. That is the
+  loop - point at the thing, say what you want, watch it change. (This is on;
+  say so plainly, it is the feature they will use most.)
 - **Share it.** `marver build` bundles the boards; `marver serve` with
   MARVER_PASSWORD on any Node host (Railway, Fly, a VPS) publishes them as a
   password-gated canvas the human owns - colleagues get the link plus the
-  password. Comments on the board are coming soon.
+  password. Give the serve a data volume and they get accounts and comment
+  right on it, and those threads sync back into the repo (instructions/publish.md).
 
 Close by asking what they want to design first.

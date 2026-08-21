@@ -37,9 +37,12 @@ export interface Batch {
 
 /** The on-disk journal (design/.local/jam-jobs.json). `seen` is the dedup source of truth
  *  (an event id enters it the moment it is batched); terminal batches are pruned, their ids
- *  stay in `seen`. `baselined` guards the activation baseline (never replay pre-existing logs). */
+ *  stay in `seen`. `baselined` guards the activation baseline (never replay pre-existing logs).
+ *  `device` binds the file to the machine that wrote it - a journal that arrived with a clone
+ *  is not this machine's word about what has already run (journal.ts). */
 export interface Journal {
   version: 1
+  device: string
   baselined: boolean
   seen: string[]
   batches: Batch[]

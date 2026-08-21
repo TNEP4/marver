@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { affectedFrameIds, extractMeta, toFrameId, type Manifest } from '../src/server/manifest.ts'
 import { tidy } from '../src/client/shell/tidy.ts'
@@ -177,9 +177,12 @@ describe('loadConfig', async () => {
   const { join } = await import('node:path')
   const { loadConfig, DEFAULTS } = await import('../src/server/config.ts')
 
-  it('missing file → defaults', async () => {
+  it('missing file → defaults (jam resolves separately - see its own suite)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-cfg-'))
-    expect(await loadConfig(root)).toEqual(DEFAULTS)
+    // BOTH jam keys come off: whether this machine has an agent CLI decides which one is set,
+    // and that must not be what makes the defaults assertion pass.
+    const { jam, jamOff, ...rest } = await loadConfig(root)
+    expect(rest).toEqual(DEFAULTS)
     rmSync(root, { recursive: true, force: true })
   })
   it('partial config merges over defaults; bad fields fall back', async () => {
@@ -211,35 +214,142 @@ describe('Live Jam M3: parseMentions (@marver rendering)', async () => {
   })
 })
 
-describe('Live Jam M0: config.jam', async () => {
+/** A PATH holding exactly the named executables. Detection is filesystem truth, so the tests
+ *  build a filesystem instead of mocking the module - and the suite stops depending on which
+ *  agent CLIs the machine running it happens to have. */
+const fakeBin = async (...names: string[]) => {
+  const { mkdtempSync, writeFileSync, chmodSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(join(tmpdir(), 'mv-bin-'))
+  for (const n of names) { writeFileSync(join(dir, n), '#!/bin/sh\n'); chmodSync(join(dir, n), 0o755) }
+  return dir
+}
+const AGENT_ENV = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_THREAD_ID']
+
+describe('Live Jam: which agent (detection)', async () => {
+  const { rmSync } = await import('node:fs')
+  const { delimiter } = await import('node:path')
+  const { detectAgent } = await import('../src/server/jam/agent.ts')
+  const dirs: string[] = []
+  const bin = async (...names: string[]) => { const d = await fakeBin(...names); dirs.push(d); return d }
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+
+  it('no agent CLI installed → undefined (nothing to spawn)', async () => {
+    expect(detectAgent({ PATH: await bin() })).toBeUndefined()
+  })
+  it('one installed → that one', async () => {
+    expect(detectAgent({ PATH: await bin('codex') })).toBe('codex')
+  })
+  it('both installed, neither running us → claude by preference', async () => {
+    expect(detectAgent({ PATH: await bin('claude', 'codex') })).toBe('claude')
+  })
+  it('the tool RUNNING us wins over preference order', async () => {
+    expect(detectAgent({ PATH: await bin('claude', 'codex'), CODEX_SANDBOX: 'seatbelt' })).toBe('codex')
+  })
+  it('an env marker for a CLI that is not on PATH never wins (the daemon must be able to spawn it)', async () => {
+    expect(detectAgent({ PATH: await bin('codex'), CLAUDECODE: '1' })).toBe('codex')
+  })
+  it('an empty PATH is not a crash', () => {
+    expect(detectAgent({})).toBeUndefined()
+  })
+  it('a DIRECTORY named like the CLI is not the CLI (directories carry the execute bit too)', async () => {
+    const { mkdirSync } = await import('node:fs')
+    const dir = await bin()
+    mkdirSync(join(dir, 'claude'))
+    expect(detectAgent({ PATH: dir })).toBeUndefined()
+  })
+  it('relative PATH entries are ignored - a CLI shipped inside the opened repo is never found', () => {
+    // '.' resolves against cwd, which IS the repo the dev server was started in
+    expect(detectAgent({ PATH: ['.', '', 'bin', 'node_modules/.bin'].join(delimiter) })).toBeUndefined()
+  })
+})
+
+describe('Live Jam: config.jam (on by default)', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
   const { loadConfig } = await import('../src/server/config.ts')
-  const load = async (src: string) => {
+  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false }
+
+  // Pin what detection sees: a PATH with a fake `claude` and no agent env markers.
+  const dirs: string[] = []
+  const bin = async (...names: string[]) => { const d = await fakeBin(...names); dirs.push(d); return d }
+  beforeEach(async () => {
+    vi.stubEnv('PATH', await bin('claude'))
+    for (const k of AGENT_ENV) vi.stubEnv(k, '')
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs(); vi.restoreAllMocks()
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+
+  const load = async (src?: string) => {
     const root = mkdtempSync(join(tmpdir(), 'sh-jam-'))
     mkdirSync(join(root, 'design'))
-    writeFileSync(join(root, 'design/config.ts'), src)
+    if (src !== undefined) writeFileSync(join(root, 'design/config.ts'), src)
     const c = await loadConfig(root)
     rmSync(root, { recursive: true, force: true })
     return c
   }
-  it('no jam block → Live Jam stays off (undefined)', async () => {
-    expect((await load(`export default { port: 6001 }\n`)).jam).toBeUndefined()
+
+  it('no jam block → armed with the detected agent', async () => {
+    expect((await load(`export default { port: 6001 }\n`)).jam).toEqual(ON)
   })
-  it('jam without an agent → off (a stray jam:{} never arms the daemon)', async () => {
-    expect((await load(`export default { jam: {} }\n`)).jam).toBeUndefined()
+  it('no config.ts at all → armed (an old workspace needs no re-init)', async () => {
+    expect((await load()).jam).toEqual(ON)
   })
-  it('bad agent → off', async () => {
+  it('a partial jam block still arms', async () => {
+    expect((await load(`export default { jam: {} }\n`)).jam).toEqual(ON)
+  })
+  it('jam: false → off (the deliberate off switch), and the raw value never rides through', async () => {
+    const c = await load(`export default { jam: false }\n`)
+    expect(c.jam).toBeUndefined()          // not `false` leaking past the user spread
+    expect(c.jamOff).toBe('opted-out')     // deliberate: the dev server stays quiet about it
+  })
+  it('each off-state names itself, so the dev server speaks up exactly once', async () => {
+    expect((await load(`export default { jam: { agent: 'gpt' } }\n`)).jamOff).toBe('bad-agent')
+    expect((await load(`export default { jam: {`)).jamOff).toBe('unreadable')
+    vi.stubEnv('PATH', await bin())
+    expect((await load(`export default {}\n`)).jamOff).toBe('no-agent')
+  })
+  it('jam: true means on; a shape that is not a jam block at all is off, not detected', async () => {
+    expect((await load(`export default { jam: true }\n`)).jam).toEqual(ON)
+    // `new Date()` types as "object" but is not a block someone wrote; 0n crashes JSON.stringify,
+    // so it also proves the warning formatter cannot throw inside the error path
+    for (const bad of ['null', '0', '[]', '"gpt"', 'new Date()', '0n']) {
+      const c = await load(`export default { jam: ${bad} }\n`)
+      expect(c.jam, `jam: ${bad}`).toBeUndefined()
+      expect(c.jamOff, `jam: ${bad}`).toBe('bad-agent')
+    }
+  })
+  it('an agent marver cannot spawn → off, never a silent swap to another tool', async () => {
     expect((await load(`export default { jam: { agent: 'gpt' } }\n`)).jam).toBeUndefined()
   })
-  it('agent set → armed with lean defaults', async () => {
-    expect((await load(`export default { jam: { agent: 'claude' } }\n`)).jam)
-      .toEqual({ agent: 'claude', concurrency: 3, subagents: true, proactive: false })
+  it('an explicit agent beats detection', async () => {
+    vi.stubEnv('PATH', await bin('claude', 'codex'))
+    expect((await load(`export default { jam: { agent: 'codex' } }\n`)).jam).toEqual({ ...ON, agent: 'codex' })
   })
-  it('explicit fields respected; out-of-range concurrency falls back; proactive opt-in', async () => {
+  it('the bare-string shorthand names the agent', async () => {
+    expect((await load(`export default { jam: "claude" }\n`)).jam).toEqual(ON)
+  })
+  it('a named agent that is not installed → off, not armed-and-failing', async () => {
+    expect((await load(`export default { jam: { agent: 'codex' } }\n`)).jam).toBeUndefined()
+  })
+  it('no agent CLI anywhere → off', async () => {
+    vi.stubEnv('PATH', await bin())
+    expect((await load(`export default { port: 6001 }\n`)).jam).toBeUndefined()
+  })
+  it('explicit fields respected; out-of-range concurrency falls back to 6; proactive opt-in', async () => {
+    vi.stubEnv('PATH', await bin('codex'))
     expect((await load(`export default { jam: { agent: 'codex', concurrency: 99, subagents: false, proactive: true } }\n`)).jam)
-      .toEqual({ agent: 'codex', concurrency: 3, subagents: false, proactive: true })
+      .toEqual({ agent: 'codex', concurrency: 6, subagents: false, proactive: true })
+  })
+  it('a concurrency inside the range is kept', async () => {
+    expect((await load(`export default { jam: { concurrency: 12 } }\n`)).jam).toEqual({ ...ON, concurrency: 12 })
+  })
+  it('a config.ts that fails to load → off, because it may have said jam: false', async () => {
+    expect((await load(`export default { jam: {`)).jam).toBeUndefined()
   })
 })
 
@@ -248,7 +358,17 @@ describe('Live Jam M0: authorization ledger', async () => {
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
   const { has, record } = await import('../src/server/jam/ledger.ts')
+  const { deviceId } = await import('../src/server/jam/device.ts')
 
+  it('a ledger that arrived with the repo (another machine stamped it) authorizes nothing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
+    record(root, 'home', 'evt-mine')
+    const file = join(root, 'design', '.local', 'jam-ledger')
+    appendFileSync(file, `some-other-machine\thome\tevt-planted\n`)
+    expect(has(root, 'home', 'evt-mine')).toBe(true)
+    expect(has(root, 'home', 'evt-planted')).toBe(false)   // a committed .local/ cannot self-authorize
+    rmSync(root, { recursive: true, force: true })
+  })
   it('record then has → true; the SAME id on another board → false (anti-spoof), unrecorded → false', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
     record(root, 'home', 'evt-owner-1')
@@ -273,7 +393,7 @@ describe('Live Jam M0: authorization ledger', async () => {
   it('a torn final line (interrupted append) is tolerated, real ids still match', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-ledger-'))
     record(root, 'home', 'evt-1')
-    appendFileSync(join(root, 'design', '.local', 'jam-ledger'), 'home\tevt-2-torn-no-newline')  // no trailing \n
+    appendFileSync(join(root, 'design', '.local', 'jam-ledger'), `${deviceId()}\thome\tevt-2-torn-no-newline`)  // no trailing \n
     expect(has(root, 'home', 'evt-1')).toBe(true)
     expect(has(root, 'home', 'evt-2-torn-no-newline')).toBe(true)   // last line, no newline, still exact-matches
     rmSync(root, { recursive: true, force: true })

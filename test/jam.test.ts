@@ -11,6 +11,7 @@ import { codexAdapter } from '../src/server/jam/adapter/codex.ts'
 import { acquireLock, releaseLock, write } from '../src/server/jam/journal.ts'
 import { buildMember } from '../src/server/jam/packet.ts'
 import { record } from '../src/server/jam/ledger.ts'
+import { deviceId } from '../src/server/jam/device.ts'
 import type { JamAdapter, Journal } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
@@ -172,11 +173,32 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
+  it('a one-message agent (codex) never posts the raw reply fence as its ack, and never doubles up', async () => {
+    const { root, dir, done } = setup()
+    // codex emits ONE agent_message, at the end, carrying the completion block - so the "early"
+    // hook sees the finished reply, not an ack
+    const oneShot: JamAdapter = {
+      name: 'codex', supportsSubagents: false,
+      spawnArgs: () => ({ cmd: process.execPath, args: ['-e', `process.stdout.write('FINAL\\n')`] }),
+      earlyText: (line) => (line.includes('FINAL') ? { text: '```marver-reply\nRenamed it.\n```' } : null),
+      parse: () => ({ reply: 'Renamed it.', ok: true, reanchors: [] }),
+    }
+    const jam = createJam(root, { ...CFG, agent: 'codex' }, oneShot)
+    ownerMention(root, dir, 'home', '@marver rename it')
+    await jam.tick()
+    jam.stop()
+    const replies = agentReplies(dir, 'home')
+    expect(replies.length).toBe(1)                       // ack and final are the same message
+    expect(replies[0].body).toBe('Renamed it.')          // the block's contents, not the fence
+    expect(replies[0].body).not.toContain('marver-reply')
+    done()
+  })
+
   it('crash resume: a batch left "claimed" by a dead process is re-run and completes', async () => {
     const { root, dir, done } = setup()
     const ev = ownerMention(root, dir, 'home', '@marver ship it')
     // simulate the journal a killed daemon left behind: baselined, id seen, batch stuck claimed
-    write(root, { version: 1, baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
+    write(root, { version: 1, device: deviceId(), baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
     const jam = createJam(root, CFG, okAdapter)
     await jam.tick()
     jam.stop()
@@ -188,7 +210,7 @@ describe('Live Jam M1: the daemon spine', () => {
   it('crash-idempotent reply: re-running the same batch posts no duplicate (deterministic reply id)', async () => {
     const { root, dir, done } = setup()
     const ev = ownerMention(root, dir, 'home', '@marver go')
-    const claimed = (): Journal => ({ version: 1, baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
+    const claimed = (): Journal => ({ version: 1, device: deviceId(), baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
     write(root, claimed())
     await createJam(root, CFG, okAdapter).tick()   // writes reply jam-b1, finishes
     write(root, claimed())                          // simulate a crash that lost the "finish": batch back to claimed
@@ -202,7 +224,7 @@ describe('Live Jam M1: the daemon spine', () => {
     // the event exists in the log but was NEVER ledgered (a synced-in / de-authorized event)
     const id = randomUUID()
     appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'create', commentId: id, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'x@remote' }, body: '@marver do it' }])
-    write(root, { version: 1, baselined: true, seen: [id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
+    write(root, { version: 1, device: deviceId(), baselined: true, seen: [id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
     const jam = createJam(root, CFG, okAdapter)
     await jam.tick()
     jam.stop()
@@ -276,8 +298,9 @@ describe('Live Jam M5: bounded parallelism + codex adapter', () => {
     ].join('\n')
     expect(codexAdapter.parse(jsonl, 0)).toEqual({ reply: 'Done — changed the CTA.', model: 'gpt-5-codex', reanchors: [], ok: true })
   })
-  it('codex adapter: no subagents (sequential frames)', () => {
-    expect(codexAdapter.supportsSubagents).toBe(false)
+  it('both adapters fan out: `codex exec` carries collaboration.spawn_agent, same as Claude Code', () => {
+    expect(codexAdapter.supportsSubagents).toBe(true)
+    expect(claudeAdapter.supportsSubagents).toBe(true)
   })
   it('codex adapter: status-only stream (no agent_message) is NOT a false success', () => {
     const jsonl = [JSON.stringify({ type: 'thread.started', thread_id: 't1' }), JSON.stringify({ type: 'turn.completed', usage: {} })].join('\n')
@@ -416,7 +439,9 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     const { root, dir, done } = setup()
     const q = 'Which field - card number or CVC?'
     const qLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: q }] } })
-    const resultLine = JSON.stringify({ type: 'result', result: q, modelUsage: {} })
+    // exactly what the job prompt asks for: the question streams plain, then the run ends with
+    // the SAME question inside the reply fence - the dedupe has to see through the fence
+    const resultLine = JSON.stringify({ type: 'result', result: '```marver-reply\n' + q + '\n```', modelUsage: {} })
     const clarifyAdapter: JamAdapter = {
       name: 'claude', supportsSubagents: true,
       spawnArgs() { return { cmd: process.execPath, args: ['-e', streamScript([qLine, resultLine])] } },

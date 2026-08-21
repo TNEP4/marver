@@ -173,8 +173,8 @@ export async function dev(root: string, portFlag?: number) {
     server.close = (async () => { unsubscribe(); clearInterval(sweep); removeDevInfo(root); return close() }) as typeof server.close
   }
 
-  // Live Jam: the dev server IS the daemon. Off unless the user set jam.agent.
-  if (config.jam?.agent) {
+  // Live Jam: the dev server IS the daemon. On by default - a resolved jam block means armed.
+  if (config.jam) {
     const { startJam } = await import('./jam/daemon.ts')
     const jam = startJam(root, config.jam, (m) => console.log(m),
       (board) => server.ws.send('sh:jam-comment', { board } as any))   // reply landed - fetch now, don't wait the 30s poll
@@ -182,6 +182,11 @@ export async function dev(root: string, portFlag?: number) {
       const close = server.close.bind(server)
       server.close = (async () => { jam.stop(); return close() }) as typeof server.close
     }
+  } else if (config.jamOff === 'no-agent') {
+    // The one off-state nobody has explained yet - and a feature that arms itself has to say
+    // when it could not, or silence reads as "marver has no such thing". Opting out is
+    // deliberate, and a bad `jam.agent` already printed its own reason: both stay quiet.
+    console.log(`  jam: no agent CLI on PATH (claude or codex) - install one and tag @${NAME} in a comment\n`)
   }
   return server
 }

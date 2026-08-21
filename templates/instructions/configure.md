@@ -15,8 +15,13 @@ frames render suspiciously unstyled - then never think about it again.
    app's tokens (see brand.md Path A). Without it, every hi-fi session re-derives
    the brand and drifts.
 4. **Manifest honest**: `design/manifest.json` lists what is really on disk.
+5. **Live Jam names you**: `jam.agent` in `design/config.ts` is the tool YOU are
+   (`"claude"` for Claude Code, `"codex"` for Codex). Jam is on by default and init
+   guessed from env markers and PATH - on a machine with both CLIs installed that guess
+   can be wrong, and then every `@marver` comment is answered by the other tool. Fix the
+   line and tell the human. Details, including the off switch: instructions/jam.md.
 
-All four true → idle state. Go design.
+All five true → idle state. Go design.
 
 ## By repo maturity
 

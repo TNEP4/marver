@@ -7,20 +7,25 @@
  * but it can never appear in a file that is written only on THIS machine by the gated
  * POST and never synced. Synced-in events are never in the ledger, so they never trigger.
  *
- * One `<board>\t<id>` per line, append-only, gitignored, never synced (design/.local/ is
- * watch-ignored and sync-excluded). Agent-written events are never recorded (they are
+ * One `<device>\t<board>\t<id>` per line, append-only, gitignored, never synced (design/.local/
+ * is watch-ignored and sync-excluded). Agent-written events are never recorded (they are
  * daemon-authored, not owner input, so they cannot self-authorize a next job).
  *
- * The key is (board, id), NOT id alone: event ids are client UUIDs that sync copies verbatim,
- * so a remote collaborator could reuse an owner's ledgered id in a NEW malicious event. Binding
- * to the board it was gate-written on defeats that - the forged copy lands on some board the
- * ledger never authorized for that id, so it never triggers.
+ * The key is (device, board, id), never id alone:
+ * - board, because event ids are client UUIDs that sync copies verbatim, so a remote
+ *   collaborator could reuse an owner's ledgered id in a NEW malicious event. Binding to the
+ *   board it was gate-written on defeats that - the forged copy lands on some board the ledger
+ *   never authorized for that id, so it never triggers.
+ * - device, because gitignore is a convention, not provenance: a repo can force-add its own
+ *   design/.local/ and hand a clone a ledger full of pre-authorized ids. Lines stamped with
+ *   another machine match nothing here (device.ts).
  */
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { deviceId } from './device.ts'
 
 const ledgerFile = (root: string) => join(root, 'design', '.local', 'jam-ledger')
-const line = (board: string, id: string) => `${board}\t${id}`
+const line = (board: string, id: string) => `${deviceId()}\t${board}\t${id}`
 
 /** Was this (board, id) authorized on this device by the gated dev POST? */
 export function has(root: string, board: string, id: string): boolean {

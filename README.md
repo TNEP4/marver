@@ -45,9 +45,9 @@ Frames appear on the canvas the moment the files land. That's the loop.
 
 ## Live Jam
 
-Tag `@marver` in a comment and your own coding agent picks it up - reads the thread, edits the real frame source, replies with a receipt - while the frame wears a live working glow. Opt in with `jam: { agent: "claude" }` (or `"codex"`) in `design/config.ts`.
+Tag `@marver` in a comment and your own coding agent picks it up - reads the thread, edits the real frame source, replies with a receipt - while the frame wears a live working glow. On by default: marver arms it with whichever agent CLI you have (`claude` or `codex`) and `init` writes the choice into `design/config.ts` as `jam: { agent: "claude", concurrency: 6 }`, where you can retune it or switch it off with `jam: false`.
 
-The trust boundary is hard: only comments written on the owner's machine trigger (a device-bound ledger - a drive-by comment on a published canvas cannot start work), the agent runs locked down (Claude Code with shell disabled entirely; Codex confined to its workspace-write sandbox), and every reply carries provenance: agent, model, dev user. Marver ships no AI; the agent that acts is the one you already run.
+The trust boundary is hard: only comments written on the owner's machine trigger (a device-bound ledger - a drive-by comment on a published canvas cannot start work), the agent runs locked down (Claude Code with shell disabled entirely; Codex confined to its workspace-write sandbox), and every reply carries provenance: which agent ran it, as which dev user, on which model when the agent names one. Marver ships no AI; the agent that acts is the one you already run.
 
 ## Working state
 
