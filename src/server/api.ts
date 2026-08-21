@@ -1,5 +1,5 @@
 import type { Connect } from 'vite'
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, copyFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, copyFileSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
@@ -94,6 +94,23 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
     return contained(p, boardsDir) ? p : null
   }
 
+  // A board name off the wire: a string, bounded, and matching the on-disk grammar. The
+  // length bound caps a pathological rewrite/filename; BOARD_NAME already blocks separators.
+  const validName = (n: unknown): n is string => typeof n === 'string' && n.length >= 1 && n.length <= 64 && BOARD_NAME.test(n)
+  // realpath(dir) must stay inside realpath(root) - a symlinked design/boards can't escape.
+  const underRoot = (dir: string): boolean => {
+    try {
+      const rr = realpathSync(root); const rd = realpathSync(dir)
+      return rd === rr || rd.startsWith(rr + sep)
+    } catch { return false }
+  }
+  // a symlinked board FILE could redirect a follow-through write; contained() only vets the
+  // resolved target's directory, not the link itself, so check the link node directly.
+  const notSymlink = (p: string): boolean => { try { return !existsSync(p) || !lstatSync(p).isSymbolicLink() } catch { return false } }
+  // Does a filesystem NODE exist at p? lstat (not existsSync) so a DANGLING symlink counts as
+  // present - else the no-clobber check misses it and renameSync would silently replace it.
+  const nodeExists = (p: string): boolean => { try { lstatSync(p); return true } catch { return false } }
+
   // boot: sweep temp files abandoned by a killed process
   try {
     for (const f of readdirSync(boardsDir)) if (f.endsWith('.tmp')) rmSync(join(boardsDir, f), { force: true })
@@ -125,6 +142,75 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return { name: f.replace(/\.json$/, ''), sha256: hash(content), order }
           })
         return json(res, 200, list)
+      }
+
+      // Rename a board file. Owner-gated (a mutation). Placed BEFORE the boards/<name> regex
+      // so 'rename'/'reorder' are never captured as ordinary board names.
+      if (path === 'boards/rename' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let parsed: unknown
+        try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
+        const { from, to } = parsed as { from?: unknown; to?: unknown }
+        if (!validName(from) || !validName(to)) return json(res, 400, { error: 'invalid board name' })
+        if (to === 'all-scenes' || from === 'all-scenes' || to === from) return json(res, 400, { error: 'invalid rename' })
+        if (!underRoot(boardsDir)) return json(res, 400, { error: 'boards directory escapes the project' })
+        const fromPath = boardPath(from), toPath = boardPath(to)
+        if (!fromPath || !toPath) return json(res, 400, { error: 'invalid board name' })
+        if (!existsSync(fromPath)) return json(res, 404, { error: `board "${from}" does not exist` })
+        if (!notSymlink(fromPath)) return json(res, 400, { error: 'refusing to rename a symlinked board file' })
+        // Persisted comments are board-keyed in three places a file move can't follow (the
+        // local JSONL, the client's in-memory union, and the remote-canonical sync). Rename is
+        // only safe on a board with no threads and no live connection.
+        if (isConnected(root)) return json(res, 409, { error: 'disconnect before renaming boards - comment sync is board-keyed' })
+        if (existsSync(join(root, 'design', 'comments', `${from}.jsonl`))) return json(res, 409, { error: 'rename a board before commenting on it - this board has threads' })
+        if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })   // lstat: a dangling symlink counts
+        // Atomic no-clobber: link() refuses (EEXIST) if the destination name exists - closing the
+        // check->rename TOCTOU. Then drop the old name. A crash between leaves both names on one
+        // inode (identical content), never a clobbered board. Filesystems without hardlinks fall
+        // back to the checked rename (the nodeExists guard above already covered the common race).
+        try { linkSync(fromPath, toPath) }
+        catch (err) {
+          const code = (err as NodeJS.ErrnoException).code
+          if (code === 'EEXIST') return json(res, 409, { error: `a board named "${to}" already exists` })
+          // ONLY a filesystem that genuinely lacks hardlinks falls back to a checked rename; any
+          // other error (ENOSPC, EACCES, ...) rethrows to the outer 500 rather than silently
+          // taking the clobber-prone path.
+          if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw err
+          if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })
+          renameSync(fromPath, toPath)
+          return json(res, 200, { name: to })
+        }
+        rmSync(fromPath)
+        return json(res, 200, { name: to })
+      }
+
+      // Reorder boards: write each named board's `order` field to its position. Advisory sort
+      // key, so per-file writes (not batch-atomic) are non-corrupting. Owner-gated.
+      if (path === 'boards/reorder' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let parsed: unknown
+        try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
+        const order = (parsed as { order?: unknown }).order
+        if (!Array.isArray(order) || order.length < 1 || order.length > 200) return json(res, 400, { error: 'invalid order' })
+        if (!order.every(validName) || order.some((n) => n === 'all-scenes')) return json(res, 400, { error: 'invalid board name in order' })
+        if (new Set(order as string[]).size !== order.length) return json(res, 400, { error: 'duplicate board in order' })
+        if (!underRoot(boardsDir)) return json(res, 400, { error: 'boards directory escapes the project' })
+        for (let i = 0; i < order.length; i++) {
+          const p = boardPath(order[i] as string)
+          if (!p || !existsSync(p) || !notSymlink(p)) continue
+          let obj: Record<string, unknown>
+          try { obj = JSON.parse(readFileSync(p, 'utf8')) } catch { continue }
+          if (!obj || typeof obj !== 'object') continue
+          obj.order = i
+          atomicWrite(p, JSON.stringify(obj, null, 2) + '\n')
+        }
+        return json(res, 200, { ok: true })
       }
 
       const boardMatch = /^boards\/([^/]+)$/.exec(path)

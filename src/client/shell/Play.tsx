@@ -364,12 +364,13 @@ function PlayInner() {
         const c = commentsStore()
         if (c.active) c.setActive(null)
       } else if (data.type === 'sh:laser-copy') {
-        // laser click in the prototype: copy the element's address (frame file + css path)
-        // and confirm in the frame's own hover label, exactly like the canvas does
+        // laser click in the prototype: copy the element's address ([board ▸ scene] +
+        // frame file + css path) and confirm in the frame's own hover label, like the canvas
         const at = s.play?.at
         const f = at ? s.manifest?.frames.find((x) => x.id === at) : undefined
-        if (f) {
-          const addr = `${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+        // drop a stale post that outran a stage swap (the sender echoes its frame id)
+        if (f && String(data.id ?? '') === at) {
+          const addr = `[${s.board} ▸ ${f.scene || '(root)'}]  ${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
           navigator.clipboard.writeText(addr).then(
             () => postStage({ type: 'sh:copy-ok', seq: data.seq }),
             () => s.toast('copy blocked - click the canvas first'))

@@ -1,4 +1,5 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore, CONFIG, PUBLISHED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
@@ -6,7 +7,7 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PlayIcon, PlusIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { useComments } from './comments-store.ts'
@@ -16,13 +17,64 @@ const commentsStore = () => useComments.getState()
 
 let booted = false                             // survives Fast Refresh; see the boot effect
 
+/** Copy text to the clipboard, toasting the outcome. Success is confirmed out loud; a
+ *  blocked clipboard (no user gesture / permission) says so instead of failing silently. */
+function copyToClipboard(text: string, okMsg: string) {
+  const { toast } = useStore.getState()
+  navigator.clipboard.writeText(text).then(() => toast(okMsg), () => toast('copy blocked - click the canvas first'))
+}
+
+/** The address a frame copies - the same string from the sidebar right-click, the floating
+ *  toolbar, and ⇧P: the board it sits on, the frame id, and its file. */
+const framePath = (board: string, f: { id: string; file: string }) => `board: ${board} · frame: ${f.id}  (${f.file})`
+
+type MenuItem = { label: string; icon: ReactNode; onClick: () => void }
+type MenuState = { x: number; y: number; items: MenuItem[] }
+
+/** A right-click menu for the sidebar. One instance lives in App; `open(e, items)` positions
+ *  it at the cursor, CLAMPED into the viewport. It closes on outside pointerdown, on pick, and
+ *  on Escape - the Escape listener runs in CAPTURE phase so it does not also trip App's global
+ *  keydown (which would clear the selection/laser underneath the menu). */
+function useContextMenu() {
+  const [menu, setMenu] = useState<MenuState | null>(null)
+  const open = (e: { preventDefault(): void; clientX: number; clientY: number }, items: MenuItem[]) => {
+    e.preventDefault()
+    const MENU_W = 184
+    const h = items.length * 32 + 12
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - MENU_W - 8), y: Math.min(e.clientY, window.innerHeight - h - 8), items })
+  }
+  return { menu, open, close: () => setMenu(null) }
+}
+
+function ContextMenu({ menu, close }: { menu: MenuState | null; close: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menu) return
+    const onDown = (e: PointerEvent) => { if (!ref.current?.contains(e.target as globalThis.Node)) close() }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close() } }
+    window.addEventListener('pointerdown', onDown)
+    window.addEventListener('keydown', onEsc, true)   // capture: beat App's bubble-phase Escape
+    return () => { window.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onEsc, true) }
+  }, [menu])
+  const app = document.querySelector('.sh-app')
+  if (!menu || !app) return null
+  return createPortal(
+    <div className="sh-menu sh-ctxmenu" ref={ref} style={{ left: menu.x, top: menu.y }}>
+      {menu.items.map((it) => (
+        <button key={it.label} onClick={() => { it.onClick(); close() }}>{it.icon}<span>{it.label}</span></button>
+      ))}
+    </div>,
+    app,
+  )
+}
+
 /** One collapsible scene group in the sidebar. `held` marks a scene that contains a
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */
-function SceneGroup({ name, count, held, onPick, children }: { name: string; count: number; held: boolean; onPick?: () => void; children: ReactNode }) {
+function SceneGroup({ name, count, held, onPick, onContextMenu, children }: { name: string; count: number; held: boolean; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; children: ReactNode }) {
   const [open, setOpen] = useState(true)
   return (
     <div>
-      <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)}>
+      <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)} onContextMenu={onContextMenu}>
         <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
         {/* the NAME selects every frame in the scene; the caret/row still collapses */}
         <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{humanize(name) || '(root)'}</span>
@@ -52,29 +104,187 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
 /** Boards live flat in the sidebar - always visible, one click to switch. The list
  *  refreshes on mount, window focus, and a slow poll so agent-created board files
  *  appear without a reload. Active board = accent icon + wash, same language as scenes. */
-function BoardList() {
+const BOARD_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
+
+function BoardList({ onMenu }: { onMenu: (e: { preventDefault(): void; clientX: number; clientY: number }, items: MenuItem[]) => void }) {
   const board = useStore((s) => s.board)
   const [names, setNames] = useState<string[]>(['all-scenes'])
+  const [editing, setEditing] = useState<string | null>(null)
+  const [drag, setDrag] = useState<string | null>(null)               // board being dragged
+  // insertion index in the CURATED list (0..len): one value per gap, so the divider lands
+  // once between two boards - not twice (A's bottom-half and B's top-half were separate spots)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
+  // genRef invalidates every async setNames: a mutation bumps it, so a poll/fetch that
+  // STARTED earlier can never clobber a fresh optimistic reorder or a just-renamed list.
+  const genRef = useRef(0)
+  const busyRef = useRef(0)                                            // reorders in flight; while >0 polls hold off
+  const commitBusy = useRef(false)                                    // guards Enter+blur firing two renames
+  const chainRef = useRef<Promise<unknown>>(Promise.resolve())         // serializes reorder POSTs
+  // reorder runs on pointer events, NOT native drag-and-drop: native DnD hands the cursor to
+  // the OS (arrow/move), so a grabbing hand can't persist. Owning the gesture lets us hold
+  // the grabbing cursor for the whole drag via a body class.
+  const gestureRef = useRef<{ pointerId: number; startX: number; startY: number; name: string; dragging: boolean; el: HTMLElement } | null>(null)
+  const refresh = () => {
+    if (busyRef.current > 0) return   // a reorder is mid-flight; its optimistic order stands until it settles
+    const gen = genRef.current
+    fetchBoardNames().then((list) => { if (gen === genRef.current) setNames(list) }).catch(() => { /* keep last known */ })
+  }
   useEffect(() => {
-    const refresh = () => fetchBoardNames().then(setNames).catch(() => { /* keep the last known list */ })
     refresh()
     const t = setInterval(refresh, 8000)
     window.addEventListener('focus', refresh)
     return () => { clearInterval(t); window.removeEventListener('focus', refresh) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const pick = async (name: string) => {
     if (name === useStore.getState().board) return
     await useStore.getState().switchBoard(name)
     setTimeout(() => canvasCtl.fitAll(), 60)
   }
+  const commit = async (old: string, raw: string) => {
+    if (commitBusy.current) return                          // Enter already fired this; ignore the follow-up blur
+    const next = raw.trim()
+    if (!next || next === old) { setEditing(null); return }
+    if (!BOARD_NAME_RE.test(next) || next.length > 64 || next === 'all-scenes' || names.includes(next)) {
+      useStore.getState().toast('use a free name - lowercase letters, numbers and dashes'); return   // stay editing
+    }
+    commitBusy.current = true
+    try {
+      const r = await useStore.getState().renameBoard(old, next)
+      if (r.ok) { setEditing(null); genRef.current++; refresh() }
+      else useStore.getState().toast(r.error ?? 'rename failed')                                      // stay editing
+    } finally { commitBusy.current = false }
+  }
+  // the INSERTION INDEX (in the curated list, 0..len) nearest the pointer - one value per
+  // gap, so a single divider lands between two boards instead of one per row-half
+  const indexAt = (x: number, y: number): number | null => {
+    const el = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('[data-board-row]') as HTMLElement | null
+    const name = el?.dataset.board
+    if (!name) return null
+    const curated = names.filter((n) => n !== 'all-scenes')
+    if (name === 'all-scenes') return curated.length            // over the pinned last row = end slot
+    const ci = curated.indexOf(name)
+    if (ci < 0) return null
+    const r = el!.getBoundingClientRect()
+    return y > r.top + r.height / 2 ? ci + 1 : ci
+  }
+  const resetPointer = () => {
+    const g = gestureRef.current
+    gestureRef.current = null
+    if (g) { try { g.el.releasePointerCapture(g.pointerId) } catch { /* already released */ } }
+    document.body.classList.remove('sh-board-dragging')
+    setDrag(null)
+    setDropIndex(null)
+  }
+  // move the dragged board to the insertion index and persist the new order optimistically
+  const applyReorder = (dragName: string, dropIndex: number) => {
+    if (dragName === 'all-scenes') return
+    const curated = names.filter((n) => n !== 'all-scenes')
+    const from = curated.indexOf(dragName)
+    if (from < 0) return
+    const to = dropIndex > from ? dropIndex - 1 : dropIndex      // removing `from` shifts later indices left
+    if (to === from) return                                      // dropped in its own slot - no move
+    curated.splice(from, 1)
+    curated.splice(to, 0, dragName)
+    const prev = names
+    genRef.current++
+    const gen = genRef.current
+    busyRef.current++                                             // hold polls off until this settles
+    setNames(names.includes('all-scenes') ? [...curated, 'all-scenes'] : curated)
+    chainRef.current = chainRef.current.then(async () => {
+      try {
+        const ok = await useStore.getState().reorderBoards(curated)
+        if (gen !== genRef.current) return                        // a newer drop superseded this one
+        if (!ok) { setNames(prev); useStore.getState().toast('could not save order') }
+      } catch { if (gen === genRef.current) { setNames(prev); useStore.getState().toast('could not save order') } }
+      finally { busyRef.current-- }
+    })
+  }
+  const onBoardPointerDown = (e: ReactPointerEvent<HTMLButtonElement>, n: string) => {
+    if (e.button !== 0) return                                    // left button only; right-click opens the menu
+    const el = e.currentTarget
+    try { el.setPointerCapture(e.pointerId) } catch { /* capture can fail on rapid input */ }
+    gestureRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, name: n, dragging: false, el }
+  }
+  const onBoardPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const g = gestureRef.current
+    if (!g || g.pointerId !== e.pointerId) return
+    if (!g.dragging) {
+      if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < 5) return   // click vs drag threshold
+      g.dragging = true
+      setDrag(g.name)
+      document.body.classList.add('sh-board-dragging')            // holds the grabbing cursor for the whole drag
+    }
+    const idx = indexAt(e.clientX, e.clientY)
+    // hide the seam at the dragged board's OWN slot (index from or from+1 = no move)
+    const from = names.filter((nm) => nm !== 'all-scenes').indexOf(g.name)
+    setDropIndex(idx === null || idx === from || idx === from + 1 ? null : idx)
+  }
+  const onBoardPointerUp = (e: ReactPointerEvent<HTMLButtonElement>, n: string) => {
+    const g = gestureRef.current
+    if (!g || g.pointerId !== e.pointerId) return
+    const dragged = g.dragging
+    const idx = dragged ? indexAt(e.clientX, e.clientY) : null
+    resetPointer()
+    if (dragged) { if (idx !== null) applyReorder(n, idx) }
+    else void pick(n)                                             // a tap switches boards (the trailing mouse click is ignored)
+  }
+  // cancel a drag on Escape (capture phase, so the app's global Escape never sees it) or focus loss
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape' && gestureRef.current?.dragging) { e.preventDefault(); e.stopPropagation(); resetPointer() } }
+    const onBlur = () => { if (gestureRef.current) resetPointer() }
+    window.addEventListener('keydown', onEsc, true)
+    window.addEventListener('blur', onBlur)
+    return () => { window.removeEventListener('keydown', onEsc, true); window.removeEventListener('blur', onBlur); resetPointer() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const menuFor = (n: string): MenuItem[] => [
+    { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') },
+    ...(!PUBLISHED && n !== 'all-scenes' ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setEditing(n) }] : []),
+  ]
+  const curated = names.filter((nm) => nm !== 'all-scenes')
   return (
     <>
-      {names.map((n) => (
-        <button key={n} className={`it board${n === board ? ' cur' : ''}`} onClick={() => pick(n)}>
-          {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
-          <span>{boardLabel(n)}</span>
-        </button>
-      ))}
+      {names.map((n) => {
+        if (editing === n) return (
+          <div key={n} className="it board editing">
+            {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
+            <input autoFocus defaultValue={n} spellCheck={false}
+              onFocus={(e) => e.currentTarget.select()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); void commit(n, e.currentTarget.value) }
+                else if (e.key === 'Escape') { e.preventDefault(); setEditing(null) }
+              }}
+              onBlur={(e) => { if (editing === n) void commit(n, e.currentTarget.value) }} />
+          </div>
+        )
+        const canDrag = !PUBLISHED && n !== 'all-scenes'
+        // ONE seam per gap, from the insertion index: drop-before the row AT that index, or
+        // drop-after the last curated row when the index is the end. Overlay (::after), so no
+        // layout shift. Never on the row being dragged.
+        const ci = curated.indexOf(n)
+        const dropCls = drag == null || dropIndex == null || n === drag ? ''
+          : ci === dropIndex ? ' drop-before'
+          : dropIndex === curated.length && ci === curated.length - 1 ? ' drop-after'
+          : ''
+        return (
+          <button key={n} data-board-row data-board={n} data-reorderable={canDrag || undefined}
+            className={`it board${n === board ? ' cur' : ''}${drag === n ? ' dragging' : ''}${dropCls}`}
+            // draggable rows switch on the pointer tap (onPointerUp), so their trailing mouse
+            // click (detail >= 1) must be ignored to avoid a double switch; keyboard clicks
+            // (detail === 0) and non-draggable rows (all-scenes) switch here as normal
+            onClick={(e) => { if (!canDrag || e.detail === 0) void pick(n) }}
+            onContextMenu={(e) => onMenu(e, menuFor(n))}
+            onPointerDown={canDrag ? (e) => onBoardPointerDown(e, n) : undefined}
+            onPointerMove={canDrag ? onBoardPointerMove : undefined}
+            onPointerUp={canDrag ? (e) => onBoardPointerUp(e, n) : undefined}
+            onPointerCancel={canDrag ? () => resetPointer() : undefined}
+            onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
+            {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
+            <span>{boardLabel(n)}</span>
+          </button>
+        )
+      })}
     </>
   )
 }
@@ -99,13 +309,24 @@ function SelectionBar() {
       roRef.current.observe(el)
     }
   }
+  // the copy-path icon flashes into a check on a successful copy - from the icon OR the
+  // Shift+P shortcut. pathPulse (store) bumps on each copy; these hooks sit ABOVE the
+  // early return so their order never changes with the selection.
+  const pathPulse = useStore((s) => s.pathPulse)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!pathPulse) return
+    setCopied(true)
+    const t = setTimeout(() => setCopied(false), 1400)
+    return () => clearTimeout(t)
+  }, [pathPulse])
   if (!node || !frame || node.missing) return null
   // anchor: centered over the bounding box of ALL selected frames, above the topmost
   const selNodes = nodes.filter((n) => selection.includes(n.key))
   const bx0 = Math.min(...selNodes.map((n) => n.x))
   const bx1 = Math.max(...selNodes.map((n) => n.x + n.w))
   const by0 = Math.min(...selNodes.map((n) => n.y))
-  const { resizeSelected, spawn, toast } = useStore.getState()
+  const { resizeSelected, toast } = useStore.getState()
   const multi = selection.length > 1
   const applyDevice = (name: string) => {
     animateLayout()
@@ -167,12 +388,15 @@ function SelectionBar() {
         </Tip>
       ))}
       <i className="sep" />
-      <Tip label={<><b>{multi ? `Copy ${selection.length} file paths` : 'Copy file path'}</b><span className="k">⇧P</span></>}>
+      <Tip label={<><b>{multi ? `Copy ${selection.length} paths` : 'Copy path'}</b><span className="k">⇧P</span></>}>
         <button className="icon"
-          onClick={() => { navigator.clipboard.writeText(selectedFrames().map((f) => f.file).join('\n')); toast(multi ? `${selection.length} file paths copied` : 'file path copied') }}><SignpostIcon size={15} /></button>
-      </Tip>
-      <Tip label={multi ? 'Duplicate frames' : 'Duplicate frame'}>
-        <button className="icon" onClick={() => selectedFrames().forEach((f) => spawn(f.id))}><PlusIcon size={15} /></button>
+          onClick={() => {
+            const brd = useStore.getState().board
+            const text = selectedFrames().map((f) => framePath(brd, f)).join('\n')
+            navigator.clipboard.writeText(text).then(
+              () => { toast(multi ? `${selection.length} paths copied` : 'path copied'); useStore.getState().pulsePath() },
+              () => toast('copy blocked - click the canvas first'))
+          }}>{copied ? <CheckIcon size={15} /> : <SignpostIcon size={15} />}</button>
       </Tip>
     </div>
   )
@@ -316,6 +540,7 @@ export function App() {
   useEffect(() => { document.body.classList.toggle('sh-commenting', commentMode) }, [commentMode])
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
   const [pillOpen, setPillOpen] = useState(true)
+  const cm = useContextMenu()   // shared sidebar right-click menu (boards + scenes)
 
   // boot honors the deep link: board before load, play mode after it.
   // Selection + camera intent are restored by the Canvas boot effect. The module-level
@@ -501,12 +726,13 @@ export function App() {
         // frame-id match, finite positive, clamped)
         s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
       } else if (data.type === 'sh:laser-copy') {
-        // laser click = copy the element's full address for the agent:
-        // frame source file + css path inside it (+ jsx source loc when stamped)
+        // laser click = copy the element's full address for the agent: WHERE it lives on
+        // the canvas ([board ▸ scene]) + frame source file + css path (+ jsx source loc)
         const n = s.nodes.find((x) => x.key === nodeKey)
         const f = n && s.frameFor(n)
-        if (f) {
-          const addr = `${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+        // drop a stale post that outran a frame swap (the sender echoes its frame id)
+        if (f && String(data.id ?? '') === f.id) {
+          const addr = `[${s.board} ▸ ${f.scene || '(root)'}]  ${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
           // success confirms IN the frame's hover label (right where the eyes are);
           // only failure needs the toast
           navigator.clipboard.writeText(addr).then(
@@ -611,12 +837,14 @@ export function App() {
         toast(c.showAnchor ? 'laser comment off' : 'laser comment on')
       }
       if (e.key === 'P' && e.shiftKey && s.selection.length) {
-        const files = s.selection
-          .map((k) => { const n = s.nodes.find((x) => x.key === k); return n ? s.frameFor(n)?.file : undefined })
-          .filter((f): f is string => !!f)
-        if (files.length) {
-          navigator.clipboard.writeText(files.join('\n'))
-          toast(files.length > 1 ? `${files.length} file paths copied` : 'file path copied')
+        const paths = s.selection
+          .map((k) => { const n = s.nodes.find((x) => x.key === k); const f = n && s.frameFor(n); return f ? framePath(s.board, f) : undefined })
+          .filter((p): p is string => !!p)
+        if (paths.length) {
+          // pulse the toolbar icon into a check ONLY on a real copy success
+          navigator.clipboard.writeText(paths.join('\n')).then(
+            () => { toast(paths.length > 1 ? `${paths.length} paths copied` : 'path copied'); s.pulsePath() },
+            () => toast('copy blocked - click the canvas first'))
         }
       }
       if (e.key === 'd' && CONFIG.themes.length > 1) {
@@ -707,11 +935,18 @@ export function App() {
           </div>
           <div className="sh-panel-scroll">
             <div className="hd">Boards</div>
-            <BoardList />
+            <BoardList onMenu={cm.open} />
             <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} count={sc.frames}
                 held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}
+                onContextMenu={(e) => cm.open(e, [{
+                  label: 'Copy path',
+                  icon: <SignpostIcon size={15} />,
+                  onClick: () => copyToClipboard(sc.name
+                    ? `board: ${useStore.getState().board} · scene: ${sc.name}  (design/scenes/${sc.name}/)`
+                    : `board: ${useStore.getState().board} · scene: (root)`, 'path copied'),
+                }])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   if (!keys.length) return
@@ -744,6 +979,9 @@ export function App() {
                     select(n.key, shift)
                     if (!shift) canvasCtl.fitNode(n.key)
                   }
+                  const frameMenu = (fr: FrameEntry): MenuItem[] => [
+                    { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(framePath(useStore.getState().board, fr), 'path copied') },
+                  ]
                   const seen = new Set<string>()
                   const rows: ReactNode[] = []
                   for (const f of sceneFrames) {
@@ -776,7 +1014,8 @@ export function App() {
                           const on = !!n && selection.includes(n.key)
                           const nm = m.title ?? cap((m.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' '))
                           rows.push(
-                            <div key={m.id} className={`sub vrow${on ? ' on' : ''}`} onClick={(e) => go(m.id, e.shiftKey)}>
+                            <div key={m.id} className={`sub vrow${on ? ' on' : ''}`} onClick={(e) => go(m.id, e.shiftKey)}
+                              onContextMenu={(e) => cm.open(e, frameMenu(m))}>
                               <span className={`chip${on ? ' on' : ''}`}>{(m.variant ?? '?').toUpperCase()}</span><span className="nm">{nm}</span>
                             </div>,
                           )
@@ -787,7 +1026,7 @@ export function App() {
                     const n = nodeFor(f.id)
                     const on = !!n && selection.includes(n.key)
                     rows.push(
-                      <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} title={f.intent}>
+                      <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} onContextMenu={(e) => cm.open(e, frameMenu(f))} title={f.intent}>
                         {/* every frame leads with an icon: intent glyph for content
                             frames, the plain frame rectangle for UI frames */}
                         {f.intent
@@ -841,6 +1080,7 @@ export function App() {
 
       <PlayOverlay />
       <CommentsController />
+      <ContextMenu menu={cm.menu} close={cm.close} />
 
       {CONFIG.setup
         ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>

@@ -42,10 +42,17 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
 ## When the human points at a specific element
 
 Two channels carry element-precise feedback - honor both:
-- **A pasted address** like `design/scenes/hero/a.tsx · #root > div > h1 (a.tsx:12)` is
-  a LASER-COPIED pointer: the human pressed L (laser mode), hovered to see the element,
-  clicked it, and its exact address landed on their clipboard. Open that frame file and
-  go straight to that element - the css path (and source location, when present) are exact.
+- **A pasted address** - the human copied it off the canvas to point you at something.
+  Two shapes:
+  - A LASER-COPIED element pointer like `[shipper-flow ▸ flow-00-scope]  design/scenes/flow-00-scope/01-orientation.tsx · #root > div > h1 (01-orientation.tsx:5:3)`.
+    They pressed L (laser mode), hovered, and clicked. Read it left to right: `[board ▸ scene]`
+    is WHERE it sits on the canvas, then the frame file, then the exact css path to the element
+    inside it, then the source location when present. Open that file and go straight to that element.
+  - A SIDEBAR copy (right-click a board, scene, or frame in the panel) names a SCOPE, not one
+    element, and leads with the board the human was viewing: `board: shipper-flow` (a whole board),
+    `board: shipper-flow · scene: flow-00-scope  (design/scenes/flow-00-scope/)` (a scene folder),
+    or `board: shipper-flow · frame: flow-00-scope/01-orientation  (design/scenes/flow-00-scope/01-orientation.tsx)`
+    (one frame file). Work within the scope it names.
 - **A pinned comment** on an element: run `npx marver comments list --open --json` - each
   thread carries the anchored element (tag, quoted text, css path, frame). Work that queue
   per instructions/iterate.md; the comment names the div, so read the anchor before the words.

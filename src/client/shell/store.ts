@@ -64,6 +64,12 @@ export async function fetchBoardNames(): Promise<string[]> {
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 export const boardLabel = (n: string) => humanize(n)
 
+/** The double-submit CSRF token the owner gate wants echoed (same read as comments-store). */
+const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+/** POST to an owner-gated dev API route, echoing the CSRF cookie the gate requires. */
+const postOwner = (path: string, body: unknown) =>
+  fetch(`${ROUTE}/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
+
 /** The frames a board pins, straight from its file (dev fetch / published inline) -
  *  membership only, never a load. Cross-board data-goto asks "which board shows this
  *  frame?" without touching the live board state. */
@@ -160,6 +166,7 @@ interface State {
   externalLeases: Record<string, { laser?: true; comment?: true }>   // nodeKey -> transient engagement
   playUpdateRevision: string | null                        // a revision arrived while play is open
   playNav: number                                          // bumps to reload the play stage on demand
+  pathPulse: number                                        // bumps on each successful path copy - flashes the toolbar icon into a check
 
   boot(): Promise<boolean>
   applyManifest(m: Manifest): void
@@ -185,6 +192,9 @@ interface State {
   setDeviceView(name: string | null): void
   resizeSelected(name: string | null): void
   switchBoard(name: string): Promise<void>
+  renameBoard(from: string, to: string): Promise<{ ok: boolean; error?: string }>
+  reorderBoards(order: string[]): Promise<boolean>
+  pulsePath(): void
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -219,7 +229,8 @@ export const useStore = create<State>((set, get) => {
   let editRev = 0                                    // bumps per edit; a stale save response may never clear dirty over a newer edit
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
-  const scheduleSave = () => { editRev++; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+  let renameLock = false                             // while a board file is being renamed, autosave must not fire against the OLD name (a mustExist PUT would 409-gone and clear dirty, losing the in-flight edit)
+  const scheduleSave = () => { editRev++; if (renameLock) return; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   // One cancelable, BOARD-SCOPED reflow after content measurements settle.
   // The captured board name is the generation guard - a debounce surviving a board
@@ -468,7 +479,7 @@ export const useStore = create<State>((set, get) => {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false,
-    pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0,
+    pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0,
 
     async boot() {
       const seq = ++loadSeq
@@ -515,6 +526,45 @@ export const useStore = create<State>((set, get) => {
       set({ board: name, interact: null, ...next })
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
+    },
+
+    async renameBoard(from, to) {
+      const active = from === get().board
+      // Renaming the ACTIVE board renames its file out from under the autosave. Flush any
+      // pending write FIRST (switchBoard's pattern), so a mustExist PUT never races the move.
+      if (active) {
+        let ok = true
+        for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
+        if (get().dirty) return { ok: false, error: 'unsaved changes - try again' }
+        // hold autosave across the round-trip: an edit landing mid-rename must NOT save to the
+        // old name (a mustExist PUT would 409-gone and clear dirty, losing the edit)
+        renameLock = true
+        clearTimeout(saveTimer)
+      }
+      // Release the lock and resume autosave. Re-read the LIVE board, not the captured `active`:
+      // a board switch may have completed while we awaited, so only the board that is STILL
+      // `from` gets renamed to `to` in state (a switched-away board keeps its own name/nodes).
+      const release = () => { if (active) { renameLock = false; if (get().dirty) scheduleSave() } }
+      let res: Response
+      try { res = await postOwner('boards/rename', { from, to }) }
+      catch { release(); return { ok: false, error: 'could not reach the dev server' } }
+      if (!res.ok) {
+        release()
+        const e = await res.json().catch(() => ({} as { error?: string }))
+        return { ok: false, error: e?.error ?? `rename failed (${res.status})` }
+      }
+      // Content is byte-identical after a file move, so boardHash still matches for the next
+      // autosave; only the name (and the URL, via the board-change subscription) changes. Set
+      // the new name BEFORE releasing the lock so a resumed save targets `to`.
+      if (active && get().board === from) set({ board: to })
+      release()
+      return { ok: true }
+    },
+
+    async reorderBoards(order) {
+      let res: Response
+      try { res = await postOwner('boards/reorder', { order }) } catch { return false }
+      return res.ok
     },
 
     applyManifest(m) {
@@ -866,6 +916,7 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({ playUpdateRevision: null, playNav: s.playNav + 1 }))
     },
     setScale(scale) { set({ scale }) },
+    pulsePath() { set((s) => ({ pathPulse: s.pathPulse + 1 })) },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
     // global theme = the VIEW preference: persists across boards + reloads, clears
     // per-frame pins. Frames declaring meta.theme keep their mode (they only work there).
@@ -937,6 +988,9 @@ export const useStore = create<State>((set, get) => {
     },
 
     save() {
+      // a rename is moving this board's file - defer every save so nothing writes to the OLD
+      // name mid-move (renameBoard reschedules once the move commits under the new name)
+      if (renameLock) return Promise.resolve(false)
       // a resize gesture in flight = torn state (new sizes, pre-recipe positions):
       // even a PREVIOUSLY scheduled timer must defer to the gesture-end save
       if (get().gesture && resizedInGesture) { scheduleSave(); return Promise.resolve(false) }

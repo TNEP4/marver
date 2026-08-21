@@ -469,6 +469,29 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-panel .it.board svg { color: var(--glass-ink-3); flex: none; margin: 0 1px; transition: color .2s ease }
 .sh-panel .it.board.cur { background: var(--accent-wash); color: var(--glass-accent); font-weight: 600 }
 .sh-panel .it.board.cur svg { color: var(--glass-accent) }
+/* drag-to-reorder: a grab cursor, the lifted row dims, and a 2px accent rule marks the
+   drop seam above or below the hovered row */
+/* a board row is click-to-switch first (pointer on hover); the grabbing hand appears the
+   moment it is pressed (:active) and - because reorder is pointer-driven, not native DnD -
+   the body class below holds that grabbing cursor for the WHOLE drag, everywhere the pointer
+   goes, instead of the OS reverting it to an arrow. The base .it already sets cursor: pointer. */
+.sh-panel .it.board[data-reorderable]:active { cursor: grabbing }
+.sh-panel .it.board.dragging { opacity: .4 }
+.sh-board-dragging, .sh-board-dragging * { cursor: grabbing !important }
+.sh-board-dragging { user-select: none }
+/* drop seam: a rounded BRAND-BLUE bar overlaid in the gap at the landing edge. Absolutely
+   positioned (::after), so it marks the seam without shifting a single row. Fixed brand blue
+   #0088ff - never the interact-mode purple that --glass-accent shifts to. */
+.sh-panel .it.board.drop-before, .sh-panel .it.board.drop-after { position: relative }
+.sh-panel .it.board.drop-before::after, .sh-panel .it.board.drop-after::after {
+  content: ''; position: absolute; left: 6px; right: 6px; height: 3px; border-radius: 3px;
+  background: #0088ff; pointer-events: none }
+.sh-panel .it.board.drop-before::after { top: -1px }
+.sh-panel .it.board.drop-after::after { bottom: -1px }
+/* inline rename: the input wears the row's own type so the swap is seamless */
+.sh-panel .it.board.editing { cursor: default }
+.sh-panel .it.board.editing input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none;
+  color: var(--glass-ink); font: inherit }
 /* frame rows: one indent in (aligned to the label line), quieter ink */
 .sh-panel .sub { display: flex; align-items: center; height: 28px; padding: 0 8px 0 31px; margin-bottom: 1px;
   color: var(--glass-ink-2); font-size: 13px; font-weight: 400; border-radius: 8px; cursor: pointer }
@@ -523,6 +546,8 @@ body.sh-commenting .sh-lean { opacity: 0 }
   cursor: pointer; text-align: left }
 .sh-menu button:hover { background: var(--glass-hover) }
 .sh-menu button span { flex: 1; text-transform: capitalize }
+/* the sidebar right-click menu keeps its labels verbatim (they match the toolbar exactly) */
+.sh-ctxmenu button span { text-transform: none }
 .sh-menu .chk { color: var(--glass-accent) }
 .sh-menu kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
