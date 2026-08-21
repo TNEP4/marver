@@ -347,6 +347,31 @@ describe('Live Jam M4: activity presence', () => {
     expect(marks.at(-1)).toEqual(['demo/hero', false])   // cleared last
     done()
   })
+  it('the glow FOLLOWS the work: a comment on one frame, but the agent builds a NEW frame', async () => {
+    const { root, dir, done } = setup()
+    // the field case: "one frame per page" - the answer is a NEW frame, not an edit to the
+    // frame the comment sits on. The adapter creates design/scenes/newpage/hero.tsx, then lingers
+    // long enough for one follow-tick (2s) to detect it before the run settles.
+    const buildAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() {
+        const script = "const fs=require('fs');fs.mkdirSync('design/scenes/newpage',{recursive:true});fs.writeFileSync('design/scenes/newpage/hero.tsx','export default function H(){return null}');setTimeout(()=>process.stdout.write(JSON.stringify({result:'Built the new page.'})),2600)"
+        return { cmd: process.execPath, args: ['-e', script] }
+      },
+      parse: claudeAdapter.parse,
+    }
+    const marks: [string | undefined, boolean][] = []
+    const jam = createJam(root, CFG, buildAdapter, undefined, { work: (f, on) => marks.push([f, on]) })
+    appendEvents(dir, 'home', [{ id: 'w2', ts: Date.now(), type: 'create', commentId: 'w2', frame: 'orders/all', nodeKey: 'orders/all', author: { email: 'nic@local' }, body: '@marver one frame per page' }])
+    record(root, 'home', 'w2')
+    await jam.tick(); jam.stop()
+    // the new frame lit up...
+    expect(marks).toContainEqual(['newpage/hero', true])
+    // ...and the commented frame's glow moved OFF it (it was only the trigger, never edited)
+    const commented = marks.filter(([f]) => f === 'orders/all')
+    expect(commented.at(-1)).toEqual(['orders/all', false])
+    done()
+  }, 12_000)
 })
 
 describe('Live Jam M2: reanchor', () => {

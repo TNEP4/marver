@@ -23,6 +23,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
+import { toFrameId } from '../manifest.ts'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
 import { localProfile } from '../profile.ts'
@@ -52,6 +53,24 @@ export interface JamHooks {
 
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
 const fenceGroup = (pid?: number) => { try { if (pid) process.kill(-pid, 'SIGKILL') } catch { /* already gone */ } }
+
+const FRAME_FILE = /\.(tsx|jsx|html)$/
+
+/** Every frame FILE under design/scenes, as `frame id -> mtimeMs`. Used to see which frames the
+ *  agent creates or edits mid-job (so the working glow can follow the work, not sit on the frame
+ *  the comment happened to be pinned to). Infra files (`_layout`, `_fixtures`) are skipped. */
+const sceneFrameMtimes = (root: string): Map<string, number> => {
+  const scenesDir = join(root, 'design', 'scenes')
+  const out = new Map<string, number>()
+  let entries: string[]
+  try { entries = readdirSync(scenesDir, { recursive: true }) as string[] } catch { return out }
+  for (const rel of entries) {
+    const base = rel.split('/').pop() ?? rel
+    if (base.startsWith('_') || !FRAME_FILE.test(base)) continue
+    try { out.set(toFrameId(`scenes/${rel}`), statSync(join(scenesDir, rel)).mtimeMs) } catch { /* vanished mid-walk */ }
+  }
+  return out
+}
 
 /** The early ack posts VERBATIM, so a first line that narrates the agent's plan instead of
  *  addressing the owner must not ship. Deliberately NARROW - "acknowledg" only ever appears
@@ -190,11 +209,28 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const threads = replay(readLog(commentsDir, b.board))
     const member = buildMember(p, threads)
     const packet = buildPacket(b.batchId, [member])
-    // Presence glow: the frame is "working" for the WHOLE run - a heartbeat keeps
-    // the activity lease alive (long jobs run many minutes; a one-shot mark lapsed at 90s and the
-    // glow died mid-job). The glow clears ONLY when the job ends (done or terminal failure).
-    hooks.work?.(member.frame, true)
-    const beat = setInterval(() => hooks.work?.(member.frame, true), 30_000)
+    // Presence glow that FOLLOWS the work. Jam agents have no shell to run `marver work`, so the
+    // daemon moves the glow itself: the commented frame lights up instantly ("I heard you"), then
+    // as the agent CREATES or EDITS frames the glow moves to those - and off the commented frame
+    // once the agent is clearly building elsewhere (it was only the trigger, not the target). A
+    // common ask is "one frame per page", where the answer is five NEW frames, not an edit to the
+    // one the comment sits on. The tick also re-marks every lit frame to keep its lease alive.
+    const lit = new Set<string>()
+    const light = (f?: string) => { if (f && !lit.has(f)) { hooks.work?.(f, true); lit.add(f) } }
+    const clearGlow = () => { for (const f of lit) hooks.work?.(f, false); lit.clear() }
+    const startMtimes = sceneFrameMtimes(root)
+    const touched = new Set<string>()
+    light(member.frame)
+    const followWork = () => {
+      for (const [id, mt] of sceneFrameMtimes(root)) if (startMtimes.get(id) !== mt) touched.add(id)   // created or edited
+      for (const id of touched) light(id)
+      // the commented frame was only the trigger if the agent built elsewhere and never touched it
+      if (member.frame && lit.has(member.frame) && !touched.has(member.frame) && touched.size > 0) {
+        hooks.work?.(member.frame, false); lit.delete(member.frame)
+      }
+      for (const f of lit) hooks.work?.(f, true)   // heartbeat: keep every lit frame's lease alive
+    }
+    const beat = setInterval(followWork, 2_000)
     beat.unref?.()
     // The agent's FIRST line streams out within seconds - post it live (its own ack, or its
     // clarifying question). Real output, not a canned placeholder.
@@ -210,20 +246,20 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       })
     } finally { clearInterval(beat) }
     logRun(b.batchId, run.raw)
-    if (stopped) { hooks.work?.(member.frame, false); return }
+    if (stopped) { clearGlow(); return }
     if (run.ok) {
       // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
       // one, so don't post it twice.
       if (run.reply !== earlyBody) writeReply(b, p, run.reply, run.model)
       emitReanchors(b, run.reanchors)
       hooks.changed?.(b.board)
-      hooks.work?.(member.frame, false)
+      clearGlow()
       finish(b)
       log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${run.reanchors.length ? ` · re-pinned ${run.reanchors.length}` : ''}`)
     } else if (b.attempts >= MAX_ATTEMPTS) {
       writeReply(b, p, "I couldn't finish that one. The raw run log is in design/.local/jam-logs - the troubleshooting drill in design/instructions/jam.md reads it. Or just rephrase and try again.", run.model)
       hooks.changed?.(b.board)
-      hooks.work?.(member.frame, false)
+      clearGlow()
       finish(b)
       log(`  jam: gave up on ${b.board} after ${b.attempts} attempts`)
     } else {

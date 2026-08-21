@@ -52,6 +52,12 @@ Before you change logic, make the work visible on the canvas:
 - Ensure the target frame exists. If it is net-new, scaffold a minimal stub file first
   (`design/scenes/<scene>/<name>.tsx` with a default export) so the frame appears immediately,
   then fill it in. Save incrementally - the human watches it build.
+- When the ask means SEVERAL new frames ("one frame per page", "a screen for each state"),
+  create ALL of them as stubs up front, then flesh each out - so the whole set shows at once.
+- The working glow follows you automatically: the frame the comment sits on lights up the
+  moment you start, and as you create or edit frame files the glow MOVES to those - and off
+  the commented frame once you are clearly building elsewhere. You do not manage it; just
+  write the frame files and the canvas tracks where the work actually is.
 - Stay camera-safe: append to the current board; never switch boards or run tidy/device-preset
   reflows mid-job (they yank the human's view).
 
