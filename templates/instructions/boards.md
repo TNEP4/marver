@@ -22,7 +22,9 @@ viewport and lays it out:
   the LANDING board the canvas opens on.** Rank them so the first is a tight, fast,
   orienting board (an overview or the primary flow) - never a giant one. Boards
   without an `order` sort after the ranked ones, by name. Set `order` deliberately on
-  every curated board; it is the first impression.
+  every curated board; it is the first impression. The human can also drag-reorder boards
+  in the sidebar (which rewrites `order`) and rename one from its right-click menu - so
+  your ranking is a starting point they may adjust.
 - `auto: false` boards show exactly their list. `all-scenes` is auto-managed (it holds
   EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
   never the landing board, and never write its file.

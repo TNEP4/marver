@@ -32,7 +32,7 @@ Frames appear on the canvas the moment the files land. That's the loop.
 
 ## The canvas
 
-- **Frames, scenes, boards.** Frames are screens, scenes group them (`design/scenes/<scene>/<frame>.tsx`), boards arrange them. Agents write `design/boards/<name>.json` (a frame list is enough); switch boards at the top of the sidebar. `all-scenes` is auto-managed.
+- **Frames, scenes, boards.** Frames are screens, scenes group them (`design/scenes/<scene>/<frame>.tsx`), boards arrange them. Agents write `design/boards/<name>.json` (a frame list is enough); switch boards at the top of the sidebar. `all-scenes` is auto-managed. Right-click any board, scene, or frame in the sidebar to copy its path - the exact string to paste to your agent - and rename or drag-reorder boards from there too.
 - **Devices view.** Hotkeys `1`-`5` (or the Devices menu) size every frame to mobile / tablet / laptop / monitor / tv to sweep your breakpoints; `0` restores your own layout exactly. Widths live in `design/config.ts`.
 - **Prototype links.** `data-goto="scene/frame"` on any element links frames into a walkable prototype - across boards, too.
 - **Play mode.** Press `p`: the board becomes a full-screen, clickable walkthrough. `data-goto` links navigate, arrow keys step between frames, `[` / `]` cycle variants, `Escape` exits. Publish it and you have a shareable prototype.
@@ -76,7 +76,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 
 **Board & chrome** - `t` tidy · `d` toggle light/dark for the board · `⌘\` (ctrl+\) collapse/open sidebar.
 
-**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · `⌘A` selects every frame on the board · `⇧P` copies the selected frames' file paths · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
+**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · `⌘A` selects every frame on the board · `⇧P` copies the selected frames' paths (board, frame, and file) · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
 
 **Modes** - `c` comment mode · `l` laser mode · `⇧C` hide/show comment pins · `⇧L` laser comment (spotlight a thread's element) · `p` play mode · `h` hide all chrome.
 
