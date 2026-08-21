@@ -66,7 +66,7 @@ one-line exfiltration channel:
 |---|---|
 | **Claude Code** | `claude -p --permission-mode acceptEdits` with an allowlist of Read, Edit, Write, Glob, Grep, WebSearch, WebFetch - and `--disallowedTools Bash`, so there is no shell at all |
 | **Codex** | `codex exec -s workspace-write`, its own OS sandbox, which bounds what commands can touch but still lets the model run them |
-| **Cursor** | `cursor-agent -p --sandbox enabled` - cursor's print mode carries a shell, so like codex it runs inside the OS sandbox; `--force` (blanket command approval) is never passed |
+| **Cursor** | `cursor-agent -p --sandbox enabled --trust` - cursor's print mode carries a shell, so like codex it runs inside the OS sandbox; `--trust` only answers the workspace-trust prompt for the repo you are already running `marver dev` in, and `--force` (blanket command approval) is never passed |
 | **droid** | `droid exec --auto low` for file edits, with `--disabled-tools` removing the shell (`Execute`), the delegation tools (`Task`, missions), and the Slack/connector tools outright |
 | **opencode** | `opencode run` with a per-run DEFAULT-DENY `OPENCODE_PERMISSION` grant - read/edit/search/web/task allowed by name, everything else (bash included) denied - never its all-approving `--auto` flag |
 | **grok** | `grok -p --no-subagents --disallowed-tools run_terminal_cmd`, removing the shell tool entirely, then `--yolo` so the remaining read/edit tools never stall on a prompt |

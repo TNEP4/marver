@@ -27,7 +27,10 @@ export const cursorAdapter: JamAdapter = {
   name: 'cursor',
   supportsSubagents: false,
   spawnArgs(goal) {
-    return { cmd: 'cursor-agent', args: ['-p', goal, '--output-format', 'stream-json', '--sandbox', 'enabled'] }
+    // --trust answers the workspace-trust prompt for THIS directory only (a headless run
+    // refuses untrusted dirs outright) - the human running `marver dev` in their own repo
+    // IS that trust decision. It is not --force: command approval stays gated.
+    return { cmd: 'cursor-agent', args: ['-p', goal, '--output-format', 'stream-json', '--sandbox', 'enabled', '--trust'] }
   },
   earlyText(line) {
     try {

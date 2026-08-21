@@ -552,6 +552,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
     const { args } = cursorAdapter.spawnArgs('g')
     expect(args).not.toContain('--force')                            // no blanket command approval
     expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')      // the OS sandbox is the jail
+    expect(args).toContain('--trust')   // headless refuses untrusted dirs; running dev there IS the trust
   })
   it('droid: claude-shaped stream (init model + result), captured init/error, json envelope fallback', () => {
     // init + error captured live from droid 0.200.0
