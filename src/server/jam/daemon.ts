@@ -214,7 +214,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       finish(b)
       log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${run.reanchors.length ? ` · re-pinned ${run.reanchors.length}` : ''}`)
     } else if (b.attempts >= MAX_ATTEMPTS) {
-      writeReply(b, p, "I couldn't finish that one. Try rephrasing, or check the dev logs.", run.model)
+      writeReply(b, p, "I couldn't finish that one. The raw run log is in design/.local/jam-logs - the troubleshooting drill in design/instructions/jam.md reads it. Or just rephrase and try again.", run.model)
       hooks.changed?.(b.board)
       hooks.work?.(member.frame, false)
       finish(b)

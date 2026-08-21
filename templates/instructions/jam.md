@@ -13,9 +13,11 @@ Live Jam is ON by default: it arms itself with whatever agent CLI the machine ha
 in a repo (the Configure phase), then never again:
 
 - **`jam.agent` names the tool YOU actually are.** Detection reads env markers and PATH, so
-  a machine with both CLIs installed can name the wrong one - and then the human's comments
-  get answered by a tool they are not using. Are you Claude Code? It must say `"claude"`.
-  Codex? `"codex"`. Fix that one line if it is wrong; it is the human's file, so say you did.
+  a machine with several CLIs installed can name the wrong one - and then the human's
+  comments get answered by a tool they are not using. The valid names: `"claude"`,
+  `"codex"`, `"cursor"`, `"droid"`, `"opencode"`, `"grok"`, `"pi"`. droid and grok set no
+  env marker at all, so from inside those tools detection will usually guess `"claude"` -
+  correct the line. It is the human's file, so say you did.
 - **`jam.concurrency`** is how many frames the daemon works on at once (default 6, max 16).
   Same frame never gets two agents; different frames run in parallel.
 
@@ -103,3 +105,37 @@ tells you which mode you are in - when it says to work on a single agent, do tha
 ## Reading comments without the daemon
 `npx marver comments list [<board>]` prints the threads on demand - use it to catch up or answer
 a one-off question without the live jam loop.
+
+## When jam misbehaves - diagnose, fix, report upstream
+
+You are the one debugging this, so here is the drill, in order:
+
+1. **The boot line first.** `marver dev` prints `jam: on (<agent>)` when armed, and the
+   exact reason when not (no CLI on PATH, a named agent it cannot spawn, `jam: false`, a
+   config that failed to parse). Fix what it names.
+2. **The raw run log.** Every job's full agent output lands in
+   `design/.local/jam-logs/<batchId>.log` (last 10 kept). A job that "did nothing" or got
+   the give-up reply almost always explains itself there - an auth error, a permission
+   refusal, an empty stream.
+3. **Auth is the usual culprit.** Prove the CLI works headless on its own, outside marver:
+   `claude -p "say ok"` / `codex exec "say ok"` / `cursor-agent -p "say ok"` /
+   `droid exec "say ok"` / `opencode run "say ok"` / `grok -p "say ok"` / `pi -p "say ok"`.
+   If that fails, the fix is the CLI's own login (or its API key env var), not marver.
+4. **The journal.** `design/.local/jam-jobs.json` is the daemon's memory. A mention posted
+   while the server was down on the first boot after an upgrade may have been baselined as
+   seen - re-comment to pick it up. Never hand-edit the ledger; it is the trust boundary.
+
+**Fix what is yours, report what is marver's.** Wrong `jam.agent`, a logged-out CLI, a
+stale config - fix those in place and tell the human what you changed. But if the drill
+shows marver itself misbehaving - a reply parsed wrong, a job that never spawned, a
+crash in the daemon - file it upstream so the next repo does not hit it:
+`gh issue create --repo TNEP4/marver` (or https://github.com/TNEP4/marver/issues) with:
+
+- the one-line symptom, marver version (`npx marver --version`), agent CLI name + version
+- the boot line, and the relevant lines from the jam-log - SCRUB anything that looks like
+  a secret or private comment text before pasting
+- what you expected against what happened, and - if you found the fix while debugging -
+  the patch itself, as a diff in the issue body
+
+That last part matters: you are the debugger on the scene, and an issue that arrives with
+its own fix is how the tool improves for every repo after this one.

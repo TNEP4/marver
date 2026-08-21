@@ -132,6 +132,13 @@ configuration speaking, and marver does not override it.
   server was down is marked seen instead of run. Re-comment to pick it up.
 - **Check the boot line.** `marver dev` prints `jam: on (<agent>)` when it is armed, and
   prints the reason when it is not.
+- **Read the raw run log.** Every job's full agent output lands in
+  `design/.local/jam-logs/` (last 10 kept) - an auth failure or permission refusal
+  explains itself there. The generated `design/instructions/jam.md` carries the full
+  troubleshooting drill, written for your agent to run: it checks the boot line, the log,
+  and the CLI's own headless auth, fixes what belongs to the workspace, and files what
+  belongs to marver at [github.com/TNEP4/marver/issues](https://github.com/TNEP4/marver/issues) -
+  with the patch, when it found one while debugging.
 
 `npx marver comments list --open --json` reads the same threads without the live loop, for
 catching up or for a one-off answer.

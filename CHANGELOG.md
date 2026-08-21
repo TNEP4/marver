@@ -17,6 +17,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `jam: "droid"` in the config block names one exactly as before. The Live Jam guide carries
   the full spawn-and-jail table.
 
+- **A troubleshooting drill written for the agent, with an upstream loop**
+  (`design/instructions/jam.md`): boot line first, then the raw run log in
+  `design/.local/jam-logs/`, then the CLI's own headless auth check - fix what belongs to
+  the workspace (a wrong `jam.agent`, a logged-out CLI), and file what belongs to marver
+  at github.com/TNEP4/marver/issues with the evidence and, when debugging surfaced one,
+  the patch. The give-up reply on the canvas now points at the same drill.
+
 ### Fixed
 
 - **The daemon pins `PWD` to the workspace when spawning an agent.** `spawn(cwd:)` changes
