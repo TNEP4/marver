@@ -26,8 +26,7 @@ import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
 import { localProfile } from '../profile.ts'
-import { claudeAdapter } from './adapter/claude.ts'
-import { codexAdapter } from './adapter/codex.ts'
+import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, extractReanchors, extractReplyBlock, goalText, threadId } from './packet.ts'
@@ -75,10 +74,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
   const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
-      const { cmd, args } = adapter.spawnArgs(goal)
+      const { cmd, args, env } = adapter.spawnArgs(goal)
       let child: ChildProcess
       // stderr is discarded at the OS level: an undrained pipe would fill and block the child.
-      try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'] }) }
+      // PWD is pinned to the workspace: spawn's cwd does not update the inherited env var, and
+      // some CLIs (opencode, verified) trust PWD over getcwd - without this, a dev server whose
+      // own cwd differs from the repo root would have the agent editing the WRONG directory.
+      try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...env, PWD: root } }) }
       catch { return resolve({ reply: '', ok: false, reanchors: [] }) }
       activeChildren.add(child)
       try { onSpawn(child.pid) } catch { /* pgid persist failed; the run still proceeds, fencing degrades */ }
@@ -339,7 +341,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
  *  one merged glow. Returns null when the adapter is unavailable or another dev server
  *  already holds the repo lock (that one runs the loop; this one watches without it). */
 export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}): JamDaemon | null {
-  const adapter: JamAdapter | null = cfg.agent === 'claude' ? claudeAdapter : cfg.agent === 'codex' ? codexAdapter : null
+  const adapter: JamAdapter | null = adapters[cfg.agent] ?? null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
 

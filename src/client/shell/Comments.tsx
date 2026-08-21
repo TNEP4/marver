@@ -271,7 +271,7 @@ function CommentBody({ body, owner }: { body?: string; owner: boolean }) {
   )
 }
 
-const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', opencode: 'OpenCode', droid: 'Factory Droid' }
+const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', opencode: 'opencode', droid: 'Factory Droid', grok: 'Grok', pi: 'pi' }
 /** claude-opus-5 → Opus 5; gpt-5.1-codex → Gpt 5.1 Codex; unknown → as-is. */
 function prettyModel(m: string): string {
   const cleaned = m.replace(/^claude-/, '').replace(/-/g, ' ')

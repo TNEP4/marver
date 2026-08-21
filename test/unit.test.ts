@@ -262,6 +262,23 @@ describe('Live Jam: which agent (detection)', async () => {
     // '.' resolves against cwd, which IS the repo the dev server was started in
     expect(detectAgent({ PATH: ['.', '', 'bin', 'node_modules/.bin'].join(delimiter) })).toBeUndefined()
   })
+  it('cursor is found by its unambiguous binary name (cursor-agent, never the bare `agent`)', async () => {
+    expect(detectAgent({ PATH: await bin('cursor-agent') })).toBe('cursor')
+    expect(detectAgent({ PATH: await bin('agent') })).toBeUndefined()   // could be cursor OR grok - never guessed
+  })
+  it('the newcomers running us win via their own markers', async () => {
+    const PATH = await bin('cursor-agent', 'opencode', 'pi')
+    expect(detectAgent({ PATH, CURSOR_AGENT: '1' })).toBe('cursor')
+    expect(detectAgent({ PATH, OPENCODE: '1' })).toBe('opencode')
+    expect(detectAgent({ PATH, PI_CODING_AGENT: 'true' })).toBe('pi')
+  })
+  it('droid and grok set no marker - PATH order finds them', async () => {
+    expect(detectAgent({ PATH: await bin('droid', 'grok', 'pi') })).toBe('droid')
+    expect(detectAgent({ PATH: await bin('grok', 'pi') })).toBe('grok')
+  })
+  it('claude still beats every newcomer by preference', async () => {
+    expect(detectAgent({ PATH: await bin('claude', 'cursor-agent', 'droid', 'opencode', 'grok', 'pi') })).toBe('claude')
+  })
 })
 
 describe('Live Jam: config.jam (on by default)', async () => {

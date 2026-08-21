@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { detectAgent, onPath, type JamAgent } from './jam/agent.ts'
+import { AGENT_BIN, AGENT_NAMES, detectAgent, onPath, type JamAgent } from './jam/agent.ts'
 
 export interface Viewport { width: number; height: number }
 /** Live Jam: the dev-server daemon config, already RESOLVED - present means armed.
@@ -113,15 +113,16 @@ const plainObject = (v: unknown): boolean => {
  *  claim every @marver mention, fail it, and never retry. */
 function resolveAgent(named: unknown): JamAgent | 'no-agent' | 'bad-agent' {
   if (named === undefined) return detectAgent() ?? 'no-agent'
-  if (named !== 'claude' && named !== 'codex') {
-    console.warn(`[marver] design/config.ts: jam.agent ${show(named)} is not an agent marver can spawn - Live Jam is off. Use "claude" or "codex".`)
+  if (typeof named !== 'string' || !Object.hasOwn(AGENT_BIN, named)) {
+    console.warn(`[marver] design/config.ts: jam.agent ${show(named)} is not an agent marver can spawn - Live Jam is off. Use ${AGENT_NAMES}.`)
     return 'bad-agent'
   }
-  if (!onPath(named)) {
-    console.warn(`[marver] design/config.ts names jam.agent "${named}", which is not on PATH - Live Jam is off until it is installed.`)
+  const agent = named as JamAgent
+  if (!onPath(AGENT_BIN[agent])) {
+    console.warn(`[marver] design/config.ts names jam.agent "${agent}", but \`${AGENT_BIN[agent]}\` is not on PATH - Live Jam is off until it is installed.`)
     return 'bad-agent'
   }
-  return named
+  return agent
 }
 
 /** Resolve the jam block. Live Jam is ON by default: an absent or partial `jam` resolves

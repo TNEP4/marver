@@ -186,7 +186,7 @@ export async function dev(root: string, portFlag?: number) {
     // The one off-state nobody has explained yet - and a feature that arms itself has to say
     // when it could not, or silence reads as "marver has no such thing". Opting out is
     // deliberate, and a bad `jam.agent` already printed its own reason: both stay quiet.
-    console.log(`  jam: no agent CLI on PATH (claude or codex) - install one and tag @${NAME} in a comment\n`)
+    console.log(`  jam: no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and tag @${NAME} in a comment\n`)
   }
   return server
 }

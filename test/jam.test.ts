@@ -8,6 +8,11 @@ import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/
 import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { codexAdapter } from '../src/server/jam/adapter/codex.ts'
+import { cursorAdapter } from '../src/server/jam/adapter/cursor.ts'
+import { droidAdapter } from '../src/server/jam/adapter/droid.ts'
+import { grokAdapter } from '../src/server/jam/adapter/grok.ts'
+import { opencodeAdapter } from '../src/server/jam/adapter/opencode.ts'
+import { piAdapter } from '../src/server/jam/adapter/pi.ts'
 import { acquireLock, releaseLock, write } from '../src/server/jam/journal.ts'
 import { buildMember } from '../src/server/jam/packet.ts'
 import { record } from '../src/server/jam/ledger.ts'
@@ -524,5 +529,104 @@ describe('Live Jam M1: single-daemon repo lock', () => {
     expect(acquireLock(root)).toBe(true)
     releaseLock(root)
     done()
+  })
+})
+
+describe('Live Jam: the five new adapters (parse over REAL captured envelopes)', () => {
+  it('cursor: result event is the reply, model from init, prose auth error is never a reply', () => {
+    const ok = [
+      '{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/w","session_id":"s1","model":"claude-opus-5","permissionMode":"default"}',
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"On it - checking the frame."}]},"session_id":"s1"}',
+      '{"type":"result","subtype":"success","is_error":false,"duration_ms":9,"result":"Done - CTA now reads Get Started.","session_id":"s1"}',
+    ].join('\n')
+    expect(cursorAdapter.parse(ok, 0)).toEqual({ reply: 'Done - CTA now reads Get Started.', model: 'claude-opus-5', reanchors: [], ok: true })
+    // captured live from cursor-agent 2026.08.11 unauthenticated: prose on stdout, non-zero exit
+    expect(cursorAdapter.parse("Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", 1).ok).toBe(false)
+  })
+  it('cursor: a stream cut before its result falls back to the LAST assistant message', () => {
+    const cut = [
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"First thought."}]}}',
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"Shipped the fix."}]}}',
+    ].join('\n')
+    expect(cursorAdapter.parse(cut, 0).reply).toBe('Shipped the fix.')
+    const { args } = cursorAdapter.spawnArgs('g')
+    expect(args).not.toContain('--force')                            // no blanket command approval
+    expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')      // the OS sandbox is the jail
+  })
+  it('droid: claude-shaped stream (init model + result), captured init/error, json envelope fallback', () => {
+    // init + error captured live from droid 0.200.0
+    const init = '{"type":"system","subtype":"init","cwd":"/w","session_id":"s","tools":["Read","Edit"],"model":"claude-opus-5","reasoning_effort":"high"}'
+    const err = '{"type":"error","source":"cli","message":"Error: Authentication failed.","timestamp":1,"session_id":"s"}'
+    expect(droidAdapter.parse([init, err].join('\n'), 1).ok).toBe(false)
+    const done = [init, '{"type":"result","subtype":"success","is_error":false,"duration_ms":5657,"num_turns":1,"result":"Moved the badge into the header.","session_id":"s"}'].join('\n')
+    expect(droidAdapter.parse(done, 0)).toEqual({ reply: 'Moved the badge into the header.', model: 'claude-opus-5', reanchors: [], ok: true })
+    const { args } = droidAdapter.spawnArgs('g')
+    expect(args[args.indexOf('--auto') + 1]).toBe('low')
+    const disabled = args[args.indexOf('--disabled-tools') + 1].split(',')
+    for (const t of ['Execute', 'Task', 'ProposeMission', 'StartMissionRun']) expect(disabled).toContain(t)   // no shell, no delegation
+    // -o json single envelope (captured live, failure path): parse must read it too
+    const envelope = '{"type":"result","subtype":"failure","is_error":true,"duration_ms":2,"num_turns":0,"result":"Authentication failed. Please log in using /login or set a valid FACTORY_API_KEY environment variable.","session_id":"x","usage":{"input_tokens":0}}'
+    expect(droidAdapter.parse(envelope, 1).ok).toBe(false)
+    expect(droidAdapter.parse('{"type":"result","subtype":"success","is_error":false,"result":"Done."}', 0).reply).toBe('Done.')
+  })
+  it('opencode: the LAST assistant message is the reply, whole even when split into parts', () => {
+    // text/step_finish shapes captured live from opencode 1.18.20 (parts carry messageID)
+    const jsonl = [
+      '{"type":"step_start","timestamp":1,"sessionID":"ses_1","part":{"id":"prt_1","messageID":"msg_a","type":"step-start"}}',
+      '{"type":"text","timestamp":2,"sessionID":"ses_1","part":{"id":"prt_2","messageID":"msg_a","type":"text","text":"Let me verify the file contents:","time":{"start":1,"end":2}}}',
+      '{"type":"text","timestamp":3,"sessionID":"ses_1","part":{"id":"prt_3","messageID":"msg_b","type":"text","text":"Swapped the hero image.","time":{"start":2,"end":3}}}',
+      '{"type":"text","timestamp":4,"sessionID":"ses_1","part":{"id":"prt_4","messageID":"msg_b","type":"text","text":"The old asset is gone - done.","time":{"start":3,"end":4}}}',
+      '{"type":"step_finish","timestamp":5,"sessionID":"ses_1","part":{"id":"prt_5","reason":"stop","type":"step-finish","tokens":{"input":1,"output":2},"cost":0}}',
+    ].join('\n')
+    // no model ever: opencode's stream names none, and none is invented
+    expect(opencodeAdapter.parse(jsonl, 0)).toEqual({ reply: 'Swapped the hero image.\n\nThe old asset is gone - done.', reanchors: [], ok: true })
+    expect(opencodeAdapter.parse('{"type":"error","timestamp":1,"sessionID":"s","error":{"name":"ProviderAuthError","data":{"message":"no auth"}}}', 1).ok).toBe(false)
+  })
+  it('opencode: the jail is a DEFAULT-DENY env grant, not the dangerous --auto flag', () => {
+    const { args, env } = opencodeAdapter.spawnArgs('g')
+    expect(args).not.toContain('--auto')
+    const perm = JSON.parse(env!.OPENCODE_PERMISSION)
+    expect(perm['*']).toBe('deny')   // unnamed/future tools are denied, not defaulted open
+    expect(perm.edit).toBe('allow')
+    expect(perm.websearch).toBe('allow')   // the goal promises web - it must not be wildcard-denied
+    expect(perm.bash).toBeUndefined()   // bash falls under the wildcard deny
+  })
+  it('grok: anthropic-shaped stream - captured init/error-result, assistant fallback, shell removed', () => {
+    // init + error result captured live from grok 1.0.5 unauthenticated
+    const init = '{"type":"system","subtype":"init","session_id":"","apiKeySource":"user","model":"unknown","cwd":"","permissionMode":"default","tools":[]}'
+    const errResult = '{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":0,"num_turns":0,"stop_reason":null,"usage":{},"modelUsage":{},"errors":["Not signed in."],"session_id":""}'
+    expect(grokAdapter.parse([init, errResult].join('\n'), 1).ok).toBe(false)
+    const done = [
+      '{"type":"system","subtype":"init","session_id":"s","model":"grok-build","permissionMode":"bypassPermissions","tools":[]}',
+      '{"type":"assistant","message":{"role":"assistant","model":"grok-build","content":[{"type":"text","text":"Tightened the spacing."}]},"session_id":"s"}',
+      '{"type":"result","subtype":"success","is_error":false,"result":"Tightened the spacing.","session_id":"s"}',
+    ].join('\n')
+    expect(grokAdapter.parse(done, 0)).toEqual({ reply: 'Tightened the spacing.', model: 'grok-build', reanchors: [], ok: true })
+    // "unknown" is grok's literal placeholder, never provenance
+    expect(grokAdapter.parse([init, '{"type":"result","subtype":"success","is_error":false,"result":"Hi.","session_id":"s"}'].join('\n'), 0).model).toBeUndefined()
+    const { args } = grokAdapter.spawnArgs('g')
+    expect(args[args.indexOf('--disallowed-tools') + 1]).toBe('run_terminal_cmd')
+    expect(args).toContain('--no-subagents')   // enforced, not just prompted
+  })
+  it('pi: agent_end is authoritative, message_end is the cut-stream fallback, auth prose never a reply', () => {
+    // session header captured live from pi 0.84.2; agent_end/message_end per its json-mode docs
+    const header = '{"type":"session","version":3,"id":"01a0","timestamp":"2026-08-21T10:07:26.320Z","cwd":"/w"}'
+    const authFail = header + '\nNo API key found for the selected model.\n\nUse /login to log into a provider via OAuth or API key.'
+    expect(piAdapter.parse(authFail, 0).ok).toBe(false)
+    const done = [
+      header,
+      '{"type":"message_end","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Working on it."}]}}',
+      '{"type":"agent_end","messages":[{"role":"user","content":[{"type":"text","text":"goal"}]},{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Renamed the section - take a look."}]}]}',
+    ].join('\n')
+    expect(piAdapter.parse(done, 0)).toEqual({ reply: 'Renamed the section - take a look.', model: 'claude-sonnet-5', reanchors: [], ok: true })
+    // stream cut before agent_end: the last message_end still answers
+    const cut = [header, '{"type":"message_end","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Done early."}]}}'].join('\n')
+    expect(piAdapter.parse(cut, 0).reply).toBe('Done early.')
+    // an assistant message that ended in error is a failure, not a reply
+    const err = [header, '{"type":"message_end","message":{"role":"assistant","errorMessage":"boom","stopReason":"error","content":[{"type":"text","text":"partial"}]}}'].join('\n')
+    expect(piAdapter.parse(err, 0).ok).toBe(false)
+    const { args } = piAdapter.spawnArgs('g')
+    expect(args[args.indexOf('--tools') + 1].split(',')).not.toContain('bash')   // the allowlist IS the jail
+    expect(args).toContain('--no-extensions')   // no arbitrary extension code in an unattended run
   })
 })

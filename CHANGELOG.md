@@ -2,6 +2,28 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **Live Jam speaks five more agent CLIs: Cursor, droid (Factory), opencode, grok, and pi**,
+  alongside claude and codex - which also covers the apps built on them (Factory drives
+  `droid`, Cursor drives `cursor-agent`, Conductor drives `claude`). Each adapter spawns its
+  CLI headless with the same posture claude set: edits yes, shell no (or OS-sandboxed) -
+  cursor runs with its sandbox forced on and never gets `--force`, droid loses its shell,
+  delegation, and connector tools, opencode runs under a per-spawn default-deny permission
+  grant, grok has its shell and subagents removed, pi's tool allowlist simply omits bash. Detection knows their env markers (`CURSOR_AGENT`,
+  `OPENCODE`, `PI_CODING_AGENT`; droid and grok set none and are found by PATH), and
+  `jam: "droid"` in the config block names one exactly as before. The Live Jam guide carries
+  the full spawn-and-jail table.
+
+### Fixed
+
+- **The daemon pins `PWD` to the workspace when spawning an agent.** `spawn(cwd:)` changes
+  the directory but not the inherited env var, and some CLIs (opencode, verified) trust
+  `PWD` over `getcwd` - a dev server whose own cwd differed from the repo root would have
+  had the agent editing the wrong directory.
+
 ## 0.9.0 - 2026-08-21
 
 ### Added

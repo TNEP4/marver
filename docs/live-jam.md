@@ -8,20 +8,26 @@ already run and pay for.
 
 ## It arms itself
 
-Live Jam is on by default (since 0.9.0). Marver looks for an agent CLI in this order:
+Live Jam is on by default (since 0.9.0). Marver speaks seven agent CLIs - `claude`,
+`codex`, `cursor`, `droid` (Factory), `opencode`, `grok`, and `pi` - which also covers the
+apps built on them: Factory drives `droid`, Cursor drives `cursor-agent`, Conductor drives
+`claude`. Marver looks for one in this order:
 
-1. **The tool running the process wins.** Claude Code and Codex each export env markers into
-   what they spawn (`CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT`, `CODEX_SANDBOX` /
-   `CODEX_THREAD_ID`), and `marver init` is usually run by the agent itself. That is
-   evidence, not a guess.
-2. **Otherwise, whatever is on PATH**, `claude` before `codex`.
+1. **The tool running the process wins.** Most CLIs export env markers into what they spawn
+   (`CLAUDECODE` for Claude Code, `CODEX_SANDBOX` for Codex, `CURSOR_AGENT` for Cursor,
+   `OPENCODE` for opencode, `PI_CODING_AGENT` for pi), and `marver init` is usually run by
+   the agent itself. That is evidence, not a guess. droid and grok set no marker in the
+   shells they spawn, so this step cannot see them - name them in config or let PATH decide.
+2. **Otherwise, whatever is on PATH**, in the order above - `claude` first.
 
 That second step is a guess, so the answer is made visible rather than clever: `init` prints
 the agent it chose and writes it into `design/config.ts` in plain sight, and `marver dev`
 names it at boot (`jam: on (claude)`). One word to correct, once per repo.
 
 The candidate has to be executable on `PATH` under its bare name, because the daemon spawns
-it without a shell. A shell alias or function is invisible to it.
+it without a shell. A shell alias or function is invisible to it. Cursor is the one agent
+whose binary differs from its config name: marver spawns `cursor-agent`, never the bare
+`agent` - both Cursor and grok install an `agent` name, so the short one is a coin flip.
 
 With no agent CLI installed, jam stays off and both `init` and `marver dev` say so instead
 of going quiet. Workspaces created before 0.9.0 need no re-init; they resolve the same way
@@ -36,7 +42,7 @@ jam: { agent: "claude", concurrency: 6 },
 
 | Key | Default | What it does |
 |---|---|---|
-| `agent` | detected | `"claude"` or `"codex"` - the CLI the daemon spawns |
+| `agent` | detected | The CLI the daemon spawns: `"claude"`, `"codex"`, `"cursor"`, `"droid"`, `"opencode"`, `"grok"`, or `"pi"` |
 | `concurrency` | `6` | Frames worked on at once (1-16). The same frame never gets two agents |
 | `subagents` | `true` | Inside one job, fan out one subagent per frame |
 
@@ -51,16 +57,30 @@ that fails to parse also leaves jam off, since it may have been the file that sa
 
 ## What the agent may do
 
-Both agents are confined to the workspace and every change is a diff you review, but the
-two CLIs are locked down differently, because they offer different controls:
+Every agent is confined to the workspace and every change is a diff you review, but each
+CLI is locked down with its own controls. The principle is the same everywhere: edits yes,
+shell no (or sandboxed) - the job packet embeds untrusted comment text, and a shell is a
+one-line exfiltration channel:
 
 | | How it is spawned |
 |---|---|
-| **Claude Code** | `--permission-mode acceptEdits` with an allowlist of Read, Edit, Write, Glob, Grep, WebSearch, WebFetch - and `--disallowedTools Bash`, so there is no shell at all |
-| **Codex** | `codex exec -s workspace-write`, its own sandbox, which bounds what commands can touch but still lets the model run them |
+| **Claude Code** | `claude -p --permission-mode acceptEdits` with an allowlist of Read, Edit, Write, Glob, Grep, WebSearch, WebFetch - and `--disallowedTools Bash`, so there is no shell at all |
+| **Codex** | `codex exec -s workspace-write`, its own OS sandbox, which bounds what commands can touch but still lets the model run them |
+| **Cursor** | `cursor-agent -p --sandbox enabled` - cursor's print mode carries a shell, so like codex it runs inside the OS sandbox; `--force` (blanket command approval) is never passed |
+| **droid** | `droid exec --auto low` for file edits, with `--disabled-tools` removing the shell (`Execute`), the delegation tools (`Task`, missions), and the Slack/connector tools outright |
+| **opencode** | `opencode run` with a per-run DEFAULT-DENY `OPENCODE_PERMISSION` grant - read/edit/search/web/task allowed by name, everything else (bash included) denied - never its all-approving `--auto` flag |
+| **grok** | `grok -p --no-subagents --disallowed-tools run_terminal_cmd`, removing the shell tool entirely, then `--yolo` so the remaining read/edit tools never stall on a prompt |
+| **pi** | `pi -p --tools read,edit,write,grep,find,ls --no-extensions --no-skills` - pi has no runtime permission system, so the tool allowlist IS the jail, and bash is not on it |
 
-Web access stays on for both: reference sites and real brand SVGs are how a frame stops
-looking like a placeholder. The agent never resolves a thread; you do that after reviewing.
+Web access stays on where the CLI offers it: reference sites and real brand SVGs are how a
+frame stops looking like a placeholder. The agent never resolves a thread; you do that
+after reviewing.
+
+One prerequisite marver cannot arrange: **the CLI has to be logged in** (`droid` and
+`cursor-agent login` and `grok login` each have their own flow; opencode and pi can also
+read provider API keys from the environment). An unauthenticated CLI fails the job; the
+daemon retries once, then replies that it could not finish - the dev log and
+`design/.local/jam-logs/` say why.
 
 ## The trust boundary
 
@@ -82,18 +102,26 @@ that repo's code. Live Jam adds no new hole to that; it does not make it safe.
 
 ## Provenance
 
-Every jam reply is stamped with who acted: your dev user, the harness that ran
-(`claude` / `codex`), and the model when the agent names one. Claude Code reports its model
-in the stream; `codex exec` reports none, so codex replies carry the harness without a
-model rather than a guessed one.
+Every jam reply is stamped with who acted: your dev user, the harness that ran, and the
+model when the agent names one. Claude Code, Cursor, droid, grok, and pi report their model
+in the stream; `codex exec` and `opencode run` report none, so their replies carry the
+harness without a model rather than a guessed one.
 
 ## Parallelism
 
 Two knobs stack, and they are not the same thing. `jam.concurrency` is how many jobs the
 daemon runs at once - different frames, different comments. `jam.subagents` is fan-out
 *inside* one job, one subagent per frame, which is what makes a five-frame ask land
-together instead of in series. Both CLIs support it: `codex exec` carries
-`collaboration.spawn_agent` the way Claude Code carries its Task tool.
+together instead of in series. Claude Code, Codex, and opencode fan out (opencode's
+subagents verifiably inherit the jail); pi has no subagent tool, and droid and grok have
+theirs removed in the spawn itself (`--disabled-tools Task`, `--no-subagents`) until a
+child is proven to inherit the parent's confinement. Their jobs simply run the frames in
+sequence - the prompt only ever says the agent MAY fan out.
+
+Two honest caveats in the same spirit as the config-execution one above: cursor's own
+permission rules (`~/.cursor/cli-config.json`, a repo's `.cursor/cli.json`) and a repo's
+own `opencode.json` agent block can widen what those CLIs allow - that is your
+configuration speaking, and marver does not override it.
 
 ## When a mention does nothing
 

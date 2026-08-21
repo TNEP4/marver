@@ -309,7 +309,7 @@ export function init(root: string, opts: InitOpts) {
   // already there decides, and it may say `jam: false` or name an agent this machine lacks -
   // announcing detection would be announcing something that is not going to happen. `marver dev`
   // prints the truth at boot in every case. The no-CLI note is machine truth, so it always holds.
-  if (!jamAgent) console.log(`\n  note: Live Jam found no agent CLI on PATH (claude or codex) - install one and it arms itself on the next \`${NAME} dev\`.`)
+  if (!jamAgent) console.log(`\n  note: Live Jam found no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and it arms itself on the next \`${NAME} dev\`.`)
   else if (created.includes('design/config.ts')) console.log(`\n  Live Jam is on (${jamAgent}): tag @${NAME} in a canvas comment and your agent does the work, then replies in the thread.`)
   console.log(`\n  next: npx ${NAME} dev   (or: npx ${NAME} canvas - same thing; canvas on http://localhost:${DEFAULTS.port} by default)\n`)
   if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)
@@ -611,7 +611,8 @@ const jamBlock = (agent?: string) => agent
   jam: { agent: ${JSON.stringify(agent)}, concurrency: 6 },`
   : `  // Live Jam - tag @${NAME} in a canvas comment and your coding agent picks the job up,
   // edits the real frame, and replies in the thread. No agent CLI was on PATH when init ran;
-  // install claude or codex and it arms itself, or name one here. \`jam: false\` turns it off.
+  // install an agent CLI (claude, codex, cursor, droid, opencode, grok, or pi) and it arms
+  // itself, or name one here. \`jam: false\` turns it off.
   // jam: { agent: "claude", concurrency: 6 },`
 
 const configTemplate = (mode: string, jamAgent?: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.

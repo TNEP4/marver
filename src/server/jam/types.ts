@@ -3,16 +3,19 @@
  * so the adapter, packet, journal, watch, and daemon modules share one vocabulary.
  */
 import type { CommentEvent } from '../../shared/events.ts'
+import type { JamAgent } from './agent.ts'
 
 /** A re-pin: the agent moved the commented element, so the whole thread follows. */
 export interface Reanchor { thread: string; anchor: unknown }
 
-/** One agent CLI the daemon can spawn. M1 ships `claude`; M5 adds `codex`. */
+/** One agent CLI the daemon can spawn. The full set lives in adapter/index.ts. */
 export interface JamAdapter {
-  name: 'claude' | 'codex'
+  name: JamAgent
   supportsSubagents: boolean
-  /** argv for a goal-phrased, workspace-jailed run over `goal`. Never full-access, never prompts. */
-  spawnArgs(goal: string): { cmd: string; args: string[] }
+  /** argv for a goal-phrased, workspace-jailed run over `goal`. Never full-access, never prompts.
+   *  `env` (rare) is merged over the daemon's env - a per-run knob for CLIs whose jail is
+   *  configured that way (opencode's OPENCODE_PERMISSION), never a credential channel. */
+  spawnArgs(goal: string): { cmd: string; args: string[]; env?: Record<string, string> }
   /** Parse the agent's stdout + exit code into the reply, best-effort model id, and any reanchors. */
   parse(stdout: string, code: number): { reply: string; model?: string; ok: boolean; reanchors: Reanchor[] }
   /** Streaming: given ONE stdout line, return the agent's message text if this line carries one.

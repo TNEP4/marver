@@ -13,18 +13,38 @@
 import { accessSync, constants, statSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 
-export type JamAgent = 'claude' | 'codex'
+export type JamAgent = 'claude' | 'codex' | 'cursor' | 'droid' | 'opencode' | 'grok' | 'pi'
 
-/** Ordered by preference when a machine has both installed and neither is running us. */
-const AGENTS: JamAgent[] = ['claude', 'codex']
+/** Ordered by preference when a machine has several installed and none is running us. */
+const AGENTS: JamAgent[] = ['claude', 'codex', 'cursor', 'droid', 'opencode', 'grok', 'pi']
 
 /** Env vars each CLI sets in the processes it spawns. Deliberately NOT CODEX_HOME or
  *  ANTHROPIC_API_KEY: those are configuration a human exports by hand, not evidence that
- *  the tool is running right now. */
+ *  the tool is running right now. (opencode's `AGENT=1` and pi's `AI_AGENT` are skipped
+ *  for the same reason in reverse - too generic to prove WHICH tool is running.)
+ *  droid and grok set no marker at all in the shells they spawn (verified against the
+ *  grok-build source and droid 0.200.0), so they are found by PATH order only. */
 const MARKERS: Record<JamAgent, string[]> = {
   claude: ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'],
   codex: ['CODEX_SANDBOX', 'CODEX_THREAD_ID'],
+  cursor: ['CURSOR_AGENT'],
+  droid: [],
+  opencode: ['OPENCODE', 'OPENCODE_PID'],
+  grok: [],
+  pi: ['PI_CODING_AGENT', 'PI_SESSION_ID'],
 }
+
+/** The executable each agent name maps to. Only cursor differs: its CLI installs BOTH
+ *  `cursor-agent` and a bare `agent` - and grok's installer symlinks `agent` too, so the
+ *  short name is a coin flip on a machine with both. The long name is unambiguous. */
+export const AGENT_BIN: Record<JamAgent, string> = {
+  claude: 'claude', codex: 'codex', cursor: 'cursor-agent', droid: 'droid',
+  opencode: 'opencode', grok: 'grok', pi: 'pi',
+}
+
+/** The valid `jam.agent` values as an English list - one string, so every surface
+ *  (config warning, init note, dev boot line) names the same set and none goes stale. */
+export const AGENT_NAMES = `${AGENTS.slice(0, -1).map((a) => `"${a}"`).join(', ')}, or "${AGENTS[AGENTS.length - 1]}"`
 
 /** Is `cmd` an executable FILE on PATH? A direct stat per PATH entry - no spawn, no shell,
  *  so this is safe to call on every dev boot. Two deliberate narrowings, both in service of
@@ -60,6 +80,6 @@ export function onPath(cmd: string, env: NodeJS.ProcessEnv = process.env): boole
  *  that line names the tool it actually is. One word to correct, once per repo. */
 export function detectAgent(env: NodeJS.ProcessEnv = process.env): JamAgent | undefined {
   const running = AGENTS.find((a) => MARKERS[a].some((k) => env[k]))
-  if (running && onPath(running, env)) return running
-  return AGENTS.find((a) => onPath(a, env))
+  if (running && onPath(AGENT_BIN[running], env)) return running
+  return AGENTS.find((a) => onPath(AGENT_BIN[a], env))
 }
