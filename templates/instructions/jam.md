@@ -72,16 +72,21 @@ file - the dev server renders it and writes the PNG back:
    `{"ok":false,"error":"..."}`. If it is not there on the first Read, it is still
    rendering - Read it once more.
 3. **Read the PNG** at that `path` and check it with your own eyes: content present, both
-   themes if you touched theming, nothing clipped. A near-blank shot means the frame threw
-   at runtime - the result's `error` carries the page's own exception. Fix and re-shoot;
-   files overwrite in place.
+   themes if you touched theming, nothing clipped. Fix and re-shoot; files overwrite in place.
 
-(If you DO have a shell - codex, cursor, droid, grok, pi - `npx marver shot <scene/frame>
-[--theme dark]` is the same thing in one line, printing the PNG path.)
+The `result.json` is the universal signal - it works even when you cannot see images.
+`"ok":false` means the frame did not render: the `error` carries the reason (a runtime
+throw shows the frame's own exception, "the frame rendered an error - ..."; an unreachable
+dev server or missing Chrome says so). So a crashed or blank frame is caught by the JSON
+alone. `"ok":true` means it painted - and THEN the PNG tells you whether it painted *well*.
 
-Verification is best-effort, not a gate: if the result reports no Chrome on the machine
-(`"ok":false` with a "no Chrome" error), say so in your reply and move on - never fake
-having looked.
+(If you DO have a shell - `npx marver shot <scene/frame> [--theme dark]` is the same thing
+in one line, printing the PNG path.)
+
+Verification is best-effort, not a gate. If your model cannot read images, or the result
+reports no Chrome on the machine, still act on `ok`/`error` - and say plainly in your reply
+that you confirmed it rendered but did not eyeball it. Never claim to have looked when you
+did not.
 
 ## Re-pin if you moved the target
 If your edit renamed or moved the commented element so its old anchor no longer matches, re-pin

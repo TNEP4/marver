@@ -20,7 +20,14 @@ document.documentElement.classList.toggle('dark', theme === 'dark')
 
 const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
 
+// A render failure posts sh:error to the shell, but a HEADLESS screenshot has no shell to
+// hear it - so also stamp the error on the document, where the shot capture can read it.
+// This is what lets `marver shot` / the file-drop result report "the frame crashed" to an
+// agent that cannot see the PNG (only the JSON), instead of a clean-looking ok:true.
+const markError = (message: string) => { (window as any).__mvFrameError = message }
+
 function fail(message: string) {
+  markError(message)
   post({ type: 'sh:error', id, message })
   document.getElementById('root')!.innerHTML =
     `<div style="font-family:ui-monospace,monospace;font-size:12px;padding:16px;color:#b42318">
@@ -35,7 +42,7 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt
 class Boundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }
   static getDerivedStateFromError(err: Error) { return { err } }
-  componentDidCatch(err: Error) { post({ type: 'sh:error', id, message: err.message }) }
+  componentDidCatch(err: Error) { markError(err.message); post({ type: 'sh:error', id, message: err.message }) }
   render() {
     if (!this.state.err) return this.props.children
     return createElement('div', { style: { fontFamily: 'ui-monospace,monospace', fontSize: 12, padding: 16, color: '#b42318' } },

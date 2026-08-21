@@ -1,5 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
@@ -268,26 +268,40 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
             : (a.address === '0.0.0.0' ? '127.0.0.1' : a.address)
           return `http://${host}:${a.port}`
         }
-        const inboxWatcher = watch(inbox, { persistent: false }, (_e, file) => {
-          if (!file || !file.endsWith('.request.json')) return
+        const inFlight = new Set<string>()
+        const processRequest = (file: string) => {
+          if (!file.endsWith('.request.json') || inFlight.has(file)) return
           const reqPath = join(inbox, file)
+          if (!existsSync(reqPath)) return
+          inFlight.add(file)
           setTimeout(async () => {   // let the write settle before reading
-            let spec: { frame?: unknown; theme?: unknown }
-            try { spec = JSON.parse(readFileSync(reqPath, 'utf8')) } catch { return }   // partial/gone
-            const base = file.replace(/\.request\.json$/, '')
-            const resultPath = join(inbox, `${base}.result.json`)
-            const frameId = typeof spec.frame === 'string' ? spec.frame : ''
-            const theme = typeof spec.theme === 'string' ? spec.theme : 'light'
-            const o = origin()
-            const write = (r: unknown) => { try { writeFileSync(resultPath, JSON.stringify(r, null, 2)) } catch { /* ignore */ } }
-            if (!o) { write({ ok: false, error: 'dev server has no address yet - retry' }); return }
-            const { shootFrame } = await import('./shot.ts')
-            const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: o })
-            write(r)
-            try { rmSync(reqPath, { force: true }) } catch { /* leave it; next write overwrites result */ }
+            try {
+              let spec: { frame?: unknown; theme?: unknown }
+              try { spec = JSON.parse(readFileSync(reqPath, 'utf8')) } catch { return }   // partial/gone
+              const base = file.replace(/\.request\.json$/, '')
+              const resultPath = join(inbox, `${base}.result.json`)
+              const frameId = typeof spec.frame === 'string' ? spec.frame : ''
+              const theme = typeof spec.theme === 'string' ? spec.theme : 'light'
+              const o = origin()
+              const write = (r: unknown) => { try { writeFileSync(resultPath, JSON.stringify(r, null, 2)) } catch { /* ignore */ } }
+              if (!o) { write({ ok: false, error: 'dev server has no address yet - retry' }); return }
+              const { shootFrame } = await import('./shot.ts')
+              const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: o })
+              write(r)
+              try { rmSync(reqPath, { force: true }) } catch { /* leave it; next write overwrites result */ }
+            } finally { inFlight.delete(file) }
           }, 60)
-        })
-        server.httpServer?.once('close', () => inboxWatcher.close())
+        }
+        // fs.watch is the fast path; a slow sweep is the backstop, because fs.watch misses
+        // events on some filesystems (macOS temp/FSEvents, network mounts) - the same reason
+        // the comments daemon pairs its watcher with a rescan. Without it, an agent's request
+        // file could sit unprocessed forever on exactly the machines where watching is flaky.
+        const inboxWatcher = watch(inbox, { persistent: false }, (_e, file) => { if (file) processRequest(file) })
+        const sweep = setInterval(() => {
+          try { for (const f of readdirSync(inbox)) processRequest(f) } catch { /* dir vanished */ }
+        }, 1000)
+        sweep.unref?.()
+        server.httpServer?.once('close', () => { inboxWatcher.close(); clearInterval(sweep) })
       } catch { /* no inbox watcher - the HTTP/CLI transport still serves shell-ful agents */ }
     },
   }

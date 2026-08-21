@@ -146,6 +146,14 @@ async function captureNow({ url, width, height, out, timeoutMs = 30_000 }: ShotR
 
     await send('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true, returnByValue: true }, sessionId).catch(() => null)
     await new Promise((r2) => setTimeout(r2, 250))   // paint settle (images decoded after fonts)
+
+    // A frame that THREW renders the frame-host's error card - which has DOM, so readiness
+    // above passed. The host stamps the crash on window.__mvFrameError; surface it so an agent
+    // reading only the JSON result (not the PNG) still learns the frame broke.
+    const errEval = await send('Runtime.evaluate', { expression: 'window.__mvFrameError || ""', returnByValue: true }, sessionId).catch(() => null)
+    const frameError = typeof errEval?.result?.value === 'string' ? errEval.result.value : ''
+    if (frameError) return { ok: false, error: `the frame rendered an error - ${frameError}` }
+
     const shot = await send('Page.captureScreenshot', { format: 'png' }, sessionId)
     writeFileSync(out, Buffer.from(String(shot.data), 'base64'))
     return { ok: true }

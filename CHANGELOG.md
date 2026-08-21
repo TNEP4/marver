@@ -27,10 +27,18 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   writes a `<slug>.request.json`, the dev server renders and writes a `<slug>.result.json`
   with the PNG path) works for every agent including Claude Code, whose WebFetch refuses
   localhost; and `npx marver shot <frame>` / `GET /api/shot` for shell-ful agents and
-  humans. Readiness is deterministic (root mounted, fonts ready), a failed navigation or a
-  crashed frame returns an honest `{ok:false,error}` rather than a blank that reads as
-  success, and the generated jam instructions now require: shoot, Read the PNG, LOOK -
-  before replying "done".
+  humans. The inbox watcher pairs `fs.watch` with a 1s sweep, so a request lands even on
+  filesystems where watching is flaky (macOS temp, network mounts) - the same belt-and-
+  braces the comments daemon uses. Readiness is deterministic (root mounted, fonts ready);
+  a failed navigation, an unreachable server, or a frame that threw at render all return an
+  honest `{ok:false,error}` carrying the real cause (the frame's own exception, surfaced via
+  the frame host) rather than a blank that reads as success - so even an agent whose model
+  cannot read images still learns from the JSON whether the frame rendered. The generated
+  jam instructions require: shoot, read the result, LOOK at the PNG when you can - and say
+  so honestly when you cannot. Verified live: Claude Code screenshotted a tour frame through
+  the file-drop path and read back its real headline; Claude, Codex, Cursor, grok, and pi
+  all read a rendered PNG correctly in isolation (opencode's configured model has no vision,
+  and degrades to the JSON signal).
 - **A troubleshooting drill written for the agent, with an upstream loop**
   (`design/instructions/jam.md`): boot line first, then the raw run log in
   `design/.local/jam-logs/`, then the CLI's own headless auth check - fix what belongs to
