@@ -14,7 +14,7 @@ export async function shotCommand(root: string, frame: string, opts: { theme?: s
   const qs = new URLSearchParams({ frame, ...(opts.theme ? { theme: opts.theme } : {}) })
   let res: Response
   try {
-    res = await fetch(`http://localhost:${info.port}/__mv/api/shot?${qs}`)
+    res = await fetch(`http://localhost:${info.port}/__mv/api/shot?${qs}`, { headers: { 'x-mv-work': info.token } })
   } catch {
     throw new Error(`could not reach \`${NAME} dev\` on port ${info.port} - is it still running?`)
   }

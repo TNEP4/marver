@@ -85,6 +85,7 @@ async function captureNow({ url, width, height, out, timeoutMs = 30_000 }: ShotR
   ], { stdio: ['ignore', 'ignore', 'pipe'] })
 
   let ws: WebSocket | null = null
+  let watchdog: ReturnType<typeof setTimeout> | undefined
   try {
     const wsUrl = await new Promise<string>((resolve, reject) => {
       let buf = ''
@@ -104,8 +105,15 @@ async function captureNow({ url, width, height, out, timeoutMs = 30_000 }: ShotR
     let seq = 0
     const pending = new Map<number, (m: any) => void>()
     let lastException = ''
+    // If the socket dies (Chrome crashed, or the watchdog killed it), settle every in-flight
+    // send so no `await send(...)` hangs forever - a hung capture would otherwise wedge the
+    // whole serialized queue (every later shot waits behind it for the rest of the session).
+    const failPending = (why: string) => { for (const [id, cb] of pending) { pending.delete(id); cb({ error: { message: why } }) } }
+    ws.onclose = () => failPending('devtools socket closed')
+    ws.onerror = () => failPending('devtools socket error')
     ws.onmessage = (e) => {
-      const m = JSON.parse(String(e.data))
+      let m: any
+      try { m = JSON.parse(String(e.data)) } catch { return }   // CDP is always JSON; ignore anything else
       if (m.id && pending.has(m.id)) { pending.get(m.id)!(m); pending.delete(m.id) }
       if (m.method === 'Runtime.exceptionThrown') {
         const d = m.params?.exceptionDetails
@@ -116,8 +124,13 @@ async function captureNow({ url, width, height, out, timeoutMs = 30_000 }: ShotR
       new Promise<any>((res, rej) => {
         const id = ++seq
         pending.set(id, (m) => m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result))
-        ws!.send(JSON.stringify({ id, method, params, sessionId }))
+        try { ws!.send(JSON.stringify({ id, method, params, sessionId })) } catch (e) { pending.delete(id); rej(e as Error) }
       })
+
+    // Overall watchdog: kill Chrome past a hard deadline, which closes the socket and rejects
+    // any pending send. Covers the CDP calls that have no timeout of their own (setup, the
+    // final captureScreenshot) - the readiness loop below bounds itself, these do not.
+    watchdog = setTimeout(() => { try { chrome.kill('SIGKILL') } catch { /* already gone */ } }, timeoutMs + 15_000)
 
     const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -160,6 +173,7 @@ async function captureNow({ url, width, height, out, timeoutMs = 30_000 }: ShotR
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   } finally {
+    if (watchdog) clearTimeout(watchdog)
     try { ws?.close() } catch { /* already gone */ }
     chrome.kill('SIGKILL')
     // rm after the process actually exits - Chrome flushes its profile on the way down

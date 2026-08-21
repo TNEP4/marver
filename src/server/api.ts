@@ -172,10 +172,15 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       }
 
       // ---- shot: render one frame headless and hand back a PNG path. Exists for the
-      // Live Jam verify loop: jam agents have no shell (the packet carries untrusted text),
-      // so "look at what you built" is a server capability - reachable by WebFetch or the
-      // `marver shot` CLI. GET + read-only + writes confined to design/.local/shots/.
+      // Live Jam verify loop: shell-ful agents and humans reach the renderer here; no-shell
+      // jam agents use the file-drop inbox (plugin.ts) instead, so this endpoint is never
+      // their path. Owner-gated like `work`: it SPAWNS a browser and writes a file, so a
+      // cross-origin drive-by must not be able to trigger it - the owner cookie (shell) or
+      // the dev-session token (CLI) is required, both unreachable cross-origin.
       if (path === 'shot' && req.method === 'GET') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
         const frameId = url.searchParams.get('frame') ?? ''
         const theme = url.searchParams.get('theme') ?? 'light'
         const { shootFrame } = await import('./shot.ts')
