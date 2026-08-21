@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## Unreleased
+## 0.10.0 - 2026-08-21
 
 ### Added
 
@@ -57,8 +57,22 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   a fenceless ack is now trimmed to its first paragraph (a fenced first message stays whole).
 - **`/api/shot` is owner/token gated**, so a cross-origin page can't trigger the browser it
   spawns; the `marver shot` CLI sends the dev-session token, and the file-drop jam path is
-  unaffected. And a hung headless Chrome can no longer wedge the shot queue - a watchdog
-  kills it past a deadline and settles every in-flight CDP call.
+  unaffected. It also renders from the dev server's actual listening address, not the
+  client-supplied Host header. And a hung headless Chrome can no longer wedge the shot queue -
+  a watchdog kills it past a deadline and settles every in-flight CDP call.
+- **The working glow follows the agent to the frames it actually builds.** A comment on one
+  frame whose answer is several NEW frames ("one frame per page") left the glow stuck on the
+  commented frame. Jam agents have no shell to run `marver work`, so the daemon now moves the
+  glow itself: it watches which frames the agent creates or edits during the job, lights those,
+  and clears the commented frame once the agent is clearly building elsewhere.
+- **Tighter agent jails, verified live.** grok's shell was actually reachable - its deny-list
+  named `run_terminal_cmd` but the real tool is `run_terminal_command`, so the flag missed and
+  a prompt-injected comment could run commands. grok now uses a read/edit tool ALLOWLIST (no
+  shell, no web, no subagents - a name a deny-list can't miss). opencode runs `--pure` so a
+  repo plugin can't execute outside its permission grant. Every other CLI's shell containment
+  was re-checked against the real binary (Cursor's OS sandbox blocks network egress; pi and
+  droid have no shell tool) rather than assumed. The Live Jam guide now states the trust model
+  plainly: your own agent, on your machine, every diff reviewed - not an airtight sandbox.
 
 ## 0.9.0 - 2026-08-21
 
