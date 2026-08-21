@@ -2,6 +2,29 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.10.1 - 2026-08-21
+
+### Added
+
+- **Point an agent at anything on the canvas by its location.** Right-click a board, scene,
+  or frame in the sidebar for a Copy path action (the same signpost icon as the floating
+  toolbar): a board copies `board: <b>`, a scene `board: <b> - scene: <s>  (design/scenes/<s>/)`,
+  a frame `board: <b> - frame: <id>  (<file>)`. Laser copy now leads with `[board > scene]`
+  before the file and selector, and the floating toolbar plus Shift+P copy that same frame
+  address (board, frame, file) - all routed through one helper so the three never drift. On a
+  real copy the toolbar signpost flashes to a check. The AGENTS templates and the Live Jam
+  guide explain how to read every pasted address.
+- **Manage boards from the sidebar.** Rename a board inline from its right-click menu; the
+  dev server performs an atomic no-clobber move and refuses a board that has a live connection
+  or a comment log (comment and sync state is board-keyed and cannot follow a file rename).
+  Reorder boards by dragging - a pointer-driven gesture (not native drag-and-drop) that holds
+  a grabbing cursor for the whole drag and marks the landing with a single brand-blue seam per
+  gap, overlaid so the list never shifts. A plain click still switches boards.
+
+### Removed
+
+- The Duplicate-frame button on the floating selection toolbar.
+
 ## 0.10.0 - 2026-08-21
 
 ### Added
