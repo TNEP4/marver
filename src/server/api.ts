@@ -84,7 +84,7 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }> } = {}): Connect.NextHandleFunction {
   const boardsDir = join(root, 'design', 'boards')
 
   const boardPath = (name: string): string | null => {
@@ -169,6 +169,19 @@ export function apiMiddleware(root: string): Connect.NextHandleFunction {
           atomicWrite(p, next2)
           return json(res, 200, { sha256: hash(next2) })
         }
+      }
+
+      // ---- shot: render one frame headless and hand back a PNG path. Exists for the
+      // Live Jam verify loop: jam agents have no shell (the packet carries untrusted text),
+      // so "look at what you built" is a server capability - reachable by WebFetch or the
+      // `marver shot` CLI. GET + read-only + writes confined to design/.local/shots/.
+      if (path === 'shot' && req.method === 'GET') {
+        const frameId = url.searchParams.get('frame') ?? ''
+        const theme = url.searchParams.get('theme') ?? 'light'
+        const { shootFrame } = await import('./shot.ts')
+        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin: `http://${req.headers.host ?? 'localhost'}` })
+        if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : r.error === 'invalid theme' ? 400 : 503, { error: r.error })
+        return json(res, 200, { path: r.path, frame: frameId, theme, width: r.width, height: r.height })
       }
 
       // ---- comments: the dev mirror of serve's collab API - same shapes,

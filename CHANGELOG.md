@@ -17,6 +17,20 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `jam: "droid"` in the config block names one exactly as before. The Live Jam guide carries
   the full spawn-and-jail table.
 
+- **The verify loop: agents can now SEE what they built.** Field feedback from 0.9.0: a
+  jam agent shipped variants that were blank at render time, because no-shell (deliberate -
+  the job packet carries untrusted text) also meant no screenshots. The answer is a jailed
+  capability, not a shell: `GET /api/shot?frame=<id>&theme=<t>` on the dev server renders
+  the frame with the machine's own headless Chrome (CDP over Node's built-in WebSocket -
+  zero new dependencies) and returns a PNG under `design/.local/shots/`. Two transports,
+  because the no-shell jail rules out the obvious one: a **file-drop inbox** (the agent
+  writes a `<slug>.request.json`, the dev server renders and writes a `<slug>.result.json`
+  with the PNG path) works for every agent including Claude Code, whose WebFetch refuses
+  localhost; and `npx marver shot <frame>` / `GET /api/shot` for shell-ful agents and
+  humans. Readiness is deterministic (root mounted, fonts ready), a failed navigation or a
+  crashed frame returns an honest `{ok:false,error}` rather than a blank that reads as
+  success, and the generated jam instructions now require: shoot, Read the PNG, LOOK -
+  before replying "done".
 - **A troubleshooting drill written for the agent, with an upstream loop**
   (`design/instructions/jam.md`): boot line first, then the raw run log in
   `design/.local/jam-logs/`, then the CLI's own headless auth check - fix what belongs to

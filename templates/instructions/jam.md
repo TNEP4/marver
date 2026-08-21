@@ -55,6 +55,34 @@ Before you change logic, make the work visible on the canvas:
 - Stay camera-safe: append to the current board; never switch boards or run tidy/device-preset
   reflows mid-job (they yank the human's view).
 
+## Verify the render - look at what you built
+
+Source that reads right can still render blank (a runtime throw, a missing import, a
+theme token that only fails live). Before you reply "done", LOOK at the frame. You have no
+shell and cannot reach localhost, so the way to ask for a screenshot is to WRITE a request
+file - the dev server renders it and writes the PNG back:
+
+1. **Drop a request.** Write `design/.local/shots/<frame-slug>.request.json` where
+   `<frame-slug>` is the frame id with each `/` turned into `--`. Content:
+   `{"frame":"<scene/frame>","theme":"<theme>"}` (theme `light` or `dark`).
+   Example, for `checkout/cart`: write `design/.local/shots/checkout--cart.request.json`
+   with `{"frame":"checkout/cart","theme":"light"}`.
+2. **Read the result.** Within a second or two the server writes
+   `design/.local/shots/<frame-slug>.result.json`: `{"ok":true,"path":"..."}` or
+   `{"ok":false,"error":"..."}`. If it is not there on the first Read, it is still
+   rendering - Read it once more.
+3. **Read the PNG** at that `path` and check it with your own eyes: content present, both
+   themes if you touched theming, nothing clipped. A near-blank shot means the frame threw
+   at runtime - the result's `error` carries the page's own exception. Fix and re-shoot;
+   files overwrite in place.
+
+(If you DO have a shell - codex, cursor, droid, grok, pi - `npx marver shot <scene/frame>
+[--theme dark]` is the same thing in one line, printing the PNG path.)
+
+Verification is best-effort, not a gate: if the result reports no Chrome on the machine
+(`"ok":false` with a "no Chrome" error), say so in your reply and move on - never fake
+having looked.
+
 ## Re-pin if you moved the target
 If your edit renamed or moved the commented element so its old anchor no longer matches, re-pin
 the thread so it does not dangle. End your reply with a fenced block (nothing after it):
@@ -127,13 +155,15 @@ You are the one debugging this, so here is the drill, in order:
 
 **Fix what is yours, report what is marver's.** Wrong `jam.agent`, a logged-out CLI, a
 stale config - fix those in place and tell the human what you changed. But if the drill
-shows marver itself misbehaving - a reply parsed wrong, a job that never spawned, a
-crash in the daemon - file it upstream so the next repo does not hit it:
-`gh issue create --repo TNEP4/marver` (or https://github.com/TNEP4/marver/issues) with:
+shows marver itself misbehaving - a reply parsed wrong, a job that never spawned, a crash
+in the daemon - file it upstream so the next repo does not hit it. The rules of the road
+are in design/AGENTS.md under "Upstream feedback" (search for an existing issue first;
+privacy is hard law - the issue is public, so never paste the owner's comment text, code,
+or anything identifying; tell the owner what you filed). What a JAM report needs on top:
 
-- the one-line symptom, marver version (`npx marver --version`), agent CLI name + version
-- the boot line, and the relevant lines from the jam-log - SCRUB anything that looks like
-  a secret or private comment text before pasting
+- marver version, agent CLI name + version, and the `jam:` boot line
+- the CLI's own error lines from the jam-log, in neutral terms - the tool's words, never
+  the design's content
 - what you expected against what happened, and - if you found the fix while debugging -
   the patch itself, as a diff in the issue body
 

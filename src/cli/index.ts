@@ -132,6 +132,19 @@ cli
     }
   })
 
+cli
+  .command('shot <frame>', 'Render one frame headless and print the PNG path (needs `dev` running)')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--theme <name>', 'Theme to render (default: light)')
+  .action(async (frame: string, opts) => {
+    const { shotCommand } = await import('./shot.ts')
+    try { await shotCommand(resolve(opts.root), frame, opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
 cli.help()
 cli.version(version())
 cli.parse()

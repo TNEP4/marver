@@ -1,5 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { existsSync, mkdirSync, readFileSync, watch } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
@@ -173,7 +173,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       })
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.
-      server.middlewares.use(apiMiddleware(root))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports }))
       server.middlewares.use(routesMiddleware(server, clientDir))
 
       devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
@@ -246,6 +246,49 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         })
         server.httpServer?.once('close', () => watcher.close())
       } catch { /* watch unsupported here - sync degrades to the 409 path */ }
+
+      // The shot inbox: the file-drop transport for the Live Jam verify loop. A no-shell
+      // agent (Claude Code) cannot run `marver shot` and its WebFetch refuses localhost, so
+      // "look at my frame" has to be Write-then-Read. The agent drops a `<name>.request.json`
+      // ({frame, theme}) here; we render and write `<name>.result.json` ({ok, path|error})
+      // next to it, then remove the request. Every jam CLI can Write, so this works for all
+      // seven. The dir is under design/.local, outside Vite's HMR watch, so requests never
+      // reload the canvas.
+      try {
+        const inbox = join(root, 'design', '.local', 'shots')
+        mkdirSync(inbox, { recursive: true })
+        // The dev server may bind IPv6 (localhost -> ::1); a hardcoded 127.0.0.1 would be
+        // refused. Build the origin from the ACTUAL bound address, bracketing IPv6 and
+        // mapping wildcards to loopback.
+        const origin = (): string | null => {
+          const a = server.httpServer?.address()
+          if (!a || typeof a === 'string') return null
+          const host = a.family === 'IPv6'
+            ? (a.address === '::' ? '[::1]' : `[${a.address}]`)
+            : (a.address === '0.0.0.0' ? '127.0.0.1' : a.address)
+          return `http://${host}:${a.port}`
+        }
+        const inboxWatcher = watch(inbox, { persistent: false }, (_e, file) => {
+          if (!file || !file.endsWith('.request.json')) return
+          const reqPath = join(inbox, file)
+          setTimeout(async () => {   // let the write settle before reading
+            let spec: { frame?: unknown; theme?: unknown }
+            try { spec = JSON.parse(readFileSync(reqPath, 'utf8')) } catch { return }   // partial/gone
+            const base = file.replace(/\.request\.json$/, '')
+            const resultPath = join(inbox, `${base}.result.json`)
+            const frameId = typeof spec.frame === 'string' ? spec.frame : ''
+            const theme = typeof spec.theme === 'string' ? spec.theme : 'light'
+            const o = origin()
+            const write = (r: unknown) => { try { writeFileSync(resultPath, JSON.stringify(r, null, 2)) } catch { /* ignore */ } }
+            if (!o) { write({ ok: false, error: 'dev server has no address yet - retry' }); return }
+            const { shootFrame } = await import('./shot.ts')
+            const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: o })
+            write(r)
+            try { rmSync(reqPath, { force: true }) } catch { /* leave it; next write overwrites result */ }
+          }, 60)
+        })
+        server.httpServer?.once('close', () => inboxWatcher.close())
+      } catch { /* no inbox watcher - the HTTP/CLI transport still serves shell-ful agents */ }
     },
   }
 }

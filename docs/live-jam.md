@@ -76,6 +76,24 @@ Web access stays on where the CLI offers it: reference sites and real brand SVGs
 frame stops looking like a placeholder. The agent never resolves a thread; you do that
 after reviewing.
 
+The missing sense that no-shell used to cost - "does my frame actually RENDER?" - is a
+server capability instead, rendered in the machine's own headless Chrome (no bundled
+browser, CDP over Node's built-in WebSocket) and written as a PNG under
+`design/.local/shots/`. Two transports reach it, because the no-shell jail rules out the
+obvious one:
+
+- **The file-drop inbox** (works for every agent, including Claude Code, which has no shell
+  and whose WebFetch refuses localhost). The agent writes
+  `design/.local/shots/<slug>.request.json` with `{"frame":"<id>","theme":"<t>"}`; the dev
+  server renders and writes `<slug>.result.json` with the PNG path or an error, which the
+  agent Reads.
+- **`npx marver shot <frame>`** / `GET /api/shot?frame=<id>&theme=<t>` for humans and
+  shell-ful agents - the same renderer, one line.
+
+The generated jam instructions tell every agent to shoot and LOOK before replying "done".
+A frame that never mounts, or a dev server that isn't reachable, comes back as an honest
+`{"ok":false,"error":...}` carrying the real cause - never a blank that reads as success.
+
 One prerequisite marver cannot arrange: **the CLI has to be logged in** (`droid` and
 `cursor-agent login` and `grok login` each have their own flow; opencode and pi can also
 read provider API keys from the environment). An unauthenticated CLI fails the job; the
