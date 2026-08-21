@@ -4,6 +4,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## Unreleased
 
+### Added
+
+- **A Live Jam guide** (`docs/live-jam.md`), now that the feature arrives armed rather than
+  opted into: how the agent is chosen and how to correct it, every key in the config block,
+  what each of the two CLIs is allowed to do, where the trust boundary sits, and what to
+  check when a mention does nothing.
+
 ### Changed
 
 - **Live Jam is on by default, at concurrency 6.** Tagging `@marver` in a comment was the

@@ -6,7 +6,7 @@
 
 **The agent-native design canvas.** A `design/` folder in your repo, one command, and a canvas of live frames built from your app's real components and theme. Your coding agent designs by writing files; the tool ships no AI.
 
-[marver.design](https://marver.design) · [Deploying a canvas](docs/publish.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
+[marver.design](https://marver.design) · [Live Jam](docs/live-jam.md) · [Deploying a canvas](docs/publish.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
 
 ## Quickstart
 
@@ -27,6 +27,7 @@ Frames appear on the canvas the moment the files land. That's the loop.
 - **Frames are real code.** Plain TSX/HTML files rendered from your repo's actual components and theme - zero imports from this package required. An approved design promotes into the app by moving a file, not by re-implementing a picture.
 - **Everything hot-reloads.** The agent writes, you watch it land - live.
 - **True viewports.** Each frame is a real iframe: drag its edge and your actual breakpoints fire.
+- **Your agent answers on the canvas.** Tag `@marver` in a comment and it picks up the job, edits the real source, and replies in the thread - no wiring, on by default. See [Live Jam](#live-jam).
 - **No AI inside.** The designer is the coding agent you already run and pay for. `init` generates the `design/AGENTS.md` contract that teaches it the whole workflow.
 
 ## The canvas
@@ -45,9 +46,9 @@ Frames appear on the canvas the moment the files land. That's the loop.
 
 ## Live Jam
 
-Tag `@marver` in a comment and your own coding agent picks it up - reads the thread, edits the real frame source, replies with a receipt - while the frame wears a live working glow. On by default: marver arms it with whichever agent CLI you have (`claude` or `codex`) and `init` writes the choice into `design/config.ts` as `jam: { agent: "claude", concurrency: 6 }`, where you can retune it or switch it off with `jam: false`.
+Tag `@marver` in a comment and your own coding agent picks it up - reads the thread, edits the real frame source, replies with a receipt - while the frame wears a live working glow. Nothing to start and nothing to wire: it rides along with `marver dev`, on by default, armed with whichever agent CLI you have. The tool running the process wins, then whatever is on PATH, and `init` writes what it found into `design/config.ts` as `jam: { agent: "claude", concurrency: 6 }` - visible, one word to correct, `jam: false` to switch off.
 
-The trust boundary is hard: only comments written on the owner's machine trigger (a device-bound ledger - a drive-by comment on a published canvas cannot start work), the agent runs locked down (Claude Code with shell disabled entirely; Codex confined to its workspace-write sandbox), and every reply carries provenance: which agent ran it, as which dev user, on which model when the agent names one. Marver ships no AI; the agent that acts is the one you already run.
+The trust boundary is hard: only comments written on the owner's machine trigger (a device-bound ledger - a drive-by comment on a published canvas cannot start work), the agent runs locked down (Claude Code with shell disabled entirely; Codex confined to its workspace-write sandbox), and every reply carries provenance: which agent ran it, as which dev user, on which model when the agent names one. Marver ships no AI; the agent that acts is the one you already run. The [Live Jam guide](docs/live-jam.md) has the config block, the two sandboxes, and what to check when a mention does nothing.
 
 ## Working state
 
@@ -58,7 +59,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | Command | What it does |
 |---|---|
 | `npx marver init` | Scaffold `design/` in this repo (safe to re-run; refreshes managed files) |
-| `npx marver dev` / `canvas` | Start the local canvas - hot reload, comments, Live Jam (`--port`, default 5199) |
+| `npx marver dev` / `canvas` | Start the local canvas - hot reload, comments, Live Jam armed (`--port`, default 5199) |
 | `npx marver build` | Static export → `design/.dist`; what ships comes from `design/publish.json` (default-closed) |
 | `npx marver serve` | Serve the export; `MARVER_PASSWORD` gates it, `MARVER_DATA_DIR` persists comments + accounts |
 | `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
