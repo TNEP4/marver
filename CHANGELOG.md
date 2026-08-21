@@ -52,6 +52,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   the directory but not the inherited env var, and some CLIs (opencode, verified) trust
   `PWD` over `getcwd` - a dev server whose own cwd differed from the repo root would have
   had the agent editing the wrong directory.
+- **The early ack no longer leaks plan narration into the thread.** A first message like
+  "On it...\n\nNow let me gather context: ..." posted the note-to-self along with the ack;
+  a fenceless ack is now trimmed to its first paragraph (a fenced first message stays whole).
+- **`/api/shot` is owner/token gated**, so a cross-origin page can't trigger the browser it
+  spawns; the `marver shot` CLI sends the dev-session token, and the file-drop jam path is
+  unaffected. And a hung headless Chrome can no longer wedge the shot queue - a watchdog
+  kills it past a deadline and settles every in-flight CDP call.
 
 ## 0.9.0 - 2026-08-21
 
