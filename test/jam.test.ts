@@ -651,8 +651,13 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
     // "unknown" is grok's literal placeholder, never provenance
     expect(grokAdapter.parse([init, '{"type":"result","subtype":"success","is_error":false,"result":"Hi.","session_id":"s"}'].join('\n'), 0).model).toBeUndefined()
     const { args } = grokAdapter.spawnArgs('g')
-    expect(args[args.indexOf('--disallowed-tools') + 1]).toBe('run_terminal_cmd')
-    expect(args).toContain('--no-subagents')   // enforced, not just prompted
+    // an ALLOWLIST, not a deny-list: a deny-list missed the real shell tool name
+    // (run_terminal_command, not run_terminal_cmd) and left the shell live - verified live.
+    const allow = args[args.indexOf('--tools') + 1].split(',')
+    expect(allow).toEqual(['read_file', 'search_replace', 'list_dir', 'grep', 'todo_write'])
+    expect(allow).not.toContain('run_terminal_command')   // no shell
+    expect(allow.some((t) => t.startsWith('web') || t.startsWith('open_page') || t.startsWith('x_'))).toBe(false)   // no web/x-search exfil
+    expect(args).not.toContain('--yolo')   // acceptEdits, not blanket approval
   })
   it('pi: agent_end is authoritative, message_end is the cut-stream fallback, auth prose never a reply', () => {
     // session header captured live from pi 0.84.2; agent_end/message_end per its json-mode docs

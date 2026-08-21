@@ -7,6 +7,8 @@
  * everything including arbitrary shell - so neither default works. The OPENCODE_PERMISSION
  * env var (verified: it merges over the user's config for this one process) is DEFAULT-DENY
  * with an explicit allowlist - so an unnamed or future tool is denied, not defaulted open.
+ * `--pure` runs without external plugins, which execute code OUTSIDE the tool-permission
+ * layer (a repo could otherwise ship a plugin the daemon's spawn would load and run).
  * Claude-parity: edits yes, shell no. Subagents inherit it (verified live).
  *
  * opencode's stream names NO model in any event (verified against its schema) - so replies
@@ -24,7 +26,7 @@ export const opencodeAdapter: JamAdapter = {
   spawnArgs(goal) {
     return {
       cmd: 'opencode',
-      args: ['run', '--format', 'json', goal],
+      args: ['run', '--pure', '--format', 'json', goal],
       env: { OPENCODE_PERMISSION: '{"*":"deny","read":"allow","edit":"allow","glob":"allow","grep":"allow","list":"allow","ls":"allow","webfetch":"allow","websearch":"allow","task":"allow","todowrite":"allow","todoread":"allow"}' },
     }
   },

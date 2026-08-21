@@ -84,7 +84,7 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }> } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null } = {}): Connect.NextHandleFunction {
   const boardsDir = join(root, 'design', 'boards')
 
   const boardPath = (name: string): string | null => {
@@ -183,8 +183,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
         const frameId = url.searchParams.get('frame') ?? ''
         const theme = url.searchParams.get('theme') ?? 'light'
+        // Origin from the ACTUAL listening socket, never the client-controlled Host header - so a
+        // spoofed Host can't point the headless render at another server. Falls back to Host only
+        // if the socket address is unavailable (the request already passed the owner/token gate).
+        const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
         const { shootFrame } = await import('./shot.ts')
-        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin: `http://${req.headers.host ?? 'localhost'}` })
+        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin })
         if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : r.error === 'invalid theme' ? 400 : 503, { error: r.error })
         return json(res, 200, { path: r.path, frame: frameId, theme, width: r.width, height: r.height })
       }

@@ -3,10 +3,14 @@
  * streaming-messages-json - an Anthropic-Messages-shaped stream: system/init and assistant
  * frames name the model, a terminal `result` event carries the reply and `is_error`.
  *
- * Jail: `--disallowed-tools run_terminal_cmd` REMOVES the shell tool entirely (the packet
- * carries untrusted text; a shell is an exfiltration channel), then `--yolo` auto-approves
- * what remains - reads, edits - so the headless run never stalls on a permission prompt.
- * Deny rules and removed tools still hold under --yolo; this is claude-parity.
+ * Jail: an explicit `--tools` ALLOWLIST of read/edit primitives only - so the shell, web,
+ * X-search, subagents, scheduler, MCP, and image tools are all simply absent, not denied by
+ * name. (A deny-list is a footgun: grok's real shell tool is `run_terminal_command`, and an
+ * earlier `--disallowed-tools run_terminal_cmd` left the shell fully live - verified. An
+ * allowlist can't miss a tool it doesn't name.) `--permission-mode acceptEdits` auto-applies
+ * those edits so the headless run never stalls; `--no-subagents` is belt-and-braces (the
+ * allowlist already omits spawn_subagent). The packet carries untrusted text, so this is the
+ * no-shell, no-network posture.
  *
  * grok injects NO env marker into processes it spawns (verified in the grok-build source),
  * so detection finds it by PATH order only - naming `jam: "grok"` in config always works.
@@ -25,13 +29,12 @@ const assistantText = (o: Record<string, any>): string | undefined => {
 
 export const grokAdapter: JamAdapter = {
   name: 'grok',
-  // Enforced by --no-subagents in the argv, not just this prompt hint: whether a child
-  // would inherit the disallowed-tools jail is unproven, so no children exist at all.
+  // The allowlist omits spawn_subagent, so no children exist to inherit (or escape) the jail.
   supportsSubagents: false,
   spawnArgs(goal) {
     return {
       cmd: 'grok',
-      args: ['-p', goal, '--output-format', 'streaming-messages-json', '--yolo', '--no-subagents', '--disallowed-tools', 'run_terminal_cmd'],
+      args: ['-p', goal, '--output-format', 'streaming-messages-json', '--permission-mode', 'acceptEdits', '--no-subagents', '--tools', 'read_file,search_replace,list_dir,grep,todo_write'],
     }
   },
   earlyText(line) {

@@ -172,8 +172,21 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         })
       })
 
+      // The dev server may bind IPv6 (localhost -> ::1); a hardcoded 127.0.0.1 would be refused.
+      // Build the origin from the ACTUAL bound address, bracketing IPv6 and mapping wildcards to
+      // loopback. Shared by /api/shot (so a spoofed Host can't redirect the render) and the
+      // file-drop shot inbox below.
+      const listeningOrigin = (): string | null => {
+        const a = server.httpServer?.address()
+        if (!a || typeof a === 'string') return null
+        const host = a.family === 'IPv6'
+          ? (a.address === '::' ? '[::1]' : `[${a.address}]`)
+          : (a.address === '0.0.0.0' ? '127.0.0.1' : a.address)
+        return `http://${host}:${a.port}`
+      }
+
       // Pre-middlewares: our routes + api run before Vite's html fallback.
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports }))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin }))
       server.middlewares.use(routesMiddleware(server, clientDir))
 
       devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
@@ -257,17 +270,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       try {
         const inbox = join(root, 'design', '.local', 'shots')
         mkdirSync(inbox, { recursive: true })
-        // The dev server may bind IPv6 (localhost -> ::1); a hardcoded 127.0.0.1 would be
-        // refused. Build the origin from the ACTUAL bound address, bracketing IPv6 and
-        // mapping wildcards to loopback.
-        const origin = (): string | null => {
-          const a = server.httpServer?.address()
-          if (!a || typeof a === 'string') return null
-          const host = a.family === 'IPv6'
-            ? (a.address === '::' ? '[::1]' : `[${a.address}]`)
-            : (a.address === '0.0.0.0' ? '127.0.0.1' : a.address)
-          return `http://${host}:${a.port}`
-        }
+        const origin = listeningOrigin   // the shared helper hoisted above
         const inFlight = new Set<string>()
         const processRequest = (file: string) => {
           if (!file.endsWith('.request.json') || inFlight.has(file)) return

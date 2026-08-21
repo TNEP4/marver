@@ -57,24 +57,35 @@ that fails to parse also leaves jam off, since it may have been the file that sa
 
 ## What the agent may do
 
-Every agent is confined to the workspace and every change is a diff you review, but each
-CLI is locked down with its own controls. The principle is the same everywhere: edits yes,
-shell no (or sandboxed) - the job packet embeds untrusted comment text, and a shell is a
-one-line exfiltration channel:
+Be clear-eyed about what this is. The real protection is not a sandbox - it is that the
+agent doing the work is **your own**, running on **your machine**, and **every change it
+makes is a diff you review** before anything is resolved. On top of that, marver removes the
+one tool that would turn a prompt-injected comment into silent damage: an unrestricted
+**shell**. Each CLI is spawned so the model can read and edit files but cannot open a shell
+(or, for Codex and Cursor, only a shell the OS sandbox contains and cuts off from the
+network):
 
 | | How it is spawned |
 |---|---|
-| **Claude Code** | `claude -p --permission-mode acceptEdits` with an allowlist of Read, Edit, Write, Glob, Grep, WebSearch, WebFetch - and `--disallowedTools Bash`, so there is no shell at all |
-| **Codex** | `codex exec -s workspace-write`, its own OS sandbox, which bounds what commands can touch but still lets the model run them |
-| **Cursor** | `cursor-agent -p --sandbox enabled --trust` - cursor's print mode carries a shell, so like codex it runs inside the OS sandbox; `--trust` only answers the workspace-trust prompt for the repo you are already running `marver dev` in, and `--force` (blanket command approval) is never passed |
-| **droid** | `droid exec --auto low` for file edits, with `--disabled-tools` removing the shell (`Execute`), the delegation tools (`Task`, missions), and the Slack/connector tools outright |
-| **opencode** | `opencode run` with a per-run DEFAULT-DENY `OPENCODE_PERMISSION` grant - read/edit/search/web/task allowed by name, everything else (bash included) denied - never its all-approving `--auto` flag |
-| **grok** | `grok -p --no-subagents --disallowed-tools run_terminal_cmd`, removing the shell tool entirely, then `--yolo` so the remaining read/edit tools never stall on a prompt |
+| **Claude Code** | `claude -p --permission-mode acceptEdits` with an allowlist of Read, Edit, Write, Glob, Grep, WebSearch, WebFetch - and `--disallowedTools Bash`, so there is no shell |
+| **Codex** | `codex exec -s workspace-write`, its own OS sandbox, which bounds what commands touch and blocks network egress, but still lets the model run shell commands |
+| **Cursor** | `cursor-agent -p --sandbox enabled --trust` - cursor's print mode carries a shell, so like Codex it runs inside the OS sandbox (verified: network egress is blocked); `--trust` only answers the workspace-trust prompt for the repo you already run `marver dev` in, and `--force` is never passed |
+| **droid** | `droid exec --auto low` for file edits, with `--disabled-tools` removing the shell (`Execute`), the delegation tools (`Task`, missions), and the Slack/connector tools |
+| **opencode** | `opencode run --pure` (no external plugins) with a per-run DEFAULT-DENY `OPENCODE_PERMISSION` grant - read/edit/search/web/task allowed by name, everything else (bash included) denied - never its all-approving `--auto` flag |
+| **grok** | `grok -p --tools read_file,search_replace,list_dir,grep,todo_write` - an ALLOWLIST of read/edit tools only, so the shell, web, and subagents are simply absent (a deny-list is a footgun: it can miss a tool's real name); `--permission-mode acceptEdits` auto-applies the edits |
 | **pi** | `pi -p --tools read,edit,write,grep,find,ls --no-extensions --no-skills` - pi has no runtime permission system, so the tool allowlist IS the jail, and bash is not on it |
 
-Web access stays on where the CLI offers it: reference sites and real brand SVGs are how a
-frame stops looking like a placeholder. The agent never resolves a thread; you do that
-after reviewing.
+The honest limits: file tools that take a path (Read/Edit/Write, and their equivalents) are
+not themselves jailed to `design/` - on the CLIs without an OS sandbox they can, if a
+comment talks the model into it, touch a file elsewhere in the repo or the machine. And Web
+access, where a CLI keeps it, can carry data outward. This is the same boundary Claude Code
+has always run under, and it is why the two rules above still do the real work: it is your
+agent, and you review the diff. Do not point Live Jam at a repo, or run it on a machine, you
+would not hand that same agent directly.
+
+Web access stays on where the CLI offers it (Claude Code, Codex, opencode): reference sites
+and real brand SVGs are how a frame stops looking like a placeholder. The agent never
+resolves a thread; you do that after reviewing.
 
 The missing sense that no-shell used to cost - "does my frame actually RENDER?" - is a
 server capability instead, rendered in the machine's own headless Chrome (no bundled
