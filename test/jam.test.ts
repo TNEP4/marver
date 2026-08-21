@@ -440,6 +440,26 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     done()
   })
 
+  it('early ack drops trailing plan narration - only the first line reaches the thread', async () => {
+    const { root, dir, done } = setup()
+    // the field-reported leak: the ack line and a "now let me..." plan share one first message
+    const ack = 'On it - one frame mapping every state of the nav.\n\nNow let me gather context: the jam instructions, the commented frame, and the boards the owner referenced.'
+    const ackLeaky = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: ack }] } })
+    const resultLine = JSON.stringify({ type: 'result', result: 'Done - the nav-states frame is in.', modelUsage: {} })
+    const leakAdapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', streamScript([ackLeaky, resultLine])] } },
+      parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText,
+    }
+    const jam = createJam(root, CFG, leakAdapter)
+    ownerMention(root, dir, 'home', '@marver map every nav state')
+    await jam.tick(); jam.stop()
+    const replies = agentReplies(dir, 'home')
+    expect(replies[0].body).toBe('On it - one frame mapping every state of the nav.')   // narration gone
+    expect(replies[0].body).not.toContain('gather context')
+    done()
+  })
+
   it('clarify-and-stop: the question posts once, never twice', async () => {
     const { root, dir, done } = setup()
     const q = 'Which field - card number or CVC?'

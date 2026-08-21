@@ -99,7 +99,10 @@ the thread so it does not dangle. End your reply with a fenced block (nothing af
 Omit it when the element's identity is unchanged. The daemon writes the reanchor for you.
 
 ## Reply
-Your FIRST message is ONE short line to the owner, posted the moment you write it:
+Your FIRST message is ONE short line to the owner, posted the moment you write it - the owner
+SEES it in the thread, so it is addressed to them, not a note to yourself. Nothing after it:
+no "now let me gather context", no plan, no "I'll start by..." - that narration is for your
+own run, never the thread. Just the ack, then go quiet and work.
 - Clear ask -> a tight ack immediately, before any tool use.
 - Unclear? LOOK AROUND FIRST, like a human would: the packet's `thread` and `nearby`, then Read
   `design/comments/<board>.jsonl` (every thread on the board - recent pins on this frame often

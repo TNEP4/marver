@@ -109,7 +109,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           // ack: codex streams a single message at the very end, and a fast claude run can do the
           // same. Post what is INSIDE the block - never the raw fence - and since that equals what
           // parse() will return, the final reply dedupes itself instead of doubling up.
-          const text = extractReplyBlock(extractReanchors(hit.text).reply)
+          const visible = extractReanchors(hit.text).reply
+          const block = extractReplyBlock(visible)
+          // A fenceless first message is a plain ACK, and models append plan narration to it
+          // ("On it.\n\nNow let me gather context..."). The ack is ONE line to the owner, so keep
+          // only the first paragraph - the narration after the blank line never reaches the thread.
+          // A fenced first message is the real completion; leave its (possibly multi-paragraph) body.
+          const hasFence = block !== visible.trim()
+          const text = hasFence ? block : block.split(/\n\s*\n/)[0].trim()
           if (!text || metaNarration(text)) continue
           earlyFired = true
           try { onEarly!(text, hit.model) } catch { /* early delivery is best-effort */ }
