@@ -92,6 +92,10 @@ The `result.json` is the universal signal - it works even when you cannot see im
 throw shows the frame's own exception, "the frame rendered an error - ..."; an unreachable
 dev server or missing Chrome says so). So a crashed or blank frame is caught by the JSON
 alone. `"ok":true` means it painted - and THEN the PNG tells you whether it painted *well*.
+The result also reports the exact `width`/`height` captured: a content frame (a `Doc`) is
+shot at its natural width and its FULL height, so a wide layout or a long spec renders in
+full, not cropped. A frame tall enough to hit the capture cap comes back with
+`"truncated":true` and a `note` - split it or shorten it and re-shoot.
 
 (If you DO have a shell - `npx marver shot <scene/frame> [--theme dark]` is the same thing
 in one line, printing the PNG path.)

@@ -2,6 +2,20 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.10.2 - 2026-08-22
+
+### Fixed
+
+- **`marver shot` renders content frames at their real size.** The verify-loop screenshot
+  (and the file-drop `design/.local/shots/*.request.json` transport) used to capture every
+  frame at the mobile viewport - a 780x1688 crop - so a `Doc layout="wide"` frame came back
+  squeezed and anything past ~1688px tall was invisible to the verifying agent. A shot now
+  sizes a content frame the way the canvas does: its `contentWidth` (760 document / 1280 wide,
+  or a declared `meta.viewport`'s width) at full measured height. Long frames render in full;
+  past a capture-safe height the shot drops to 1x pixel density and, if still enormous, reports
+  `truncated` with a note rather than producing a gigapixel PNG. The `/api/shot` and file-drop
+  results now include `scale` and, when clipped, `truncated`/`note`.
+
 ## 0.10.1 - 2026-08-21
 
 ### Added

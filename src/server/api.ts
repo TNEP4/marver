@@ -276,7 +276,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { shootFrame } = await import('./shot.ts')
         const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin })
         if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : r.error === 'invalid theme' ? 400 : 503, { error: r.error })
-        return json(res, 200, { path: r.path, frame: frameId, theme, width: r.width, height: r.height })
+        return json(res, 200, { path: r.path, frame: frameId, theme, width: r.width, height: r.height, scale: r.scale, ...(r.truncated ? { truncated: true, note: r.note } : {}) })
       }
 
       // ---- comments: the dev mirror of serve's collab API - same shapes,

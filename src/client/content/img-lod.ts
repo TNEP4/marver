@@ -35,6 +35,12 @@ const schedule = (job: () => Promise<void>): void => {
   pump()
 }
 
+// Decode-idle signal for the headless shot: 0 means no decode is running or queued. The shot
+// (src/server/shot.ts) polls this to know each image's first decode has settled - which pins
+// its aspect-ratio and so stabilizes the frame's measured height - before it measures and
+// captures. Harmless and 0 when there are no LOD images (nothing ever decodes).
+if (typeof window !== 'undefined') (window as { __mvLodBusy?: () => number }).__mvLodBusy = () => active + q.length
+
 interface Item { canvas: HTMLCanvasElement; src: string; bucket: number; token: number }
 const items = new Set<Item>()
 let scale = 0.2      // overview default until the shell primes the settled scale on frame-ready
