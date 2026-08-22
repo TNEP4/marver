@@ -141,6 +141,21 @@ export async function dev(root: string, portFlag?: number) {
   if (picked.fellBack) console.log(`\n  port ${desiredPort} is in use - serving "${projectName}" on ${port} instead`)
   console.log(`\n  ${NAME} · ${projectName} → http://localhost:${port}/\n`)
 
+  // Staleness signal: the new code is running, but the managed instructions on disk may
+  // predate it (e.g. this workspace was scaffolded before jam.md shipped). Distinct from the
+  // registry update-check below - this compares the INSTALLED package's templates against the
+  // on-disk markers. Read-only and self-guarding; a re-init refreshes them.
+  try {
+    const { staleManagedInstructions } = await import('./managed.ts')
+    const { installedVersion } = await import('./update.ts')
+    const stale = staleManagedInstructions(root)
+    if (stale.length) {
+      const shown = stale.slice(0, 4).join(', ') + (stale.length > 4 ? `, +${stale.length - 4} more` : '')
+      const v = installedVersion()
+      console.log(`  instructions predate ${v ? NAME + ' ' + v : 'the installed version'} (${shown}) - run: npx ${NAME} init\n`)
+    }
+  } catch { /* a boot must never fail on an advisory check */ }
+
   // comment sync loop: ~30s exchanges with the publish target. The
   // ticker ALWAYS runs and re-reads credentials each pass, so `comments connect`
   // issued while dev is already open starts syncing on the next tick - no restart.

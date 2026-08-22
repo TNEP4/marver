@@ -16,6 +16,16 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `truncated` with a note rather than producing a gigapixel PNG. The `/api/shot` and file-drop
   results now include `scale` and, when clipped, `truncated`/`note`.
 
+### Added
+
+- **`marver dev` warns when your instructions predate the installed package.** Upgrading the
+  package doesn't refresh the managed files in `design/` - so a workspace scaffolded on an
+  older version could run the new daemon against an agent contract that predated it (for
+  example, Live Jam armed with no `jam.md` on disk). Dev now prints one line at boot when a
+  managed instruction file is behind the installed version - `instructions predate marver
+  <version> (jam.md, ...) - run: npx marver init` - comparing the on-disk `marver:managed`
+  hashes against what this version ships. Files you edited or detached are never flagged.
+
 ## 0.10.1 - 2026-08-21
 
 ### Added
