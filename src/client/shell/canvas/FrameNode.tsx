@@ -7,6 +7,7 @@ import { threadHostKey } from '../keys.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { primeCameraFor } from './camera-broadcast.ts'
 import { registerLeanFrame, dropSnapshot, scheduleCapture, invalidateLean } from './snapshots.ts'
+import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -47,7 +48,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // B0.1: no reactive scale subscription - it re-rendered every FrameNode on every
   // pan/zoom tick. gestureScale below measures the world rect (the canonical source,
   // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
-  const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, setGesture, toast } = useStore.getState()
+  const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, reloadFrame, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const themeRef = useRef(node.theme)
   // src is frozen at mount: theme changes ride sh:set-theme (never navigation), so
@@ -204,12 +205,40 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (frame && iframeRef.current) iframeRef.current.src = frameUrl(frame, node.theme)
   }, [node.nav])
 
-  // ready timeout: 10s without sh:ready -> error card with reload
+  // Reload the frame, assigning the fresh URL SYNCHRONOUSLY so the live iframe's src is current the
+  // instant a stale sh:ready (queued by the document we just superseded) could be processed - the
+  // App generation guard then drops it against the new src. reloadFrame bumps nav+manifestRev; we
+  // pre-apply the src here and advance navRef so the passive nav effect does not navigate a 2nd time.
+  const reload = (automatic: boolean) => {
+    const before = useStore.getState().nodes.find((x) => x.key === node.key)
+    if (!before || (automatic && !canAutoReload(before))) return
+    reloadFrame(node.key, automatic)
+    const after = useStore.getState().nodes.find((x) => x.key === node.key)
+    const f = useStore.getState().frameFor(node)
+    if (after && f && iframeRef.current) {
+      iframeRef.current.src = frameUrl(f, node.theme)
+      navRef.current = after.nav ?? 0
+    }
+  }
+  // latest-callback ref so the watchdog effect can call the current reload() without taking it as a
+  // dep (an unstable function there would reset the timer every render and starve the retry)
+  const reloadRef = useRef(reload)
+  reloadRef.current = reload
+
+  // ready watchdog: a slow dev server (Vite re-optimizing deps, or the box saturated by parallel
+  // Live Jam agents) can leave boot()'s module fetches unresolved past the deadline - that is a slow
+  // frame, NOT a failed one (a real failure posts sh:error immediately). So the first silent deadline
+  // auto-renavigates ONCE on a fresh rev; a second silence stays 'loading' (never a red error card).
+  // node.nav is a dep so a fresh navigation restarts the full budget; readyRetried flips true on the
+  // retry and bounds it to exactly one.
   useEffect(() => {
-    if (node.status !== 'loading') return
-    const t = setTimeout(() => setStatus(node.key, 'error', 'frame never reported ready (10s)'), 10_000)
+    if (!shouldArmReadyWatch(node, !!frame)) return
+    const t = setTimeout(() => reloadRef.current(true), 10_000)
     return () => clearTimeout(t)
-  }, [node.status, node.key, setStatus])
+    // depend on the frame's stable SIGNATURE, not the manifest object - that object is replaced on
+    // every manifest reconcile, so depending on it would reset the budget on unrelated frames during
+    // heavy Live Jam churn and starve the retry. kind/file still re-arm on a real file swap.
+  }, [node.status, node.readyRetried, node.nav, node.key, node.missing, frame?.kind, frame?.file])
 
   const drag = (e: React.PointerEvent, mode: 'move' | 'e' | 's' | 'se') => {
     e.stopPropagation()
@@ -345,13 +374,23 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             <span className="msg">{node.error}</span>
             <span className="dim">{frame.file}</span>
             <span className="row">
-              <button className="sh-no-pan" onClick={() => { setStatus(node.key, 'loading'); iframeRef.current && (iframeRef.current.src = frameUrl(frame, node.theme)) }}>
+              <button className="sh-no-pan" onClick={() => reload(false)}>
                 <ReloadIcon size={12} /> reload
               </button>
               <button className="sh-no-pan" onClick={() => { navigator.clipboard.writeText(`${frame.file}: ${node.error}`); toast('error copied for agent') }}>
                 <CopyIcon size={12} /> copy for agent
               </button>
             </span>
+          </div>
+        ) : null}
+        {/* a frame still silent after its one auto-retry: a slow dev server, never a failure. A quiet
+            non-covering pill (not the red card) keeps it honest and offers a manual reload. */}
+        {node.status === 'loading' && node.readyRetried ? (
+          <div className="sh-loading sh-no-pan">
+            <span>still loading</span>
+            <button className="sh-no-pan" onClick={() => reload(false)}>
+              <ReloadIcon size={11} /> reload
+            </button>
           </div>
         ) : null}
         <iframe

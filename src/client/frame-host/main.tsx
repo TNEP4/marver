@@ -77,7 +77,10 @@ async function boot() {
     for (const W of wrappers.reverse()) if (W != null) tree = createElement(W, null, tree)
 
     createRoot(document.getElementById('root')!).render(createElement(Boundary, null, tree))
-    post({ type: 'sh:ready', id, meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined })
+    // stamp the URL revision so the shell can drop a ready queued by a superseded document (one it
+    // auto-renavigated past) - a WindowProxy survives navigation, so a stale ready could otherwise
+    // mark a reloading frame ready. Mirrors the sh:measure generation guard.
+    post({ type: 'sh:ready', id, gen: params.get('r') ?? '', meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined })
   } catch (err) {
     fail((err as Error).message)
   }

@@ -73,7 +73,9 @@ window.addEventListener('message', (e) => {
 })
 
 if (isHtmlFrame) {
-  const ready = () => post({ type: 'sh:ready', id })
+  // stamp the URL revision (see main.tsx) so the shell can drop a ready from a superseded document
+  const gen = new URLSearchParams(location.search).get('r') ?? ''
+  const ready = () => post({ type: 'sh:ready', id, gen })
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
 }
 

@@ -426,6 +426,14 @@ body.sh-commenting .sh-lean { opacity: 0 }
   border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 999px;
   padding: 4px 10px; cursor: pointer }
 
+/* still-loading pill: a slow (not failed) frame after its one auto-retry. Non-covering, sits above
+   the drag overlay (z2) so its reload button is clickable, and stays out of the frame's content. */
+.sh-loading { position: absolute; left: 8px; bottom: 8px; z-index: 6; display: inline-flex; align-items: center;
+  gap: 8px; padding: 4px 4px 4px 10px; border-radius: 999px; font: 500 11px -apple-system, system-ui, sans-serif;
+  color: var(--card-warn-ink); background: var(--card-warn-bg); box-shadow: 0 1px 4px rgba(0, 0, 0, .16) }
+.sh-loading button { display: inline-flex; align-items: center; gap: 4px; font: 600 11px -apple-system, system-ui, sans-serif;
+  border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 999px; padding: 3px 9px; cursor: pointer }
+
 /* shared icon button (glass surfaces) */
 .sh-ibtn { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 999px;
   border: 0; background: none; color: var(--glass-ink-3); cursor: pointer }

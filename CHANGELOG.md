@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## 0.10.2 - 2026-08-22
+## 0.10.2 - 2026-08-24
 
 ### Fixed
 
@@ -15,6 +15,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   past a capture-safe height the shot drops to 1x pixel density and, if still enormous, reports
   `truncated` with a note rather than producing a gigapixel PNG. The `/api/shot` and file-drop
   results now include `scale` and, when clipped, `truncated`/`note`.
+- **A slow dev server no longer fails a healthy frame.** A frame that hadn't reported ready
+  within 10s was marked `frame failed` / `frame never reported ready (10s)`, hidden behind a red
+  card that only a per-frame click could clear - but the frame was usually fine, just waiting on
+  a slow module response (Vite re-optimizing dependencies, or the box saturated by parallel Live
+  Jam agents). A genuine failure already reports itself immediately, so silence past the deadline
+  now auto-renavigates the frame once on a fresh revision; if it's still loading it stays visible
+  behind a quiet "still loading" pill (with its own reload) instead of a failure. A late ready
+  clears it, and a stale ready from the superseded document is dropped by generation so it can't
+  mark a reloading frame ready.
 
 ### Added
 

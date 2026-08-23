@@ -38,6 +38,10 @@ export interface Node {
    *  frame arrives - an authored size on a temporarily-missing frame is never touched. */
   sizeFallback?: boolean
   status: 'loading' | 'ready' | 'error'; error?: string; missing?: boolean
+  /** the frame's one automatic ready-retry has been spent (a slow dev server must not be reported
+   *  as a failed frame; see canvas/ready-watch.ts). Transient - cleared on any real ready/error and
+   *  on every fresh navigation. */
+  readyRetried?: boolean
 }
 /** A Live Jam notification: a persistent bottom-right glass pill for a Marver
  *  reply. Frame-first: the FRAME is the news (icon + title, blue), Marver + preview below. */
@@ -48,6 +52,7 @@ export const CONFIG: { viewports: Record<string, { width: number; height: number
 
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
+import { canAutoReload } from './canvas/ready-watch.ts'
 
 /** Board names for switchers: the agent's curated boards FIRST (ranked by each board's `order`, then
  *  name), and the auto `all-scenes` everything-board LAST - it is the expensive one, never the landing.
@@ -94,7 +99,7 @@ export const bumpManifestRev = () => { manifestRev++ }
 
 export function frameUrl(frame: FrameEntry, theme: string): string {
   return frame.kind === 'html'
-    ? `/${frame.file}?theme=${theme}`
+    ? `/${frame.file}?theme=${theme}&r=${manifestRev}`   // r= carries the generation for the sh:ready guard (static serving ignores it)
     : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}&r=${manifestRev}`
 }
 
@@ -175,6 +180,7 @@ interface State {
   resizeNode(key: string, w: number, h: number): void
   measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
+  reloadFrame(key: string, automatic?: boolean): void
   removeNode(key: string): void
   select(key: string | null, additive?: boolean): void
   selectMany(keys: string[]): void
@@ -620,7 +626,7 @@ export const useStore = create<State>((set, get) => {
             n.w = vp?.width ?? d.w
             n.h = vp?.height ?? d.h
           }
-          if (arrived) delete n.sizeFallback
+          if (arrived) { delete n.sizeFallback; n.readyRetried = false }   // a fresh mount earns a fresh allowance
           n.missing = missing
           changed = true
         }
@@ -637,7 +643,7 @@ export const useStore = create<State>((set, get) => {
         if (!f?.contentWidth && n.sizeMode) { delete n.sizeMode; retinted = true }
         // an errored frame whose file IS in the fresh manifest gets one automatic retry
         // on a rev-stamped URL - the "unknown frame id" dead end must self-heal (#20)
-        if (!missing && n.status === 'error') { n.status = 'loading'; n.nav = (n.nav ?? 0) + 1; retinted = true }
+        if (!missing && n.status === 'error') { n.status = 'loading'; n.nav = (n.nav ?? 0) + 1; n.readyRetried = false; retinted = true }
       }
       // auto boards prune deleted frames outright - "auto-managed" must manage both
       // directions (friction log #15). Curated boards keep the explicit card.
@@ -793,7 +799,22 @@ export const useStore = create<State>((set, get) => {
       else scheduleSave()
     },
     setStatus(key, status, error) {
-      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error } : n)) }))
+      // any real ready/error resets the one-shot retry allowance, so a later manual reload or a
+      // fresh manifest earns its own auto-retry again
+      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error, readyRetried: false } : n)) }))
+    },
+    // Reload a frame on a fresh rev-stamped URL (dodges a poisoned-cache document, #20). The
+    // watchdog calls this with automatic=true after a silent deadline: it fires at most once per
+    // load (canAutoReload gates it) and marks readyRetried so a second silence never retries and
+    // never becomes an error. A manual reload passes automatic=false, granting a fresh allowance.
+    reloadFrame(key, automatic = false) {
+      const n = get().nodes.find((x) => x.key === key)
+      if (!n) return
+      if (automatic && !canAutoReload(n)) return
+      bumpManifestRev()
+      set((s) => ({ nodes: s.nodes.map((x) => (x.key === key
+        ? { ...x, status: 'loading' as const, error: undefined, nav: (x.nav ?? 0) + 1, readyRetried: automatic }
+        : x)) }))
     },
     // plain select replaces; additive toggles membership. Interact survives only while its
     // frame stays selected.
@@ -884,7 +905,7 @@ export const useStore = create<State>((set, get) => {
       const nodes = s.nodes.map((n) => {
         if (!ids.has(n.frame)) return n
         if (frameIsLeased(n.frame, s)) { pending[n.frame] = revision; return n }
-        return { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1 }
+        return { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1, readyRetried: false }
       })
       set({ nodes, pendingFrameRevisions: pending, ...(s.play ? { playUpdateRevision: revision } : {}) })
     },
@@ -897,7 +918,7 @@ export const useStore = create<State>((set, get) => {
       const pending = { ...s.pendingFrameRevisions }
       for (const id of ids) delete pending[id]
       const nodes = s.nodes.map((n) => apply.has(n.frame)
-        ? { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1 } : n)
+        ? { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1, readyRetried: false } : n)
       set({ nodes, pendingFrameRevisions: pending })
     },
     setExternalLease(nodeKey, reason, on) {

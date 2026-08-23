@@ -710,6 +710,11 @@ export function App() {
       const s = useStore.getState()
 
       if (data.type === 'sh:ready') {
+        // a WindowProxy survives navigation, so a ready queued by a SUPERSEDED document (one the
+        // ready-watchdog auto-renavigated past) can arrive here; drop it by generation like
+        // sh:measure does, so a stale ready never marks a reloading frame ready.
+        const gen = el.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
+        if (String(data.gen ?? '') !== gen) return
         s.setStatus(nodeKey, 'ready')
       } else if (data.type === 'sh:error') {
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
