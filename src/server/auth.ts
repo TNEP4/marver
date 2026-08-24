@@ -35,7 +35,8 @@ export interface User {
   salt?: string                   // hex   - password accounts only
   hash?: string                   // hex scrypt(password, salt) - password accounts only
   params?: typeof SCRYPT
-  /** Stable subject from the identity service. Grants bind to this, not email. */
+  /** `<issuer>#<subject>` from the identity service - qualified so a canvas
+   *  repointed at a different service cannot bind a colliding subject. */
   idSubject?: string
   createdAt: number
 }
@@ -149,6 +150,15 @@ export function claimInvite(
   const hash = sha256(rawToken)
   const invite = store.invites.find((i) => i.tokenHash === hash && i.exp > Date.now())
   if (!invite) throw new Error('this invite link is invalid, expired, or already used')
+  // An account for this address may have appeared since the invite was minted -
+  // through Marver ID, say. Creating a second user with the same email would be
+  // an account takeover, not a duplicate: sessions resolve by email to the FIRST
+  // matching user, so the claimant would inherit whatever that first user is.
+  if (findUser(store, invite.emailNorm)) {
+    store.invites = store.invites.filter((i) => i !== invite)
+    saveStore(dir, store)
+    throw new Error('an account already exists for this address - sign in instead')
+  }
   store.invites = store.invites.filter((i) => i !== invite)
   const salt = randomBytes(16).toString('hex')
   const user: User = {
@@ -202,31 +212,48 @@ export function signIn(dir: string, email: string, password: string): { user: Us
  */
 export function provisionFromMarverId(
   dir: string,
-  identity: { email: string; subject: string },
-  allowed: (emailNorm: string) => boolean,
+  identity: { email: string; subject: string; issuer: string },
+  opts: { ownerEmail?: string } = {},
 ): { user: User; session: string } | null {
   const emailNorm = normEmail(identity.email)
-  if (!emailNorm || !allowed(emailNorm)) return null
+  if (!emailNorm) return null
 
   return withLock(dir, () => {
     const store = loadStore(dir)
-    let user = findUser(store, emailNorm)
+
+    // The allowlist decision happens HERE, inside the lock, against the store we
+    // are about to write. Reading it outside meant two concurrent callbacks could
+    // both pass a check that was already stale - which is exactly the race the
+    // lock exists to prevent.
+    const existing = findUser(store, emailNorm)
+    const invite = store.invites.find((i) => i.emailNorm === emailNorm && i.exp > Date.now())
+    const isBootstrapOwner = !!opts.ownerEmail && !store.users.length && normEmail(opts.ownerEmail) === emailNorm
+    if (!existing && !invite && !isBootstrapOwner) return null
+
+    // An invite that authorises entry is SPENT by it. Leaving it pending would
+    // leave a password-based second door into an account that now exists.
+    if (invite) store.invites = store.invites.filter((i) => i !== invite)
+
+    let user = existing
 
     if (user) {
       // An existing PASSWORD account keeps its password; signing in through the
       // identity service does not silently convert it, and must not be a way to
       // take one over. Same address, same person, both doors still work.
-      if (!user.idSubject) user.idSubject = identity.subject
-      // A subject that disagrees with the one we recorded means two different
-      // identity-service accounts claim the same address. Refuse rather than guess.
-      else if (user.idSubject !== identity.subject) return null
+      const qualified = `${identity.issuer}#${identity.subject}`
+      if (!user.idSubject) user.idSubject = qualified
+      // A subject that disagrees with the one we recorded means a different
+      // identity claims this address. Refuse rather than guess. Qualified by
+      // issuer, so pointing a canvas at a new identity service cannot silently
+      // bind a coincidentally identical subject from somewhere else.
+      else if (user.idSubject !== qualified) return null
     } else {
       user = {
         email: emailNorm,
         name: emailNorm.split('@')[0] ?? emailNorm,
         role: store.users.length ? 'member' : 'owner',
         auth: 'marver-id',
-        idSubject: identity.subject,
+        idSubject: `${identity.issuer}#${identity.subject}`,
         createdAt: Date.now(),
       }
       store.users.push(user)

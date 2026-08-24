@@ -45,11 +45,14 @@ invite, or is `MARVER_OWNER_EMAIL` on a canvas with no accounts yet. You invite
 people exactly as before; this only removes the password step from claiming it.
 Somebody with a perfectly valid Marver account who is not on your list gets nothing.
 
-Behind a proxy you do not control, pin `MARVER_PUBLIC_ORIGIN=https://your.canvas`
-so the audience check compares against the origin you meant rather than one a
-client can suggest. If the identity service is unreachable, sign-in fails closed -
-existing sessions keep working, new ones get a clear error, and nothing falls back
-to open.
+`MARVER_PUBLIC_ORIGIN=https://your.canvas` is REQUIRED unless you are on
+localhost. Every assertion is bound to this exact origin, and deriving it from
+request headers would let a caller choose what the check compares against - so
+it is configuration, not inference. It must be a bare https origin, and cookie
+security follows it rather than any forwarded header.
+
+If the identity service is unreachable, sign-in fails closed: existing sessions
+keep working, new ones are refused, and nothing falls back to open.
 
 A canvas with no `MARVER_ID_ISSUER` set makes no outbound request of any kind. The
 identity service is opt-in, and opting out is the default.

@@ -153,8 +153,15 @@ export async function verifyAssertion(opts: {
   let header: Record<string, unknown>
   let claims: Record<string, unknown>
   try {
-    header = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8'))
-    claims = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'))
+    const h = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8')) as unknown
+    const c = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as unknown
+    // `null`, `[]`, `1` and `"x"` are all valid JSON, and `null.alg` throws a
+    // TypeError rather than returning a rejection - which would escape this
+    // function's contract and, unhandled, take the process with it. Every caller
+    // is entitled to a VerifyResult, never an exception.
+    if (!isPlainObject(h) || !isPlainObject(c)) return { ok: false, reason: 'malformed json' }
+    header = h
+    claims = c
   } catch { return { ok: false, reason: 'malformed json' } }
 
   // Algorithm is pinned, not read from the token. `none`, HMAC confusion, and
@@ -228,6 +235,11 @@ async function verifySignature(parts: string[], kid: string, issuer: string): Pr
   v.update(`${parts[0]}.${parts[1]}`)
   v.end()
   return v.verify({ key, dsaEncoding: 'ieee-p1363' }, signature)
+}
+
+/** A JSON object, and not an array or null - both of which pass `typeof === 'object'`. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 /** Length-safe string compare, so a mismatch leaks nothing through timing. */

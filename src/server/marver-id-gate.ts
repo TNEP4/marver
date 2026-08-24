@@ -17,7 +17,7 @@
  * this canvas, so anything left in localStorage would be readable by them.
  */
 import { randomBytes } from 'node:crypto'
-import { loadStore, normEmail, provisionFromMarverId } from './auth.ts'
+import { provisionFromMarverId } from './auth.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
 
 /** Names the browser across the two requests. Not a session - just a handle. */
@@ -28,36 +28,42 @@ const MONTH = 30 * 24 * 3600
 export function marverIdHandler(dir: string, issuer: string) {
   const transactions = new TransactionStore()
 
-  // Validated once at startup rather than per request: a malformed value should
-  // stop the server, not fail every sign-in with a confusing 400.
+  // The canvas's own origin, pinned by the operator.
+  //
+  // This is REQUIRED rather than inferred, and that is a deliberate reversal.
+  // Deriving it from x-forwarded-host let a raw client choose what the audience
+  // check compares against: spoof the header, mint a transaction for another
+  // origin, get an assertion for it, present it back with the same header, and
+  // the exact-origin isolation this protocol promises evaporates. A value a
+  // caller can suggest cannot be the value a security check trusts.
+  //
+  // Loopback is the one exception, so local development needs no configuration.
   const pinned = (process.env.MARVER_PUBLIC_ORIGIN ?? '').trim().replace(/\/$/, '')
   let publicOrigin: string | null = null
   if (pinned) {
-    try {
-      const u = new URL(pinned)
-      if (u.pathname !== '/' || u.search || u.hash) throw new Error('not an origin')
-      publicOrigin = u.origin
-    } catch {
-      throw new Error(`MARVER_PUBLIC_ORIGIN is not a valid origin: ${pinned}`)
-    }
+    let u: URL
+    try { u = new URL(pinned) } catch { throw new Error(`MARVER_PUBLIC_ORIGIN is not a URL: ${pinned}`) }
+    const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+    if (u.pathname !== '/' || u.search || u.hash) throw new Error(`MARVER_PUBLIC_ORIGIN must be a bare origin: ${pinned}`)
+    if (u.protocol !== 'https:' && !loopback) throw new Error(`MARVER_PUBLIC_ORIGIN must be https (or loopback): ${pinned}`)
+    publicOrigin = u.origin
   }
 
   return async function handle(req: any, res: any, url: URL): Promise<boolean> {
-    const secure = req.headers['x-forwarded-proto'] === 'https'
+    // Loopback development needs no configuration; anything else must be pinned.
+    const origin = publicOrigin ?? localOrigin(req)
+    if (!origin) {
+      console.error(
+        '[marver-id] MARVER_PUBLIC_ORIGIN is required when the canvas is not on localhost -\n' +
+        '            set it to this canvas\'s exact public origin, e.g. https://canvas.example.com',
+      )
+      return json(res, 500, { error: 'misconfigured' })
+    }
 
-    // This canvas's own origin, as the browser sees it. Every assertion is bound
-    // to this exact string, so getting it wrong breaks sign-in - and trusting it
-    // blindly lets a client choose what the audience check compares against.
-    //
-    // MARVER_PUBLIC_ORIGIN pins it explicitly and always wins. Set it whenever the
-    // canvas sits behind a proxy you do not control; the header fallback below is
-    // for the ordinary case where the proxy is the one terminating TLS for you.
-    const origin = publicOrigin ?? (() => {
-      const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '')
-      if (!host || !/^[\w.-]+(?::\d+)?$/.test(host)) return null
-      return `${secure ? 'https' : 'http'}://${host}`
-    })()
-    if (!origin) return json(res, 400, { error: 'bad host' })
+    // Cookie security follows the ORIGIN, not a header. x-forwarded-proto is as
+    // spoofable as x-forwarded-host, and a Secure flag decided by the caller is
+    // not a Secure flag.
+    const secure = origin.startsWith('https://')
 
     if (req.method === 'GET' && url.pathname === '/__mv/id/start') {
       // Give the browser a stable handle if it has none, so the callback can
@@ -77,10 +83,17 @@ export function marverIdHandler(dir: string, issuer: string) {
     }
 
     if (req.method === 'POST' && url.pathname === '/__mv/id/callback') {
-      const body = await readBody(req, 16_000)
+      const { body, tooLarge } = await readBody(req, 16_000)
+      if (tooLarge) return json(res, 413, { error: 'too large' })
       let assertion = ''
-      try { assertion = String(JSON.parse(body).assertion ?? '') } catch { /* handled below */ }
-      if (!assertion) return json(res, 400, { error: 'no assertion' })
+      try {
+        const parsed = JSON.parse(body) as unknown
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const a = (parsed as Record<string, unknown>).assertion
+          if (typeof a === 'string') assertion = a
+        }
+      } catch { /* handled below */ }
+      if (!assertion) return json(res, 400, { error: 'bad request' })
 
       const browserId = readCookie(req, BROWSER_COOKIE)
       if (!browserId) {
@@ -104,8 +117,14 @@ export function marverIdHandler(dir: string, issuer: string) {
         return json(res, 401, { error: 'not signed in' })
       }
 
-      // Proved WHO. Now the local question: were they invited?
-      const session = provisionFromMarverId(dir, result.identity, (email) => allowed(dir, email))
+      // Proved WHO. Now the local question: were they invited? That decision
+      // happens inside the auth store's lock, so it cannot go stale between the
+      // check and the write.
+      const session = provisionFromMarverId(
+        dir,
+        { ...result.identity, issuer },
+        { ownerEmail: process.env.MARVER_OWNER_EMAIL },
+      )
       if (!session) {
         // Deliberately the same shape of refusal as a bad assertion. Whether an
         // address is on somebody's private invite list is not public knowledge.
@@ -126,20 +145,13 @@ export function marverIdHandler(dir: string, issuer: string) {
 }
 
 /**
- * Whether an address may enter this canvas.
- *
- * Reuses the owner's existing invite list rather than introducing a second one:
- * an address is allowed if it already has an account, or holds an unexpired
- * invite, or is the bootstrap owner of a canvas with no accounts yet. An owner
- * therefore invites people exactly as they always have.
+ * The origin for a canvas served directly on loopback, where there is no proxy
+ * to lie about it. Returns null for anything else - that case must be pinned.
  */
-function allowed(dir: string, emailNorm: string): boolean {
-  const store = loadStore(dir)
-  if (store.users.some((u) => normEmail(u.email) === emailNorm)) return true
-  if (store.invites.some((i) => i.emailNorm === emailNorm && i.exp > Date.now())) return true
-  const owner = process.env.MARVER_OWNER_EMAIL
-  if (owner && !store.users.length && normEmail(owner) === emailNorm) return true
-  return false
+function localOrigin(req: any): string | null {
+  const host = String(req.headers.host ?? '')
+  const m = /^(localhost|127\.0\.0\.1|\[::1\])(?::(\d{1,5}))?$/.exec(host)
+  return m ? `http://${host}` : null
 }
 
 function json(res: any, status: number, body: unknown): boolean {
@@ -159,14 +171,29 @@ function readCookie(req: any, name: string): string {
   return m?.[1] ?? ''
 }
 
-function readBody(req: any, limit: number): Promise<string> {
+/**
+ * Read a bounded request body.
+ *
+ * Counts BYTES, not decoded characters, and signals an overflow rather than
+ * destroying the socket - the previous version killed the connection and then
+ * tried to write a response onto it, which cannot arrive.
+ */
+function readBody(req: any, limit: number): Promise<{ body: string; tooLarge: boolean }> {
   return new Promise((resolve) => {
-    let body = ''
+    const chunks: Buffer[] = []
+    let size = 0
+    let done = false
+    const finish = (tooLarge: boolean) => {
+      if (done) return
+      done = true
+      resolve({ body: tooLarge ? '' : Buffer.concat(chunks).toString('utf8'), tooLarge })
+    }
     req.on('data', (c: Buffer) => {
-      body += c
-      if (body.length > limit) { req.destroy(); resolve('') }
+      size += c.length
+      if (size > limit) { req.pause(); return finish(true) }
+      chunks.push(c)
     })
-    req.on('end', () => resolve(body))
-    req.on('error', () => resolve(''))
+    req.on('end', () => finish(false))
+    req.on('error', () => finish(false))
   })
 }

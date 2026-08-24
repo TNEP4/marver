@@ -62,7 +62,10 @@ export async function serve(root: string, portFlag?: number) {
     // bootstrap: a fresh store has no owner to mint invites. MARVER_OWNER_EMAIL names
     // the first account; its one-time claim token prints HERE (deploy logs are the
     // trusted channel the deployer already reads - the Jupyter token pattern).
-    const owner = process.env.MARVER_OWNER_EMAIL
+    // In identity mode the owner bootstraps by signing in with Marver ID, so a
+    // password claim token would be a second, weaker route to the same account -
+    // printed into deploy logs, no less.
+    const owner = process.env.MARVER_ID_ISSUER ? '' : process.env.MARVER_OWNER_EMAIL
     if (owner) {
       const store = loadStore(dir)
       if (!store.users.length && !store.invites.some((i) => i.emailNorm === normEmail(owner))) {
@@ -114,10 +117,15 @@ export async function serve(root: string, portFlag?: number) {
     return want.length === got.length && timingSafeEqual(want, got)
   }
 
+  // Is this canvas private at all? One answer, used for routing AND for cache
+  // headers - they were allowed to disagree once, and the disagreement was a
+  // disclosure bug.
+  const gated = Boolean(verifier || idIssuer)
+
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
 
-    if (verifier || idIssuer) {
+    if (gated) {
       // Password POST only exists in password mode. In identity mode there is no
       // shared secret to compare against, and this endpoint must not answer at all.
       if (verifier && req.method === 'POST' && url.pathname === '/__mv/auth') {
@@ -160,14 +168,20 @@ export async function serve(root: string, portFlag?: number) {
         })()
         // sign-in, claim, and the invite peek live IN FRONT of the gate - that's the
         // whole point of the member path (rate-limited + non-enumerating in collab.ts)
-        const preGate = (collab && (
+        // In IDENTITY mode the password sign-in and invite-claim endpoints are not
+        // pre-gate paths: letting them through would leave a password-shaped door
+        // beside the identity gate, which is precisely what choosing identity mode
+        // is meant to remove.
+        const preGate = (collab && !idIssuer && (
           (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
           (req.method === 'GET' && url.pathname === '/__mv/api/invite-info')))
           // Marver ID's two endpoints must be reachable by somebody who has not
           // signed in yet - that is the entire point of them. Only in identity
           // mode: in password mode they do not exist, and a path that skips the
           // gate should never be open wider than the feature that needs it.
-          || (!!idIssuer && (url.pathname === '/__mv/id/start' || url.pathname === '/__mv/id/callback'))
+          || (!!idIssuer && (
+            (req.method === 'GET' && url.pathname === '/__mv/id/start') ||
+            (req.method === 'POST' && url.pathname === '/__mv/id/callback')))
         if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
     }
@@ -222,7 +236,10 @@ export async function serve(root: string, portFlag?: number) {
       res.setHeader('content-type', MIME[extname(file)] ?? 'application/octet-stream')
       // gated responses are never publicly cacheable - a CDN would serve the bundle
       // (inlined boards included) to unauthenticated clients from its cache
-      const cache = verifier ? 'private, no-store'
+      // A gated canvas is private in EITHER mode. Keying this on `verifier`
+      // alone marked identity-gated assets `public, immutable`, which invites a
+      // shared CDN to hand somebody's private frames to anybody who asks.
+      const cache = gated ? 'private, no-store'
         : file.startsWith(join(dist, 'assets')) ? 'public, max-age=31536000, immutable' : 'no-store'
       res.setHeader('cache-control', cache)
       res.end(content)
@@ -240,7 +257,10 @@ export async function serve(root: string, portFlag?: number) {
   })
   server.listen(port, () => {
     console.log(`\n  ${NAME} serving design/.dist → http://localhost:${port}/`)
-    console.log(verifier ? '  gate: ON (MARVER_PASSWORD set)\n' : '  gate: off - set MARVER_PASSWORD to require a password\n')
+    console.log(
+      idIssuer ? `  gate: ON - Marver ID (${idIssuer})\n`
+      : verifier ? '  gate: ON (MARVER_PASSWORD set)\n'
+      : '  gate: off - set MARVER_PASSWORD or MARVER_ID_ISSUER to require sign-in\n')
   })
   return server
 }

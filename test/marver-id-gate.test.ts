@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,7 +18,24 @@ import { join } from 'node:path'
  */
 
 const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
-const built = existsSync(CLI)
+
+/**
+ * Build the CLI if it is not there.
+ *
+ * These are the only tests that would catch a canvas serving its bundle
+ * pre-auth, so they must never quietly skip. `describe.skipIf(!built)` on a
+ * clean checkout would do exactly that - a green run that proved nothing, which
+ * is worse than a red one.
+ */
+function ensureBuilt(): void {
+  if (existsSync(CLI)) return
+  execFileSync('npm', ['run', 'build'], {
+    cwd: join(import.meta.dirname, '..'),
+    stdio: 'ignore',
+    timeout: 120_000,
+  })
+  if (!existsSync(CLI)) throw new Error('build did not produce dist/cli.mjs - cannot verify the gate')
+}
 
 /** A minimal published canvas - enough for `serve` to agree to start. */
 function fixture(): string {
@@ -59,10 +76,11 @@ function stop(c: Canvas) {
 
 const bundleServed = (html: string) => html.includes('id="root"') && html.includes('type="module"')
 
-describe.skipIf(!built)('gate providers - three modes, one server each', () => {
+describe('gate providers - three modes, one server each', () => {
   let open: Canvas, password: Canvas, identity: Canvas
 
   beforeAll(async () => {
+    ensureBuilt()
     ;[open, password, identity] = await Promise.all([
       start({}, 4471),
       start({ MARVER_PASSWORD: 'hunter2', MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-d1-')) }, 4472),
@@ -127,6 +145,66 @@ describe.skipIf(!built)('gate providers - three modes, one server each', () => {
     })
     expect(res.status).toBeGreaterThanOrEqual(400)
     expect(res.headers.get('set-cookie') ?? '').not.toContain('mv_s=')
+  })
+
+  it('identity mode: private assets are never marked publicly cacheable', async () => {
+    // Found in review: cache headers keyed on the password verifier alone, so an
+    // identity-gated canvas told every CDN its assets were public and immutable.
+    for (const p of ['/', '/assets/anything.js', '/index.html']) {
+      const res = await fetch(`http://localhost:${identity.port}${p}`)
+      const cc = res.headers.get('cache-control') ?? ''
+      expect(cc).not.toContain('public')
+      expect(cc).not.toContain('immutable')
+    }
+  })
+
+  it('identity mode: the password sign-in and invite-claim paths are NOT pre-gate', async () => {
+    // Leaving them open would put a password-shaped door beside the identity
+    // gate - exactly what choosing identity mode is meant to remove.
+    for (const p of ['/__mv/api/auth/signin', '/__mv/api/auth/claim']) {
+      const res = await fetch(`http://localhost:${identity.port}${p}`, { method: 'POST' })
+      const html = await res.text()
+      expect(bundleServed(html)).toBe(false)
+      expect(html).toContain('id-go')   // the gate answered, not the API
+    }
+  })
+
+  it('identity mode: a wrong-method call to an ID path does not skip the gate', async () => {
+    const html = await (await fetch(`http://localhost:${identity.port}/__mv/id/start`, { method: 'POST' })).text()
+    expect(bundleServed(html)).toBe(false)
+  })
+
+  it('identity mode: malformed JWT shapes are refused, never thrown on', async () => {
+    // null / array / scalar are all valid JSON, and `null.alg` throws a TypeError
+    // - which escaped verifyAssertion's contract and could take the process down.
+    const b = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const shapes = [
+      `${b(null)}.${b({ iss: 'x' })}.AA`,
+      `${b({ alg: 'ES256' })}.${b(null)}.AA`,
+      `${b([1, 2])}.${b({ iss: 'x' })}.AA`,
+      `${b('str')}.${b(7)}.AA`,
+    ]
+    for (const token of shapes) {
+      const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assertion: token }),
+        signal: AbortSignal.timeout(8000),
+      })
+      expect(res.status).toBeGreaterThanOrEqual(400)
+    }
+    // and the server is still alive afterwards
+    expect((await fetch(`http://localhost:${identity.port}/__mv/id/start`)).status).toBe(200)
+  })
+
+  it('identity mode: an oversized body gets a bounded refusal, not a dead socket', async () => {
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assertion: 'x'.repeat(200_000) }),
+      signal: AbortSignal.timeout(8000),
+    })
+    expect([400, 413]).toContain(res.status)
   })
 
   it('identity mode: the refusal never says WHY', async () => {
