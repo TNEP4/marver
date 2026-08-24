@@ -116,7 +116,7 @@ function raw(port: number, path: string, headers: Record<string, string> = {}):
 // Real servers, real ports, real scrypt. The default 5s budget is for unit
 // tests; spawning three canvases and authenticating against them is not that.
 describe('gate providers - three modes, one server each', { timeout: 30_000 }, () => {
-  let open: Canvas, password: Canvas, identity: Canvas
+  let open: Canvas, password: Canvas, identity: Canvas, behindTls: Canvas
   /** A password-gate cookie and an identity session, for authenticated probes. */
   let passwordCookie = ''
   let identitySession = ''
@@ -125,7 +125,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
   beforeAll(async () => {
     ensureBuilt()
     identityDataDir = mkdtempSync(join(tmpdir(), 'mv-d2-'))
-    ;[open, password, identity] = await Promise.all([
+    ;[open, password, identity, behindTls] = await Promise.all([
       start({}, 4471),
       start({ MARVER_PASSWORD: 'hunter2', MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-d1-')) }, 4472),
       start({
@@ -133,6 +133,15 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
         MARVER_DATA_DIR: identityDataDir,
         MARVER_OWNER_EMAIL: 'owner@example.test',
       }, 4473),
+      // The https branch, without needing a certificate. Cookie security follows
+      // the canvas's own PUBLIC origin, which is what a deployment behind a TLS
+      // terminator looks like: https to the world, plain http on the socket.
+      start({
+        MARVER_ID_ISSUER: 'https://id.example.test',
+        MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-d3-')),
+        MARVER_OWNER_EMAIL: 'owner@example.test',
+        MARVER_PUBLIC_ORIGIN: 'https://canvas.example.test',
+      }, 4474),
     ])
   }, 120_000)
 
@@ -160,7 +169,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(identitySession).toBeTruthy()
   })
 
-  afterAll(() => [open, password, identity].forEach((c) => c && stop(c)))
+  afterAll(() => [open, password, identity, behindTls].forEach((c) => c && stop(c)))
 
   it('no gate configured: serves the canvas, as it always has', async () => {
     const html = await (await fetch(`http://localhost:${open.port}/`)).text()
@@ -406,15 +415,34 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(setCookie).not.toContain('Secure')
   })
 
-  it('and carries the attributes __Host- requires, so the prefix is valid over https', async () => {
-    // The prefix is only honoured with Secure, Path=/ and NO Domain. Two of
-    // those do not depend on the scheme, so they can be checked here - a Domain
-    // attribute appearing would silently void the prefix in production.
-    const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+  it('and IS prefixed when the canvas is served over https', async () => {
+    // Against a canvas whose public origin is https, which is what every real
+    // deployment is. Asserting only the scheme-independent attributes on the
+    // http server left the prefix shipping in a branch no test ever entered.
+    const res = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`)
     const setCookie = res.headers.get('set-cookie') ?? ''
+    expect(setCookie).toContain('__Host-mv_b=')
+    // The prefix is only honoured with all three of these. Miss one and the
+    // browser silently ignores the whole thing.
+    expect(setCookie).toContain('Secure')
     expect(setCookie).toContain('Path=/')
     expect(setCookie).not.toContain('Domain=')
     expect(setCookie).toContain('HttpOnly')
+  })
+
+  it('and the prefixed handle is the one it reads back', async () => {
+    // A canvas that WRITES the prefixed name and READS the plain one would set
+    // a fresh transaction on every request, so nobody could ever finish signing
+    // in. Pressing Continue twice has to land on the same attempt.
+    const first = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`)
+    const handle = /(__Host-mv_b=[\w-]+)/.exec(first.headers.get('set-cookie') ?? '')?.[1]
+    expect(handle).toBeTruthy()
+    const nonce = (path: string) => new URL(JSON.parse(path).authorize).searchParams.get('nonce')
+
+    const again = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`, {
+      headers: { cookie: handle! },
+    })
+    expect(nonce(await again.text())).toBe(nonce(await first.text()))
   })
 
   // ---- raw-socket tests last, deliberately ----

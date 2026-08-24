@@ -30,6 +30,14 @@ import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.t
  * prefix makes a cookie host-only and unsettable by any other host, and the
  * browser enforces it rather than us. Plain over http, where the prefix is
  * invalid; there is no https there to have, and localhost has no siblings.
+ *
+ * What that leaves, stated rather than assumed. The prefix protects against
+ * every OTHER host, and against nothing on this one: cookies ignore ports, so a
+ * second service on the same hostname can still write the handle, and so can
+ * anyone who takes over the hostname itself. A browser that does not implement
+ * the prefix gets no protection at all. So the assumption a self-hosted canvas
+ * is making is exclusive control of its own hostname, and modern browsers -
+ * which is the same assumption its TLS certificate already makes.
  */
 const BROWSER_COOKIE = 'mv_b'
 const BROWSER_COOKIE_SECURE = '__Host-mv_b'
