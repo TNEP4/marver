@@ -66,15 +66,24 @@ export class TransactionStore {
   mint(origin: string, browser: string): Transaction {
     this.sweep()
 
-    // One live transaction per browser.
+    // One live transaction per browser, and starting again REUSES it.
     //
     // /__mv/id/start has to answer before anyone has signed in, so it is a free
-    // endpoint and somebody can hold it down. Without this, a single caller
-    // mints unboundedly and pushes real sign-ins out of the map. A browser only
-    // ever needs one attempt in flight - starting a second abandons the first -
-    // so replacing is both the safe behaviour and the true one.
+    // endpoint and somebody can hold it down. Without a per-browser limit a
+    // single caller mints unboundedly and pushes real sign-ins out of the map.
+    //
+    // Reusing rather than replacing matters just as much. The binding comes from
+    // a cookie, and on a shared parent domain a sibling host can set one -
+    // so if a second start DESTROYED the first, anyone who could make a browser
+    // send a chosen value could cancel a sign-in already in flight. Handing back
+    // the transaction that browser already holds removes the destructive move
+    // entirely, and is what a person means by clicking Continue twice.
     const held = this.byBrowser.get(browser)
-    if (held) this.items.delete(held)
+    if (held) {
+      const live = this.items.get(held)
+      if (live && live.exp >= Date.now() && live.origin === origin) return live
+      if (held) this.items.delete(held)
+    }
 
     // Still bounded overall, because a caller can always present a fresh
     // binding. Past the cap, drop the oldest; a displaced person clicks again.

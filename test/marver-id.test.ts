@@ -235,11 +235,31 @@ describe('TransactionStore', () => {
     expect(store.size).toBe(1)
   })
 
-  it('and starting again abandons the previous attempt rather than keeping both', () => {
+  it('and starting again HANDS BACK the same attempt rather than destroying it', () => {
+    // The binding comes from a cookie, and a sibling host on a shared parent
+    // domain can set one. If a second start replaced the first, that would be a
+    // way to cancel somebody's sign-in mid-flight. Reuse removes the move.
     const first = store.mint(ORIGIN, BROWSER)
     const second = store.mint(ORIGIN, BROWSER)
-    expect(store.consume(first.nonce, BROWSER)).toBeNull()
-    expect(store.consume(second.nonce, BROWSER)).not.toBeNull()
+    expect(second.nonce).toBe(first.nonce)
+    expect(store.consume(first.nonce, BROWSER)).not.toBeNull()
+  })
+
+  it('but a stale or foreign-origin attempt is replaced, not resurrected', () => {
+    vi.useFakeTimers()
+    try {
+      const first = store.mint(ORIGIN, BROWSER)
+      vi.advanceTimersByTime(6 * 60 * 1000)
+      const second = store.mint(ORIGIN, BROWSER)
+      expect(second.nonce).not.toBe(first.nonce)
+    } finally { vi.useRealTimers() }
+
+    // A canvas reached on a different origin must not be handed a transaction
+    // minted for the other one - `aud` is checked against it later.
+    const here = store.mint(ORIGIN, BROWSER)
+    const elsewhere = store.mint('https://other.example.test', BROWSER)
+    expect(elsewhere.nonce).not.toBe(here.nonce)
+    expect(elsewhere.origin).toBe('https://other.example.test')
   })
 
   it('one browser flooding does NOT evict a different browser\'s live sign-in', () => {
@@ -249,9 +269,12 @@ describe('TransactionStore', () => {
     expect(store.consume(tx.nonce, victim)).not.toBeNull()
   })
 
-  it('issues a distinct nonce every time', () => {
-    const seen = new Set(Array.from({ length: 50 }, () => store.mint(ORIGIN, BROWSER).nonce))
-    expect(seen.size).toBe(50)
+  it('issues a distinct, unguessable nonce to every browser', () => {
+    // A distinct binding per mint, since one browser now reuses its transaction.
+    const nonces = Array.from({ length: 50 }, (_, i) => store.mint(ORIGIN, browserBinding(`b-${i}`)).nonce)
+    expect(new Set(nonces).size).toBe(50)
+    // And each carries real entropy - a counter would also be "distinct".
+    for (const n of nonces) expect(n.length).toBeGreaterThanOrEqual(32)
   })
 })
 
@@ -330,18 +353,47 @@ describe('the key fetch cannot be turned into an amplifier', () => {
   })
 
   it('but a genuine rotation is still picked up once the cooldown has passed', async () => {
+    // A real rotation, not a counted fetch. The service publishes a second key,
+    // signs with it, and the canvas has to end up ACCEPTING that token - which
+    // is what "picked up" means. Asserting only that fetch was called would pass
+    // against a canvas that refetches and then rejects the new key anyway.
+    const rotated = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    const rotatedJwk = {
+      ...rotated.publicKey.export({ format: 'jwk' }),
+      kid: 'rotated-kid', alg: 'ES256', use: 'sig',
+    }
+
+    const signRotated = (claims: Record<string, unknown>) => {
+      const h = b64({ alg: 'ES256', kid: 'rotated-kid', typ: 'marver-assertion+jwt' })
+      const pl = b64(claims)
+      const s = createSign('SHA256')
+      s.update(`${h}.${pl}`)
+      s.end()
+      return `${h}.${pl}.${s.sign({ key: rotated.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
+    }
+
     vi.useFakeTimers()
     try {
+      // Warm the cache on the old key set, then burn the one forced refresh.
       await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce)))
-      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: 'unknown-1' }))
-      const calls = () => (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length
-      const before = calls()
+      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: 'made-up' }))
+
+      // Now the service rotates: both keys are published, as a real one does.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(
+        JSON.stringify({ keys: [jwk, rotatedJwk] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )))
+
+      // Inside the cooldown the new key is not reachable yet - stated plainly,
+      // because it is the cost of the fix and somebody should see it here.
+      const tooSoon = await verify(signRotated(goodClaims(store.mint(ORIGIN, BROWSER).nonce)))
+      expect(tooSoon.ok).toBe(false)
 
       vi.advanceTimersByTime(31_000)
-      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: 'unknown-2' }))
+      const accepted = await verify(signRotated(goodClaims(store.mint(ORIGIN, BROWSER).nonce)))
       // A cooldown that never lifts would be a canvas that can never follow a
-      // key rotation - locking everybody out until the process restarts.
-      expect(calls()).toBe(before + 1)
+      // rotation - locking everybody out until the process restarts.
+      expect(accepted.ok).toBe(true)
     } finally { vi.useRealTimers() }
   })
 })

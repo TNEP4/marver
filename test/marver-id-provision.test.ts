@@ -112,11 +112,29 @@ describe('account safety', () => {
     // this test. Coming back has to WORK, and land on the same account.
     expect(second).not.toBeNull()
     expect(second!.user.email).toBe('a@x.test')
-    // Same record, not a lookalike: a second account created for the same
-    // address would carry its own creation time and its own subject binding.
-    expect(second!.user.createdAt).toBe(first!.user.createdAt)
-    expect(second!.user.idSubject).toBe(first!.user.idSubject)
     expect(loadStore(dir).users).toHaveLength(1)
+  })
+
+  it('and coming back does not quietly reset the account', () => {
+    // "Same email, same subject, same count" is also true of code that deletes
+    // the account and builds a fresh one. What proves continuity is the state
+    // that only the ORIGINAL record carries: a profile the person edited, and a
+    // session they are still holding.
+    invite('a@x.test')
+    const first = provisionFromMarverId(dir, identity('a@x.test', 's1'))!
+
+    const store = loadStore(dir)
+    store.users[0]!.name = 'Chosen Name'
+    store.users[0]!.avatar = 'data:image/png;base64,AAAA'
+    writeFileSync(join(dir, 'auth.json'), JSON.stringify(store))
+
+    provisionFromMarverId(dir, identity('a@x.test', 's1'))
+
+    const after = loadStore(dir).users[0]!
+    expect(after.name).toBe('Chosen Name')
+    expect(after.avatar).toBe('data:image/png;base64,AAAA')
+    expect(after.createdAt).toBe(first.user.createdAt)
+    expect(after.idSubject).toBe(first.user.idSubject)
   })
 
   it('REFUSES a different subject claiming an address we already bound', () => {
