@@ -20,8 +20,20 @@ import { randomBytes } from 'node:crypto'
 import { provisionFromMarverId } from './auth.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
 
-/** Names the browser across the two requests. Not a session - just a handle. */
+/**
+ * Names the browser across the two requests. Not a session - just a handle.
+ *
+ * Over https it carries the `__Host-` prefix, which is not decoration. The
+ * handle is what binds a sign-in to the browser that started it, and without
+ * the prefix a sibling host on a shared parent domain can set one - "cookie
+ * tossing" - which means choosing the binding for somebody else's sign-in. The
+ * prefix makes a cookie host-only and unsettable by any other host, and the
+ * browser enforces it rather than us. Plain over http, where the prefix is
+ * invalid; there is no https there to have, and localhost has no siblings.
+ */
 const BROWSER_COOKIE = 'mv_b'
+const BROWSER_COOKIE_SECURE = '__Host-mv_b'
+const browserCookieName = (secure: boolean) => (secure ? BROWSER_COOKIE_SECURE : BROWSER_COOKIE)
 const SESSION_COOKIE = 'mv_s'
 const MONTH = 30 * 24 * 3600
 
@@ -68,11 +80,11 @@ export function marverIdHandler(dir: string, issuer: string) {
     if (req.method === 'GET' && url.pathname === '/__mv/id/start') {
       // Give the browser a stable handle if it has none, so the callback can
       // prove it is the same browser that started this.
-      let browserId = readCookie(req, BROWSER_COOKIE)
+      let browserId = readCookie(req, browserCookieName(secure))
       const headers: string[] = []
       if (!browserId) {
         browserId = randomBytes(24).toString('base64url')
-        headers.push(cookie(BROWSER_COOKIE, browserId, { maxAge: 600, secure }))
+        headers.push(cookie(browserCookieName(secure), browserId, { maxAge: 600, secure }))
       }
 
       const tx = transactions.mint(origin, browserBinding(browserId))
@@ -95,7 +107,7 @@ export function marverIdHandler(dir: string, issuer: string) {
       } catch { /* handled below */ }
       if (!assertion) return json(res, 400, { error: 'bad request' })
 
-      const browserId = readCookie(req, BROWSER_COOKIE)
+      const browserId = readCookie(req, browserCookieName(secure))
       if (!browserId) {
         // Same refusal as a bad assertion, deliberately. Distinguishing "your
         // handle is gone" from "your token is wrong" tells a prober which half
@@ -135,7 +147,7 @@ export function marverIdHandler(dir: string, issuer: string) {
       res.setHeader('set-cookie', [
         cookie(SESSION_COOKIE, session.session, { maxAge: MONTH, secure }),
         // The browser handle has done its job.
-        cookie(BROWSER_COOKIE, '', { maxAge: 0, secure }),
+        cookie(browserCookieName(secure), '', { maxAge: 0, secure }),
       ])
       return json(res, 200, { ok: true })
     }

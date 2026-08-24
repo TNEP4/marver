@@ -388,6 +388,35 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
       expect(body, `the refusal named "${leak}"`).not.toContain(leak)
     }
   })
+
+  /**
+   * The browser handle binds a sign-in to the browser that began it. Without the
+   * `__Host-` prefix a sibling on a shared parent domain can set one, which
+   * means choosing somebody else's binding. The prefix makes the cookie
+   * host-only and the BROWSER enforces it, which is the only place it can be -
+   * a server cannot tell a tossed cookie from its own.
+   */
+
+  it('the browser handle is plain over http, where the prefix would be invalid', async () => {
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+    const setCookie = res.headers.get('set-cookie') ?? ''
+    expect(setCookie).toMatch(/(^|[;,\s])mv_b=/)
+    expect(setCookie).not.toContain('__Host-')
+    // No Secure flag either, which would make the cookie unsendable over http.
+    expect(setCookie).not.toContain('Secure')
+  })
+
+  it('and carries the attributes __Host- requires, so the prefix is valid over https', async () => {
+    // The prefix is only honoured with Secure, Path=/ and NO Domain. Two of
+    // those do not depend on the scheme, so they can be checked here - a Domain
+    // attribute appearing would silently void the prefix in production.
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+    const setCookie = res.headers.get('set-cookie') ?? ''
+    expect(setCookie).toContain('Path=/')
+    expect(setCookie).not.toContain('Domain=')
+    expect(setCookie).toContain('HttpOnly')
+  })
+
   // ---- raw-socket tests last, deliberately ----
 
   /**
