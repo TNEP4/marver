@@ -26,9 +26,17 @@ export interface User {
   name: string
   avatar?: string                 // data-URI, client-resized (~4KB); absent = initials
   role: 'member' | 'owner'
-  salt: string                    // hex
-  hash: string                    // hex scrypt(password, salt)
-  params: typeof SCRYPT
+  /** How this account proves who it is. Absent = 'password' (accounts predate
+   *  the field). A 'marver-id' account has NO local credential at all: it holds
+   *  no salt/hash, and signIn() refuses it outright. That is deliberate - a
+   *  fabricated password hash would be a second, weaker way into the same
+   *  account, which is exactly what the identity service is meant to remove. */
+  auth?: 'password' | 'marver-id'
+  salt?: string                   // hex   - password accounts only
+  hash?: string                   // hex scrypt(password, salt) - password accounts only
+  params?: typeof SCRYPT
+  /** Stable subject from the identity service. Grants bind to this, not email. */
+  idSubject?: string
   createdAt: number
 }
 interface Invite { emailNorm: string; tokenHash: string; exp: number }
@@ -160,16 +168,73 @@ export function claimInvite(
 export function signIn(dir: string, email: string, password: string): { user: User; session: string } | null {
   return withLock(dir, () => {
   const store = loadStore(dir)
-  const user = findUser(store, email)
+  const found = findUser(store, email)
+  // An account provisioned by the identity service has no password to check.
+  // Treat it exactly like an unknown email - same generic failure, same scrypt
+  // cost - so this path never reveals which accounts exist or how they sign in.
+  const user = found && found.auth !== 'marver-id' && found.salt && found.hash ? found : null
   // unknown email still pays a scrypt to keep timing flat
-  const salt = user ? Buffer.from(user.salt, 'hex') : randomBytes(16)
+  const salt = user ? Buffer.from(user.salt!, 'hex') : randomBytes(16)
   const params = user?.params ?? SCRYPT
   const got = scryptSync(password, salt, params.keylen, params)
-  const want = user ? Buffer.from(user.hash, 'hex') : randomBytes(SCRYPT.keylen)
+  const want = user ? Buffer.from(user.hash!, 'hex') : randomBytes(SCRYPT.keylen)
   if (!user || got.length !== want.length || !timingSafeEqual(got, want)) return null
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
+  })
+}
+
+/**
+ * Turn a verified Marver ID identity into a local session.
+ *
+ * The identity service has already proved who this person is; this function
+ * decides whether they may in - and that decision is LOCAL, which is the whole
+ * shape of L1a. The identity service knows nothing about who is allowed where.
+ *
+ * `allowed` is the owner's allowlist. An email that is not on it gets no account
+ * and no session: being able to prove you are someone is not the same as being
+ * invited. The first allowed account to arrive owns the canvas, matching the
+ * invite flow's rule.
+ *
+ * No password is fabricated. A marver-id account carries no salt or hash at all,
+ * so there is no second, weaker door into it.
+ */
+export function provisionFromMarverId(
+  dir: string,
+  identity: { email: string; subject: string },
+  allowed: (emailNorm: string) => boolean,
+): { user: User; session: string } | null {
+  const emailNorm = normEmail(identity.email)
+  if (!emailNorm || !allowed(emailNorm)) return null
+
+  return withLock(dir, () => {
+    const store = loadStore(dir)
+    let user = findUser(store, emailNorm)
+
+    if (user) {
+      // An existing PASSWORD account keeps its password; signing in through the
+      // identity service does not silently convert it, and must not be a way to
+      // take one over. Same address, same person, both doors still work.
+      if (!user.idSubject) user.idSubject = identity.subject
+      // A subject that disagrees with the one we recorded means two different
+      // identity-service accounts claim the same address. Refuse rather than guess.
+      else if (user.idSubject !== identity.subject) return null
+    } else {
+      user = {
+        email: emailNorm,
+        name: emailNorm.split('@')[0] ?? emailNorm,
+        role: store.users.length ? 'member' : 'owner',
+        auth: 'marver-id',
+        idSubject: identity.subject,
+        createdAt: Date.now(),
+      }
+      store.users.push(user)
+    }
+
+    const session = pushSession(store, user)
+    saveStore(dir, store)
+    return { user, session }
   })
 }
 

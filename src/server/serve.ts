@@ -74,7 +74,30 @@ export async function serve(root: string, portFlag?: number) {
     }
   }
 
-  const password = process.env.MARVER_PASSWORD ?? ''
+  // ---- Marver ID: a second way through the gate, when an issuer is named ----
+  //
+  // Providers are alternatives, not layers. MARVER_ID_ISSUER turns the gate into
+  // an identity gate; MARVER_PASSWORD leaves it a shared-secret gate. Running both
+  // would weaken the allowlist to "an account OR whoever has the password", which
+  // is the opposite of what an allowlist is for.
+  //
+  // The allowlist is not new configuration: it is the invite list the owner
+  // already keeps. An address may enter if it already has an account, or has a
+  // pending invite, or is the bootstrap owner of an empty canvas. So an owner
+  // invites people exactly as before - Marver ID only removes the password step.
+  const idIssuer = (process.env.MARVER_ID_ISSUER ?? '').replace(/\/$/, '')
+  let idHandler: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
+  if (idIssuer) {
+    if (!process.env.MARVER_DATA_DIR) {
+      console.error(`[${NAME}] MARVER_ID_ISSUER needs MARVER_DATA_DIR - identity accounts need somewhere to live.`)
+      process.exit(1)
+    }
+    const { marverIdHandler } = await import('./marver-id-gate.ts')
+    const { dataDir } = await import('./comments.ts')
+    idHandler = marverIdHandler(dataDir(), idIssuer)
+  }
+
+  const password = idIssuer ? '' : (process.env.MARVER_PASSWORD ?? '')
   // verifier: scrypt-derived, fixed length - each guess pays the scrypt cost (a natural
   // throttle) and the compare never leaks password length. Cookies are signed with a
   // RANDOM per-boot secret, so a captured cookie is not offline brute-force material
@@ -94,8 +117,10 @@ export async function serve(root: string, portFlag?: number) {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
 
-    if (verifier) {
-      if (req.method === 'POST' && url.pathname === '/__mv/auth') {
+    if (verifier || idIssuer) {
+      // Password POST only exists in password mode. In identity mode there is no
+      // shared secret to compare against, and this endpoint must not answer at all.
+      if (verifier && req.method === 'POST' && url.pathname === '/__mv/auth') {
         let body = ''
         req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
         req.on('end', () => {
@@ -112,7 +137,7 @@ export async function serve(root: string, portFlag?: number) {
             res.setHeader('location', /^#\/[\w\/?&=%.,~-]*$/.test(next) ? `/${next}` : '/')
             return res.end()
           }
-          return gate(res, meta, !!collab, 'Wrong canvas password - try again')
+          return gate(res, meta, !!collab, 'Wrong canvas password - try again', !!idIssuer)
         })
         return
       }
@@ -135,11 +160,19 @@ export async function serve(root: string, portFlag?: number) {
         })()
         // sign-in, claim, and the invite peek live IN FRONT of the gate - that's the
         // whole point of the member path (rate-limited + non-enumerating in collab.ts)
-        const preGate = collab && (
+        const preGate = (collab && (
           (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
-          (req.method === 'GET' && url.pathname === '/__mv/api/invite-info'))
-        if (!bearerOk && !preGate) return gate(res, meta, !!collab)
+          (req.method === 'GET' && url.pathname === '/__mv/api/invite-info')))
+          // Marver ID's two endpoints must be reachable by somebody who has not
+          // signed in yet - that is the entire point of them.
+          || url.pathname === '/__mv/id/start' || url.pathname === '/__mv/id/callback'
+        if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
+    }
+
+    if (idHandler && url.pathname.startsWith('/__mv/id/')) {
+      void idHandler(req, res, url)
+      return
     }
 
     // the collaboration API sits behind the gate, before static
@@ -210,7 +243,7 @@ const MARK_LG = MARK_AT(24)
  *  guests pay the canvas password, members sign in with their OWN password, and an
  *  invite link (#/i/<token>) opens straight into the claim. The member and claim
  *  states exist only on collaboration canvases - a static canvas keeps one field. */
-function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string) {
+function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string, idOn = false) {
   const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
   // the app's own logo when the build found one; Marver's mark as the backup
   const appMark = meta.logo ? `<img src="${esc(meta.logo)}" alt="" width="24" height="24" />` : MARK_LG
@@ -317,6 +350,15 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
   <div class="card">
 
     <section id="guest" class="on">
+${idOn ? `
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <header>${appMark}<h1>${esc(name)}</h1></header>
+        <p class="lead">This canvas is private. Continue with your email - one account opens every Marver canvas you have been invited to.</p>
+        <div class="err" id="id-err">${error ? esc(error) : ''}</div>
+        <div class="ctawrap">
+          <button class="cta" id="id-go" type="button">Continue</button>
+        </div>
+      </div>` : `
       <form method="post" action="/__mv/auth" style="display:flex;flex-direction:column;gap:14px">
         <header>${appMark}<h1>${esc(name)}</h1></header>
         <p class="lead">You're one step from the canvas. This space is private - enter the canvas password to step inside.</p>
@@ -328,7 +370,7 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
           <span class="tip">Enter the canvas password first</span>
         </div>
         ${collabOn ? '<div class="swap"><span style="font:500 12px -apple-system,system-ui,sans-serif;color:rgba(24,24,27,.45)">Member? <a data-go="member">Sign in instead</a></span></div>' : ''}
-      </form>
+      </form>`}
     </section>
 ${collabOn ? `
     <section id="member">
@@ -372,10 +414,76 @@ ${collabOn ? `
     const $ = (id) => document.getElementById(id)
     const next = document.querySelector('[name=next]')
     if (next) next.value = location.hash
+
+    // ---- Marver ID: drive the popup and hand the result to our own server ----
+    const idGo = $('id-go')
+    if (idGo) {
+      const err = $('id-err')
+      const fail = (m) => { err.textContent = m; idGo.disabled = false; idGo.textContent = 'Continue' }
+
+      idGo.addEventListener('click', async () => {
+        err.textContent = ''
+        idGo.disabled = true
+        idGo.textContent = 'Opening...'
+
+        // The window MUST be opened synchronously inside the click, before any
+        // await: Safari blocks a popup opened after an async gap, and the whole
+        // sign-in dead-ends with no visible error.
+        const popup = window.open('', 'marver-id', 'width=420,height=600')
+        if (!popup) return fail('Allow popups for this site, then try again.')
+
+        let start
+        try {
+          start = await (await fetch('/__mv/id/start')).json()
+        } catch { popup.close(); return fail('Could not reach the canvas. Try again.') }
+
+        const issuer = new URL(start.authorize).origin
+        popup.location = start.authorize
+
+        let settled = false
+        const onMessage = async (e) => {
+          // Three checks, all required. Origin alone is not enough: any frame
+          // could postMessage from a page on that origin. Checking the source
+          // property pins it to the window we actually opened.
+          if (settled) return
+          if (e.origin !== issuer) return
+          if (e.source !== popup) return
+          if (!e.data || e.data.type !== 'marver-id:assertion' || typeof e.data.assertion !== 'string') return
+
+          settled = true
+          window.removeEventListener('message', onMessage)
+          clearInterval(watch)
+
+          try {
+            const res = await fetch('/__mv/id/callback', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ assertion: e.data.assertion }),
+            })
+            if (res.ok) { location.replace('/' + (location.hash || '')); return }
+            fail(res.status === 403
+              ? 'That account has not been invited to this canvas.'
+              : 'That sign-in did not work. Try again.')
+          } catch { fail('Could not reach the canvas. Try again.') }
+        }
+        window.addEventListener('message', onMessage)
+
+        // If somebody closes the popup, give the button back rather than
+        // leaving them staring at a disabled control.
+        const watch = setInterval(() => {
+          if (popup.closed && !settled) {
+            clearInterval(watch)
+            window.removeEventListener('message', onMessage)
+            fail('')
+          }
+        }, 500)
+      })
+    }
+
     // the guest CTA follows its field (server-side form, client-side gating)
     const gpass = document.querySelector('#guest input[type=password]')
     const gbtn = document.querySelector('#guest button.cta')
-    gpass.addEventListener('input', () => { gbtn.disabled = !gpass.value })
+    if (gpass && gbtn) gpass.addEventListener('input', () => { gbtn.disabled = !gpass.value })
     ${collabOn ? `
     const show = (id) => {
       for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === id)
