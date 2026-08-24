@@ -145,13 +145,28 @@ export function marverIdHandler(dir: string, issuer: string) {
 }
 
 /**
- * The origin for a canvas served directly on loopback, where there is no proxy
- * to lie about it. Returns null for anything else - that case must be pinned.
+ * The origin for a canvas genuinely being used over loopback.
+ *
+ * The Host HEADER is not evidence of anything: the server listens on every
+ * interface, so a caller anywhere on the internet can send `Host: localhost`,
+ * collect assertions for that audience, and replay the resulting session against
+ * the real host. So the check is on the SOCKET - where the connection actually
+ * came from and where it actually landed - which a remote caller cannot forge.
+ *
+ * The header still has to agree, because it is what the browser will use when
+ * the popup posts back; but agreement alone was never enough.
  */
 function localOrigin(req: any): string | null {
+  const remote = req.socket?.remoteAddress ?? ''
+  const local = req.socket?.localAddress ?? ''
+  const isLoopbackAddr = (a: string) =>
+    a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1'
+  if (!isLoopbackAddr(remote) || !isLoopbackAddr(local)) return null
+
   const host = String(req.headers.host ?? '')
-  const m = /^(localhost|127\.0\.0\.1|\[::1\])(?::(\d{1,5}))?$/.exec(host)
-  return m ? `http://${host}` : null
+  return /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/.test(host)
+    ? `http://${host}`
+    : null
 }
 
 function json(res: any, status: number, body: unknown): boolean {

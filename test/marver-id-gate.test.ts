@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { request as httpRequest } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,7 +29,9 @@ const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
  * is worse than a red one.
  */
 function ensureBuilt(): void {
-  if (existsSync(CLI)) return
+  // Unconditionally. `dist/` is gitignored, so a stale build from an earlier
+  // branch would happily test code that is not in this commit - a green run
+  // proving something nobody asked about.
   execFileSync('npm', ['run', 'build'], {
     cwd: join(import.meta.dirname, '..'),
     stdio: 'ignore',
@@ -47,6 +50,13 @@ function fixture(): string {
   writeFileSync(join(dist, 'index.html'),
     '<!doctype html><html><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>')
   writeFileSync(join(dist, 'meta.json'), JSON.stringify({ name: 'Fixture', branding: false }))
+  // A real asset, so cache headers can be checked on a file that EXISTS - the
+  // gate's own no-store would otherwise mask a wrong header on real content.
+  mkdirSync(join(dist, 'assets'), { recursive: true })
+  writeFileSync(join(dist, 'assets', 'probe.js'), 'export const probe = 1\n')
+  // A real favicon, so the cosmetic exemption has something legitimate to serve.
+  mkdirSync(join(dist, '__mv', 'favicon'), { recursive: true })
+  writeFileSync(join(dist, '__mv', 'favicon', 'favicon.ico'), 'x')
   return root
 }
 
@@ -76,21 +86,79 @@ function stop(c: Canvas) {
 
 const bundleServed = (html: string) => html.includes('id="root"') && html.includes('type="module"')
 
-describe('gate providers - three modes, one server each', () => {
+/**
+ * A raw HTTP request, so a test can set headers `fetch` refuses to.
+ *
+ * `host` is a forbidden header name in the fetch spec: undici silently drops
+ * it, which made an earlier version of the spoofing test pass without ever
+ * spoofing anything. Header-injection tests have to speak HTTP directly.
+ */
+function raw(port: number, path: string, headers: Record<string, string> = {}):
+  Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    // `hostname` for the connection, `headers.host` for the header. Passing
+    // `host` in the options sets BOTH, so a spoofing test would send two Host
+    // headers and the server would reset the connection on a malformed request.
+    const req = httpRequest(
+      { hostname: '127.0.0.1', port, path, method: 'GET', headers: { connection: 'close', ...headers } },
+      (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => { body += c })
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+      },
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+// Real servers, real ports, real scrypt. The default 5s budget is for unit
+// tests; spawning three canvases and authenticating against them is not that.
+describe('gate providers - three modes, one server each', { timeout: 30_000 }, () => {
   let open: Canvas, password: Canvas, identity: Canvas
+  /** A password-gate cookie and an identity session, for authenticated probes. */
+  let passwordCookie = ''
+  let identitySession = ''
+  let identityDataDir = ''
 
   beforeAll(async () => {
     ensureBuilt()
+    identityDataDir = mkdtempSync(join(tmpdir(), 'mv-d2-'))
     ;[open, password, identity] = await Promise.all([
       start({}, 4471),
       start({ MARVER_PASSWORD: 'hunter2', MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-d1-')) }, 4472),
       start({
         MARVER_ID_ISSUER: 'https://id.example.test',
-        MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-d2-')),
+        MARVER_DATA_DIR: identityDataDir,
         MARVER_OWNER_EMAIL: 'owner@example.test',
       }, 4473),
     ])
-  }, 60_000)
+  }, 120_000)
+
+  beforeAll(async () => {
+    // Authenticate against the password canvas the way a browser does.
+    const res = await fetch(`http://localhost:${password.port}/__mv/auth`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'password=hunter2',
+      redirect: 'manual',
+    })
+    passwordCookie = /mv_a=([^;]+)/.exec(res.headers.get('set-cookie') ?? '')?.[1] ?? ''
+    expect(passwordCookie).toBeTruthy()
+
+    // And mint a real identity session by provisioning the bootstrap owner
+    // directly - the assertion round trip needs a live identity service, which
+    // these tests deliberately do not depend on.
+    const { provisionFromMarverId } = await import('../src/server/auth.ts')
+    const granted = provisionFromMarverId(
+      identityDataDir,
+      { email: 'owner@example.test', subject: 's1', issuer: 'https://id.example.test' },
+      { ownerEmail: 'owner@example.test' },
+    )
+    identitySession = granted?.session ?? ''
+    expect(identitySession).toBeTruthy()
+  })
 
   afterAll(() => [open, password, identity].forEach((c) => c && stop(c)))
 
@@ -147,15 +215,55 @@ describe('gate providers - three modes, one server each', () => {
     expect(res.headers.get('set-cookie') ?? '').not.toContain('mv_s=')
   })
 
-  it('identity mode: private assets are never marked publicly cacheable', async () => {
+  it('identity mode: a REAL asset is never marked publicly cacheable', async () => {
     // Found in review: cache headers keyed on the password verifier alone, so an
     // identity-gated canvas told every CDN its assets were public and immutable.
-    for (const p of ['/', '/assets/anything.js', '/index.html']) {
-      const res = await fetch(`http://localhost:${identity.port}${p}`)
-      const cc = res.headers.get('cache-control') ?? ''
-      expect(cc).not.toContain('public')
-      expect(cc).not.toContain('immutable')
+    //
+    // Checked on a file that EXISTS and is reached with a session - an
+    // unauthenticated request just gets the gate's own no-store, which would
+    // pass even against the broken code.
+    const res = await fetch(`http://localhost:${identity.port}/assets/probe.js`, {
+      headers: { cookie: `mv_s=${identitySession}` },
+    })
+    expect(res.status).toBe(200)
+    const cc = res.headers.get('cache-control') ?? ''
+    expect(cc).toContain('no-store')
+    expect(cc).not.toContain('public')
+    expect(cc).not.toContain('immutable')
+  })
+
+  it('password mode: a REAL asset is never marked publicly cacheable either', async () => {
+    const res = await fetch(`http://localhost:${password.port}/assets/probe.js`, {
+      headers: { cookie: `mv_a=${passwordCookie}` },
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control') ?? '').toContain('no-store')
+  })
+
+  it('an UNGATED canvas still caches its assets aggressively', async () => {
+    // The optimisation must survive the fix - this is the case it exists for.
+    const res = await fetch(`http://localhost:${open.port}/assets/probe.js`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control') ?? '').toContain('immutable')
+  })
+
+  it('a NON-EXISTENT cosmetic path 404s instead of leaking the bundle', async () => {
+    // Pre-existing on main: /__mv/favicon/anything.png skipped the gate, missed
+    // on disk, and fell through to the hash-routing fallback - handing the whole
+    // private bundle to anyone who asked.
+    for (const c of [password, identity]) {
+      for (const p of ['/__mv/favicon/nope.png', '/__mv/favicon/a.b.c', '/__mv/logo.svg']) {
+        const res = await fetch(`http://localhost:${c.port}${p}`)
+        const body = await res.text()
+        expect(bundleServed(body)).toBe(false)
+        expect(res.status).toBe(404)
+      }
     }
+  })
+
+  it('but a REAL favicon is still served - the gate page wears it', async () => {
+    const res = await fetch(`http://localhost:${identity.port}/__mv/favicon/favicon.ico`)
+    expect(res.status).toBe(200)
   })
 
   it('identity mode: the password sign-in and invite-claim paths are NOT pre-gate', async () => {
@@ -169,12 +277,15 @@ describe('gate providers - three modes, one server each', () => {
     }
   })
 
-  it('identity mode: a wrong-method call to an ID path does not skip the gate', async () => {
+  it('identity mode: a wrong-method call to an ID path hits the GATE', async () => {
+    // Asserting merely "not the bundle" would pass if the ID handler answered
+    // with its own JSON 404 - which would mean the path still skipped the gate.
     const html = await (await fetch(`http://localhost:${identity.port}/__mv/id/start`, { method: 'POST' })).text()
     expect(bundleServed(html)).toBe(false)
+    expect(html).toContain('id-go')
   })
 
-  it('identity mode: malformed JWT shapes are refused, never thrown on', async () => {
+  it('identity mode: malformed JWT shapes REACH the verifier and are refused', async () => {
     // null / array / scalar are all valid JSON, and `null.alg` throws a TypeError
     // - which escaped verifyAssertion's contract and could take the process down.
     const b = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
@@ -185,9 +296,15 @@ describe('gate providers - three modes, one server each', () => {
       `${b('str')}.${b(7)}.AA`,
     ]
     for (const token of shapes) {
+      // A real browser handle, so the request gets PAST the cookie check and
+      // actually exercises the parser. Without it these are rejected earlier and
+      // the test would pass even against the throwing version.
+      const start = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+      const mvb = /mv_b=([\w-]+)/.exec(start.headers.get('set-cookie') ?? '')?.[1]
+      expect(mvb).toBeTruthy()
       const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', cookie: `mv_b=${mvb}` },
         body: JSON.stringify({ assertion: token }),
         signal: AbortSignal.timeout(8000),
       })
@@ -204,7 +321,7 @@ describe('gate providers - three modes, one server each', () => {
       body: JSON.stringify({ assertion: 'x'.repeat(200_000) }),
       signal: AbortSignal.timeout(8000),
     })
-    expect([400, 413]).toContain(res.status)
+    expect(res.status).toBe(413)
   })
 
   it('identity mode: the refusal never says WHY', async () => {
@@ -220,4 +337,37 @@ describe('gate providers - three modes, one server each', () => {
       expect(body).not.toContain(leak)
     }
   })
+  // ---- raw-socket tests last, deliberately ----
+  //
+  // These close their connections, and Node's fetch keeps a pool keyed by
+  // origin: a later fetch would reuse a socket the server had already closed and
+  // fail with ECONNRESET. Running them at the end means nothing follows them to
+  // trip over it.
+  it('identity mode: a spoofed Host NEVER becomes the audience', async () => {
+    // Sent over a raw socket, because fetch() drops `host` and an earlier
+    // version of this test therefore proved nothing at all.
+    const res = await raw(identity.port, '/__mv/id/start', { host: 'evil.example.com' })
+    // Either the canvas refuses to guess, or it names itself - never the
+    // attacker's host. Both outcomes are safe; naming evil.example.com is not.
+    expect(res.body).not.toContain('evil.example.com')
+    if (res.status === 200) {
+      const { authorize } = JSON.parse(res.body) as { authorize: string }
+      expect(new URL(authorize).searchParams.get('origin')).not.toContain('evil')
+    }
+  })
+
+  it('identity mode: forwarded headers cannot change the audience', async () => {
+    const res = await raw(identity.port, '/__mv/id/start', {
+      'x-forwarded-host': 'attacker.test',
+      'x-forwarded-proto': 'https',
+    })
+    expect(res.status).toBe(200)
+    const { authorize } = JSON.parse(res.body) as { authorize: string }
+    // The origin is this canvas on the port we actually reached it on - whichever
+    // loopback spelling the client used - and never anything a caller asserted.
+    const named = new URL(authorize).searchParams.get('origin')!
+    expect(named).toMatch(new RegExp(`^http://(localhost|127\\.0\\.0\\.1):${identity.port}$`))
+    expect(res.body).not.toContain('attacker.test')
+  })
+
 })

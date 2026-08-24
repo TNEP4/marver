@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn } from '../src/server/auth.ts'
@@ -98,6 +98,29 @@ describe('account safety', () => {
     invite('a@x.test')
     provisionFromMarverId(dir, identity('a@x.test', 's1', ISSUER))
     expect(provisionFromMarverId(dir, identity('a@x.test', 's1', 'https://evil.test'))).toBeNull()
+  })
+
+  it('upgrades a LEGACY bare subject instead of locking the person out', () => {
+    // Accounts written before subjects were issuer-qualified hold a bare value.
+    // A format change must never become a lockout from somebody's own canvas.
+    invite('legacy@x.test')
+    provisionFromMarverId(dir, identity('legacy@x.test', 's1'))
+    const store = loadStore(dir)
+    store.users[0]!.idSubject = 's1'          // rewind to the old format
+    writeFileSync(join(dir, 'auth.json'), JSON.stringify(store))
+
+    const again = provisionFromMarverId(dir, identity('legacy@x.test', 's1'))
+    expect(again).not.toBeNull()
+    expect(loadStore(dir).users[0]!.idSubject).toBe(`${ISSUER}#s1`)
+  })
+
+  it('but a legacy subject from a DIFFERENT identity is still refused', () => {
+    invite('legacy2@x.test')
+    provisionFromMarverId(dir, identity('legacy2@x.test', 's1'))
+    const store = loadStore(dir)
+    store.users[0]!.idSubject = 's1'
+    writeFileSync(join(dir, 'auth.json'), JSON.stringify(store))
+    expect(provisionFromMarverId(dir, identity('legacy2@x.test', 'OTHER'))).toBeNull()
   })
 
   it('links an existing password account without converting it', () => {

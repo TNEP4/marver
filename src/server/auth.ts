@@ -241,12 +241,19 @@ export function provisionFromMarverId(
       // identity service does not silently convert it, and must not be a way to
       // take one over. Same address, same person, both doors still work.
       const qualified = `${identity.issuer}#${identity.subject}`
-      if (!user.idSubject) user.idSubject = qualified
-      // A subject that disagrees with the one we recorded means a different
-      // identity claims this address. Refuse rather than guess. Qualified by
-      // issuer, so pointing a canvas at a new identity service cannot silently
-      // bind a coincidentally identical subject from somewhere else.
-      else if (user.idSubject !== qualified) return null
+      if (!user.idSubject) {
+        user.idSubject = qualified
+      } else if (user.idSubject === identity.subject) {
+        // A store written before subjects were issuer-qualified. The same person,
+        // recorded the old way - upgrade it in place rather than locking them out
+        // of their own canvas over a format change.
+        user.idSubject = qualified
+      } else if (user.idSubject !== qualified) {
+        // A subject that disagrees means a different identity claims this
+        // address. Refuse rather than guess. Qualified by issuer, so pointing a
+        // canvas at a new service cannot bind a coincidentally identical subject.
+        return null
+      }
     } else {
       user = {
         email: emailNorm,

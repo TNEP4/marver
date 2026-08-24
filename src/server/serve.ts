@@ -154,9 +154,7 @@ export async function serve(root: string, portFlag?: number) {
       // them, and they carry no design data. Match the DECODED path against strict
       // filenames (no traversal): the static handler decodes too, so a raw-encoded
       // `/__mv/favicon/%2f..%2f..%2findex.html` must not slip the gate as "cosmetic".
-      let decoded = url.pathname
-      try { decoded = decodeURIComponent(url.pathname) } catch { /* keep raw - it won't match below */ }
-      const cosmetic = /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png)$/.test(decoded)
+      const cosmetic = isCosmetic(url.pathname)
       // a member session opens the gate outright (account > shared secret)
       if (!authed(req) && !cosmetic && !sessionCheck?.(req)) {
         // bearer requests (dev proxy / agent CLI) may pierce the gate to the API,
@@ -229,7 +227,18 @@ export async function serve(root: string, portFlag?: number) {
       const rel = relative(realDist, real)
       if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('outside dist')
       file = real
-    } catch { file = join(dist, 'index.html') }   // missing or escaping → the shell (hash routing)
+      // A cosmetic path was let PAST the gate on the promise that it is a
+      // favicon or a logo. If no such file exists, the hash-routing fallback
+      // below would hand an unauthenticated caller the entire private bundle -
+      // so for these paths a miss is a miss.
+    } catch {
+      if (gated && isCosmetic(url.pathname)) { res.statusCode = 404; return res.end('not found') }
+      file = join(dist, 'index.html')   // missing or escaping → the shell (hash routing)
+    }
+    if (gated && isCosmetic(url.pathname) && !file.startsWith(join(dist, '__mv')) && relative(realDist, file) === 'index.html') {
+      res.statusCode = 404
+      return res.end('not found')
+    }
     if (!extname(file)) file = join(dist, 'index.html')
     try {
       const content = readFileSync(file)
@@ -263,6 +272,22 @@ export async function serve(root: string, portFlag?: number) {
       : '  gate: off - set MARVER_PASSWORD or MARVER_ID_ISSUER to require sign-in\n')
   })
   return server
+}
+
+/**
+ * Paths the gate lets through unauthenticated: the favicons and logo the gate
+ * page itself wears. They carry no design data.
+ *
+ * Matched against the DECODED path, because the static handler decodes too - a
+ * raw-encoded `/__mv/favicon/%2f..%2f..%2findex.html` must not slip through as
+ * "cosmetic". And because these paths skip the gate, a request for one that does
+ * NOT exist must 404 rather than falling back to the shell; that fallback was a
+ * complete bundle disclosure on any gated canvas.
+ */
+function isCosmetic(pathname: string): boolean {
+  let decoded = pathname
+  try { decoded = decodeURIComponent(pathname) } catch { /* keep raw - it won't match */ }
+  return /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png)$/.test(decoded)
 }
 
 /** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */
