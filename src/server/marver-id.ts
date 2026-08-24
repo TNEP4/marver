@@ -53,18 +53,40 @@ export type VerifyResult =
 /** A ceiling on live transactions - /start is unauthenticated by necessity. */
 const MAX_TRANSACTIONS = 10_000
 
+/** How often the expiry sweep is allowed to walk the whole map. */
+const SWEEP_INTERVAL_MS = 10 * 1000
+
 export class TransactionStore {
   private readonly items = new Map<string, Transaction>()
+  /** nonce currently held by each browser, so one browser holds one slot. */
+  private readonly byBrowser = new Map<string, string>()
+  private lastSweep = 0
 
   /** Invent a nonce for a sign-in attempt from this browser to this origin. */
   mint(origin: string, browser: string): Transaction {
     this.sweep()
-    // /__mv/id/start has to be reachable before sign-in, so it is a free
-    // endpoint. Bounded rather than unbounded: past the cap, drop the oldest
-    // rather than growing forever. A displaced person simply clicks again.
+
+    // One live transaction per browser.
+    //
+    // /__mv/id/start has to answer before anyone has signed in, so it is a free
+    // endpoint and somebody can hold it down. Without this, a single caller
+    // mints unboundedly and pushes real sign-ins out of the map. A browser only
+    // ever needs one attempt in flight - starting a second abandons the first -
+    // so replacing is both the safe behaviour and the true one.
+    const held = this.byBrowser.get(browser)
+    if (held) this.items.delete(held)
+
+    // Still bounded overall, because a caller can always present a fresh
+    // binding. Past the cap, drop the oldest; a displaced person clicks again.
     if (this.items.size >= MAX_TRANSACTIONS) {
       const oldest = this.items.keys().next().value
-      if (oldest) this.items.delete(oldest)
+      if (oldest) {
+        const victim = this.items.get(oldest)
+        this.items.delete(oldest)
+        if (victim && this.byBrowser.get(victim.browser) === oldest) {
+          this.byBrowser.delete(victim.browser)
+        }
+      }
     }
     const tx: Transaction = {
       nonce: randomBytes(32).toString('base64url'),
@@ -73,6 +95,7 @@ export class TransactionStore {
       exp: Date.now() + TRANSACTION_TTL_MS,
     }
     this.items.set(tx.nonce, tx)
+    this.byBrowser.set(browser, tx.nonce)
     return tx
   }
 
@@ -93,21 +116,83 @@ export class TransactionStore {
     if (!tx) return null
     if (!constantTimeEqual(tx.browser, browser)) return null
     this.items.delete(nonce)
+    if (this.byBrowser.get(tx.browser) === nonce) this.byBrowser.delete(tx.browser)
     if (tx.exp < Date.now()) return null
     return tx
   }
 
+  /**
+   * Drop what has expired.
+   *
+   * Throttled, because this walks the whole map and it is reached from an
+   * unauthenticated endpoint - running it on every mint turns /start into a
+   * quadratic cost the caller controls. Expiry is still enforced exactly, in
+   * consume(); this only reclaims memory, and ten seconds late is fine.
+   */
   private sweep() {
     const now = Date.now()
-    for (const [k, v] of this.items) if (v.exp < now) this.items.delete(k)
+    if (now - this.lastSweep < SWEEP_INTERVAL_MS) return
+    this.lastSweep = now
+    for (const [k, v] of this.items) {
+      if (v.exp < now) {
+        this.items.delete(k)
+        if (this.byBrowser.get(v.browser) === k) this.byBrowser.delete(v.browser)
+      }
+    }
   }
 
   get size(): number { return this.items.size }
 }
 
+/**
+ * Reduce a configured issuer to a bare origin, or refuse it.
+ *
+ * The issuer is the trust root: its published keys decide who may open this
+ * canvas. Taken as a raw string it is far too easy to configure into something
+ * that is not a trust root at all - `http://` invites anyone on the path
+ * between here and there to serve their own keys, and a value carrying a path,
+ * a query or embedded credentials means the URL the operator read is not the
+ * URL that gets fetched.
+ *
+ * Loopback over http is allowed because that is how the protocol is developed
+ * against a local identity service, and there is no network to sit on.
+ *
+ * Returns null when the value cannot be trusted, so the caller can refuse to
+ * start rather than run with a trust root nobody vetted.
+ */
+export function normalizeIssuer(raw: string | undefined | null): string | null {
+  if (!raw) return null
+
+  let url: URL
+  try {
+    url = new URL(raw.trim())
+  } catch {
+    return null
+  }
+
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return null
+
+  // Credentials, a path, a query or a fragment all mean the operator is looking
+  // at one thing and the fetch will do another.
+  if (url.username || url.password) return null
+  if (url.pathname !== '/' || url.search || url.hash) return null
+
+  return url.origin
+}
+
 /** Cached public keys from the identity service. */
 type Jwks = { keys: Array<Record<string, unknown>> }
 let jwksCache: { at: number; url: string; jwks: Jwks } | null = null
+
+/**
+ * The last time an unknown kid forced a refetch, and how rarely that may happen.
+ *
+ * The token chooses the kid, so without a floor here a caller manufactures one
+ * outbound request per attempt.
+ */
+let lastForcedFetch = 0
+const FORCED_FETCH_COOLDOWN_MS = 30 * 1000
 
 async function fetchJwks(issuer: string, force = false): Promise<Jwks> {
   const url = `${issuer.replace(/\/$/, '')}/.well-known/jwks.json`
@@ -123,7 +208,7 @@ async function fetchJwks(issuer: string, force = false): Promise<Jwks> {
 }
 
 /** Only for tests - drop the cached keys. */
-export function _resetJwksCache() { jwksCache = null }
+export function _resetJwksCache() { jwksCache = null; lastForcedFetch = 0 }
 
 /**
  * Verify an assertion against everything it claims to be.
@@ -212,9 +297,17 @@ async function verifySignature(parts: string[], kid: string, issuer: string): Pr
   let jwks = await fetchJwks(issuer)
   let jwk = jwks.keys.find((k) => (k as { kid?: string }).kid === kid)
 
-  // An unknown kid may simply mean the service rotated since we last looked.
-  // Refetch ONCE - never follow a url the token supplied.
-  if (!jwk) {
+  // An unknown kid may simply mean the service rotated since we last looked, so
+  // refetch once - never following a url the token supplied.
+  //
+  // Under a cooldown, though. The kid comes from the token, and a caller who
+  // holds a transaction of their own chooses it freely: without this, every
+  // made-up kid becomes an outbound request, and a canvas turns into an
+  // amplifier pointed at its own identity service. One refresh per cooldown is
+  // all rotation needs, because a rotating service publishes the new key well
+  // before it signs with it.
+  if (!jwk && Date.now() - lastForcedFetch >= FORCED_FETCH_COOLDOWN_MS) {
+    lastForcedFetch = Date.now()
     jwks = await fetchJwks(issuer, true)
     jwk = jwks.keys.find((k) => (k as { kid?: string }).kid === kid)
   }

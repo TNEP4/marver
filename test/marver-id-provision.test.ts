@@ -42,8 +42,24 @@ describe('the allowlist is the boundary', () => {
   it('admits the bootstrap owner only while the canvas has no accounts', () => {
     const first = provisionFromMarverId(dir, identity('owner@x.test', 's1'), { ownerEmail: 'owner@x.test' })
     expect(first?.user.role).toBe('owner')
-    // Now that an owner exists, the bootstrap door is shut.
-    expect(provisionFromMarverId(dir, identity('other@x.test', 's2'), { ownerEmail: 'owner@x.test' })).toBeNull()
+    // Retrying the SAME configured owner address, which is what the rule is
+    // actually about. Trying a different address instead would be refused for
+    // simply not being on any list, so deleting the empty-canvas condition
+    // would have left the old version of this test green.
+    expect(
+      provisionFromMarverId(dir, identity('owner@x.test', 'DIFFERENT'), { ownerEmail: 'owner@x.test' }),
+    ).toBeNull()
+  })
+
+  it('shuts the bootstrap door as soon as ANY account exists', () => {
+    // The door closes on the canvas having accounts, not on who asks. Provision
+    // an ordinary invited person first, then let the configured owner try.
+    invite('someone@x.test')
+    expect(provisionFromMarverId(dir, identity('someone@x.test', 's1'))).not.toBeNull()
+    expect(
+      provisionFromMarverId(dir, identity('owner@x.test', 's2'), { ownerEmail: 'owner@x.test' }),
+    ).toBeNull()
+    expect(loadStore(dir).users).toHaveLength(1)
   })
 
   it('normalizes the address, so casing cannot slip past the list', () => {
@@ -52,12 +68,20 @@ describe('the allowlist is the boundary', () => {
     expect(res?.user.email).toBe('person@x.test')
   })
 
-  it('SPENDS the invite that authorised entry', () => {
+  it('SPENDS the invite that authorised entry, and only that one', () => {
     // Found in review: leaving it pending left a password-based second door into
     // an account that now exists.
+    //
+    // Two invites, not one. With a single invite, "the list is empty afterwards"
+    // is equally true of code that spends the right invite and of code that
+    // clears the list - and clearing the list would silently revoke everybody
+    // else's pending invitation.
     invite('a@x.test')
+    invite('b@x.test')
     expect(provisionFromMarverId(dir, identity('a@x.test', 's1'))).not.toBeNull()
-    expect(loadStore(dir).invites).toHaveLength(0)
+    const invites = loadStore(dir).invites
+    expect(invites).toHaveLength(1)
+    expect(invites[0]!.emailNorm).toBe('b@x.test')
   })
 })
 
@@ -81,8 +105,17 @@ describe('account safety', () => {
 
   it('re-signing in reuses the account rather than duplicating it', () => {
     invite('a@x.test')
-    provisionFromMarverId(dir, identity('a@x.test', 's1'))
-    provisionFromMarverId(dir, identity('a@x.test', 's1'))
+    const first = provisionFromMarverId(dir, identity('a@x.test', 's1'))
+    const second = provisionFromMarverId(dir, identity('a@x.test', 's1'))
+    // The second result was previously discarded, so refusing every repeat
+    // sign-in - locking people out of their own canvas after one visit - passed
+    // this test. Coming back has to WORK, and land on the same account.
+    expect(second).not.toBeNull()
+    expect(second!.user.email).toBe('a@x.test')
+    // Same record, not a lookalike: a second account created for the same
+    // address would carry its own creation time and its own subject binding.
+    expect(second!.user.createdAt).toBe(first!.user.createdAt)
+    expect(second!.user.idSubject).toBe(first!.user.idSubject)
     expect(loadStore(dir).users).toHaveLength(1)
   })
 
@@ -167,8 +200,20 @@ describe('the duplicate-account takeover, closed', () => {
   it('one email can never end up with two accounts', () => {
     const { token } = createInvite(dir, 'a@x.test')
     provisionFromMarverId(dir, identity('a@x.test', 's1'))
-    try { claimInvite(dir, token, { password: 'whatever12', name: 'X' }) } catch { /* expected */ }
-    const emails = loadStore(dir).users.map((u) => u.email)
-    expect(new Set(emails).size).toBe(emails.length)
+
+    // The refusal is named, not swallowed. `catch {}` around the claim made any
+    // exception a pass - including one thrown for an unrelated reason before the
+    // duplicate check was ever reached, which is exactly how a broken claim path
+    // would masquerade as a working defence.
+    expect(() => claimInvite(dir, token, { password: 'whatever12', name: 'X' }))
+      .toThrow(/invalid, expired, or already used/i)
+
+    const users = loadStore(dir).users
+    expect(users).toHaveLength(1)
+    expect(users[0]!.email).toBe('a@x.test')
+    expect(users[0]!.auth).toBe('marver-id')
+    // No password material appeared on the account either - a claim that half
+    // succeeded would leave exactly that behind.
+    expect(users[0]!.hash).toBeUndefined()
   })
 })

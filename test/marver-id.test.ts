@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { generateKeyPairSync, createSign } from 'node:crypto'
 import {
-  TransactionStore, browserBinding, verifyAssertion, _resetJwksCache,
+  TransactionStore, browserBinding, normalizeIssuer, verifyAssertion, _resetJwksCache,
 } from '../src/server/marver-id.ts'
 
 /**
@@ -137,9 +137,13 @@ describe('verifyAssertion - refusals that keep strangers out', () => {
 
   it('refuses an assertion issued in the future', async () => {
     const tx = store.mint(ORIGIN, BROWSER)
-    const future = Math.floor(Date.now() / 1000) + 3600
-    const res = await verify(sign(goodClaims(tx.nonce, { iat: future, nbf: future, exp: future + 300 })))
-    expect(res.ok).toBe(false)
+    const now = Math.floor(Date.now() / 1000)
+    const future = now + 3600
+    // `nbf` stays current on purpose. Moving both meant the nbf check alone
+    // produced the refusal, so deleting the iat check entirely left this green -
+    // the test named one rule and exercised another.
+    const res = await verify(sign(goodClaims(tx.nonce, { iat: future, nbf: now, exp: future + 300 })))
+    expect(res).toEqual({ ok: false, reason: 'issued in the future' })
   })
 
   it('refuses an unverified email', async () => {
@@ -216,12 +220,128 @@ describe('TransactionStore', () => {
   })
 
   it('is bounded, so an open endpoint cannot exhaust memory', () => {
-    for (let i = 0; i < 10_050; i++) store.mint(ORIGIN, BROWSER)
+    // A distinct binding each time, which is what an attacker would present.
+    // Reusing one browser would now hold a single slot and the cap would never
+    // be approached - the test would pass without testing anything.
+    for (let i = 0; i < 10_050; i++) store.mint(ORIGIN, browserBinding(`b-${i}`))
     expect(store.size).toBeLessThanOrEqual(10_000)
+  })
+
+  it('gives ONE browser one slot, so a single caller cannot flood it out', () => {
+    // /start answers before anyone has signed in, so it is free to call. Without
+    // a per-browser limit one caller mints thousands and evicts the real sign-ins
+    // that were queued behind them.
+    for (let i = 0; i < 500; i++) store.mint(ORIGIN, BROWSER)
+    expect(store.size).toBe(1)
+  })
+
+  it('and starting again abandons the previous attempt rather than keeping both', () => {
+    const first = store.mint(ORIGIN, BROWSER)
+    const second = store.mint(ORIGIN, BROWSER)
+    expect(store.consume(first.nonce, BROWSER)).toBeNull()
+    expect(store.consume(second.nonce, BROWSER)).not.toBeNull()
+  })
+
+  it('one browser flooding does NOT evict a different browser\'s live sign-in', () => {
+    const victim = browserBinding('someone-mid-signin')
+    const tx = store.mint(ORIGIN, victim)
+    for (let i = 0; i < 5_000; i++) store.mint(ORIGIN, BROWSER)
+    expect(store.consume(tx.nonce, victim)).not.toBeNull()
   })
 
   it('issues a distinct nonce every time', () => {
     const seen = new Set(Array.from({ length: 50 }, () => store.mint(ORIGIN, BROWSER).nonce))
     expect(seen.size).toBe(50)
+  })
+})
+
+describe('normalizeIssuer - the trust root is not a free-text field', () => {
+  /**
+   * Whatever this resolves to publishes the keys that decide who may open the
+   * canvas. A value that is merely "a string the operator typed" is not a trust
+   * root, so anything ambiguous is refused at boot rather than trusted at runtime.
+   */
+
+  it('accepts a bare https origin, and strips a trailing slash', () => {
+    expect(normalizeIssuer('https://id.marver.design')).toBe('https://id.marver.design')
+    expect(normalizeIssuer('https://id.marver.design/')).toBe('https://id.marver.design')
+    expect(normalizeIssuer('  https://id.marver.design  ')).toBe('https://id.marver.design')
+    expect(normalizeIssuer('https://id.example.test:8443')).toBe('https://id.example.test:8443')
+  })
+
+  it('REFUSES http, which hands the trust root to the network', () => {
+    // Anyone on the path between the canvas and this address could serve their
+    // own keys, and every assertion signed with them would verify.
+    expect(normalizeIssuer('http://id.marver.design')).toBeNull()
+    expect(normalizeIssuer('http://id.example.test:8443')).toBeNull()
+  })
+
+  it('allows http ONLY on loopback, where there is no network to sit on', () => {
+    expect(normalizeIssuer('http://localhost:3000')).toBe('http://localhost:3000')
+    expect(normalizeIssuer('http://127.0.0.1:3000')).toBe('http://127.0.0.1:3000')
+    // A hostname that merely begins with the word is not loopback.
+    expect(normalizeIssuer('http://localhost.evil.test')).toBeNull()
+    expect(normalizeIssuer('http://127.0.0.1.evil.test')).toBeNull()
+  })
+
+  it('REFUSES anything where the address read is not the address fetched', () => {
+    // Credentials, a path, a query or a fragment all mean the operator is
+    // looking at one thing and the JWKS fetch will do another.
+    expect(normalizeIssuer('https://user:pw@id.marver.design')).toBeNull()
+    expect(normalizeIssuer('https://id.marver.design/tenant-a')).toBeNull()
+    expect(normalizeIssuer('https://id.marver.design/?x=1')).toBeNull()
+    expect(normalizeIssuer('https://id.marver.design/#frag')).toBeNull()
+    expect(normalizeIssuer('https://evil.test\\@id.marver.design')).toBeNull()
+  })
+
+  it('REFUSES what is not a url at all', () => {
+    for (const bad of ['', '   ', 'id.marver.design', 'javascript:alert(1)', 'file:///etc/passwd', 'not a url']) {
+      expect(normalizeIssuer(bad), bad).toBeNull()
+    }
+    expect(normalizeIssuer(undefined)).toBeNull()
+    expect(normalizeIssuer(null)).toBeNull()
+  })
+})
+
+describe('the key fetch cannot be turned into an amplifier', () => {
+  /**
+   * `kid` is chosen by whoever presents the token. An unknown one forces a
+   * refetch, because it may mean the service rotated - so without a floor on how
+   * often that may happen, each made-up kid becomes one outbound request and a
+   * canvas becomes a lever pointed at its own identity service.
+   */
+
+  it('refetches ONCE for an unknown kid, then stops until the cooldown passes', async () => {
+    // Prime the cache so the baseline is one fetch, not zero.
+    await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce)))
+    const calls = () => (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length
+    const primed = calls()
+
+    // First unknown kid: one forced refetch is allowed and expected.
+    await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: 'rotated-away' }))
+    const afterFirst = calls()
+    expect(afterFirst).toBe(primed + 1)
+
+    // Twenty more, each with a different invented kid. None may reach the network.
+    for (let i = 0; i < 20; i++) {
+      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: `made-up-${i}` }))
+    }
+    expect(calls()).toBe(afterFirst)
+  })
+
+  it('but a genuine rotation is still picked up once the cooldown has passed', async () => {
+    vi.useFakeTimers()
+    try {
+      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce)))
+      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: 'unknown-1' }))
+      const calls = () => (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length
+      const before = calls()
+
+      vi.advanceTimersByTime(31_000)
+      await verify(sign(goodClaims(store.mint(ORIGIN, BROWSER).nonce), { kid: 'unknown-2' }))
+      // A cooldown that never lifts would be a canvas that can never follow a
+      // key rotation - locking everybody out until the process restarts.
+      expect(calls()).toBe(before + 1)
+    } finally { vi.useRealTimers() }
   })
 })

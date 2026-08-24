@@ -167,26 +167,49 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(bundleServed(html)).toBe(true)
   })
 
-  it('password mode: the bundle is NEVER sent pre-auth', async () => {
-    const html = await (await fetch(`http://localhost:${password.port}/`)).text()
-    expect(bundleServed(html)).toBe(false)
-    expect(html).toContain('name="password"')
+  it('password mode: the bundle is NEVER sent pre-auth, by ANY path', async () => {
+    // Every shape a private file can be asked for, not just "/". The bundle
+    // disclosure this suite exists to catch arrived through a path nobody had
+    // thought to request - so requesting only the front door proves nothing.
+    for (const p of ['/', '/index.html', '/assets/probe.js', '/board/anything', '/no-such-route']) {
+      const res = await fetch(`http://localhost:${password.port}${p}`)
+      const html = await res.text()
+      expect(bundleServed(html), `bundle leaked at ${p}`).toBe(false)
+      expect(html, `no gate at ${p}`).toContain('name="password"')
+      // The fixture's own bytes must not appear either, whatever the wrapper.
+      expect(html, `asset bytes leaked at ${p}`).not.toContain('export const probe')
+    }
   })
 
   it('password mode: the identity endpoints do not open a hole', async () => {
     // They must not exist here, and above all must not become a path that skips
     // the gate - a bypass is a bypass even when the handler behind it is absent.
     for (const p of ['/__mv/id/start', '/__mv/id/callback', '/__mv/id/anything']) {
-      const html = await (await fetch(`http://localhost:${password.port}${p}`)).text()
-      expect(bundleServed(html)).toBe(false)
+      const res = await fetch(`http://localhost:${password.port}${p}`)
+      const html = await res.text()
+      expect(bundleServed(html), `bundle leaked at ${p}`).toBe(false)
+      // "not the bundle" is too weak on its own: an identity handler answering
+      // JSON here would also pass it. In password mode these paths must be the
+      // password gate and nothing else.
+      expect(html, `${p} did not answer with the password gate`).toContain('name="password"')
+      // "not the bundle" would also pass if an identity handler answered JSON
+      // here, which is the accidental exposure worth catching. The gate page is
+      // HTML and never hands out a transaction.
+      expect(res.headers.get('content-type') ?? '', `${p} did not answer HTML`).toContain('text/html')
+      expect(html, `${p} issued a transaction`).not.toContain('"nonce"')
     }
   })
 
-  it('identity mode: the bundle is never sent pre-auth, and no password is asked for', async () => {
-    const html = await (await fetch(`http://localhost:${identity.port}/`)).text()
-    expect(bundleServed(html)).toBe(false)
-    expect(html).not.toContain('name="password"')
-    expect(html).toContain('id-go')
+  it('identity mode: the bundle is never sent pre-auth by ANY path, and no password is asked for', async () => {
+    for (const p of ['/', '/index.html', '/assets/probe.js', '/board/anything', '/no-such-route']) {
+      const res = await fetch(`http://localhost:${identity.port}${p}`)
+      const html = await res.text()
+      expect(bundleServed(html), `bundle leaked at ${p}`).toBe(false)
+      expect(html, `asset bytes leaked at ${p}`).not.toContain('export const probe')
+      // A password box here would mean the gate fell back to the other provider.
+      expect(html, `password asked for at ${p}`).not.toContain('name="password"')
+      expect(html, `no identity gate at ${p}`).toContain('id-go')
+    }
   })
 
   it('identity mode: /start issues a distinct nonce per request, bound to this canvas', async () => {
@@ -264,6 +287,9 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
   it('but a REAL favicon is still served - the gate page wears it', async () => {
     const res = await fetch(`http://localhost:${identity.port}/__mv/favicon/favicon.ico`)
     expect(res.status).toBe(200)
+    // Status alone would pass if index.html were served under this name, which
+    // is precisely the fallback that caused the disclosure. Check the bytes.
+    expect(await res.text()).toBe('x')
   })
 
   it('identity mode: the password sign-in and invite-claim paths are NOT pre-gate', async () => {
@@ -308,12 +334,70 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
         body: JSON.stringify({ assertion: token }),
         signal: AbortSignal.timeout(8000),
       })
-      expect(res.status).toBeGreaterThanOrEqual(400)
+      // 401 exactly, not "any 4xx". The verifier used to THROW on some of these
+      // shapes; the route caught it and answered 500, and a >=400 assertion
+      // called that a pass. A refusal and a crash must not look alike.
+      expect(res.status, `${token.slice(0, 24)} was not refused as 401`).toBe(401)
     }
     // and the server is still alive afterwards
     expect((await fetch(`http://localhost:${identity.port}/__mv/id/start`)).status).toBe(200)
   })
 
+  it('identity mode: the refusal never says WHY', async () => {
+    // "expired" vs "wrong audience" would turn this endpoint into a debugger for
+    // whoever is probing it. The reason belongs in the operator's logs.
+    //
+    // This has to reach the verifier to mean anything. Without a browser cookie
+    // the request is refused before any claim is examined, so every phrase we
+    // check for is trivially absent and the test proves nothing. So: take a
+    // real transaction, then present a well-formed assertion minted for a
+    // DIFFERENT audience - a refusal with a specific, tempting reason behind it.
+    const start = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+    const mvb = /mv_b=([\w-]+)/.exec(start.headers.get('set-cookie') ?? '')?.[1]
+    expect(mvb).toBeTruthy()
+    const { nonce } = JSON.parse(await start.text()) as { nonce?: string }
+
+    // Unsigned on purpose. The audience is checked BEFORE the signature is, so
+    // this reaches the claim comparison without needing the fixture issuer's
+    // private key - and the claim comparison is where the tempting reason is.
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const wrongAudience = [
+      b64({ alg: 'ES256', typ: 'marver-assertion+jwt', kid: 'k1' }),
+      b64({
+        iss: 'https://id.example.test',
+        aud: 'https://somewhere-else.example',
+        sub: 'user-1',
+        email: 'someone@example.test',
+        email_verified: true,
+        nonce: nonce ?? 'x'.repeat(32),
+        exp: Math.floor(Date.now() / 1000) + 300,
+      }),
+      Buffer.alloc(64).toString('base64url'),
+    ].join('.')
+
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_b=${mvb}` },
+      body: JSON.stringify({ assertion: wrongAudience }),
+      signal: AbortSignal.timeout(8000),
+    })
+    expect(res.status).toBe(401)
+
+    const body = await res.text()
+    for (const leak of ['aud', 'iss', 'signature', 'nonce', 'expired', 'audience', 'somewhere-else']) {
+      expect(body, `the refusal named "${leak}"`).not.toContain(leak)
+    }
+  })
+  // ---- raw-socket tests last, deliberately ----
+
+  /**
+   * Moved down here with the raw-socket tests, and for the same reason.
+   *
+   * Refusing a 200KB body means answering before the body has been read, which
+   * leaves bytes in flight and the connection unusable. Node's fetch keeps that
+   * socket in its pool and hands it to the next request, which then dies with
+   * ECONNRESET - a failure that looks like the NEXT test's bug and is not.
+   */
   it('identity mode: an oversized body gets a bounded refusal, not a dead socket', async () => {
     const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
       method: 'POST',
@@ -324,20 +408,6 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(res.status).toBe(413)
   })
 
-  it('identity mode: the refusal never says WHY', async () => {
-    // "expired" vs "wrong audience" would turn this endpoint into a debugger for
-    // whoever is probing it. The reason belongs in the operator's logs.
-    const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ assertion: 'a.b.c' }),
-    })
-    const body = await res.text()
-    for (const leak of ['aud', 'iss', 'signature', 'nonce', 'expired']) {
-      expect(body).not.toContain(leak)
-    }
-  })
-  // ---- raw-socket tests last, deliberately ----
   //
   // These close their connections, and Node's fetch keeps a pool keyed by
   // origin: a later fetch would reuse a socket the server had already closed and

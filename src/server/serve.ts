@@ -88,7 +88,20 @@ export async function serve(root: string, portFlag?: number) {
   // already keeps. An address may enter if it already has an account, or has a
   // pending invite, or is the bootstrap owner of an empty canvas. So an owner
   // invites people exactly as before - Marver ID only removes the password step.
-  const idIssuer = (process.env.MARVER_ID_ISSUER ?? '').replace(/\/$/, '')
+  const rawIssuer = (process.env.MARVER_ID_ISSUER ?? '').trim()
+  const { normalizeIssuer } = await import('./marver-id.ts')
+  const idIssuer = normalizeIssuer(rawIssuer)
+  if (rawIssuer && !idIssuer) {
+    // Refuse to boot rather than run with a trust root nobody vetted. The keys
+    // this address publishes decide who may open the canvas, so an http issuer
+    // hands that decision to anyone on the network path.
+    console.error(
+      `[${NAME}] MARVER_ID_ISSUER is not a usable issuer: ${rawIssuer}\n` +
+      `  It must be a bare https origin - https://id.marver.design - with no path, query or credentials.\n` +
+      `  http:// is accepted only for localhost, while developing against a local identity service.`,
+    )
+    process.exit(1)
+  }
   let idHandler: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
   if (idIssuer) {
     if (!process.env.MARVER_DATA_DIR) {
