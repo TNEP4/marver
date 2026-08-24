@@ -135,6 +135,12 @@ describe('account safety', () => {
     expect(after.avatar).toBe('data:image/png;base64,AAAA')
     expect(after.createdAt).toBe(first.user.createdAt)
     expect(after.idSubject).toBe(first.user.idSubject)
+
+    // And the session they were already holding still works. Preserving the
+    // profile while clearing sessions would pass everything above and still
+    // sign somebody out of the tab they had open.
+    expect(sessionUser(dir, first.session)).not.toBeNull()
+    expect(sessionUser(dir, first.session)!.email).toBe('a@x.test')
   })
 
   it('REFUSES a different subject claiming an address we already bound', () => {

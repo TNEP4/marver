@@ -390,6 +390,23 @@ describe('the key fetch cannot be turned into an amplifier', () => {
       expect(tooSoon.ok).toBe(false)
 
       vi.advanceTimersByTime(31_000)
+
+      // First, a token wearing the rotated kid but signed by the WRONG key.
+      // Finding a kid in a refreshed key set is not the same as the signature
+      // being good, and code that returned success the moment the lookup
+      // succeeded would pass the acceptance check below on its own.
+      const impostor = (() => {
+        const other = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+        const claims = goodClaims(store.mint(ORIGIN, BROWSER).nonce)
+        const h = b64({ alg: 'ES256', kid: 'rotated-kid', typ: 'marver-assertion+jwt' })
+        const pl = b64(claims)
+        const s = createSign('SHA256')
+        s.update(`${h}.${pl}`)
+        s.end()
+        return `${h}.${pl}.${s.sign({ key: other.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
+      })()
+      expect(await verify(impostor)).toEqual({ ok: false, reason: 'signature' })
+
       const accepted = await verify(signRotated(goodClaims(store.mint(ORIGIN, BROWSER).nonce)))
       // A cooldown that never lifts would be a canvas that can never follow a
       // rotation - locking everybody out until the process restarts.
