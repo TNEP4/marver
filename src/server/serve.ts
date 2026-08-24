@@ -164,14 +164,26 @@ export async function serve(root: string, portFlag?: number) {
           (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
           (req.method === 'GET' && url.pathname === '/__mv/api/invite-info')))
           // Marver ID's two endpoints must be reachable by somebody who has not
-          // signed in yet - that is the entire point of them.
-          || url.pathname === '/__mv/id/start' || url.pathname === '/__mv/id/callback'
+          // signed in yet - that is the entire point of them. Only in identity
+          // mode: in password mode they do not exist, and a path that skips the
+          // gate should never be open wider than the feature that needs it.
+          || (!!idIssuer && (url.pathname === '/__mv/id/start' || url.pathname === '/__mv/id/callback'))
         if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
     }
 
     if (idHandler && url.pathname.startsWith('/__mv/id/')) {
-      void idHandler(req, res, url)
+      // Never let a rejected promise leave the socket open: an unanswered request
+      // hangs the browser until it times out, which reads as "marver is broken"
+      // rather than "something failed".
+      idHandler(req, res, url).catch((err) => {
+        console.error(`[${NAME}] marver-id handler failed:`, err?.message ?? err)
+        if (!res.headersSent) {
+          res.statusCode = 500
+          res.setHeader('content-type', 'application/json')
+          res.end('{"error":"internal"}')
+        }
+      })
       return
     }
 

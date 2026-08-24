@@ -28,15 +28,36 @@ const MONTH = 30 * 24 * 3600
 export function marverIdHandler(dir: string, issuer: string) {
   const transactions = new TransactionStore()
 
+  // Validated once at startup rather than per request: a malformed value should
+  // stop the server, not fail every sign-in with a confusing 400.
+  const pinned = (process.env.MARVER_PUBLIC_ORIGIN ?? '').trim().replace(/\/$/, '')
+  let publicOrigin: string | null = null
+  if (pinned) {
+    try {
+      const u = new URL(pinned)
+      if (u.pathname !== '/' || u.search || u.hash) throw new Error('not an origin')
+      publicOrigin = u.origin
+    } catch {
+      throw new Error(`MARVER_PUBLIC_ORIGIN is not a valid origin: ${pinned}`)
+    }
+  }
+
   return async function handle(req: any, res: any, url: URL): Promise<boolean> {
     const secure = req.headers['x-forwarded-proto'] === 'https'
 
-    // This canvas's own origin, as the browser sees it. Everything downstream is
-    // bound to this exact string, so it is derived from the request rather than
-    // configured - a misconfigured origin would silently break every assertion.
-    const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '')
-    if (!host || !/^[\w.-]+(?::\d+)?$/.test(host)) return json(res, 400, { error: 'bad host' })
-    const origin = `${secure ? 'https' : 'http'}://${host}`
+    // This canvas's own origin, as the browser sees it. Every assertion is bound
+    // to this exact string, so getting it wrong breaks sign-in - and trusting it
+    // blindly lets a client choose what the audience check compares against.
+    //
+    // MARVER_PUBLIC_ORIGIN pins it explicitly and always wins. Set it whenever the
+    // canvas sits behind a proxy you do not control; the header fallback below is
+    // for the ordinary case where the proxy is the one terminating TLS for you.
+    const origin = publicOrigin ?? (() => {
+      const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '')
+      if (!host || !/^[\w.-]+(?::\d+)?$/.test(host)) return null
+      return `${secure ? 'https' : 'http'}://${host}`
+    })()
+    if (!origin) return json(res, 400, { error: 'bad host' })
 
     if (req.method === 'GET' && url.pathname === '/__mv/id/start') {
       // Give the browser a stable handle if it has none, so the callback can
@@ -62,7 +83,13 @@ export function marverIdHandler(dir: string, issuer: string) {
       if (!assertion) return json(res, 400, { error: 'no assertion' })
 
       const browserId = readCookie(req, BROWSER_COOKIE)
-      if (!browserId) return json(res, 400, { error: 'expired' })
+      if (!browserId) {
+        // Same refusal as a bad assertion, deliberately. Distinguishing "your
+        // handle is gone" from "your token is wrong" tells a prober which half
+        // of the flow to attack; the operator sees the difference in the logs.
+        console.warn('[marver-id] callback with no browser handle')
+        return json(res, 401, { error: 'not signed in' })
+      }
 
       const result = await verifyAssertion({
         token: assertion, origin, issuer, store: transactions,

@@ -32,6 +32,28 @@ line is how the tool spreads - we'd love it if you keep it. It's yours to remove
 strings: `share: { branding: false }` in `design/config.ts` (this also strips every
 Marver mention from the page metadata).
 
+**The gate, by identity instead**: set `MARVER_ID_ISSUER=https://id.marver.design`
+and the gate asks people who they are rather than asking for a shared secret. They
+sign in once at the identity service; every canvas you gate this way opens without
+another password. Requires `MARVER_DATA_DIR`, and it REPLACES the password gate
+rather than sitting beside it - running both would weaken your invite list to
+"an account OR whoever has the password".
+
+Who may enter is decided here, by you, and the identity service never learns it: an
+address gets in if it already has an account on this canvas, holds an unexpired
+invite, or is `MARVER_OWNER_EMAIL` on a canvas with no accounts yet. You invite
+people exactly as before; this only removes the password step from claiming it.
+Somebody with a perfectly valid Marver account who is not on your list gets nothing.
+
+Behind a proxy you do not control, pin `MARVER_PUBLIC_ORIGIN=https://your.canvas`
+so the audience check compares against the origin you meant rather than one a
+client can suggest. If the identity service is unreachable, sign-in fails closed -
+existing sessions keep working, new ones get a clear error, and nothing falls back
+to open.
+
+A canvas with no `MARVER_ID_ISSUER` set makes no outbound request of any kind. The
+identity service is opt-in, and opting out is the default.
+
 ## Railway (the one-pager)
 
 1. Push your repo to GitHub and create a Railway service from it.
