@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { request as httpRequest } from 'node:http'
+import { request as httpRequest, createServer as createHttpServer } from 'node:http'
+import { generateKeyPairSync, createSign } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -560,17 +561,154 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(String(res.headers.location ?? '')).not.toContain('evil.example.com')
   })
 
-  it('identity mode: forwarded headers cannot change the audience', async () => {
+  it('identity mode: a plain loopback start names this canvas, on the port we reached it on', async () => {
+    const res = await raw(identity.port, '/__mv/id/start', {})
+    expect(res.status).toBe(302)
+    const named = new URL(String(res.headers.location)).searchParams.get('origin')!
+    expect(named).toMatch(new RegExp(`^http://(localhost|127\\.0\\.0\\.1):${identity.port}$`))
+  })
+
+  it('identity mode: forwarded headers cannot change the audience - they disable the guess', async () => {
+    // A loopback socket used to be treated as proof of a local browser. Behind
+    // the ordinary self-hosted shape - nginx or Caddy talking to node over
+    // loopback - it is nothing of the kind: a request from the open internet
+    // arrives with both socket addresses loopback, and a passed-through
+    // `Host: localhost` would hand the caller an http://localhost audience and
+    // a session cookie with no Secure flag.
+    //
+    // So a forwarding header now REFUSES rather than guessing. An unpinned
+    // canvas behind a proxy is a misconfiguration, and saying so beats
+    // inventing an origin for it.
     const res = await raw(identity.port, '/__mv/id/start', {
       'x-forwarded-host': 'attacker.test',
       'x-forwarded-proto': 'https',
     })
-    expect(res.status).toBe(302)
-    // The origin is this canvas on the port we actually reached it on - whichever
-    // loopback spelling the client used - and never anything a caller asserted.
-    const named = new URL(String(res.headers.location)).searchParams.get('origin')!
-    expect(named).toMatch(new RegExp(`^http://(localhost|127\\.0\\.0\\.1):${identity.port}$`))
+    expect(res.status).toBe(500)
     expect(res.body).not.toContain('attacker.test')
+    expect(res.headers.location).toBeUndefined()
   })
 
+})
+
+/**
+ * The whole path, once, for real: /start -> a signed assertion -> a session.
+ *
+ * Everything else in this file proves a REFUSAL - wrong audience, spent nonce,
+ * uninvited address. Nothing proved the success case end to end, and the gap was
+ * not academic: the callback issued `mv_s` without its `mv_c` double-submit
+ * partner, so every identity user got a canvas they could read and never write
+ * to - no comments, no profile, no invites, all 403 - and the entire suite
+ * stayed green. A test that only ever watches the door slam does not notice the
+ * key snapping off in the lock.
+ *
+ * This needs a real issuer, because the signature is checked against fetched
+ * keys. So it stands one up: a P-256 keypair, a JWKS endpoint, and assertions
+ * signed the way the identity service signs them.
+ */
+describe('identity mode: the successful path, end to end', () => {
+  const KID = 'e2e-1'
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const OWNER = 'owner@example.test'
+
+  let issuer: import('node:http').Server
+  let issuerUrl = ''
+  let canvas: Canvas
+
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+
+  /** An assertion shaped exactly like the identity service's. */
+  function assertionFor(opts: { aud: string; nonce: string; email?: string; sub?: string }): string {
+    const now = Math.floor(Date.now() / 1000)
+    const h = b64({ alg: 'ES256', typ: 'marver-assertion+jwt', kid: KID })
+    const p = b64({
+      iss: issuerUrl, aud: opts.aud, nonce: opts.nonce,
+      sub: opts.sub ?? 'subject-e2e', email: opts.email ?? OWNER, email_verified: true,
+      iat: now, nbf: now, exp: now + 300,
+    })
+    const s = createSign('SHA256')
+    s.update(`${h}.${p}`)
+    s.end()
+    const sig = s.sign({ key: privateKey, dsaEncoding: 'ieee-p1363' })
+    return `${h}.${p}.${sig.toString('base64url')}`
+  }
+
+  beforeAll(async () => {
+    const jwk = publicKey.export({ format: 'jwk' })
+    const body = JSON.stringify({ keys: [{ ...jwk, kid: KID, alg: 'ES256', use: 'sig' }] })
+    issuer = createHttpServer((req, res) => {
+      if (req.url === '/.well-known/jwks.json') {
+        res.setHeader('content-type', 'application/json')
+        return res.end(body)
+      }
+      res.statusCode = 404
+      res.end('no')
+    })
+    await new Promise<void>((r) => issuer.listen(0, '127.0.0.1', r))
+    const port = (issuer.address() as import('node:net').AddressInfo).port
+    // http on loopback is the one non-https issuer normalizeIssuer allows, and
+    // it exists precisely so the protocol can be developed and tested locally.
+    issuerUrl = `http://localhost:${port}`
+
+    canvas = await start({
+      MARVER_ID_ISSUER: issuerUrl,
+      MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-e2e-')),
+      MARVER_OWNER_EMAIL: OWNER,
+    }, 4788)
+  }, 180_000)
+
+  afterAll(async () => {
+    canvas?.proc.kill()
+    if (!issuer) return
+    issuer.closeAllConnections?.()
+    await new Promise<void>((r) => issuer.close(() => r()))
+  })
+
+  it('turns a signed assertion into a session that can actually WRITE', async () => {
+    // 1. Start: a nonce, and the handle that owns it.
+    const started = await fetch(`http://localhost:${canvas.port}/__mv/id/start`, { redirect: 'manual' })
+    expect(started.status).toBe(302)
+    const to = new URL(String(started.headers.get('location')))
+    const nonce = to.searchParams.get('nonce')!
+    expect(nonce).toBeTruthy()
+    const handle = /(?:^|;\s*)mv_b=([\w-]+)/.exec(started.headers.getSetCookie().join('; '))?.[1]
+    expect(handle, 'the browser handle must be issued by /start').toBeTruthy()
+
+    // 2. The audience is this canvas, exactly as it named itself.
+    const aud = to.searchParams.get('origin')!
+
+    // 3. Callback: the assertion, from the browser that started it.
+    const done = await fetch(`http://localhost:${canvas.port}/__mv/id/callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_b=${handle}` },
+      body: JSON.stringify({ assertion: assertionFor({ aud, nonce }) }),
+    })
+    expect(done.status, await done.text().catch(() => '')).toBe(200)
+
+    const set = done.headers.getSetCookie().join('\n')
+    expect(set, 'a session must be issued').toMatch(/(^|\n)mv_s=[\w.-]+/)
+    // The regression this test exists for. Without mv_c the session is
+    // read-only: collab.ts refuses every mutation that carries mv_s and no
+    // matching x-mv-c.
+    expect(set, 'mv_c must ride along, or every mutation 403s').toMatch(/(^|\n)mv_c=[\w-]+/)
+    // It has to be readable by script - the browser echoes it back itself.
+    const mvc = /(?:^|\n)mv_c=[^\n]*/.exec(set)![0]
+    expect(mvc).not.toMatch(/HttpOnly/i)
+    // And the handle is spent, not left lying around.
+    expect(set).toMatch(/mv_b=;/)
+  }, 60_000)
+
+  it('refuses a second use of the same nonce', async () => {
+    const started = await fetch(`http://localhost:${canvas.port}/__mv/id/start`, { redirect: 'manual' })
+    const to = new URL(String(started.headers.get('location')))
+    const nonce = to.searchParams.get('nonce')!
+    const aud = to.searchParams.get('origin')!
+    const handle = /(?:^|;\s*)mv_b=([\w-]+)/.exec(started.headers.getSetCookie().join('; '))?.[1]
+    const send = () => fetch(`http://localhost:${canvas.port}/__mv/id/callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_b=${handle}` },
+      body: JSON.stringify({ assertion: assertionFor({ aud, nonce }) }),
+    })
+    expect((await send()).status).toBe(200)
+    expect((await send()).status).toBe(401)
+  }, 60_000)
 })

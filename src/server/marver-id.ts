@@ -3,10 +3,13 @@
  *
  * A canvas never trusts a token because it looks well-formed. The sequence is:
  *
- *   1. mintTransaction()  - the canvas invents a nonce and remembers it, bound
- *                           to this browser and this exact origin, for 5 minutes.
- *   2. the browser opens a popup at id.marver.design/authorize, which returns a
- *      signed assertion by postMessage.
+ *   1. mint()             - the canvas invents a nonce and remembers it, bound
+ *                           to this browser and this exact origin.
+ *   2. the TAB goes to id.marver.design/authorize and comes back to
+ *      /__mv/id/finish with the assertion in the URL fragment. One tab, one
+ *      redirect each way - no popup and no postMessage, because Google serves
+ *      COOP: same-origin and severs window.opener permanently. See
+ *      marver-id-gate.ts for the full reasoning.
  *   3. verifyAssertion()  - the canvas SERVER checks every claim against the
  *                           published keys, then consumes the transaction.
  *
@@ -22,8 +25,22 @@
  */
 import { createHash, randomBytes, timingSafeEqual, createVerify } from 'node:crypto'
 
-/** How long a transaction may sit unused. Matches the assertion's own life. */
-const TRANSACTION_TTL_MS = 5 * 60 * 1000
+/**
+ * How long a sign-in may take, start to finish.
+ *
+ * Was five minutes, which quietly assumed the identity service answers
+ * instantly. It does not: a sign-in there can mean waiting for an emailed code,
+ * and mail is store-and-forward - a first-time sender can be greylisted and
+ * deferred for minutes before the message is even accepted. Somebody who went to
+ * find their code and came back to "unknown or spent nonce" did nothing wrong.
+ *
+ * Fifteen minutes covers a slow round trip with room to spare, and costs little:
+ * the nonce is single-use, bound to one browser and one origin, and useless
+ * without a signature from the issuer. The browser handle below is set to match,
+ * so the two halves of the same deadline expire together rather than leaving a
+ * window where the transaction lives but the handle that owns it is gone.
+ */
+const TRANSACTION_TTL_MS = 15 * 60 * 1000
 /** Servers drift; allow a little, but not enough to matter. */
 const CLOCK_TOLERANCE_S = 30
 /** Public keys are cached; rotation publishes a key well before it signs. */
@@ -60,7 +77,7 @@ export type VerifyResult =
 /**
  * The transaction store.
  *
- * In memory on purpose: a transaction lives five minutes, and a canvas that
+ * In memory on purpose: a transaction is short-lived, and a canvas that
  * restarts mid-sign-in should simply ask the person to try again rather than
  * persist half-finished authentications to disk.
  */
@@ -222,12 +239,38 @@ let jwksCache: { at: number; url: string; jwks: Jwks } | null = null
 let lastForcedFetch = 0
 const FORCED_FETCH_COOLDOWN_MS = 30 * 1000
 
+/**
+ * The fetch currently in flight, if there is one.
+ *
+ * The cooldown above bounds refetches for an UNKNOWN kid, but says nothing about
+ * a cold cache: at boot, or the moment the cache ages out, every callback that
+ * arrives at once sees no entry and starts its own request. That is a thundering
+ * herd pointed at the identity service, and a caller holding transactions can
+ * time it deliberately. One request per URL, shared by everyone waiting for it.
+ */
+let inFlight: { url: string; p: Promise<Jwks> } | null = null
+
 async function fetchJwks(issuer: string, force = false): Promise<Jwks> {
   const url = `${issuer.replace(/\/$/, '')}/.well-known/jwks.json`
   if (!force && jwksCache && jwksCache.url === url && Date.now() - jwksCache.at < JWKS_TTL_MS) {
     return jwksCache.jwks
   }
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
+  if (inFlight && inFlight.url === url) return inFlight.p
+  const p = fetchJwksNow(url)
+  inFlight = { url, p }
+  try { return await p } finally { if (inFlight?.p === p) inFlight = null }
+}
+
+async function fetchJwksNow(url: string): Promise<Jwks> {
+  // Never follow a redirect for the keys.
+  //
+  // normalizeIssuer() works hard to make the configured origin the trust root,
+  // and a followed redirect hands that root away: an ordinary open redirect on
+  // the identity service - the sort of bug that is usually a shrug - would
+  // become "serve your own P-256 key and mint sessions for any invited address".
+  // The real service answers this path directly, so a redirect here is either a
+  // misconfiguration or an attack, and both deserve the same refusal.
+  const res = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: 'error' })
   if (!res.ok) throw new Error(`jwks fetch failed (${res.status})`)
   const jwks = (await res.json()) as Jwks
   if (!Array.isArray(jwks.keys)) throw new Error('jwks malformed')
@@ -236,7 +279,7 @@ async function fetchJwks(issuer: string, force = false): Promise<Jwks> {
 }
 
 /** Only for tests - drop the cached keys. */
-export function _resetJwksCache() { jwksCache = null; lastForcedFetch = 0 }
+export function _resetJwksCache() { jwksCache = null; lastForcedFetch = 0; inFlight = null }
 
 /**
  * Verify an assertion against everything it claims to be.

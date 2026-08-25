@@ -108,13 +108,26 @@ export async function serve(root: string, portFlag?: number) {
       console.error(`[${NAME}] MARVER_ID_ISSUER needs MARVER_DATA_DIR - identity accounts need somewhere to live.`)
       process.exit(1)
     }
+    // Say at BOOT what will otherwise only be discovered by the first person to
+    // try signing in. Without a pinned origin the handler serves loopback and
+    // nothing else, so a deployed canvas starts perfectly and then answers every
+    // sign-in with a 500 - a failure that looks like the identity service is
+    // down rather than like a missing setting. Not fatal, because developing
+    // against localhost legitimately leaves it unset.
+    if (!process.env.MARVER_PUBLIC_ORIGIN) {
+      console.warn(
+        `[${NAME}] MARVER_ID_ISSUER is set but MARVER_PUBLIC_ORIGIN is not.\n` +
+        `  Sign-in will work over localhost ONLY. Before deploying, set it to this\n` +
+        `  canvas's exact public origin, e.g. https://canvas.example.com`,
+      )
+    }
     const { marverIdHandler } = await import('./marver-id-gate.ts')
     const { dataDir } = await import('./comments.ts')
     // The canvas's own name travels with the sign-in request, so the identity
     // service can say what somebody is signing in to open. Capitalised the same
     // way the gate shows it, so the two read as the same canvas.
     const canvasName = humanName(meta.name)
-    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName)
+    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName, meta.branding)
   }
 
   const password = idIssuer ? '' : (process.env.MARVER_PASSWORD ?? '')

@@ -58,7 +58,11 @@ const BROWSER_COOKIE = 'mv_b'
 const BROWSER_COOKIE_SECURE = '__Host-mv_b'
 const browserCookieName = (secure: boolean) => (secure ? BROWSER_COOKIE_SECURE : BROWSER_COOKIE)
 const SESSION_COOKIE = 'mv_s'
+/** The double-submit half of the session pair. See where it is set. */
+const CSRF_COOKIE = 'mv_c'
 const MONTH = 30 * 24 * 3600
+/** Matches TRANSACTION_TTL_MS - one deadline, expressed in both halves. */
+const HANDLE_TTL_S = 15 * 60
 
 /**
  * Where to put somebody back, after they sign in.
@@ -105,7 +109,7 @@ export function safeHash(raw: string | null): string | null {
   return value
 }
 
-export function marverIdHandler(dir: string, issuer: string, canvasName?: string) {
+export function marverIdHandler(dir: string, issuer: string, canvasName?: string, branding = true) {
   const transactions = new TransactionStore()
 
   // The canvas's own origin, pinned by the operator.
@@ -125,7 +129,13 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
     try { u = new URL(pinned) } catch { throw new Error(`MARVER_PUBLIC_ORIGIN is not a URL: ${pinned}`) }
     const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
     if (u.pathname !== '/' || u.search || u.hash) throw new Error(`MARVER_PUBLIC_ORIGIN must be a bare origin: ${pinned}`)
-    if (u.protocol !== 'https:' && !loopback) throw new Error(`MARVER_PUBLIC_ORIGIN must be https (or loopback): ${pinned}`)
+    // https anywhere, or http on loopback - and nothing else. The loopback
+    // exception used to be written as "not https is fine if the host is local",
+    // which also waved through ftp://localhost and every other scheme, each of
+    // them quietly turning off the Secure flag on the way past.
+    if (!(u.protocol === 'https:' || (u.protocol === 'http:' && loopback))) {
+      throw new Error(`MARVER_PUBLIC_ORIGIN must be https, or http on loopback: ${pinned}`)
+    }
     publicOrigin = u.origin
   }
 
@@ -152,8 +162,16 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       const headers: string[] = []
       if (!browserId) {
         browserId = randomBytes(24).toString('base64url')
-        headers.push(cookie(browserCookieName(secure), browserId, { maxAge: 600, secure }))
       }
+      // Re-set it on every start, not only when it is missing.
+      //
+      // The handle and the transaction are two halves of one deadline, and only
+      // the transaction was being renewed. A handle set once and left to expire
+      // meant a sign-in could hold a perfectly live transaction it no longer had
+      // the cookie to claim - and the callback's answer for that is the same
+      // blank refusal as a forged token. Stamping it here keeps both halves
+      // running from the same moment.
+      headers.push(cookie(browserCookieName(secure), browserId, { maxAge: HANDLE_TTL_S, secure }))
 
       // Where they were heading, captured by the gate's script from the URL
       // fragment - the one part of a link no server ever receives. Kept in the
@@ -186,13 +204,20 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       res.setHeader('cache-control', 'no-store')
       res.setHeader('referrer-policy', 'no-referrer')
       res.end(finishPage(canvasName, new URL(origin).host,
-        `${issuer}/switch?origin=${encodeURIComponent(origin)}`))
+        `${issuer}/switch?origin=${encodeURIComponent(origin)}`, branding))
       return true
     }
 
     if (req.method === 'POST' && url.pathname === '/__mv/id/callback') {
       const { body, tooLarge } = await readBody(req, 16_000)
-      if (tooLarge) return json(res, 413, { error: 'too large' })
+      if (tooLarge) {
+        // Answer, then hang up. The rest of an oversized or too-slow body is
+        // still unread in the socket, and reusing a connection in that state
+        // under keep-alive gets the next request parsed out of leftover bytes.
+        // The refusal still arrives - it is written before the close.
+        res.setHeader('connection', 'close')
+        return json(res, 413, { error: 'too large' })
+      }
       let assertion = ''
       try {
         const parsed = JSON.parse(body) as unknown
@@ -256,6 +281,18 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
 
       res.setHeader('set-cookie', [
         cookie(SESSION_COOKIE, session.session, { maxAge: MONTH, secure }),
+        // The other half of the double-submit pair, and NOT optional.
+        //
+        // Every mutation in collab.ts requires a JS-readable mv_c echoed back as
+        // x-mv-c, and its check reads "no session, or a matching pair" - so a
+        // session WITHOUT mv_c fails every time. Issuing mv_s alone produced a
+        // canvas somebody could read and never write to: no comments, no profile,
+        // no invites, all 403. The password path has always set both here; this
+        // one simply forgot, and nothing failed loudly enough to notice.
+        //
+        // Deliberately NOT HttpOnly - the browser has to read it to echo it. It
+        // carries no authority on its own; the session cookie does.
+        `${CSRF_COOKIE}=${randomBytes(16).toString('base64url')}; Path=/; Max-Age=${MONTH}; SameSite=Lax${secure ? '; Secure' : ''}`,
         // The browser handle has done its job.
         cookie(browserCookieName(secure), '', { maxAge: 0, secure }),
       ])
@@ -275,8 +312,8 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
  * the real host. So the check is on the SOCKET - where the connection actually
  * came from and where it actually landed - which a remote caller cannot forge.
  *
- * The header still has to agree, because it is what the browser will use when
- * the popup posts back; but agreement alone was never enough.
+ * The header still has to agree, because it is what the browser will use when it
+ * comes back to /__mv/id/finish; but agreement alone was never enough.
  */
 function localOrigin(req: any): string | null {
   const remote = req.socket?.remoteAddress ?? ''
@@ -284,6 +321,22 @@ function localOrigin(req: any): string | null {
   const isLoopbackAddr = (a: string) =>
     a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1'
   if (!isLoopbackAddr(remote) || !isLoopbackAddr(local)) return null
+
+  // A loopback socket is not proof of a local browser once a proxy is involved.
+  //
+  // The usual self-hosted shape is nginx or Caddy in front of node over
+  // loopback, which makes BOTH socket addresses loopback for a request that came
+  // from the open internet. If that proxy passes an attacker's `Host: localhost`
+  // through, the exemption below hands them an `http://localhost` audience and
+  // turns off the Secure flag - the exact substitution the socket check was
+  // written to prevent.
+  //
+  // Any forwarding header means somebody is in front of us, and a canvas with
+  // something in front of it is not a canvas being developed on. It must say
+  // what it is with MARVER_PUBLIC_ORIGIN instead of being guessed at.
+  for (const h of ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded']) {
+    if (req.headers?.[h]) return null
+  }
 
   const host = String(req.headers.host ?? '')
   return /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/.test(host)
@@ -322,7 +375,13 @@ const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
-function finishPage(canvasName: string | undefined, host: string, switchUrl: string): string {
+/**
+ * `share: { branding: false }` is documented as stripping every Marver mention,
+ * and this page was the exception nobody noticed - the last screen of the flow,
+ * still wearing the footer an operator had explicitly turned off. A setting that
+ * holds almost everywhere is a setting you cannot rely on.
+ */
+function finishPage(canvasName: string | undefined, host: string, switchUrl: string, branding = true): string {
   const name = esc(canvasName || 'this canvas')
   const where = esc(host)
   return `<!doctype html>
@@ -378,7 +437,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
     <p class="lead" id="m"></p>
     <a class="cta" id="back" href="/" data-switch="${esc(switchUrl)}" hidden>Use a different account</a>
   </div>
-  <footer>${MARK} <span>Powered by Marver.design</span></footer>
+  ${branding ? `<footer>${MARK} <span>Powered by Marver.design</span></footer>` : ''}
 <script>
 (function () {
   var s = document.getElementById('s'), m = document.getElementById('m'), back = document.getElementById('back')
@@ -474,7 +533,7 @@ function readCookie(req: any, name: string): string {
  * destroying the socket - the previous version killed the connection and then
  * tried to write a response onto it, which cannot arrive.
  */
-function readBody(req: any, limit: number): Promise<{ body: string; tooLarge: boolean }> {
+function readBody(req: any, limit: number, timeoutMs = 10_000): Promise<{ body: string; tooLarge: boolean }> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = []
     let size = 0
@@ -482,14 +541,33 @@ function readBody(req: any, limit: number): Promise<{ body: string; tooLarge: bo
     const finish = (tooLarge: boolean) => {
       if (done) return
       done = true
+      clearTimeout(timer)
       resolve({ body: tooLarge ? '' : Buffer.concat(chunks).toString('utf8'), tooLarge })
     }
+
+    // A deadline, because the size limit alone bounds only memory.
+    //
+    // /__mv/id/callback answers before anyone has signed in, so a caller can open
+    // as many as they like and dribble bytes: each stays under 16KB forever and
+    // holds a socket. Bounded memory and unbounded sockets is still a canvas
+    // nobody can reach.
+    // Treated exactly like an oversized body: stop reading, refuse, and let the
+    // caller close the connection. Same reason as above - destroying here would
+    // take the socket before the refusal could be written.
+    const timer = setTimeout(() => { req.pause(); finish(true) }, timeoutMs)
+    if (typeof timer.unref === 'function') timer.unref()
+
     req.on('data', (c: Buffer) => {
       size += c.length
+      // pause(), NOT destroy(). Destroying takes the socket with it, and the 413
+      // we are about to write then has nowhere to go - which is the bug an
+      // earlier version of this function already had and fixed. The un-drained
+      // remainder is dealt with by closing the connection AFTER the response;
+      // see the `connection: close` on the 413.
       if (size > limit) { req.pause(); return finish(true) }
       chunks.push(c)
     })
     req.on('end', () => finish(false))
-    req.on('error', () => finish(false))
+    req.on('error', () => finish(true))
   })
 }

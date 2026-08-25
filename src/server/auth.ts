@@ -225,9 +225,36 @@ export function provisionFromMarverId(
     // are about to write. Reading it outside meant two concurrent callbacks could
     // both pass a check that was already stale - which is exactly the race the
     // lock exists to prevent.
-    const existing = findUser(store, emailNorm)
+    const qualified = `${identity.issuer}#${identity.subject}`
+
+    // Find them by SUBJECT first, then by address.
+    //
+    // The subject is the stable identity; the address is a label on it that
+    // people genuinely change - a Workspace rename, a married name, a company
+    // moving domain. Looking up by email alone meant a returning person whose
+    // address had changed did not match their own account, fell through to the
+    // allowlist with an address nobody had invited, and was refused entry to a
+    // canvas they may well own. Their account is right there, bound to the
+    // subject the assertion just proved.
+    const bound = store.users.find((u) => u.idSubject === qualified)
+    const existing = bound ?? findUser(store, emailNorm)
+    // A recognised account carries its own permission; the allowlist is for
+    // deciding about strangers.
+    if (bound && normEmail(bound.email) !== emailNorm) bound.email = emailNorm
+
     const invite = store.invites.find((i) => i.emailNorm === emailNorm && i.exp > Date.now())
-    const isBootstrapOwner = !!opts.ownerEmail && !store.users.length && normEmail(opts.ownerEmail) === emailNorm
+
+    // An empty canvas with a named owner is RESERVED for that owner.
+    //
+    // Without the reservation, any pending invite on a canvas with no accounts
+    // was enough to walk in - and the first account through the door is made
+    // owner, so whoever arrived first took the canvas. Rare, because an empty
+    // canvas usually has no invites to hold, but the cost of it happening is the
+    // whole canvas and the guard is one condition.
+    const ownerNorm = opts.ownerEmail ? normEmail(opts.ownerEmail) : ''
+    const reservedForOwner = !!ownerNorm && !store.users.length && ownerNorm !== emailNorm
+    const isBootstrapOwner = !!ownerNorm && !store.users.length && ownerNorm === emailNorm
+    if (reservedForOwner) return null
     if (!existing && !invite && !isBootstrapOwner) return null
 
     // An invite that authorises entry is SPENT by it. Leaving it pending would
@@ -240,7 +267,6 @@ export function provisionFromMarverId(
       // An existing PASSWORD account keeps its password; signing in through the
       // identity service does not silently convert it, and must not be a way to
       // take one over. Same address, same person, both doors still work.
-      const qualified = `${identity.issuer}#${identity.subject}`
       if (!user.idSubject) {
         user.idSubject = qualified
       } else if (user.idSubject === identity.subject) {

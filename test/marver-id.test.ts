@@ -201,11 +201,21 @@ describe('verifyAssertion - refusals that defeat token forgery', () => {
 })
 
 describe('TransactionStore', () => {
+  /**
+   * Comfortably past whatever the deadline currently is.
+   *
+   * These used to advance a hardcoded six minutes, which was a restatement of a
+   * five-minute TTL - so raising the TTL to cover a slow emailed code broke two
+   * tests that were not about the number at all. Expiry is the property; the
+   * duration is policy, and policy belongs in one place.
+   */
+  const PAST_ANY_DEADLINE_MS = 24 * 60 * 60 * 1000
+
   it('expires transactions rather than keeping them forever', async () => {
     vi.useFakeTimers()
     try {
       const tx = store.mint(ORIGIN, BROWSER)
-      vi.advanceTimersByTime(6 * 60 * 1000)
+      vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS)
       expect(store.consume(tx.nonce, BROWSER)).toBeNull()
     } finally { vi.useRealTimers() }
   })
@@ -249,7 +259,7 @@ describe('TransactionStore', () => {
     vi.useFakeTimers()
     try {
       const first = store.mint(ORIGIN, BROWSER)
-      vi.advanceTimersByTime(6 * 60 * 1000)
+      vi.advanceTimersByTime(PAST_ANY_DEADLINE_MS)
       const second = store.mint(ORIGIN, BROWSER)
       expect(second.nonce).not.toBe(first.nonce)
     } finally { vi.useRealTimers() }
