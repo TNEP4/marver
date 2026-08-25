@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { scryptSync } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn } from '../src/server/auth.ts'
@@ -296,5 +297,69 @@ describe('following a renamed address', () => {
     const newcomer = provisionFromMarverId(dir, identity('old@x.test', 'subj-2'))
     expect(newcomer).not.toBeNull()
     expect(sessionUser(dir, before.session), 'and must never resolve to the newcomer').toBeNull()
+  })
+})
+
+/**
+ * A canvas that already exists, upgrading into this release.
+ *
+ * The User type changed shape here: `salt`, `hash` and `params` became optional
+ * so an identity account can exist without a credential, and `auth`/`idSubject`
+ * arrived. Every deployed canvas has an auth.json written before any of that.
+ * If it does not load, or its accounts stop signing in, the upgrade takes those
+ * canvases down - and nothing else in this suite would notice, because every
+ * other test writes its store with the CURRENT code.
+ *
+ * So this hand-writes the OLD shape and drives the real functions over it.
+ */
+describe('an auth.json written by an older marver', () => {
+  const SCRYPT = { N: 2 ** 15, r: 8, p: 1, keylen: 32, maxmem: 64 * 1024 * 1024 }
+
+  /** Exactly the fields the previous release wrote - no `auth`, no `idSubject`. */
+  const legacyStore = (email: string, password: string) => {
+    const salt = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
+    const hash = scryptSync(password, Buffer.from(salt, 'hex'), SCRYPT.keylen, SCRYPT).toString('hex')
+    return {
+      users: [{
+        email, name: 'Existing Owner', role: 'owner',
+        salt, hash, params: SCRYPT, createdAt: 1_700_000_000_000,
+      }],
+      invites: [],
+      sessions: [],
+    }
+  }
+
+  const writeLegacy = (email: string, password: string) => {
+    writeFileSync(join(dir, 'auth.json'), JSON.stringify(legacyStore(email, password), null, 2))
+  }
+
+  it('still loads, and its accounts still sign in with their password', () => {
+    writeLegacy('old@x.test', 'the-old-password')
+    expect(loadStore(dir).users).toHaveLength(1)
+
+    const hit = signIn(dir, 'old@x.test', 'the-old-password')
+    expect(hit, 'an existing account must survive the upgrade').not.toBeNull()
+    expect(hit!.user.name).toBe('Existing Owner')
+    expect(sessionUser(dir, hit!.session)?.email).toBe('old@x.test')
+
+    expect(signIn(dir, 'old@x.test', 'wrong'), 'and a wrong password is still wrong').toBeNull()
+  })
+
+  it('lets that same person arrive through Marver ID, without losing their password', () => {
+    writeLegacy('old@x.test', 'the-old-password')
+
+    // The address already has an account, so the allowlist admits them and the
+    // subject is bound on first arrival.
+    const viaId = provisionFromMarverId(dir, identity('old@x.test', 'subj-new'))
+    expect(viaId, 'an existing account is its own permission').not.toBeNull()
+    expect(viaId!.user.idSubject).toBe(`${ISSUER}#subj-new`)
+
+    // The password still works. Signing in through the identity service does not
+    // silently convert an account or take it over - both doors stay open, which
+    // is what makes switching a canvas to MARVER_ID_ISSUER reversible.
+    expect(signIn(dir, 'old@x.test', 'the-old-password'), 'the password must survive').not.toBeNull()
+
+    // And a DIFFERENT identity claiming that address is still refused.
+    expect(provisionFromMarverId(dir, identity('old@x.test', 'someone-else'))).toBeNull()
   })
 })
