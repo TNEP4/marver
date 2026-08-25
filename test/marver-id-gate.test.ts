@@ -107,6 +107,39 @@ const bundleServed = (html: string) => html.includes('id="root"') && html.includ
  * it, which made an earlier version of the spoofing test pass without ever
  * spoofing anything. Header-injection tests have to speak HTTP directly.
  */
+/**
+ * A POST with headers a browser sets and script cannot.
+ *
+ * Sec-Fetch-* are forbidden header names, so fetch() silently drops them - which
+ * is exactly why the approve route can rely on them, and exactly why a test of
+ * that route cannot use fetch. Raw HTTP is the only way to describe what a real
+ * navigation looks like.
+ */
+function rawPost(port: number, path: string, body: string, headers: Record<string, string> = {}):
+  Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: '127.0.0.1', port, path, method: 'POST',
+        headers: {
+          connection: 'close',
+          'content-type': 'application/x-www-form-urlencoded',
+          'content-length': String(Buffer.byteLength(body)),
+          ...headers,
+        },
+      },
+      (res) => {
+        let out = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => { out += c })
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: out, headers: res.headers }))
+      },
+    )
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
 function raw(port: number, path: string, headers: Record<string, string> = {}):
   Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
   return new Promise((resolve, reject) => {
@@ -778,13 +811,29 @@ describe('identity mode: the successful path, end to end', () => {
     })
     expect(guess.status, 'the user code is not a device code').toBe(410)
 
-    // The browser half, with the identity session behind it.
-    const approved = await fetch(`http://localhost:${canvas.port}/__mv/api/cli/approve`, {
+    // A fetch cannot approve, even holding the right session. Authored frames
+    // run same-origin, so anything fetch() can do, a frame can do silently -
+    // and what it would walk away with here is a thirty-day bearer token.
+    const byFetch = await fetch(`http://localhost:${canvas.port}/__mv/api/cli/approve`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: `mv_s=${mvS}; mv_c=${mvC}`, 'x-mv-c': mvC },
-      body: JSON.stringify({ code: start.userCode }),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: `mv_s=${mvS}; mv_c=${mvC}`, 'x-mv-c': mvC },
+      body: new URLSearchParams({ code: start.userCode }).toString(),
     })
-    expect(approved.status, await approved.text().catch(() => '')).toBe(200)
+    expect(byFetch.status, 'a fetch must never approve').toBe(403)
+
+    // The browser half: a real form submission from the approval page, which is
+    // what the Sec-Fetch headers below describe. They are written by the
+    // browser and cannot be set by page script, which is the whole point.
+    const approved = await rawPost(
+      canvas.port, '/__mv/api/cli/approve',
+      new URLSearchParams({ code: start.userCode }).toString(),
+      {
+        cookie: `mv_s=${mvS}; mv_c=${mvC}`,
+        'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document', 'sec-fetch-site': 'same-origin',
+      },
+    )
+    expect(approved.status, approved.body).toBe(303)
+    expect(String(approved.headers.location)).toContain('done=1')
 
     const got = await poll()
     expect(got.status).toBe(200)
@@ -813,13 +862,16 @@ describe('identity mode: the successful path, end to end', () => {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     })
     const s2 = await second.json() as any
-    const approve = () => fetch(`http://localhost:${canvas.port}/__mv/api/cli/approve`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: `mv_s=${mvS}; mv_c=${mvC}`, 'x-mv-c': mvC },
-      body: JSON.stringify({ code: s2.userCode }),
-    })
-    expect((await approve()).status).toBe(200)
-    expect((await approve()).status, 'a code cannot be approved twice').toBe(409)
+    const approve = () => rawPost(
+      canvas.port, '/__mv/api/cli/approve',
+      new URLSearchParams({ code: s2.userCode }).toString(),
+      {
+        cookie: `mv_s=${mvS}; mv_c=${mvC}`,
+        'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document', 'sec-fetch-site': 'same-origin',
+      },
+    )
+    expect(String((await approve()).headers.location)).toContain('done=1')
+    expect(String((await approve()).headers.location), 'a code cannot be approved twice').toContain('err=used')
 
     // Revocation too - the other half an owner needs.
     const revoked = await fetch(`http://localhost:${canvas.port}/__mv/api/revoke`, {

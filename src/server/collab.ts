@@ -259,6 +259,18 @@ export function collabHandler(dataDir: string, distDir: string) {
     res.setHeader('cache-control', 'no-store')
     res.end(JSON.stringify(body))
   }
+  /** The approval arrives as a form navigation, so it is urlencoded, not JSON. */
+  const readForm = (req: IncomingMessage): Promise<URLSearchParams> => new Promise((resolve) => {
+    let body = ''
+    let done = false
+    const settle = () => { if (done) return; done = true; clearTimeout(timer); resolve(new URLSearchParams(body)) }
+    const timer = setTimeout(() => { req.destroy(); settle() }, 10_000)
+    if (typeof timer.unref === 'function') timer.unref()
+    req.on('data', (c) => { body += c; if (body.length > 4096) { req.destroy(); settle() } })
+    req.on('end', settle)
+    req.on('error', settle)
+  })
+
   const readBody = (req: IncomingMessage): Promise<any> => new Promise((resolve, reject) => {
     // JSON only, declared as such: a cross-site <form> can post text/plain with a
     // JSON-shaped body, and content-type is the one thing it cannot forge
@@ -366,7 +378,8 @@ export function collabHandler(dataDir: string, distDir: string) {
       // claim/signin run BEFORE a session exists, so the double-submit pair cannot -
       // and need not - be present: CSRF protects authenticated state, and these have
       // none to ride (the scrypt cost + rate limit carry the abuse load)
-      const preAuth = path === 'auth/claim' || path === 'auth/signin' || path === 'cli/start' || path === 'cli/poll'
+      const preAuth = path === 'auth/claim' || path === 'auth/signin' || path === 'cli/start'
+        || path === 'cli/poll' || path === 'cli/approve'
       if (!preAuth && !csrfOk(req))
         return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
 
@@ -423,25 +436,54 @@ export function collabHandler(dataDir: string, distDir: string) {
         // The only authority in this flow. Everything the CLI ends up holding is
         // whatever this person could already do.
         if (!u) return json(res, 401, { error: 'sign in first' }), true
+
+        /**
+         * A real form submission, from the top-level page. Not a fetch.
+         *
+         * This is the check that stops a live frame stealing a session. Authored
+         * frames run SAME-ORIGIN in a canvas - that is deliberate and documented -
+         * so frame JavaScript can read mv_c, and any request it makes carries the
+         * viewer's mv_s automatically. Which means it could mint a device code,
+         * approve it, poll it, and walk away with a thirty-day bearer token: a
+         * durable credential that outlives the page, survives signing out of the
+         * browser, and can be carried somewhere else entirely. That is a real
+         * escalation over "a frame can act while it is open".
+         *
+         * Sec-Fetch-* is set by the browser and cannot be written by page script,
+         * so requiring a same-origin top-level NAVIGATION is something a frame
+         * cannot forge with fetch(). It can still navigate the whole window to
+         * submit one - but that replaces the canvas with this page in front of
+         * the person, which is the difference between theft and something they
+         * watch happen.
+         *
+         * The same header also does the CSRF job here: a cross-site form post
+         * arrives as Sec-Fetch-Site: cross-site, and a form cannot set the
+         * x-mv-c header that the double-submit check wants.
+         */
+        const h = (n: string) => String(req.headers[n] ?? '')
+        if (h('sec-fetch-mode') !== 'navigate' || h('sec-fetch-dest') !== 'document'
+            || h('sec-fetch-site') !== 'same-origin') {
+          return json(res, 403, { error: 'approval must come from the approval page' }), true
+        }
+
         if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
-        const b = await readBody(req)
-        const hit = byUserCode(String(b.code ?? ''))
-        if (!hit) return json(res, 404, { error: 'that code is not waiting for approval - it may have expired' }), true
-        // One approval, first only. Last-writer-wins meant a second person
-        // approving the same code before the terminal's next poll silently
-        // replaced the first - both browsers told "approved", and the terminal
-        // handed whichever session arrived last.
-        if (hit[1].approvedFor) return json(res, 409, { error: 'that code has already been approved' }), true
-        // Both, because the address alone is not stable.
-        //
-        // A device code lives ten minutes, and an identity account can change
-        // its address in that window - at which point another admitted account
-        // can be given the address it left. Redeeming by email alone would then
-        // hand the terminal that other person's session. Recording the subject
-        // as well makes the redemption checkable: a password account has no
-        // subject and cannot rename, so for those the address IS the identity.
+        const body = await readForm(req)
+        const code = String(body.get('code') ?? '')
+        const hit = byUserCode(code)
+
+        // Post-redirect-get: the answer is a page, because this was a navigation.
+        const back = (q: string) => {
+          res.statusCode = 303
+          res.setHeader('location', `/__mv/cli?code=${encodeURIComponent(code)}&${q}`)
+          res.setHeader('cache-control', 'no-store')
+          res.end()
+          return true
+        }
+        if (!hit) return back('err=gone')
+        // One approval, first only.
+        if (hit[1].approvedFor) return back('err=used')
         hit[1].approvedFor = { email: u.email, idSubject: u.idSubject }
-        return json(res, 200, { user: publicUser(u) }), true
+        return back(`done=1&as=${encodeURIComponent(u.email)}`)
       }
 
       if (path === 'cli/poll') {

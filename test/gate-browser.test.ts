@@ -239,12 +239,15 @@ describe('the pages a person clicks, in a real browser', () => {
     // Now the approval page, with a real session behind it.
     await browser!.go(session, `${base}/__mv/cli?code=${encodeURIComponent(started.userCode)}`)
     // It must SHOW the code - that comparison is the whole anti-phishing step.
-    expect(await browser!.eval(session, 'document.getElementById("code").textContent.trim()')).toBe(started.userCode)
+    expect(await browser!.eval(session, 'document.querySelector(".code").textContent.trim()')).toBe(started.userCode)
 
-    await browser!.eval(session, 'document.getElementById("go").click()')
-    await browser!.until(session, 'document.getElementById("note") && !document.getElementById("note").hidden')
-    const note = await browser!.eval(session, 'document.getElementById("note").textContent')
-    expect(note, `the page said: ${note}`).toContain('owner@x.test')
+    // A real click on a real form, which is now the ONLY way to approve: the
+    // route requires a same-origin top-level navigation, so a fetch from a
+    // same-origin frame cannot do this silently.
+    await browser!.eval(session, 'document.querySelector("form button").click()')
+    await browser!.until(session, 'document.body.textContent.indexOf("Approved") >= 0')
+    const shown = await browser!.eval(session, 'document.body.textContent')
+    expect(shown, `the page said: ${shown}`).toContain('owner@x.test')
 
     // And the waiting terminal now gets its session.
     const polled = await fetch(`${base}/__mv/api/cli/poll`, {
@@ -285,6 +288,55 @@ describe('the pages a person clicks, in a real browser', () => {
     // With the card up, the badge belongs with it.
     expect(visible).toContain('footer#mark')
   }, 60_000)
+
+  it('a same-origin frame cannot approve a terminal with fetch - only a real navigation can', async () => {
+    // Authored frames run same-origin in a canvas, deliberately. That means
+    // frame JavaScript can read mv_c and every request it makes carries the
+    // viewer's session automatically - so without this rule it could mint a
+    // device code, approve it, poll it, and walk off with a thirty-day bearer
+    // token. A durable credential that outlives the page and survives signing
+    // out is a real escalation over "a frame can act while it is open".
+    //
+    // Sec-Fetch-* is written by the browser and cannot be set by page script,
+    // so requiring a same-origin top-level navigation is something fetch()
+    // cannot fake.
+    const started = await (await fetch(`${base}/__mv/api/cli/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json() as any
+
+    const { session } = await browser!.tab()
+    await browser!.go(session, base)
+    await browser!.eval(session, `(function(){var i=document.querySelector('input[type=password]');i.value='hunter2';i.form.submit()})()`)
+    await browser!.until(session, 'document.body.innerHTML.includes("CANVAS-BUNDLE")')
+
+    // ...and sign in to a real ACCOUNT, because the worrying case is a frame
+    // running inside a canvas somebody is genuinely signed in to. Without this
+    // the request is refused for the duller reason of having no session, and
+    // the Sec-Fetch rule never gets exercised at all.
+    const signedIn = await browser!.eval(session, `
+      fetch('/__mv/api/auth/signin', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'owner@x.test', password: 'correct-horse-battery' })
+      }).then(function (r) { return r.status })
+    `)
+    expect(signedIn, 'the frame test needs a real session to be meaningful').toBe(200)
+
+    // Signed in, same origin, cookies attached automatically - and refused.
+    const status = await browser!.eval(session, `
+      fetch('/__mv/api/cli/approve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'code=${started.userCode}'
+      }).then(function (r) { return r.status })
+    `)
+    expect(status, 'a fetch approval must be refused').toBe(403)
+
+    const polled = await fetch(`${base}/__mv/api/cli/poll`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceCode: started.deviceCode }),
+    })
+    expect(polled.status, 'and nothing may be granted').toBe(202)
+  }, 90_000)
 
   it('nothing is on screen while the sign-in is still in flight', async () => {
     // The success path never calls speak(), so this is what a person sees for
@@ -336,11 +388,13 @@ describe('the pages a person clicks, in a real browser', () => {
 
     const { session } = await browser!.tab()   // a fresh tab: no gate cookie, no session
     await browser!.go(session, `${base}/__mv/cli?code=${encodeURIComponent(started.userCode)}`)
-    await browser!.eval(session, 'document.getElementById("go").click()')
-    await browser!.until(session, 'document.getElementById("note") && !document.getElementById("note").hidden')
-    const note = await browser!.eval(session, 'document.getElementById("note").textContent')
-    expect(note.toLowerCase()).toContain('sign in')
-    expect(note.toLowerCase()).not.toContain('signed in as')
+    await browser!.eval(session, 'document.querySelector("form button").click()')
+    // The gate answers a signed-out navigation with its own page, so what a
+    // person sees is the sign-in prompt - never "your terminal is signed in".
+    await browser!.until(session, 'document.readyState === "complete"')
+    const shown = await browser!.eval(session, 'document.body.textContent')
+    expect(shown.toLowerCase()).not.toContain('approved')
+    expect(shown.toLowerCase()).not.toContain('signed in as')
 
     // And nothing was actually approved.
     const polled = await fetch(`${base}/__mv/api/cli/poll`, {
