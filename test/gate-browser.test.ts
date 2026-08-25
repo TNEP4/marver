@@ -30,6 +30,7 @@ class Browser {
   private proc!: ChildProcess
   private seq = 0
   private pending = new Map<number, (m: any) => void>()
+  private listeners = new Map<string, (params: any, session: string) => void>()
 
   static async launch(): Promise<Browser | null> {
     const bin = findChrome()
@@ -58,8 +59,12 @@ class Browser {
     })
     b.ws.onmessage = (e) => {
       const m = JSON.parse(String(e.data))
-      const cb = m.id != null ? b.pending.get(m.id) : undefined
-      if (cb) { b.pending.delete(m.id); cb(m) }
+      if (m.id != null) {
+        const cb = b.pending.get(m.id)
+        if (cb) { b.pending.delete(m.id); cb(m) }
+        return
+      }
+      b.listeners.get(m.method)?.(m.params, m.sessionId)
     }
     return b
   }
@@ -121,6 +126,9 @@ class Browser {
     }
     throw new Error(`timed out waiting for: ${expression} (last: ${JSON.stringify(last)})`)
   }
+
+  /** Hear a CDP event. One listener per method is all this suite needs. */
+  on(method: string, fn: (params: any, session: string) => void) { this.listeners.set(method, fn) }
 
   close() { try { this.proc.kill() } catch { /* already gone */ } }
 }
@@ -278,22 +286,45 @@ describe('the pages a person clicks, in a real browser', () => {
     expect(visible).toContain('footer#mark')
   }, 60_000)
 
-  it('nothing is on screen until there is something to say', async () => {
+  it('nothing is on screen while the sign-in is still in flight', async () => {
     // The success path never calls speak(), so this is what a person sees for
     // the whole of a fast sign-in: the dotted ground, and nothing on it. The
     // badge in particular must not be sitting there alone - that was the flash
     // the card used to be, wearing a smaller hat.
+    //
+    // Observing that needs the callback held OPEN. Every resolved path speaks -
+    // a bad assertion is refused, a missing one is explained - so a page that
+    // has already answered is the wrong moment to look at. An earlier version
+    // of this test navigated with a fake assertion and read the page after it
+    // had failed, then swallowed the evaluation error as '' and asserted ''.
+    // It passed without ever seeing the finish page.
     const { session } = await browser!.tab()
-    await browser!.send('Page.navigate', { url: `${idBase}/__mv/id/finish#pretend-assertion` }, session)
-    // Read it IMMEDIATELY - before the callback resolves and paints a refusal.
+
+    let paused: string | null = null
+    browser!.on('Fetch.requestPaused', (p) => { paused = p.requestId })
+    await browser!.send('Fetch.enable', {
+      patterns: [{ urlPattern: '*/__mv/id/callback', requestStage: 'Request' }],
+    }, session)
+
+    await browser!.send('Page.navigate', { url: `${idBase}/__mv/id/finish#held-open` }, session)
+
+    // Wait for the page to have actually asked, so we are looking at the real
+    // in-flight moment rather than at a page that has not started yet.
+    for (let i = 0; i < 100 && !paused; i++) await new Promise((r) => setTimeout(r, 50))
+    expect(paused, 'the page must have POSTed the assertion').toBeTruthy()
+
+    expect(await browser!.eval(session, 'location.pathname')).toBe('/__mv/id/finish')
     const visible = await browser!.eval(session, `
       [...document.body.children]
         .filter(function (el) { return !el.hidden && el.tagName !== 'SCRIPT' })
         .map(function (el) { return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') })
         .join(',')
-    `).catch(() => '')
-    expect(visible, `something was on screen: ${visible}`).toBe('')
-  }, 60_000)
+    `)
+    expect(visible, `something was on screen while signing in: ${visible}`).toBe('')
+
+    await browser!.send('Fetch.failRequest', { requestId: paused, errorReason: 'Aborted' }, session)
+    await browser!.send('Fetch.disable', {}, session)
+  }, 90_000)
 
   it('the approval page does NOT claim success when nobody is signed in', async () => {
     // A signed-out POST is answered by the outer gate with its own HTML and a

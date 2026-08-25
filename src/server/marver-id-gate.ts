@@ -32,7 +32,7 @@
  * in this canvas, so anything left in localStorage would be readable by them.
  */
 import { randomBytes } from 'node:crypto'
-import { provisionFromMarverId, wantsAvatarFrom } from './auth.ts'
+import { attachAvatar, provisionFromMarverId, wantsAvatarFrom } from './auth.ts'
 import { fetchAvatar } from './avatar.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
 import { poweredByUrl } from '../shared/utm.ts'
@@ -281,32 +281,15 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
         return json(res, 401, { error: 'not signed in' })
       }
 
-      // Their picture, fetched HERE and not inside provisioning.
-      //
-      // Everything in the auth store runs under a file lock, and a lock held
-      // across a network round trip is a lock held for as long as somebody
-      // else's CDN feels like taking - every other sign-in on this canvas waits
-      // behind it. So the request happens out here, before the lock, and what
-      // goes in is bytes rather than a URL.
-      //
-      // Best-effort throughout: wantsAvatarFrom keeps this to genuinely new or
-      // rotated pictures rather than every sign-in, and fetchAvatar answers null
-      // for every kind of failure. A picture is decoration, and nobody should be
-      // refused entry over one.
-      let avatar: string | undefined
-      const picture = result.identity.picture
-      if (picture && wantsAvatarFrom(dir, `${issuer}#${result.identity.subject}`, result.identity.email, picture)) {
-        avatar = (await fetchAvatar(picture)) ?? undefined
-      }
-
       // Proved WHO. Now the local question: were they invited? That decision
       // happens inside the auth store's lock, so it cannot go stale between the
       // check and the write.
       const session = provisionFromMarverId(
         dir,
-        { ...result.identity, issuer, ...(avatar ? { avatar, avatarSource: picture } : {}) },
+        { ...result.identity, issuer },
         { ownerEmail: process.env.MARVER_OWNER_EMAIL },
       )
+
       if (!session) {
         // The REASON stays private - whether an address sits on somebody's invite
         // list is not public knowledge, and this refusal is deliberately the same
@@ -321,6 +304,24 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
         // a fault.
         console.warn(`[marver-id] ${result.identity.email} is not on this canvas's list`)
         return json(res, 403, { error: 'not invited', email: result.identity.email })
+      }
+
+      // Their picture, fetched only now - after they are in, and outside the
+      // store lock.
+      //
+      // Both halves of that matter. Fetching before the allowlist decision let
+      // anybody holding a valid assertion make this canvas issue an outbound
+      // request, over and over, without ever being a member of it; the invite
+      // list is what bounds it. And a lock held across a network round trip is
+      // a lock held for as long as somebody else's CDN feels like taking, with
+      // every other sign-in queued behind it.
+      //
+      // Best-effort to the end: a picture is decoration, and somebody who is
+      // already through the door is not turned around over one.
+      const picture = result.identity.picture
+      if (picture && wantsAvatarFrom(dir, `${issuer}#${result.identity.subject}`, result.identity.email, picture)) {
+        const avatar = await fetchAvatar(picture)
+        if (avatar) attachAvatar(dir, session.user.email, avatar, picture)
       }
 
       res.setHeader('set-cookie', [

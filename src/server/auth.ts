@@ -219,13 +219,6 @@ export function provisionFromMarverId(
     email: string; subject: string; issuer: string
     /** Display name from the assertion, already bounded by the verifier. */
     name?: string
-    /** A data URI, already FETCHED by the caller. Never a URL - the network call
-     *  must not happen in here, because everything below runs inside the store
-     *  lock and a lock held across a network round trip is a lock held for as
-     *  long as somebody else's CDN feels like taking. */
-    avatar?: string
-    /** The URL that avatar came from, recorded so it is not re-fetched. */
-    avatarSource?: string
   },
   opts: { ownerEmail?: string } = {},
 ): { user: User; session: string } | null {
@@ -331,8 +324,6 @@ export function provisionFromMarverId(
         role: store.users.length ? 'member' : 'owner',
         auth: 'marver-id',
         idSubject: `${identity.issuer}#${identity.subject}`,
-        ...(identity.avatar ? { avatar: identity.avatar } : {}),
-        ...(identity.avatarSource ? { avatarSource: identity.avatarSource } : {}),
         createdAt: Date.now(),
       }
       store.users.push(user)
@@ -351,14 +342,37 @@ export function provisionFromMarverId(
     if (identity.name && (!user.name || user.name === emailNorm.split('@')[0])) {
       user.name = identity.name
     }
-    if (identity.avatar && !user.avatar) {
-      user.avatar = identity.avatar
-      user.avatarSource = identity.avatarSource
-    }
-
     const session = pushSession(store, user)
     saveStore(dir, store)
     return { user, session }
+  })
+}
+
+/**
+ * Attach a picture the identity service supplied.
+ *
+ * Separate from provisioning because the fetch happens after admission and
+ * outside the lock, so by the time there are bytes the account already exists.
+ *
+ * `avatarSource` is what makes this safe to repeat: its presence means "this
+ * picture came from the identity service", and only such a picture may be
+ * replaced. An avatar with no source was chosen HERE, by the person, and the
+ * identity service does not get to overwrite it - which is the same rule the
+ * name follows.
+ *
+ * Replacing a rotated one is the point. Refusing to, as an earlier version did,
+ * meant the stored source never caught up with the assertion, so every single
+ * sign-in fetched the new picture and then threw it away.
+ */
+export function attachAvatar(dir: string, email: string, avatar: string, source: string): void {
+  withLock(dir, () => {
+    const store = loadStore(dir)
+    const user = findUser(store, normEmail(email))
+    if (!user) return
+    if (user.avatar && !user.avatarSource) return      // theirs, not ours
+    user.avatar = avatar
+    user.avatarSource = source
+    saveStore(dir, store)
   })
 }
 
@@ -375,7 +389,9 @@ export function wantsAvatarFrom(dir: string, subjectQualified: string, email: st
   const user = store.users.find((u) => u.idSubject === subjectQualified) ?? findUser(store, normEmail(email))
   if (!user) return true                       // new account - it has no picture yet
   if (!user.avatar) return true                // has none, and one is on offer
-  return user.avatarSource !== undefined && user.avatarSource !== pictureUrl
+  // Theirs, chosen here: never replaced, so never worth fetching.
+  if (!user.avatarSource) return false
+  return user.avatarSource !== pictureUrl      // ours, and it has rotated
 }
 
 function pushSession(store: Store, user: User): string {
@@ -430,7 +446,14 @@ export function updateProfile(dir: string, email: string, patch: { name?: string
   const user = findUser(store, email)
   if (!user) throw new Error('no such account')
   if (patch.name?.trim()) user.name = patch.name.trim()
-  if (patch.avatar !== undefined) user.avatar = patch.avatar || undefined
+  if (patch.avatar !== undefined) {
+    user.avatar = patch.avatar || undefined
+    // Setting your own picture makes it YOURS, so the record of where the last
+    // one came from has to go with it. Left behind, the account still looks
+    // like it is carrying an identity-service avatar, and the next rotation
+    // would overwrite the one they just chose.
+    user.avatarSource = undefined
+  }
   saveStore(dir, store)
   return user
   })

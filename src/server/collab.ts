@@ -261,8 +261,31 @@ export function collabHandler(dataDir: string, distDir: string) {
     if (!/^application\/json\b/.test(String(req.headers['content-type'] ?? '')))
       return reject(new Error('content-type must be application/json'))
     let body = ''
-    req.on('data', (c) => { body += c; if (body.length > MAX_BODY) { reject(new Error('body too large')); req.destroy() } })
-    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('bad json')) } })
+    let done = false
+    const settle = (fn: () => void) => { if (done) return; done = true; clearTimeout(timer); fn() }
+
+    // A deadline as well as a size limit.
+    //
+    // Most of these routes sit behind the gate, but cli/start and cli/poll
+    // answer BEFORE it - a terminal waiting to be approved has no session by
+    // definition. Without a clock, an unauthenticated caller opens as many
+    // chunked POSTs as it likes and dribbles bytes: each stays under the size
+    // cap forever and holds a socket until Node's much longer server timeout.
+    // Bounded memory and unbounded sockets is still a canvas nobody can reach.
+    const timer = setTimeout(() => settle(() => {
+      req.destroy()
+      reject(new Error('body timed out'))
+    }), 10_000)
+    if (typeof timer.unref === 'function') timer.unref()
+
+    req.on('data', (c) => {
+      body += c
+      if (body.length > MAX_BODY) settle(() => { req.destroy(); reject(new Error('body too large')) })
+    })
+    req.on('end', () => settle(() => {
+      try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('bad json')) }
+    }))
+    req.on('error', () => settle(() => reject(new Error('request failed'))))
   })
   const setSession = (req: IncomingMessage, res: ServerResponse, token: string) => {
     const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''

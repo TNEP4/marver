@@ -32,13 +32,28 @@ describe('the address rule', () => {
       'fd00::1', 'fc00::1',             // unique local
       '::ffff:127.0.0.1',               // loopback wearing an IPv6 hat
       '::ffff:10.0.0.1',                // private, same trick
+      // Found by review: the first version matched PREFIXES on the printed
+      // form, so everything below walked past it.
+      '::ffff:a00:1',                   // 10.0.0.1 written in hex
+      '::ffff:7f00:1',                  // 127.0.0.1 written in hex
+      'fe90::1', 'febf::1',             // link-local is fe80::/10, not fe80:
+      'fec0::1', 'feff::1',             // site-local, deprecated but routable
+      'fd12:3456:789a::1',              // unique local, longer form
+      '::',                             // unspecified
+      'ff02::1',                        // multicast
+      '0:0:0:0:0:ffff:192.168.0.1',     // mapped, written out in full
     ]) {
       expect(_isPublicAddress(addr), `${addr} must be refused`).toBe(false)
     }
   })
 
   it('allows ordinary public addresses', () => {
-    for (const addr of ['8.8.8.8', '142.250.187.206', '2a00:1450:4009:81f::200e']) {
+    for (const addr of [
+      '8.8.8.8', '142.250.187.206',
+      '2a00:1450:4009:81f::200e',       // googleusercontent, in practice
+      '2001:4860:4860::8888',
+      'fe00::1',                        // just below link-local - still public
+    ]) {
       expect(_isPublicAddress(addr), `${addr} should be allowed`).toBe(true)
     }
   })
@@ -156,6 +171,34 @@ describe('what comes back is checked, not assumed', () => {
     const huge = Buffer.alloc(200 * 1024, 1)
     // Content-Length lies about the size; the body is what counts.
     expect(await avatarFromResponse(reply('image/png', huge, true, 10))).toBeNull()
+  })
+
+  it('stops reading a body that keeps going, rather than buffering it first', async () => {
+    // The cap used to be applied to the result of arrayBuffer() - a check
+    // performed after the thing it was checking had already been allocated. A
+    // chunked response, or one whose Content-Length simply lies, could stream
+    // hundreds of megabytes into the process inside the timeout window.
+    let pushed = 0
+    const chunk = new Uint8Array(16 * 1024)
+    const streamed = {
+      ok: true,
+      headers: { get: (n: string) => (n.toLowerCase() === 'content-type' ? 'image/png' : null) },
+      body: {
+        getReader: () => ({
+          read: async () => {
+            pushed += chunk.byteLength
+            // Would run for ever if nobody stopped it.
+            return { done: false, value: chunk }
+          },
+          cancel: async () => {},
+        }),
+      },
+      arrayBuffer: async () => { throw new Error('must not buffer the whole body') },
+    }
+    expect(await avatarFromResponse(streamed as any)).toBeNull()
+    // Read past the cap, and then stopped - not "read everything, then judged".
+    expect(pushed).toBeGreaterThan(64 * 1024)
+    expect(pushed, 'must stop within a chunk of the cap').toBeLessThan(64 * 1024 + 32 * 1024)
   })
 
   it('refuses an empty body and a failed response', async () => {

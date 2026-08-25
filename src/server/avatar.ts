@@ -41,19 +41,63 @@ const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
  * unless it is a small image. The value of the remaining hole is one blind
  * request; it is defence in depth rather than a wall.
  */
+/**
+ * Every hextet of an IPv6 address, or null if it is not one.
+ *
+ * Prefix matching on the printed form is what let the first version through:
+ * `fe80:` is a string test, and link-local is fe80::/10 - so fe90:: and febf::
+ * sailed past. Likewise `::ffff:` was only recognised in its dotted form, and
+ * `::ffff:a00:1` is the same 10.0.0.1 written in hex. Comparing numbers instead
+ * of text removes the whole class.
+ */
+function v6Parts(addr: string): number[] | null {
+  let s = addr.toLowerCase()
+  const zone = s.indexOf('%')
+  if (zone >= 0) s = s.slice(0, zone)
+
+  // A trailing dotted quad (::ffff:10.0.0.1) is two hextets in disguise.
+  const tail4 = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s)
+  if (tail4) {
+    const b = [Number(tail4[2]), Number(tail4[3]), Number(tail4[4]), Number(tail4[5])]
+    if (b.some((n) => n > 255)) return null
+    s = `${tail4[1]}${(((b[0]! << 8) | b[1]!) >>> 0).toString(16)}:${(((b[2]! << 8) | b[3]!) >>> 0).toString(16)}`
+  }
+
+  const halves = s.split('::')
+  if (halves.length > 2) return null
+  const head = halves[0] ? halves[0]!.split(':') : []
+  const tail = halves.length === 2 && halves[1] ? halves[1]!.split(':') : []
+  const gap = halves.length === 2 ? 8 - head.length - tail.length : 0
+  if (gap < 0 || (halves.length === 1 && head.length !== 8)) return null
+
+  const parts = [...head, ...Array<string>(gap).fill('0'), ...tail]
+  if (parts.length !== 8) return null
+  const nums = parts.map((h) => (/^[0-9a-f]{1,4}$/.test(h) ? parseInt(h, 16) : NaN))
+  return nums.some((n) => !Number.isInteger(n)) ? null : nums
+}
+
 function isPublicAddress(addr: string): boolean {
   if (isIP(addr) === 6) {
-    const a = addr.toLowerCase()
-    if (a === '::1' || a === '::') return false
-    if (a.startsWith('fe80:') || a.startsWith('fc') || a.startsWith('fd')) return false
-    // IPv4-mapped (::ffff:10.0.0.1) is an IPv4 address wearing a hat.
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a)
-    if (mapped) return isPublicAddress(mapped[1]!)
+    const p = v6Parts(addr)
+    if (!p) return false
+
+    // ::x and ::ffff:x are IPv4 wearing a hat - judge them as IPv4.
+    if (p.slice(0, 5).every((x) => x === 0) && (p[5] === 0xffff || p[5] === 0)) {
+      if (p[5] === 0 && p[6] === 0 && p[7]! <= 1) return false          // :: and ::1
+      const v4 = `${p[6]! >> 8}.${p[6]! & 255}.${p[7]! >> 8}.${p[7]! & 255}`
+      return isPublicAddress(v4)
+    }
+    if (p[0]! >= 0xfe80 && p[0]! <= 0xfebf) return false                // link-local  fe80::/10
+    if (p[0]! >= 0xfec0 && p[0]! <= 0xfeff) return false                // site-local  fec0::/10
+    if (p[0]! >= 0xfc00 && p[0]! <= 0xfdff) return false                // unique local fc00::/7
+    if (p[0] === 0x0100 && p[1] === 0) return false                     // discard-only 100::/64
+    if (p[0]! >= 0xff00) return false                                   // multicast
     return true
   }
-  const p = addr.split('.').map(Number)
-  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false
-  const [a, b] = p as [number, number, number, number]
+
+  const q = addr.split('.').map(Number)
+  if (q.length !== 4 || q.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false
+  const [a, b] = q as [number, number, number, number]
   if (a === 0 || a === 127) return false                       // this host, loopback
   if (a === 10) return false                                   // private
   if (a === 172 && b >= 16 && b <= 31) return false            // private
@@ -118,15 +162,54 @@ export async function avatarFromResponse(res: {
   const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
   if (!ALLOWED.has(type)) return null
 
-  // Check the header AND the body: Content-Length is a claim, and a body that
-  // keeps going is how a 64KB cap becomes a memory problem.
+  // Content-Length is a claim, so it is worth checking and worth nothing.
   const declared = Number(res.headers.get('content-length') ?? '0')
   if (declared && declared > MAX_BYTES) return null
 
-  const buf = Buffer.from(await res.arrayBuffer())
-  if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) return null
+  const buf = await readCapped(res)
+  if (!buf || buf.byteLength === 0) return null
 
   return `data:${type};base64,${buf.toString('base64')}`
+}
+
+/**
+ * Read a body, and stop reading the moment it is too big.
+ *
+ * The cap used to be applied to the result of arrayBuffer(), which is a check
+ * performed after the thing it was checking has already been allocated. A
+ * chunked response, or one whose Content-Length simply lies, could stream
+ * hundreds of megabytes into the canvas process inside the five second window,
+ * and a handful of concurrent sign-ins would be enough to end it. Counting as
+ * the chunks arrive and cancelling at the limit is the difference between a
+ * bound and a wish.
+ */
+async function readCapped(res: { body?: unknown; arrayBuffer(): Promise<ArrayBuffer> }): Promise<Buffer | null> {
+  const body = res.body as ReadableStream<Uint8Array> | null | undefined
+  if (!body || typeof body.getReader !== 'function') {
+    // No stream to read incrementally - fall back, still bounded by the check.
+    const buf = Buffer.from(await res.arrayBuffer())
+    return buf.byteLength > MAX_BYTES ? null : buf
+  }
+
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      size += value.byteLength
+      if (size > MAX_BYTES) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
+      chunks.push(value)
+    }
+  } catch {
+    return null
+  }
+  return Buffer.concat(chunks)
 }
 
 /** Exposed for tests - the address rule is the part worth pinning down. */

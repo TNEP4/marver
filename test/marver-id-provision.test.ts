@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { scryptSync } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
+import { attachAvatar, claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
 
 /**
  * Provisioning: turning a proved identity into local access.
@@ -390,14 +390,35 @@ describe('display name and picture from the assertion', () => {
     expect(hit!.user.name).toBe('nic')
   })
 
-  it('stores the picture the caller fetched, and remembers where it came from', () => {
+  it('attaches the picture the caller fetched, and remembers where it came from', () => {
     invite('nic@x.test')
-    const hit = provisionFromMarverId(dir, {
-      ...identity('nic@x.test', 's1'),
-      avatar: AVATAR, avatarSource: 'https://cdn.example/a.png',
-    })
-    expect(hit!.user.avatar).toBe(AVATAR)
-    expect(hit!.user.avatarSource, 'so a rotated URL can be noticed').toBe('https://cdn.example/a.png')
+    provisionFromMarverId(dir, identity('nic@x.test', 's1'))
+    attachAvatar(dir, 'nic@x.test', AVATAR, 'https://cdn.example/a.png')
+
+    const u = loadStore(dir).users[0]!
+    expect(u.avatar).toBe(AVATAR)
+    expect(u.avatarSource, 'so a rotated URL can be noticed').toBe('https://cdn.example/a.png')
+  })
+
+  it('replaces a rotated picture, but never one the person chose here', () => {
+    invite('nic@x.test')
+    provisionFromMarverId(dir, identity('nic@x.test', 's1'))
+
+    // Ours, then rotated: the new one wins, and the source catches up. An
+    // earlier version refused the replacement, so the source never advanced and
+    // every sign-in re-fetched the same new picture and discarded it.
+    attachAvatar(dir, 'nic@x.test', AVATAR, 'https://cdn.example/a.png')
+    attachAvatar(dir, 'nic@x.test', 'data:image/png;base64,ROTATED=', 'https://cdn.example/b.png')
+    let u = loadStore(dir).users[0]!
+    expect(u.avatar).toBe('data:image/png;base64,ROTATED=')
+    expect(u.avatarSource).toBe('https://cdn.example/b.png')
+
+    // Theirs: an avatar with no source was chosen on this canvas, and the
+    // identity service does not get to overwrite it.
+    updateProfile(dir, 'nic@x.test', { avatar: 'data:image/png;base64,CHOSEN=' })
+    attachAvatar(dir, 'nic@x.test', AVATAR, 'https://cdn.example/c.png')
+    u = loadStore(dir).users[0]!
+    expect(u.avatar, 'their choice stands').toBe('data:image/png;base64,CHOSEN=')
   })
 
   it('never overwrites a name or picture chosen ON this canvas', () => {
@@ -406,10 +427,7 @@ describe('display name and picture from the assertion', () => {
     updateProfile(dir, 'nic@x.test', { name: 'Nic (design)', avatar: 'data:image/png;base64,CHOSEN=' })
 
     // Signing in again must not quietly undo that edit.
-    const again = provisionFromMarverId(dir, {
-      ...identity('nic@x.test', 's1'),
-      name: 'Nicolas Touron', avatar: AVATAR, avatarSource: 'https://cdn.example/a.png',
-    })
+    const again = provisionFromMarverId(dir, { ...identity('nic@x.test', 's1'), name: 'Nicolas Touron' })
     expect(again!.user.name, 'their edit stands').toBe('Nic (design)')
     expect(again!.user.avatar).toBe('data:image/png;base64,CHOSEN=')
   })
@@ -432,10 +450,13 @@ describe('display name and picture from the assertion', () => {
 
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'no account yet').toBe(true)
 
-    provisionFromMarverId(dir, {
-      ...identity('nic@x.test', 's1'), avatar: AVATAR, avatarSource: url,
-    })
+    provisionFromMarverId(dir, identity('nic@x.test', 's1'))
+    attachAvatar(dir, 'nic@x.test', AVATAR, url)
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'already have this one').toBe(false)
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/b.png'), 'rotated').toBe(true)
+
+    // And an avatar the person chose here is never worth fetching over.
+    updateProfile(dir, 'nic@x.test', { avatar: 'data:image/png;base64,MINE=' })
+    expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/d.png'), 'theirs').toBe(false)
   })
 })
