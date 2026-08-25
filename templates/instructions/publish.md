@@ -60,7 +60,7 @@ vars if the host has no CLI.
 | `MARVER_PUBLIC_ORIGIN` | REQUIRED with `MARVER_ID_ISSUER`: this canvas's exact public origin |
 | `MARVER_PASSWORD` | the sovereign alternative: one shared password; unset = open |
 | `MARVER_DATA_DIR` | persistent dir for `comments/` + `auth.json`; unset = no collaboration |
-| `MARVER_OWNER_EMAIL` | prints a single-use OWNER claim link in the deploy logs on first boot |
+| `MARVER_OWNER_EMAIL` | who owns an empty canvas. With Marver Sign In they just sign in; with a password, a single-use claim link prints in the deploy logs on first boot |
 | `MARVER_TRUSTED_PROXY` | set to `1` behind a reverse proxy (Railway, Fly) so rate limits see real IPs |
 
 ## The host contract (works on any volume-capable host)
@@ -101,7 +101,9 @@ railway variables --set MARVER_ID_ISSUER=https://id.marver.design \
 # ...or the sovereign alternative, if this canvas must depend on nothing external:
 #   --set MARVER_PASSWORD=<pw>   (instead of MARVER_ID_ISSUER/MARVER_PUBLIC_ORIGIN)
 railway up                        # uploads the repo; Railway runs build then start
-railway logs                      # ← the owner claim LINK prints here, once (see below)
+railway logs                      # with a PASSWORD gate, the owner claim link prints
+                                  # here once. With Marver Sign In there is no link -
+                                  # the owner simply signs in. See below.
 ```
 
 Republishing is just `railway up` again: the server unions the seeded logs on

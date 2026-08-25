@@ -39,9 +39,16 @@ export async function commentsCommand(root: string, action: string, value: strin
   switch (action) {
     case 'connect': {
       if (!value) throw new Error('usage: comments connect <published-url>')
-      // the canvas gate comes first: MARVER_PASSWORD env, --canvas-password, or prompt
-      const canvasPassword = opts.canvasPassword ?? process.env.MARVER_PASSWORD ??
-        await ask('canvas password (blank if the canvas is ungated): ', true)
+      // The canvas password is only asked for on the paths that actually need to
+      // get PAST the gate. The device flow does not: its three touch-points -
+      // start, poll, and the approval page - all answer in front of it, and an
+      // identity-gated canvas has no password to give. Prompting first meant the
+      // passwordless flow opened by demanding a password, and then failed
+      // against the very canvases it exists for.
+      const needsGate = !!opts.invite || !!opts.email || !!opts.password
+      const canvasPassword = !needsGate ? undefined
+        : (opts.canvasPassword ?? process.env.MARVER_PASSWORD ??
+           await ask('canvas password (blank if the canvas is ungated): ', true))
       if (opts.invite) {
         const name = opts.name ?? await ask('display name: ')
         const password = opts.password ?? await ask('choose a password: ', true)
@@ -56,7 +63,7 @@ export async function commentsCommand(root: string, action: string, value: strin
       } else {
         // The default: let a browser vouch for this terminal. Works whichever
         // gate the canvas uses, and puts no password into a shell history.
-        await connectByBrowser(root, value, canvasPassword || undefined, ({ userCode, verifyUrl }) => {
+        await connectByBrowser(root, value, undefined, ({ userCode, verifyUrl }) => {
           console.log('')
           console.log(`  Open this and approve the terminal:`)
           console.log(`    ${verifyUrl}`)

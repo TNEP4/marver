@@ -223,6 +223,10 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       res.setHeader('content-type', 'text/html; charset=utf-8')
       res.setHeader('cache-control', 'no-store')
       res.setHeader('referrer-policy', 'no-referrer')
+      // The assertion lands on this page. Framing it is somebody else watching
+      // a sign-in complete.
+      res.setHeader('content-security-policy', "frame-ancestors 'none'")
+      res.setHeader('x-frame-options', 'DENY')
       res.end(finishPage(canvasName, new URL(origin).host,
         `${issuer}/switch?origin=${encodeURIComponent(origin)}`, branding))
       return true

@@ -176,9 +176,28 @@ export function collabHandler(dataDir: string, distDir: string) {
    */
   const DEVICE_TTL_MS = 10 * 60 * 1000
   const MAX_PENDING = 512
+  /**
+   * And a much smaller cap per source.
+   *
+   * A global cap alone bounds memory and nothing else: a handful of sources at
+   * ten starts a minute fill 512 ten-minute slots and hold them, so every
+   * legitimate `connect` gets a 503 for as long as they care to keep it up. The
+   * global limit stops the map growing; this one stops one caller owning it.
+   */
+  const MAX_PENDING_PER_IP = 8
+  /**
+   * A ceiling on polls for one authorization.
+   *
+   * The CLI polls every two seconds for up to ten minutes - 300 requests, which
+   * is normal traffic and must not look like abuse. Counting them against the
+   * shared auth bucket (10/min) meant a perfectly ordinary sign-in was refused
+   * about twenty seconds in, which is the whole feature broken by its own
+   * throttle. The budget belongs to the authorization, not to the minute.
+   */
+  const MAX_POLLS = 400
   /** No I, O, 0 or 1 - these get read aloud and typed by hand. */
   const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  type Pending = { userCode: string; exp: number; approvedFor?: string }
+  type Pending = { userCode: string; exp: number; approvedFor?: string; ip: string; polls: number }
   const pending = new Map<string, Pending>()
 
   const userCode = (): string => {
@@ -357,9 +376,12 @@ export function collabHandler(dataDir: string, distDir: string) {
         // else's pending approval to make room would let a flood cancel a real
         // sign-in in flight.
         if (pending.size >= MAX_PENDING) return json(res, 503, { error: 'too many pending authorizations - try again shortly' }), true
+        let mine = 0
+        for (const v of pending.values()) if (v.ip === ip) mine++
+        if (mine >= MAX_PENDING_PER_IP) return json(res, 429, { error: 'too many authorizations waiting from here - approve or wait for one to expire' }), true
         const deviceCode = randomBytes(32).toString('base64url')
         const code = userCode()
-        pending.set(deviceCode, { userCode: code, exp: Date.now() + DEVICE_TTL_MS })
+        pending.set(deviceCode, { userCode: code, exp: Date.now() + DEVICE_TTL_MS, ip, polls: 0 })
         return json(res, 200, {
           deviceCode,
           userCode: code,
@@ -378,16 +400,28 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const hit = byUserCode(String(b.code ?? ''))
         if (!hit) return json(res, 404, { error: 'that code is not waiting for approval - it may have expired' }), true
+        // One approval, first only. Last-writer-wins meant a second person
+        // approving the same code before the terminal's next poll silently
+        // replaced the first - both browsers told "approved", and the terminal
+        // handed whichever session arrived last.
+        if (hit[1].approvedFor) return json(res, 409, { error: 'that code has already been approved' }), true
         hit[1].approvedFor = u.email
         return json(res, 200, { user: publicUser(u) }), true
       }
 
       if (path === 'cli/poll') {
-        if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
         const b = await readBody(req)
         const deviceCode = String(b.deviceCode ?? '')
         const entry = deviceCode ? pending.get(deviceCode) : undefined
+        // A wrong device code allocates nothing and is answered immediately, so
+        // this needs no IP throttle - and must not share the auth one, which is
+        // sized for password guesses rather than for a CLI polling every two
+        // seconds. The budget that matters is per authorization, below.
         if (!entry || entry.exp < Date.now()) {
+          pending.delete(deviceCode)
+          return json(res, 410, { error: 'this authorization expired - start again' }), true
+        }
+        if (++entry.polls > MAX_POLLS) {
           pending.delete(deviceCode)
           return json(res, 410, { error: 'this authorization expired - start again' }), true
         }

@@ -793,6 +793,21 @@ describe('identity mode: the successful path, end to end', () => {
     expect(invited.status, invitedBody).toBe(200)
     expect(JSON.parse(invitedBody).token, 'an invite link must come back').toBeTruthy()
 
+    // Approval is ONE-SHOT. Last-writer-wins meant a second person approving
+    // the same code before the terminal's next poll silently replaced the
+    // first, and the terminal took whichever session landed last.
+    const second = await fetch(`http://localhost:${canvas.port}/__mv/api/cli/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    const s2 = await second.json() as any
+    const approve = () => fetch(`http://localhost:${canvas.port}/__mv/api/cli/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_s=${mvS}; mv_c=${mvC}`, 'x-mv-c': mvC },
+      body: JSON.stringify({ code: s2.userCode }),
+    })
+    expect((await approve()).status).toBe(200)
+    expect((await approve()).status, 'a code cannot be approved twice').toBe(409)
+
     // Revocation too - the other half an owner needs.
     const revoked = await fetch(`http://localhost:${canvas.port}/__mv/api/revoke`, {
       method: 'POST',
@@ -801,6 +816,18 @@ describe('identity mode: the successful path, end to end', () => {
     })
     expect(revoked.status).toBe(200)
   }, 60_000)
+
+  it('refuses to be framed - the approval page and the finish page both', async () => {
+    // An attacker starts a device flow of their own, frames the approval URL
+    // under an unrelated button, and polls their device code once the victim
+    // clicks. SameSite=Lax is no defence: a framed page on the same site still
+    // carries its cookies. The only thing that stops it is refusing the frame.
+    for (const path of ['/__mv/cli?code=ABCD-2345', '/__mv/id/finish']) {
+      const res = await fetch(`http://localhost:${canvas.port}${path}`)
+      expect(res.headers.get('x-frame-options'), path).toBe('DENY')
+      expect(res.headers.get('content-security-policy'), path).toContain("frame-ancestors 'none'")
+    }
+  }, 30_000)
 
   it('refuses a second use of the same nonce', async () => {
     const started = await fetch(`http://localhost:${canvas.port}/__mv/id/start`, { redirect: 'manual' })

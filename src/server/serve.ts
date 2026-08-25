@@ -234,6 +234,7 @@ export async function serve(root: string, portFlag?: number) {
       res.setHeader('content-type', 'text/html; charset=utf-8')
       res.setHeader('cache-control', 'no-store')
       res.setHeader('referrer-policy', 'no-referrer')
+      denyFraming(res)
       return void res.end(cliApprovalPage(meta, url.searchParams.get('code')))
     }
 
@@ -402,6 +403,25 @@ function humanName(raw: string | undefined): string | undefined {
  * so the page never approves anything by merely being opened - the click is
  * required, and it is refused outright unless a real session is behind it.
  */
+/**
+ * Refuse to be framed.
+ *
+ * Every HTML page this server serves is either a credential prompt or the
+ * private canvas itself, and neither has any business inside somebody else's
+ * frame. The approval page made the cost concrete: an attacker starts a device
+ * flow of their own, frames the approval URL under an unrelated button, and
+ * polls their device code after the victim clicks - collecting the victim's
+ * real session. SameSite=Lax does not help, because a framed page on the same
+ * site still carries its cookies.
+ *
+ * Both headers, because the CSP directive is the modern one and X-Frame-Options
+ * is what older clients actually enforce.
+ */
+function denyFraming(res: any) {
+  res.setHeader('content-security-policy', "frame-ancestors 'none'")
+  res.setHeader('x-frame-options', 'DENY')
+}
+
 function cliApprovalPage(meta: { name: string; branding: boolean }, code: string | null): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -478,12 +498,23 @@ function cliApprovalPage(meta: { name: string; branding: boolean }, code: string
       headers: Object.assign({ 'content-type': 'application/json' }, m ? { 'x-mv-c': m[1] } : {}),
       body: JSON.stringify({ code: code })
     }).then(function (r) {
+      // 2xx is NOT enough. A signed-out POST is answered by the outer gate with
+      // its own HTML page and a 200, so trusting the status told somebody their
+      // terminal was signed in when nothing had happened at all. Only a JSON
+      // body naming the approver is an approval.
       if (r.ok) {
         return r.json().then(function (b) {
+          if (!b || !b.user || !b.user.email) {
+            go.hidden = true
+            return say('You need to sign in to this canvas first, then open the link again.', true)
+          }
           lead.textContent = 'Approved.'
           go.hidden = true
-          say('Your terminal is signed in as ' + ((b && b.user && b.user.email) || 'you') + '. You can close this tab.', true)
-        }, function () { lead.textContent = 'Approved.'; go.hidden = true; say('You can close this tab.', true) })
+          say('Your terminal is signed in as ' + b.user.email + '. You can close this tab.', true)
+        }, function () {
+          go.hidden = true
+          say('You need to sign in to this canvas first, then open the link again.', true)
+        })
       }
       go.hidden = true
       if (r.status === 401) return say('You need to sign in to this canvas first, then open the link again.', true)
@@ -517,6 +548,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
   res.statusCode = 200
   res.setHeader('content-type', 'text/html; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
+  denyFraming(res)
   res.end(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
