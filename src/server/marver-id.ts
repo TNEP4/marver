@@ -115,6 +115,15 @@ export class TransactionStore {
       if (live && live.exp >= Date.now() && live.origin === origin) {
         // Pressing Continue from a different board should still land there.
         if (next) live.next = next
+        // Starting again restarts the clock.
+        //
+        // Reuse without renewal meant a second Continue handed back a nonce with
+        // whatever was left of the first one's life - press it fourteen minutes
+        // in and you get a fresh browser handle good for fifteen minutes and a
+        // transaction with one. Somebody who starts over is asking for a full
+        // attempt, and the deadline they are actually racing is the one that
+        // started when they last pressed the button.
+        live.exp = Date.now() + TRANSACTION_TTL_MS
         return live
       }
       if (held) this.items.delete(held)

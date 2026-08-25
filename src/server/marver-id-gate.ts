@@ -121,10 +121,32 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
   // the exact-origin isolation this protocol promises evaporates. A value a
   // caller can suggest cannot be the value a security check trusts.
   //
-  // Loopback is the one exception, so local development needs no configuration.
+  // REQUIRED, with no loopback exception and no inference.
+  //
+  // There used to be one: a request whose socket was loopback at both ends was
+  // treated as a local browser, so development needed no configuration. That
+  // does not survive contact with how canvases are actually deployed. nginx's
+  // documented `proxy_pass http://localhost:PORT` replaces Host with the
+  // upstream's name and adds no X-Forwarded-* headers at all - so a request from
+  // the open internet arrives looking exactly like a local one, and the canvas
+  // would hand its caller an http://localhost audience and a session cookie with
+  // no Secure flag.
+  //
+  // Refusing forwarding headers was the first attempt, and it only narrows the
+  // gap: absence of a header is not evidence of a browser. There is no signal
+  // here that a proxy cannot erase, so the canvas stops guessing and asks. Local
+  // development sets MARVER_PUBLIC_ORIGIN=http://localhost:4173 like anywhere
+  // else - one variable, and the audience is a fact rather than an inference.
   const pinned = (process.env.MARVER_PUBLIC_ORIGIN ?? '').trim().replace(/\/$/, '')
-  let publicOrigin: string | null = null
-  if (pinned) {
+  let publicOrigin: string
+  {
+    if (!pinned) {
+      throw new Error(
+        'MARVER_PUBLIC_ORIGIN is required when MARVER_ID_ISSUER is set.\n' +
+        "  Set it to this canvas's exact public origin - scheme, host and port -\n" +
+        '  e.g. https://canvas.example.com, or http://localhost:4173 in development.',
+      )
+    }
     let u: URL
     try { u = new URL(pinned) } catch { throw new Error(`MARVER_PUBLIC_ORIGIN is not a URL: ${pinned}`) }
     const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
@@ -140,15 +162,7 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
   }
 
   return async function handle(req: any, res: any, url: URL): Promise<boolean> {
-    // Loopback development needs no configuration; anything else must be pinned.
-    const origin = publicOrigin ?? localOrigin(req)
-    if (!origin) {
-      console.error(
-        '[marver-id] MARVER_PUBLIC_ORIGIN is required when the canvas is not on localhost -\n' +
-        '            set it to this canvas\'s exact public origin, e.g. https://canvas.example.com',
-      )
-      return json(res, 500, { error: 'misconfigured' })
-    }
+    const origin = publicOrigin
 
     // Cookie security follows the ORIGIN, not a header. x-forwarded-proto is as
     // spoofable as x-forwarded-host, and a Secure flag decided by the caller is
@@ -301,47 +315,6 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
 
     return json(res, 404, { error: 'not found' })
   }
-}
-
-/**
- * The origin for a canvas genuinely being used over loopback.
- *
- * The Host HEADER is not evidence of anything: the server listens on every
- * interface, so a caller anywhere on the internet can send `Host: localhost`,
- * collect assertions for that audience, and replay the resulting session against
- * the real host. So the check is on the SOCKET - where the connection actually
- * came from and where it actually landed - which a remote caller cannot forge.
- *
- * The header still has to agree, because it is what the browser will use when it
- * comes back to /__mv/id/finish; but agreement alone was never enough.
- */
-function localOrigin(req: any): string | null {
-  const remote = req.socket?.remoteAddress ?? ''
-  const local = req.socket?.localAddress ?? ''
-  const isLoopbackAddr = (a: string) =>
-    a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1'
-  if (!isLoopbackAddr(remote) || !isLoopbackAddr(local)) return null
-
-  // A loopback socket is not proof of a local browser once a proxy is involved.
-  //
-  // The usual self-hosted shape is nginx or Caddy in front of node over
-  // loopback, which makes BOTH socket addresses loopback for a request that came
-  // from the open internet. If that proxy passes an attacker's `Host: localhost`
-  // through, the exemption below hands them an `http://localhost` audience and
-  // turns off the Secure flag - the exact substitution the socket check was
-  // written to prevent.
-  //
-  // Any forwarding header means somebody is in front of us, and a canvas with
-  // something in front of it is not a canvas being developed on. It must say
-  // what it is with MARVER_PUBLIC_ORIGIN instead of being guessed at.
-  for (const h of ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded']) {
-    if (req.headers?.[h]) return null
-  }
-
-  const host = String(req.headers.host ?? '')
-  return /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/.test(host)
-    ? `http://${host}`
-    : null
 }
 
 /**

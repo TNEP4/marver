@@ -108,18 +108,23 @@ export async function serve(root: string, portFlag?: number) {
       console.error(`[${NAME}] MARVER_ID_ISSUER needs MARVER_DATA_DIR - identity accounts need somewhere to live.`)
       process.exit(1)
     }
-    // Say at BOOT what will otherwise only be discovered by the first person to
-    // try signing in. Without a pinned origin the handler serves loopback and
-    // nothing else, so a deployed canvas starts perfectly and then answers every
-    // sign-in with a 500 - a failure that looks like the identity service is
-    // down rather than like a missing setting. Not fatal, because developing
-    // against localhost legitimately leaves it unset.
+    // Fatal at BOOT, not per request.
+    //
+    // A warning let an unhealthy deployment start perfectly and then answer every
+    // sign-in with a 500 - which reads as "the identity service is down" rather
+    // than "you forgot a setting", and is discovered by a user rather than by
+    // the person who deployed it. The canvas cannot do its job without this, so
+    // it declines to pretend otherwise.
     if (!process.env.MARVER_PUBLIC_ORIGIN) {
-      console.warn(
+      console.error(
         `[${NAME}] MARVER_ID_ISSUER is set but MARVER_PUBLIC_ORIGIN is not.\n` +
-        `  Sign-in will work over localhost ONLY. Before deploying, set it to this\n` +
-        `  canvas's exact public origin, e.g. https://canvas.example.com`,
+        `  Every assertion is bound to this canvas's exact origin, and it cannot be\n` +
+        `  inferred from request headers - a proxy can make any request look local.\n` +
+        `  Set it to the origin people actually reach this canvas on:\n` +
+        `    MARVER_PUBLIC_ORIGIN=https://canvas.example.com\n` +
+        `    MARVER_PUBLIC_ORIGIN=http://localhost:${portFlag ?? (Number(process.env.PORT) || 4199)} (development)`,
       )
+      process.exit(1)
     }
     const { marverIdHandler } = await import('./marver-id-gate.ts')
     const { dataDir } = await import('./comments.ts')

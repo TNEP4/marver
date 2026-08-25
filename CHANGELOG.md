@@ -2,6 +2,68 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **Marver Sign In: a canvas can ask people who they are, instead of asking for a shared
+  password.** Set `MARVER_ID_ISSUER=https://id.marver.design` (plus `MARVER_PUBLIC_ORIGIN`
+  and `MARVER_DATA_DIR`) and the gate becomes an identity gate. People sign in once - with
+  Google, or a code emailed to them - and every canvas gated this way opens without another
+  password. Nobody types a canvas password, so there is none to leak, rotate, or forget, and
+  revoking one person revokes exactly them. This is the better default for a team, and the
+  one we run ourselves.
+
+  **Your guest list stays yours.** The identity service proves *who somebody is* and has no
+  say in *where they may go*: an address gets in if it already has an account on your canvas,
+  holds an unexpired invite, or is `MARVER_OWNER_EMAIL` on a canvas with no accounts yet.
+  That decision is made on your disk, and the identity service is never told the answer.
+  Somebody with a perfectly valid Marver account who is not on your list gets nothing.
+
+  **The sovereign path is unchanged and is not going anywhere.** `MARVER_PASSWORD` still
+  gates a canvas with accounts that live entirely in your `MARVER_DATA_DIR`, and a canvas
+  with no `MARVER_ID_ISSUER` set makes no outbound request of any kind - nothing to depend
+  on, nothing to phone home to. The two are alternatives rather than layers: running both
+  would weaken your invite list to "an account OR whoever has the password", so the identity
+  gate replaces the password gate rather than sitting beside it.
+
+  How it works, for anyone who wants to check rather than trust: the canvas mints a
+  single-use nonce bound to the browser that started the sign-in, the tab visits the identity
+  service and comes back with a short-lived ES256 assertion in the URL fragment - the one
+  part of a link no server ever receives - and the canvas verifies it against published JWKS
+  before issuing its own ordinary session. The assertion's audience is the canvas's exact
+  origin, port included, so one minted for one canvas is inert at another. The verifying half
+  is dependency-free and lives in this repo (`src/server/marver-id.ts`), which is why
+  pointing a canvas at a different issuer is a configuration change rather than a fork.
+
+  `MARVER_PUBLIC_ORIGIN` is required and the canvas will not start without it, in
+  development too. The audience cannot be inferred safely: nginx's documented
+  `proxy_pass http://localhost:PORT` rewrites `Host` and adds no `X-Forwarded-*`, so a
+  request from the internet is indistinguishable from a local one - and a canvas that
+  guessed would hand its caller a `http://localhost` audience and a cookie with no Secure
+  flag.
+
+  Sign-in fails closed: if the identity service is unreachable, existing sessions keep
+  working and new ones are refused. Nothing falls back to open.
+
+  **One gap, stated rather than buried**: invites are still created with
+  `marver comments invite`, which signs the CLI in with a password - and identity mode has no
+  passwords. So an identity-gated canvas can let its owner in but cannot yet invite anybody
+  else from the CLI. Seed invites before switching a canvas over, or share a
+  `MARVER_DATA_DIR`. A supported path is next.
+
+### Fixed
+
+- **A gated canvas is no longer publicly cacheable in identity mode.** The `Cache-Control`
+  decision keyed off the password verifier alone, so an identity-gated canvas marked its
+  assets `public, immutable` - an invitation for a shared CDN to serve somebody's private
+  frames to anybody who asked. Both modes are now `private, no-store`.
+
+- **A missing cosmetic file no longer falls through to the bundle.** Favicon and logo paths
+  are allowed past the gate on the promise that they are favicons and logos; when no such
+  file existed, the hash-routing fallback handed an unauthenticated caller `index.html`
+  instead. For those paths a miss is now a miss.
+
 ## 0.10.2 - 2026-08-24
 
 ### Fixed

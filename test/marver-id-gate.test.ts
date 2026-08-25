@@ -144,6 +144,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
       start({ MARVER_PASSWORD: 'hunter2', MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-d1-')) }, 4472),
       start({
         MARVER_ID_ISSUER: 'https://id.example.test',
+        MARVER_PUBLIC_ORIGIN: 'http://localhost:4473',
         MARVER_DATA_DIR: identityDataDir,
         MARVER_OWNER_EMAIL: 'owner@example.test',
       }, 4473),
@@ -561,31 +562,23 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(String(res.headers.location ?? '')).not.toContain('evil.example.com')
   })
 
-  it('identity mode: a plain loopback start names this canvas, on the port we reached it on', async () => {
-    const res = await raw(identity.port, '/__mv/id/start', {})
-    expect(res.status).toBe(302)
-    const named = new URL(String(res.headers.location)).searchParams.get('origin')!
-    expect(named).toMatch(new RegExp(`^http://(localhost|127\\.0\\.0\\.1):${identity.port}$`))
-  })
-
-  it('identity mode: forwarded headers cannot change the audience - they disable the guess', async () => {
-    // A loopback socket used to be treated as proof of a local browser. Behind
-    // the ordinary self-hosted shape - nginx or Caddy talking to node over
-    // loopback - it is nothing of the kind: a request from the open internet
-    // arrives with both socket addresses loopback, and a passed-through
-    // `Host: localhost` would hand the caller an http://localhost audience and
-    // a session cookie with no Secure flag.
-    //
-    // So a forwarding header now REFUSES rather than guessing. An unpinned
-    // canvas behind a proxy is a misconfiguration, and saying so beats
-    // inventing an origin for it.
+  it('identity mode: the audience is the pinned origin, whatever a caller asserts', async () => {
+    // The canvas used to infer its own origin when both socket addresses were
+    // loopback. That did not survive the ordinary self-hosted shape: nginx's
+    // documented `proxy_pass http://localhost:PORT` rewrites Host to the
+    // upstream and adds no X-Forwarded-* at all, so a request from the open
+    // internet is indistinguishable from a local one - and the inference would
+    // have handed its caller an http://localhost audience and a cookie with no
+    // Secure flag. There is no signal a proxy cannot erase, so the origin is
+    // now configuration and these headers are simply ignored.
     const res = await raw(identity.port, '/__mv/id/start', {
       'x-forwarded-host': 'attacker.test',
       'x-forwarded-proto': 'https',
     })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(302)
+    const named = new URL(String(res.headers.location)).searchParams.get('origin')!
+    expect(named).toBe(`http://localhost:${identity.port}`)
     expect(res.body).not.toContain('attacker.test')
-    expect(res.headers.location).toBeUndefined()
   })
 
 })
@@ -651,6 +644,7 @@ describe('identity mode: the successful path, end to end', () => {
 
     canvas = await start({
       MARVER_ID_ISSUER: issuerUrl,
+      MARVER_PUBLIC_ORIGIN: 'http://localhost:4788',
       MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-e2e-')),
       MARVER_OWNER_EMAIL: OWNER,
     }, 4788)
@@ -695,6 +689,37 @@ describe('identity mode: the successful path, end to end', () => {
     expect(mvc).not.toMatch(/HttpOnly/i)
     // And the handle is spent, not left lying around.
     expect(set).toMatch(/mv_b=;/)
+
+    // Now actually WRITE, which is the thing the cookies are for and the thing
+    // that was broken. Inspecting Set-Cookie proves the header; it does not
+    // prove the session resolves, that the double-submit compare accepts the
+    // pair, or that a mutation gets past collab.ts. Those were the three ways
+    // this could still have been dead with both cookies present.
+    const mvS = /(?:^|\n)mv_s=([^;]+)/.exec(set)![1]
+    const mvC = /(?:^|\n)mv_c=([^;]+)/.exec(set)![1]
+    const wrote = await fetch(`http://localhost:${canvas.port}/__mv/api/profile`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: `mv_s=${mvS}; mv_c=${mvC}`,
+        'x-mv-c': mvC,
+      },
+      body: JSON.stringify({ name: 'Renamed By Test' }),
+    })
+    // Read the body ONCE - the failure message and the assertion both want it,
+    // and a Response cannot be consumed twice.
+    const wroteBody = await wrote.text()
+    expect(wrote.status, wroteBody).toBe(200)
+    expect(JSON.parse(wroteBody).user?.name).toBe('Renamed By Test')
+
+    // The same mutation WITHOUT the echoed header must still be refused - the
+    // CSRF check has to be doing its job, not merely be satisfiable.
+    const forged = await fetch(`http://localhost:${canvas.port}/__mv/api/profile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_s=${mvS}; mv_c=${mvC}` },
+      body: JSON.stringify({ name: 'Should Not Apply' }),
+    })
+    expect(forged.status).toBe(403)
   }, 60_000)
 
   it('refuses a second use of the same nonce', async () => {

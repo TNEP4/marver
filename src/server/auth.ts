@@ -238,9 +238,21 @@ export function provisionFromMarverId(
     // subject the assertion just proved.
     const bound = store.users.find((u) => u.idSubject === qualified)
     const existing = bound ?? findUser(store, emailNorm)
-    // A recognised account carries its own permission; the allowlist is for
-    // deciding about strangers.
-    if (bound && normEmail(bound.email) !== emailNorm) bound.email = emailNorm
+
+    // Follow a rename, but never onto an address somebody else already holds.
+    //
+    // Sessions are stored by email and resolved to the FIRST user matching one,
+    // so letting two records carry the same address is not a duplicate - it is a
+    // takeover with the winner decided by array order. If A's verified address
+    // changes to one B already owns, A's next session can resolve to B, and B may
+    // be the owner. Refusing is the only safe answer: the rename is genuine but
+    // the destination is occupied, and a canvas cannot tell which of the two
+    // people is meant to keep it.
+    if (bound && normEmail(bound.email) !== emailNorm) {
+      const clash = findUser(store, emailNorm)
+      if (clash && clash !== bound) return null
+      bound.email = emailNorm
+    }
 
     const invite = store.invites.find((i) => i.emailNorm === emailNorm && i.exp > Date.now())
 
