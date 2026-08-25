@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, diffEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 
-export interface Collab { url: string; token: string; email?: string; name?: string }
+export interface Collab { url: string; token: string; email?: string; name?: string; avatar?: string }
 
 const collabFile = (root: string) => join(root, 'design', '.local', 'collab.json')
 
@@ -109,7 +109,7 @@ export async function connect(root: string, url: string, email: string, password
   })
   const token = await sessionFrom(res, 'sign-in')
   const user = (await res.clone().json().catch(() => null) as any)?.user
-  saveCollab(root, { url: base, token, email: user?.email ?? email, name: user?.name })
+  saveCollab(root, { url: base, token, email: user?.email ?? email, name: user?.name, avatar: user?.avatar })
 }
 
 /** Claim an invite from the CLI (the dev-first path - no published UI needed). */
@@ -122,5 +122,5 @@ export async function connectClaim(root: string, url: string, invite: string, pr
   })
   const token = await sessionFrom(res, 'claim')
   const user = (await res.clone().json().catch(() => null) as any)?.user
-  saveCollab(root, { url: base, token, email: user?.email, name: user?.name ?? profile.name })
+  saveCollab(root, { url: base, token, email: user?.email, name: user?.name ?? profile.name, avatar: user?.avatar })
 }

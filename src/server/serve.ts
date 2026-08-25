@@ -62,7 +62,10 @@ export async function serve(root: string, portFlag?: number) {
     // bootstrap: a fresh store has no owner to mint invites. MARVER_OWNER_EMAIL names
     // the first account; its one-time claim token prints HERE (deploy logs are the
     // trusted channel the deployer already reads - the Jupyter token pattern).
-    const owner = process.env.MARVER_OWNER_EMAIL
+    // In identity mode the owner bootstraps by signing in with Marver ID, so a
+    // password claim token would be a second, weaker route to the same account -
+    // printed into deploy logs, no less.
+    const owner = process.env.MARVER_ID_ISSUER ? '' : process.env.MARVER_OWNER_EMAIL
     if (owner) {
       const store = loadStore(dir)
       if (!store.users.length && !store.invites.some((i) => i.emailNorm === normEmail(owner))) {
@@ -74,7 +77,65 @@ export async function serve(root: string, portFlag?: number) {
     }
   }
 
-  const password = process.env.MARVER_PASSWORD ?? ''
+  // ---- Marver ID: a second way through the gate, when an issuer is named ----
+  //
+  // Providers are alternatives, not layers. MARVER_ID_ISSUER turns the gate into
+  // an identity gate; MARVER_PASSWORD leaves it a shared-secret gate. Running both
+  // would weaken the allowlist to "an account OR whoever has the password", which
+  // is the opposite of what an allowlist is for.
+  //
+  // The allowlist is not new configuration: it is the invite list the owner
+  // already keeps. An address may enter if it already has an account, or has a
+  // pending invite, or is the bootstrap owner of an empty canvas. So an owner
+  // invites people exactly as before - Marver ID only removes the password step.
+  const rawIssuer = (process.env.MARVER_ID_ISSUER ?? '').trim()
+  const { normalizeIssuer } = await import('./marver-id.ts')
+  const idIssuer = normalizeIssuer(rawIssuer)
+  if (rawIssuer && !idIssuer) {
+    // Refuse to boot rather than run with a trust root nobody vetted. The keys
+    // this address publishes decide who may open the canvas, so an http issuer
+    // hands that decision to anyone on the network path.
+    console.error(
+      `[${NAME}] MARVER_ID_ISSUER is not a usable issuer: ${rawIssuer}\n` +
+      `  It must be a bare https origin - https://id.marver.design - with no path, query or credentials.\n` +
+      `  http:// is accepted only for localhost, while developing against a local identity service.`,
+    )
+    process.exit(1)
+  }
+  let idHandler: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
+  if (idIssuer) {
+    if (!process.env.MARVER_DATA_DIR) {
+      console.error(`[${NAME}] MARVER_ID_ISSUER needs MARVER_DATA_DIR - identity accounts need somewhere to live.`)
+      process.exit(1)
+    }
+    // Fatal at BOOT, not per request.
+    //
+    // A warning let an unhealthy deployment start perfectly and then answer every
+    // sign-in with a 500 - which reads as "the identity service is down" rather
+    // than "you forgot a setting", and is discovered by a user rather than by
+    // the person who deployed it. The canvas cannot do its job without this, so
+    // it declines to pretend otherwise.
+    if (!process.env.MARVER_PUBLIC_ORIGIN) {
+      console.error(
+        `[${NAME}] MARVER_ID_ISSUER is set but MARVER_PUBLIC_ORIGIN is not.\n` +
+        `  Every assertion is bound to this canvas's exact origin, and it cannot be\n` +
+        `  inferred from request headers - a proxy can make any request look local.\n` +
+        `  Set it to the origin people actually reach this canvas on:\n` +
+        `    MARVER_PUBLIC_ORIGIN=https://canvas.example.com\n` +
+        `    MARVER_PUBLIC_ORIGIN=http://localhost:${portFlag ?? (Number(process.env.PORT) || 4199)} (development)`,
+      )
+      process.exit(1)
+    }
+    const { marverIdHandler } = await import('./marver-id-gate.ts')
+    const { dataDir } = await import('./comments.ts')
+    // The canvas's own name travels with the sign-in request, so the identity
+    // service can say what somebody is signing in to open. Capitalised the same
+    // way the gate shows it, so the two read as the same canvas.
+    const canvasName = humanName(meta.name)
+    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName, meta.branding)
+  }
+
+  const password = idIssuer ? '' : (process.env.MARVER_PASSWORD ?? '')
   // verifier: scrypt-derived, fixed length - each guess pays the scrypt cost (a natural
   // throttle) and the compare never leaks password length. Cookies are signed with a
   // RANDOM per-boot secret, so a captured cookie is not offline brute-force material
@@ -91,11 +152,18 @@ export async function serve(root: string, portFlag?: number) {
     return want.length === got.length && timingSafeEqual(want, got)
   }
 
+  // Is this canvas private at all? One answer, used for routing AND for cache
+  // headers - they were allowed to disagree once, and the disagreement was a
+  // disclosure bug.
+  const gated = Boolean(verifier || idIssuer)
+
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
 
-    if (verifier) {
-      if (req.method === 'POST' && url.pathname === '/__mv/auth') {
+    if (gated) {
+      // Password POST only exists in password mode. In identity mode there is no
+      // shared secret to compare against, and this endpoint must not answer at all.
+      if (verifier && req.method === 'POST' && url.pathname === '/__mv/auth') {
         let body = ''
         req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
         req.on('end', () => {
@@ -112,7 +180,7 @@ export async function serve(root: string, portFlag?: number) {
             res.setHeader('location', /^#\/[\w\/?&=%.,~-]*$/.test(next) ? `/${next}` : '/')
             return res.end()
           }
-          return gate(res, meta, !!collab, 'Wrong canvas password - try again')
+          return gate(res, meta, !!collab, 'Wrong canvas password - try again', !!idIssuer)
         })
         return
       }
@@ -121,9 +189,7 @@ export async function serve(root: string, portFlag?: number) {
       // them, and they carry no design data. Match the DECODED path against strict
       // filenames (no traversal): the static handler decodes too, so a raw-encoded
       // `/__mv/favicon/%2f..%2f..%2findex.html` must not slip the gate as "cosmetic".
-      let decoded = url.pathname
-      try { decoded = decodeURIComponent(url.pathname) } catch { /* keep raw - it won't match below */ }
-      const cosmetic = /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png)$/.test(decoded)
+      const cosmetic = isCosmetic(url.pathname)
       // a member session opens the gate outright (account > shared secret)
       if (!authed(req) && !cosmetic && !sessionCheck?.(req)) {
         // bearer requests (dev proxy / agent CLI) may pierce the gate to the API,
@@ -135,11 +201,39 @@ export async function serve(root: string, portFlag?: number) {
         })()
         // sign-in, claim, and the invite peek live IN FRONT of the gate - that's the
         // whole point of the member path (rate-limited + non-enumerating in collab.ts)
-        const preGate = collab && (
+        // In IDENTITY mode the password sign-in and invite-claim endpoints are not
+        // pre-gate paths: letting them through would leave a password-shaped door
+        // beside the identity gate, which is precisely what choosing identity mode
+        // is meant to remove.
+        const preGate = (collab && !idIssuer && (
           (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
-          (req.method === 'GET' && url.pathname === '/__mv/api/invite-info'))
-        if (!bearerOk && !preGate) return gate(res, meta, !!collab)
+          (req.method === 'GET' && url.pathname === '/__mv/api/invite-info')))
+
+          // Marver ID's two endpoints must be reachable by somebody who has not
+          // signed in yet - that is the entire point of them. Only in identity
+          // mode: in password mode they do not exist, and a path that skips the
+          // gate should never be open wider than the feature that needs it.
+          || (!!idIssuer && (
+            (req.method === 'GET' && url.pathname === '/__mv/id/start') ||
+            (req.method === 'GET' && url.pathname === '/__mv/id/finish') ||
+            (req.method === 'POST' && url.pathname === '/__mv/id/callback')))
+        if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
+    }
+
+    if (idHandler && url.pathname.startsWith('/__mv/id/')) {
+      // Never let a rejected promise leave the socket open: an unanswered request
+      // hangs the browser until it times out, which reads as "marver is broken"
+      // rather than "something failed".
+      idHandler(req, res, url).catch((err) => {
+        console.error(`[${NAME}] marver-id handler failed:`, err?.message ?? err)
+        if (!res.headersSent) {
+          res.statusCode = 500
+          res.setHeader('content-type', 'application/json')
+          res.end('{"error":"internal"}')
+        }
+      })
+      return
     }
 
     // the collaboration API sits behind the gate, before static
@@ -170,14 +264,28 @@ export async function serve(root: string, portFlag?: number) {
       const rel = relative(realDist, real)
       if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('outside dist')
       file = real
-    } catch { file = join(dist, 'index.html') }   // missing or escaping → the shell (hash routing)
+      // A cosmetic path was let PAST the gate on the promise that it is a
+      // favicon or a logo. If no such file exists, the hash-routing fallback
+      // below would hand an unauthenticated caller the entire private bundle -
+      // so for these paths a miss is a miss.
+    } catch {
+      if (gated && isCosmetic(url.pathname)) { res.statusCode = 404; return res.end('not found') }
+      file = join(dist, 'index.html')   // missing or escaping → the shell (hash routing)
+    }
+    if (gated && isCosmetic(url.pathname) && !file.startsWith(join(dist, '__mv')) && relative(realDist, file) === 'index.html') {
+      res.statusCode = 404
+      return res.end('not found')
+    }
     if (!extname(file)) file = join(dist, 'index.html')
     try {
       const content = readFileSync(file)
       res.setHeader('content-type', MIME[extname(file)] ?? 'application/octet-stream')
       // gated responses are never publicly cacheable - a CDN would serve the bundle
       // (inlined boards included) to unauthenticated clients from its cache
-      const cache = verifier ? 'private, no-store'
+      // A gated canvas is private in EITHER mode. Keying this on `verifier`
+      // alone marked identity-gated assets `public, immutable`, which invites a
+      // shared CDN to hand somebody's private frames to anybody who asks.
+      const cache = gated ? 'private, no-store'
         : file.startsWith(join(dist, 'assets')) ? 'public, max-age=31536000, immutable' : 'no-store'
       res.setHeader('cache-control', cache)
       res.end(content)
@@ -195,9 +303,28 @@ export async function serve(root: string, portFlag?: number) {
   })
   server.listen(port, () => {
     console.log(`\n  ${NAME} serving design/.dist → http://localhost:${port}/`)
-    console.log(verifier ? '  gate: ON (MARVER_PASSWORD set)\n' : '  gate: off - set MARVER_PASSWORD to require a password\n')
+    console.log(
+      idIssuer ? `  gate: ON - Marver ID (${idIssuer})\n`
+      : verifier ? '  gate: ON (MARVER_PASSWORD set)\n'
+      : '  gate: off - set MARVER_PASSWORD or MARVER_ID_ISSUER to require sign-in\n')
   })
   return server
+}
+
+/**
+ * Paths the gate lets through unauthenticated: the favicons and logo the gate
+ * page itself wears. They carry no design data.
+ *
+ * Matched against the DECODED path, because the static handler decodes too - a
+ * raw-encoded `/__mv/favicon/%2f..%2f..%2findex.html` must not slip through as
+ * "cosmetic". And because these paths skip the gate, a request for one that does
+ * NOT exist must 404 rather than falling back to the shell; that fallback was a
+ * complete bundle disclosure on any gated canvas.
+ */
+function isCosmetic(pathname: string): boolean {
+  let decoded = pathname
+  try { decoded = decodeURIComponent(pathname) } catch { /* keep raw - it won't match */ }
+  return /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png)$/.test(decoded)
 }
 
 /** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */
@@ -210,8 +337,76 @@ const MARK_LG = MARK_AT(24)
  *  guests pay the canvas password, members sign in with their OWN password, and an
  *  invite link (#/i/<token>) opens straight into the claim. The member and claim
  *  states exist only on collaboration canvases - a static canvas keeps one field. */
-function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string) {
-  const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
+/**
+ * Marver ID needs no client script at all, and that is the point.
+ *
+ * Continue is a plain GET form to /__mv/id/start, which redirects the tab to the
+ * identity service; the tab returns to /__mv/id/finish, which completes the
+ * sign-in. Nothing depends on JavaScript to leave, so no popup blocker,
+ * extension or CSP can strand somebody on the gate.
+ *
+ * What this replaced was a popup, a postMessage listener, and a poll on the
+ * popup's closed flag. It could not work for social sign-in: Google serves
+ * Cross-Origin-Opener-Policy: same-origin, which permanently severs the opener
+ * relationship, so the assertion had nowhere to go and the button sat on
+ * "Opening..." for ever while the console filled with COOP warnings. Found by
+ * signing in with a real Google account, which no test had done.
+ */
+/**
+ * A canvas name a person would recognise.
+ *
+ * meta.name comes from the host package.json, so it arrives in package shape -
+ * "marver-strategy", "acme_q3_review". Capitalising the first letter alone left
+ * "Marver-strategy" on the sign-in card, which reads as a slug rather than as
+ * the name of the thing somebody is opening.
+ *
+ * Only separators are touched. Words already carrying their own capitals keep
+ * them - "myApp-billing" stays "myApp Billing" rather than being flattened to
+ * "Myapp Billing".
+ */
+function humanName(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  const words = raw.split(/[-_.\s]+/).filter(Boolean)
+  if (!words.length) return undefined
+  return words.map((w) => (/[A-Z]/.test(w) ? w : w[0]!.toUpperCase() + w.slice(1))).join(' ')
+}
+
+/**
+ * "A terminal is asking to sign in as you."
+ *
+ * The browser half of the device flow, and the only place authority enters it.
+ * Deliberately server-rendered rather than a shell route: it has to work on a
+ * canvas whose bundle the visitor may not be allowed to load yet, and it is a
+ * security prompt - the fewer moving parts between the code and the person
+ * reading it, the better.
+ *
+ * The code is shown, large, and the copy asks the reader to CHECK it against
+ * their terminal. That comparison is the whole defence. Somebody who can be
+ * talked into approving a code they did not generate has handed over a session,
+ * so the page never approves anything by merely being opened - the click is
+ * required, and it is refused outright unless a real session is behind it.
+ */
+/**
+ * Refuse to be framed.
+ *
+ * Every HTML page this server serves is either a credential prompt or the
+ * private canvas itself, and neither has any business inside somebody else's
+ * frame. The approval page made the cost concrete: an attacker starts a device
+ * flow of their own, frames the approval URL under an unrelated button, and
+ * polls their device code after the victim clicks - collecting the victim's
+ * real session. SameSite=Lax does not help, because a framed page on the same
+ * site still carries its cookies.
+ *
+ * Both headers, because the CSP directive is the modern one and X-Frame-Options
+ * is what older clients actually enforce.
+ */
+function denyFraming(res: any) {
+  res.setHeader('content-security-policy', "frame-ancestors 'none'")
+  res.setHeader('x-frame-options', 'DENY')
+}
+
+function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string, idOn = false) {
+  const name = humanName(meta.name) ?? 'Marver'
   // the app's own logo when the build found one; Marver's mark as the backup
   const appMark = meta.logo ? `<img src="${esc(meta.logo)}" alt="" width="24" height="24" />` : MARK_LG
   // The self-promotion balance: the tab truncates to the app's name, so the title's
@@ -226,6 +421,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
   res.statusCode = 200
   res.setHeader('content-type', 'text/html; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
+  denyFraming(res)
   res.end(`<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
@@ -317,6 +513,18 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
   <div class="card">
 
     <section id="guest" class="on">
+${idOn ? `
+      <div style="display:flex;flex-direction:column;gap:14px" id="id-card">
+        <header>${appMark}<h1>${esc(name)}</h1></header>
+        <p class="lead">This canvas is private. Taking you to Marver to sign in...</p>
+        <div class="err" id="id-err">${error ? esc(error) : ''}</div>
+        <div class="ctawrap">
+          <form method="get" action="/__mv/id/start" style="width:100%">
+            <input type="hidden" name="next" id="id-next" />
+            <button class="cta" id="id-go" type="submit">Continue</button>
+          </form>
+        </div>
+      </div>` : `
       <form method="post" action="/__mv/auth" style="display:flex;flex-direction:column;gap:14px">
         <header>${appMark}<h1>${esc(name)}</h1></header>
         <p class="lead">You're one step from the canvas. This space is private - enter the canvas password to step inside.</p>
@@ -328,7 +536,7 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
           <span class="tip">Enter the canvas password first</span>
         </div>
         ${collabOn ? '<div class="swap"><span style="font:500 12px -apple-system,system-ui,sans-serif;color:rgba(24,24,27,.45)">Member? <a data-go="member">Sign in instead</a></span></div>' : ''}
-      </form>
+      </form>`}
     </section>
 ${collabOn ? `
     <section id="member">
@@ -372,10 +580,27 @@ ${collabOn ? `
     const $ = (id) => document.getElementById(id)
     const next = document.querySelector('[name=next]')
     if (next) next.value = location.hash
+
+    // Marver ID: carry the deep link, then go. The card is a fallback for
+    // somebody without JavaScript, not a step - it is replaced immediately.
+    //
+    // The hash is why this page exists at all. A canvas link keeps its board and
+    // thread in the fragment, which no server ever receives, so a plain redirect
+    // from the server would drop every shared link. Reading it here is the only
+    // chance anybody gets.
+    const idNext = $('id-next')
+    if (idNext) {
+      idNext.value = location.hash
+      const to = '/__mv/id/start' + (location.hash ? '?next=' + encodeURIComponent(location.hash) : '')
+      // replace, not assign: Back should go where they came from, not bounce
+      // them forward into the redirect again.
+      location.replace(to)
+    }
+
     // the guest CTA follows its field (server-side form, client-side gating)
     const gpass = document.querySelector('#guest input[type=password]')
     const gbtn = document.querySelector('#guest button.cta')
-    gpass.addEventListener('input', () => { gbtn.disabled = !gpass.value })
+    if (gpass && gbtn) gpass.addEventListener('input', () => { gbtn.disabled = !gpass.value })
     ${collabOn ? `
     const show = (id) => {
       for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === id)

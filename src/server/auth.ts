@@ -26,9 +26,21 @@ export interface User {
   name: string
   avatar?: string                 // data-URI, client-resized (~4KB); absent = initials
   role: 'member' | 'owner'
-  salt: string                    // hex
-  hash: string                    // hex scrypt(password, salt)
-  params: typeof SCRYPT
+  /** How this account proves who it is. Absent = 'password' (accounts predate
+   *  the field). A 'marver-id' account has NO local credential at all: it holds
+   *  no salt/hash, and signIn() refuses it outright. That is deliberate - a
+   *  fabricated password hash would be a second, weaker way into the same
+   *  account, which is exactly what the identity service is meant to remove. */
+  auth?: 'password' | 'marver-id'
+  salt?: string                   // hex   - password accounts only
+  hash?: string                   // hex scrypt(password, salt) - password accounts only
+  params?: typeof SCRYPT
+  /** `<issuer>#<subject>` from the identity service - qualified so a canvas
+   *  repointed at a different service cannot bind a colliding subject. */
+  idSubject?: string
+  /** The picture URL this account's avatar was fetched FROM. Kept so a rotated
+   *  URL can be noticed and re-fetched, and so we never fetch the same one twice. */
+  avatarSource?: string
   createdAt: number
 }
 interface Invite { emailNorm: string; tokenHash: string; exp: number }
@@ -141,6 +153,15 @@ export function claimInvite(
   const hash = sha256(rawToken)
   const invite = store.invites.find((i) => i.tokenHash === hash && i.exp > Date.now())
   if (!invite) throw new Error('this invite link is invalid, expired, or already used')
+  // An account for this address may have appeared since the invite was minted -
+  // through Marver ID, say. Creating a second user with the same email would be
+  // an account takeover, not a duplicate: sessions resolve by email to the FIRST
+  // matching user, so the claimant would inherit whatever that first user is.
+  if (findUser(store, invite.emailNorm)) {
+    store.invites = store.invites.filter((i) => i !== invite)
+    saveStore(dir, store)
+    throw new Error('an account already exists for this address - sign in instead')
+  }
   store.invites = store.invites.filter((i) => i !== invite)
   const salt = randomBytes(16).toString('hex')
   const user: User = {
@@ -160,17 +181,259 @@ export function claimInvite(
 export function signIn(dir: string, email: string, password: string): { user: User; session: string } | null {
   return withLock(dir, () => {
   const store = loadStore(dir)
-  const user = findUser(store, email)
+  const found = findUser(store, email)
+  // An account provisioned by the identity service has no password to check.
+  // Treat it exactly like an unknown email - same generic failure, same scrypt
+  // cost - so this path never reveals which accounts exist or how they sign in.
+  const user = found && found.auth !== 'marver-id' && found.salt && found.hash ? found : null
   // unknown email still pays a scrypt to keep timing flat
-  const salt = user ? Buffer.from(user.salt, 'hex') : randomBytes(16)
+  const salt = user ? Buffer.from(user.salt!, 'hex') : randomBytes(16)
   const params = user?.params ?? SCRYPT
   const got = scryptSync(password, salt, params.keylen, params)
-  const want = user ? Buffer.from(user.hash, 'hex') : randomBytes(SCRYPT.keylen)
+  const want = user ? Buffer.from(user.hash!, 'hex') : randomBytes(SCRYPT.keylen)
   if (!user || got.length !== want.length || !timingSafeEqual(got, want)) return null
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
   })
+}
+
+/**
+ * Turn a verified Marver ID identity into a local session.
+ *
+ * The identity service has already proved who this person is; this function
+ * decides whether they may in - and that decision is LOCAL, which is the whole
+ * shape of L1a. The identity service knows nothing about who is allowed where.
+ *
+ * `allowed` is the owner's allowlist. An email that is not on it gets no account
+ * and no session: being able to prove you are someone is not the same as being
+ * invited. The first allowed account to arrive owns the canvas, matching the
+ * invite flow's rule.
+ *
+ * No password is fabricated. A marver-id account carries no salt or hash at all,
+ * so there is no second, weaker door into it.
+ */
+export function provisionFromMarverId(
+  dir: string,
+  identity: {
+    email: string; subject: string; issuer: string
+    /** Display name from the assertion, already bounded by the verifier. */
+    name?: string
+  },
+  opts: { ownerEmail?: string } = {},
+): { user: User; session: string } | null {
+  const emailNorm = normEmail(identity.email)
+  if (!emailNorm) return null
+
+  return withLock(dir, () => {
+    const store = loadStore(dir)
+
+    // The allowlist decision happens HERE, inside the lock, against the store we
+    // are about to write. Reading it outside meant two concurrent callbacks could
+    // both pass a check that was already stale - which is exactly the race the
+    // lock exists to prevent.
+    const qualified = `${identity.issuer}#${identity.subject}`
+
+    // Find them by SUBJECT first, then by address.
+    //
+    // The subject is the stable identity; the address is a label on it that
+    // people genuinely change - a Workspace rename, a married name, a company
+    // moving domain. Looking up by email alone meant a returning person whose
+    // address had changed did not match their own account, fell through to the
+    // allowlist with an address nobody had invited, and was refused entry to a
+    // canvas they may well own. Their account is right there, bound to the
+    // subject the assertion just proved.
+    const bound = store.users.find((u) => u.idSubject === qualified)
+    const existing = bound ?? findUser(store, emailNorm)
+
+    // Follow a rename, but never onto an address somebody else already holds.
+    //
+    // Sessions are stored by email and resolved to the FIRST user matching one,
+    // so letting two records carry the same address is not a duplicate - it is a
+    // takeover with the winner decided by array order. If A's verified address
+    // changes to one B already owns, A's next session can resolve to B, and B may
+    // be the owner. Refusing is the only safe answer: the rename is genuine but
+    // the destination is occupied, and a canvas cannot tell which of the two
+    // people is meant to keep it.
+    if (bound && normEmail(bound.email) !== emailNorm) {
+      const clash = findUser(store, emailNorm)
+      if (clash && clash !== bound) return null
+      const vacated = normEmail(bound.email)
+      bound.email = emailNorm
+
+      // Every session issued under the OLD address dies with it.
+      //
+      // A session records the email it was minted for, and resolves by looking
+      // that email up again. So a rename leaves the old sessions pointing at an
+      // address their owner no longer holds - and the moment somebody else
+      // legitimately claims it, those sessions start resolving to that person
+      // instead. The account records are fine; the stale keys are the problem.
+      //
+      // Dropping them is the conservative half of the fix: the worst case is
+      // signing in again on other devices, against a silent handover of whatever
+      // that account can reach. The session minted just below is created after
+      // this, so the person doing the renaming stays signed in here.
+      store.sessions = store.sessions.filter((s) => s.emailNorm !== vacated)
+    }
+
+    const invite = store.invites.find((i) => i.emailNorm === emailNorm && i.exp > Date.now())
+
+    // An empty canvas with a named owner is RESERVED for that owner.
+    //
+    // Without the reservation, any pending invite on a canvas with no accounts
+    // was enough to walk in - and the first account through the door is made
+    // owner, so whoever arrived first took the canvas. Rare, because an empty
+    // canvas usually has no invites to hold, but the cost of it happening is the
+    // whole canvas and the guard is one condition.
+    const ownerNorm = opts.ownerEmail ? normEmail(opts.ownerEmail) : ''
+    const reservedForOwner = !!ownerNorm && !store.users.length && ownerNorm !== emailNorm
+    const isBootstrapOwner = !!ownerNorm && !store.users.length && ownerNorm === emailNorm
+    if (reservedForOwner) return null
+    if (!existing && !invite && !isBootstrapOwner) return null
+
+    // An invite that authorises entry is SPENT by it. Leaving it pending would
+    // leave a password-based second door into an account that now exists.
+    if (invite) store.invites = store.invites.filter((i) => i !== invite)
+
+    let user = existing
+
+    if (user) {
+      // An existing PASSWORD account keeps its password; signing in through the
+      // identity service does not silently convert it, and must not be a way to
+      // take one over. Same address, same person, both doors still work.
+      if (!user.idSubject) {
+        user.idSubject = qualified
+      } else if (user.idSubject === identity.subject) {
+        // A store written before subjects were issuer-qualified. The same person,
+        // recorded the old way - upgrade it in place rather than locking them out
+        // of their own canvas over a format change.
+        user.idSubject = qualified
+      } else if (user.idSubject !== qualified) {
+        // A subject that disagrees means a different identity claims this
+        // address. Refuse rather than guess. Qualified by issuer, so pointing a
+        // canvas at a new service cannot bind a coincidentally identical subject.
+        return null
+      }
+    } else {
+      user = {
+        email: emailNorm,
+        // Their actual name when the assertion carries one. The address sliced
+        // at the @ is the fallback, not the intent: it produced "nicolas.t.touron"
+        // on every comment for somebody the consent card had just greeted by name.
+        name: identity.name || emailNorm.split('@')[0] || emailNorm,
+        role: store.users.length ? 'member' : 'owner',
+        auth: 'marver-id',
+        idSubject: `${identity.issuer}#${identity.subject}`,
+        createdAt: Date.now(),
+      }
+      store.users.push(user)
+    }
+
+    // Fill what is missing; never overwrite what they set HERE.
+    //
+    // A canvas profile is editable, and somebody who renamed themselves or
+    // picked a different picture on this canvas meant it. So the assertion is
+    // treated as a source for gaps rather than as the truth every sign-in
+    // reasserts - otherwise every visit would quietly undo their edit.
+    //
+    // The exception is the email-derived placeholder: an account created before
+    // assertions carried names is sitting on a fallback nobody chose, and the
+    // real name is strictly better.
+    if (identity.name && (!user.name || user.name === emailNorm.split('@')[0])) {
+      user.name = identity.name
+    }
+    const session = pushSession(store, user)
+    saveStore(dir, store)
+    return { user, session }
+  })
+}
+
+/**
+ * Attach a picture the identity service supplied.
+ *
+ * Separate from provisioning because the fetch happens after admission and
+ * outside the lock, so by the time there are bytes the account already exists.
+ *
+ * `avatarSource` is what makes this safe to repeat: its presence means "this
+ * picture came from the identity service", and only such a picture may be
+ * replaced. An avatar with no source was chosen HERE, by the person, and the
+ * identity service does not get to overwrite it - which is the same rule the
+ * name follows.
+ *
+ * Replacing a rotated one is the point. Refusing to, as an earlier version did,
+ * meant the stored source never caught up with the assertion, so every single
+ * sign-in fetched the new picture and then threw it away.
+ */
+export function attachAvatar(
+  dir: string,
+  subjectQualified: string,
+  avatar: string,
+  source: string,
+  /** What the stored source was when this fetch STARTED. See below. */
+  expected: string | undefined,
+): void {
+  withLock(dir, () => {
+    const store = loadStore(dir)
+    // By SUBJECT, not by email.
+    //
+    // The email was read before the fetch, and a fetch is a network round trip
+    // during which things move: the subject can be renamed, and the address
+    // they vacated can be taken by another admitted account. Coming back and
+    // looking up that address would then attach one person's face to somebody
+    // else's account. The subject is the one identifier that does not move.
+    const user = store.users.find((u) => u.idSubject === subjectQualified)
+    if (!user) return
+    if (user.avatar && !user.avatarSource) return      // theirs, not ours
+
+    // Compare and swap, not "is it different".
+    //
+    // Two sign-ins can be in flight at once, and the slower one must not win.
+    // Asking whether the stored source differs from ours does not achieve that:
+    // if B lands first and a stale A arrives afterwards, A differs from B, so A
+    // happily overwrites the newer picture. What has to hold is that nothing
+    // changed underneath us - the stored source is still the one this fetch set
+    // out to replace. Anything else means somebody got there first, and the
+    // right move is to do nothing.
+    if (user.avatarSource !== expected) return
+
+    user.avatar = avatar
+    user.avatarSource = source
+    saveStore(dir, store)
+  })
+}
+
+/**
+ * Would a picture from the identity service actually be used?
+ *
+ * Read-only and outside the lock, so the gate can decide whether a network
+ * fetch is worth making before it commits to one. Worst case it is wrong and we
+ * fetch a picture that then gets discarded - which costs one request, versus
+ * fetching an avatar on every single sign-in forever.
+ */
+export function avatarSourceFor(
+  dir: string,
+  subjectQualified: string,
+  email: string,
+  pictureUrl?: string,
+): { wanted: boolean; source: string | undefined } {
+  const store = loadStore(dir)
+  const user = store.users.find((u) => u.idSubject === subjectQualified) ?? findUser(store, normEmail(email))
+  if (!user) return { wanted: true, source: undefined }            // new account
+  if (!user.avatar) return { wanted: true, source: user.avatarSource }
+  if (!user.avatarSource) return { wanted: false, source: undefined } // theirs, never replaced
+  return { wanted: user.avatarSource !== pictureUrl, source: user.avatarSource }
+}
+
+/**
+ * Would a picture from the identity service actually be used?
+ *
+ * Read-only and outside the lock, so the gate can decide whether a network
+ * fetch is worth making before it commits to one. Worst case it is wrong and we
+ * fetch a picture that then gets discarded - which costs one request, versus
+ * fetching an avatar on every single sign-in forever.
+ */
+export function wantsAvatarFrom(dir: string, subjectQualified: string, email: string, pictureUrl: string): boolean {
+  return avatarSourceFor(dir, subjectQualified, email, pictureUrl).wanted
 }
 
 function pushSession(store: Store, user: User): string {
@@ -179,7 +442,6 @@ function pushSession(store: Store, user: User): string {
   return raw
 }
 
-/** Resolve a session token to its user; null when unknown or expired. */
 export function sessionUser(dir: string, rawToken: string): User | null {
   const store = loadStore(dir)
   const hash = sha256(rawToken)
@@ -203,7 +465,14 @@ export function updateProfile(dir: string, email: string, patch: { name?: string
   const user = findUser(store, email)
   if (!user) throw new Error('no such account')
   if (patch.name?.trim()) user.name = patch.name.trim()
-  if (patch.avatar !== undefined) user.avatar = patch.avatar || undefined
+  if (patch.avatar !== undefined) {
+    user.avatar = patch.avatar || undefined
+    // Setting your own picture makes it YOURS, so the record of where the last
+    // one came from has to go with it. Left behind, the account still looks
+    // like it is carrying an identity-service avatar, and the next rotation
+    // would overwrite the one they just chose.
+    user.avatarSource = undefined
+  }
   saveStore(dir, store)
   return user
   })

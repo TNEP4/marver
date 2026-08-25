@@ -187,8 +187,34 @@ export function collabHandler(dataDir: string, distDir: string) {
     if (!/^application\/json\b/.test(String(req.headers['content-type'] ?? '')))
       return reject(new Error('content-type must be application/json'))
     let body = ''
-    req.on('data', (c) => { body += c; if (body.length > MAX_BODY) { reject(new Error('body too large')); req.destroy() } })
-    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('bad json')) } })
+    let done = false
+    const settle = (fn: () => void) => { if (done) return; done = true; clearTimeout(timer); fn() }
+
+    // A deadline as well as a size limit.
+    //
+    // The size limit bounds memory and says nothing about time. A caller can
+    // open a chunked POST and dribble bytes: it stays under the cap for ever
+    // while holding a socket until Node's much longer server timeout. Bounded
+    // memory and unbounded sockets is still a server nobody can reach.
+    //
+    // Kept after the device flow that motivated it was removed, because it was
+    // never really about those two routes - auth/signin and auth/claim also
+    // answer in front of the gate, and every route here is reachable by
+    // somebody with a session who wants to be a nuisance.
+    const timer = setTimeout(() => settle(() => {
+      req.destroy()
+      reject(new Error('body timed out'))
+    }), 10_000)
+    if (typeof timer.unref === 'function') timer.unref()
+
+    req.on('data', (c) => {
+      body += c
+      if (body.length > MAX_BODY) settle(() => { req.destroy(); reject(new Error('body too large')) })
+    })
+    req.on('end', () => settle(() => {
+      try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('bad json')) }
+    }))
+    req.on('error', () => settle(() => reject(new Error('request failed'))))
   })
   const setSession = (req: IncomingMessage, res: ServerResponse, token: string) => {
     const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''
@@ -265,7 +291,8 @@ export function collabHandler(dataDir: string, distDir: string) {
       // claim/signin run BEFORE a session exists, so the double-submit pair cannot -
       // and need not - be present: CSRF protects authenticated state, and these have
       // none to ride (the scrypt cost + rate limit carry the abuse load)
-      if (path !== 'auth/claim' && path !== 'auth/signin' && !csrfOk(req))
+      const preAuth = path === 'auth/claim' || path === 'auth/signin'
+      if (!preAuth && !csrfOk(req))
         return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
 
       if (path === 'auth/claim') {
