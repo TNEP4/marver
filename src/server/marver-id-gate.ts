@@ -185,7 +185,7 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       res.setHeader('content-type', 'text/html; charset=utf-8')
       res.setHeader('cache-control', 'no-store')
       res.setHeader('referrer-policy', 'no-referrer')
-      res.end(finishPage())
+      res.end(finishPage(canvasName, new URL(origin).host))
       return true
     }
 
@@ -296,40 +296,90 @@ function localOrigin(req: any): string | null {
  * the screen in front of you beats being returned to a form that silently
  * refuses to move.
  */
-function finishPage(): string {
+/**
+ * The mark and the escaper, defined here rather than imported from serve.ts.
+ *
+ * serve.ts imports this module, so reaching back for them would be a cycle. The
+ * paths are the same ones the gate draws - if one changes, both change, which
+ * is exactly the coupling the shared look depends on.
+ */
+const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
+const MARK = MARK_AT(18)
+const MARK_LG = MARK_AT(24)
+
+/** The canvas name is the operator's own, but it still lands in HTML. */
+const esc = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+   .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+
+function finishPage(canvasName: string | undefined, host: string): string {
+  const name = esc(canvasName || 'this canvas')
+  const where = esc(host)
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
-<title>Signing in - Marver</title>
+<title>Signing in - ${name}</title>
+<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
 <style>
-  :root { color-scheme: light dark }
-  body { margin:0; min-height:100vh; display:grid; place-items:center;
-         font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
-         background:#fff; color:#111 }
-  @media (prefers-color-scheme: dark) { body { background:#0a0a0a; color:#f5f5f5 } }
-  .card { width:min(380px,88vw); text-align:center }
-  h1 { font-size:17px; font-weight:600; margin:0 0 6px; letter-spacing:-.01em }
-  p { margin:0; color:#666 }
-  @media (prefers-color-scheme: dark) { p { color:#a3a3a3 } }
-  a { display:inline-block; margin-top:18px; color:inherit; font-weight:500 }
+  /* The gate's own tokens. This page is the last thing somebody sees before the
+     canvas opens - or the only thing, if they are refused - so it belongs to
+     the same surface rather than looking like an error from somewhere else. */
+  * { box-sizing: border-box }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; gap: 18px;
+         background-color: #e7e9ef;
+         background-image: radial-gradient(#c9cbd5 1px, transparent 1px);
+         background-size: 20px 20px;
+         font: 500 14px -apple-system, system-ui, sans-serif; color: #18181b;
+         -webkit-font-smoothing: antialiased }
+  .card { width: 340px; padding: 24px; border-radius: 24px;
+          background: rgba(255,255,255,.64);
+          backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+          box-shadow: 0 1px 2px rgba(24,24,27,.04), 0 12px 32px rgba(24,24,27,.07);
+          display: flex; flex-direction: column; gap: 14px }
+  header { display: flex; align-items: center; gap: 9px }
+  header svg { color: #0088ff; flex: none }
+  h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
+  .state { margin: 0; padding: 0 4px; font-size: 13.5px; font-weight: 600 }
+  .chip { height: 40px; padding: 0 16px; border-radius: 999px;
+          background: rgba(24,24,27,.05); display: flex; align-items: center;
+          font: 500 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  p.lead { margin: 0; padding: 0 4px; font-size: 12.5px; line-height: 1.5;
+           color: rgba(24,24,27,.66) }
+  a.cta { height: 40px; border-radius: 999px; background: #18181b; color: #fafafa;
+          font: 600 13px -apple-system, system-ui, sans-serif; text-decoration: none;
+          display: flex; align-items: center; justify-content: center }
+  footer { display: inline-flex; align-items: center; gap: 7px;
+           font: 600 12.5px -apple-system, system-ui, sans-serif;
+           color: rgba(24,24,27,.5) }
+  footer svg { color: #0088ff }
+  [hidden] { display: none !important }
 </style></head>
-<body><div class="card">
-  <h1 id="t">Signing you in...</h1>
-  <p id="m"></p>
-  <a id="back" href="/" hidden>Back to the canvas</a>
-</div>
+<body>
+  <div class="card">
+    <header>${MARK_LG}<h1 id="t">${name}</h1></header>
+    <p class="state" id="s">Signing you in...</p>
+    <div class="chip">${where}</div>
+    <p class="lead" id="m"></p>
+    <a class="cta" id="back" href="/" hidden>Use a different account</a>
+  </div>
+  <footer>${MARK} <span>Powered by Marver.design</span></footer>
 <script>
 (function () {
-  var t = document.getElementById('t'), m = document.getElementById('m'), back = document.getElementById('back')
-  function stop(title, msg) { t.textContent = title; m.textContent = msg; back.hidden = false }
+  var s = document.getElementById('s'), m = document.getElementById('m'), back = document.getElementById('back')
+  function stop(state, msg, cta) {
+    s.textContent = state; m.textContent = msg
+    if (cta) { back.textContent = cta; back.hidden = false }
+  }
 
   // Take it, then erase it - before any await, so a slow network cannot leave
   // the assertion sitting in the address bar.
   var assertion = location.hash.replace(/^#/, '')
   try { history.replaceState(null, '', location.pathname) } catch (e) {}
 
-  if (!assertion) return stop('Nothing to sign in with', 'That link is incomplete. Start again from the canvas.')
+  if (!assertion) return stop('Nothing to sign in with', 'That link is incomplete. Start again from the canvas.', 'Back to the canvas')
 
   fetch('/__mv/id/callback', {
     method: 'POST',
@@ -345,15 +395,20 @@ function finishPage(): string {
         location.replace('/' + to)
       }, function () { location.replace('/') })
     }
-    if (res.status === 403) return stop('Not invited yet', 'That account has not been invited to this canvas. Ask whoever owns it to add your address.')
-    stop('That sign-in did not work', 'Start again from the canvas, or try a different account.')
+    if (res.status === 403) {
+      return stop("You haven't been invited",
+        'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
+        'Use a different account')
+    }
+    stop('That sign-in did not work', 'Start again from the canvas, or try a different account.', 'Try again')
   }).catch(function () {
-    stop('Could not reach the canvas', 'It may have stopped. Try again in a moment.')
+    stop('Could not reach the canvas', 'It may have stopped. Try again in a moment.', 'Try again')
   })
 })()
 </script>
 </body></html>`
 }
+
 
 function json(res: any, status: number, body: unknown): boolean {
   res.statusCode = status

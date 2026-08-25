@@ -490,8 +490,14 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     // It posts the assertion to our own origin - never anywhere else.
     expect(ha).toContain("fetch('/__mv/id/callback'")
     expect(ha).not.toContain('https://')
-    // And it names the refusal a person is most likely to hit.
-    expect(ha).toContain('has not been invited')
+    // And it names the refusal a person is most likely to hit. The wording moved
+    // when the page was restyled; what must not move is that the sentence a
+    // refused person reads is IN this page rather than fetched from anywhere.
+    expect(ha).toContain("You haven't been invited")
+    expect(ha).toContain('not on the invite list')
+    // It wears the gate's ground, so a refusal does not look like an error page
+    // from somewhere else.
+    expect(ha).toContain('#e7e9ef')
   })
 
   it('identity mode: /finish is never cached and never leaks a referrer', async () => {
