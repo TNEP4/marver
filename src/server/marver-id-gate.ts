@@ -351,7 +351,9 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
   header { display: flex; align-items: center; gap: 9px }
   header svg { color: #0088ff; flex: none }
   h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
-  .state { margin: 0; padding: 0 4px; font-size: 13.5px; font-weight: 600 }
+  /* Pulled up against the address below it: the state line introduces that
+     chip rather than floating between it and the canvas name. */
+  .state { margin: 0 0 -8px; padding: 0 4px; font-size: 13.5px; font-weight: 600 }
   .chip { height: 40px; padding: 0 16px; border-radius: 999px;
           background: rgba(24,24,27,.05); display: flex; align-items: center;
           font: 500 13px ui-monospace, SFMono-Regular, Menlo, monospace;
