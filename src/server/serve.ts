@@ -113,7 +113,7 @@ export async function serve(root: string, portFlag?: number) {
     // The canvas's own name travels with the sign-in request, so the identity
     // service can say what somebody is signing in to open. Capitalised the same
     // way the gate shows it, so the two read as the same canvas.
-    const canvasName = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : undefined
+    const canvasName = humanName(meta.name)
     idHandler = marverIdHandler(dataDir(), idIssuer, canvasName)
   }
 
@@ -333,8 +333,27 @@ const MARK_LG = MARK_AT(24)
  * "Opening..." for ever while the console filled with COOP warnings. Found by
  * signing in with a real Google account, which no test had done.
  */
+/**
+ * A canvas name a person would recognise.
+ *
+ * meta.name comes from the host package.json, so it arrives in package shape -
+ * "marver-strategy", "acme_q3_review". Capitalising the first letter alone left
+ * "Marver-strategy" on the sign-in card, which reads as a slug rather than as
+ * the name of the thing somebody is opening.
+ *
+ * Only separators are touched. Words already carrying their own capitals keep
+ * them - "myApp-billing" stays "myApp Billing" rather than being flattened to
+ * "Myapp Billing".
+ */
+function humanName(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  const words = raw.split(/[-_.\s]+/).filter(Boolean)
+  if (!words.length) return undefined
+  return words.map((w) => (/[A-Z]/.test(w) ? w : w[0]!.toUpperCase() + w.slice(1))).join(' ')
+}
+
 function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string, idOn = false) {
-  const name = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : 'Marver'
+  const name = humanName(meta.name) ?? 'Marver'
   // the app's own logo when the build found one; Marver's mark as the backup
   const appMark = meta.logo ? `<img src="${esc(meta.logo)}" alt="" width="24" height="24" />` : MARK_LG
   // The self-promotion balance: the tab truncates to the app's name, so the title's
