@@ -1148,13 +1148,31 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
     expect(localProfile(root)).toEqual({ email: 'n@x.co', name: 'Nic', avatar: 'data:image/png;base64,AA' })
     rmSync(root, { recursive: true, force: true })
   })
-  it('connect account wins name+email; the avatar stays local', () => {
+  it('a local avatar still applies when the connected account has none', () => {
     const root = make({
       'profile.json': { name: 'Local Me', email: 'old@x.co', avatar: 'data:image/png;base64,AA' },
       'collab.json': { url: 'https://c.example', token: 't', email: 'me@team.co', name: 'Team Me' },
     })
     expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,AA' })
     expect(isConnected(root)).toBe(true)
+    rmSync(root, { recursive: true, force: true })
+  })
+  it("the connected account's own picture wins, the way its name does", () => {
+    // The account already has an avatar and the server sends it with every
+    // sign-in, but the CLI dropped it and this resolver never looked - so a
+    // connected repo showed the right name against a generated initials chip.
+    // It follows the same rule the name does: the account is the identity, and
+    // profile.json is what you fall back to without one.
+    const root = make({
+      'profile.json': { name: 'Local Me', avatar: 'data:image/png;base64,LOCAL' },
+      'collab.json': {
+        url: 'https://c.example', token: 't', email: 'me@team.co',
+        name: 'Team Me', avatar: 'data:image/png;base64,ACCOUNT',
+      },
+    })
+    expect(localProfile(root)).toEqual({
+      email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,ACCOUNT',
+    })
     rmSync(root, { recursive: true, force: true })
   })
   it('a connect account without a name keeps the local display name', () => {

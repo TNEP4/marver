@@ -39,6 +39,12 @@ export function localProfile(root: string): LocalProfile {
     // (the client renders it as the green Y avatar until a real profile is set)
     name: str(collab.name) || str(prof.name) || 'You',
     email: str(collab.email) || str(prof.email),
-    avatar: str(prof.avatar) || undefined,
+    // The connected account's picture wins, exactly as its name does.
+    //
+    // The account already HAS one - the server sends it with every sign-in - and
+    // it was being dropped on the floor, so a connected repo showed the right
+    // name against a generated initials chip. A local profile.json avatar still
+    // works when there is no account to take one from.
+    avatar: str(collab.avatar) || str(prof.avatar) || undefined,
   }
 }
