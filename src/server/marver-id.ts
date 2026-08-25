@@ -31,7 +31,21 @@ const JWKS_TTL_MS = 10 * 60 * 1000
 /** A ceiling on token size - nothing legitimate is close to this. */
 const MAX_TOKEN_BYTES = 8192
 
-export type Transaction = { nonce: string; origin: string; browser: string; exp: number }
+export type Transaction = {
+  nonce: string
+  origin: string
+  browser: string
+  exp: number
+  /**
+   * The deep link they arrived on, kept here rather than sent anywhere.
+   *
+   * A canvas link carries its board and thread in the FRAGMENT, which no server
+   * ever receives - so the only way it survives a sign-in is if the canvas holds
+   * it. Putting it in the transaction means it never crosses to the identity
+   * service, and it is spent with the nonce.
+   */
+  next?: string
+}
 
 export type VerifiedIdentity = {
   /** Stable id from the identity service. Grants bind to this, not to email. */
@@ -63,7 +77,7 @@ export class TransactionStore {
   private lastSweep = 0
 
   /** Invent a nonce for a sign-in attempt from this browser to this origin. */
-  mint(origin: string, browser: string): Transaction {
+  mint(origin: string, browser: string, next?: string): Transaction {
     this.sweep()
 
     // One live transaction per browser, and starting again REUSES it.
@@ -81,7 +95,11 @@ export class TransactionStore {
     const held = this.byBrowser.get(browser)
     if (held) {
       const live = this.items.get(held)
-      if (live && live.exp >= Date.now() && live.origin === origin) return live
+      if (live && live.exp >= Date.now() && live.origin === origin) {
+        // Pressing Continue from a different board should still land there.
+        if (next) live.next = next
+        return live
+      }
       if (held) this.items.delete(held)
     }
 
@@ -102,6 +120,7 @@ export class TransactionStore {
       origin,
       browser,
       exp: Date.now() + TRANSACTION_TTL_MS,
+      ...(next ? { next } : {}),
     }
     this.items.set(tx.nonce, tx)
     this.byBrowser.set(browser, tx.nonce)
@@ -236,6 +255,15 @@ export async function verifyAssertion(opts: {
   store: TransactionStore
   /** Opaque per-browser value, matched against the transaction. */
   browser: string
+  /**
+   * Called with the transaction at the moment it is spent.
+   *
+   * The caller needs what the transaction was carrying - the deep link somebody
+   * arrived on - and consume() is single-use, so there is no second chance to
+   * ask. Handing it over here keeps the verifier's own answer unchanged: it
+   * still returns ok or a reason, and nothing else.
+   */
+  onConsumed?: (tx: Transaction) => void
 }): Promise<VerifyResult> {
   const { token, origin, issuer, store, browser } = opts
 
@@ -289,6 +317,10 @@ export async function verifyAssertion(opts: {
   const tx = store.consume(nonce, browser)
   if (!tx) return { ok: false, reason: 'unknown or spent nonce' }
   if (tx.origin !== origin) return { ok: false, reason: 'origin mismatch' }
+  // Only after the transaction has proved it belongs to this browser and this
+  // origin. Handing the caller anything from an unproven one would let a
+  // stranger's nonce decide where somebody lands.
+  opts.onConsumed?.(tx)
 
   // Signature last: everything above is free, this costs a key fetch.
   let verified = false

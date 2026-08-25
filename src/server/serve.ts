@@ -110,7 +110,11 @@ export async function serve(root: string, portFlag?: number) {
     }
     const { marverIdHandler } = await import('./marver-id-gate.ts')
     const { dataDir } = await import('./comments.ts')
-    idHandler = marverIdHandler(dataDir(), idIssuer)
+    // The canvas's own name travels with the sign-in request, so the identity
+    // service can say what somebody is signing in to open. Capitalised the same
+    // way the gate shows it, so the two read as the same canvas.
+    const canvasName = meta.name ? meta.name[0].toUpperCase() + meta.name.slice(1) : undefined
+    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName)
   }
 
   const password = idIssuer ? '' : (process.env.MARVER_PASSWORD ?? '')
@@ -437,12 +441,13 @@ ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
 
     <section id="guest" class="on">
 ${idOn ? `
-      <div style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;flex-direction:column;gap:14px" id="id-card">
         <header>${appMark}<h1>${esc(name)}</h1></header>
-        <p class="lead">This canvas is private. Continue with your email - one account opens every Marver canvas you have been invited to.</p>
+        <p class="lead">This canvas is private. Taking you to Marver to sign in...</p>
         <div class="err" id="id-err">${error ? esc(error) : ''}</div>
         <div class="ctawrap">
           <form method="get" action="/__mv/id/start" style="width:100%">
+            <input type="hidden" name="next" id="id-next" />
             <button class="cta" id="id-go" type="submit">Continue</button>
           </form>
         </div>
@@ -502,6 +507,22 @@ ${collabOn ? `
     const $ = (id) => document.getElementById(id)
     const next = document.querySelector('[name=next]')
     if (next) next.value = location.hash
+
+    // Marver ID: carry the deep link, then go. The card is a fallback for
+    // somebody without JavaScript, not a step - it is replaced immediately.
+    //
+    // The hash is why this page exists at all. A canvas link keeps its board and
+    // thread in the fragment, which no server ever receives, so a plain redirect
+    // from the server would drop every shared link. Reading it here is the only
+    // chance anybody gets.
+    const idNext = $('id-next')
+    if (idNext) {
+      idNext.value = location.hash
+      const to = '/__mv/id/start' + (location.hash ? '?next=' + encodeURIComponent(location.hash) : '')
+      // replace, not assign: Back should go where they came from, not bounce
+      // them forward into the redirect again.
+      location.replace(to)
+    }
 
     // the guest CTA follows its field (server-side form, client-side gating)
     const gpass = document.querySelector('#guest input[type=password]')

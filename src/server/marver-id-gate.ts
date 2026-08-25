@@ -60,7 +60,52 @@ const browserCookieName = (secure: boolean) => (secure ? BROWSER_COOKIE_SECURE :
 const SESSION_COOKIE = 'mv_s'
 const MONTH = 30 * 24 * 3600
 
-export function marverIdHandler(dir: string, issuer: string) {
+/**
+ * Where to put somebody back, after they sign in.
+ *
+ * A canvas link carries its board and thread in the fragment - `#/b/strategy`,
+ * `#/b/strategy?c=<thread>` - which no server ever receives. The gate's script
+ * reads it and hands it here on the query string, which means that by the time
+ * it arrives it is an ordinary attacker-reachable parameter: anyone can request
+ * /__mv/id/start?next=<anything>.
+ *
+ * It ends up in location.replace() on this canvas, so it is an open redirect if
+ * it is wrong. Only a hash route on this same canvas survives.
+ *
+ * The rejections worth naming:
+ *   "#//evil.test"  - a browser reads what follows a bare // as a host
+ *   "javascript:.." - not a route at all
+ *   anything with a control character, which is how a value gets smuggled past
+ *   a check and into a header or a log
+ */
+export function safeHash(raw: string | null): string | null {
+  if (!raw) return null
+  const value = raw.trim()
+
+  // A canvas route and nothing else: "#/..." with no authority after the slash.
+  if (!value.startsWith('#/')) return null
+  if (value.startsWith('#//') || value.startsWith('#/\\')) return null
+  if (/[\u0000-\u001f\u007f]/.test(value)) return null
+  if (value.length > 512) return null
+
+  // No dot segments, anywhere.
+  //
+  // The identity service's sanitiser learned to re-check its own OUTPUT,
+  // because "/..//evil.test" normalises into an authority. That trick does not
+  // transfer: a fragment is opaque to URL parsing, so nothing normalises it and
+  // re-parsing tells you nothing. A browser will not resolve it either, which
+  // makes this unexploitable rather than safe - and a canvas route has no
+  // business containing ".." in the first place. Refusing is cheaper than
+  // reasoning about it every time somebody reads this.
+  if (/(^|\/)\.\.?(\/|$)/.test(value.slice(1))) return null
+
+  // A single leading slash, then a route. Anything else is not ours.
+  if (!/^#\/[\w\-./~%!$&'()*+,;=:@?[\]]*$/.test(value)) return null
+
+  return value
+}
+
+export function marverIdHandler(dir: string, issuer: string, canvasName?: string) {
   const transactions = new TransactionStore()
 
   // The canvas's own origin, pinned by the operator.
@@ -110,8 +155,16 @@ export function marverIdHandler(dir: string, issuer: string) {
         headers.push(cookie(browserCookieName(secure), browserId, { maxAge: 600, secure }))
       }
 
-      const tx = transactions.mint(origin, browserBinding(browserId))
+      // Where they were heading, captured by the gate's script from the URL
+      // fragment - the one part of a link no server ever receives. Kept in the
+      // transaction; it never crosses to the identity service.
+      const next = safeHash(url.searchParams.get('next'))
+
+      const tx = transactions.mint(origin, browserBinding(browserId), next ?? undefined)
       const authorize = `${issuer}/authorize?origin=${encodeURIComponent(origin)}&nonce=${encodeURIComponent(tx.nonce)}`
+        // The canvas's own name, so the sign-in page can say what it is for
+        // rather than asking somebody to sign in to nothing in particular.
+        + (canvasName ? `&name=${encodeURIComponent(canvasName)}` : '')
 
       // A redirect, not JSON. The gate's Continue is an ordinary form submit, so
       // leaving this canvas needs no JavaScript at all and cannot be blocked.
@@ -158,9 +211,14 @@ export function marverIdHandler(dir: string, issuer: string) {
         return json(res, 401, { error: 'not signed in' })
       }
 
+      // consume() returns the transaction, which carries the deep link the gate
+      // captured before leaving. Reading it here keeps it server-side start to
+      // finish - it never travelled to the identity service and back.
+      let landing: string | null = null
       const result = await verifyAssertion({
         token: assertion, origin, issuer, store: transactions,
         browser: browserBinding(browserId),
+        onConsumed: (tx) => { landing = tx.next ?? null },
       })
 
       if (!result.ok) {
@@ -191,7 +249,7 @@ export function marverIdHandler(dir: string, issuer: string) {
         // The browser handle has done its job.
         cookie(browserCookieName(secure), '', { maxAge: 0, secure }),
       ])
-      return json(res, 200, { ok: true })
+      return json(res, 200, { ok: true, next: landing })
     }
 
     return json(res, 404, { error: 'not found' })
@@ -278,7 +336,15 @@ function finishPage(): string {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ assertion: assertion })
   }).then(function (res) {
-    if (res.ok) { location.replace('/'); return }
+    if (res.ok) {
+      // Back to the board or thread the link pointed at. The server decides
+      // where that is - it held the deep link the whole time - so a value in
+      // this page cannot send anybody somewhere else.
+      return res.json().then(function (body) {
+        var to = body && typeof body.next === 'string' && body.next.indexOf('#/') === 0 ? body.next : ''
+        location.replace('/' + to)
+      }, function () { location.replace('/') })
+    }
     if (res.status === 403) return stop('Not invited yet', 'That account has not been invited to this canvas. Ask whoever owns it to add your address.')
     stop('That sign-in did not work', 'Start again from the canvas, or try a different account.')
   }).catch(function () {
