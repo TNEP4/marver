@@ -393,7 +393,7 @@ describe('display name and picture from the assertion', () => {
   it('attaches the picture the caller fetched, and remembers where it came from', () => {
     invite('nic@x.test')
     provisionFromMarverId(dir, identity('nic@x.test', 's1'))
-    attachAvatar(dir, 'nic@x.test', AVATAR, 'https://cdn.example/a.png')
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/a.png')
 
     const u = loadStore(dir).users[0]!
     expect(u.avatar).toBe(AVATAR)
@@ -407,8 +407,8 @@ describe('display name and picture from the assertion', () => {
     // Ours, then rotated: the new one wins, and the source catches up. An
     // earlier version refused the replacement, so the source never advanced and
     // every sign-in re-fetched the same new picture and discarded it.
-    attachAvatar(dir, 'nic@x.test', AVATAR, 'https://cdn.example/a.png')
-    attachAvatar(dir, 'nic@x.test', 'data:image/png;base64,ROTATED=', 'https://cdn.example/b.png')
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/a.png')
+    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,ROTATED=', 'https://cdn.example/b.png')
     let u = loadStore(dir).users[0]!
     expect(u.avatar).toBe('data:image/png;base64,ROTATED=')
     expect(u.avatarSource).toBe('https://cdn.example/b.png')
@@ -416,7 +416,7 @@ describe('display name and picture from the assertion', () => {
     // Theirs: an avatar with no source was chosen on this canvas, and the
     // identity service does not get to overwrite it.
     updateProfile(dir, 'nic@x.test', { avatar: 'data:image/png;base64,CHOSEN=' })
-    attachAvatar(dir, 'nic@x.test', AVATAR, 'https://cdn.example/c.png')
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/c.png')
     u = loadStore(dir).users[0]!
     expect(u.avatar, 'their choice stands').toBe('data:image/png;base64,CHOSEN=')
   })
@@ -443,6 +443,44 @@ describe('display name and picture from the assertion', () => {
     expect(second!.user.name).toBe('Nicolas Touron')
   })
 
+  it('attaches to the SUBJECT, so a rename mid-fetch cannot cross accounts', () => {
+    // The email is read before the fetch, and a fetch is a network round trip
+    // during which things move. If the subject renames and the address they
+    // vacated is taken by another admitted account, coming back and looking up
+    // that address attaches one person's face to somebody else's account.
+    invite('first@x.test'); invite('second@x.test')
+    provisionFromMarverId(dir, identity('first@x.test', 'subj-a'));
+    provisionFromMarverId(dir, identity('second@x.test', 'subj-b'));
+
+    // subj-a renames away from first@x.test...
+    provisionFromMarverId(dir, identity('moved@x.test', 'subj-a'));
+    // ...and somebody else takes the address they left.
+    invite('first@x.test')
+    provisionFromMarverId(dir, identity('first@x.test', 'subj-c'));
+
+    // The fetch that started before all that now lands, carrying subj-a.
+    attachAvatar(dir, `${ISSUER}#subj-a`, 'data:image/png;base64,AVATARA=', 'https://cdn.example/a.png')
+
+    const users = loadStore(dir).users
+    const moved = users.find((u) => u.idSubject === `${ISSUER}#subj-a`)!
+    const newcomer = users.find((u) => u.idSubject === `${ISSUER}#subj-c`)!
+    expect(moved.avatar, 'lands on the account it was fetched for').toBe('data:image/png;base64,AVATARA=')
+    expect(newcomer.avatar, 'and NOT on whoever took the old address').toBeUndefined()
+  })
+
+  it('does not let a slower fetch overwrite a newer picture', () => {
+    // Two sign-ins in flight. The second finishes first and stores B; the
+    // first then lands with A, which is now stale.
+    invite('nic@x.test')
+    provisionFromMarverId(dir, identity('nic@x.test', 's1'))
+    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,B=', 'https://cdn.example/b.png')
+    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,B=', 'https://cdn.example/b.png')
+
+    const u = loadStore(dir).users[0]!
+    expect(u.avatarSource, 'the same source twice is a no-op, not a rewrite').toBe('https://cdn.example/b.png')
+    expect(u.avatar).toBe('data:image/png;base64,B=')
+  })
+
   it('only asks for a picture when one would actually be used', () => {
     invite('nic@x.test')
     const qualified = `${ISSUER}#s1`
@@ -451,7 +489,7 @@ describe('display name and picture from the assertion', () => {
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'no account yet').toBe(true)
 
     provisionFromMarverId(dir, identity('nic@x.test', 's1'))
-    attachAvatar(dir, 'nic@x.test', AVATAR, url)
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, url)
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'already have this one').toBe(false)
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/b.png'), 'rotated').toBe(true)
 

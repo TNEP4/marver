@@ -81,35 +81,39 @@ function isPublicAddress(addr: string): boolean {
     const p = v6Parts(addr)
     if (!p) return false
 
-    /**
-     * Addresses that are IPv4 wearing a hat, judged as the IPv4 inside.
-     *
-     * ::ffff:x is the obvious one. 64:ff9b::x is NAT64 (RFC 6052), and it is
-     * the one worth spelling out: on an IPv6-only network - which is how a
-     * growing number of hosts are actually built - 64:ff9b::10.0.0.1 is a live
-     * route to 10.0.0.1 through the translator. Treating it as an ordinary
-     * public v6 address, which is what a naive check does, hands back the
-     * entire private range the rest of this function exists to refuse.
-     *
-     * Decoding rather than blanket-refusing, because NAT64 is also how such a
-     * host legitimately reaches a public IPv4 avatar.
-     */
-    const embedded = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+    // ::ffff:x is an IPv4 address wearing a hat - judge what it reaches.
+    if (p.slice(0, 5).every((x) => x === 0) && p[5] === 0xffff) {
+      return isPublicAddress(`${p[6]! >> 8}.${p[6]! & 255}.${p[7]! >> 8}.${p[7]! & 255}`)
+    }
 
-    if (p.slice(0, 5).every((x) => x === 0) && (p[5] === 0xffff || p[5] === 0)) {
-      if (p[5] === 0 && p[6] === 0 && p[7]! <= 1) return false          // :: and ::1
-      return isPublicAddress(embedded(p[6]!, p[7]!))
-    }
-    // 64:ff9b::/96 well-known, and 64:ff9b:1::/48 local-use (RFC 8215).
-    if (p[0] === 0x0064 && p[1] === 0xff9b) {
-      if (p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0) return isPublicAddress(embedded(p[6]!, p[7]!))
-      if (p[2] === 0x0001) return isPublicAddress(embedded(p[6]!, p[7]!))
-    }
-    if (p[0]! >= 0xfe80 && p[0]! <= 0xfebf) return false                // link-local  fe80::/10
-    if (p[0]! >= 0xfec0 && p[0]! <= 0xfeff) return false                // site-local  fec0::/10
-    if (p[0]! >= 0xfc00 && p[0]! <= 0xfdff) return false                // unique local fc00::/7
-    if (p[0] === 0x0100 && p[1] === 0) return false                     // discard-only 100::/64
-    if (p[0]! >= 0xff00) return false                                   // multicast
+    /**
+     * Everything else must be global unicast, and then survive three exceptions.
+     *
+     * This is an ALLOWLIST, and the earlier blocklist is why. Naming the ranges
+     * to refuse means the default is "allowed", and IPv6 has far too much
+     * special-purpose space for that default to be safe: reserved blocks,
+     * documentation space, and several prefixes that carry an IPv4 address
+     * inside them and route to it. Every one I had not thought of was a hole,
+     * and the list of things I have not thought of is not something I can
+     * enumerate. Requiring 2000::/3 inverts it - the default becomes "refused",
+     * and the exceptions below are the small, auditable part.
+     *
+     * The three exceptions are all inside global unicast and none are reachable
+     * the way an avatar host is:
+     *   2001::/23    IETF protocol assignments - Teredo, benchmarking, ORCHID.
+     *                Teredo in particular tunnels IPv4 inside the address.
+     *   2001:db8::/32 documentation. Never routed, and a favourite in examples.
+     *   2002::/16    6to4, which embeds an IPv4 address and routes to it.
+     *
+     * NAT64 (64:ff9b::/96) is refused simply by being outside 2000::/3, and
+     * that is the right outcome: it is a live route to whatever IPv4 address it
+     * carries, including the metadata endpoint. An IPv6-only canvas loses
+     * nothing real, because an avatar host that matters has a AAAA record.
+     */
+    if ((p[0]! & 0xe000) !== 0x2000) return false
+    if (p[0] === 0x2001 && p[1]! < 0x0200) return false
+    if (p[0] === 0x2001 && p[1] === 0x0db8) return false
+    if (p[0] === 0x2002) return false
     return true
   }
 
@@ -122,6 +126,8 @@ function isPublicAddress(addr: string): boolean {
   if (a === 192 && b === 168) return false                     // private
   if (a === 169 && b === 254) return false                     // link-local, and cloud metadata
   if (a === 100 && b >= 64 && b <= 127) return false           // carrier-grade NAT
+  if (a === 192 && b === 0) return false                       // IETF protocol assignments
+  if (a === 198 && (b === 18 || b === 19)) return false         // benchmarking
   if (a >= 224) return false                                   // multicast and reserved
   return true
 }

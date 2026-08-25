@@ -321,7 +321,7 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       const picture = result.identity.picture
       if (picture && wantsAvatarFrom(dir, `${issuer}#${result.identity.subject}`, result.identity.email, picture)) {
         const avatar = await fetchAvatar(picture)
-        if (avatar) attachAvatar(dir, session.user.email, avatar, picture)
+        if (avatar) attachAvatar(dir, `${issuer}#${result.identity.subject}`, avatar, picture)
       }
 
       res.setHeader('set-cookie', [

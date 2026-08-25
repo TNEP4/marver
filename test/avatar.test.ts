@@ -48,7 +48,13 @@ describe('the address rule', () => {
       '64:ff9b::127.0.0.1',
       '64:ff9b::10.0.0.1',
       '64:ff9b::169.254.169.254',       // cloud metadata, one translation away
-      '64:ff9b:1::192.168.1.1',         // local-use prefix, RFC 8215
+      '64:ff9b:1::192.168.1.1',
+      '64:ff9b:1:a9fe:a9:fe00:808:808', // the /48 encoding, which my decoder got wrong
+      // Reserved and special-purpose space that a blocklist simply never named.
+      '1::', 'fe00::1', 'fe7f::1',
+      '2001:db8::1',                    // documentation
+      '2001::1', '2001:2::1', '2001:10::1', // Teredo, benchmarking, ORCHID
+      '2002:0a00:0001::1',              // 6to4 carrying 10.0.0.1
     ]) {
       expect(_isPublicAddress(addr), `${addr} must be refused`).toBe(false)
     }
@@ -58,10 +64,11 @@ describe('the address rule', () => {
     for (const addr of [
       '8.8.8.8', '142.250.187.206',
       '2a00:1450:4009:81f::200e',       // googleusercontent, in practice
-      '2001:4860:4860::8888',
-      'fe00::1',                        // just below link-local - still public
-      '64:ff9b::8.8.8.8',               // NAT64 to a PUBLIC v4 is how an
-                                        // IPv6-only host legitimately reaches one
+      '2001:4860:4860::8888',            // ordinary allocation inside 2001::/16
+      // 3ffe::/16 was the 6bone. It was deprecated and RETURNED to the free
+      // pool in 2008, so it is allocatable global unicast now - refusing it
+      // would be preserving a fact that stopped being true.
+      '3ffe::1',
     ]) {
       expect(_isPublicAddress(addr), `${addr} should be allowed`).toBe(true)
     }

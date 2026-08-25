@@ -364,12 +364,25 @@ export function provisionFromMarverId(
  * meant the stored source never caught up with the assertion, so every single
  * sign-in fetched the new picture and then threw it away.
  */
-export function attachAvatar(dir: string, email: string, avatar: string, source: string): void {
+export function attachAvatar(dir: string, subjectQualified: string, avatar: string, source: string): void {
   withLock(dir, () => {
     const store = loadStore(dir)
-    const user = findUser(store, normEmail(email))
+    // By SUBJECT, not by email.
+    //
+    // The email was read before the fetch, and a fetch is a network round trip
+    // during which things move: the subject can be renamed, and the address
+    // they vacated can be taken by another admitted account. Coming back and
+    // looking up that address would then attach one person's face to somebody
+    // else's account. The subject is the one identifier that does not move.
+    const user = store.users.find((u) => u.idSubject === subjectQualified)
     if (!user) return
     if (user.avatar && !user.avatarSource) return      // theirs, not ours
+
+    // Re-checked under the lock, because two sign-ins can be in flight at once
+    // and the slower fetch must not win. If the stored source already matches,
+    // somebody got here first with the same picture and there is nothing to do.
+    if (user.avatarSource === source) return
+
     user.avatar = avatar
     user.avatarSource = source
     saveStore(dir, store)
