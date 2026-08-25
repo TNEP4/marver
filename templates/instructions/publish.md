@@ -127,12 +127,23 @@ isn't one. An address that is not on the list is refused by name, on screen.
 ## Wiring people up (after first deploy)
 
 **With Marver Sign In**, the owner just signs in - `MARVER_OWNER_EMAIL` claims an
-empty canvas for that address, with no token to pass around. To let this machine
-mint invites afterwards, connect it and approve from a browser:
+empty canvas for that address, with no token to pass around.
 
-Note the current gap: `comments invite` and `comments revoke` sign the CLI in with a
-password, which identity mode does not have. Seed invites while the canvas is still
-password-gated, or share a `MARVER_DATA_DIR` between the two.
+**But this machine cannot mint invites on an identity-gated canvas.** `comments
+invite` and `comments revoke` sign the CLI in with a password, and identity mode
+has none. So plan for it:
+
+- seed the invites while the canvas is still password-gated, THEN switch it to
+  `MARVER_ID_ISSUER`, or
+- run both canvases from the same `MARVER_DATA_DIR`, so the accounts and invites
+  are shared.
+
+A browser-approved CLI sign-in was built for this and removed before release:
+authored frames run same-origin in a canvas, so frame code could have driven the
+approval itself and kept a long-lived credential. Closing that needs frame
+isolation or an approval on the identity service's own origin, so do not expect
+it in this version and do not invent a workaround that posts to internal
+endpoints.
 
 **With a canvas password**, `MARVER_OWNER_EMAIL` makes the first boot print an
 owner bootstrap in the logs: a browser link (`<url>/#/i/<token>`) AND the exact

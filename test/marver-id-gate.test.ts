@@ -532,7 +532,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     // "every Marver mention". The identity finish page was the exception nobody
     // noticed - the last screen of the flow, still wearing a footer an operator
     // had explicitly turned off.
-    for (const path of ['/', '/__mv/id/finish', '/__mv/cli?code=ABCD-2345']) {
+    for (const path of ['/', '/__mv/id/finish']) {
       const html = await (await fetch(`http://localhost:${identity.port}${path}`)).text()
       expect(html, `${path} still says "Powered by"`).not.toContain('Powered by')
       expect(html, `${path} still links to marver.design`).not.toContain('href="https://marver.design')

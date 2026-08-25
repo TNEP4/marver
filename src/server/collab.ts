@@ -192,12 +192,15 @@ export function collabHandler(dataDir: string, distDir: string) {
 
     // A deadline as well as a size limit.
     //
-    // Most of these routes sit behind the gate, but cli/start and cli/poll
-    // answer BEFORE it - a terminal waiting to be approved has no session by
-    // definition. Without a clock, an unauthenticated caller opens as many
-    // chunked POSTs as it likes and dribbles bytes: each stays under the size
-    // cap forever and holds a socket until Node's much longer server timeout.
-    // Bounded memory and unbounded sockets is still a canvas nobody can reach.
+    // The size limit bounds memory and says nothing about time. A caller can
+    // open a chunked POST and dribble bytes: it stays under the cap for ever
+    // while holding a socket until Node's much longer server timeout. Bounded
+    // memory and unbounded sockets is still a server nobody can reach.
+    //
+    // Kept after the device flow that motivated it was removed, because it was
+    // never really about those two routes - auth/signin and auth/claim also
+    // answer in front of the gate, and every route here is reachable by
+    // somebody with a session who wants to be a nuisance.
     const timer = setTimeout(() => settle(() => {
       req.destroy()
       reject(new Error('body timed out'))
