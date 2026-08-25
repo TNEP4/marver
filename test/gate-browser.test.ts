@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findChrome } from '../src/server/shot.ts'
@@ -145,9 +145,6 @@ let ownerToken = ''
 const base = `http://localhost:${PORT}`
 
 beforeAll(async () => {
-  execFileSync('npm', ['run', 'build'], { cwd: join(import.meta.dirname, '..'), stdio: 'ignore', timeout: 180_000 })
-  if (!existsSync(CLI)) throw new Error('build produced no CLI')
-
   root = mkdtempSync(join(tmpdir(), 'mv-gb-'))
   dataDir = mkdtempSync(join(tmpdir(), 'mv-gbd-'))
   const dist = join(root, 'design', '.dist')

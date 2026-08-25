@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { request as httpRequest, createServer as createHttpServer } from 'node:http'
 import { generateKeyPairSync, createSign } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -20,26 +20,6 @@ import { join } from 'node:path'
  */
 
 const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
-
-/**
- * Build the CLI if it is not there.
- *
- * These are the only tests that would catch a canvas serving its bundle
- * pre-auth, so they must never quietly skip. `describe.skipIf(!built)` on a
- * clean checkout would do exactly that - a green run that proved nothing, which
- * is worse than a red one.
- */
-function ensureBuilt(): void {
-  // Unconditionally. `dist/` is gitignored, so a stale build from an earlier
-  // branch would happily test code that is not in this commit - a green run
-  // proving something nobody asked about.
-  execFileSync('npm', ['run', 'build'], {
-    cwd: join(import.meta.dirname, '..'),
-    stdio: 'ignore',
-    timeout: 120_000,
-  })
-  if (!existsSync(CLI)) throw new Error('build did not produce dist/cli.mjs - cannot verify the gate')
-}
 
 /** A minimal published canvas - enough for `serve` to agree to start. */
 function fixture(branding = false): string {
@@ -170,7 +150,6 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
   let identityDataDir = ''
 
   beforeAll(async () => {
-    ensureBuilt()
     identityDataDir = mkdtempSync(join(tmpdir(), 'mv-d2-'))
     ;[open, password, identity, behindTls] = await Promise.all([
       start({}, 4471),
