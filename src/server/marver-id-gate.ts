@@ -185,7 +185,8 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       res.setHeader('content-type', 'text/html; charset=utf-8')
       res.setHeader('cache-control', 'no-store')
       res.setHeader('referrer-policy', 'no-referrer')
-      res.end(finishPage(canvasName, new URL(origin).host))
+      res.end(finishPage(canvasName, new URL(origin).host,
+        `${issuer}/switch?origin=${encodeURIComponent(origin)}`))
       return true
     }
 
@@ -238,10 +239,19 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
         { ownerEmail: process.env.MARVER_OWNER_EMAIL },
       )
       if (!session) {
-        // Deliberately the same shape of refusal as a bad assertion. Whether an
-        // address is on somebody's private invite list is not public knowledge.
+        // The REASON stays private - whether an address sits on somebody's invite
+        // list is not public knowledge, and this refusal is deliberately the same
+        // shape as one for a bad token.
+        //
+        // The address is different. It came out of an assertion this browser just
+        // presented, signed by the identity service and bound to this browser's
+        // own handle - so it is theirs, they supplied it, and handing it back
+        // tells them nothing they did not already know. What it does buy is the
+        // answer to the only question a refused person actually has: which
+        // account did I just use? Withholding that made a correct refusal read as
+        // a fault.
         console.warn(`[marver-id] ${result.identity.email} is not on this canvas's list`)
-        return json(res, 403, { error: 'not invited' })
+        return json(res, 403, { error: 'not invited', email: result.identity.email })
       }
 
       res.setHeader('set-cookie', [
@@ -312,7 +322,7 @@ const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
-function finishPage(canvasName: string | undefined, host: string): string {
+function finishPage(canvasName: string | undefined, host: string, switchUrl: string): string {
   const name = esc(canvasName || 'this canvas')
   const where = esc(host)
   return `<!doctype html>
@@ -348,6 +358,7 @@ function finishPage(canvasName: string | undefined, host: string): string {
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
   p.lead { margin: 0; padding: 0 4px; font-size: 12.5px; line-height: 1.5;
            color: rgba(24,24,27,.66) }
+  p.lead strong { color: #18181b; font-weight: 600 }
   a.cta { height: 40px; border-radius: 999px; background: #18181b; color: #fafafa;
           font: 600 13px -apple-system, system-ui, sans-serif; text-decoration: none;
           display: flex; align-items: center; justify-content: center }
@@ -363,7 +374,7 @@ function finishPage(canvasName: string | undefined, host: string): string {
     <p class="state" id="s">Signing you in...</p>
     <div class="chip">${where}</div>
     <p class="lead" id="m"></p>
-    <a class="cta" id="back" href="/" hidden>Use a different account</a>
+    <a class="cta" id="back" href="/" data-switch="${esc(switchUrl)}" hidden>Use a different account</a>
   </div>
   <footer>${MARK} <span>Powered by Marver.design</span></footer>
 <script>
@@ -372,6 +383,23 @@ function finishPage(canvasName: string | undefined, host: string): string {
   function stop(state, msg, cta) {
     s.textContent = state; m.textContent = msg
     if (cta) { back.textContent = cta; back.hidden = false }
+  }
+
+  /** Refused, and told which account did it. */
+  function refused(email) {
+    s.textContent = "You haven't been invited"
+    m.textContent = ''
+    m.appendChild(document.createTextNode('You are signed in as '))
+    var b = document.createElement('strong')
+    b.textContent = email
+    m.appendChild(b)
+    m.appendChild(document.createTextNode(', and that address is not on the invite list for this canvas. Ask whoever owns it to add you, or sign in with the address they invited.'))
+    back.textContent = 'Use a different account'
+    // Signing out happens at the identity service - this canvas cannot reach
+    // across origins to do it, and sending them back here would just hand them
+    // the same account and the same refusal.
+    back.href = back.getAttribute('data-switch') || '/'
+    back.hidden = false
   }
 
   // Take it, then erase it - before any await, so a slow network cannot leave
@@ -396,9 +424,19 @@ function finishPage(canvasName: string | undefined, host: string): string {
       }, function () { location.replace('/') })
     }
     if (res.status === 403) {
-      return stop("You haven't been invited",
-        'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
-        'Use a different account')
+      return res.json().then(function (body) {
+        var who = body && typeof body.email === 'string' ? body.email : ''
+        // textContent, never innerHTML: the address is attested, but it is still
+        // a string arriving over the wire and this page will not be the place
+        // that learns the difference the hard way.
+        who ? refused(who) : stop("You haven't been invited",
+          'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
+          'Use a different account')
+      }, function () {
+        stop("You haven't been invited",
+          'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
+          'Use a different account')
+      })
     }
     stop('That sign-in did not work', 'Start again from the canvas, or try a different account.', 'Try again')
   }).catch(function () {
