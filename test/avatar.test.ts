@@ -42,6 +42,13 @@ describe('the address rule', () => {
       '::',                             // unspecified
       'ff02::1',                        // multicast
       '0:0:0:0:0:ffff:192.168.0.1',     // mapped, written out in full
+      // NAT64 (RFC 6052). On an IPv6-only network this is a live route to the
+      // address inside it, through the translator - so the well-known prefix
+      // is not a public address, it is whatever it carries.
+      '64:ff9b::127.0.0.1',
+      '64:ff9b::10.0.0.1',
+      '64:ff9b::169.254.169.254',       // cloud metadata, one translation away
+      '64:ff9b:1::192.168.1.1',         // local-use prefix, RFC 8215
     ]) {
       expect(_isPublicAddress(addr), `${addr} must be refused`).toBe(false)
     }
@@ -53,6 +60,8 @@ describe('the address rule', () => {
       '2a00:1450:4009:81f::200e',       // googleusercontent, in practice
       '2001:4860:4860::8888',
       'fe00::1',                        // just below link-local - still public
+      '64:ff9b::8.8.8.8',               // NAT64 to a PUBLIC v4 is how an
+                                        // IPv6-only host legitimately reaches one
     ]) {
       expect(_isPublicAddress(addr), `${addr} should be allowed`).toBe(true)
     }

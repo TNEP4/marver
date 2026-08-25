@@ -81,11 +81,29 @@ function isPublicAddress(addr: string): boolean {
     const p = v6Parts(addr)
     if (!p) return false
 
-    // ::x and ::ffff:x are IPv4 wearing a hat - judge them as IPv4.
+    /**
+     * Addresses that are IPv4 wearing a hat, judged as the IPv4 inside.
+     *
+     * ::ffff:x is the obvious one. 64:ff9b::x is NAT64 (RFC 6052), and it is
+     * the one worth spelling out: on an IPv6-only network - which is how a
+     * growing number of hosts are actually built - 64:ff9b::10.0.0.1 is a live
+     * route to 10.0.0.1 through the translator. Treating it as an ordinary
+     * public v6 address, which is what a naive check does, hands back the
+     * entire private range the rest of this function exists to refuse.
+     *
+     * Decoding rather than blanket-refusing, because NAT64 is also how such a
+     * host legitimately reaches a public IPv4 avatar.
+     */
+    const embedded = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
+
     if (p.slice(0, 5).every((x) => x === 0) && (p[5] === 0xffff || p[5] === 0)) {
       if (p[5] === 0 && p[6] === 0 && p[7]! <= 1) return false          // :: and ::1
-      const v4 = `${p[6]! >> 8}.${p[6]! & 255}.${p[7]! >> 8}.${p[7]! & 255}`
-      return isPublicAddress(v4)
+      return isPublicAddress(embedded(p[6]!, p[7]!))
+    }
+    // 64:ff9b::/96 well-known, and 64:ff9b:1::/48 local-use (RFC 8215).
+    if (p[0] === 0x0064 && p[1] === 0xff9b) {
+      if (p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0) return isPublicAddress(embedded(p[6]!, p[7]!))
+      if (p[2] === 0x0001) return isPublicAddress(embedded(p[6]!, p[7]!))
     }
     if (p[0]! >= 0xfe80 && p[0]! <= 0xfebf) return false                // link-local  fe80::/10
     if (p[0]! >= 0xfec0 && p[0]! <= 0xfeff) return false                // site-local  fec0::/10
