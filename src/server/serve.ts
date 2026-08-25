@@ -208,6 +208,15 @@ export async function serve(root: string, portFlag?: number) {
         const preGate = (collab && !idIssuer && (
           (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
           (req.method === 'GET' && url.pathname === '/__mv/api/invite-info')))
+          // Device authorization, in BOTH modes. A CLI waiting to be approved has
+          // no session by definition, so start and poll answer in front of the
+          // gate; neither grants anything on its own - a device code is worthless
+          // until a signed-in person approves it, and approve is NOT in this list.
+          // The page itself is inert without a session: it can render, and the
+          // approval it offers is refused unless somebody is signed in.
+          || (!!collab && (
+            (req.method === 'POST' && (url.pathname === '/__mv/api/cli/start' || url.pathname === '/__mv/api/cli/poll')) ||
+            (req.method === 'GET' && url.pathname === '/__mv/cli')))
           // Marver ID's two endpoints must be reachable by somebody who has not
           // signed in yet - that is the entire point of them. Only in identity
           // mode: in password mode they do not exist, and a path that skips the
@@ -218,6 +227,14 @@ export async function serve(root: string, portFlag?: number) {
             (req.method === 'POST' && url.pathname === '/__mv/id/callback')))
         if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
+    }
+
+    if (collab && req.method === 'GET' && url.pathname === '/__mv/cli') {
+      res.statusCode = 200
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.setHeader('cache-control', 'no-store')
+      res.setHeader('referrer-policy', 'no-referrer')
+      return void res.end(cliApprovalPage(meta, url.searchParams.get('code')))
     }
 
     if (idHandler && url.pathname.startsWith('/__mv/id/')) {
@@ -368,6 +385,120 @@ function humanName(raw: string | undefined): string | undefined {
   const words = raw.split(/[-_.\s]+/).filter(Boolean)
   if (!words.length) return undefined
   return words.map((w) => (/[A-Z]/.test(w) ? w : w[0]!.toUpperCase() + w.slice(1))).join(' ')
+}
+
+/**
+ * "A terminal is asking to sign in as you."
+ *
+ * The browser half of the device flow, and the only place authority enters it.
+ * Deliberately server-rendered rather than a shell route: it has to work on a
+ * canvas whose bundle the visitor may not be allowed to load yet, and it is a
+ * security prompt - the fewer moving parts between the code and the person
+ * reading it, the better.
+ *
+ * The code is shown, large, and the copy asks the reader to CHECK it against
+ * their terminal. That comparison is the whole defence. Somebody who can be
+ * talked into approving a code they did not generate has handed over a session,
+ * so the page never approves anything by merely being opened - the click is
+ * required, and it is refused outright unless a real session is behind it.
+ */
+function cliApprovalPage(meta: { name: string; branding: boolean }, code: string | null): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  // Only ever the shape this flow issues; anything else is not a code we made.
+  const clean = code && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/i.test(code.trim()) ? code.trim().toUpperCase() : ''
+  const name = esc(meta.name || 'this canvas')
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Authorize a terminal - ${name}</title>
+<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; gap: 18px;
+         background-color: #e7e9ef;
+         background-image: radial-gradient(#c9cbd5 1px, transparent 1px);
+         background-size: 20px 20px;
+         font: 500 14px -apple-system, system-ui, sans-serif; color: #18181b;
+         -webkit-font-smoothing: antialiased }
+  .card { width: 360px; padding: 24px; border-radius: 24px;
+          background: rgba(255,255,255,.64);
+          backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+          box-shadow: 0 1px 2px rgba(24,24,27,.04), 0 12px 32px rgba(24,24,27,.07);
+          display: flex; flex-direction: column; gap: 14px }
+  header { display: flex; align-items: center; gap: 9px }
+  header svg { color: #0088ff; flex: none }
+  h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
+  p { margin: 0; padding: 0 4px; font-size: 12.5px; line-height: 1.5; color: rgba(24,24,27,.66) }
+  p strong { color: #18181b; font-weight: 600 }
+  .code { height: 56px; border-radius: 14px; background: rgba(24,24,27,.05);
+          display: flex; align-items: center; justify-content: center;
+          font: 700 24px ui-monospace, SFMono-Regular, Menlo, monospace;
+          letter-spacing: .14em }
+  button { height: 40px; width: 100%; border: 0; border-radius: 999px;
+           background: #18181b; color: #fafafa; font: 600 13px inherit; cursor: pointer }
+  button[disabled] { opacity: .55; cursor: default }
+  .ghost { background: #fff; color: #18181b; border: 1px solid rgba(24,24,27,.14) }
+  a.ghost { display:flex; align-items:center; justify-content:center; text-decoration:none }
+  footer { display: inline-flex; align-items: center; gap: 7px;
+           font: 600 12.5px -apple-system, system-ui, sans-serif; color: rgba(24,24,27,.5) }
+  footer svg { color: #0088ff }
+  [hidden] { display: none !important }
+</style></head>
+<body>
+  <div class="card">
+    <header>${MARK_LG}<h1>Authorize a terminal</h1></header>
+    <p id="lead">A terminal is asking to act as you on <strong>${name}</strong>. Check that
+      the code below is the one printed in your terminal, then approve.</p>
+    <div class="code" id="code">${esc(clean) || '----&nbsp;----'}</div>
+    <button id="go"${clean ? '' : ' disabled'}>Approve this terminal</button>
+    <a class="ghost" href="/" id="back" hidden>Open ${name}</a>
+    <p id="note" hidden></p>
+  </div>
+  ${meta.branding ? `<footer>${MARK} <span>Powered by Marver.design</span></footer>` : ''}
+<script>
+(function () {
+  var go = document.getElementById('go'), note = document.getElementById('note')
+  var back = document.getElementById('back'), lead = document.getElementById('lead')
+  var code = ${JSON.stringify(clean)}
+  function say(msg, showBack) {
+    note.textContent = msg; note.hidden = false
+    if (showBack) back.hidden = false
+  }
+  if (!code) { say('That link is missing its code. Run the command again and open the URL it prints.'); return }
+  go.addEventListener('click', function () {
+    go.disabled = true
+    go.textContent = 'Approving...'
+    // The double-submit half, read from the cookie the session was issued with.
+    var m = /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)
+    fetch('/__mv/api/cli/approve', {
+      method: 'POST',
+      headers: Object.assign({ 'content-type': 'application/json' }, m ? { 'x-mv-c': m[1] } : {}),
+      body: JSON.stringify({ code: code })
+    }).then(function (r) {
+      if (r.ok) {
+        return r.json().then(function (b) {
+          lead.textContent = 'Approved.'
+          go.hidden = true
+          say('Your terminal is signed in as ' + ((b && b.user && b.user.email) || 'you') + '. You can close this tab.', true)
+        }, function () { lead.textContent = 'Approved.'; go.hidden = true; say('You can close this tab.', true) })
+      }
+      go.hidden = true
+      if (r.status === 401) return say('You need to sign in to this canvas first, then open the link again.', true)
+      if (r.status === 404) return say('That code is not waiting for approval - it may have expired. Run the command again.', true)
+      if (r.status === 403) return say('That request was refused. Reload this page and try once more.', true)
+      say('That did not work. Run the command again.', true)
+    }).catch(function () {
+      go.disabled = false
+      go.textContent = 'Approve this terminal'
+      say('Could not reach the canvas. Try again in a moment.')
+    })
+  })
+})()
+</script>
+</body></html>`
 }
 
 function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string, idOn = false) {

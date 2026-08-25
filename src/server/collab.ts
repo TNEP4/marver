@@ -18,7 +18,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
-import { claimInvite, createInvite, inviteInfo, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { claimInvite, createInvite, inviteInfo, issueSession, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 
 const MONTH = 30 * 24 * 3600
 const MAX_BODY = 256 * 1024
@@ -148,6 +148,61 @@ export function collabHandler(dataDir: string, distDir: string) {
   }
   setInterval(() => { for (const res of clients) res.write(': keepalive\n\n') }, 240_000).unref()
 
+  /**
+   * Device authorization: how a CLI signs in without ever holding a password.
+   *
+   * The old answer was `comments connect <url> <email> <password>`, which has two
+   * problems. It puts a password in a shell history, and it simply does not exist
+   * in identity mode - a canvas gated by Marver ID has no password to type, which
+   * left an owner able to sign in to their own canvas and unable to invite anyone
+   * to it.
+   *
+   * So the CLI does what gh and docker do. It asks for a pair of codes, prints a
+   * URL, and waits. The person opens that URL in a browser where they are already
+   * signed in - by whichever gate this canvas uses, which is exactly why this
+   * works in both modes - checks that the code on screen matches the one in their
+   * terminal, and approves. The CLI then collects a session of its own.
+   *
+   * The two codes have different jobs, and it matters that they are separate. The
+   * DEVICE code is a secret only the waiting CLI holds, and it is what redeems the
+   * session; the USER code is short enough to read aloud and travels in a URL. If
+   * the user code alone could redeem, anyone who saw the link over a shoulder
+   * would get a session.
+   *
+   * Showing the code on the approval page is the anti-phishing step, not
+   * decoration: it is what stops somebody being talked into approving a device
+   * that is not theirs. A page that just said "Approve?" would be a very good
+   * way to hand out sessions.
+   */
+  const DEVICE_TTL_MS = 10 * 60 * 1000
+  const MAX_PENDING = 512
+  /** No I, O, 0 or 1 - these get read aloud and typed by hand. */
+  const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  type Pending = { userCode: string; exp: number; approvedFor?: string }
+  const pending = new Map<string, Pending>()
+
+  const userCode = (): string => {
+    const raw = randomBytes(8)
+    let out = ''
+    for (let i = 0; i < 8; i++) {
+      if (i === 4) out += '-'
+      out += CODE_ALPHABET[raw[i]! % CODE_ALPHABET.length]
+    }
+    return out
+  }
+
+  const sweepPending = () => {
+    const now = Date.now()
+    for (const [k, v] of pending) if (v.exp < now) pending.delete(k)
+  }
+
+  /** Find a pending request by the code a human typed. Case-insensitive. */
+  const byUserCode = (code: string): [string, Pending] | null => {
+    const want = code.trim().toUpperCase()
+    for (const entry of pending) if (entry[1].userCode === want && entry[1].exp >= Date.now()) return entry
+    return null
+  }
+
   // ---- rate limit on auth attempts, keyed by BOTH network peer and target email.
   // X-Forwarded-For is client-controlled; trust it only when the deployer says the
   // proxy in front is trusted (MARVER_TRUSTED_PROXY=1 - true on Railway/Fly).
@@ -265,7 +320,8 @@ export function collabHandler(dataDir: string, distDir: string) {
       // claim/signin run BEFORE a session exists, so the double-submit pair cannot -
       // and need not - be present: CSRF protects authenticated state, and these have
       // none to ride (the scrypt cost + rate limit carry the abuse load)
-      if (path !== 'auth/claim' && path !== 'auth/signin' && !csrfOk(req))
+      const preAuth = path === 'auth/claim' || path === 'auth/signin' || path === 'cli/start' || path === 'cli/poll'
+      if (!preAuth && !csrfOk(req))
         return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
 
       if (path === 'auth/claim') {
@@ -287,6 +343,63 @@ export function collabHandler(dataDir: string, distDir: string) {
         setSession(req, res, hit.session)
         return json(res, 200, { user: publicUser(hit.user) }), true
       }
+      // ---- device authorization: start, approve, poll ----------------------
+      //
+      // start and poll are reachable BEFORE the gate (a CLI has no session yet -
+      // that is the point). approve is not: it is the step that requires a real
+      // signed-in person, and it is where all the authority comes from.
+
+      if (path === 'cli/start') {
+        if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        sweepPending()
+        // A cap, because this endpoint answers before anyone has signed in. Past
+        // it the answer is a refusal rather than an eviction: dropping somebody
+        // else's pending approval to make room would let a flood cancel a real
+        // sign-in in flight.
+        if (pending.size >= MAX_PENDING) return json(res, 503, { error: 'too many pending authorizations - try again shortly' }), true
+        const deviceCode = randomBytes(32).toString('base64url')
+        const code = userCode()
+        pending.set(deviceCode, { userCode: code, exp: Date.now() + DEVICE_TTL_MS })
+        return json(res, 200, {
+          deviceCode,
+          userCode: code,
+          verifyPath: `/__mv/cli?code=${encodeURIComponent(code)}`,
+          expiresIn: Math.floor(DEVICE_TTL_MS / 1000),
+          interval: 2,
+        }), true
+      }
+
+      if (path === 'cli/approve') {
+        const u = currentUser(req)
+        // The only authority in this flow. Everything the CLI ends up holding is
+        // whatever this person could already do.
+        if (!u) return json(res, 401, { error: 'sign in first' }), true
+        if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        const b = await readBody(req)
+        const hit = byUserCode(String(b.code ?? ''))
+        if (!hit) return json(res, 404, { error: 'that code is not waiting for approval - it may have expired' }), true
+        hit[1].approvedFor = u.email
+        return json(res, 200, { user: publicUser(u) }), true
+      }
+
+      if (path === 'cli/poll') {
+        if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        const b = await readBody(req)
+        const deviceCode = String(b.deviceCode ?? '')
+        const entry = deviceCode ? pending.get(deviceCode) : undefined
+        if (!entry || entry.exp < Date.now()) {
+          pending.delete(deviceCode)
+          return json(res, 410, { error: 'this authorization expired - start again' }), true
+        }
+        if (!entry.approvedFor) return json(res, 202, { status: 'pending' }), true
+        // Redeemed exactly once: the code is spent whether or not the CLI
+        // manages to store what comes back.
+        pending.delete(deviceCode)
+        const issued = issueSession(dataDir, entry.approvedFor)
+        if (!issued) return json(res, 410, { error: 'that account no longer exists' }), true
+        return json(res, 200, { token: issued.session, user: publicUser(issued.user) }), true
+      }
+
       if (path === 'auth/signout') {
         const tok = cookie(req, 'mv_s')
         if (tok) signOut(dataDir, tok)

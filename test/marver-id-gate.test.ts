@@ -722,6 +722,86 @@ describe('identity mode: the successful path, end to end', () => {
     expect(forged.status).toBe(403)
   }, 60_000)
 
+  it('lets an identity-signed-in owner authorize a CLI, and then invite somebody', async () => {
+    // The gap this closes. Managing people is a CLI job, the CLI used to sign in
+    // with a password, and identity mode has no passwords - so an owner could
+    // enter their own canvas and never add anybody to it. The device flow is the
+    // answer, and it has to work HERE, on a canvas with no password at all.
+
+    // Sign in the way a person does, and keep the session.
+    const started = await fetch(`http://localhost:${canvas.port}/__mv/id/start`, { redirect: 'manual' })
+    const to = new URL(String(started.headers.get('location')))
+    const handle = /(?:^|;\s*)mv_b=([\w-]+)/.exec(started.headers.getSetCookie().join('; '))?.[1]
+    const done = await fetch(`http://localhost:${canvas.port}/__mv/id/callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_b=${handle}` },
+      body: JSON.stringify({ assertion: assertionFor({ aud: to.searchParams.get('origin')!, nonce: to.searchParams.get('nonce')! }) }),
+    })
+    expect(done.status).toBe(200)
+    const set = done.headers.getSetCookie().join('\n')
+    const mvS = /(?:^|\n)mv_s=([^;]+)/.exec(set)![1]
+    const mvC = /(?:^|\n)mv_c=([^;]+)/.exec(set)![1]
+
+    // A terminal asks to be let in. No session, and it reaches this in front of
+    // the gate - which is the entire point of it.
+    const startRes = await fetch(`http://localhost:${canvas.port}/__mv/api/cli/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    expect(startRes.status, 'a waiting CLI has no session and must still be able to ask').toBe(200)
+    const start = await startRes.json() as any
+    expect(start.userCode).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
+
+    const poll = () => fetch(`http://localhost:${canvas.port}/__mv/api/cli/poll`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceCode: start.deviceCode }),
+    })
+    expect((await poll()).status, 'nothing is granted until a person approves').toBe(202)
+
+    // The device code alone must not be redeemable by knowing the SHORT code -
+    // the one that travels in a URL and can be read over a shoulder.
+    const guess = await fetch(`http://localhost:${canvas.port}/__mv/api/cli/poll`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceCode: start.userCode }),
+    })
+    expect(guess.status, 'the user code is not a device code').toBe(410)
+
+    // The browser half, with the identity session behind it.
+    const approved = await fetch(`http://localhost:${canvas.port}/__mv/api/cli/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: `mv_s=${mvS}; mv_c=${mvC}`, 'x-mv-c': mvC },
+      body: JSON.stringify({ code: start.userCode }),
+    })
+    expect(approved.status, await approved.text().catch(() => '')).toBe(200)
+
+    const got = await poll()
+    expect(got.status).toBe(200)
+    const { token, user } = await got.json() as any
+    expect(user.email).toBe(OWNER)
+    expect(token).toBeTruthy()
+
+    // Spent - a device code redeems once.
+    expect((await poll()).status).toBe(410)
+
+    // And now the thing that was impossible: invite somebody, from the CLI's
+    // own credential, on a canvas with no password.
+    const invited = await fetch(`http://localhost:${canvas.port}/__mv/api/invite`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ email: 'teammate@example.test' }),
+    })
+    const invitedBody = await invited.text()
+    expect(invited.status, invitedBody).toBe(200)
+    expect(JSON.parse(invitedBody).token, 'an invite link must come back').toBeTruthy()
+
+    // Revocation too - the other half an owner needs.
+    const revoked = await fetch(`http://localhost:${canvas.port}/__mv/api/revoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ email: 'teammate@example.test' }),
+    })
+    expect(revoked.status).toBe(200)
+  }, 60_000)
+
   it('refuses a second use of the same nonce', async () => {
     const started = await fetch(`http://localhost:${canvas.port}/__mv/id/start`, { redirect: 'manual' })
     const to = new URL(String(started.headers.get('location')))

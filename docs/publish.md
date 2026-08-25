@@ -143,12 +143,25 @@ other sessions are signed out when that happens - a session records the address 
 was minted for, and leaving it alive would hand it to whoever claims that address
 next. A rename onto an address someone else already holds is refused outright.
 
-> **Known gap, being worked on.** Managing people is done with
-> `marver comments invite` and `marver comments revoke`, and both authenticate the
-> CLI with a password - which identity mode does not have. So on a canvas gated this
-> way the owner can sign in, but can neither invite nor revoke anybody from the CLI.
-> Until that lands, seed the invites before switching a canvas to
-> `MARVER_ID_ISSUER`, or run both canvases from the same `MARVER_DATA_DIR`.
+#### Connecting a terminal
+
+`marver comments invite` and friends act as you, so the CLI needs its own
+credential. It gets one by asking a browser to vouch for it:
+
+```bash
+npx marver comments connect https://your.canvas
+```
+
+It prints a URL and a short code and waits. Open the URL in a browser where you
+are signed in to the canvas, check that the code on screen matches the one in your
+terminal, and approve. The terminal then holds a session of its own.
+
+Check the code rather than approving on sight - that comparison is what stops
+somebody talking you into authorizing a terminal that is not yours.
+
+This is how it works on either gate, and it is why nobody types a password into a
+CLI any more. `--email` and `--password` still work for non-interactive scripting
+against a password-gated canvas.
 
 ### The gate footer
 

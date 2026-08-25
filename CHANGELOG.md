@@ -46,11 +46,21 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Sign-in fails closed: if the identity service is unreachable, existing sessions keep
   working and new ones are refused. Nothing falls back to open.
 
-  **One gap, stated rather than buried**: managing people is done with
-  `marver comments invite` and `marver comments revoke`, and both sign the CLI in with a
-  password - which identity mode does not have. So an identity-gated canvas can let its owner
-  in but can neither invite nor revoke anybody from the CLI. Seed invites before switching a
-  canvas over, or share a `MARVER_DATA_DIR`. A supported path is next.
+- **`marver comments connect` no longer wants a password.** It asks the canvas for a pair of
+  codes, prints a URL, and waits; you open it in a browser where you are already signed in,
+  check the code matches your terminal, and approve. The terminal then gets a session of its
+  own. This is the device-authorization flow that `gh` and `docker` use, and it is now the
+  default on both gates - so nobody puts a password into a shell history any more.
+
+  It is also what makes Marver Sign In usable end to end. Managing people is a CLI job, the
+  CLI signed in with a password, and identity mode has none - so before this an owner could
+  enter their own canvas and never invite anybody to it. `--email`/`--password` still work for
+  non-interactive scripting against a password-gated canvas.
+
+  The two codes do different jobs on purpose: the device code is a secret only the waiting
+  terminal holds and is what redeems the session, while the short code travels in a URL and is
+  only ever compared by eye. The approval page shows it and asks you to check it, because a
+  page that just said "Approve?" would be an excellent way to hand out sessions.
 
 ### Fixed
 

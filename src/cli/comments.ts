@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
-import { connect, connectClaim, loadCollab, syncOnce } from '../server/sync.ts'
+import { connect, connectClaim, loadCollab, syncOnce, connectByBrowser } from '../server/sync.ts'
 import { localProfile } from '../server/profile.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
@@ -46,10 +46,26 @@ export async function commentsCommand(root: string, action: string, value: strin
         const name = opts.name ?? await ask('display name: ')
         const password = opts.password ?? await ask('choose a password: ', true)
         await connectClaim(root, value, String(opts.invite), { password, name }, canvasPassword || undefined)
-      } else {
+      } else if (opts.email || opts.password) {
+        // The old path, kept for anyone scripting it non-interactively. Only
+        // taken when credentials are passed explicitly, and it cannot work on a
+        // canvas gated by Marver ID - there is no password there to check.
         const email = opts.email ?? await ask('email: ')
         const password = opts.password ?? await ask('password: ', true)
         await connect(root, value, email, password, canvasPassword || undefined)
+      } else {
+        // The default: let a browser vouch for this terminal. Works whichever
+        // gate the canvas uses, and puts no password into a shell history.
+        await connectByBrowser(root, value, canvasPassword || undefined, ({ userCode, verifyUrl }) => {
+          console.log('')
+          console.log(`  Open this and approve the terminal:`)
+          console.log(`    ${verifyUrl}`)
+          console.log('')
+          console.log(`  It should show this code. If it shows a different one, do NOT approve:`)
+          console.log(`    ${userCode}`)
+          console.log('')
+          console.log(`  Waiting...`)
+        })
       }
       console.log(`[${NAME}] connected - design/.local/collab.json holds the device credential (gitignored)`)
       console.log(`[${NAME}] \`${NAME} dev\` now syncs comments every 30s; \`${NAME} comments sync\` does one exchange`)
