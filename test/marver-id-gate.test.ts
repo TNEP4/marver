@@ -42,7 +42,7 @@ function ensureBuilt(): void {
 }
 
 /** A minimal published canvas - enough for `serve` to agree to start. */
-function fixture(): string {
+function fixture(branding = false): string {
   const root = mkdtempSync(join(tmpdir(), 'mv-gate-'))
   const dist = join(root, 'design', '.dist')
   mkdirSync(dist, { recursive: true })
@@ -50,7 +50,7 @@ function fixture(): string {
   // the canvas was served, which pre-auth is exactly the failure we are hunting.
   writeFileSync(join(dist, 'index.html'),
     '<!doctype html><html><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>')
-  writeFileSync(join(dist, 'meta.json'), JSON.stringify({ name: 'Fixture', branding: false }))
+  writeFileSync(join(dist, 'meta.json'), JSON.stringify({ name: 'Fixture', branding }))
   // A real asset, so cache headers can be checked on a file that EXISTS - the
   // gate's own no-store would otherwise mask a wrong header on real content.
   mkdirSync(join(dist, 'assets'), { recursive: true })
@@ -63,8 +63,8 @@ function fixture(): string {
 
 type Canvas = { port: number; root: string; proc: ChildProcess }
 
-async function start(env: Record<string, string>, port: number): Promise<Canvas> {
-  const root = fixture()
+async function start(env: Record<string, string>, port: number, branding = false): Promise<Canvas> {
+  const root = fixture(branding)
   const proc = spawn(process.execPath, [CLI, 'serve'], {
     cwd: root,
     env: { ...process.env, PORT: String(port), ...env },
@@ -515,6 +515,18 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     expect(res.headers.get('referrer-policy')).toBe('no-referrer')
   })
 
+  it('branding:false strips Marver from the sign-in screens too, not just the gate', async () => {
+    // This fixture sets branding:false, and the promise that setting makes is
+    // "every Marver mention". The identity finish page was the exception nobody
+    // noticed - the last screen of the flow, still wearing a footer an operator
+    // had explicitly turned off.
+    for (const path of ['/', '/__mv/id/finish', '/__mv/cli?code=ABCD-2345']) {
+      const html = await (await fetch(`http://localhost:${identity.port}${path}`)).text()
+      expect(html, `${path} still says "Powered by"`).not.toContain('Powered by')
+      expect(html, `${path} still links to marver.design`).not.toContain('href="https://marver.design')
+    }
+  }, 30_000)
+
   it('password mode: /finish does not exist - a path is never open wider than the feature', async () => {
     const res = await fetch(`http://localhost:${password.port}/__mv/id/finish`)
     const html = await res.text()
@@ -647,7 +659,8 @@ describe('identity mode: the successful path, end to end', () => {
       MARVER_PUBLIC_ORIGIN: 'http://localhost:4788',
       MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-e2e-')),
       MARVER_OWNER_EMAIL: OWNER,
-    }, 4788)
+      // Branding ON here, so the powered-by links have something to assert.
+    }, 4788, true)
   }, 180_000)
 
   afterAll(async () => {
@@ -816,6 +829,31 @@ describe('identity mode: the successful path, end to end', () => {
     })
     expect(revoked.status).toBe(200)
   }, 60_000)
+
+  it('every powered-by badge is a real link, tagged with its own placement', async () => {
+    // The finish page's footer was plain text - the mark and the words, linking
+    // nowhere at all. Every other surface links to marver.design with
+    // attribution, and a badge that is a link on three screens and inert on a
+    // fourth is the sort of gap nobody notices until the numbers are wrong.
+    const placements = new Set<string>()
+    for (const [path, want] of [
+      ['/', 'gate'],
+      ['/__mv/id/finish', 'sign-in'],
+      ['/__mv/cli?code=ABCD-2345', 'authorize-device'],
+    ] as const) {
+      const html = await (await fetch(`http://localhost:${canvas.port}${path}`)).text()
+      const href = /href="(https:\/\/marver\.design\/\?[^"]*)"/.exec(html)?.[1]
+      expect(href, `${path} must carry a real powered-by link`).toBeTruthy()
+      const q = new URL(href!.replace(/&amp;/g, '&')).searchParams
+      expect(q.get('utm_medium'), path).toBe('powered-by')
+      expect(q.get('utm_source'), path).toBe('published-canvas')
+      expect(q.get('utm_content'), path).toBe(want)
+      placements.add(q.get('utm_content')!)
+    }
+    // Distinct placements, or attribution cannot tell the surfaces apart -
+    // which is the entire reason utm_content exists.
+    expect(placements.size).toBe(3)
+  }, 30_000)
 
   it('refuses to be framed - the approval page and the finish page both', async () => {
     // An attacker starts a device flow of their own, frames the approval URL

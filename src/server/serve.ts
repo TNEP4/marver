@@ -462,9 +462,14 @@ function cliApprovalPage(meta: { name: string; branding: boolean }, code: string
   button[disabled] { opacity: .55; cursor: default }
   .ghost { background: #fff; color: #18181b; border: 1px solid rgba(24,24,27,.14) }
   a.ghost { display:flex; align-items:center; justify-content:center; text-decoration:none }
-  footer { display: inline-flex; align-items: center; gap: 7px;
-           font: 600 12.5px -apple-system, system-ui, sans-serif; color: rgba(24,24,27,.5) }
-  footer svg { color: #0088ff }
+  footer a { display: inline-flex; align-items: center; gap: 7px;
+             font: 600 12.5px -apple-system, system-ui, sans-serif;
+             color: rgba(24,24,27,.5); text-decoration: none }
+  footer a > svg:first-of-type { color: #0088ff }
+  footer .md, footer .up { transition: color .15s, opacity .15s }
+  footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
+  footer .up { opacity: .45; margin-left: -3px }
+  footer a:hover .up { opacity: 1; color: #0088ff }
   [hidden] { display: none !important }
 </style></head>
 <body>
@@ -477,7 +482,7 @@ function cliApprovalPage(meta: { name: string; branding: boolean }, code: string
     <a class="ghost" href="/" id="back" hidden>Open ${name}</a>
     <p id="note" hidden></p>
   </div>
-  ${meta.branding ? `<footer>${MARK} <span>Powered by Marver.design</span></footer>` : ''}
+  ${meta.branding ? `<footer><a href="${poweredByUrl(meta.name, 'published-canvas', 'authorize-device')}" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> <svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
 <script>
 (function () {
   var go = document.getElementById('go'), note = document.getElementById('note')

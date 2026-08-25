@@ -34,6 +34,7 @@
 import { randomBytes } from 'node:crypto'
 import { provisionFromMarverId } from './auth.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
+import { poweredByUrl } from '../shared/utm.ts'
 
 /**
  * Names the browser across the two requests. Not a session - just a handle.
@@ -352,6 +353,7 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
 const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
 const MARK = MARK_AT(18)
 const MARK_LG = MARK_AT(24)
+const ARROW = `<svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg>`
 
 /** The canvas name is the operator's own, but it still lands in HTML. */
 const esc = (s: string) =>
@@ -406,10 +408,14 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
   a.cta { height: 40px; border-radius: 999px; background: #18181b; color: #fafafa;
           font: 600 13px -apple-system, system-ui, sans-serif; text-decoration: none;
           display: flex; align-items: center; justify-content: center }
-  footer { display: inline-flex; align-items: center; gap: 7px;
-           font: 600 12.5px -apple-system, system-ui, sans-serif;
-           color: rgba(24,24,27,.5) }
-  footer svg { color: #0088ff }
+  footer a { display: inline-flex; align-items: center; gap: 7px;
+             font: 600 12.5px -apple-system, system-ui, sans-serif;
+             color: rgba(24,24,27,.5); text-decoration: none }
+  footer a > svg:first-of-type { color: #0088ff }
+  footer .md, footer .up { transition: color .15s, opacity .15s }
+  footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
+  footer .up { opacity: .45; margin-left: -3px }
+  footer a:hover .up { opacity: 1; color: #0088ff }
   [hidden] { display: none !important }
 </style></head>
 <body>
@@ -418,14 +424,25 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
     <p class="state" id="s">Signing you in...</p>
     <div class="chip">${where}</div>
     <p class="lead" id="m"></p>
+    <p class="lead" id="m2" hidden></p>
     <a class="cta" id="back" href="/" data-switch="${esc(switchUrl)}" hidden>Use a different account</a>
   </div>
-  ${branding ? `<footer>${MARK} <span>Powered by Marver.design</span></footer>` : ''}
+  ${branding ? `<footer><a href="${poweredByUrl(canvasName, 'published-canvas', 'sign-in')}" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> ${ARROW}</a></footer>` : ''}
 <script>
 (function () {
   var s = document.getElementById('s'), m = document.getElementById('m'), back = document.getElementById('back')
-  function stop(state, msg, cta) {
+  var m2 = document.getElementById('m2')
+  /**
+   * State, what happened, and - separately - what to do about it.
+   *
+   * The advice used to run on from the diagnosis in one paragraph, so the
+   * sentence that tells somebody how to get unstuck was buried at the end of
+   * the sentence explaining why they are stuck. They are two different thoughts
+   * and the person only needs the second one.
+   */
+  function stop(state, msg, cta, advice) {
     s.textContent = state; m.textContent = msg
+    if (advice) { m2.textContent = advice; m2.hidden = false }
     if (cta) { back.textContent = cta; back.hidden = false }
   }
 
@@ -437,7 +454,9 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
     var b = document.createElement('strong')
     b.textContent = email
     m.appendChild(b)
-    m.appendChild(document.createTextNode(', and that address is not on the invite list for this canvas. Ask whoever owns it to add you, or sign in with the address they invited.'))
+    m.appendChild(document.createTextNode(', and that address is not on the invite list for this canvas.'))
+    m2.textContent = 'Ask whoever owns it to add you, or sign in with the address they invited.'
+    m2.hidden = false
     back.textContent = 'Use a different account'
     // Signing out happens at the identity service - this canvas cannot reach
     // across origins to do it, and sending them back here would just hand them
@@ -478,8 +497,9 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
           'Use a different account')
       }, function () {
         stop("You haven't been invited",
-          'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
-          'Use a different account')
+          'That account is not on the invite list for this canvas.',
+          'Use a different account',
+          'Ask whoever owns it to add your address.')
       })
     }
     stop('That sign-in did not work', 'Start again from the canvas, or try a different account.', 'Try again')
