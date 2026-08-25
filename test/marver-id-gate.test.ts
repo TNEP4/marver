@@ -84,6 +84,19 @@ function stop(c: Canvas) {
   rmSync(c.root, { recursive: true, force: true })
 }
 
+/**
+ * Where /start sends the tab.
+ *
+ * It used to answer JSON for a script to read; it is a redirect now, because the
+ * whole flow happens in one tab and leaving needs no JavaScript. `redirect:
+ * 'manual'` matters - let fetch follow it and the test wanders off to the
+ * fixture issuer, which does not resolve.
+ */
+async function startedAuthorize(res: Response): Promise<URL> {
+  expect(res.status).toBe(302)
+  return new URL(res.headers.get('location') ?? '')
+}
+
 const bundleServed = (html: string) => html.includes('id="root"') && html.includes('type="module"')
 
 /**
@@ -94,7 +107,7 @@ const bundleServed = (html: string) => html.includes('id="root"') && html.includ
  * spoofing anything. Header-injection tests have to speak HTTP directly.
  */
 function raw(port: number, path: string, headers: Record<string, string> = {}):
-  Promise<{ status: number; body: string }> {
+  Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
   return new Promise((resolve, reject) => {
     // `hostname` for the connection, `headers.host` for the header. Passing
     // `host` in the options sets BOTH, so a spoofing test would send two Host
@@ -105,7 +118,7 @@ function raw(port: number, path: string, headers: Record<string, string> = {}):
         let body = ''
         res.setEncoding('utf8')
         res.on('data', (c) => { body += c })
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }))
       },
     )
     req.on('error', reject)
@@ -224,10 +237,8 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
   it('identity mode: /start issues a distinct nonce per request, bound to this canvas', async () => {
     const seen = new Set<string>()
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
-      expect(res.status).toBe(200)
-      const { authorize } = (await res.json()) as { authorize: string }
-      const u = new URL(authorize)
+      const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`, { redirect: 'manual' })
+      const u = await startedAuthorize(res)
       expect(u.origin).toBe('https://id.example.test')
       // The canvas names ITSELF as the audience-to-be, port included.
       expect(u.searchParams.get('origin')).toBe(`http://localhost:${identity.port}`)
@@ -334,7 +345,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
       // A real browser handle, so the request gets PAST the cookie check and
       // actually exercises the parser. Without it these are rejected earlier and
       // the test would pass even against the throwing version.
-      const start = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+      const start = await fetch(`http://localhost:${identity.port}/__mv/id/start`, { redirect: 'manual' })
       const mvb = /mv_b=([\w-]+)/.exec(start.headers.get('set-cookie') ?? '')?.[1]
       expect(mvb).toBeTruthy()
       const res = await fetch(`http://localhost:${identity.port}/__mv/id/callback`, {
@@ -349,7 +360,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
       expect(res.status, `${token.slice(0, 24)} was not refused as 401`).toBe(401)
     }
     // and the server is still alive afterwards
-    expect((await fetch(`http://localhost:${identity.port}/__mv/id/start`)).status).toBe(200)
+    expect((await fetch(`http://localhost:${identity.port}/__mv/id/start`, { redirect: 'manual' })).status).toBe(302)
   })
 
   it('identity mode: the refusal never says WHY', async () => {
@@ -361,10 +372,10 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     // check for is trivially absent and the test proves nothing. So: take a
     // real transaction, then present a well-formed assertion minted for a
     // DIFFERENT audience - a refusal with a specific, tempting reason behind it.
-    const start = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+    const start = await fetch(`http://localhost:${identity.port}/__mv/id/start`, { redirect: 'manual' })
     const mvb = /mv_b=([\w-]+)/.exec(start.headers.get('set-cookie') ?? '')?.[1]
     expect(mvb).toBeTruthy()
-    const { nonce } = JSON.parse(await start.text()) as { nonce?: string }
+    const nonce = (await startedAuthorize(start)).searchParams.get('nonce')
 
     // Unsigned on purpose. The audience is checked BEFORE the signature is, so
     // this reaches the claim comparison without needing the fixture issuer's
@@ -407,7 +418,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
    */
 
   it('the browser handle is plain over http, where the prefix would be invalid', async () => {
-    const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`)
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`, { redirect: 'manual' })
     const setCookie = res.headers.get('set-cookie') ?? ''
     expect(setCookie).toMatch(/(^|[;,\s])mv_b=/)
     expect(setCookie).not.toContain('__Host-')
@@ -419,7 +430,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     // Against a canvas whose public origin is https, which is what every real
     // deployment is. Asserting only the scheme-independent attributes on the
     // http server left the prefix shipping in a branch no test ever entered.
-    const res = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`)
+    const res = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`, { redirect: 'manual' })
     const setCookie = res.headers.get('set-cookie') ?? ''
     expect(setCookie).toContain('__Host-mv_b=')
     // The prefix is only honoured with all three of these. Miss one and the
@@ -434,15 +445,73 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     // A canvas that WRITES the prefixed name and READS the plain one would set
     // a fresh transaction on every request, so nobody could ever finish signing
     // in. Pressing Continue twice has to land on the same attempt.
-    const first = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`)
+    const first = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`, { redirect: 'manual' })
     const handle = /(__Host-mv_b=[\w-]+)/.exec(first.headers.get('set-cookie') ?? '')?.[1]
     expect(handle).toBeTruthy()
-    const nonce = (path: string) => new URL(JSON.parse(path).authorize).searchParams.get('nonce')
-
     const again = await fetch(`http://localhost:${behindTls.port}/__mv/id/start`, {
-      headers: { cookie: handle! },
+      headers: { cookie: handle! }, redirect: 'manual',
     })
-    expect(nonce(await again.text())).toBe(nonce(await first.text()))
+    expect((await startedAuthorize(again)).searchParams.get('nonce'))
+      .toBe((await startedAuthorize(first)).searchParams.get('nonce'))
+  })
+
+  /**
+   * One tab, no opener.
+   *
+   * The popup design this replaced was dead on arrival for social sign-in:
+   * Google serves Cross-Origin-Opener-Policy: same-origin, which severs the
+   * popup's window.opener permanently. The assertion had nowhere to go, and the
+   * gate sat on "Opening..." for ever. Nothing in the flow may depend on two
+   * windows being able to talk to each other.
+   */
+
+  it('the gate leaves WITHOUT JavaScript - Continue is a plain form submit', async () => {
+    // If leaving needs a script, it can be broken by a popup blocker, an
+    // extension, or a CSP. A GET form cannot.
+    const html = await (await fetch(`http://localhost:${identity.port}/`)).text()
+    expect(html).toContain('action="/__mv/id/start"')
+    expect(html).toMatch(/<button[^>]*id="id-go"[^>]*type="submit"/)
+    // And the machinery that broke is gone, not merely unused.
+    expect(html).not.toContain('window.open')
+    expect(html).not.toContain('popup.closed')
+    expect(html).not.toContain('postMessage')
+  })
+
+  it('identity mode: /finish is reachable before sign-in, and is the same bytes for everyone', async () => {
+    // It has to answer somebody with no session - that is the entire point.
+    // And since the assertion is in the fragment, this server never saw it, so
+    // there is nothing here to template and nothing to escape.
+    const a = await fetch(`http://localhost:${identity.port}/__mv/id/finish`)
+    const b = await fetch(`http://localhost:${identity.port}/__mv/id/finish#anything-at-all`)
+    expect(a.status).toBe(200)
+    const [ha, hb] = [await a.text(), await b.text()]
+    expect(ha).toBe(hb)
+    expect(bundleServed(ha)).toBe(false)
+    // It posts the assertion to our own origin - never anywhere else.
+    expect(ha).toContain("fetch('/__mv/id/callback'")
+    expect(ha).not.toContain('https://')
+    // And it names the refusal a person is most likely to hit.
+    expect(ha).toContain('has not been invited')
+  })
+
+  it('identity mode: /finish is never cached and never leaks a referrer', async () => {
+    // A cached finish page would replay somebody else's sign-in screen, and a
+    // referrer would carry this canvas's address to wherever they click next.
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/finish`)
+    expect(res.headers.get('cache-control')).toContain('no-store')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+  })
+
+  it('password mode: /finish does not exist - a path is never open wider than the feature', async () => {
+    const res = await fetch(`http://localhost:${password.port}/__mv/id/finish`)
+    const html = await res.text()
+    expect(bundleServed(html)).toBe(false)
+    expect(html).toContain('name="password"')
+  })
+
+  it('identity mode: /start is never cached - a cached redirect is a spent nonce', async () => {
+    const res = await fetch(`http://localhost:${identity.port}/__mv/id/start`, { redirect: 'manual' })
+    expect(res.headers.get('cache-control')).toContain('no-store')
   })
 
   // ---- raw-socket tests last, deliberately ----
@@ -477,10 +546,7 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
     // Either the canvas refuses to guess, or it names itself - never the
     // attacker's host. Both outcomes are safe; naming evil.example.com is not.
     expect(res.body).not.toContain('evil.example.com')
-    if (res.status === 200) {
-      const { authorize } = JSON.parse(res.body) as { authorize: string }
-      expect(new URL(authorize).searchParams.get('origin')).not.toContain('evil')
-    }
+    expect(String(res.headers.location ?? '')).not.toContain('evil.example.com')
   })
 
   it('identity mode: forwarded headers cannot change the audience', async () => {
@@ -488,11 +554,10 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
       'x-forwarded-host': 'attacker.test',
       'x-forwarded-proto': 'https',
     })
-    expect(res.status).toBe(200)
-    const { authorize } = JSON.parse(res.body) as { authorize: string }
+    expect(res.status).toBe(302)
     // The origin is this canvas on the port we actually reached it on - whichever
     // loopback spelling the client used - and never anything a caller asserted.
-    const named = new URL(authorize).searchParams.get('origin')!
+    const named = new URL(String(res.headers.location)).searchParams.get('origin')!
     expect(named).toMatch(new RegExp(`^http://(localhost|127\\.0\\.0\\.1):${identity.port}$`))
     expect(res.body).not.toContain('attacker.test')
   })

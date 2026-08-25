@@ -1,20 +1,35 @@
 /**
- * The two endpoints that bracket a Marver ID sign-in.
+ * The three endpoints that bracket a Marver ID sign-in.
  *
- *   GET  /__mv/id/start     "I am about to open the popup" - mints a nonce,
- *                           bound to this browser, and hands back the URL.
- *   POST /__mv/id/callback  "here is what the popup gave me" - verifies it
- *                           server-side and, if the owner invited this address,
- *                           issues an ordinary canvas session.
+ *   GET  /__mv/id/start     mints a nonce bound to this browser, then sends the
+ *                           tab to the identity service. A plain redirect - no
+ *                           JavaScript is involved in leaving.
+ *   GET  /__mv/id/finish    where the identity service sends the tab back, with
+ *                           the assertion in the URL FRAGMENT. Reads it, hands
+ *                           it to the callback, and shows what happened.
+ *   POST /__mv/id/callback  verifies the assertion server-side and, if the owner
+ *                           invited this address, issues a canvas session.
  *
- * The important architectural choice is the last line: a Marver ID sign-in ends
- * with the SAME `mv_s` session cookie that a password sign-in produces. Nothing
- * downstream - the gate, the comment API, the event stream - learns that a new
- * kind of login exists. One session concept, one place to revoke it.
+ * This used to be a popup that handed the assertion back by postMessage. That
+ * design is dead on arrival for social sign-in: Google serves
+ * `Cross-Origin-Opener-Policy: same-origin`, which permanently severs the
+ * popup's `window.opener` - and it does not come back when the popup returns to
+ * our origin. Microsoft and Apple do the same. So the whole flow now happens in
+ * ONE tab, and nothing depends on two windows being able to talk. It also fixes
+ * popup blockers and mobile, where popups were never good.
  *
- * The assertion never touches the browser's storage. It arrives by postMessage,
- * is POSTed straight here, and is consumed. Authored frames run same-origin in
- * this canvas, so anything left in localStorage would be readable by them.
+ * The assertion rides in the fragment on the way back, which is the one part of
+ * a URL a browser never sends to a server: it stays out of this canvas's access
+ * logs and out of any `Referer`.
+ *
+ * The important architectural choice is unchanged: a Marver ID sign-in ends with
+ * the SAME `mv_s` session cookie a password sign-in produces. Nothing downstream
+ * - the gate, the comment API, the event stream - learns that a new kind of
+ * login exists. One session concept, one place to revoke it.
+ *
+ * The assertion never touches the browser's storage. It is read from the
+ * fragment, POSTed straight here, and consumed. Authored frames run same-origin
+ * in this canvas, so anything left in localStorage would be readable by them.
  */
 import { randomBytes } from 'node:crypto'
 import { provisionFromMarverId } from './auth.ts'
@@ -98,8 +113,27 @@ export function marverIdHandler(dir: string, issuer: string) {
       const tx = transactions.mint(origin, browserBinding(browserId))
       const authorize = `${issuer}/authorize?origin=${encodeURIComponent(origin)}&nonce=${encodeURIComponent(tx.nonce)}`
 
+      // A redirect, not JSON. The gate's Continue is an ordinary form submit, so
+      // leaving this canvas needs no JavaScript at all and cannot be blocked.
       if (headers.length) res.setHeader('set-cookie', headers)
-      return json(res, 200, { authorize, issuer })
+      res.statusCode = 302
+      res.setHeader('location', authorize)
+      // Minting is per-request; a cached redirect would hand somebody a spent nonce.
+      res.setHeader('cache-control', 'no-store')
+      res.end()
+      return true
+    }
+
+    if (req.method === 'GET' && url.pathname === '/__mv/id/finish') {
+      // Where the identity service sends the tab back. The assertion is in the
+      // fragment, which never reached this server - so this page is the same
+      // fixed bytes for everyone, and the work happens in the browser.
+      res.statusCode = 200
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.setHeader('cache-control', 'no-store')
+      res.setHeader('referrer-policy', 'no-referrer')
+      res.end(finishPage())
+      return true
     }
 
     if (req.method === 'POST' && url.pathname === '/__mv/id/callback') {
@@ -187,6 +221,72 @@ function localOrigin(req: any): string | null {
   return /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/.test(host)
     ? `http://${host}`
     : null
+}
+
+/**
+ * The page the identity service sends the tab back to.
+ *
+ * Fixed bytes for everyone: the assertion is in the fragment, which the browser
+ * never sent here, so there is nothing to template and nothing to escape. The
+ * script reads it, wipes it out of the address bar before doing anything else -
+ * so it cannot be left behind in history or read off the screen - and hands it
+ * to the callback over a SAME-ORIGIN POST, which is what keeps the browser
+ * handle cookie flowing under SameSite=Lax.
+ *
+ * A refusal is shown HERE rather than bounced back to the gate, because this is
+ * the page somebody is looking at. Being told "that account was not invited" on
+ * the screen in front of you beats being returned to a form that silently
+ * refuses to move.
+ */
+function finishPage(): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Signing in - Marver</title>
+<style>
+  :root { color-scheme: light dark }
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         font:15px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+         background:#fff; color:#111 }
+  @media (prefers-color-scheme: dark) { body { background:#0a0a0a; color:#f5f5f5 } }
+  .card { width:min(380px,88vw); text-align:center }
+  h1 { font-size:17px; font-weight:600; margin:0 0 6px; letter-spacing:-.01em }
+  p { margin:0; color:#666 }
+  @media (prefers-color-scheme: dark) { p { color:#a3a3a3 } }
+  a { display:inline-block; margin-top:18px; color:inherit; font-weight:500 }
+</style></head>
+<body><div class="card">
+  <h1 id="t">Signing you in...</h1>
+  <p id="m"></p>
+  <a id="back" href="/" hidden>Back to the canvas</a>
+</div>
+<script>
+(function () {
+  var t = document.getElementById('t'), m = document.getElementById('m'), back = document.getElementById('back')
+  function stop(title, msg) { t.textContent = title; m.textContent = msg; back.hidden = false }
+
+  // Take it, then erase it - before any await, so a slow network cannot leave
+  // the assertion sitting in the address bar.
+  var assertion = location.hash.replace(/^#/, '')
+  try { history.replaceState(null, '', location.pathname) } catch (e) {}
+
+  if (!assertion) return stop('Nothing to sign in with', 'That link is incomplete. Start again from the canvas.')
+
+  fetch('/__mv/id/callback', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ assertion: assertion })
+  }).then(function (res) {
+    if (res.ok) { location.replace('/'); return }
+    if (res.status === 403) return stop('Not invited yet', 'That account has not been invited to this canvas. Ask whoever owns it to add your address.')
+    stop('That sign-in did not work', 'Start again from the canvas, or try a different account.')
+  }).catch(function () {
+    stop('Could not reach the canvas', 'It may have stopped. Try again in a moment.')
+  })
+})()
+</script>
+</body></html>`
 }
 
 function json(res: any, status: number, body: unknown): boolean {
