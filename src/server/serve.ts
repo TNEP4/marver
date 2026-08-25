@@ -492,7 +492,11 @@ function cliApprovalPage(meta: { name: string; branding: boolean }, code: string
     go.disabled = true
     go.textContent = 'Approving...'
     // The double-submit half, read from the cookie the session was issued with.
-    var m = /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)
+    // Doubled on purpose: this lives inside a template literal, so a single
+    // backslash is eaten before the browser ever sees it and \\w quietly becomes
+    // a literal "w". That is not a syntax error anywhere - the page loads, the
+    // regex matches nothing, no x-mv-c is sent, and every approval 403s.
+    var m = /(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie)
     fetch('/__mv/api/cli/approve', {
       method: 'POST',
       headers: Object.assign({ 'content-type': 'application/json' }, m ? { 'x-mv-c': m[1] } : {}),
