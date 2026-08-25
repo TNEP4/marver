@@ -68,6 +68,20 @@ export type VerifiedIdentity = {
   /** Stable id from the identity service. Grants bind to this, not to email. */
   subject: string
   email: string
+  /**
+   * Display only, and never load-bearing.
+   *
+   * Both are self-asserted at the identity service - somebody's name is whatever
+   * they told Google - so nothing may branch on them. They exist so a canvas can
+   * render a person the way they recognise themselves instead of slicing their
+   * address at the @.
+   *
+   * `picture` is a URL that has been checked for shape and scheme here and
+   * NOTHING else. Whether to fetch it, and how to survive doing so, is the
+   * caller's problem - see fetchAvatar in auth.ts.
+   */
+  name?: string
+  picture?: string
 }
 
 export type VerifyResult =
@@ -383,7 +397,7 @@ export async function verifyAssertion(opts: {
   }
   if (!verified) return { ok: false, reason: 'signature' }
 
-  return { ok: true, identity: { subject: sub, email } }
+  return { ok: true, identity: { subject: sub, email, ...displayClaims(claims) } }
 }
 
 async function verifySignature(parts: string[], kid: string, issuer: string): Promise<boolean> {
@@ -421,6 +435,36 @@ async function verifySignature(parts: string[], kid: string, issuer: string): Pr
   v.update(`${parts[0]}.${parts[1]}`)
   v.end()
   return v.verify({ key, dsaEncoding: 'ieee-p1363' }, signature)
+}
+
+/**
+ * The optional display claims, taken only if they are the right shape.
+ *
+ * Deliberately forgiving: a malformed name or picture drops that ONE field and
+ * lets the sign-in through, because neither decides anything. Refusing a valid
+ * assertion over a bad avatar URL would trade a cosmetic problem for a lockout.
+ *
+ * The bounds are what stop this being a hole. A name is capped so it cannot be
+ * used to write a paragraph into somebody's comment sidebar, and control
+ * characters go because that is how a value gets smuggled into a log line. A
+ * picture must be https and bounded - the canvas will make a server-side request
+ * to whatever survives this, so http, data:, file: and friends never get that
+ * far.
+ */
+function displayClaims(claims: Record<string, unknown>): { name?: string; picture?: string } {
+  const out: { name?: string; picture?: string } = {}
+
+  const raw = typeof claims.name === 'string' ? claims.name : ''
+  const name = raw.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80)
+  if (name) out.name = name
+
+  if (typeof claims.picture === 'string' && claims.picture.length <= 2048) {
+    try {
+      const u = new URL(claims.picture)
+      if (u.protocol === 'https:' && !u.username && !u.password) out.picture = u.toString()
+    } catch { /* not a URL - no picture, and no failure */ }
+  }
+  return out
 }
 
 /** A JSON object, and not an array or null - both of which pass `typeof === 'object'`. */

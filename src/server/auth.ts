@@ -38,6 +38,9 @@ export interface User {
   /** `<issuer>#<subject>` from the identity service - qualified so a canvas
    *  repointed at a different service cannot bind a colliding subject. */
   idSubject?: string
+  /** The picture URL this account's avatar was fetched FROM. Kept so a rotated
+   *  URL can be noticed and re-fetched, and so we never fetch the same one twice. */
+  avatarSource?: string
   createdAt: number
 }
 interface Invite { emailNorm: string; tokenHash: string; exp: number }
@@ -212,7 +215,18 @@ export function signIn(dir: string, email: string, password: string): { user: Us
  */
 export function provisionFromMarverId(
   dir: string,
-  identity: { email: string; subject: string; issuer: string },
+  identity: {
+    email: string; subject: string; issuer: string
+    /** Display name from the assertion, already bounded by the verifier. */
+    name?: string
+    /** A data URI, already FETCHED by the caller. Never a URL - the network call
+     *  must not happen in here, because everything below runs inside the store
+     *  lock and a lock held across a network round trip is a lock held for as
+     *  long as somebody else's CDN feels like taking. */
+    avatar?: string
+    /** The URL that avatar came from, recorded so it is not re-fetched. */
+    avatarSource?: string
+  },
   opts: { ownerEmail?: string } = {},
 ): { user: User; session: string } | null {
   const emailNorm = normEmail(identity.email)
@@ -310,19 +324,58 @@ export function provisionFromMarverId(
     } else {
       user = {
         email: emailNorm,
-        name: emailNorm.split('@')[0] ?? emailNorm,
+        // Their actual name when the assertion carries one. The address sliced
+        // at the @ is the fallback, not the intent: it produced "nicolas.t.touron"
+        // on every comment for somebody the consent card had just greeted by name.
+        name: identity.name || emailNorm.split('@')[0] || emailNorm,
         role: store.users.length ? 'member' : 'owner',
         auth: 'marver-id',
         idSubject: `${identity.issuer}#${identity.subject}`,
+        ...(identity.avatar ? { avatar: identity.avatar } : {}),
+        ...(identity.avatarSource ? { avatarSource: identity.avatarSource } : {}),
         createdAt: Date.now(),
       }
       store.users.push(user)
+    }
+
+    // Fill what is missing; never overwrite what they set HERE.
+    //
+    // A canvas profile is editable, and somebody who renamed themselves or
+    // picked a different picture on this canvas meant it. So the assertion is
+    // treated as a source for gaps rather than as the truth every sign-in
+    // reasserts - otherwise every visit would quietly undo their edit.
+    //
+    // The exception is the email-derived placeholder: an account created before
+    // assertions carried names is sitting on a fallback nobody chose, and the
+    // real name is strictly better.
+    if (identity.name && (!user.name || user.name === emailNorm.split('@')[0])) {
+      user.name = identity.name
+    }
+    if (identity.avatar && !user.avatar) {
+      user.avatar = identity.avatar
+      user.avatarSource = identity.avatarSource
     }
 
     const session = pushSession(store, user)
     saveStore(dir, store)
     return { user, session }
   })
+}
+
+/**
+ * Would a picture from the identity service actually be used?
+ *
+ * Read-only and outside the lock, so the gate can decide whether a network
+ * fetch is worth making before it commits to one. Worst case it is wrong and we
+ * fetch a picture that then gets discarded - which costs one request, versus
+ * fetching an avatar on every single sign-in forever.
+ */
+export function wantsAvatarFrom(dir: string, subjectQualified: string, email: string, pictureUrl: string): boolean {
+  const store = loadStore(dir)
+  const user = store.users.find((u) => u.idSubject === subjectQualified) ?? findUser(store, normEmail(email))
+  if (!user) return true                       // new account - it has no picture yet
+  if (!user.avatar) return true                // has none, and one is on offer
+  return user.avatarSource !== undefined && user.avatarSource !== pictureUrl
 }
 
 function pushSession(store: Store, user: User): string {

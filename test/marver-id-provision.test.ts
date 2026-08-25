@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { scryptSync } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn } from '../src/server/auth.ts'
+import { claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
 
 /**
  * Provisioning: turning a proved identity into local access.
@@ -361,5 +361,81 @@ describe('an auth.json written by an older marver', () => {
 
     // And a DIFFERENT identity claiming that address is still refused.
     expect(provisionFromMarverId(dir, identity('old@x.test', 'someone-else'))).toBeNull()
+  })
+})
+
+
+/**
+ * The name and the face - the whole point, from the person's side.
+ *
+ * The consent card greets somebody as "Nicolas Touron" with their photo, and
+ * one redirect later the canvas called them "nicolas.t.touron" against a
+ * generated chip, because the assertion carried neither. These cover the rule
+ * that fixed it: the assertion FILLS gaps and never overwrites a choice made
+ * here, because a canvas profile is editable and somebody who renamed
+ * themselves meant it.
+ */
+describe('display name and picture from the assertion', () => {
+  const AVATAR = 'data:image/png;base64,iVBORw0KGgo='
+
+  it('names a new account the way the person is actually called', () => {
+    invite('nic@x.test')
+    const hit = provisionFromMarverId(dir, { ...identity('nic@x.test', 's1'), name: 'Nicolas Touron' })
+    expect(hit!.user.name, 'not the address sliced at the @').toBe('Nicolas Touron')
+  })
+
+  it('falls back to the address when the assertion carries no name', () => {
+    invite('nic@x.test')
+    const hit = provisionFromMarverId(dir, identity('nic@x.test', 's1'))
+    expect(hit!.user.name).toBe('nic')
+  })
+
+  it('stores the picture the caller fetched, and remembers where it came from', () => {
+    invite('nic@x.test')
+    const hit = provisionFromMarverId(dir, {
+      ...identity('nic@x.test', 's1'),
+      avatar: AVATAR, avatarSource: 'https://cdn.example/a.png',
+    })
+    expect(hit!.user.avatar).toBe(AVATAR)
+    expect(hit!.user.avatarSource, 'so a rotated URL can be noticed').toBe('https://cdn.example/a.png')
+  })
+
+  it('never overwrites a name or picture chosen ON this canvas', () => {
+    invite('nic@x.test')
+    provisionFromMarverId(dir, { ...identity('nic@x.test', 's1'), name: 'Nicolas Touron' })
+    updateProfile(dir, 'nic@x.test', { name: 'Nic (design)', avatar: 'data:image/png;base64,CHOSEN=' })
+
+    // Signing in again must not quietly undo that edit.
+    const again = provisionFromMarverId(dir, {
+      ...identity('nic@x.test', 's1'),
+      name: 'Nicolas Touron', avatar: AVATAR, avatarSource: 'https://cdn.example/a.png',
+    })
+    expect(again!.user.name, 'their edit stands').toBe('Nic (design)')
+    expect(again!.user.avatar).toBe('data:image/png;base64,CHOSEN=')
+  })
+
+  it('upgrades an account still sitting on the email-derived placeholder', () => {
+    // Created before assertions carried names, so its name is a fallback
+    // nobody chose - the real one is strictly better.
+    invite('nic@x.test')
+    const first = provisionFromMarverId(dir, identity('nic@x.test', 's1'))
+    expect(first!.user.name).toBe('nic')
+
+    const second = provisionFromMarverId(dir, { ...identity('nic@x.test', 's1'), name: 'Nicolas Touron' })
+    expect(second!.user.name).toBe('Nicolas Touron')
+  })
+
+  it('only asks for a picture when one would actually be used', () => {
+    invite('nic@x.test')
+    const qualified = `${ISSUER}#s1`
+    const url = 'https://cdn.example/a.png'
+
+    expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'no account yet').toBe(true)
+
+    provisionFromMarverId(dir, {
+      ...identity('nic@x.test', 's1'), avatar: AVATAR, avatarSource: url,
+    })
+    expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'already have this one').toBe(false)
+    expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/b.png'), 'rotated').toBe(true)
   })
 })
