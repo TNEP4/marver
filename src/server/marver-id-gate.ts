@@ -460,7 +460,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
     <p class="lead" id="m2" hidden></p>
     <a class="cta" id="back" href="/" data-switch="${esc(switchUrl)}" hidden>Use a different account</a>
   </div>
-  ${branding ? `<footer><a href="${poweredByUrl(canvasName, 'published-canvas', 'sign-in')}" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> ${ARROW}</a></footer>` : ''}
+  ${branding ? `<footer id="mark" hidden><a href="${poweredByUrl(canvasName, 'published-canvas', 'sign-in')}" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> ${ARROW}</a></footer>` : ''}
 <script>
 (function () {
   var s = document.getElementById('s'), m = document.getElementById('m'), back = document.getElementById('back')
@@ -482,8 +482,21 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
    */
   var slow = setTimeout(function () { wait.hidden = false }, 1500)
 
-  /** Stop waiting and show the card - only ever for something worth reading. */
-  function speak() { clearTimeout(slow); wait.hidden = true; card.hidden = false }
+  /**
+   * Stop waiting and show the card - only ever for something worth reading.
+   *
+   * The badge belongs to the CARD, not to the page. Left outside the hidden
+   * card it sat by itself in the middle of an empty ground on every successful
+   * sign-in - which is the same flash the card used to be, wearing a smaller
+   * hat. Nothing is on screen until there is something to say.
+   */
+  var mark = document.getElementById('mark')
+  function speak() {
+    clearTimeout(slow)
+    wait.hidden = true
+    card.hidden = false
+    if (mark) mark.hidden = false
+  }
   /**
    * State, what happened, and - separately - what to do about it.
    *

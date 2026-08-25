@@ -263,11 +263,36 @@ describe('the pages a person clicks, in a real browser', () => {
       JSON.stringify({
         spinner: !document.getElementById('wait').hidden,
         card: !document.getElementById('card').hidden,
+        // Anything at all that a person would SEE. The badge lived outside the
+        // card, so hiding the card left it sitting alone in the middle of an
+        // empty ground - the same flash, wearing a smaller hat.
+        visible: [...document.body.children]
+          .filter(function (el) { return !el.hidden && el.tagName !== 'SCRIPT' })
+          .map(function (el) { return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') }),
       })
     `)
-    const { spinner, card } = JSON.parse(state)
+    const { spinner, card, visible } = JSON.parse(state)
     expect(spinner, 'no spinner on a path that resolves instantly').toBe(false)
     expect(card, 'but the card, because there IS something to say').toBe(true)
+    // With the card up, the badge belongs with it.
+    expect(visible).toContain('footer#mark')
+  }, 60_000)
+
+  it('nothing is on screen until there is something to say', async () => {
+    // The success path never calls speak(), so this is what a person sees for
+    // the whole of a fast sign-in: the dotted ground, and nothing on it. The
+    // badge in particular must not be sitting there alone - that was the flash
+    // the card used to be, wearing a smaller hat.
+    const { session } = await browser!.tab()
+    await browser!.send('Page.navigate', { url: `${idBase}/__mv/id/finish#pretend-assertion` }, session)
+    // Read it IMMEDIATELY - before the callback resolves and paints a refusal.
+    const visible = await browser!.eval(session, `
+      [...document.body.children]
+        .filter(function (el) { return !el.hidden && el.tagName !== 'SCRIPT' })
+        .map(function (el) { return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') })
+        .join(',')
+    `).catch(() => '')
+    expect(visible, `something was on screen: ${visible}`).toBe('')
   }, 60_000)
 
   it('the approval page does NOT claim success when nobody is signed in', async () => {
