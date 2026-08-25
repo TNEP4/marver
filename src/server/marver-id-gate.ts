@@ -32,7 +32,7 @@
  * in this canvas, so anything left in localStorage would be readable by them.
  */
 import { randomBytes } from 'node:crypto'
-import { attachAvatar, provisionFromMarverId, wantsAvatarFrom } from './auth.ts'
+import { attachAvatar, avatarSourceFor, provisionFromMarverId } from './auth.ts'
 import { fetchAvatar } from './avatar.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
 import { poweredByUrl } from '../shared/utm.ts'
@@ -319,9 +319,15 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       // Best-effort to the end: a picture is decoration, and somebody who is
       // already through the door is not turned around over one.
       const picture = result.identity.picture
-      if (picture && wantsAvatarFrom(dir, `${issuer}#${result.identity.subject}`, result.identity.email, picture)) {
-        const avatar = await fetchAvatar(picture)
-        if (avatar) attachAvatar(dir, `${issuer}#${result.identity.subject}`, avatar, picture)
+      const qualified = `${issuer}#${result.identity.subject}`
+      if (picture) {
+        // Read what is stored BEFORE fetching, and hand it back afterwards, so
+        // the write can tell whether anything moved while the network was busy.
+        const before = avatarSourceFor(dir, qualified, result.identity.email, picture)
+        if (before.wanted) {
+          const avatar = await fetchAvatar(picture)
+          if (avatar) attachAvatar(dir, qualified, avatar, picture, before.source)
+        }
       }
 
       res.setHeader('set-cookie', [

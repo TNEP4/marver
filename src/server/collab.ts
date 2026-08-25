@@ -197,7 +197,11 @@ export function collabHandler(dataDir: string, distDir: string) {
   const MAX_POLLS = 400
   /** No I, O, 0 or 1 - these get read aloud and typed by hand. */
   const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  type Pending = { userCode: string; exp: number; approvedFor?: string; ip: string; polls: number }
+  type Pending = {
+    userCode: string; exp: number; ip: string; polls: number
+    /** Who approved it: the address, AND the identity behind it if there is one. */
+    approvedFor?: { email: string; idSubject?: string }
+  }
   const pending = new Map<string, Pending>()
 
   const userCode = (): string => {
@@ -428,7 +432,15 @@ export function collabHandler(dataDir: string, distDir: string) {
         // replaced the first - both browsers told "approved", and the terminal
         // handed whichever session arrived last.
         if (hit[1].approvedFor) return json(res, 409, { error: 'that code has already been approved' }), true
-        hit[1].approvedFor = u.email
+        // Both, because the address alone is not stable.
+        //
+        // A device code lives ten minutes, and an identity account can change
+        // its address in that window - at which point another admitted account
+        // can be given the address it left. Redeeming by email alone would then
+        // hand the terminal that other person's session. Recording the subject
+        // as well makes the redemption checkable: a password account has no
+        // subject and cannot rename, so for those the address IS the identity.
+        hit[1].approvedFor = { email: u.email, idSubject: u.idSubject }
         return json(res, 200, { user: publicUser(u) }), true
       }
 
@@ -452,8 +464,10 @@ export function collabHandler(dataDir: string, distDir: string) {
         // Redeemed exactly once: the code is spent whether or not the CLI
         // manages to store what comes back.
         pending.delete(deviceCode)
-        const issued = issueSession(dataDir, entry.approvedFor)
-        if (!issued) return json(res, 410, { error: 'that account no longer exists' }), true
+        const issued = issueSession(dataDir, entry.approvedFor.email, entry.approvedFor.idSubject)
+        if (!issued) {
+          return json(res, 410, { error: 'that account is no longer the one that approved this' }), true
+        }
         return json(res, 200, { token: issued.session, user: publicUser(issued.user) }), true
       }
 

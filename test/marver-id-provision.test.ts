@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { scryptSync } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { attachAvatar, claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
+import { attachAvatar, claimInvite, createInvite, issueSession, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
 
 /**
  * Provisioning: turning a proved identity into local access.
@@ -393,7 +393,7 @@ describe('display name and picture from the assertion', () => {
   it('attaches the picture the caller fetched, and remembers where it came from', () => {
     invite('nic@x.test')
     provisionFromMarverId(dir, identity('nic@x.test', 's1'))
-    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/a.png')
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/a.png', undefined)
 
     const u = loadStore(dir).users[0]!
     expect(u.avatar).toBe(AVATAR)
@@ -407,8 +407,8 @@ describe('display name and picture from the assertion', () => {
     // Ours, then rotated: the new one wins, and the source catches up. An
     // earlier version refused the replacement, so the source never advanced and
     // every sign-in re-fetched the same new picture and discarded it.
-    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/a.png')
-    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,ROTATED=', 'https://cdn.example/b.png')
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/a.png', undefined)
+    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,ROTATED=', 'https://cdn.example/b.png', 'https://cdn.example/a.png')
     let u = loadStore(dir).users[0]!
     expect(u.avatar).toBe('data:image/png;base64,ROTATED=')
     expect(u.avatarSource).toBe('https://cdn.example/b.png')
@@ -416,7 +416,7 @@ describe('display name and picture from the assertion', () => {
     // Theirs: an avatar with no source was chosen on this canvas, and the
     // identity service does not get to overwrite it.
     updateProfile(dir, 'nic@x.test', { avatar: 'data:image/png;base64,CHOSEN=' })
-    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/c.png')
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, 'https://cdn.example/c.png', undefined)
     u = loadStore(dir).users[0]!
     expect(u.avatar, 'their choice stands').toBe('data:image/png;base64,CHOSEN=')
   })
@@ -459,7 +459,7 @@ describe('display name and picture from the assertion', () => {
     provisionFromMarverId(dir, identity('first@x.test', 'subj-c'));
 
     // The fetch that started before all that now lands, carrying subj-a.
-    attachAvatar(dir, `${ISSUER}#subj-a`, 'data:image/png;base64,AVATARA=', 'https://cdn.example/a.png')
+    attachAvatar(dir, `${ISSUER}#subj-a`, 'data:image/png;base64,AVATARA=', 'https://cdn.example/a.png', undefined)
 
     const users = loadStore(dir).users
     const moved = users.find((u) => u.idSubject === `${ISSUER}#subj-a`)!
@@ -469,16 +469,25 @@ describe('display name and picture from the assertion', () => {
   })
 
   it('does not let a slower fetch overwrite a newer picture', () => {
-    // Two sign-ins in flight. The second finishes first and stores B; the
-    // first then lands with A, which is now stale.
+    // Two sign-ins in flight, both starting from an account with no avatar.
+    // The SECOND finishes first and stores B. The first then lands with A,
+    // which is now stale - and must lose.
+    //
+    // The earlier version of this test called B twice, which exercised no
+    // stale write at all. The guard it was meant to cover asked "is the stored
+    // source different from mine", and a stale A IS different from B, so A
+    // overwrote the newer picture every time. Comparing against what each
+    // fetch SAW when it started is what actually settles the order.
     invite('nic@x.test')
     provisionFromMarverId(dir, identity('nic@x.test', 's1'))
-    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,B=', 'https://cdn.example/b.png')
-    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,B=', 'https://cdn.example/b.png')
+
+    const bothSawNothing = undefined
+    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,B=', 'https://cdn.example/b.png', bothSawNothing)
+    attachAvatar(dir, `${ISSUER}#s1`, 'data:image/png;base64,A=', 'https://cdn.example/a.png', bothSawNothing)
 
     const u = loadStore(dir).users[0]!
-    expect(u.avatarSource, 'the same source twice is a no-op, not a rewrite').toBe('https://cdn.example/b.png')
-    expect(u.avatar).toBe('data:image/png;base64,B=')
+    expect(u.avatar, 'the newer picture stands').toBe('data:image/png;base64,B=')
+    expect(u.avatarSource).toBe('https://cdn.example/b.png')
   })
 
   it('only asks for a picture when one would actually be used', () => {
@@ -489,12 +498,57 @@ describe('display name and picture from the assertion', () => {
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'no account yet').toBe(true)
 
     provisionFromMarverId(dir, identity('nic@x.test', 's1'))
-    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, url)
+    attachAvatar(dir, `${ISSUER}#s1`, AVATAR, url, undefined)
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', url), 'already have this one').toBe(false)
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/b.png'), 'rotated').toBe(true)
 
     // And an avatar the person chose here is never worth fetching over.
     updateProfile(dir, 'nic@x.test', { avatar: 'data:image/png;base64,MINE=' })
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/d.png'), 'theirs').toBe(false)
+  })
+})
+
+
+/**
+ * Redeeming a device approval, when the account underneath has moved.
+ *
+ * A device code lives ten minutes. An identity account can change its address
+ * inside that window, and the address it leaves can be given to somebody else -
+ * so a redemption that resolves by email alone hands the waiting terminal the
+ * wrong person's session.
+ */
+describe('issuing a session for an approved terminal', () => {
+  it('follows the identity that approved, not the address it used', () => {
+    invite('first@x.test')
+    provisionFromMarverId(dir, identity('first@x.test', 'subj-a'))
+
+    // Approved as first@x.test, subject subj-a. Then they rename...
+    provisionFromMarverId(dir, identity('moved@x.test', 'subj-a'))
+    // ...and somebody else is admitted on the address they left.
+    invite('first@x.test')
+    provisionFromMarverId(dir, identity('first@x.test', 'subj-c'))
+
+    const issued = issueSession(dir, 'first@x.test', `${ISSUER}#subj-a`)
+    expect(issued, 'the approver still exists').not.toBeNull()
+    expect(issued!.user.email, 'and it is them, at their new address').toBe('moved@x.test')
+    expect(issued!.user.idSubject).toBe(`${ISSUER}#subj-a`)
+  })
+
+  it('refuses when the approving identity is gone', () => {
+    invite('a@x.test')
+    provisionFromMarverId(dir, identity('a@x.test', 'subj-a'))
+    expect(issueSession(dir, 'a@x.test', `${ISSUER}#vanished`)).toBeNull()
+  })
+
+  it('will not hand a password approval to an account that has since gained an identity', () => {
+    // A password account approved a terminal. Before it was redeemed, that
+    // address became an identity account - which is a different thing, and not
+    // what was approved.
+    const { token } = createInvite(dir, 'pw@x.test')
+    claimInvite(dir, token, { password: 'correct-horse-battery', name: 'PW' })
+    expect(issueSession(dir, 'pw@x.test'), 'a plain password approval works').not.toBeNull()
+
+    provisionFromMarverId(dir, identity('pw@x.test', 'subj-new'))
+    expect(issueSession(dir, 'pw@x.test'), 'but not once it is an identity account').toBeNull()
   })
 })

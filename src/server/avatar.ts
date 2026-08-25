@@ -111,9 +111,10 @@ function isPublicAddress(addr: string): boolean {
      * nothing real, because an avatar host that matters has a AAAA record.
      */
     if ((p[0]! & 0xe000) !== 0x2000) return false
-    if (p[0] === 0x2001 && p[1]! < 0x0200) return false
-    if (p[0] === 0x2001 && p[1] === 0x0db8) return false
-    if (p[0] === 0x2002) return false
+    if (p[0] === 0x2001 && p[1]! < 0x0200) return false        // IETF protocol assignments
+    if (p[0] === 0x2001 && p[1] === 0x0db8) return false       // documentation
+    if (p[0] === 0x2002) return false                          // 6to4, embeds IPv4
+    if (p[0]! >= 0x3fff && p[0]! <= 0x3fff) return false       // documentation, RFC 9637
     return true
   }
 
@@ -126,8 +127,14 @@ function isPublicAddress(addr: string): boolean {
   if (a === 192 && b === 168) return false                     // private
   if (a === 169 && b === 254) return false                     // link-local, and cloud metadata
   if (a === 100 && b >= 64 && b <= 127) return false           // carrier-grade NAT
-  if (a === 192 && b === 0) return false                       // IETF protocol assignments
+  if (a === 192 && b === 0) return false                       // 192.0.0.0/24 protocol
+                                                               // assignments and 192.0.2.0/24
+                                                               // TEST-NET-1; /16 is broader than
+                                                               // either, and the rest of it is
+                                                               // reserved anyway
   if (a === 198 && (b === 18 || b === 19)) return false         // benchmarking
+  if (a === 198 && b === 51 && q[2] === 100) return false       // TEST-NET-2
+  if (a === 203 && b === 0 && q[2] === 113) return false        // TEST-NET-3
   if (a >= 224) return false                                   // multicast and reserved
   return true
 }

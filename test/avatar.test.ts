@@ -55,6 +55,10 @@ describe('the address rule', () => {
       '2001:db8::1',                    // documentation
       '2001::1', '2001:2::1', '2001:10::1', // Teredo, benchmarking, ORCHID
       '2002:0a00:0001::1',              // 6to4 carrying 10.0.0.1
+      '3fff::1', '3fff:ffff::1',        // documentation, RFC 9637
+      '192.0.2.1',                      // TEST-NET-1
+      '198.51.100.1',                   // TEST-NET-2
+      '203.0.113.1',                    // TEST-NET-3
     ]) {
       expect(_isPublicAddress(addr), `${addr} must be refused`).toBe(false)
     }

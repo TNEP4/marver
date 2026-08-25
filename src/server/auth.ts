@@ -364,7 +364,14 @@ export function provisionFromMarverId(
  * meant the stored source never caught up with the assertion, so every single
  * sign-in fetched the new picture and then threw it away.
  */
-export function attachAvatar(dir: string, subjectQualified: string, avatar: string, source: string): void {
+export function attachAvatar(
+  dir: string,
+  subjectQualified: string,
+  avatar: string,
+  source: string,
+  /** What the stored source was when this fetch STARTED. See below. */
+  expected: string | undefined,
+): void {
   withLock(dir, () => {
     const store = loadStore(dir)
     // By SUBJECT, not by email.
@@ -378,10 +385,16 @@ export function attachAvatar(dir: string, subjectQualified: string, avatar: stri
     if (!user) return
     if (user.avatar && !user.avatarSource) return      // theirs, not ours
 
-    // Re-checked under the lock, because two sign-ins can be in flight at once
-    // and the slower fetch must not win. If the stored source already matches,
-    // somebody got here first with the same picture and there is nothing to do.
-    if (user.avatarSource === source) return
+    // Compare and swap, not "is it different".
+    //
+    // Two sign-ins can be in flight at once, and the slower one must not win.
+    // Asking whether the stored source differs from ours does not achieve that:
+    // if B lands first and a stale A arrives afterwards, A differs from B, so A
+    // happily overwrites the newer picture. What has to hold is that nothing
+    // changed underneath us - the stored source is still the one this fetch set
+    // out to replace. Anything else means somebody got there first, and the
+    // right move is to do nothing.
+    if (user.avatarSource !== expected) return
 
     user.avatar = avatar
     user.avatarSource = source
@@ -397,14 +410,30 @@ export function attachAvatar(dir: string, subjectQualified: string, avatar: stri
  * fetch a picture that then gets discarded - which costs one request, versus
  * fetching an avatar on every single sign-in forever.
  */
-export function wantsAvatarFrom(dir: string, subjectQualified: string, email: string, pictureUrl: string): boolean {
+export function avatarSourceFor(
+  dir: string,
+  subjectQualified: string,
+  email: string,
+  pictureUrl?: string,
+): { wanted: boolean; source: string | undefined } {
   const store = loadStore(dir)
   const user = store.users.find((u) => u.idSubject === subjectQualified) ?? findUser(store, normEmail(email))
-  if (!user) return true                       // new account - it has no picture yet
-  if (!user.avatar) return true                // has none, and one is on offer
-  // Theirs, chosen here: never replaced, so never worth fetching.
-  if (!user.avatarSource) return false
-  return user.avatarSource !== pictureUrl      // ours, and it has rotated
+  if (!user) return { wanted: true, source: undefined }            // new account
+  if (!user.avatar) return { wanted: true, source: user.avatarSource }
+  if (!user.avatarSource) return { wanted: false, source: undefined } // theirs, never replaced
+  return { wanted: user.avatarSource !== pictureUrl, source: user.avatarSource }
+}
+
+/**
+ * Would a picture from the identity service actually be used?
+ *
+ * Read-only and outside the lock, so the gate can decide whether a network
+ * fetch is worth making before it commits to one. Worst case it is wrong and we
+ * fetch a picture that then gets discarded - which costs one request, versus
+ * fetching an avatar on every single sign-in forever.
+ */
+export function wantsAvatarFrom(dir: string, subjectQualified: string, email: string, pictureUrl: string): boolean {
+  return avatarSourceFor(dir, subjectQualified, email, pictureUrl).wanted
 }
 
 function pushSession(store: Store, user: User): string {
@@ -413,7 +442,6 @@ function pushSession(store: Store, user: User): string {
   return raw
 }
 
-/** Resolve a session token to its user; null when unknown or expired. */
 /**
  * A session for somebody who has ALREADY proved who they are.
  *
@@ -425,11 +453,30 @@ function pushSession(store: Store, user: User): string {
  *
  * Callers must have established the identity themselves. Nothing here does.
  */
-export function issueSession(dir: string, email: string): { user: User; session: string } | null {
+export function issueSession(
+  dir: string,
+  email: string,
+  /**
+   * The identity that approved, when there was one.
+   *
+   * An address is not a stable handle over the life of a device code: an
+   * identity account can rename inside that window, and the address it leaves
+   * can be given to another admitted account - which would hand the waiting
+   * terminal somebody else's session. Passing the subject turns the redemption
+   * into a check rather than a lookup. A password account has no subject and no
+   * way to rename, so for those the address IS the identity and this is absent.
+   */
+  idSubject?: string,
+): { user: User; session: string } | null {
   return withLock(dir, () => {
     const store = loadStore(dir)
-    const user = findUser(store, normEmail(email))
+    const user = idSubject
+      ? store.users.find((u) => u.idSubject === idSubject)
+      : findUser(store, normEmail(email))
     if (!user) return null
+    // An account that has GAINED a subject since approval is not the account
+    // that approved, even if it still holds the address.
+    if (!idSubject && user.idSubject) return null
     const session = pushSession(store, user)
     saveStore(dir, store)
     return { user, session }
