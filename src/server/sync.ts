@@ -112,61 +112,6 @@ export async function connect(root: string, url: string, email: string, password
   saveCollab(root, { url: base, token, email: user?.email ?? email, name: user?.name, avatar: user?.avatar })
 }
 
-/**
- * Sign the CLI in by asking a browser to vouch for it.
- *
- * The device-authorization flow, and now the default way to connect. It replaces
- * typing a password into a terminal, which was never good - shell history, and
- * a second copy of a credential - and is the ONLY way that works on a canvas
- * gated by Marver ID, where there is no password to type at all.
- *
- * The shape: ask the canvas for a pair of codes, print the URL, and poll. The
- * person opens it in a browser where they are already signed in - by whichever
- * gate that canvas uses - checks the code matches what is on screen here, and
- * approves. Only then does the canvas issue a token, and only to the holder of
- * the device code, which never leaves this process.
- */
-export async function connectByBrowser(
-  root: string,
-  url: string,
-  canvasPassword?: string,
-  onPrompt?: (info: { userCode: string; verifyUrl: string }) => void,
-): Promise<void> {
-  const base = url.replace(/\/+$/, '')
-  const gate = await gateCookie(base, canvasPassword)
-  const headers = { 'content-type': 'application/json', ...(gate ? { cookie: gate } : {}) }
-
-  const startRes = await fetch(`${base}/__mv/api/cli/start`, { method: 'POST', headers, body: '{}' })
-  if (!startRes.ok) {
-    const why = await startRes.text().catch(() => '')
-    throw new Error(`could not start sign-in (${startRes.status}) ${why.slice(0, 160)}`)
-  }
-  const start = await startRes.json() as
-    { deviceCode: string; userCode: string; verifyPath: string; expiresIn: number; interval: number }
-
-  const verifyUrl = `${base}${start.verifyPath}`
-  onPrompt?.({ userCode: start.userCode, verifyUrl })
-
-  const deadline = Date.now() + (start.expiresIn ?? 600) * 1000
-  const waitMs = Math.max(1, start.interval ?? 2) * 1000
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, waitMs))
-    const res = await fetch(`${base}/__mv/api/cli/poll`, {
-      method: 'POST', headers, body: JSON.stringify({ deviceCode: start.deviceCode }),
-    })
-    if (res.status === 202) continue                       // nobody has approved it yet
-    if (res.status === 410) throw new Error('that sign-in expired before it was approved - run the command again')
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as any
-      throw new Error(data.error ?? `canvas answered ${res.status}`)
-    }
-    const body = await res.json() as { token: string; user?: { email?: string; name?: string; avatar?: string } }
-    saveCollab(root, { url: base, token: body.token, email: body.user?.email, name: body.user?.name, avatar: body.user?.avatar })
-    return
-  }
-  throw new Error('timed out waiting for approval - run the command again')
-}
-
 /** Claim an invite from the CLI (the dev-first path - no published UI needed). */
 export async function connectClaim(root: string, url: string, invite: string, profile: { password: string; name: string }, canvasPassword?: string): Promise<void> {
   const base = url.replace(/\/+$/, '')

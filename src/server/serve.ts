@@ -208,15 +208,7 @@ export async function serve(root: string, portFlag?: number) {
         const preGate = (collab && !idIssuer && (
           (req.method === 'POST' && (url.pathname === '/__mv/api/auth/signin' || url.pathname === '/__mv/api/auth/claim')) ||
           (req.method === 'GET' && url.pathname === '/__mv/api/invite-info')))
-          // Device authorization, in BOTH modes. A CLI waiting to be approved has
-          // no session by definition, so start and poll answer in front of the
-          // gate; neither grants anything on its own - a device code is worthless
-          // until a signed-in person approves it, and approve is NOT in this list.
-          // The page itself is inert without a session: it can render, and the
-          // approval it offers is refused unless somebody is signed in.
-          || (!!collab && (
-            (req.method === 'POST' && (url.pathname === '/__mv/api/cli/start' || url.pathname === '/__mv/api/cli/poll')) ||
-            (req.method === 'GET' && url.pathname === '/__mv/cli')))
+
           // Marver ID's two endpoints must be reachable by somebody who has not
           // signed in yet - that is the entire point of them. Only in identity
           // mode: in password mode they do not exist, and a path that skips the
@@ -227,15 +219,6 @@ export async function serve(root: string, portFlag?: number) {
             (req.method === 'POST' && url.pathname === '/__mv/id/callback')))
         if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
-    }
-
-    if (collab && req.method === 'GET' && url.pathname === '/__mv/cli') {
-      res.statusCode = 200
-      res.setHeader('content-type', 'text/html; charset=utf-8')
-      res.setHeader('cache-control', 'no-store')
-      res.setHeader('referrer-policy', 'no-referrer')
-      denyFraming(res)
-      return void res.end(cliApprovalPage(meta, url.searchParams.get('code'), url.searchParams))
     }
 
     if (idHandler && url.pathname.startsWith('/__mv/id/')) {
@@ -420,99 +403,6 @@ function humanName(raw: string | undefined): string | undefined {
 function denyFraming(res: any) {
   res.setHeader('content-security-policy', "frame-ancestors 'none'")
   res.setHeader('x-frame-options', 'DENY')
-}
-
-function cliApprovalPage(
-  meta: { name: string; branding: boolean },
-  code: string | null,
-  q: URLSearchParams = new URLSearchParams(),
-): string {
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
-  // Only ever the shape this flow issues; anything else is not a code we made.
-  const clean = code && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/i.test(code.trim()) ? code.trim().toUpperCase() : ''
-  const name = esc(meta.name || 'this canvas')
-
-  // The outcome arrives as a query string, because approving is a real form
-  // navigation now rather than a fetch - see the Sec-Fetch check on the
-  // approve route for why that matters.
-  const done = q.get('done') === '1'
-  const err = q.get('err')
-  const as = esc(q.get('as') ?? '')
-
-  const body = done
-    ? `<p>Approved.</p>
-       <p>Your terminal is signed in${as ? ` as <strong>${as}</strong>` : ''}. You can close this tab.</p>
-       <a class="ghost" href="/">Open ${name}</a>`
-    : err === 'gone'
-    ? `<p>That code is not waiting for approval - it may have expired. Run the command again.</p>
-       <a class="ghost" href="/">Open ${name}</a>`
-    : err === 'used'
-    ? `<p>That code has already been approved. If it was not you, run the command again to get a new one.</p>
-       <a class="ghost" href="/">Open ${name}</a>`
-    : !clean
-    ? `<p>That link is missing its code. Run the command again and open the URL it prints.</p>`
-    : `<p>A terminal is asking to act as you on <strong>${name}</strong>. Check that the
-         code below is the one printed in your terminal, then approve.</p>
-       <div class="code">${esc(clean)}</div>
-       <form method="post" action="/__mv/api/cli/approve">
-         <input type="hidden" name="code" value="${esc(clean)}" />
-         <button type="submit">Approve this terminal</button>
-       </form>
-       <p class="quiet">If you did not start this, close the tab. Nothing happens until you approve.</p>`
-
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex" />
-<title>Authorize a terminal - ${name}</title>
-<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
-<style>
-  * { box-sizing: border-box }
-  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column;
-         align-items: center; justify-content: center; gap: 18px;
-         background-color: #e7e9ef;
-         background-image: radial-gradient(#c9cbd5 1px, transparent 1px);
-         background-size: 20px 20px;
-         font: 500 14px -apple-system, system-ui, sans-serif; color: #18181b;
-         -webkit-font-smoothing: antialiased }
-  .card { width: 360px; padding: 24px; border-radius: 24px;
-          background: rgba(255,255,255,.64);
-          backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-          box-shadow: 0 1px 2px rgba(24,24,27,.04), 0 12px 32px rgba(24,24,27,.07);
-          display: flex; flex-direction: column; gap: 14px }
-  header { display: flex; align-items: center; gap: 9px }
-  header svg { color: #0088ff; flex: none }
-  h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
-  p { margin: 0; padding: 0 4px; font-size: 12.5px; line-height: 1.5; color: rgba(24,24,27,.66) }
-  p strong { color: #18181b; font-weight: 600 }
-  p.quiet { font-size: 11.5px; color: rgba(24,24,27,.45) }
-  .code { height: 56px; border-radius: 14px; background: rgba(24,24,27,.05);
-          display: flex; align-items: center; justify-content: center;
-          font: 700 24px ui-monospace, SFMono-Regular, Menlo, monospace;
-          letter-spacing: .14em }
-  form { margin: 0 }
-  button { height: 40px; width: 100%; border: 0; border-radius: 999px;
-           background: #18181b; color: #fafafa; font: 600 13px inherit; cursor: pointer }
-  .ghost { height: 40px; border-radius: 999px; background: #fff; color: #18181b;
-           border: 1px solid rgba(24,24,27,.14); font: 600 13px inherit;
-           display: flex; align-items: center; justify-content: center; text-decoration: none }
-  footer a { display: inline-flex; align-items: center; gap: 7px;
-             font: 600 12.5px -apple-system, system-ui, sans-serif;
-             color: rgba(24,24,27,.5); text-decoration: none }
-  footer a > svg:first-of-type { color: #0088ff }
-  footer .md, footer .up { transition: color .15s, opacity .15s }
-  footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
-  footer .up { opacity: .45; margin-left: -3px }
-  footer a:hover .up { opacity: 1; color: #0088ff }
-</style></head>
-<body>
-  <div class="card">
-    <header>${MARK_LG}<h1>Authorize a terminal</h1></header>
-    ${body}
-  </div>
-  ${meta.branding ? `<footer><a href="${poweredByUrl(meta.name, 'published-canvas', 'authorize-device')}" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> <svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg></a></footer>` : ''}
-</body></html>`
 }
 
 function gate(res: any, meta: { name: string; branding: boolean; logo?: string }, collabOn: boolean, error?: string, idOn = false) {

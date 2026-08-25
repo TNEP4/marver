@@ -46,21 +46,20 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Sign-in fails closed: if the identity service is unreachable, existing sessions keep
   working and new ones are refused. Nothing falls back to open.
 
-- **`marver comments connect` no longer wants a password.** It asks the canvas for a pair of
-  codes, prints a URL, and waits; you open it in a browser where you are already signed in,
-  check the code matches your terminal, and approve. The terminal then gets a session of its
-  own. This is the device-authorization flow that `gh` and `docker` use, and it is now the
-  default on both gates - so nobody puts a password into a shell history any more.
+  **One gap, stated rather than buried**: managing people is done with
+  `marver comments invite` and `marver comments revoke`, and both sign the CLI in with a
+  password - which identity mode does not have. So an identity-gated canvas can let its owner
+  in but can neither invite nor revoke anybody from the CLI. Seed invites before switching a
+  canvas over, or share a `MARVER_DATA_DIR`.
 
-  It is also what makes Marver Sign In usable end to end. Managing people is a CLI job, the
-  CLI signed in with a password, and identity mode has none - so before this an owner could
-  enter their own canvas and never invite anybody to it. `--email`/`--password` still work for
-  non-interactive scripting against a password-gated canvas.
-
-  The two codes do different jobs on purpose: the device code is a secret only the waiting
-  terminal holds and is what redeems the session, while the short code travels in a URL and is
-  only ever compared by eye. The approval page shows it and asks you to check it, because a
-  page that just said "Approve?" would be an excellent way to hand out sessions.
+  A browser-approved CLI sign-in was built for this and pulled before release. Authored frames
+  run same-origin in a canvas, which is deliberate and documented - and it means frame
+  JavaScript could have run the approval itself and collected a thirty-day credential that
+  outlives the page. Requiring a real top-level navigation narrowed it and did not close it: a
+  frame can submit a form into the top window, and `Sec-Fetch-Site: same-origin` proves where a
+  request came from, not that a person meant it. It also broke plain-HTTP LAN canvases, since
+  browsers omit those headers on non-secure origins. The honest fix is frame isolation or
+  moving approval to the identity service's origin, and neither belongs in this release.
 
 ### Fixed
 

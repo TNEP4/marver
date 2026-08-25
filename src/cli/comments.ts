@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
-import { connect, connectClaim, loadCollab, syncOnce, connectByBrowser } from '../server/sync.ts'
+import { connect, connectClaim, loadCollab, syncOnce } from '../server/sync.ts'
 import { localProfile } from '../server/profile.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
@@ -39,40 +39,17 @@ export async function commentsCommand(root: string, action: string, value: strin
   switch (action) {
     case 'connect': {
       if (!value) throw new Error('usage: comments connect <published-url>')
-      // The canvas password is only asked for on the paths that actually need to
-      // get PAST the gate. The device flow does not: its three touch-points -
-      // start, poll, and the approval page - all answer in front of it, and an
-      // identity-gated canvas has no password to give. Prompting first meant the
-      // passwordless flow opened by demanding a password, and then failed
-      // against the very canvases it exists for.
-      const needsGate = !!opts.invite || !!opts.email || !!opts.password
-      const canvasPassword = !needsGate ? undefined
-        : (opts.canvasPassword ?? process.env.MARVER_PASSWORD ??
-           await ask('canvas password (blank if the canvas is ungated): ', true))
+      // the canvas gate comes first: MARVER_PASSWORD env, --canvas-password, or prompt
+      const canvasPassword = opts.canvasPassword ?? process.env.MARVER_PASSWORD ??
+        await ask('canvas password (blank if the canvas is ungated): ', true)
       if (opts.invite) {
         const name = opts.name ?? await ask('display name: ')
         const password = opts.password ?? await ask('choose a password: ', true)
         await connectClaim(root, value, String(opts.invite), { password, name }, canvasPassword || undefined)
-      } else if (opts.email || opts.password) {
-        // The old path, kept for anyone scripting it non-interactively. Only
-        // taken when credentials are passed explicitly, and it cannot work on a
-        // canvas gated by Marver ID - there is no password there to check.
+      } else {
         const email = opts.email ?? await ask('email: ')
         const password = opts.password ?? await ask('password: ', true)
         await connect(root, value, email, password, canvasPassword || undefined)
-      } else {
-        // The default: let a browser vouch for this terminal. Works whichever
-        // gate the canvas uses, and puts no password into a shell history.
-        await connectByBrowser(root, value, undefined, ({ userCode, verifyUrl }) => {
-          console.log('')
-          console.log(`  Open this and approve the terminal:`)
-          console.log(`    ${verifyUrl}`)
-          console.log('')
-          console.log(`  It should show this code. If it shows a different one, do NOT approve:`)
-          console.log(`    ${userCode}`)
-          console.log('')
-          console.log(`  Waiting...`)
-        })
       }
       console.log(`[${NAME}] connected - design/.local/collab.json holds the device credential (gitignored)`)
       console.log(`[${NAME}] \`${NAME} dev\` now syncs comments every 30s; \`${NAME} comments sync\` does one exchange`)

@@ -130,12 +130,9 @@ isn't one. An address that is not on the list is refused by name, on screen.
 empty canvas for that address, with no token to pass around. To let this machine
 mint invites afterwards, connect it and approve from a browser:
 
-```bash
-npx marver comments connect <url>
-#  prints a URL and a code; open the URL, check the code matches, approve.
-#  No password is typed anywhere, and it works on either gate.
-npx marver comments invite <teammate@email>
-```
+Note the current gap: `comments invite` and `comments revoke` sign the CLI in with a
+password, which identity mode does not have. Seed invites while the canvas is still
+password-gated, or share a `MARVER_DATA_DIR` between the two.
 
 **With a canvas password**, `MARVER_OWNER_EMAIL` makes the first boot print an
 owner bootstrap in the logs: a browser link (`<url>/#/i/<token>`) AND the exact

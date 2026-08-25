@@ -143,25 +143,20 @@ other sessions are signed out when that happens - a session records the address 
 was minted for, and leaving it alive would hand it to whoever claims that address
 next. A rename onto an address someone else already holds is refused outright.
 
-#### Connecting a terminal
-
-`marver comments invite` and friends act as you, so the CLI needs its own
-credential. It gets one by asking a browser to vouch for it:
-
-```bash
-npx marver comments connect https://your.canvas
-```
-
-It prints a URL and a short code and waits. Open the URL in a browser where you
-are signed in to the canvas, check that the code on screen matches the one in your
-terminal, and approve. The terminal then holds a session of its own.
-
-Check the code rather than approving on sight - that comparison is what stops
-somebody talking you into authorizing a terminal that is not yours.
-
-This is how it works on either gate, and it is why nobody types a password into a
-CLI any more. `--email` and `--password` still work for non-interactive scripting
-against a password-gated canvas.
+> **Known gap.** Managing people is done with `marver comments invite` and
+> `marver comments revoke`, and both authenticate the CLI with a password -
+> which identity mode does not have. So on a canvas gated this way the owner can
+> sign in, but can neither invite nor revoke anybody from the CLI. Seed the
+> invites before switching a canvas to `MARVER_ID_ISSUER`, or run both canvases
+> from the same `MARVER_DATA_DIR`.
+>
+> A browser-approved sign-in for the CLI was built for this and then removed
+> before release. Authored frames run same-origin in a canvas, so frame
+> JavaScript could have driven the approval itself and walked away with a
+> long-lived credential; no header distinguishes a frame from the page around
+> it, because they are the same origin. It needs either frame isolation or an
+> approval that happens on the identity service's origin, and both are their own
+> piece of work.
 
 ### The gate footer
 

@@ -442,47 +442,6 @@ function pushSession(store: Store, user: User): string {
   return raw
 }
 
-/**
- * A session for somebody who has ALREADY proved who they are.
- *
- * There is no credential check here on purpose, which makes it the one function
- * in this file a caller can misuse. It exists for the device-authorization flow:
- * a person signs in normally in their browser, approves a waiting CLI, and the
- * CLI collects a session of its own. The proof happened at the approval step,
- * against a real session; this only issues the result.
- *
- * Callers must have established the identity themselves. Nothing here does.
- */
-export function issueSession(
-  dir: string,
-  email: string,
-  /**
-   * The identity that approved, when there was one.
-   *
-   * An address is not a stable handle over the life of a device code: an
-   * identity account can rename inside that window, and the address it leaves
-   * can be given to another admitted account - which would hand the waiting
-   * terminal somebody else's session. Passing the subject turns the redemption
-   * into a check rather than a lookup. A password account has no subject and no
-   * way to rename, so for those the address IS the identity and this is absent.
-   */
-  idSubject?: string,
-): { user: User; session: string } | null {
-  return withLock(dir, () => {
-    const store = loadStore(dir)
-    const user = idSubject
-      ? store.users.find((u) => u.idSubject === idSubject)
-      : findUser(store, normEmail(email))
-    if (!user) return null
-    // An account that has GAINED a subject since approval is not the account
-    // that approved, even if it still holds the address.
-    if (!idSubject && user.idSubject) return null
-    const session = pushSession(store, user)
-    saveStore(dir, store)
-    return { user, session }
-  })
-}
-
 export function sessionUser(dir: string, rawToken: string): User | null {
   const store = loadStore(dir)
   const hash = sha256(rawToken)

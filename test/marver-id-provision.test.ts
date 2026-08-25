@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { scryptSync } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { attachAvatar, claimInvite, createInvite, issueSession, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
+import { attachAvatar, claimInvite, createInvite, loadStore, provisionFromMarverId, sessionUser, signIn, updateProfile, wantsAvatarFrom } from '../src/server/auth.ts'
 
 /**
  * Provisioning: turning a proved identity into local access.
@@ -505,50 +505,5 @@ describe('display name and picture from the assertion', () => {
     // And an avatar the person chose here is never worth fetching over.
     updateProfile(dir, 'nic@x.test', { avatar: 'data:image/png;base64,MINE=' })
     expect(wantsAvatarFrom(dir, qualified, 'nic@x.test', 'https://cdn.example/d.png'), 'theirs').toBe(false)
-  })
-})
-
-
-/**
- * Redeeming a device approval, when the account underneath has moved.
- *
- * A device code lives ten minutes. An identity account can change its address
- * inside that window, and the address it leaves can be given to somebody else -
- * so a redemption that resolves by email alone hands the waiting terminal the
- * wrong person's session.
- */
-describe('issuing a session for an approved terminal', () => {
-  it('follows the identity that approved, not the address it used', () => {
-    invite('first@x.test')
-    provisionFromMarverId(dir, identity('first@x.test', 'subj-a'))
-
-    // Approved as first@x.test, subject subj-a. Then they rename...
-    provisionFromMarverId(dir, identity('moved@x.test', 'subj-a'))
-    // ...and somebody else is admitted on the address they left.
-    invite('first@x.test')
-    provisionFromMarverId(dir, identity('first@x.test', 'subj-c'))
-
-    const issued = issueSession(dir, 'first@x.test', `${ISSUER}#subj-a`)
-    expect(issued, 'the approver still exists').not.toBeNull()
-    expect(issued!.user.email, 'and it is them, at their new address').toBe('moved@x.test')
-    expect(issued!.user.idSubject).toBe(`${ISSUER}#subj-a`)
-  })
-
-  it('refuses when the approving identity is gone', () => {
-    invite('a@x.test')
-    provisionFromMarverId(dir, identity('a@x.test', 'subj-a'))
-    expect(issueSession(dir, 'a@x.test', `${ISSUER}#vanished`)).toBeNull()
-  })
-
-  it('will not hand a password approval to an account that has since gained an identity', () => {
-    // A password account approved a terminal. Before it was redeemed, that
-    // address became an identity account - which is a different thing, and not
-    // what was approved.
-    const { token } = createInvite(dir, 'pw@x.test')
-    claimInvite(dir, token, { password: 'correct-horse-battery', name: 'PW' })
-    expect(issueSession(dir, 'pw@x.test'), 'a plain password approval works').not.toBeNull()
-
-    provisionFromMarverId(dir, identity('pw@x.test', 'subj-new'))
-    expect(issueSession(dir, 'pw@x.test'), 'but not once it is an identity account').toBeNull()
   })
 })
