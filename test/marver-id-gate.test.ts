@@ -855,6 +855,32 @@ describe('identity mode: the successful path, end to end', () => {
     expect(placements.size).toBe(3)
   }, 30_000)
 
+  it('the finish page waits quietly, and only speaks when something is wrong', async () => {
+    // Painting the card first meant every successful sign-in flashed a panel
+    // naming the canvas and its address on the way past - a screen nobody
+    // needs, appearing and vanishing. Getting in says itself by the canvas
+    // appearing; the card is for when there is something to READ.
+    const html = await (await fetch(`http://localhost:${canvas.port}/__mv/id/finish`)).text()
+
+    // BOTH ship hidden. The usual case is one POST, and a spinner that appears
+    // and vanishes inside 200ms is a flicker rather than feedback - so the fast
+    // path shows only the dotted ground, which is the ground the canvas itself
+    // is drawn on.
+    expect(html).toMatch(/<div class="card" id="card" hidden>/)
+    expect(html).toMatch(/<div class="wait" id="wait"[^>]*hidden>/)
+    // ...and the spinner is revealed on a timer, not immediately.
+    expect(html).toMatch(/setTimeout\(function \(\) \{ wait\.hidden = false \}, 1500\)/)
+    // A failure inside that window must cancel it, or the card arrives with a
+    // spinner blinking on beside it.
+    expect(html).toContain('clearTimeout(slow)')
+    // Nothing pre-written into the state line - it used to say "Signing you
+    // in..." in the markup, which is the flash even before any script runs.
+    expect(html).toMatch(/<p class="state" id="s"><\/p>/)
+    // And every path that shows the card goes through the same door.
+    expect(html).toMatch(/function speak\(\)/)
+    expect(html).toContain('wait.hidden = true')
+  }, 30_000)
+
   it('refuses to be framed - the approval page and the finish page both', async () => {
     // An attacker starts a device flow of their own, frames the approval URL
     // under an unrelated button, and polls their device code once the victim

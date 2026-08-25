@@ -127,6 +127,9 @@ class Browser {
 
 let browser: Browser | null = null
 let canvas: ChildProcess
+/** A second canvas in IDENTITY mode - the only place /__mv/id/finish exists. */
+let idCanvas: ChildProcess
+const idBase = `http://localhost:${PORT + 1}`
 let dataDir = ''
 let root = ''
 let ownerToken = ''
@@ -157,12 +160,31 @@ beforeAll(async () => {
     try { await fetch(base, { signal: AbortSignal.timeout(500) }); break } catch { await new Promise((r) => setTimeout(r, 100)) }
   }
   ownerToken = /\/#\/i\/([\w-]+)/.exec(logs.join(''))?.[1] ?? ''
+
+  // The finish page is served only when an issuer is configured. Nothing here
+  // verifies an assertion, so the issuer need not be reachable - the page is
+  // fixed bytes and a script, which is exactly what is under test.
+  idCanvas = spawn(process.execPath, [CLI, 'serve'], {
+    cwd: root,
+    env: {
+      ...process.env, PORT: String(PORT + 1),
+      MARVER_ID_ISSUER: 'https://id.example.test',
+      MARVER_PUBLIC_ORIGIN: idBase,
+      MARVER_DATA_DIR: mkdtempSync(join(tmpdir(), 'mv-gbi-')),
+    },
+    stdio: 'ignore',
+  })
+  for (let i = 0; i < 80; i++) {
+    try { await fetch(idBase, { signal: AbortSignal.timeout(500) }); break } catch { await new Promise((r) => setTimeout(r, 100)) }
+  }
+
   browser = await Browser.launch()
 }, 240_000)
 
 afterAll(() => {
   browser?.close()
   canvas?.kill()
+  idCanvas?.kill()
   for (const d of [root, dataDir]) if (d) rmSync(d, { recursive: true, force: true })
 })
 
@@ -226,6 +248,27 @@ describe('the pages a person clicks, in a real browser', () => {
     expect(body.user.email).toBe('owner@x.test')
     expect(body.token).toBeTruthy()
   }, 120_000)
+
+  it('the finish page shows nothing at all on a fast path - no flicker', async () => {
+    // The point of the delay: on the usual sub-second path a person should see
+    // the dotted ground and then the canvas, never a spinner blinking on and
+    // off. A flicker reads as something going wrong.
+    const { session } = await browser!.tab()
+    await browser!.go(session, `${idBase}/__mv/id/finish`)
+
+    // Immediately after load, with no assertion in the fragment, the page has
+    // already decided it has something to say - so the card is up and the
+    // spinner never appeared.
+    const state = await browser!.eval(session, `
+      JSON.stringify({
+        spinner: !document.getElementById('wait').hidden,
+        card: !document.getElementById('card').hidden,
+      })
+    `)
+    const { spinner, card } = JSON.parse(state)
+    expect(spinner, 'no spinner on a path that resolves instantly').toBe(false)
+    expect(card, 'but the card, because there IS something to say').toBe(true)
+  }, 60_000)
 
   it('the approval page does NOT claim success when nobody is signed in', async () => {
     // A signed-out POST is answered by the outer gate with its own HTML and a

@@ -436,11 +436,25 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
   footer .up { opacity: .45; margin-left: -3px }
   footer a:hover .up { opacity: 1; color: #0088ff }
   [hidden] { display: none !important }
+  /* Shown only if the wait becomes long enough to be worth explaining.
+     Painting the whole card first meant every successful sign-in flashed a
+     panel naming the canvas and its address on the way past - a screen nobody
+     needs, appearing and vanishing, which reads as a stutter rather than as
+     progress. The card is for when something has to be SAID; getting in says
+     itself by the canvas appearing. */
+  .wait { width: 34px; height: 34px; border-radius: 50%;
+          border: 3px solid rgba(24,24,27,.12); border-top-color: #0088ff;
+          animation: spin .7s linear infinite }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  @media (prefers-reduced-motion: reduce) {
+    .wait { animation: none; border-top-color: rgba(24,24,27,.35) }
+  }
 </style></head>
 <body>
-  <div class="card">
+  <div class="wait" id="wait" role="status" aria-label="Signing you in" hidden></div>
+  <div class="card" id="card" hidden>
     <header>${MARK_LG}<h1 id="t">${name}</h1></header>
-    <p class="state" id="s">Signing you in...</p>
+    <p class="state" id="s"></p>
     <div class="chip">${where}</div>
     <p class="lead" id="m"></p>
     <p class="lead" id="m2" hidden></p>
@@ -451,6 +465,25 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
 (function () {
   var s = document.getElementById('s'), m = document.getElementById('m'), back = document.getElementById('back')
   var m2 = document.getElementById('m2')
+  var wait = document.getElementById('wait'), card = document.getElementById('card')
+
+  /**
+   * A spinner, but only if the wait is long enough to need one.
+   *
+   * This page is usually one POST - fifty to two hundred milliseconds - and a
+   * spinner that appears and vanishes inside that window is worse than no
+   * spinner at all: it is a flicker, and a flicker reads as something going
+   * wrong. Held back, the fast path shows only the dotted ground, which is the
+   * same ground the canvas itself is drawn on - so it looks like the canvas
+   * loading rather than like a screen in between.
+   *
+   * Past a second and a half the wait is real, and silence stops being calm and
+   * starts being broken. That is when the spinner earns its place.
+   */
+  var slow = setTimeout(function () { wait.hidden = false }, 1500)
+
+  /** Stop waiting and show the card - only ever for something worth reading. */
+  function speak() { clearTimeout(slow); wait.hidden = true; card.hidden = false }
   /**
    * State, what happened, and - separately - what to do about it.
    *
@@ -460,6 +493,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
    * and the person only needs the second one.
    */
   function stop(state, msg, cta, advice) {
+    speak()
     s.textContent = state; m.textContent = msg
     if (advice) { m2.textContent = advice; m2.hidden = false }
     if (cta) { back.textContent = cta; back.hidden = false }
@@ -467,6 +501,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
 
   /** Refused, and told which account did it. */
   function refused(email) {
+    speak()
     s.textContent = "You haven't been invited"
     m.textContent = ''
     m.appendChild(document.createTextNode('You are signed in as '))
