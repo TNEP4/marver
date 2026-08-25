@@ -150,6 +150,12 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
     let u: URL
     try { u = new URL(pinned) } catch { throw new Error(`MARVER_PUBLIC_ORIGIN is not a URL: ${pinned}`) }
     const loopback = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+    // Bare means bare: no path, no query, no fragment, and no credentials.
+    // `https://user:pass@canvas.example` parses fine and normalises to the same
+    // origin, so it would be accepted silently - an operator reading one thing
+    // while the canvas uses another, which is the whole failure mode this
+    // validation exists to prevent.
+    if (u.username || u.password) throw new Error(`MARVER_PUBLIC_ORIGIN must not carry credentials: ${pinned}`)
     if (u.pathname !== '/' || u.search || u.hash) throw new Error(`MARVER_PUBLIC_ORIGIN must be a bare origin: ${pinned}`)
     // https anywhere, or http on loopback - and nothing else. The loopback
     // exception used to be written as "not https is fine if the host is local",

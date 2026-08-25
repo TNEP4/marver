@@ -241,3 +241,60 @@ describe('the duplicate-account takeover, closed', () => {
     expect(users[0]!.hash).toBeUndefined()
   })
 })
+
+/**
+ * A verified address is a LABEL on an identity, not the identity.
+ *
+ * People rename: a Workspace migration, a company changing domain, a married
+ * name. Matching on email alone meant a returning person did not match their own
+ * account and was refused entry to a canvas they might own. Following the rename
+ * fixes that and opens two holes of its own, both found in review, both here.
+ */
+describe('following a renamed address', () => {
+  it('recognises somebody by subject after their email changes', () => {
+    invite('before@x.test')
+    const first = provisionFromMarverId(dir, identity('before@x.test', 'subj-1'))
+    expect(first).not.toBeNull()
+
+    // No invite for the new address - the point is that they do not need one,
+    // because the assertion proves they are already an account here.
+    const again = provisionFromMarverId(dir, identity('after@x.test', 'subj-1'))
+    expect(again, 'a rename must not lock somebody out of their own canvas').not.toBeNull()
+    expect(again!.user.email).toBe('after@x.test')
+    expect(loadStore(dir).users).toHaveLength(1)
+  })
+
+  it('refuses a rename onto an address somebody else already holds', () => {
+    invite('a@x.test'); invite('b@x.test')
+    provisionFromMarverId(dir, identity('a@x.test', 'subj-a'))
+    provisionFromMarverId(dir, identity('b@x.test', 'subj-b'))
+
+    // Sessions resolve to the FIRST user matching an email, so two records
+    // sharing one address is a takeover decided by array order - and the loser
+    // could be the owner. The rename is genuine; the destination is occupied.
+    const collide = provisionFromMarverId(dir, identity('b@x.test', 'subj-a'))
+    expect(collide, 'a rename onto an occupied address must be refused').toBeNull()
+
+    const users = loadStore(dir).users
+    expect(users.filter((u) => u.email === 'b@x.test')).toHaveLength(1)
+    expect(users.find((u) => u.email === 'b@x.test')!.idSubject).toBe(`${ISSUER}#subj-b`)
+  })
+
+  it('kills the sessions minted under the address they left behind', () => {
+    invite('old@x.test')
+    const before = provisionFromMarverId(dir, identity('old@x.test', 'subj-1'))!
+    expect(sessionUser(dir, before.session)?.email).toBe('old@x.test')
+
+    provisionFromMarverId(dir, identity('new@x.test', 'subj-1'))
+
+    // The old session recorded the address, not the account. Left alive, it
+    // would resolve to whoever legitimately claims that address next - so it
+    // does not survive the rename.
+    expect(sessionUser(dir, before.session), 'a session under the old address must not survive').toBeNull()
+
+    invite('old@x.test')
+    const newcomer = provisionFromMarverId(dir, identity('old@x.test', 'subj-2'))
+    expect(newcomer).not.toBeNull()
+    expect(sessionUser(dir, before.session), 'and must never resolve to the newcomer').toBeNull()
+  })
+})

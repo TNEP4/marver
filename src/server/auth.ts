@@ -251,7 +251,22 @@ export function provisionFromMarverId(
     if (bound && normEmail(bound.email) !== emailNorm) {
       const clash = findUser(store, emailNorm)
       if (clash && clash !== bound) return null
+      const vacated = normEmail(bound.email)
       bound.email = emailNorm
+
+      // Every session issued under the OLD address dies with it.
+      //
+      // A session records the email it was minted for, and resolves by looking
+      // that email up again. So a rename leaves the old sessions pointing at an
+      // address their owner no longer holds - and the moment somebody else
+      // legitimately claims it, those sessions start resolving to that person
+      // instead. The account records are fine; the stale keys are the problem.
+      //
+      // Dropping them is the conservative half of the fix: the worst case is
+      // signing in again on other devices, against a silent handover of whatever
+      // that account can reach. The session minted just below is created after
+      // this, so the person doing the renaming stays signed in here.
+      store.sessions = store.sessions.filter((s) => s.emailNorm !== vacated)
     }
 
     const invite = store.invites.find((i) => i.emailNorm === emailNorm && i.exp > Date.now())

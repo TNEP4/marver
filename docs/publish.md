@@ -33,12 +33,17 @@ Three choices, and the canvas is public until you make one.
 
 | | **Open** | **Password** | **Marver Sign In** |
 |---|---|---|---|
-| Set | nothing | `MARVER_PASSWORD` | `MARVER_ID_ISSUER` |
+| Set | nothing | `MARVER_PASSWORD` | `MARVER_ID_ISSUER` + `MARVER_PUBLIC_ORIGIN` |
 | People prove | nothing | they know a secret | who they are |
-| Accounts | none | on your disk | on your disk |
+| Named accounts | none | only with `MARVER_DATA_DIR` | always (needs `MARVER_DATA_DIR`) |
 | Who decides entry | - | you | you |
 | Outbound requests | none | none | public keys only |
 | Best for | a public canvas | one link to a small group | a team, across canvases |
+
+`MARVER_DATA_DIR` is what turns a gate into accounts. Without it the password gate
+is exactly one shared secret and nothing else - no per-person identity, no comments
+that persist, and nothing for `marver comments invite` to write to. Marver Sign In
+requires it outright, because identity accounts need somewhere to live.
 
 They are alternatives, not layers. Setting both `MARVER_PASSWORD` and
 `MARVER_ID_ISSUER` would weaken your invite list to "an account OR whoever has the
@@ -51,12 +56,19 @@ and has no say in *where they may go*. Your canvas decides that, from a list it
 holds, and the identity service is never told the answer. Somebody with a
 perfectly valid Marver account who is not on your list gets nothing.
 
-### Sovereign accounts (`MARVER_PASSWORD`)
+### Sovereign accounts (`MARVER_PASSWORD` + `MARVER_DATA_DIR`)
+
+```bash
+MARVER_PASSWORD=secret MARVER_DATA_DIR=/data npx marver serve
+```
 
 Everything stays here. Accounts live in `MARVER_DATA_DIR` as scrypt hashes, invites
 are minted by you, and the canvas makes no outbound request of any kind - there is
 no service to depend on and nothing to phone home to. If you want a canvas that
 still works in ten years on a disconnected network, this is it.
+
+`MARVER_PASSWORD` on its own is a simpler thing: one shared secret in front of the
+bundle, with no accounts behind it. Add the volume when you want named people.
 
 Auth is an HMAC-signed 30-day cookie with a per-boot secret (a server restart
 re-prompts), and each password attempt pays an scrypt cost. Invite people with
@@ -126,14 +138,17 @@ invite people exactly as before; Marver Sign In only removes the password step f
 claiming it.
 
 People are matched on the stable identity behind the address, not the address
-itself, so somebody whose email changes keeps their account and their history.
+itself, so somebody whose email changes keeps their account and their history. Their
+other sessions are signed out when that happens - a session records the address it
+was minted for, and leaving it alive would hand it to whoever claims that address
+next. A rename onto an address someone else already holds is refused outright.
 
-> **Known gap, being worked on.** Invites are currently created with
-> `marver comments invite`, which signs the CLI in with a password - and identity
-> mode has no passwords. So on a canvas gated this way, the owner can sign in but
-> cannot yet invite anybody else from the CLI. Until that lands, seed the invites
-> before switching a canvas to `MARVER_ID_ISSUER`, or run both canvases from the
-> same `MARVER_DATA_DIR`.
+> **Known gap, being worked on.** Managing people is done with
+> `marver comments invite` and `marver comments revoke`, and both authenticate the
+> CLI with a password - which identity mode does not have. So on a canvas gated this
+> way the owner can sign in, but can neither invite nor revoke anybody from the CLI.
+> Until that lands, seed the invites before switching a canvas to
+> `MARVER_ID_ISSUER`, or run both canvases from the same `MARVER_DATA_DIR`.
 
 ### The gate footer
 

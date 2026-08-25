@@ -46,11 +46,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Sign-in fails closed: if the identity service is unreachable, existing sessions keep
   working and new ones are refused. Nothing falls back to open.
 
-  **One gap, stated rather than buried**: invites are still created with
-  `marver comments invite`, which signs the CLI in with a password - and identity mode has no
-  passwords. So an identity-gated canvas can let its owner in but cannot yet invite anybody
-  else from the CLI. Seed invites before switching a canvas over, or share a
-  `MARVER_DATA_DIR`. A supported path is next.
+  **One gap, stated rather than buried**: managing people is done with
+  `marver comments invite` and `marver comments revoke`, and both sign the CLI in with a
+  password - which identity mode does not have. So an identity-gated canvas can let its owner
+  in but can neither invite nor revoke anybody from the CLI. Seed invites before switching a
+  canvas over, or share a `MARVER_DATA_DIR`. A supported path is next.
 
 ### Fixed
 
