@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## 0.11.0 - 2026-08-26
+## 0.11.0 - 2026-08-27
 
 ### Added
 
@@ -104,6 +104,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   refuses.
 
 ### Fixed
+
+- **`Secure` on the session cookie no longer depends on a header your proxy may not send.**
+  A canvas decided whether it was on https by reading `X-Forwarded-Proto`, and nginx's own
+  documented `proxy_pass http://localhost:PORT` sets no `X-Forwarded-*` at all. A canvas
+  served over https behind that configuration saw no header, concluded "not secure", and
+  issued a thirty-day session cookie the browser would happily send over plain http. Where
+  `MARVER_PUBLIC_ORIGIN` is set it now decides - a deliberate statement by whoever deployed
+  the canvas, rather than a guess about a proxy that may not be speaking. The header remains
+  the fallback only where there is nothing better, which is development on loopback.
 
 - **The collaboration credential has moved out of your repository, because `marver dev` was
   serving it.** It lived at `design/.local/collab.json`, and the dev server puts the repository
