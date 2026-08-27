@@ -198,6 +198,38 @@ describe('verifyAssertion - refusals that defeat token forgery', () => {
     const res = await verify('a'.repeat(9000))
     expect(res).toEqual({ ok: false, reason: 'token size' })
   })
+
+  /**
+   * A key on the issuer's own JWKS, for a purpose that is not this one.
+   *
+   * P-256 is also the curve for ECDH key agreement, so a service can perfectly
+   * reasonably publish a key nobody regards as a signing authority - and whoever
+   * holds its private half could then mint identities for every canvas pointed
+   * at that issuer. The token names the kid, so it is the caller who chooses
+   * which published key to be checked against.
+   */
+  it('refuses a key the issuer published for another purpose', async () => {
+    for (const purpose of [{ use: 'enc' }, { key_ops: ['deriveKey'] }]) {
+      _resetJwksCache()
+      const wrong = { ...jwk, ...purpose, kid: 'other-purpose' }
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ keys: [wrong] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })))
+      const tx = store.mint(ORIGIN, BROWSER)
+      const res = await verify(sign(goodClaims(tx.nonce), { kid: 'other-purpose' }))
+      expect(res).toEqual({ ok: false, reason: 'signature' })
+    }
+  })
+
+  it('still accepts a key that states no purpose at all - the fields are optional', async () => {
+    _resetJwksCache()
+    const { use, ...bare } = jwk as Record<string, unknown>
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ keys: [bare] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })))
+    const tx = store.mint(ORIGIN, BROWSER)
+    expect((await verify(sign(goodClaims(tx.nonce)))).ok).toBe(true)
+  })
 })
 
 describe('TransactionStore', () => {

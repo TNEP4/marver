@@ -1,7 +1,8 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createServer as netServer } from 'node:net'
-import { basename, dirname, join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
@@ -38,6 +39,103 @@ async function pickPort(root: string, desired: number): Promise<{ port: number; 
   return { port: desired, fellBack: true }
 }
 
+/**
+ * What the dev server must never hand out, however deep in the repo it sits.
+ *
+ * `marver dev` puts the whole repository on the web so frames can import from it.
+ * The collaboration credential no longer lives in there - it moved to
+ * ~/.marver/canvases/ precisely because guarding it here could not be finished -
+ * but design/.local still holds the local profile and whatever a previous version
+ * left behind, and none of that is anybody's business but the author's.
+ *
+ * Vite's own defaults are restated rather than assumed. `fs.deny` REPLACES the
+ * default list, so an array containing only our own rule quietly re-exposes
+ * `.env`, private keys, `.npmrc` and `.git` - a much larger hole than the one
+ * being closed, opened by closing it. Kept as an exported constant so a test can
+ * hold both halves.
+ */
+export const FS_DENY = [
+  // Vite 8's defaults, verbatim.
+  '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**',
+  // Conventions Vite does not know about but that hold secrets all the same.
+  '.dev.vars', '.dev.vars.*',
+  // Ours. Narrow on purpose: a host app may legitimately import from some other
+  // `.local` directory of its own, and nothing marver serves lives under this one.
+  '**/design/.local/**',
+]
+
+/**
+ * The half of the credential guard that globs cannot do.
+ *
+ * `fs.deny` matches the REQUEST path, lexically, and then Vite stats and streams
+ * whatever that path resolves to. So a repository containing
+ * `leak.json -> design/.local/anything` serves that file at `/leak.json` to any
+ * authored frame that asks - the deny rule never sees the name it is looking for.
+ * Verified against a real dev server before this existed.
+ *
+ * More patterns cannot fix that; only resolving can. This runs BEFORE Vite's own
+ * middlewares (a `configureServer` hook that does not return a function is
+ * installed first) and refuses any request whose real file lands inside
+ * design/.local, whatever route it took to get there.
+ *
+ * "Whatever route" means every place Vite would look, not just the project root.
+ * `public/` is mapped onto `/`, so `public/leak.json -> ../design/.local/x` is
+ * served at `/leak.json` - and Vite skips its own deny checks entirely for public
+ * files, so that spelling was reachable even with the root candidate guarded.
+ * Each candidate is resolved; if any lands in design/.local, the request is
+ * refused.
+ *
+ * The boundary this does NOT claim: a repository that can write symlinks can also
+ * write `design/config.ts`, which `marver dev` imports and RUNS in this process
+ * before any of the above exists. Running `dev` on a repository you do not trust
+ * hands it your machine long before it hands it a file, so a symlink is not the
+ * interesting way in. What this closes is the frame-in-a-trusted-repo case: a
+ * component that runs in the browser, same-origin, that can only ask for URLs and
+ * cannot create a file to ask for.
+ */
+function denyLocalSecrets(root: string): any {
+  const guardedAt = join(root, 'design', '.local')
+  // Vite's default publicDir. dev.ts never overrides it, so this is the one extra
+  // place a request path can come from.
+  const publicAt = join(root, 'public')
+  const inside = (real: string, dir: string) => {
+    const rel = relative(dir, real)
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  }
+  return {
+    name: 'marver:deny-local-secrets',
+    configureServer(server: any) {
+      server.middlewares.use((req: any, res: any, next: () => void) => {
+        let pathname: string
+        try { pathname = decodeURIComponent((req.url ?? '/').split('?')[0].split('#')[0]) } catch { return next() }
+        const rel = '.' + (pathname.startsWith('/') ? pathname : `/${pathname}`)
+        // `/@fs/<abs>` is Vite's escape hatch for files outside the root; root and
+        // public are the two places an ordinary path can land.
+        // Vite derives more paths than it is asked for: `/leak` can resolve to
+        // `leak.html`, `leak/index`, `leak/index.html`. Enumerating a bundler's
+        // resolution rules is not a game anyone wins, which is why the credential
+        // itself now lives outside the repository - this list is depth, not the
+        // defence. It covers the derivations Vite actually applies.
+        const derived = (base: string) => [base, `${base}.html`, join(base, 'index'), join(base, 'index.html')]
+        const candidates = pathname.startsWith('/@fs/')
+          ? derived(pathname.slice('/@fs'.length))
+          : [...derived(resolvePath(root, rel)), ...derived(resolvePath(publicAt, rel))]
+        let guarded: string
+        // A missing design/.local means there is nothing here to protect.
+        try { guarded = realpathSync(guardedAt) } catch { return next() }
+        // A candidate that does not resolve is a 404 Vite will produce on its own.
+        const leaks = candidates.some((c) => {
+          try { return inside(realpathSync(c), guarded) } catch { return false }
+        })
+        if (!leaks) return next()
+        res.statusCode = 403
+        res.setHeader('content-type', 'text/plain; charset=utf-8')
+        res.end('design/.local holds this canvas\'s credentials and is never served')
+      })
+    },
+  }
+}
+
 export async function dev(root: string, portFlag?: number) {
   const config = await loadConfig(root)
   const host = detectHost(root)
@@ -51,7 +149,7 @@ export async function dev(root: string, portFlag?: number) {
   const desiredPort = explicitPort ?? projectPort(root)
   const picked = await pickPort(root, desiredPort)
 
-  const plugins: any[] = [react()]
+  const plugins: any[] = [denyLocalSecrets(root), react()]
   if (host.tailwind === 4) {
     const tw = await tailwind4Plugin(root)
     if (tw) plugins.push(...tw)
@@ -82,7 +180,10 @@ export async function dev(root: string, portFlag?: number) {
       port: picked.port,
       strictPort: false,
       // keep Vite's workspace-root allowance: monorepo hosts import sibling packages
-      fs: { allow: [...new Set([root, pkgDir, searchForWorkspaceRoot(root)])] },
+      fs: {
+        allow: [...new Set([root, pkgDir, searchForWorkspaceRoot(root)])],
+        deny: FS_DENY,
+      },
       // Spec §5.6: our own writes must never bounce off the watcher - an out-of-graph
       // .json change makes Vite full-reload every client, shell included (measured).
       // Host build output is ignored too: `next build` (etc.) writing .next/ was firing
@@ -161,7 +262,7 @@ export async function dev(root: string, portFlag?: number) {
   // issued while dev is already open starts syncing on the next tick - no restart.
   // Single-flight; quiet on failure - the exchange is idempotent, the next one heals.
   const { loadCollab, syncOnce } = await import('./sync.ts')
-  if (loadCollab(root)) console.log(`  comments: syncing with the published canvas (design/.local/collab.json)\n`)
+  if (loadCollab(root)) console.log(`  comments: syncing with the published canvas\n`)
   let syncing = false
   const tick = async () => {
     if (syncing) return

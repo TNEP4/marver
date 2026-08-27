@@ -1,8 +1,11 @@
 /**
  * `marver comments <action>` - the collaboration CLI.
  *
- * connect <url>   sign in (or --invite <token> to claim) against a published canvas;
- *                 stores the device credential in design/.local/collab.json
+ * connect <url>   sign in against a published canvas and store the device credential
+ *                 in ~/.marver/canvases/ (outside the repo - `dev` serves the repo).
+ *                 Three ways in: --token <t>, the
+ *                 canvas's MARVER_CLI_TOKEN (the only one an identity-mode canvas
+ *                 has), --invite <t> to claim an invite, or email + password.
  * sync            one full exchange with the publish target (agent/CI path)
  * list            threads from design/comments/ (--open, --board, --json)
  * reply <thread>  append a reply (--body) - the agent's voice in the loop
@@ -15,7 +18,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
-import { connect, connectClaim, loadCollab, syncOnce } from '../server/sync.ts'
+import { connect, connectClaim, connectToken, loadCollab, syncOnce } from '../server/sync.ts'
 import { localProfile } from '../server/profile.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
@@ -39,6 +42,16 @@ export async function commentsCommand(root: string, action: string, value: strin
   switch (action) {
     case 'connect': {
       if (!value) throw new Error('usage: comments connect <published-url>')
+      // A token is its own gate passage, so it skips the canvas-password prompt
+      // entirely - asking for a shared secret that an identity-mode canvas does
+      // not even have was the confusing part of this flow.
+      const cliToken = opts.token ?? process.env.MARVER_CLI_TOKEN
+      if (cliToken) {
+        await connectToken(root, value, String(cliToken))
+        console.log(`[${NAME}] connected - the device credential is in ~/.marver/canvases/, outside this repo`)
+        console.log(`[${NAME}] \`${NAME} dev\` now syncs comments every 30s; \`${NAME} comments sync\` does one exchange`)
+        return
+      }
       // the canvas gate comes first: MARVER_PASSWORD env, --canvas-password, or prompt
       const canvasPassword = opts.canvasPassword ?? process.env.MARVER_PASSWORD ??
         await ask('canvas password (blank if the canvas is ungated): ', true)
@@ -51,7 +64,7 @@ export async function commentsCommand(root: string, action: string, value: strin
         const password = opts.password ?? await ask('password: ', true)
         await connect(root, value, email, password, canvasPassword || undefined)
       }
-      console.log(`[${NAME}] connected - design/.local/collab.json holds the device credential (gitignored)`)
+      console.log(`[${NAME}] connected - the device credential is in ~/.marver/canvases/, outside this repo`)
       console.log(`[${NAME}] \`${NAME} dev\` now syncs comments every 30s; \`${NAME} comments sync\` does one exchange`)
       return
     }
@@ -98,12 +111,22 @@ export async function commentsCommand(root: string, action: string, value: strin
     }
     case 'invite': {
       if (!value || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) throw new Error('usage: comments invite <email>')
-      const { token } = await ownerApi(root, 'invite', { email: value })
+      const { token, idMode } = await ownerApi(root, 'invite', { email: value })
       const url = loadCollab(root)!.url.replace(/\/+$/, '')
       console.log(`  invite for ${value} (single-use, 7 days):`)
-      console.log(`    ${url}/#/i/${token}`)
-      console.log(`  send them that link (plus the canvas password) - it opens straight into`)
-      console.log(`  "pick your name and password".`)
+      // On an identity canvas there is no link to send and no canvas password
+      // to send with it: the address IS the invitation, spent the first time
+      // that address signs in through Marver ID. Printing the claim link there
+      // sends people to a door that is deliberately bolted shut.
+      if (idMode) {
+        console.log(`    ${url}`)
+        console.log(`  send them that address - they sign in with ${value} and they are in.`)
+        console.log(`  no link to forward, no password: the invitation IS the email address.`)
+      } else {
+        console.log(`    ${url}/#/i/${token}`)
+        console.log(`  send them that link (plus the canvas password) - it opens straight into`)
+        console.log(`  "pick your name and password".`)
+      }
       return
     }
     case 'revoke': {

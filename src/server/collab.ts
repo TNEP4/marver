@@ -18,7 +18,8 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
-import { claimInvite, createInvite, inviteInfo, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { claimInvite, createInvite, inviteInfo, issueDeviceSession, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
 const MAX_BODY = 256 * 1024
@@ -168,11 +169,12 @@ export function collabHandler(dataDir: string, distDir: string) {
 
   const cookie = (req: IncomingMessage, name: string): string | undefined =>
     new RegExp(`(?:^|;\\s*)${name}=([\\w-]+)`).exec(String(req.headers.cookie ?? ''))?.[1]
+  /** browser session cookie, or a bearer token (the dev proxy / agent CLI path -
+   *  same session store, held server-side by the Vite process, never by a page) */
+  const sessionToken = (req: IncomingMessage): string | null =>
+    /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? cookie(req, 'mv_s') ?? null
   const currentUser = (req: IncomingMessage): User | null => {
-    // browser session cookie, or a bearer token (the dev proxy / agent CLI path -
-    // same session store, held server-side by the Vite process, never by a page)
-    const bearer = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
-    const tok = bearer ?? cookie(req, 'mv_s')
+    const tok = sessionToken(req)
     return tok ? sessionUser(dataDir, tok) : null
   }
   const json = (res: ServerResponse, code: number, body: unknown) => {
@@ -217,7 +219,7 @@ export function collabHandler(dataDir: string, distDir: string) {
     req.on('error', () => settle(() => reject(new Error('request failed'))))
   })
   const setSession = (req: IncomingMessage, res: ServerResponse, token: string) => {
-    const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''
+    const secure = secureSuffix(req)
     res.setHeader('set-cookie', [
       `mv_s=${token}; Path=/; Max-Age=${MONTH}; HttpOnly; SameSite=Lax${secure}`,
       // the double-submit half: JS-readable, echoed as x-mv-c on every mutation
@@ -330,13 +332,35 @@ export function collabHandler(dataDir: string, distDir: string) {
         })
         return json(res, 200, { user: publicUser(next) }), true
       }
+      if (path === 'cli-session') {
+        // The operator secret, and nothing else, opens this - not a signed-in
+        // session, because a frame rides those. It is read from the Authorization
+        // header ONLY: a cookie is ambient, and this is the one route where being
+        // reachable by something the browser sends automatically would matter.
+        const bearer = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
+        if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        const issued = issueDeviceSession(dataDir, bearer)
+        // One refusal for a wrong secret and for a canvas nobody owns yet. The
+        // second is the common setup mistake, so it is named in the text without
+        // the status telling a guesser which of the two they hit.
+        if (!issued) return json(res, 401, { error: 'MARVER_CLI_TOKEN was refused, or nobody owns this canvas yet' }), true
+        return json(res, 200, { token: issued.token, exp: issued.exp, user: publicUser(issued.user) }), true
+      }
       if (path === 'invite') {
         const u = currentUser(req)
         if (!can(u, rights, '', 'admin')) return json(res, 403, { error: 'owner only' }), true
         const b = await readBody(req)
         const email = String(b.email ?? '')
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json(res, 400, { error: 'a valid email is required' }), true
-        return json(res, 200, createInvite(dataDir, email)), true
+        // How the invite gets SPENT differs by gate mode, and only the server
+        // knows which mode it is running in - so it says, rather than leaving
+        // the CLI to print instructions that are wrong half the time. On an
+        // identity canvas the link is inert (serve.ts keeps auth/claim behind
+        // `!idIssuer`); the address itself is the invitation, matched at
+        // sign-in. Reported from the pilot, where the printed advice named a
+        // canvas password that does not exist in identity mode.
+        const idMode = !!process.env.MARVER_ID_ISSUER
+        return json(res, 200, { ...createInvite(dataDir, email), idMode }), true
       }
       if (path === 'revoke') {
         const u = currentUser(req)

@@ -44,7 +44,14 @@ export interface User {
   createdAt: number
 }
 interface Invite { emailNorm: string; tokenHash: string; exp: number }
-interface Session { tokenHash: string; emailNorm: string; exp: number }
+interface Session {
+  tokenHash: string; emailNorm: string; exp: number
+  /** Set only on sessions minted by the operator credential: a fingerprint of the
+   *  MARVER_CLI_TOKEN that produced it. Rotating that variable changes the
+   *  fingerprint and every session carrying an old one stops resolving - which is
+   *  what makes "rotate to revoke" true rather than a hope. */
+  via?: string
+}
 interface Store { users: User[]; invites: Invite[]; sessions: Session[] }
 
 export const normEmail = (e: string) => e.trim().toLowerCase()
@@ -446,7 +453,130 @@ export function sessionUser(dir: string, rawToken: string): User | null {
   const store = loadStore(dir)
   const hash = sha256(rawToken)
   const s = store.sessions.find((s) => s.tokenHash === hash && s.exp > Date.now())
-  return s ? (store.users.find((u) => normEmail(u.email) === s.emailNorm) ?? null) : null
+  if (!s) return null
+  // An operator-minted session is only as alive as the secret that minted it. The
+  // operator cannot revoke the owner's account - the store refuses to remove its
+  // last owner - so rotation is the lever they actually have, and it has to work.
+  if (s.via && s.via !== operatorFingerprint()) return null
+  return store.users.find((u) => normEmail(u.email) === s.emailNorm) ?? null
+}
+
+/** The shortest `MARVER_CLI_TOKEN` worth honouring. Nothing rate-limits this
+ *  credential and nothing slows a guess down, so its entropy is the whole
+ *  defence - and a length floor is the only part of entropy a program can check.
+ *  `openssl rand -hex 24` clears it with room to spare. */
+export const MIN_CLI_TOKEN = 32
+
+/** The alphabet a bearer token can actually travel in: both the gate and the API
+ *  parse `Authorization` with `[\w-]+`, so a secret containing anything else is
+ *  accepted at boot and then silently unusable. Checked HERE as well as at boot so
+ *  the two can never drift apart. */
+export const CLI_TOKEN_CHARS = /^[\w-]+$/
+
+/**
+ * The operator's own credential, read from the deployment environment.
+ *
+ * `comments connect` authenticates with a password, and an identity account has
+ * none by design - so on an identity-gated canvas the whole CLI surface (invite,
+ * revoke, and the comment sync the agent loop runs on) had no reachable
+ * credential. This is the door, and where it lives is the entire point.
+ *
+ * The obvious alternative - a page that mints a token for whoever is signed in -
+ * is the device flow this project already built and pulled (2d0850c). Authored
+ * frames run same-origin in a canvas: frame JavaScript reads `mv_c`, every
+ * request it makes carries the viewer's session, so any browser-reachable way to
+ * mint a durable token is a way for a frame to mint one silently and carry it
+ * off. There is no header that separates a frame from its own origin.
+ *
+ * An environment variable is on the other side of that line. It is never sent to
+ * a page, no frame can read it, and reaching it already means reaching the
+ * deployment - at which point the canvas was never the weakest thing in the room.
+ * The cost is honest: it is a static secret that rotates by redeploying, and it
+ * acts as the owner, so it is an operator credential rather than a person's.
+ */
+export function operatorUser(dir: string, presented: string): User | null {
+  return operatorMatch(presented) ? ownerOf(dir) : null
+}
+
+/** The owner's account, or null on a canvas nobody has claimed yet. Chosen by
+ *  stored ROLE, never by array order or by whatever MARVER_OWNER_EMAIL currently
+ *  says - that variable only ever nominated a bootstrap account, and honouring it
+ *  afterwards would let a changed environment repoint this at a different person. */
+const ownerOf = (dir: string): User | null => loadStore(dir).users.find((u) => u.role === 'owner') ?? null
+
+/**
+ * Why a configured `MARVER_CLI_TOKEN` is unusable, or null when it is fine.
+ *
+ * One function so that boot and the matcher can never disagree. They did: boot
+ * trimmed the value before checking it while `comments connect` sent the shell's
+ * value as-is, so `" abcd... "` started a canvas that then refused the operator's
+ * own token with no explanation anywhere. Surrounding whitespace is now a refusal
+ * rather than something quietly repaired on one side of the wire.
+ */
+export function cliTokenProblem(raw: string): string | null {
+  if (!raw) return null                                    // unset is a choice, not a mistake
+  if (raw !== raw.trim())
+    return 'MARVER_CLI_TOKEN has whitespace around it - quote it, or drop the quotes that put it there'
+  if (raw.length < MIN_CLI_TOKEN)
+    return `MARVER_CLI_TOKEN is too short to be a bearer credential (${raw.length} chars, needs ${MIN_CLI_TOKEN})`
+  if (!CLI_TOKEN_CHARS.test(raw))
+    return 'MARVER_CLI_TOKEN contains characters that cannot travel in an Authorization header'
+  return null
+}
+
+/** The configured secret, or '' when there is none worth honouring. Never trimmed
+ *  into shape: a value that needed trimming was refused at boot. */
+const operatorSecret = (): string => {
+  const raw = process.env.MARVER_CLI_TOKEN ?? ''
+  return raw && !cliTokenProblem(raw) ? raw : ''
+}
+
+/** A fingerprint of the current secret, so a session can record WHICH one minted
+ *  it. The hash, never the value: this is written to auth.json, and a store that
+ *  quietly contains the operator's credential is the thing being avoided. */
+const operatorFingerprint = (): string => {
+  const secret = operatorSecret()
+  return secret ? sha256(`cli-generation:${secret}`) : ''
+}
+
+function operatorMatch(presented: string): boolean {
+  const secret = operatorSecret()
+  if (!secret || !presented) return false
+  // Compared as digests so the two are always the same length: timingSafeEqual
+  // throws on a length mismatch, and catching that throw would leak the length
+  // of the secret through which guesses cost nothing.
+  return timingSafeEqual(Buffer.from(sha256(presented), 'hex'), Buffer.from(sha256(secret), 'hex'))
+}
+
+/**
+ * Trade the operator's secret for an ordinary session, once, from the terminal.
+ *
+ * The secret itself must not become the thing a repo carries. `connect` persists
+ * whatever it is given, and that file sits on a developer's disk for as long as
+ * the project lasts - a non-expiring master key is the wrong shape for it. What comes back here expires, dies with
+ * `comments revoke`, and can be replaced without touching the deployment.
+ *
+ * Only the operator secret opens this. Deliberately NOT any signed-in session:
+ * authored frames run same-origin and ride the viewer's cookies, so a route that
+ * minted sessions for whoever was signed in would be the pulled device flow
+ * (2d0850c) with a different name. A frame cannot present this Bearer, because
+ * the value it needs was never in the browser.
+ */
+export function issueDeviceSession(dir: string, presented: string): { token: string; exp: number; user: User } | null {
+  if (!operatorMatch(presented)) return null
+  return withLock(dir, () => {
+    const store = loadStore(dir)
+    const user = store.users.find((u) => u.role === 'owner')
+    if (!user) return null
+    const token = pushSession(store, user)
+    // Stamp it with the generation of the secret that asked. Rotating
+    // MARVER_CLI_TOKEN then ends every session it ever minted - the only
+    // revocation lever an operator has over a credential that acts as the owner,
+    // since the store refuses to delete its last owner.
+    store.sessions[store.sessions.length - 1].via = operatorFingerprint()
+    saveStore(dir, store)
+    return { token, exp: Date.now() + SESSION_TTL, user }
+  })
 }
 
 export function signOut(dir: string, rawToken: string) {

@@ -1127,9 +1127,15 @@ describe('validateEvents (acceptance is forever, validate hard)', async () => {
 })
 
 describe('localProfile (the ONE dev identity resolver)', async () => {
-  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { localProfile, isConnected } = await import('../src/server/profile.ts')
+  const { saveCollab, collabFileFor } = await import('../src/server/sync.ts')
+  /** Remove the project AND the credential loadCollab may have migrated out of it. */
+  const cleanup = (root: string) => {
+    rmSync(collabFileFor(root), { force: true })
+    rmSync(root, { recursive: true, force: true })
+  }
   const make = (files: Record<string, unknown>) => {
     const root = mkdtempSync(join(tmpdir(), 'sh-prof-'))
     mkdirSync(join(root, 'design', '.local'), { recursive: true })
@@ -1141,13 +1147,30 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
     const root = make({})
     expect(localProfile(root)).toEqual({ email: '', name: 'You', avatar: undefined })
     expect(isConnected(root)).toBe(false)
-    rmSync(root, { recursive: true, force: true })
+    cleanup(root)
   })
   it('reads profile.json (name, email, avatar)', () => {
     const root = make({ 'profile.json': { name: 'Nic', email: 'n@x.co', avatar: 'data:image/png;base64,AA' } })
     expect(localProfile(root)).toEqual({ email: 'n@x.co', name: 'Nic', avatar: 'data:image/png;base64,AA' })
-    rmSync(root, { recursive: true, force: true })
+    cleanup(root)
   })
+  it('reads the connected account from OUTSIDE the repo, where it now lives', () => {
+    // The credential moved to ~/.marver/canvases because `marver dev` serves the
+    // repo. profile.ts read the old path directly, so after the move a connected
+    // repo silently lost its identity on every comment it authored - and the
+    // legacy-path tests around this one kept passing throughout.
+    const root = make({ 'profile.json': { avatar: 'data:image/png;base64,AA' } })
+    saveCollab(root, { url: 'https://c.example', token: 't', email: 'me@team.co', name: 'Team Me' })
+    try {
+      expect(existsSync(join(root, 'design', '.local', 'collab.json'))).toBe(false)
+      expect(isConnected(root)).toBe(true)
+      expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,AA' })
+    } finally {
+      rmSync(collabFileFor(root), { force: true })
+      cleanup(root)
+    }
+  })
+
   it('a local avatar still applies when the connected account has none', () => {
     const root = make({
       'profile.json': { name: 'Local Me', email: 'old@x.co', avatar: 'data:image/png;base64,AA' },
@@ -1155,7 +1178,7 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
     })
     expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,AA' })
     expect(isConnected(root)).toBe(true)
-    rmSync(root, { recursive: true, force: true })
+    cleanup(root)
   })
   it("the connected account's own picture wins, the way its name does", () => {
     // The account already has an avatar and the server sends it with every
@@ -1173,7 +1196,7 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
     expect(localProfile(root)).toEqual({
       email: 'me@team.co', name: 'Team Me', avatar: 'data:image/png;base64,ACCOUNT',
     })
-    rmSync(root, { recursive: true, force: true })
+    cleanup(root)
   })
   it('a connect account without a name keeps the local display name', () => {
     const root = make({
@@ -1181,13 +1204,13 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
       'collab.json': { url: 'https://c.example', token: 't', email: 'me@team.co' },
     })
     expect(localProfile(root)).toEqual({ email: 'me@team.co', name: 'Local Me', avatar: undefined })
-    rmSync(root, { recursive: true, force: true })
+    cleanup(root)
   })
   it('survives malformed json on disk', () => {
     const root = make({})
     writeFileSync(join(root, 'design', '.local', 'profile.json'), '{nope')
     expect(localProfile(root).name).toBe('You')
-    rmSync(root, { recursive: true, force: true })
+    cleanup(root)
   })
   it('survives VALID json that is not an object (null / array / primitive)', () => {
     for (const body of ['null', '[1,2]', '"hi"', '42']) {
@@ -1196,7 +1219,7 @@ describe('localProfile (the ONE dev identity resolver)', async () => {
       writeFileSync(join(root, 'design', '.local', 'collab.json'), body)
       expect(localProfile(root)).toEqual({ email: '', name: 'You', avatar: undefined })
       expect(isConnected(root)).toBe(false)
-      rmSync(root, { recursive: true, force: true })
+      cleanup(root)
     }
   })
 })
@@ -1372,5 +1395,46 @@ describe('poweredByUrl (automatic canvas attribution)', async () => {
   it('a missing or unsluggable name drops utm_campaign, never emits an empty one', () => {
     expect(poweredByUrl(undefined, 'published-canvas', 'gate')).not.toContain('utm_campaign')
     expect(poweredByUrl('!!!', 'published-canvas', 'gate')).not.toContain('utm_campaign')
+  })
+})
+
+describe('isSecureDeployment (the Secure flag on a thirty-day cookie)', async () => {
+  const { isSecureDeployment } = await import('../src/server/secure-cookie.ts')
+  const req = (headers: Record<string, unknown> = {}) => ({ headers })
+  const withOrigin = (value: string | undefined, run: () => void) => {
+    const had = process.env.MARVER_PUBLIC_ORIGIN
+    if (value === undefined) delete process.env.MARVER_PUBLIC_ORIGIN
+    else process.env.MARVER_PUBLIC_ORIGIN = value
+    try { run() } finally {
+      if (had === undefined) delete process.env.MARVER_PUBLIC_ORIGIN
+      else process.env.MARVER_PUBLIC_ORIGIN = had
+    }
+  }
+
+  it('believes the pinned origin over a silent proxy', () => {
+    // The whole point: nginx's documented proxy_pass sends no X-Forwarded-*, so
+    // an https canvas would otherwise hand out a cookie with no Secure on it.
+    withOrigin('https://canvas.example.com', () => {
+      expect(isSecureDeployment(req())).toBe(true)
+    })
+  })
+
+  it('and over a proxy that says otherwise, in both directions', () => {
+    withOrigin('https://canvas.example.com', () => {
+      expect(isSecureDeployment(req({ 'x-forwarded-proto': 'http' }))).toBe(true)
+    })
+    withOrigin('http://localhost:4199', () => {
+      expect(isSecureDeployment(req({ 'x-forwarded-proto': 'https' }))).toBe(false)
+    })
+  })
+
+  it('falls back to the header when nothing is pinned', () => {
+    withOrigin(undefined, () => {
+      expect(isSecureDeployment(req({ 'x-forwarded-proto': 'https' }))).toBe(true)
+      expect(isSecureDeployment(req())).toBe(false)
+    })
+    withOrigin('   ', () => {
+      expect(isSecureDeployment(req({ 'x-forwarded-proto': 'https' }))).toBe(true)
+    })
   })
 })

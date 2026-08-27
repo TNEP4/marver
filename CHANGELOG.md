@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## Unreleased
+## 0.11.0 - 2026-08-26
 
 ### Added
 
@@ -21,9 +21,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Somebody with a perfectly valid Marver account who is not on your list gets nothing.
 
   **The sovereign path is unchanged and is not going anywhere.** `MARVER_PASSWORD` still
-  gates a canvas with accounts that live entirely in your `MARVER_DATA_DIR`, and a canvas
-  with no `MARVER_ID_ISSUER` set makes no outbound request of any kind - nothing to depend
-  on, nothing to phone home to. The two are alternatives rather than layers: running both
+  gates a canvas with accounts that live entirely in your `MARVER_DATA_DIR`, and a served
+  canvas with no `MARVER_ID_ISSUER` set makes no outbound request at all - nothing to depend
+  on, nothing to phone home to. (Stated precisely, because it is the kind of promise that
+  should be: `marver serve` is silent. `marver dev` still makes the one anonymous registry
+  request it always has, once a day, to notice a new version - `MARVER_NO_UPDATE_CHECK=1`
+  turns it off - and a workspace you have connected to a published canvas still syncs its
+  comments with that canvas.) The two are alternatives rather than layers: running both
   would weaken your invite list to "an account OR whoever has the password", so the identity
   gate replaces the password gate rather than sitting beside it.
 
@@ -46,22 +50,81 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Sign-in fails closed: if the identity service is unreachable, existing sessions keep
   working and new ones are refused. Nothing falls back to open.
 
-  **One gap, stated rather than buried**: managing people is done with
-  `marver comments invite` and `marver comments revoke`, and both sign the CLI in with a
-  password - which identity mode does not have. So an identity-gated canvas can let its owner
-  in but can neither invite nor revoke anybody from the CLI. Seed invites before switching a
-  canvas over, or share a `MARVER_DATA_DIR`.
+  **Managing people from the repo needs `MARVER_CLI_TOKEN`.** `marver comments invite`,
+  `revoke` and `sync` authenticate the CLI with a password, and an identity account has none -
+  so set `MARVER_CLI_TOKEN` on the canvas to a *generated* secret of 32 characters or more
+  (`openssl rand -hex 24`) and pass the same value back:
 
-  A browser-approved CLI sign-in was built for this and pulled before release. Authored frames
-  run same-origin in a canvas, which is deliberate and documented - and it means frame
-  JavaScript could have run the approval itself and collected a thirty-day credential that
-  outlives the page. Requiring a real top-level navigation narrowed it and did not close it: a
-  frame can submit a form into the top window, and `Sec-Fetch-Site: same-origin` proves where a
-  request came from, not that a person meant it. It also broke plain-HTTP LAN canvases, since
-  browsers omit those headers on non-secure origins. The honest fix is frame isolation or
-  moving approval to the identity service's origin, and neither belongs in this release.
+  ```
+  MARVER_CLI_TOKEN='<that same value>' marver comments connect https://canvas.example.com
+  ```
+
+  (`--token` works too, but a secret on the command line is visible to anything that can
+  list processes.)
+
+  It acts as whoever owns the canvas, so it does nothing until somebody has signed in and
+  claimed it. Generate it rather than choosing one: nothing rate-limits this credential and
+  nothing slows a guess down, so its entropy is the whole defence, and a length floor is the
+  only part of entropy a program can check. The canvas refuses to start on a value that is too
+  short, and on one containing characters an `Authorization` header cannot carry - hex rather
+  than base64, so that a canvas never boots holding a secret it would go on to reject.
+
+  `connect` trades that secret for an ordinary session and stores THAT in
+  `~/.marver/canvases/`, so neither the secret nor the session lands in your repo. **Rotate
+  `MARVER_CLI_TOKEN` to revoke it**: every session it minted stops working the moment the
+  variable changes, and sessions people hold in their browsers are untouched. That is the
+  lever rather than `comments revoke`, because the session acts as the owner and a canvas
+  refuses to remove its last owner.
+
+  It is an environment variable, and not a page that hands out tokens to whoever is signed in,
+  for a reason worth stating plainly: authored frames run same-origin in a canvas. That is
+  deliberate and documented, and it means frame JavaScript can read `mv_c` and ride the
+  viewer's session - so any browser-reachable way to mint a durable credential is a way for a
+  frame to mint one silently and carry it off, an owner's if an owner is the one looking. A
+  browser-approved device flow was built for exactly this job and pulled before release for
+  exactly that reason; requiring a real top-level navigation narrowed it and did not close it,
+  because `Sec-Fetch-Site: same-origin` proves where a request came from and never that a
+  person meant it. An environment variable is on the other side of that line: it is never
+  sent to a page, and reaching it already means reaching the deployment.
+
+  The cost is honest. It is a static secret that rotates by redeploying, and it acts as the
+  owner rather than as a person, so it is an operator's credential and belongs with your other
+  deployment secrets. Per-member CLI credentials still want the frame isolation this release
+  does not have.
+
+### Changed
+
+- **The gate refuses to be framed** - every gate response now carries
+  `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. A
+  credential form inside somebody else's page, under a transparent button, is the classic
+  clickjack, and `SameSite=Lax` does not help because a framed page on the same site still
+  carries its cookies. Called out because it is a behaviour change rather than an addition:
+  if you were embedding a password-gated canvas in an iframe, that stops working. Embedding
+  a canvas people have already signed into is unaffected - it is the gate itself that
+  refuses.
 
 ### Fixed
+
+- **The collaboration credential has moved out of your repository, because `marver dev` was
+  serving it.** It lived at `design/.local/collab.json`, and the dev server puts the repository
+  on the web so frames can import from it. Authored frames run same-origin, so any frame could
+  `fetch('/design/.local/collab.json')` and carry off a live session for your published canvas.
+
+  It now lives in `~/.marver/canvases/`, keyed by the project's path - one file per canvas per
+  machine, outside anything that is served. `connect` writes there, `dev` moves an older
+  credential out of the repo the first time it runs, and nothing needs doing by hand.
+
+  Guarding the old location was tried first and is the reason for the move: a deny rule matched
+  the path asked for rather than the file served, so a repository containing
+  `leak.json -> design/.local/collab.json` walked straight past it - and after that was fixed,
+  `public/` and Vite's derived `index.html` candidates each did the same. Enumerating a
+  bundler's resolution rules is not a thing anyone finishes. Those guards stayed as depth,
+  `design/.local` is still never served whatever route a request takes, and Vite's own default
+  deny list is no longer replaced by ours.
+
+  If you have ever run `marver dev` on a repository you did not write, treat that credential as
+  exposed: change `MARVER_CLI_TOKEN` on the canvas, which ends every session it minted, or on a
+  password-account canvas `marver comments revoke` and reconnect.
 
 - **A gated canvas is no longer publicly cacheable in identity mode.** The `Cache-Control`
   decision keyed off the password verifier alone, so an identity-gated canvas marked its

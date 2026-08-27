@@ -420,9 +420,19 @@ async function verifySignature(parts: string[], kid: string, issuer: string): Pr
   }
   if (!jwk) return false
 
-  const k = jwk as { kty?: string; crv?: string; alg?: string }
+  const k = jwk as { kty?: string; crv?: string; alg?: string; use?: string; key_ops?: unknown }
   if (k.kty !== 'EC' || k.crv !== 'P-256') return false
   if (k.alg && k.alg !== 'ES256') return false
+
+  // A P-256 key on a JWKS is not automatically a key for THIS. The same curve
+  // serves ECDH key agreement, and a service that publishes one of those beside
+  // its signing keys would have us verify assertions with a key nobody thinks of
+  // as an authority - whoever holds its private half could mint identities. So
+  // the purpose is read where it is stated: `use` must be `sig` and `key_ops`
+  // must include `verify`. Absent, both stay unconstrained, which is what RFC
+  // 7517 means by optional - the check is on the claim, not on its presence.
+  if (k.use && k.use !== 'sig') return false
+  if (Array.isArray(k.key_ops) && !k.key_ops.includes('verify')) return false
 
   const { createPublicKey } = await import('node:crypto')
   const key = createPublicKey({ key: jwk as import('node:crypto').JsonWebKey, format: 'jwk' })

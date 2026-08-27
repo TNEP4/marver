@@ -35,6 +35,7 @@ export async function serve(root: string, portFlag?: number) {
   // ---- collaboration: on when MARVER_DATA_DIR names a durable home ----
   let collab: ((req: any, res: any, url: URL) => Promise<boolean>) | null = null
   let bearerCheck: ((token: string) => unknown) | null = null
+  let operatorCheck: ((token: string, req: any, url: URL) => boolean) | null = null
   let sessionCheck: ((req: any) => unknown) | null = null
   if (process.env.MARVER_DATA_DIR) {
     const { collabHandler } = await import('./collab.ts')
@@ -51,8 +52,16 @@ export async function serve(root: string, portFlag?: number) {
         appendEvents(join(dir, 'comments'), board, readLog(seedDir, board))
       }
     collab = collabHandler(dir, dist)
-    const { loadStore, createInvite, normEmail, sessionUser } = await import('./auth.ts')
+    const { loadStore, createInvite, normEmail, operatorUser, sessionUser } = await import('./auth.ts')
     bearerCheck = (token) => sessionUser(dir, token)
+    // The operator secret opens the gate for ONE request: the exchange that turns
+    // it into a session. Letting it pass generally was a real widening - the gate
+    // is the outer READ boundary, and behind it `/boards`, a published board's
+    // comments and the live event stream answer callers the API itself never
+    // identified. It buys the operator nothing either, since they are one request
+    // away from a session that opens all of it properly.
+    operatorCheck = (token, req, url) =>
+      req.method === 'POST' && url.pathname === '/__mv/api/cli-session' && !!operatorUser(dir, token)
     // a member's session IS gate passage - an account is strictly stronger than the
     // shared canvas password, so members never touch the shared secret again
     sessionCheck = (req) => {
@@ -74,6 +83,31 @@ export async function serve(root: string, portFlag?: number) {
         console.log(`    in the browser:  <canvas-url>/#/i/${token}`)
         console.log(`    from the repo:   npx ${NAME} comments connect <this-url> --invite ${token}\n`)
       }
+    }
+  }
+
+  // ---- the operator's CLI credential ----
+  //
+  // Validated at BOOT, because a value this check would refuse is one the matcher
+  // silently ignores at request time - and "my invites do nothing" is a much worse
+  // way to learn about it than a message at startup. The same function decides
+  // both, so the two can never drift.
+  const cliToken = process.env.MARVER_CLI_TOKEN ?? ''
+  if (cliToken) {
+    const { cliTokenProblem } = await import('./auth.ts')
+    if (!process.env.MARVER_DATA_DIR) {
+      console.error(`[${NAME}] MARVER_CLI_TOKEN needs MARVER_DATA_DIR - there are no accounts for it to act as otherwise.`)
+      process.exit(1)
+    }
+    const problem = cliTokenProblem(cliToken)
+    if (problem) {
+      console.error(
+        `[${NAME}] ${problem}.\n` +
+        `  Nothing rate-limits this credential and nothing slows a guess down, so its entropy is the\n` +
+        `  whole defence. Generate one rather than choosing one, in hex rather than base64:\n` +
+        `    MARVER_CLI_TOKEN=$(openssl rand -hex 24)`,
+      )
+      process.exit(1)
     }
   }
 
@@ -197,7 +231,8 @@ export async function serve(root: string, portFlag?: number) {
         // comment bodies or subscribe to events
         const bearerOk = collab && url.pathname.startsWith('/__mv/api/') && (() => {
           const tok = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
-          return !!tok && !!bearerCheck?.(tok)
+          if (!tok) return false
+          return !!bearerCheck?.(tok) || !!operatorCheck?.(tok, req, url)
         })()
         // sign-in, claim, and the invite peek live IN FRONT of the gate - that's the
         // whole point of the member path (rate-limited + non-enumerating in collab.ts)
@@ -304,9 +339,15 @@ export async function serve(root: string, portFlag?: number) {
   server.listen(port, () => {
     console.log(`\n  ${NAME} serving design/.dist → http://localhost:${port}/`)
     console.log(
-      idIssuer ? `  gate: ON - Marver ID (${idIssuer})\n`
-      : verifier ? '  gate: ON (MARVER_PASSWORD set)\n'
-      : '  gate: off - set MARVER_PASSWORD or MARVER_ID_ISSUER to require sign-in\n')
+      idIssuer ? `  gate: ON - Marver ID (${idIssuer})`
+      : verifier ? '  gate: ON (MARVER_PASSWORD set)'
+      : '  gate: off - set MARVER_PASSWORD or MARVER_ID_ISSUER to require sign-in')
+    // Said out loud because it is the only credential an identity-gated canvas
+    // has for the CLI, and because a canvas running without one will refuse
+    // `comments invite` later with no clue as to why.
+    if (cliToken) console.log(`  CLI: MARVER_CLI_TOKEN accepted (acts as the canvas owner)\n`)
+    else if (idIssuer) console.log(`  CLI: set MARVER_CLI_TOKEN to invite or sync from the repo\n`)
+    else console.log('')
   })
   return server
 }

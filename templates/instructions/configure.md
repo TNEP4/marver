@@ -72,6 +72,10 @@ If collaboration is deployed, each engineer runs `marver comments connect
 cloud sync on top of git. Git carries the committed comments; `connect` adds
 the real-time stream from published viewers.
 
+On a canvas gated by Marver Sign In there are no per-engineer CLI accounts:
+identity accounts have no password to connect with. The repo connects once with
+the canvas's `MARVER_CLI_TOKEN`, acting as the owner - see instructions/publish.md.
+
 ## Dev identity (who comments render as)
 
 `marver dev` resolves the local author from `design/.local/` - never invent or

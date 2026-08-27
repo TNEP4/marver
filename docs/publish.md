@@ -143,20 +143,44 @@ other sessions are signed out when that happens - a session records the address 
 was minted for, and leaving it alive would hand it to whoever claims that address
 next. A rename onto an address someone else already holds is refused outright.
 
-> **Known gap.** Managing people is done with `marver comments invite` and
-> `marver comments revoke`, and both authenticate the CLI with a password -
-> which identity mode does not have. So on a canvas gated this way the owner can
-> sign in, but can neither invite nor revoke anybody from the CLI. Seed the
-> invites before switching a canvas to `MARVER_ID_ISSUER`, or run both canvases
-> from the same `MARVER_DATA_DIR`.
+> **Managing people needs `MARVER_CLI_TOKEN`.** `marver comments invite`,
+> `revoke` and `sync` authenticate the CLI with a password, and an identity
+> account has none. Set `MARVER_CLI_TOKEN` on the canvas to a generated secret of
+> 32 characters or more and hand the same value back:
 >
-> A browser-approved sign-in for the CLI was built for this and then removed
-> before release. Authored frames run same-origin in a canvas, so frame
+> ```bash
+> # on the canvas:  MARVER_CLI_TOKEN=$(openssl rand -hex 24)
+> MARVER_CLI_TOKEN='<that same value>' marver comments connect https://canvas.example.com
+> ```
+>
+> `--token` works too, but a secret on the command line is visible to anything
+> that can list processes, so prefer the variable.
+>
+> Generate it, do not choose it: nothing rate-limits this credential and nothing
+> slows a guess down, so its entropy is the whole defence. Use hex rather than
+> base64 - an `Authorization` header carries letters, digits, `_` and `-`, and the
+> canvas refuses to start on a value it could never accept. It acts as whoever
+> owns the canvas, so let the owner sign in once first.
+>
+> `connect` trades it for an ordinary session and stores THAT in
+> `~/.marver/canvases/`, so neither the secret nor the session lands in your repo.
+>
+> **To revoke it, rotate `MARVER_CLI_TOKEN`.** Every session it ever minted stops
+> working the moment the variable changes; sessions people hold in their browsers
+> are untouched. `marver comments revoke` cannot help here - the session acts as
+> the owner, and a canvas refuses to remove its last owner - so rotation is the
+> lever, and it is the reason each device session records which secret minted it.
+> (One instance at a time, as ever: during a rolling restart an old replica still
+> honours old sessions until it drains.)
+>
+> It is a deployment variable rather than something a page hands out, and that is
+> deliberate. A browser-approved sign-in for the CLI was built for this and then
+> removed before release: authored frames run same-origin in a canvas, so frame
 > JavaScript could have driven the approval itself and walked away with a
-> long-lived credential; no header distinguishes a frame from the page around
-> it, because they are the same origin. It needs either frame isolation or an
-> approval that happens on the identity service's origin, and both are their own
-> piece of work.
+> long-lived credential; no header distinguishes a frame from the page around it,
+> because they are the same origin. Per-member CLI credentials still want the
+> frame isolation this release does not have, so the one credential is the
+> operator's.
 
 ### The gate footer
 

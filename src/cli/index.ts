@@ -99,6 +99,7 @@ cli
 cli
   .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · reply <thread> · resolve <thread> · invite <email> · revoke <email>')
   .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--token <token>', 'connect: the canvas\'s MARVER_CLI_TOKEN (default $MARVER_CLI_TOKEN) - the identity-mode path')
   .option('--invite <token>', 'connect: claim this invite instead of signing in')
   .option('--canvas-password <password>', 'connect: the canvas gate password (default $MARVER_PASSWORD or prompt)')
   .option('--email <email>', 'connect: account email (skips the prompt)')

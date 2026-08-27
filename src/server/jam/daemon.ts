@@ -54,6 +54,25 @@ export interface JamHooks {
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
 const fenceGroup = (pid?: number) => { try { if (pid) process.kill(-pid, 'SIGKILL') } catch { /* already gone */ } }
 
+/**
+ * What a spawned agent is allowed to inherit.
+ *
+ * Agents get the environment because they need it - PATH, HOME, the API key
+ * their own CLI signs in with. `MARVER_CLI_TOKEN` is the exception: it is the
+ * operator's credential for the PUBLISHED canvas, it is accepted as a shell
+ * fallback by `comments connect`, and an agent is the one process on this machine
+ * that is running somebody else's instructions. Handing it over would let a
+ * prompt-injected agent take the published canvas, which is a much larger blast
+ * radius than the frames it was asked to edit.
+ *
+ * Exported so the removal is testable: a spawn option nobody asserts is a spawn
+ * option that quietly grows back.
+ */
+export function agentEnv(from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const { MARVER_CLI_TOKEN: _withheld, ...rest } = from
+  return rest
+}
+
 const FRAME_FILE = /\.(tsx|jsx|html)$/
 
 /** Every frame FILE under design/scenes, as `frame id -> mtimeMs`. Used to see which frames the
@@ -91,6 +110,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
   type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
+  type Env = NodeJS.ProcessEnv
   const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const { cmd, args, env } = adapter.spawnArgs(goal)
@@ -99,7 +119,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // PWD is pinned to the workspace: spawn's cwd does not update the inherited env var, and
       // some CLIs (opencode, verified) trust PWD over getcwd - without this, a dev server whose
       // own cwd differs from the repo root would have the agent editing the WRONG directory.
-      try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...env, PWD: root } }) }
+      try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), ...env, PWD: root } }) }
       catch { return resolve({ reply: '', ok: false, reanchors: [] }) }
       activeChildren.add(child)
       try { onSpawn(child.pid) } catch { /* pgid persist failed; the run still proceeds, fencing degrades */ }

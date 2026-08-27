@@ -61,6 +61,7 @@ vars if the host has no CLI.
 | `MARVER_PASSWORD` | the sovereign alternative: one shared password; unset = open |
 | `MARVER_DATA_DIR` | persistent dir for `comments/` + `auth.json`; unset = no collaboration |
 | `MARVER_OWNER_EMAIL` | who owns an empty canvas. With Marver Sign In they just sign in; with a password, a single-use claim link prints in the deploy logs on first boot |
+| `MARVER_CLI_TOKEN` | generated 32+ char secret (`openssl rand -hex 24`) that lets this repo run `comments invite`/`revoke`/`sync` as the owner. Required with `MARVER_ID_ISSUER` - identity accounts have no password for the CLI to use |
 | `MARVER_TRUSTED_PROXY` | set to `1` behind a reverse proxy (Railway, Fly) so rate limits see real IPs |
 
 ## The host contract (works on any volume-capable host)
@@ -97,7 +98,8 @@ railway volume add --mount-path /data
 # The default gate: people sign in as themselves.
 railway variables --set MARVER_ID_ISSUER=https://id.marver.design \
   --set MARVER_PUBLIC_ORIGIN=https://<the deployed url> --set MARVER_DATA_DIR=/data \
-  --set MARVER_OWNER_EMAIL=<owner@email> --set MARVER_TRUSTED_PROXY=1
+  --set MARVER_OWNER_EMAIL=<owner@email> --set MARVER_TRUSTED_PROXY=1 \
+  --set MARVER_CLI_TOKEN="$(openssl rand -hex 24)"
 # ...or the sovereign alternative, if this canvas must depend on nothing external:
 #   --set MARVER_PASSWORD=<pw>   (instead of MARVER_ID_ISSUER/MARVER_PUBLIC_ORIGIN)
 railway up                        # uploads the repo; Railway runs build then start
@@ -129,21 +131,33 @@ isn't one. An address that is not on the list is refused by name, on screen.
 **With Marver Sign In**, the owner just signs in - `MARVER_OWNER_EMAIL` claims an
 empty canvas for that address, with no token to pass around.
 
-**But this machine cannot mint invites on an identity-gated canvas.** `comments
-invite` and `comments revoke` sign the CLI in with a password, and identity mode
-has none. So plan for it:
+**To manage people from this machine, the canvas needs `MARVER_CLI_TOKEN`.**
+`comments invite`, `revoke` and `sync` sign the CLI in with a password, and
+identity mode has none. Generate a secret - do not choose one, nothing
+rate-limits this and nothing slows a guess down - set it on the canvas, and hand
+the same value back:
 
-- seed the invites while the canvas is still password-gated, THEN switch it to
-  `MARVER_ID_ISSUER`, or
-- run both canvases from the same `MARVER_DATA_DIR`, so the accounts and invites
-  are shared.
+```bash
+# on the canvas (deployment environment):  MARVER_CLI_TOKEN=$(openssl rand -hex 24)
+MARVER_CLI_TOKEN='<that same value>' marver comments connect https://canvas.example.com
+```
 
-A browser-approved CLI sign-in was built for this and removed before release:
-authored frames run same-origin in a canvas, so frame code could have driven the
-approval itself and kept a long-lived credential. Closing that needs frame
-isolation or an approval on the identity service's own origin, so do not expect
-it in this version and do not invent a workaround that posts to internal
-endpoints.
+Hex, not base64: an `Authorization` header carries letters, digits, `_` and `-`,
+and the canvas refuses to start on a value it could never accept. `--token` works
+too, but a value on the command line is visible to anything that can list
+processes, so prefer the variable.
+
+It acts as whoever owns the canvas, so let the owner sign in once first - until
+somebody owns it there is nobody for the token to be. `connect` trades it for an
+ordinary session and stores THAT, so the secret never lands in your repo.
+Rotating `MARVER_CLI_TOKEN` ends every session it minted.
+
+It is a deployment variable and not something a page hands out, because authored
+frames run same-origin in a canvas: frame code can read `mv_c` and ride the
+viewer's session, so anything a browser can mint, a frame can mint silently. A
+browser-approved device flow was built for this job and removed before release for
+that reason. Do not reintroduce one, and do not invent a workaround that posts to
+internal endpoints.
 
 **With a canvas password**, `MARVER_OWNER_EMAIL` makes the first boot print an
 owner bootstrap in the logs: a browser link (`<url>/#/i/<token>`) AND the exact
@@ -179,5 +193,6 @@ through sign-in.
 - `<MARVER_DATA_DIR>/auth.json` - accounts (scrypt), sessions, invites, on the volume.
 - `design/comments/<board>.jsonl` - the dev-side mirror, git-tracked: feedback
   has history, and the volume has an off-site replica for free.
-- `design/.local/collab.json` - THIS machine's device credential. Gitignored;
+- `~/.marver/canvases/<project-hash>.json` - THIS machine's device credential, kept
+  OUTSIDE the repo because `marver dev` serves the repo;
   never commit it.

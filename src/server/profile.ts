@@ -1,9 +1,11 @@
 /**
  * The dev identity - ONE resolver for every server-side consumer (api, jam daemon, CLI).
  *
- * Two sources merge in design/.local/:
- *  - profile.json  {name, email?, avatar?} - set from the composer's avatar popover
- *  - collab.json   {email, name}           - the connect account, written by `comments connect`
+ * Two sources merge:
+ *  - design/.local/profile.json  {name, email?, avatar?} - set from the composer's
+ *    avatar popover
+ *  - the connect account {email, name}, written by `comments connect` into
+ *    ~/.marver/canvases/ - outside the repo, because `marver dev` serves the repo
  *
  * The connect account wins name + email (published serves validate author == session, so
  * events born here must carry an identity the remote will accept). The avatar always comes
@@ -11,6 +13,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { loadCollab } from './sync.ts'
 
 export interface LocalProfile { email: string; name: string; avatar?: string }
 
@@ -27,13 +30,16 @@ const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 
 /** True when a connect account provides the identity - name/email are then read-only in dev. */
 export function isConnected(root: string): boolean {
-  return !!str(readJson(join(root, 'design', '.local', 'collab.json')).email)
+  return !!str(loadCollab(root)?.email)
 }
 
 export function localProfile(root: string): LocalProfile {
   const dir = join(root, 'design', '.local')
   const prof = readJson(join(dir, 'profile.json'))
-  const collab = readJson(join(dir, 'collab.json'))
+  // Through loadCollab, never by path: the credential moved out of the repo, and
+  // reading the old location directly silently dropped the connected identity off
+  // every comment the moment somebody upgraded.
+  const collab = (loadCollab(root) ?? {}) as Record<string, unknown>
   return {
     // the unset default is "You" - the person at the keyboard, whatever their role
     // (the client renders it as the green Y avatar until a real profile is set)
