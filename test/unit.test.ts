@@ -1268,6 +1268,49 @@ describe('serve without collaboration (static canvas API boundary)', async () =>
       if (prevPw !== undefined) process.env.MARVER_PASSWORD = prevPw
     }
   })
+
+  /**
+   * The GATE cookie, not the collaboration session - two different thirty-day
+   * cookies set in two different files, and 0.11.0 fixed only one of them.
+   *
+   * The gate is the password-mode door, so it is the cookie most likely to be
+   * sitting behind somebody's nginx with the documented bare `proxy_pass`, which
+   * sends no X-Forwarded-* at all. Asserted with the header ABSENT, because a
+   * test that sets it passes against the broken code too.
+   */
+  it('puts Secure on the gate cookie from the pinned origin, with no proxy header', async () => {
+    const prevData = process.env.MARVER_DATA_DIR
+    const prevPw = process.env.MARVER_PASSWORD
+    const prevOrigin = process.env.MARVER_PUBLIC_ORIGIN
+    delete process.env.MARVER_DATA_DIR
+    process.env.MARVER_PASSWORD = 'a-long-enough-canvas-password'
+    process.env.MARVER_PUBLIC_ORIGIN = 'https://canvas.example.com'
+    const root = mkdtempSync(join(tmpdir(), 'sh-gate-'))
+    mkdirSync(join(root, 'design', '.dist'), { recursive: true })
+    writeFileSync(join(root, 'design', '.dist', 'index.html'), '<!doctype html><title>t</title>')
+    const { serve } = await import('../src/server/serve.ts')
+    const server = await serve(root, 0)
+    try {
+      await new Promise<void>((r) => server.once('listening', () => r()))
+      const port = (server.address() as { port: number }).port
+      const res = await fetch(`http://127.0.0.1:${port}/__mv/auth`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'a-long-enough-canvas-password' }).toString(),
+        redirect: 'manual',
+      })
+      expect(res.status).toBe(303)
+      const cookie = res.headers.get('set-cookie') ?? ''
+      expect(cookie).toContain('HttpOnly')
+      expect(cookie).toContain('; Secure')
+    } finally {
+      server.close()
+      rmSync(root, { recursive: true, force: true })
+      if (prevData !== undefined) process.env.MARVER_DATA_DIR = prevData
+      if (prevPw !== undefined) process.env.MARVER_PASSWORD = prevPw; else delete process.env.MARVER_PASSWORD
+      if (prevOrigin !== undefined) process.env.MARVER_PUBLIC_ORIGIN = prevOrigin; else delete process.env.MARVER_PUBLIC_ORIGIN
+    }
+  })
 })
 
 describe('stableNodeKey (comment-anchor stability)', async () => {

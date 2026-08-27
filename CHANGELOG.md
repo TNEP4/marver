@@ -2,6 +2,21 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.11.1 - 2026-08-27
+
+### Fixed
+
+- **The password gate's cookie now gets `Secure` from the pinned origin too.** 0.11.0 fixed
+  this for the collaboration session cookie and missed the gate's own, which is set in a
+  different file and is the one most likely to be sitting behind a plain `proxy_pass` - it is
+  the door on every password-mode canvas. Same rule, same reason: `MARVER_PUBLIC_ORIGIN`
+  decides when it is set, and `X-Forwarded-Proto` is the fallback only when there is nothing
+  better. Set `MARVER_PUBLIC_ORIGIN=https://your-canvas.example.com` and the thirty-day gate
+  cookie is https-only regardless of what your proxy tells the process.
+
+  Canvases behind a proxy that does send `X-Forwarded-Proto` - Railway, Fly, Vercel, Caddy,
+  and nginx configured with `proxy_set_header` - were never affected.
+
 ## 0.11.0 - 2026-08-27
 
 ### Added
@@ -105,14 +120,17 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Fixed
 
-- **`Secure` on the session cookie no longer depends on a header your proxy may not send.**
-  A canvas decided whether it was on https by reading `X-Forwarded-Proto`, and nginx's own
-  documented `proxy_pass http://localhost:PORT` sets no `X-Forwarded-*` at all. A canvas
-  served over https behind that configuration saw no header, concluded "not secure", and
-  issued a thirty-day session cookie the browser would happily send over plain http. Where
+- **`Secure` on the collaboration session cookie no longer depends on a header your proxy may
+  not send.** A canvas decided whether it was on https by reading `X-Forwarded-Proto`, and
+  nginx's own documented `proxy_pass http://localhost:PORT` sets no `X-Forwarded-*` at all. A
+  canvas served over https behind that configuration saw no header, concluded "not secure",
+  and issued a thirty-day session cookie the browser would happily send over plain http. Where
   `MARVER_PUBLIC_ORIGIN` is set it now decides - a deliberate statement by whoever deployed
   the canvas, rather than a guess about a proxy that may not be speaking. The header remains
   the fallback only where there is nothing better, which is development on loopback.
+
+  This release fixed the collaboration session cookie only. The password gate's own cookie
+  still guessed from the header - see 0.11.1.
 
 - **The collaboration credential has moved out of your repository, because `marver dev` was
   serving it.** It lived at `design/.local/collab.json`, and the dev server puts the repository

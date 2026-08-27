@@ -11,6 +11,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { NAME } from '../cli/name.ts'
 import { poweredByUrl } from '../shared/utm.ts'
+import { secureSuffix } from './secure-cookie.ts'
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -205,7 +206,11 @@ export async function serve(root: string, portFlag?: number) {
           const given = form.get('password') ?? ''
           if (timingSafeEqual(scryptSync(given, 'marver-gate', 32), verifier)) {
             const exp = Math.floor(Date.now() / 1000) + MONTH
-            const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''
+            // Same rule as the collaboration session cookie, and for the same
+            // reason - this one is a thirty-day cookie too, and a password
+            // canvas behind nginx's bare `proxy_pass` sends no X-Forwarded-*,
+            // so guessing from the header drops Secure on a live https gate.
+            const secure = secureSuffix(req)
             res.setHeader('set-cookie', `${COOKIE}=${exp}.${sign(exp)}; Path=/; Max-Age=${MONTH}; HttpOnly; SameSite=Lax${secure}`)
             // deep links survive the gate: the page posts its hash, redirects carry it
             // back. Whitelisted charset - no CR/LF, no absolute URLs, no header games.

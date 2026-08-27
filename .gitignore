@@ -12,3 +12,6 @@ spike/
 *.tar.gz
 .env
 .env.*
+
+# Asteria knowledge fan-out projection - never commit
+.brain-inbox.json
