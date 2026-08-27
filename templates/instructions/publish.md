@@ -152,6 +152,16 @@ somebody owns it there is nobody for the token to be. `connect` trades it for an
 ordinary session and stores THAT, so the secret never lands in your repo.
 Rotating `MARVER_CLI_TOKEN` ends every session it minted.
 
+Then invite people by address, and send them nothing:
+
+```bash
+marver comments invite colleague@company.com
+#    → in identity mode the ADDRESS is the invitation. They open the canvas URL,
+#      sign in as themselves, and the invite is spent by that sign-in. There is
+#      no link to forward and no canvas password to send with it - the claim link
+#      is deliberately shut off in identity mode, so do not go looking for one.
+```
+
 It is a deployment variable and not something a page hands out, because authored
 frames run same-origin in a canvas: frame code can read `mv_c` and ride the
 viewer's session, so anything a browser can mint, a frame can mint silently. A
@@ -192,7 +202,11 @@ through sign-in.
 - `<MARVER_DATA_DIR>/comments/<board>.jsonl` - the live event log, on the volume.
 - `<MARVER_DATA_DIR>/auth.json` - accounts (scrypt), sessions, invites, on the volume.
 - `design/comments/<board>.jsonl` - the dev-side mirror, git-tracked: feedback
-  has history, and the volume has an off-site replica for free.
+  has history, and the volume has an off-site replica for free. **Each event
+  carries its author's email address** - that is how the canvas decides who may
+  edit or resolve their own thread. Harmless in a private repo; if yours is
+  public, or may become public, gitignore `design/comments/` and let the volume
+  be the record. The canvas keeps its own copy either way, so nothing is lost.
 - `~/.marver/canvases/<project-hash>.json` - THIS machine's device credential, kept
   OUTSIDE the repo because `marver dev` serves the repo;
   never commit it.

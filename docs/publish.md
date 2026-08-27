@@ -75,6 +75,15 @@ re-prompts), and each password attempt pays an scrypt cost. Invite people with
 `marver comments invite <email>`; they claim it in the browser and choose a
 password.
 
+**Set `MARVER_PUBLIC_ORIGIN` here too if you serve over https.** It is required for
+Marver Sign In and optional here, but it is what puts `Secure` on that 30-day
+cookie. Without it the canvas has to guess from `X-Forwarded-Proto`, and nginx's
+own documented `proxy_pass http://localhost:PORT` sends no `X-Forwarded-*` at all -
+so an https canvas behind that config drops `Secure` and the cookie will travel
+over plain http. Proxies that do set the header (Railway, Fly, Vercel, Caddy,
+nginx with `proxy_set_header`) were never affected. Fixed in 0.11.1; on 0.11.0 the
+gate cookie guessed regardless.
+
 The costs are the ordinary costs of passwords. It is one secret shared by
 everybody, so removing one person means rotating it for all of them; there is no
 password reset; and a person with five canvases keeps five passwords.
@@ -92,6 +101,13 @@ The gate asks people who they are instead of asking for a shared secret. They si
 in once - with Google, or a code emailed to them - and every canvas you gate this
 way opens without another password. Nobody types a canvas password, so there is
 none to leak, rotate, or forget, and revoking one person revokes them.
+
+A Marver account is **free**, and there is exactly one of it. That is the point:
+the account is not per canvas, so the second board you share with somebody costs
+them nothing - no signup, no password to store, no invite link to keep. The first
+canvas is where they pay the thirty seconds; every one after that is a click. If
+you have ever watched a review die because a reviewer could not find the link, that
+is the friction this removes.
 
 This is the better default for a team, and it is the one we run ourselves. What it
 costs you is honest to state:

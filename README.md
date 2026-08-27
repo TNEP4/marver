@@ -28,6 +28,7 @@ Frames appear on the canvas the moment the files land. That's the loop.
 - **Everything hot-reloads.** The agent writes, you watch it land - live.
 - **True viewports.** Each frame is a real iframe: drag its edge and your actual breakpoints fire.
 - **Your agent answers on the canvas.** Tag `@marver` in a comment and it picks up the job, edits the real source, and replies in the thread - no wiring, on by default. See [Live Jam](#live-jam).
+- **Feedback without a signup wall.** Publish the canvas, invite people by email, and they sign in as themselves - one free Marver account, Google or an emailed code, and it opens every canvas you ever share with them. Or keep it entirely self-hosted behind a shared password. See [Collaboration](#collaboration).
 - **No AI inside.** The designer is the coding agent you already run and pay for. `init` generates the `design/AGENTS.md` contract that teaches it the whole workflow.
 
 ## The canvas
@@ -40,9 +41,21 @@ Frames appear on the canvas the moment the files land. That's the loop.
 
 ## Collaboration
 
-- **Comments.** Google-Docs-style feedback pinned to actual elements. Press `c`, click a div inside a frame, write - the thread lives on that element and survives edits via a layered anchor (source semantics → structure → fuzzy text). Viewers on a published canvas comment with real names and avatars (invite-link accounts, no email infrastructure). `marver dev` syncs the same threads into `design/comments/*.jsonl`, where your agent works the queue: `npx marver comments list --open --json` → fork a variant → `resolve --addressed-in`. Live via SSE; one deploy, no extra services.
+- **Comments.** Google-Docs-style feedback pinned to actual elements. Press `c`, click a div inside a frame, write - the thread lives on that element and survives edits via a layered anchor (source semantics → structure → fuzzy text). Viewers on a published canvas comment with real names and avatars - either a Marver account they already have, or an invite-link account on that canvas alone. `marver dev` syncs the same threads into `design/comments/*.jsonl`, where your agent works the queue: `npx marver comments list --open --json` → fork a variant → `resolve --addressed-in`. Live via SSE; one deploy, no extra services.
 - **Laser mode.** Press `l`: every element in every frame gets depth-hued outlines plus a hover label - the fastest way to see structure. Click any element to copy its full address (frame file + CSS path) for the agent.
-- **Publishing.** `npx marver build` exports a static canvas (default-closed: `design/publish.json` names what ships); `npx marver serve` hosts it with an optional password gate. One deploy on Railway, Docker, or any static host - the [publishing guide](docs/publish.md) has the one-pagers.
+- **Publishing.** `npx marver build` exports a static canvas (default-closed: `design/publish.json` names what ships, and whether each board is `read` or `comment`); `npx marver serve` hosts it. One deploy on Railway, Docker, or any static host - the [publishing guide](docs/publish.md) has the one-pagers.
+
+- **Two ways to let people in.** They are alternatives, not layers - pick one per canvas.
+
+  **Marver Sign In** (new in 0.11). Set `MARVER_ID_ISSUER=https://id.marver.design` and reviewers sign in as themselves, with Google or a six-digit code emailed to them. One free Marver account opens *every* canvas gated this way, so the second board you share costs them nothing: no new signup, no new password, no link to keep. You invite an email address and they are in.
+
+  That is the whole difference, and it is the difference between "I'll look later" and a comment actually landing on the board. It also means their real name and face ride along, so a thread is from a person rather than from an address.
+
+  **A shared password** (`MARVER_PASSWORD`). Fully self-hosted, no account anywhere but your own volume, nothing about your reviewers leaves your infrastructure - and still fully supported, not a legacy path. The trade is that every canvas is an island: reviewers claim an invite link and pick a name and password *on that canvas*, and do it again for the next one. Fine for one board, a toll on the fifth.
+
+  Either way the canvas runs on your infrastructure and stores its own comments and members. With Marver Sign In the identity service only ever tells your canvas that a verified address matched an entry on your invite list - it never sees your frames, your files, or your comments. Rights stay yours: `design/publish.json` decides which boards are readable and which are commentable, and `marver comments invite`/`revoke` decides who is on the list.
+
+  *Coming next:* one home for your account - every canvas you have been invited to, every canvas you have shared, and the access each one carries, in a single list. Today the account page at `id.marver.design` shows the canvases you have approved and lets you revoke them.
 
 ## Live Jam
 
@@ -61,7 +74,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver init` | Scaffold `design/` in this repo (safe to re-run; refreshes managed files) |
 | `npx marver dev` / `canvas` | Start the local canvas - hot reload, comments, Live Jam armed (`--port`, default 5199) |
 | `npx marver build` | Static export → `design/.dist`; what ships comes from `design/publish.json` (default-closed) |
-| `npx marver serve` | Serve the export; `MARVER_PASSWORD` gates it, `MARVER_DATA_DIR` persists comments + accounts |
+| `npx marver serve` | Serve the export; `MARVER_ID_ISSUER` or `MARVER_PASSWORD` gates it, `MARVER_DATA_DIR` persists comments + accounts |
 | `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` · `list` |
 
