@@ -21,6 +21,7 @@ import { appendEvents, listBoards, readLog, type CommentEvent } from './comments
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
+import { relayNotify, transitionId, type NotifyCtx } from './notify.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
@@ -157,6 +158,10 @@ export function collabHandler(dataDir: string, distDir: string) {
   const publicOrigin = (process.env.MARVER_PUBLIC_ORIGIN ?? '').trim() || null
   const appOrigin = (process.env.MARVER_APP_ORIGIN ?? '').trim() || 'https://app.marver.design'
   const frontDoorOn = !!idIssuer && !!publicOrigin && meta.frontDoor !== false
+  const notifyCtx: NotifyCtx = {
+    dataDir, issuer: idIssuer, origin: publicOrigin,
+    enabled: (meta as { notify?: boolean }).notify !== false,
+  }
   const threads = new Map<string, BoardThreads>()
   for (const b of Object.keys(rights)) threads.set(b, deriveThreads(readLog(commentsDir, b)))
   const boardType = (b: string) => meta.boards?.[b]?.type ?? 'mix'
@@ -398,6 +403,13 @@ export function collabHandler(dataDir: string, distDir: string) {
         const tok0 = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
         const tok = tok0?.includes('.') ? tok0 : undefined
         const sessionCaller = tok || !b ? null : currentUser(req)
+        // "someone asked for access" - to the owner, carrying only "someone";
+        // the transition id is the asker alone, so a note-replacing repeat
+        // request sends nothing
+        const tellOwner = (asker: string) => {
+          const owner = loadStore(dataDir).users.find((u) => u.role === 'owner')
+          if (owner) relayNotify(notifyCtx, 'access-requested', owner.email, transitionId('asked', asker))
+        }
         if (b && tok) {
           const v = verifyCanvasJws(dataDir, tok, 'marver-reqaccess+jwt', publicOrigin)
           if (v.ok && typeof v.claims.email === 'string' && notBlocked(v.claims.email)) {
@@ -409,10 +421,12 @@ export function collabHandler(dataDir: string, distDir: string) {
               target: typeof v.claims.target === 'string' && v.claims.target ? v.claims.target.slice(0, 300) : undefined,
               note,
             })
+            tellOwner(v.claims.email)
           }
         } else if (sessionCaller && csrfOk(req) && notBlocked(sessionCaller.email)) {
           // the admitted viewer's "Ask to comment" - same queue, same shape
           putRequest(dataDir, { email: sessionCaller.email, name: sessionCaller.name, requestedRole, note })
+          tellOwner(sessionCaller.email)
         }
         return json(res, 202, { ok: true }), true
       }
@@ -491,12 +505,15 @@ export function collabHandler(dataDir: string, distDir: string) {
             return json(res, 200, r), true
           }
           if (sub === 'grant' && req.method === 'PUT') {
-            upsertGrant(dataDir, ceilings, {
+            const g = upsertGrant(dataDir, ceilings, {
               principal: String(b.principal ?? ''), scope: b.scope === 'canvas' ? 'canvas' : String(b.scope ?? ''),
               assigned: b.assigned === 'comment' ? 'comment' : 'view',
               expires: typeof b.expires === 'string' ? b.expires : null,
               by: owner?.email ?? 'owner',
             } as any, { identityMode: !!idIssuer })
+            // "you were invited" - sent the moment a grant lands on an address;
+            // the transition id makes a same-role re-invite send nothing
+            relayNotify(notifyCtx, 'invited', g.principal, transitionId('invited', g.principal, g.assigned))
             return json(res, 200, roster()), true
           }
           if (sub === 'grant' && req.method === 'DELETE') {
@@ -527,9 +544,11 @@ export function collabHandler(dataDir: string, distDir: string) {
           const rm = /^request\/(.+)$/.exec(sub)
           if (rm && req.method === 'POST') {
             const email = decodeURIComponent(rm[1])
-            const hit = resolveRequest(dataDir, ceilings, email,
-              b.approve === true ? { assigned: b.assigned === 'comment' ? 'comment' : 'view', by: owner?.email ?? 'owner' } : null)
+            const approved = b.approve === true ? { assigned: (b.assigned === 'comment' ? 'comment' : 'view') as 'view' | 'comment', by: owner?.email ?? 'owner' } : null
+            const hit = resolveRequest(dataDir, ceilings, email, approved)
             if (!hit) return json(res, 422, { error: 'no pending request for that address' }), true
+            // "your request was approved" - on approval; declines stay silent
+            if (approved) relayNotify(notifyCtx, 'request-approved', email, transitionId('approved', email, approved.assigned))
             return json(res, 200, roster()), true
           }
         } catch (err) {
