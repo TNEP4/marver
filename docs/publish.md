@@ -53,8 +53,26 @@ beside it.
 **Whichever you choose, the guest list stays yours.** This is the part worth
 reading twice: with Marver Sign In, the identity service proves *who somebody is*
 and has no say in *where they may go*. Your canvas decides that, from a list it
-holds, and the identity service is never told the answer. Somebody with a
-perfectly valid Marver account who is not on your list gets nothing.
+holds. Somebody with a perfectly valid Marver account who is not on your list
+gets nothing.
+
+And the honest fine print, because this is a promise we publish rather than a
+slogan: Marver stores which canvases a person has *signed in to*, and issues
+short-lived tokens for them. What someone can **do** on your canvas is answered
+by your canvas to their own browser, cached only there, and never sent to us.
+Two things do cross the line, both disclosed and both optional: an invite email
+means the identity service learns that an address was invited to your origin
+(that is what sending the mail requires - decline it entirely with
+`share: { notify: false }` in `design/config.ts` and use the dialog's "copy
+invite message" instead), and the front door at `app.marver.design` learns
+which origins a person probes (`share: { frontDoor: false }` keeps your canvas
+silent there). The app ships no third-party analytics and no summary telemetry.
+
+**Sharing, precisely.** Sharing controls who may **comment**, and who gets in
+at all. What a person who is in can **see** is decided at build time by
+`design/publish.json` - boards you do not publish are not in the bundle. One
+canvas per audience is the read boundary today; per-person read arrives in v2,
+served rather than bundled.
 
 ### Sovereign accounts (`MARVER_PASSWORD` + `MARVER_DATA_DIR`)
 
