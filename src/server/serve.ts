@@ -319,7 +319,12 @@ export async function serve(root: string, portFlag?: number) {
             // refuses cookie-bearing summary calls before anything else
             (req.method === 'GET' && url.pathname === '/__mv/api/summary') ||
             (req.method === 'OPTIONS' && url.pathname === '/__mv/api/summary') ||
-            (req.method === 'GET' && url.pathname === '/__mv/api/identity')))
+            (req.method === 'GET' && url.pathname === '/__mv/api/identity') ||
+            // request access authenticates with the gate-minted request token;
+            // the owner API with its own bearer - both are refused inside the
+            // handler, never waved through
+            (req.method === 'POST' && url.pathname === '/__mv/api/request-access') ||
+            url.pathname.startsWith('/__mv/api/share/')))
         if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
     }

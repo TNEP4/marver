@@ -121,6 +121,23 @@ cli
   })
 
 cli
+  .command('share <action> [value]', 'Sharing roster (owner): add <who> · remove <who> · block/unblock <email> · general <mode> · list · requests · explain <who> · who')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--role <role>', 'add / requests --approve: view (default) or comment')
+  .option('--expires <iso>', 'add: expiry timestamp, e.g. 2026-12-31T00:00:00Z')
+  .option('--approve <email>', 'requests: approve this pending request (canvas-wide in v1)')
+  .option('--decline <email>', 'requests: decline this pending request (silent to the asker)')
+  .option('--json', 'list: machine-readable output')
+  .action(async (action: string, value: string | undefined, opts) => {
+    const { shareCommand } = await import('./share.ts')
+    try { await shareCommand(resolve(opts.root), action, value, opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
   .command('work <action> [...frames]', 'Working state on the canvas: start <scene/frame ...> · done <scene/frame ...> | --all · list')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--ttl <minutes>', 'start: minutes before the glow self-expires (default 10, max 30)')

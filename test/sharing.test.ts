@@ -577,3 +577,161 @@ describe('the summary endpoint', () => {
     delete process.env.MARVER_PUBLIC_ORIGIN
   })
 })
+
+// ---- request access + the owner API (04-solution §9.3-9.4, acceptance 12) ----
+
+describe('request access and the owner API', () => {
+  it('the full loop: refusal mints a token, the request lands, the owner approves canvas-wide', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const ISSUER_PORT = PORT + 1
+    const { generateKeyPairSync, createSign } = await import('node:crypto')
+    const kp = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    const jwk = { ...kp.publicKey.export({ format: 'jwk' }), kid: 'iss-kid', alg: 'ES256', use: 'sig' }
+    const { createServer } = await import('node:http')
+    const issuer = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ keys: [jwk] })) })
+    await new Promise<void>((r) => issuer.listen(ISSUER_PORT, r))
+
+    const ceil = ceilingsFromRights({ main: 'comment' } as any)
+    ensureShare(data, 'private', [], ceil)
+    const { provisionFromMarverId: prov } = await import('../src/server/auth.ts')
+    const owner = prov(data, { email: 'owner@x.test', subject: 's-own', issuer: `http://localhost:${ISSUER_PORT}` }, { ownerEmail: 'owner@x.test', ceilings: ceil })!
+
+    await boot({
+      MARVER_DATA_DIR: data,
+      MARVER_ID_ISSUER: `http://localhost:${ISSUER_PORT}`,
+      MARVER_PUBLIC_ORIGIN: `http://localhost:${PORT}`,
+    })
+
+    // the refused visitor's token: what the gate mints on verified refusal
+    const { signCanvasJws } = await import('../src/server/summary.ts')
+    const now = Math.floor(Date.now() / 1000)
+    const reqTok = signCanvasJws(data, {
+      aud: `http://localhost:${PORT}`, sub: 's-dana', email: 'dana@acme.test', name: 'Dana',
+      target: '#/f/memo/q3-findings', iat: now, exp: now + 900, jti: 'jti-1',
+    }, 'marver-reqaccess+jwt')
+
+    // the ask: 202, and the row lands with target + requestedRole
+    const ask = await fetch(`http://localhost:${PORT}/__mv/api/request-access`, {
+      method: 'POST', headers: { authorization: `Bearer ${reqTok}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ requestedRole: 'comment', note: 'reviewing the checkout flow' }),
+    })
+    expect(ask.status).toBe(202)
+    // single use: a replay of the same token answers 202 but stores nothing new
+    const replayRes = await fetch(`http://localhost:${PORT}/__mv/api/request-access`, {
+      method: 'POST', headers: { authorization: `Bearer ${reqTok}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ requestedRole: 'view', note: 'replayed' }),
+    })
+    expect(replayRes.status).toBe(202)
+    // junk token: identical 202, nothing stored
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/request-access`, {
+      method: 'POST', headers: { authorization: 'Bearer junk', 'content-type': 'application/json' },
+      body: JSON.stringify({ requestedRole: 'view' }),
+    })).status).toBe(202)
+
+    // the owner's view of the queue (device-session path - the CLI's credential)
+    const asOwner = { authorization: `Bearer ${owner.session}` }
+    const roster = await (await fetch(`http://localhost:${PORT}/__mv/api/share/roster`, { headers: asOwner })).json() as any
+    expect(roster.requests).toHaveLength(1)
+    expect(roster.requests[0]).toMatchObject({ email: 'dana@acme.test', requestedRole: 'comment', target: '#/f/memo/q3-findings', note: 'reviewing the checkout flow' })
+
+    // a non-owner session cannot administer
+    upsertGrant(data, ceil, { principal: 'member@x.test', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    const member = prov(data, { email: 'member@x.test', subject: 's-mem', issuer: `http://localhost:${ISSUER_PORT}` }, { ceilings: ceil })!
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/share/roster`, { headers: { authorization: `Bearer ${member.session}` } })).status).toBe(403)
+
+    // approval grants canvas-wide and resolves the row; the next sign-in walks in
+    const ap = await fetch(`http://localhost:${PORT}/__mv/api/share/request/${encodeURIComponent('dana@acme.test')}`, {
+      method: 'POST', headers: { ...asOwner, 'content-type': 'application/json' },
+      body: JSON.stringify({ approve: true, assigned: 'comment' }),
+    })
+    expect(ap.status).toBe(200)
+    const after = await ap.json() as any
+    expect(after.requests).toHaveLength(0)
+    expect(after.grants.some((g: any) => g.principal === 'dana@acme.test' && g.scope === 'canvas' && g.assigned === 'comment')).toBe(true)
+    expect(prov(data, { email: 'dana@acme.test', subject: 's-dana', issuer: `http://localhost:${ISSUER_PORT}` }, { ceilings: ceil })).not.toBeNull()
+
+    // v1 refuses board scopes at the wire too
+    const bs = await fetch(`http://localhost:${PORT}/__mv/api/share/grant`, {
+      method: 'PUT', headers: { ...asOwner, 'content-type': 'application/json' },
+      body: JSON.stringify({ principal: 'x@y.test', scope: 'board:main', assigned: 'view' }),
+    })
+    expect(bs.status).toBe(422)
+
+    // an admitted viewer's "Ask to comment" lands in the same queue (acceptance 12)
+    const up = await fetch(`http://localhost:${PORT}/__mv/api/request-access`, {
+      method: 'POST', headers: { authorization: `Bearer ${member.session}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ requestedRole: 'comment', note: 'may I comment?' }),
+    })
+    expect(up.status).toBe(202)
+    const q2 = await (await fetch(`http://localhost:${PORT}/__mv/api/share/roster`, { headers: asOwner })).json() as any
+    expect(q2.requests.some((r: any) => r.email === 'member@x.test' && r.requestedRole === 'comment')).toBe(true)
+
+    await new Promise<void>((r) => issuer.close(() => r()))
+    delete process.env.MARVER_ID_ISSUER
+    delete process.env.MARVER_PUBLIC_ORIGIN
+  })
+})
+
+describe('the app credential: per-mutation owner-api tokens', () => {
+  it('a digest-bound token mutates once; a stale etag answers 409; a tampered body 403', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const ISSUER_PORT = PORT + 1
+    const { generateKeyPairSync, createSign, createHash } = await import('node:crypto')
+    const kp = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    const jwk = { ...kp.publicKey.export({ format: 'jwk' }), kid: 'iss-kid', alg: 'ES256', use: 'sig' }
+    const { createServer } = await import('node:http')
+    const issuer = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ keys: [jwk] })) })
+    await new Promise<void>((r) => issuer.listen(ISSUER_PORT, r))
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const mintOwner = (claims: Record<string, unknown>) => {
+      const h = b64({ alg: 'ES256', kid: 'iss-kid', typ: 'marver-owner-api+jwt' })
+      const p = b64(claims)
+      const s = createSign('SHA256'); s.update(`${h}.${p}`); s.end()
+      return `${h}.${p}.${s.sign({ key: kp.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
+    }
+
+    const ceil = ceilingsFromRights({ main: 'comment' } as any)
+    ensureShare(data, 'private', [], ceil)
+    const { provisionFromMarverId: prov } = await import('../src/server/auth.ts')
+    prov(data, { email: 'owner@x.test', subject: 's-own', issuer: `http://localhost:${ISSUER_PORT}` }, { ownerEmail: 'owner@x.test', ceilings: ceil })
+
+    await boot({
+      MARVER_DATA_DIR: data,
+      MARVER_ID_ISSUER: `http://localhost:${ISSUER_PORT}`,
+      MARVER_PUBLIC_ORIGIN: `http://localhost:${PORT}`,
+    })
+
+    const { _resetJwksCache } = await import('../src/server/marver-id.ts')
+    _resetJwksCache()   // earlier tests cached a different keypair under the same issuer URL
+    const { rosterEtag } = await import('../src/server/share.ts')
+    const now = () => Math.floor(Date.now() / 1000)
+    const tokenFor = (method: string, path: string, body: string, etag: string) => {
+      const digest = createHash('sha256').update(`${method}\n${path}\n${createHash('sha256').update(body).digest('hex')}\n${etag}`).digest('hex')
+      return mintOwner({
+        iss: `http://localhost:${ISSUER_PORT}`, aud: `http://localhost:${PORT}`, azp: 'https://app.marver.design',
+        sub: 's-own', email: 'owner@x.test', iat: now(), exp: now() + 120, digest, etag,
+      })
+    }
+
+    const body = JSON.stringify({ principal: 'dana@acme.test', scope: 'canvas', assigned: 'view' })
+    const etag = rosterEtag(data)
+    const put = (tok: string, b: string) => fetch(`http://localhost:${PORT}/__mv/api/share/grant`, {
+      method: 'PUT', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json' }, body: b,
+    })
+
+    // the exact mutation the token was minted for lands
+    expect((await put(tokenFor('PUT', '/__mv/api/share/grant', body, etag), body)).status).toBe(200)
+    // a tampered body fails the digest (the roster moved too, but mint fresh to isolate)
+    const etag2 = rosterEtag(data)
+    const evil = JSON.stringify({ principal: 'evil@acme.test', scope: 'canvas', assigned: 'comment' })
+    expect((await put(tokenFor('PUT', '/__mv/api/share/grant', body, etag2), evil)).status).toBe(403)
+    // a token minted against a stale roster answers 409 - re-read and re-mint
+    expect((await put(tokenFor('PUT', '/__mv/api/share/grant', body, etag), body)).status).toBe(409)
+
+    await new Promise<void>((r) => issuer.close(() => r()))
+    delete process.env.MARVER_ID_ISSUER
+    delete process.env.MARVER_PUBLIC_ORIGIN
+  })
+})

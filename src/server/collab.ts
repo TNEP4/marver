@@ -14,13 +14,13 @@
  * refetches - logs are tiny). Heartbeat every 240s clears proxy idle cuts.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
-import { ceilingsFromRights, commentAllowed, entryAllowed, resolveAccess, shareState } from './share.ts'
-import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, type BoardThreads } from './summary.ts'
+import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
+import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
@@ -373,6 +373,151 @@ export function collabHandler(dataDir: string, distDir: string) {
         res.setHeader('cache-control', 'no-store')
         return res.end(signCanvasJws(dataDir, payload)), true
       }
+      // ---- request access (01-sharing §7.6, 04-solution §9.3) ----
+      // Two callers, one shape: a verified-but-refused identity presenting the
+      // request token the gate minted, and an admitted viewer asking to
+      // comment over their ordinary session. 202 for every well-formed call -
+      // whether anything was stored is not the caller's to learn.
+      if (idIssuer && publicOrigin && path === 'request-access' && req.method === 'POST') {
+        if (limited(`req:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        const b = await readBody(req)
+        const requestedRole = b.requestedRole === 'comment' ? 'comment' as const : 'view' as const
+        const note = typeof b.note === 'string' ? b.note.slice(0, 500) : undefined
+        // a request token is a JWS (it has dots); a session token never does -
+        // the admitted viewer's upgrade ask arrives over the ordinary session,
+        // Bearer or cookie alike
+        const tok0 = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
+        const tok = tok0?.includes('.') ? tok0 : undefined
+        const sessionCaller = tok ? null : currentUser(req)
+        if (tok) {
+          const v = verifyCanvasJws(dataDir, tok, 'marver-reqaccess+jwt', publicOrigin)
+          if (v.ok && typeof v.claims.email === 'string') {
+            putRequest(dataDir, {
+              email: v.claims.email,
+              name: typeof v.claims.name === 'string' ? v.claims.name : undefined,
+              picture: typeof v.claims.picture === 'string' ? v.claims.picture : undefined,
+              requestedRole,
+              target: typeof v.claims.target === 'string' && v.claims.target ? v.claims.target.slice(0, 300) : undefined,
+              note,
+            })
+          }
+        } else if (sessionCaller && csrfOk(req)) {
+          // the admitted viewer's "Ask to comment" - same queue, same shape
+          putRequest(dataDir, { email: sessionCaller.email, name: sessionCaller.name, requestedRole, note })
+        }
+        return json(res, 202, { ok: true }), true
+      }
+
+      // ---- the owner API (01-sharing §9.1, 04-solution §9.4) ----
+      // Bearer only, two credentials: an owner-mapped session (the CLI's device
+      // path - marver share calls these same routes) or the per-mutation
+      // owner-api token the ID service mints for the app. Cookies never open
+      // this - an authored frame holding the viewer's session gains nothing.
+      if (path.startsWith('share/')) {
+        if (req.method === 'OPTIONS') {
+          cors(res)
+          res.setHeader('access-control-allow-methods', 'GET, PUT, POST, DELETE, OPTIONS')
+          res.setHeader('access-control-allow-headers', 'authorization, content-type')
+          res.statusCode = 204
+          return res.end(), true
+        }
+        const body = req.method === 'GET' ? '' : await new Promise<string>((resolve, reject) => {
+          let raw = ''
+          req.on('data', (c) => { raw += c; if (raw.length > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
+          req.on('end', () => resolve(raw))
+          req.on('error', () => reject(new Error('request failed')))
+        })
+        const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
+        const owner = loadStore(dataDir).users.find((u) => u.role === 'owner')
+        let allowed = false
+        // (a) an owner session - the CLI device credential resolves to the owner
+        const su = tok ? sessionUser(dataDir, tok) : null
+        if (su && su.role === 'owner') allowed = true
+        // (b) the app's owner-api token: verified against the issuer, mapped to
+        // the LOCAL owner, and (mutations) digest-bound to this exact request
+        // against the roster state it was computed on - replay is defused by
+        // construction, not by state
+        if (!allowed && tok && idIssuer && publicOrigin) {
+          const { verifyBearerJwt } = await import('./marver-id.ts')
+          const v = await verifyBearerJwt({ token: tok, origin: publicOrigin, issuer: idIssuer, typ: 'marver-owner-api+jwt', azp: appOrigin })
+          if (v.ok && owner && normEmail(v.email) === normEmail(owner.email)) {
+            if (req.method === 'GET') allowed = true
+            else {
+              const etag = rosterEtag(dataDir)
+              const claimedEtag = typeof v.claims.etag === 'string' ? v.claims.etag : ''
+              if (claimedEtag && claimedEtag !== etag) { cors(res); return json(res, 409, { error: 'roster changed - re-read and retry' }), true }
+              const bodyHash = createHash('sha256').update(body).digest('hex')
+              const want = createHash('sha256').update(`${req.method}\n${url.pathname}\n${bodyHash}\n${etag}`).digest('hex')
+              if (v.claims.digest === want) allowed = true
+            }
+          }
+        }
+        cors(res)
+        if (!allowed) return json(res, 403, { error: 'owner only' }), true
+        const b = body ? (() => { try { return JSON.parse(body) } catch { return null } })() : {}
+        if (b === null) return json(res, 422, { error: 'bad json' }), true
+        const ceilings = ceilingsFromRights(rights)
+        const roster = () => {
+          const s = loadShare(dataDir)
+          return {
+            general: s?.general ?? { mode: 'private', role: 'view' },
+            blocked: s?.blocked ?? [],
+            grants: s?.grants ?? [],
+            requests: loadRequests(dataDir).map(({ exp, ...r }) => r),
+            etag: rosterEtag(dataDir),
+          }
+        }
+        try {
+          const sub = path.slice('share/'.length)
+          if (sub === 'roster' && req.method === 'GET') {
+            const r = roster()
+            res.setHeader('etag', `"${r.etag}"`)
+            return json(res, 200, r), true
+          }
+          if (sub === 'grant' && req.method === 'PUT') {
+            upsertGrant(dataDir, ceilings, {
+              principal: String(b.principal ?? ''), scope: b.scope === 'canvas' ? 'canvas' : String(b.scope ?? ''),
+              assigned: b.assigned === 'comment' ? 'comment' : 'view',
+              expires: typeof b.expires === 'string' ? b.expires : null,
+              by: owner?.email ?? 'owner',
+            } as any, { identityMode: !!idIssuer })
+            return json(res, 200, roster()), true
+          }
+          if (sub === 'grant' && req.method === 'DELETE') {
+            removeGrant(dataDir, String(b.principal ?? ''), b.scope === 'canvas' ? 'canvas' : String(b.scope ?? '') as any)
+            return json(res, 200, roster()), true
+          }
+          if (sub === 'reconfirm' && req.method === 'POST') {
+            reconfirmGrant(dataDir, ceilings, String(b.principal ?? ''), b.scope === 'canvas' ? 'canvas' : String(b.scope ?? '') as any, String(b.board ?? ''))
+            return json(res, 200, roster()), true
+          }
+          if (sub === 'general' && req.method === 'PUT') {
+            const mode = String(b.mode ?? '')
+            if (mode !== 'private' && mode !== 'password' && mode !== 'public') return json(res, 422, { error: 'mode must be private | password | public' }), true
+            setGeneralMode(dataDir, mode)
+            return json(res, 200, roster()), true
+          }
+          if (sub === 'block' && (req.method === 'PUT' || req.method === 'DELETE')) {
+            const address = String(b.address ?? '')
+            if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) return json(res, 422, { error: 'a valid address is required' }), true
+            setBlocked(dataDir, address, req.method === 'PUT')
+            return json(res, 200, roster()), true
+          }
+          const rm = /^request\/(.+)$/.exec(sub)
+          if (rm && req.method === 'POST') {
+            const email = decodeURIComponent(rm[1])
+            const hit = resolveRequest(dataDir, ceilings, email,
+              b.approve === true ? { assigned: b.assigned === 'comment' ? 'comment' : 'view', by: owner?.email ?? 'owner' } : null)
+            if (!hit) return json(res, 422, { error: 'no pending request for that address' }), true
+            return json(res, 200, roster()), true
+          }
+        } catch (err) {
+          const msg = (err as Error).message
+          return json(res, /canvas-scoped|identity gate|no such/.test(msg) ? 422 : 400, { error: msg }), true
+        }
+        return json(res, 404, { error: 'not found' }), true
+      }
+
       if (path === 'seen' && req.method === 'POST') {
         // the canvas's own client calling home: ordinary session, no CORS -
         // and a cookie session pays the same double-submit toll as every

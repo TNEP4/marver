@@ -463,7 +463,7 @@ export async function verifyBearerJwt(opts: {
   typ: string
   /** The party the token was minted to (`azp`), when the profile demands one. */
   azp?: string
-}): Promise<{ ok: true; sub: string; email: string } | { ok: false; reason: string }> {
+}): Promise<{ ok: true; sub: string; email: string; claims: Record<string, unknown> } | { ok: false; reason: string }> {
   const { token, origin, issuer, typ } = opts
   if (!token || token.length > MAX_TOKEN_BYTES) return { ok: false, reason: 'token size' }
   const parts = token.split('.')
@@ -496,7 +496,7 @@ export async function verifyBearerJwt(opts: {
   let verified = false
   try { verified = await verifySignature(parts, kid, issuer) } catch { return { ok: false, reason: 'key fetch failed' } }
   if (!verified) return { ok: false, reason: 'signature' }
-  return { ok: true, sub, email }
+  return { ok: true, sub, email, claims }
 }
 
 /**

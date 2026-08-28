@@ -7,7 +7,7 @@
  * is what makes a front-door row light up), and the per-user seen marks that
  * make `unread` a real number instead of a bookmark.
  */
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as cryptoSign } from 'node:crypto'
+import { createHash, createPrivateKey, createPublicKey, createVerify, generateKeyPairSync, randomBytes, sign as cryptoSign } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { withLock } from './auth.ts'
@@ -122,4 +122,41 @@ export function unreadCount(state: BoardThreads, markId: string | undefined): nu
     if (root && state.open.has(root)) n++
   }
   return n
+}
+
+// ---- verifying the canvas's OWN tokens (the request token, §9.3) ----
+// Signed by the canvas identity key, verified against it - no network, no
+// issuer. jti is single-use in memory: one instance is the deployment rule.
+
+const spentJti = new Map<string, number>()
+
+export function verifyCanvasJws(dir: string, token: string, typ: string, aud: string):
+  { ok: true; claims: Record<string, any> } | { ok: false } {
+  const parts = token.split('.')
+  if (parts.length !== 3 || token.length > 8192) return { ok: false }
+  let header: any, claims: any
+  try {
+    header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'))
+    claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+  } catch { return { ok: false } }
+  if (typeof header !== 'object' || header === null || typeof claims !== 'object' || claims === null) return { ok: false }
+  if (header.alg !== 'ES256' || header.typ !== typ) return { ok: false }
+  const id = canvasIdentity(dir)
+  if (header.kid !== id.kid) return { ok: false }
+  if (claims.aud !== aud) return { ok: false }
+  const now = Math.floor(Date.now() / 1000)
+  if (typeof claims.exp !== 'number' || claims.exp < now) return { ok: false }
+  const sig = Buffer.from(parts[2], 'base64url')
+  if (sig.length !== 64) return { ok: false }
+  const v = createVerify('SHA256')
+  v.update(`${parts[0]}.${parts[1]}`)
+  v.end()
+  if (!v.verify({ key: canvasPublicKey(dir), dsaEncoding: 'ieee-p1363' }, sig)) return { ok: false }
+  // single use, after the signature held (a forgery must not burn a real jti)
+  if (typeof claims.jti === 'string') {
+    if (spentJti.size > 10_000) for (const [k, e] of spentJti) { if (e < now) spentJti.delete(k) }
+    if (spentJti.has(claims.jti)) return { ok: false }
+    spentJti.set(claims.jti, claims.exp)
+  }
+  return { ok: true, claims }
 }

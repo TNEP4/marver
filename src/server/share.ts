@@ -23,7 +23,7 @@
  * quietly grant the ceiling.
  */
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { normEmail, withLock, type User } from './auth.ts'
 
@@ -403,4 +403,118 @@ export function operativeMode(stored: GeneralMode, env: { password: boolean; iss
   if (env.issuer) return 'private'
   if (env.password) return stored === 'private' ? 'private' : 'password'
   return 'public'
+}
+
+// ---- roster mutations (the owner API's verbs, 04-solution §9.4) ----
+
+/** The strong ETag mutations are conditioned on: a hash of the exact stored
+ *  roster bytes. Any intervening change fails a replayed digest's precondition. */
+export function rosterEtag(dir: string): string {
+  let raw = ''
+  try { raw = readFileSync(shareFile(dir), 'utf8') } catch { /* absent = empty */ }
+  return createHash('sha256').update(raw).digest('hex').slice(0, 32)
+}
+
+export function removeGrant(dir: string, principal: string, scope: ShareGrant['scope']) {
+  withLock(dir, () => {
+    const store = loadShare(dir)
+    if (!store) return
+    const norm = principal.startsWith('@') ? principal.toLowerCase().trim() : normEmail(principal)
+    const before = store.grants.length
+    store.grants = store.grants.filter((g) => !(g.principal === norm && g.scope === scope))
+    if (store.grants.length !== before) saveShare(dir, store)
+  }, '.share.lock')
+}
+
+/** The re-confirm badge's verb: raises ONE board's ratchet entry back to
+ *  min(assigned, ceiling) - the only thing that ever raises one (01-sharing §3.6). */
+export function reconfirmGrant(dir: string, ceilings: Ceilings, principal: string, scope: ShareGrant['scope'], board: string) {
+  withLock(dir, () => {
+    const store = loadShare(dir)
+    if (!store) throw new Error('no share store')
+    const norm = principal.startsWith('@') ? principal.toLowerCase().trim() : normEmail(principal)
+    const g = store.grants.find((x) => x.principal === norm && x.scope === scope)
+    if (!g) throw new Error('no such grant')
+    if (!(board in ceilings)) throw new Error('no such board')
+    g.boardRole[board] = roleMin(g.assigned, ceilings[board])
+    saveShare(dir, store)
+  }, '.share.lock')
+}
+
+export function setGeneralMode(dir: string, mode: GeneralMode) {
+  withLock(dir, () => {
+    const store = loadShare(dir)
+    if (!store) throw new Error('no share store')
+    store.general = { mode, role: 'view' }
+    saveShare(dir, store)
+  }, '.share.lock')
+}
+
+export function setBlocked(dir: string, address: string, blocked: boolean) {
+  withLock(dir, () => {
+    const store = loadShare(dir)
+    if (!store) throw new Error('no share store')
+    const norm = normEmail(address)
+    const has = store.blocked.some((b) => normEmail(b) === norm)
+    if (blocked && !has) store.blocked.push(norm)
+    else if (!blocked && has) store.blocked = store.blocked.filter((b) => normEmail(b) !== norm)
+    else return
+    saveShare(dir, store)
+  }, '.share.lock')
+}
+
+// ---- pending access requests (01-sharing §7.6, 04-solution §9.3) ----
+// Their own file: share.json is THE grant schema and requests are not grants.
+// One pending row per address - a repeat replaces the note and requestedRole,
+// never multiplies - with a 30-day expiry swept on every write.
+
+export interface AccessRequest {
+  email: string
+  name?: string
+  picture?: string
+  requestedRole: 'view' | 'comment'
+  /** What the refused link pointed at - context in v1, enforced scope in v2. */
+  target?: string
+  note?: string
+  at: string
+  exp: number
+}
+
+const requestsFile = (dir: string) => join(dir, 'requests.json')
+
+export function loadRequests(dir: string): AccessRequest[] {
+  try {
+    const p = JSON.parse(readFileSync(requestsFile(dir), 'utf8'))
+    const now = Date.now()
+    return Array.isArray(p) ? p.filter((r) => typeof r?.email === 'string' && r.exp > now) : []
+  } catch { return [] }
+}
+
+function saveRequests(dir: string, rows: AccessRequest[]) {
+  const file = requestsFile(dir)
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  const fd = openSync(tmp, 'wx', 0o600)
+  try { writeSync(fd, JSON.stringify(rows)); fsyncSync(fd) } finally { closeSync(fd) }
+  renameSync(tmp, file)
+}
+
+export function putRequest(dir: string, req: Omit<AccessRequest, 'at' | 'exp'>) {
+  withLock(dir, () => {
+    const rows = loadRequests(dir).filter((r) => normEmail(r.email) !== normEmail(req.email))
+    rows.push({ ...req, email: normEmail(req.email), at: new Date().toISOString(), exp: Date.now() + 30 * 24 * 3600_000 })
+    saveRequests(dir, rows)
+  }, '.share.lock')
+}
+
+/** Approving adds the grant (canvas-wide in v1 - the dialog says so) and
+ *  resolves the row; declining just resolves it, silently to the asker. */
+export function resolveRequest(dir: string, ceilings: Ceilings, email: string, approve: { assigned: 'view' | 'comment'; by: string } | null): boolean {
+  const rows = loadRequests(dir)
+  const row = rows.find((r) => normEmail(r.email) === normEmail(email))
+  if (!row) return false
+  if (approve) upsertGrant(dir, ceilings, { principal: row.email, scope: 'canvas', assigned: approve.assigned, by: approve.by })
+  withLock(dir, () => {
+    saveRequests(dir, loadRequests(dir).filter((r) => normEmail(r.email) !== normEmail(email)))
+  }, '.share.lock')
+  return true
 }

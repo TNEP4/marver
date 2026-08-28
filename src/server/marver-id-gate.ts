@@ -303,7 +303,29 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
         // account did I just use? Withholding that made a correct refusal read as
         // a fault.
         console.warn(`[marver-id] ${result.identity.email} is not on this canvas's list`)
-        return json(res, 403, { error: 'not invited', email: result.identity.email })
+        // Being refused should offer a door (01-sharing §7.6): a VERIFIED
+        // refusal mints the request token - short-lived, origin-bound, single
+        // purpose - and the finish page renders the ask. A blocked address gets
+        // no token: the blocklist beats request-access eligibility too. The
+        // target rides as CONTEXT (the thing the link pointed at); approval in
+        // v1 is canvas-wide and the owner's surface says so.
+        let request: string | undefined
+        try {
+          const { shareState, provisionVerdict } = await import('./share.ts')
+          const share = shareState(dir)
+          const blocked = share ? provisionVerdict(share, result.identity.email) === 'blocked' : false
+          if (!blocked) {
+            const { signCanvasJws } = await import('./summary.ts')
+            const now = Math.floor(Date.now() / 1000)
+            request = signCanvasJws(dir, {
+              aud: origin, sub: result.identity.subject, email: result.identity.email,
+              ...(result.identity.name ? { name: result.identity.name } : {}),
+              ...(result.identity.picture ? { picture: result.identity.picture } : {}),
+              target: landing ?? '', iat: now, exp: now + 900, jti: randomBytes(12).toString('hex'),
+            }, 'marver-reqaccess+jwt')
+          }
+        } catch { /* no data dir or no key - the refusal stands alone */ }
+        return json(res, 403, { error: 'not invited', email: result.identity.email, ...(request ? { request } : {}) })
       }
 
       // Their picture, fetched only now - after they are in, and outside the
@@ -449,6 +471,24 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
      needs, appearing and vanishing, which reads as a stutter rather than as
      progress. The card is for when something has to be SAID; getting in says
      itself by the canvas appearing. */
+  /* the request-access ask (01-sharing §7.6): the gate's own language - chips,
+     rounded field, the same CTA - below a hairline. */
+  .rdiv { border: 0; height: 1px; background: rgba(24,24,27,.09); margin: 2px 2px 6px }
+  .rrow { display: flex; gap: 8px; padding: 0 2px }
+  .rchip { flex: 1; cursor: pointer }
+  .rchip input { position: absolute; opacity: 0; pointer-events: none }
+  .rchip span { display: flex; align-items: center; justify-content: center; height: 34px;
+                border-radius: 999px; border: 1px solid rgba(24,24,27,.14); background: #fff;
+                font: 500 12.5px -apple-system, system-ui, sans-serif; transition: border-color .15s, box-shadow .15s }
+  .rchip input:checked + span { border-color: #0088ff; box-shadow: 0 0 0 3px rgba(0,136,255,.14); color: #0088ff }
+  #req { display: flex; flex-direction: column; gap: 12px }
+  #req[hidden] { display: none }
+  #req textarea { padding: 10px 16px; border-radius: 16px; border: 1px solid rgba(24,24,27,.14);
+                  background: #fff; color: #18181b; font: 500 13px -apple-system, system-ui, sans-serif;
+                  outline: none; resize: none; width: 100% }
+  #req textarea:focus { border-color: #0088ff; box-shadow: 0 0 0 3px rgba(0,136,255,.18) }
+  #req button.cta { border: 0; width: 100%; cursor: pointer }
+  #req button.cta:disabled { background: rgba(24,24,27,.35); cursor: default }
   .wait { width: 34px; height: 34px; border-radius: 50%;
           border: 3px solid rgba(24,24,27,.12); border-top-color: #0088ff;
           animation: spin .7s linear infinite }
@@ -466,6 +506,16 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
     <p class="lead" id="m"></p>
     <p class="lead" id="m2" hidden></p>
     <a class="cta" id="back" href="/" data-switch="${esc(switchUrl)}" hidden>Use a different account</a>
+    <div id="req" hidden>
+      <hr class="rdiv" />
+      <p class="lead">Or ask for access - the owner decides who gets in.</p>
+      <div class="rrow">
+        <label class="rchip"><input type="radio" name="rrole" value="view" checked /><span>View</span></label>
+        <label class="rchip"><input type="radio" name="rrole" value="comment" /><span>View + comment</span></label>
+      </div>
+      <textarea id="rnote" maxlength="500" rows="2" placeholder="Add a note (optional)"></textarea>
+      <button class="cta" id="rgo" type="button">Request access</button>
+    </div>
   </div>
   ${branding ? `<footer id="mark" hidden><a href="${poweredByUrl(canvasName, 'published-canvas', 'sign-in')}" target="_blank" rel="noopener">${MARK} <span>Powered by <span class="md">Marver.design</span></span> ${ARROW}</a></footer>` : ''}
 <script>
@@ -539,6 +589,28 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
     back.hidden = false
   }
 
+  /** The door a refusal offers: role, note, one send. The response is the same
+   *  whatever the server recognised (no probe oracle) - "sent" is all it says. */
+  function offerRequest(token) {
+    var req = document.getElementById('req'), go = document.getElementById('rgo')
+    req.hidden = false
+    go.addEventListener('click', function () {
+      go.disabled = true
+      var role = (document.querySelector('input[name="rrole"]:checked') || {}).value === 'comment' ? 'comment' : 'view'
+      var note = (document.getElementById('rnote') || {}).value || ''
+      fetch('/__mv/api/request-access', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+        body: JSON.stringify({ requestedRole: role, note: note.slice(0, 500) })
+      }).then(function () { sent() }, function () { sent() })
+      function sent() {
+        go.textContent = 'Request sent'
+        var lead = req.querySelector('p.lead')
+        if (lead) lead.textContent = 'The owner will review it. If they approve, signing in again will let you straight in.'
+      }
+    })
+  }
+
   // Take it, then erase it - before any await, so a slow network cannot leave
   // the assertion sitting in the address bar.
   var assertion = location.hash.replace(/^#/, '')
@@ -569,6 +641,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
         who ? refused(who) : stop("You haven't been invited",
           'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
           'Use a different account')
+        if (who && body && typeof body.request === 'string') offerRequest(body.request)
       }, function () {
         stop("You haven't been invited",
           'That account is not on the invite list for this canvas.',
