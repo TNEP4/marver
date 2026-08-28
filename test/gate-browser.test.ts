@@ -283,4 +283,65 @@ describe('the pages a person clicks, in a real browser', () => {
     await browser!.send('Fetch.disable', {}, session)
   }, 90_000)
 
+  it('a refused visitor is offered the request-access form, and sending it posts the token', async () => {
+    // The finish page's request-access affordance (offerRequest) is a
+    // hand-written script with a fetch to /__mv/api/request-access - exactly
+    // the class of code this suite exists for, and the end-to-end run drove it
+    // once by hand. This is the standing regression: the callback is answered
+    // with a 403 carrying a request token (as a verified refusal does), the
+    // form must appear, and clicking Send must POST that token to the endpoint.
+    const { session } = await browser!.tab()
+    const REQ_TOKEN = 'test.request.token'
+
+    // fulfil the callback POST with the refusal shape; capture the follow-up
+    // request-access POST so we can assert what the page sent.
+    let sawRequest = null
+    await browser!.send('Fetch.enable', {
+      patterns: [
+        { urlPattern: '*/__mv/id/callback', requestStage: 'Request' },
+        { urlPattern: '*/__mv/api/request-access', requestStage: 'Request' },
+      ],
+    }, session)
+    browser!.on('Fetch.requestPaused', async (p) => {
+      if (p.request.url.endsWith('/__mv/id/callback')) {
+        const body = Buffer.from(JSON.stringify({
+          error: 'not invited', email: 'stranger@x.test', request: REQ_TOKEN, target: '#/b/roadmap',
+        })).toString('base64')
+        await browser!.send('Fetch.fulfillRequest', {
+          requestId: p.requestId, responseCode: 403,
+          responseHeaders: [{ name: 'content-type', value: 'application/json' }],
+          body,
+        }, session)
+      } else if (p.request.url.endsWith('/__mv/api/request-access')) {
+        sawRequest = { auth: p.request.headers.Authorization ?? p.request.headers.authorization, body: p.request.postData }
+        await browser!.send('Fetch.fulfillRequest', {
+          requestId: p.requestId, responseCode: 202,
+          responseHeaders: [{ name: 'content-type', value: 'application/json' }],
+          body: Buffer.from('{"ok":true}').toString('base64'),
+        }, session)
+      }
+    })
+
+    await browser!.send('Page.navigate', { url: `${idBase}/__mv/id/finish#some-assertion` }, session)
+
+    // the refusal names the account, and the request form is offered
+    await browser!.until(session, `document.getElementById('req') && !document.getElementById('req').hidden`)
+    expect(await browser!.eval(session, `document.getElementById('s').textContent`)).toContain("haven't been invited")
+    // the target the link pointed at is named (acceptance 12)
+    expect(await browser!.eval(session, `document.querySelector('#req').textContent`)).toContain('#/b/roadmap')
+
+    // choose comment, type a note, send
+    await browser!.eval(session, `document.querySelector('input[name="rrole"][value="comment"]').click()`)
+    await browser!.eval(session, `(() => { const n = document.getElementById('rnote'); n.value = 'please add me'; n.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await browser!.eval(session, `document.getElementById('rgo').click()`)
+
+    await browser!.until(session, `document.getElementById('rgo').textContent === 'Request sent'`)
+    // the page posted the exact token the refusal minted, as a Bearer
+    expect(sawRequest, 'the request-access POST never fired').toBeTruthy()
+    expect(sawRequest.auth).toBe(`Bearer ${REQ_TOKEN}`)
+    expect(JSON.parse(sawRequest.body).requestedRole).toBe('comment')
+
+    await browser!.send('Fetch.disable', {}, session)
+  }, 90_000)
+
 })
