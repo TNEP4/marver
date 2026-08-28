@@ -496,7 +496,7 @@ describe('the summary endpoint', () => {
     const now = () => Math.floor(Date.now() / 1000)
     const claims = (email: string, over: Record<string, unknown> = {}) => ({
       iss: `http://localhost:${ISSUER_PORT}`, aud: `http://localhost:${PORT}`, azp: 'https://app.marver.design',
-      sub: `sub-${email}`, email, iat: now(), exp: now() + 60, ...over,
+      sub: `sub-${email}`, email, jti: crypto.randomUUID(), iat: now(), exp: now() + 60, ...over,
     })
 
     // an identity-mode canvas with an owner and one granted member
@@ -793,7 +793,7 @@ describe('review-round regressions', () => {
       return `${h}.${p}.${s.sign({ key: kp.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
     }
     const week = await fetch(`http://localhost:${PORT}/__mv/api/summary`, {
-      headers: { authorization: `Bearer ${mint({ iss: `http://localhost:${ISSUER_PORT}`, aud: `http://localhost:${PORT}`, azp: 'https://app.marver.design', sub: 's-own', email: 'owner@x.test', iat: now, exp: now + 7 * 86400 })}` },
+      headers: { authorization: `Bearer ${mint({ iss: `http://localhost:${ISSUER_PORT}`, aud: `http://localhost:${PORT}`, azp: 'https://app.marver.design', sub: 's-own', email: 'owner@x.test', jti: crypto.randomUUID(), iat: now, exp: now + 7 * 86400 })}` },
     })
     expect(week.status).toBe(401)
 
@@ -860,5 +860,26 @@ describe('the canvas fires the relay on real transitions only', () => {
     } finally {
       globalThis.fetch = realFetch
     }
+  })
+})
+
+describe('a same-role upsert carries the ratchet forward', () => {
+  it('an expiry tweak after a ceiling dip-and-rise cannot restore the higher role', () => {
+    const dir = join(root, 'data')
+    const both = ceilingsFromRights({ a: 'comment' } as any)
+    ensureShare(dir, 'private', [], both)
+    upsertGrant(dir, both, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    // ceiling dips and rises across two deploys - the ratchet holds view
+    reclampShare(dir, ceilingsFromRights({ a: 'read' } as any))
+    reclampShare(dir, both)
+    expect(loadShare(dir)!.grants[0].boardRole).toEqual({ a: 'view' })
+    // the owner edits the EXPIRY (same role) - the ratchet must survive
+    const g = upsertGrant(dir, both, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'comment', by: 'owner', expires: '2027-01-01T00:00:00Z' })
+    expect(g.changed).toBe(false)
+    expect(loadShare(dir)!.grants[0].boardRole).toEqual({ a: 'view' })
+    // a ROLE change is the owner's fresh statement - fresh ratchet
+    const g2 = upsertGrant(dir, both, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'view', by: 'owner' })
+    expect(g2.changed).toBe(true)
+    expect(loadShare(dir)!.grants[0].boardRole).toEqual({ a: 'view' })
   })
 })

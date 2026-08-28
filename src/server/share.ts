@@ -218,7 +218,13 @@ export function upsertGrant(
     const changed = !prior || prior.assigned !== input.assigned
     store.grants = store.grants.filter((g) => !(g.principal === principal && g.scope === input.scope))
     const g: ShareGrant = {
-      principal, scope: input.scope, assigned: input.assigned, boardRole: {},
+      principal, scope: input.scope, assigned: input.assigned,
+      // a SAME-ROLE upsert (an expiry tweak, a re-add) carries the ratchet
+      // FORWARD - rematerialising from scratch after a ceiling dip-and-rise
+      // would silently restore the higher role without the owner's re-confirm,
+      // which is the exact invariant the ratchet exists for. A role CHANGE is
+      // the owner's fresh statement, and a fresh ratchet is what it means.
+      boardRole: !changed && prior ? { ...prior.boardRole } : {},
       expires: input.expires ?? null, by: input.by, at: new Date().toISOString(),
     }
     materialise(g, ceilings)

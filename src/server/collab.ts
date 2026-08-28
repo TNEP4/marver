@@ -342,19 +342,23 @@ export function collabHandler(dataDir: string, distDir: string) {
       }
       if (frontDoorOn && path === 'summary' && req.method === 'GET') {
         cors(res)
-        // Bearer-only, by profile: a cookie-bearing request is refused before
+        // Bearer-only, by profile: ANY cookie-bearing request is refused before
         // anything else - the pairing (summary never accepts cookies, cookie
         // routes never receive CORS) is the whole CSRF invariant (04 §2.5)
-        if (/(?:^|;\s*)mv_[sa]=/.test(String(req.headers.cookie ?? ''))) return json(res, 401, { error: 'not authorized' }), true
+        if (String(req.headers.cookie ?? '').trim()) return json(res, 401, { error: 'not authorized' }), true
         if (limited(`sum:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
         const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
         const { verifyBearerJwt } = await import('./marver-id.ts')
         const v = await verifyBearerJwt({ token: tok, origin: publicOrigin!, issuer: idIssuer!, typ: 'marver-summary+jwt', azp: appOrigin, maxAgeS: 120 })
         if (!v.ok) return json(res, 401, { error: 'not authorized' }), true
-        // jti replay rejection (02-home §3): a captured summary token is dead
-        // after its first use; the set stays tiny because tokens live 120s
+        // jti replay rejection (02-home §3): REQUIRED - the id service always
+        // mints one, so a token without one was not minted by it; a captured
+        // token is dead after its first use. The set stays tiny (120s lives),
+        // and a restart forgets at most one lifetime's worth - bounded by the
+        // same 120s the token itself is.
         const jti = typeof v.claims.jti === 'string' ? v.claims.jti : ''
-        if (jti) {
+        if (!jti) return json(res, 401, { error: 'not authorized' }), true
+        {
           const now = Date.now()
           for (const [k, e] of summaryJtis) if (e < now) summaryJtis.delete(k)
           if (summaryJtis.has(jti)) return json(res, 401, { error: 'not authorized' }), true
@@ -452,7 +456,10 @@ export function collabHandler(dataDir: string, distDir: string) {
         if (req.method === 'OPTIONS') {
           cors(res)
           res.setHeader('access-control-allow-methods', 'GET, PUT, POST, DELETE, OPTIONS')
-          res.setHeader('access-control-allow-headers', 'authorization, content-type')
+          // x-mv-salt is the digest-blinding salt the app sends with every
+          // mutation - absent from the preflight allowance, every browser
+          // mutation dies at CORS before the server ever sees it
+          res.setHeader('access-control-allow-headers', 'authorization, content-type, x-mv-salt')
           res.statusCode = 204
           return res.end(), true
         }
@@ -462,13 +469,18 @@ export function collabHandler(dataDir: string, distDir: string) {
         // raw BYTES, concatenated as buffers: the digest is over the exact
         // UTF-8 the app hashed, and a multibyte character split across chunks
         // must not become replacement characters
-        const bodyBuf = req.method === 'GET' ? Buffer.alloc(0) : await new Promise<Buffer>((resolve, reject) => {
-          const chunks: Buffer[] = []
-          let size = 0
-          req.on('data', (c: Buffer) => { chunks.push(c); size += c.length; if (size > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
-          req.on('end', () => resolve(Buffer.concat(chunks)))
-          req.on('error', () => reject(new Error('request failed')))
-        })
+        // an oversized body is a schema refusal like any other (422, never the
+        // outer 400 - the owner API's refusals are 403/409/422, closed set)
+        let bodyBuf: Buffer
+        try {
+          bodyBuf = req.method === 'GET' ? Buffer.alloc(0) : await new Promise<Buffer>((resolve, reject) => {
+            const chunks: Buffer[] = []
+            let size = 0
+            req.on('data', (c: Buffer) => { chunks.push(c); size += c.length; if (size > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
+            req.on('end', () => resolve(Buffer.concat(chunks)))
+            req.on('error', () => reject(new Error('request failed')))
+          })
+        } catch (err) { cors(res); return json(res, 422, { error: (err as Error).message }), true }
         const body = bodyBuf.toString('utf8')
         const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
         const owner = loadStore(dataDir).users.find((u) => u.role === 'owner')
@@ -511,12 +523,14 @@ export function collabHandler(dataDir: string, distDir: string) {
         const ceilings = ceilingsFromRights(rights)
         const roster = () => {
           const s = loadShare(dataDir)
-          // distinct historical authors per board - what the dialog's history
-          // warning needs to be honest (resolved threads still carry emails)
+          // distinct historical authors per board AND across the canvas - what
+          // the dialog's history warning needs to be honest (resolved threads
+          // still carry emails; one author on three boards is ONE address)
           const history: Record<string, number> = {}
+          const allAuthors = new Set<string>()
           for (const [b, st] of threads) {
             const authors = new Set<string>()
-            for (const e of st.events) if (e.author?.email) authors.add(e.author.email.toLowerCase())
+            for (const e of st.events) if (e.author?.email) { authors.add(e.author.email.toLowerCase()); allAuthors.add(e.author.email.toLowerCase()) }
             if (authors.size) history[b] = authors.size
           }
           return {
@@ -527,6 +541,7 @@ export function collabHandler(dataDir: string, distDir: string) {
             etag: rosterEtag(dataDir),
             ceilings,
             history,
+            historyAuthors: allAuthors.size,
             gate: idIssuer ? 'identity' as const : process.env.MARVER_PASSWORD ? 'password' as const : 'open' as const,
           }
         }
@@ -539,13 +554,17 @@ export function collabHandler(dataDir: string, distDir: string) {
           if (sub === 'explain' && req.method === 'GET') {
             // the resolver's trace, from the SAME pure function every door
             // enforces with - what the dialog's Who-sees-what renders, so the
-            // terminal and the dialog can never disagree (acceptance 9)
+            // terminal and the dialog can never disagree (acceptance 9).
+            // Explaining a DOMAIN means explaining a member of it: a synthetic
+            // address at the domain, which the domain grants match - email:null
+            // would explain anonymous access and miss the grant entirely.
             const who = String(url.searchParams.get('who') ?? '')
             if (!who) return json(res, 422, { error: 'who is required' }), true
             const s = loadShare(dataDir)
             if (!s) return json(res, 422, { error: 'no roster yet' }), true
-            const account = loadStore(dataDir).users.find((u) => normEmail(u.email) === normEmail(who))
-            const r = resolveAccess({ email: who.startsWith('@') ? null : who, userRole: account?.role, store: s, ceilings })
+            const asEmail = who.startsWith('@') ? `member${who}` : who
+            const account = loadStore(dataDir).users.find((u) => normEmail(u.email) === normEmail(asEmail))
+            const r = resolveAccess({ email: asEmail, userRole: account?.role, store: s, ceilings })
             return json(res, 200, { who, entry: r.entry, role: r.role, boards: r.boards, trace: r.trace }), true
           }
           if (sub === 'grant' && req.method === 'PUT') {
