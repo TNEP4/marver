@@ -309,12 +309,19 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
       const p = policy.boards[n]
       return [n, { type: p.type, ...(p.open ? { open: p.open } : {}), ...(p.lock ? { lock: true } : {}) }]
     }))
+  // when EVERY published board is locked to a stage mode, the canvas shell is
+  // never offered - the bundle boots straight into the locked surface (§5.1's
+  // all-boards rule; the Publish-to-web shape)
+  const lockedShell = publishedNames.length > 0 && publishedNames.every((n) => {
+    const p = policy.boards[n]
+    return !!p?.lock && !!p.open && ['present', 'focus', 'slides'].includes(p.open)
+  })
   // names drives the published board switcher (all-scenes only when actually published);
   // default is where `/` opens - the first published board, never a synthesized aggregate
   const data = {
     manifest: pubManifest, boards, names: publishedNames,
     default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],
-    rights, policy: { boards: boardsMeta, reveal: policy.reveal },
+    rights, policy: { boards: boardsMeta, reveal: policy.reveal, ...(lockedShell ? { lockedShell: true } : {}) },
   }
 
   // ---- build overrides: real sh-data + the generated registry ----

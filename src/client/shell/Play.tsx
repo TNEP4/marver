@@ -11,14 +11,14 @@
  * next) stays prototype-only.
  */
 import { useEffect, useRef, useState } from 'react'
-import { useStore, CONFIG, SOURCE_REVEALED, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
+import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, type Node } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DraftComposer, hueVars, MarkerFace, ThreadCard } from './Comments.tsx'
-import { ArrowLeftIcon, ArrowRightIcon, CaretIcon, CheckIcon, PanelFilledIcon, PanelHollowIcon, ReloadIcon, XIcon } from './icons.tsx'
+import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -61,6 +61,29 @@ export function enterPlay(over?: { at?: string; device?: string; theme?: string 
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
     ?? node?.theme ?? frame?.theme ?? s.viewTheme
   s.setPlay({ at, device, theme })
+}
+
+/**
+ * Enter Focus - the fourth view mode (01-sharing §6.1): one frame, full screen.
+ * Landing on a doc board opens its first frame at the doc preset; a frame deep
+ * link (`deep`) may target any playable manifest frame and carries the
+ * single-frame chrome - no board name, no canvas door. Presentation, not
+ * access: every published board stays reachable by URL (04-solution §2.35).
+ */
+export function enterFocus(at?: string, over?: { device?: string; theme?: string; deep?: boolean }) {
+  const s = useStore.getState()
+  const list = playList()
+  const target = at && s.manifest?.frames.some((f) => f.id === at && f.kind === 'tsx') ? at : list[0]
+  if (!target) { s.toast('nothing to focus here'); return }
+  const frame = s.manifest?.frames.find((f) => f.id === target)
+  const node = s.nodes.find((n) => n.frame === target && !n.missing)
+  const names = Object.keys(CONFIG.viewports)
+  const device = (over?.device && (CONFIG.viewports[over.device] || over.device === 'fill') ? over.device : undefined)
+    ?? (node ? names.find((v) => CONFIG.viewports[v].width === node.w) : undefined)
+    ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
+  const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
+    ?? node?.theme ?? frame?.theme ?? s.viewTheme
+  s.setPlay({ at: target, device, theme, focus: true, ...(over?.deep ? { deep: true } : {}) })
 }
 
 /** Switch boards WITHOUT leaving play: the overlay stays up over the canvas churn, then
@@ -229,6 +252,13 @@ function PlayInner() {
   const [pillOpen, setPillOpen] = useState(true)          // collapse (pill -> re-open fab), like the canvas
   const [stageReady, setStageReady] = useState(0)         // bumps on each sh:stage-ready (reload) - re-drives the highlight
   const fill = play?.device === 'fill'
+  // the mode's shape: focus is single-frame; the doc preset (reading width,
+  // page ground) applies when the board's declared type is doc; lock and deep
+  // links both drop the canvas door (lock as policy, deep as the link's chrome)
+  const focus = !!play?.focus
+  const docPreset = focus && BOARD_POLICY[board]?.type === 'doc'
+  const locked = boardLocked(board)
+  const noDoor = locked || !!play?.deep
 
   // the stage is same-origin (/__mv/stage/); a fixed target origin keeps anchor bundles
   // from leaking if a link ever navigates the iframe cross-origin
@@ -250,6 +280,9 @@ function PlayInner() {
   useEffect(() => { postStage({ type: 'sh:pick', on: commentMode, quiet: !useComments.getState().showAnchor }) }, [commentMode, playShowAnchor])
 
   const exit = () => {
+    // the lock caps disclosure: a locked board has no way out into other modes,
+    // and a deep-link visit carries no door on the surface (URL still works)
+    if (noDoor) return
     const { at } = useStore.getState().play ?? {}
     if (isHideUI()) toggleHideUI()             // never strand the canvas with its chrome hidden
     useStore.getState().setPlay(null)
@@ -272,14 +305,14 @@ function PlayInner() {
   const goTo = (at: string) => playCtl.setAt(at)
   const step = (dir: 1 | -1) => {
     const p = useStore.getState().play
-    if (!p) return
+    if (!p || p.focus) return                  // focus is one frame - no walking
     const list = playList()
     if (!list.length) return
     const i = list.indexOf(p.at)
     // an off-board frame has no position: → restarts, ← goes to the last board frame
     goTo(i === -1 ? (dir === 1 ? list[0] : list[list.length - 1]) : list[(i + dir + list.length) % list.length])
   }
-  const restart = () => { const list = playList(); if (list.length) goTo(list[0]) }
+  const restart = () => { if (useStore.getState().play?.focus) return; const list = playList(); if (list.length) goTo(list[0]) }
 
   /** Variant siblings of the CURRENT frame present on this board: the
    *  review question is "which direction is better on THIS screen" - switch in place,
@@ -435,12 +468,18 @@ function PlayInner() {
 
   if (!play) return null                       // parent gates on play; belt to its braces
 
-  const vp = fill ? { width: win.w, height: win.h } : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
-  const scale = fill ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
+  // doc preset: reading width, natural document scrolling - the iframe takes the
+  // window's height at min(width, 860) CSS pixels, unscaled, and scrolls itself
+  const vp = docPreset ? { width: Math.min(win.w, 860), height: win.h }
+    : fill ? { width: win.w, height: win.h }
+    : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
+  const scale = fill || docPreset ? 1 : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   const names = Object.keys(CONFIG.viewports)
-  const list = playList()
+  const list = focus ? [play.at] : playList()
   const pos = list.indexOf(play.at)
   const variants = variantList()
+  const frameEntry = useStore.getState().manifest?.frames.find((f) => f.id === play.at)
+  const title = focus ? (frameEntry?.title ?? (play.at.split('/').pop() ?? play.at).replace(/-/g, ' ')) : boardLabel(board)
 
   // whole-pixel wrapper + per-axis scale so the iframe lands exactly on its edges -
   // fractional sizes left subpixel seams glowing at the corners on dark frames
@@ -449,7 +488,7 @@ function PlayInner() {
   const deviceHint = fill ? 'Fill window' : `${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
 
   return (
-    <div className={`sh-play${fill ? ' fill' : ''}`}>
+    <div className={`sh-play${fill || docPreset ? ' fill' : ''}${docPreset ? ` doc t-${play.theme}` : ''}`}>
       {/* device + comment overlay share ONE flex-centered box; the overlay is inset:0 over
           it (a sibling of the clipping .dev, so a thread card is never eaten by overflow) */}
       <div className="sh-play-stage" style={{ width: dw, height: dh }}>
@@ -464,13 +503,35 @@ function PlayInner() {
         <PlayComments iframe={iframeRef} frameId={play.at} vp={vp} dw={dw} dh={dh} ready={stageReady} />
       </div>
 
+      {!focus && list.length > 1 && (
+        <div className="sh-play-hint">← → to step · <kbd>c</kbd> to comment</div>
+      )}
+
+      {/* top-left: brand + place (the present chrome's identity pill). A deep-link
+          focus visit names only the frame - single-frame chrome, no board (04 §2.35);
+          branding: false strips the mark (invariant 21). */}
+      <nav className={`sh-pill sh-play-pill sh-play-brand${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
+        {BRANDING && <>
+          <span className="sh-play-mark"><ParallelogramDuoIcon size={19} /><span className="wd">Marver</span></span>
+          <i className="sep" />
+        </>}
+        {focus && <SpecDocIcon size={15} style={{ flex: 'none', opacity: .7, marginRight: -2 }} />}
+        {!focus && !locked && !PUBLISHED ? <BoardMenu current={board} /> : (
+          <Tip side="bottom" label={<b>{CONFIG.projectName ?? title}</b>}>
+            <span className="sh-play-title">{title}</span>
+          </Tip>
+        )}
+      </nav>
+
       <nav className={`sh-pill sh-play-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
-        <BoardMenu current={board} />
-        <i className="sep" />
+        {!focus && list.length > 1 && <>
+          <span className="sh-play-pos">{pos === -1 ? '·' : pos + 1} / {list.length}</span>
+          <i className="sep" />
+        </>}
         <CommentButton />
         <LaserButton />
         <i className="sep" />
-        <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill hint={deviceHint} dark />
+        {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill hint={deviceHint} dark />}
         <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
         {playUpdateRevision && <>
           <i className="sep" />
@@ -485,16 +546,27 @@ function PlayInner() {
             <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
-        <Tip side="bottom" label={<><b>Exit Prototype view</b><span>Esc</span></>}>
-          <button className="sh-pill-btn" onClick={exit}><XIcon size={14} /></button>
-        </Tip>
+        {/* the canvas door: absent on a locked board (policy) and on a frame
+            deep link (the link's chrome) - not hidden, not rendered */}
+        {!noDoor && (
+          <Tip side="bottom" label={<><b>Open in canvas</b><span>Esc</span></>}>
+            <button className="sh-pill-btn" onClick={exit}><GridIcon size={16} /></button>
+          </Tip>
+        )}
+        {BRANDING && PUBLISHED && (
+          <Tip side="bottom" label={<b>Open in app</b>}>
+            <a className="sh-pill-btn" href="https://app.marver.design" target="_blank" rel="noopener" aria-label="Open in app">
+              <BrowsersIcon size={16} />
+            </a>
+          </Tip>
+        )}
       </nav>
       <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
         <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
           aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
 
-      <div className="sh-play-nav">
+      {!focus && <div className="sh-play-nav">
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
           <button onClick={restart}><ReloadIcon size={14} /></button>
         </Tip>
@@ -523,7 +595,7 @@ function PlayInner() {
             return <Tip inv label={<b>{full}</b>}><span className="vname">{full}</span></Tip>
           })()}
         </>}
-      </div>
+      </div>}
     </div>
   )
 }

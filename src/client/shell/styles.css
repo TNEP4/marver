@@ -856,6 +856,33 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .sh-play-pill .sep { background: rgba(255, 255, 255, .12) }
 .sh-play-pill .bd { color: rgba(245, 245, 247, .82) }
 .sh-pill-btn.bd { width: auto; gap: 6px; padding: 0 8px 0 11px; white-space: nowrap; font-weight: 600 }
+
+/* ---- present/focus chrome (sharing v1): brand pill top-left, counter in the
+   toolbar, doc reading preset. Same glass skin as the play pill. */
+.sh-play-brand.sh-pill { left: var(--edge); right: auto; transform-origin: 22px 22px; padding: 5px 14px 5px 10px }
+.sh-play-mark { display: inline-flex; align-items: center; gap: 7px; padding: 0 2px 0 6px; color: rgba(245, 245, 247, .88) }
+.sh-play-mark svg { color: #6db3ff }
+.sh-play-mark .wd { font: 600 13px -apple-system, system-ui, sans-serif; letter-spacing: -.01em }
+.sh-play-title { font: 500 13px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .82);
+  max-width: 143px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px }
+.sh-play-pos { font: 500 12.5px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .64);
+  font-variant-numeric: tabular-nums; padding: 0 8px; white-space: nowrap }
+/* the hint pill: bottom center, the design's quiet keyboard cue */
+.sh-play-hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 31;
+  border-radius: 999px; padding: 7px 16px; white-space: nowrap;
+  background: rgba(18, 18, 24, .8); border: 1px solid rgba(255, 255, 255, .1);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .64) }
+.sh-play-hint kbd { font: 500 11.5px ui-monospace, monospace }
+body.sh-hide-ui .sh-play-hint { display: none !important }
+/* doc preset: the page IS the surface - reading column on a calm ground, no
+   device shell, natural document scrolling inside the frame */
+.sh-play.doc { background: #f4f4f6 }
+.sh-play.doc.t-dark { background: #101116 }
+.sh-play.doc .dev { --pdev-bg: #fff; box-shadow: none }
+.sh-play.doc.t-dark .dev { --pdev-bg: #0f1015 }
+/* the doc chrome floats over a LIGHT ground in light theme - the dark pill skin
+   still reads (it is glass over anything), matching the design's fixed pills */
 .sh-play-update { width: auto !important; gap: 5px; padding: 0 11px !important; font-size: 12px; font-weight: 600 }
 /* the picker dropdowns portal to .sh-app; in play they carry .sh-menu-dark for the dark skin */
 .sh-menu-dark { background: rgba(20, 20, 26, .97); border-color: rgba(255, 255, 255, .12); box-shadow: 0 12px 40px rgba(0, 0, 0, .5) }

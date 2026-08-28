@@ -1,11 +1,11 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, landingMode, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
-import { enterPlay, playCtl, PlayOverlay } from './Play.tsx'
+import { enterFocus, enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
@@ -564,7 +564,20 @@ export function App() {
       }
       const ok = await boot()
       urlReady.current = true
-      if (ok && bootHash.play) enterPlay(bootHash.play)     // #/p/<board> alone = board start
+      if (ok && bootHash.focus) {
+        // a frame deep link forces focus for that visit, over every other rule
+        // (01-sharing §6.1 step 3) - the stage mounts any manifest frame, so no
+        // board lookup is needed
+        enterFocus(bootHash.focus.at, { ...bootHash.focus, deep: true })
+      } else if (ok && bootHash.play) enterPlay(bootHash.play)     // #/p/<board> alone = board start
+      else if (ok && PUBLISHED) {
+        // published landing: explicit `open` beats the type default; canvas and
+        // board land on the canvas surface (board-scoped already); a lock will
+        // then hold the mode by hiding every door (04-solution §2.35)
+        const mode = landingMode(useStore.getState().board)
+        if (mode === 'present') enterPlay()
+        else if (mode === 'focus') enterFocus()
+      }
     }
     void start()
   }, [])
@@ -577,11 +590,15 @@ export function App() {
   useEffect(() => {
     if (!urlReady.current) return
     const s = useStore.getState()
-    if (playState) {
+    if (playState?.focus && playState.deep) {
+      // a deep-link focus visit keeps its frame URL - the shareable form
+      writeHash({ focus: { at: playState.at, device: playState.device, theme: playState.theme } })
+    } else if (playState && !playState.focus) {
       const push = !prevPlay.current || prevPlay.current.at !== playState.at
       writeHash({ board: s.board, play: playState }, push)
     } else {
-      writeHash({ board: s.board, n: s.selection })
+      // type-default focus keeps the board URL the visitor arrived on
+      writeHash({ board: s.board, n: playState ? [] : s.selection })
     }
     prevPlay.current = playState
   })
@@ -599,7 +616,9 @@ export function App() {
         s = useStore.getState()
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
       }
-      if (h.play) {
+      if (h.focus) {
+        enterFocus(h.focus.at, { ...h.focus, deep: true })
+      } else if (h.play) {
         if (s.play) playCtl.sync(h.play)
         else enterPlay(h.play)
       } else {
@@ -921,6 +940,19 @@ export function App() {
   useEffect(() => {
     if (!interacting) appRef.current?.focus({ preventScroll: true })
   }, [interacting])
+
+  // Every published board is locked to a stage mode: the canvas shell is never
+  // offered - no sidebar, no canvas surface, no toolbar. The bundle IS the
+  // locked view (the Publish-to-web shape). Boot still ran above; the landing
+  // effect entered the mode, and PlayOverlay's noDoor keeps it there.
+  if (LOCKED_SHELL) {
+    return (
+      <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}`}>
+        <PlayOverlay />
+        <div className="sh-toasts">{toasts.map((t) => <div className="sh-toast" key={t.id}>{t.text}</div>)}</div>
+      </div>
+    )
+  }
 
   return (
     <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}`}>

@@ -10,6 +10,9 @@
  *   #/b/<board>?c=<id>     board with a comment thread open
  *   #/i/<token>            invite link - opens the claim dialog with the token
  *   #/p/<board>?at=<frame-id>&device=<viewport>&theme=<theme>   play mode
+ *   #/f/<frame-id>?device=&theme=   focus - one frame, full screen, no board in
+ *                                   the chrome (a frame deep link is presentation,
+ *                                   not access: 01-sharing §3.5)
  */
 
 export interface HashState {
@@ -18,6 +21,8 @@ export interface HashState {
   c?: string
   invite?: string
   play?: { at?: string; device?: string; theme?: string }
+  /** A frame deep link: lands that visit in focus, over every other rule. */
+  focus?: { at: string; device?: string; theme?: string }
 }
 
 const BOARD_RE = /^[a-z0-9][a-z0-9-]*$/
@@ -31,6 +36,13 @@ export function parseHash(hash: string = location.hash): HashState {
     const params = new URLSearchParams(q === -1 ? '' : raw.slice(q + 1))
     const mi = path.match(/^\/i\/([\w-]{8,128})$/)
     if (mi) return { invite: mi[1] }
+    // frame ids are <scene>/<name> (or bare <name>), so the f route takes the rest of the path
+    const mf = path.match(/^\/f\/(.+)$/)
+    if (mf) {
+      const at = decodeURIComponent(mf[1])
+      if (!/^[\w./-]{1,200}$/.test(at) || at.includes('..')) return {}
+      return { focus: { at, device: params.get('device') ?? undefined, theme: params.get('theme') ?? undefined } }
+    }
     const m = path.match(/^\/(b|p)\/([^/?]+)$/)
     if (!m) return {}
     const board = decodeURIComponent(m[2])
@@ -52,6 +64,13 @@ export function parseHash(hash: string = location.hash): HashState {
 }
 
 export function buildHash(s: HashState): string {
+  if (s.focus?.at) {
+    const p = new URLSearchParams()
+    if (s.focus.device) p.set('device', s.focus.device)
+    if (s.focus.theme) p.set('theme', s.focus.theme)
+    const q = p.toString()
+    return `#/f/${s.focus.at}${q ? `?${q}` : ''}`
+  }
   if (s.play?.at && s.board) {
     const p = new URLSearchParams({ at: s.play.at })
     if (s.play.device) p.set('device', s.play.device)

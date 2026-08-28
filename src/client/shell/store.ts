@@ -13,8 +13,12 @@ import shData from 'virtual:sh-data'
 const DATA: {
   manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string
   /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
-  policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean } }
+  policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
 } | null = shData
+
+/** Every published board is locked to a stage mode - the canvas shell is never
+ *  offered on this bundle (01-sharing §5.1's all-boards rule). */
+export const LOCKED_SHELL = DATA?.policy?.lockedShell === true
 
 /** True on a published static canvas - no dev server, no API, no update checks. */
 export const PUBLISHED = DATA !== null
@@ -61,7 +65,31 @@ export interface Node {
 export interface JamNote { threadId: string; board: string; preview: string; ts: number; frame?: string; frameTitle?: string; intent?: string }
 export interface Toast { id: number; text: string; jam?: JamNote }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean } = shConfig
+
+/** Invariant: `branding: false` strips every Marver mention - new chrome included. */
+export const BRANDING = CONFIG.branding !== false
+
+/** The five view modes' landing map (04-solution §2.35): the artifact type picks
+ *  the default view; an explicit `open` beats it; a frame deep link beats both. */
+export function landingMode(board: string): 'canvas' | 'board' | 'present' | 'focus' | 'slides' {
+  const p = BOARD_POLICY[board]
+  if (!p) return 'canvas'
+  if (p.open && ['canvas', 'board', 'present', 'focus', 'slides'].includes(p.open)) {
+    // slides is v1.5 - until the mode exists it lands in present, its nearest kin
+    return p.open === 'slides' ? 'present' : p.open as any
+  }
+  switch (p.type) {
+    case 'doc': return 'focus'
+    case 'slides': return 'present'          // slides mode is v1.5; present until then
+    case 'design': case 'sketch': case 'refs': return 'board'
+    default: return 'canvas'
+  }
+}
+
+/** Is this board frozen to its landing mode? The lock caps disclosure - no way
+ *  out into other modes, and (published) no sidebar ever renders for it. */
+export const boardLocked = (board: string): boolean => BOARD_POLICY[board]?.lock === true
 
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
@@ -161,7 +189,11 @@ interface State {
   selection: string[]                 // ordered; last entry is the primary (bar anchor)
   interact: string | null
   viewTheme: string                   // the global theme preference; sticky across boards and reloads
-  play: { at: string; device: string; theme: string } | null   // play mode; at = current frame id
+  /** Play mode; at = current frame id. `focus` = the single-frame view (the
+   *  fourth mode): no walking, doc reading preset when the board type is doc.
+   *  `deep` = entered by a frame deep link - the chrome then carries no board
+   *  name and no canvas door (presentation default of the link, 04 §2.35). */
+  play: { at: string; device: string; theme: string; focus?: boolean; deep?: boolean } | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   laser: boolean                      // laser/inspect mode: frames outline their structure
   board: string                       // active board name; 'all-scenes' is the auto board
