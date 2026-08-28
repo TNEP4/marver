@@ -123,11 +123,16 @@ describe('landing modes + the focus chrome, in a real browser', () => {
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play')`)).toBe(false)
   })
 
-  skippable('the chrome holds at 390px - no horizontal scroll (acceptance 13)', async () => {
-    const tab = await browser!.tab({ width: 390, height: 844 })
-    await browser!.go(tab, `${base}/#/b/memo`)
-    await browser!.until(tab, `!!document.querySelector('.sh-play.doc')`)
-    const over = await browser!.eval(tab, `document.documentElement.scrollWidth - document.documentElement.clientWidth`)
-    expect(over).toBeLessThanOrEqual(0)
+  skippable('the chrome holds at 390px - no horizontal scroll, 34px tap targets (acceptance 13)', async () => {
+    for (const hash of ['#/b/memo', '#/b/deck']) {           // focus-doc AND locked present
+      const tab = await browser!.tab({ width: 390, height: 844 })
+      await browser!.go(tab, `${base}/${hash}`)
+      await browser!.until(tab, `!!document.querySelector('.sh-play')`)
+      const over = await browser!.eval(tab, `document.documentElement.scrollWidth - document.documentElement.clientWidth`)
+      expect(over, `${hash} scrolls sideways`).toBeLessThanOrEqual(0)
+      // tap targets: every pill button measures at least the shell's 34px
+      const minSide = await browser!.eval(tab, `Math.min(...[...document.querySelectorAll('.sh-play-pill .sh-pill-btn')].map((b) => Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height)))`)
+      expect(minSide, `${hash} tap targets under 34px`).toBeGreaterThanOrEqual(33)
+    }
   })
 })
