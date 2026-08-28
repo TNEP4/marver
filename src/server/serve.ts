@@ -191,9 +191,15 @@ export async function serve(root: string, portFlag?: number) {
     // service can say what somebody is signing in to open. Capitalised the same
     // way the gate shows it, so the two read as the same canvas.
     const canvasName = humanName(meta.name)
-    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName, meta.branding)
+    const { ceilingsFromRights } = await import('./share.ts')
+    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName, meta.branding, ceilingsFromRights(meta.rights ?? {}))
   }
 
+  // Both set: the issuer wins and the password is ignored - said once, out
+  // loud, because a deployer who set both believes the password still guards
+  // something (01-sharing §10's both-gates row).
+  if (idIssuer && process.env.MARVER_PASSWORD)
+    console.log(`  note: MARVER_ID_ISSUER and MARVER_PASSWORD are both set - the identity gate wins, the password is IGNORED`)
   const password = idIssuer ? '' : (process.env.MARVER_PASSWORD ?? '')
   // verifier: scrypt-derived, fixed length - each guess pays the scrypt cost (a natural
   // throttle) and the compare never leaks password length. Cookies are signed with a

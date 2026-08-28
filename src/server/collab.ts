@@ -339,7 +339,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const { user, session } = claimInvite(dataDir, String(b.token ?? ''), {
           password: String(b.password ?? ''), name: String(b.name ?? ''),
           avatar: validAvatar(b.avatar) ? b.avatar : undefined,
-        })
+        }, ceilings)
         setSession(req, res, session)
         return json(res, 200, { user: publicUser(user) }), true
       }
@@ -347,7 +347,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const b = await readBody(req)
         const email = String(b.email ?? '').trim().toLowerCase()
         if (limited(`ip:${ip}`, `em:${email}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
-        const hit = signIn(dataDir, email, String(b.password ?? ''))
+        const hit = signIn(dataDir, email, String(b.password ?? ''), ceilings)
         if (!hit) return json(res, 401, { error: 'wrong email or password' }), true
         setSession(req, res, hit.session)
         return json(res, 200, { user: publicUser(hit.user) }), true

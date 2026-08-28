@@ -6,8 +6,8 @@
  * this file holds who was granted what and until when. The resolver is a pure
  * function - blocklist first, then the highest matching grant, then the ceiling
  * clamps - and it is consulted at every door: gate admission, identity
- * provisioning, comment writes, request-access eligibility and SSE
- * re-authorization. One function, five doors, so no door can drift.
+ * provisioning, password sign-in, comment writes, request-access eligibility
+ * and SSE re-authorization. One function, so no door can drift.
  *
  * The non-promotion invariant is carried by two mechanics and nothing else:
  * reads always use `min(current ceiling, grant.boardRole[b])`, and every boot
@@ -18,7 +18,9 @@
  *
  * No share.json = pre-migration 0.11 behaviour, exactly. The file is created
  * once at serve boot from the migration matrix (01-sharing §10); until then
- * every caller falls back to the legacy rules it always had.
+ * every caller falls back to the legacy rules it always had. A present but
+ * corrupt or malformed file fails CLOSED - a policy typo must deny, never
+ * quietly grant the ceiling.
  */
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
@@ -48,13 +50,6 @@ export interface ShareStore {
   general: { mode: GeneralMode; role: 'view' }
   blocked: string[]
   grants: ShareGrant[]
-  /** A boot-time snapshot of the publish ceilings (meta.json rights), written by
-   *  every re-clamp. NOT a new authority - meta.json stays the policy transport
-   *  and ceilings only change at a deploy, which is a boot, which rewrites this.
-   *  It exists so callers without the dist in reach (identity provisioning,
-   *  invite redemption) can materialise and check grants against the same
-   *  ceilings the serving process enforces with. */
-  ceilings: Ceilings
 }
 
 const RANK: Record<ShareRole, number> = { none: 0, view: 1, comment: 2 }
@@ -67,8 +62,30 @@ export const shareFile = (dir: string) => join(dir, 'share.json')
 export const ceilingsFromRights = (rights: Record<string, 'read' | 'comment'>): Ceilings =>
   Object.fromEntries(Object.entries(rights).map(([b, r]) => [b, r === 'comment' ? 'comment' : 'view']))
 
+const ROLES = new Set<string>(['none', 'view', 'comment'])
+const MODES = new Set<string>(['private', 'password', 'public'])
+
+/** Fail CLOSED on anything malformed: an unknown role string must never rank
+ *  above a real one, and a misspelt mode must never open the anonymous door. */
+function validateStore(p: any): asserts p is ShareStore {
+  const bad = (why: string) => { throw new Error(`share store is malformed (${why}) - refusing to load it. Fix or delete it deliberately.`) }
+  if (p?.version !== 1) bad('version must be 1')
+  if (!MODES.has(p?.general?.mode)) bad(`general.mode "${p?.general?.mode}"`)
+  if (p?.general?.role !== 'view') bad('general.role must be "view"')
+  if (!Array.isArray(p?.blocked) || p.blocked.some((b: unknown) => typeof b !== 'string')) bad('blocked must be addresses')
+  if (!Array.isArray(p?.grants)) bad('grants must be an array')
+  for (const g of p.grants) {
+    if (typeof g?.principal !== 'string' || !g.principal) bad('grant principal')
+    if (g?.scope !== 'canvas' && !(typeof g?.scope === 'string' && g.scope.startsWith('board:'))) bad(`grant scope "${g?.scope}"`)
+    if (g?.assigned !== 'view' && g?.assigned !== 'comment') bad(`grant assigned "${g?.assigned}"`)
+    if (typeof g?.boardRole !== 'object' || g.boardRole === null) bad('grant boardRole')
+    for (const r of Object.values(g.boardRole)) if (!ROLES.has(r as string)) bad(`boardRole value "${r}"`)
+    if (g?.expires !== null && typeof g?.expires !== 'string') bad('grant expires')
+  }
+}
+
 /** Null when no share.json exists (pre-migration) - callers keep legacy rules.
- *  A present-but-corrupt file fails CLOSED, same doctrine as auth.json. */
+ *  A present-but-unreadable/corrupt/malformed file fails CLOSED. */
 export function loadShare(dir: string): ShareStore | null {
   let raw: string
   try { raw = readFileSync(shareFile(dir), 'utf8') }
@@ -78,14 +95,15 @@ export function loadShare(dir: string): ShareStore | null {
   }
   let parsed: any
   try { parsed = JSON.parse(raw) } catch { throw new Error('share store is corrupt JSON - refusing to treat it as absent. Restore it or delete it deliberately.') }
-  if (!Array.isArray(parsed?.grants) || !Array.isArray(parsed?.blocked) || typeof parsed?.general?.mode !== 'string')
-    throw new Error('share store has an unexpected shape - refusing to load it')
-  parsed.ceilings ??= {}
+  validateStore(parsed)
   return parsed
 }
 
 /** Atomic rewrite; expired grants garbage-collect on every write, the same sweep
- *  invites and sessions already ride. 0600 - the roster is a list of addresses. */
+ *  invites and sessions already ride. 0600 - the roster is a list of addresses.
+ *  The request-path cache is refreshed HERE, in-process: the supported setup is
+ *  single-instance, so the writer and every reader share this module, and an
+ *  mtime tie on a coarse filesystem can never serve a pre-revoke roster. */
 export function saveShare(dir: string, store: ShareStore) {
   const now = Date.now()
   store.grants = store.grants.filter((g) => !g.expires || Date.parse(g.expires) > now)
@@ -95,10 +113,12 @@ export function saveShare(dir: string, store: ShareStore) {
   const fd = openSync(tmp, 'wx', 0o600)
   try { writeSync(fd, JSON.stringify(store, null, 2)); fsyncSync(fd) } finally { closeSync(fd) }
   renameSync(tmp, file)
+  cache.set(dir, { mtime: statSync(file).mtimeMs, store })
 }
 
-// ---- request-path reads: mtime-cached so the gate can consult the roster on
-// every request without re-parsing a file that changes rarely ----
+// ---- request-path reads: cached so the gate can consult the roster on every
+// request without re-parsing. Writes refresh the cache directly (above); the
+// mtime check only covers out-of-band edits (an owner hand-editing the file).
 const cache = new Map<string, { mtime: number; store: ShareStore | null }>()
 export function shareState(dir: string): ShareStore | null {
   const file = shareFile(dir)
@@ -130,7 +150,6 @@ export function reclampShare(dir: string, ceilings: Ceilings) {
   withLock(dir, () => {
     const store = loadShare(dir)
     if (!store) return
-    store.ceilings = ceilings
     for (const g of store.grants) {
       materialise(g, ceilings)
       for (const b of Object.keys(g.boardRole)) if (b in ceilings) g.boardRole[b] = roleMin(g.boardRole[b], ceilings[b])
@@ -162,20 +181,29 @@ export function ensureShare(dir: string, mode: GeneralMode, users: User[], ceili
         materialise(g, ceilings)
         return g
       }),
-      ceilings,
     }
     saveShare(dir, store)
     return { created: true }
   }, '.share.lock')
 }
 
-/** Upsert a grant (idempotent by principal+scope) and materialise its entries
- *  against the store's boot ceilings. Re-granting REPLACES: new assigned, fresh
- *  ratchet - the owner just said so. */
+/** Upsert a grant (idempotent by principal+scope) and materialise its entries.
+ *  Re-granting REPLACES: new assigned, fresh ratchet - the owner just said so.
+ *
+ *  v1 accepts `scope: "canvas"` ONLY (04-solution §9.4): before read privacy
+ *  exists, a board-scoped grant would open the whole bundle while reading as
+ *  "just this board" - the schema stays v2-ready, the door refuses. Domain
+ *  principals need the identity gate: a canvas that cannot verify addresses
+ *  cannot verify domains (01-sharing §4.4), and they ship only together with
+ *  the blocklist, which is why creation demands `identityMode`. */
 export function upsertGrant(
-  dir: string,
+  dir: string, ceilings: Ceilings,
   input: { principal: string; scope: ShareGrant['scope']; assigned: 'view' | 'comment'; expires?: string | null; by: string },
+  opts: { identityMode?: boolean } = {},
 ): ShareGrant {
+  if (input.scope !== 'canvas') throw new Error('v1 accepts canvas-scoped grants only - board scopes arrive with read privacy (v2)')
+  if (input.principal.startsWith('@') && !opts.identityMode)
+    throw new Error('domain grants need the identity gate - a password canvas cannot verify who holds an address')
   return withLock(dir, () => {
     const store = loadShare(dir)
     if (!store) throw new Error('no share store - the canvas has not booted under v2 yet')
@@ -185,38 +213,49 @@ export function upsertGrant(
       principal, scope: input.scope, assigned: input.assigned, boardRole: {},
       expires: input.expires ?? null, by: input.by, at: new Date().toISOString(),
     }
-    materialise(g, store.ceilings)
+    materialise(g, ceilings)
     store.grants.push(g)
     saveShare(dir, store)
     return g
   }, '.share.lock')
 }
 
-/** An unexpired v1 invite, redeemed after migration, materialises the same
- *  canvas-scoped comment grant an existing account received (01-sharing §10) -
- *  because that is exactly what claiming it would have produced under v1.
- *  A no-op before migration (no store) and on an address already granted. */
-export function grantFromInviteRedemption(dir: string, email: string) {
-  const store = shareState(dir)
-  if (!store) return
-  const principal = normEmail(email)
-  if (store.grants.some((g) => g.principal === principal && g.scope === 'canvas')) return
-  upsertGrant(dir, { principal, scope: 'canvas', assigned: 'comment', by: 'invite' })
+/** Remove every grant held by an exact principal. Ridden by account revocation:
+ *  `revokeUser` alone would leave the grant behind, and on an identity canvas
+ *  the next sign-in would quietly re-provision the account it just removed. */
+export function removePrincipalGrants(dir: string, email: string) {
+  withLock(dir, () => {
+    const store = loadShare(dir)
+    if (!store) return
+    const norm = normEmail(email)
+    const before = store.grants.length
+    store.grants = store.grants.filter((g) => g.principal !== norm)
+    if (store.grants.length !== before) saveShare(dir, store)
+  }, '.share.lock')
 }
 
-/** Provisioning's question, answerable without the dist in reach: may this
- *  address be admitted on the strength of the roster alone. `blocked` beats
- *  everything; `granted` means a live grant reaches ≥ view on some published
- *  board (boardRole entries are already ceiling-clamped, so any entry ≥ view
- *  is an entry through a real door). */
-export function provisionVerdict(store: ShareStore, email: string): 'blocked' | 'granted' | 'none' {
-  const norm = normEmail(email)
-  if (store.blocked.some((b) => normEmail(b) === norm)) return 'blocked'
-  const now = Date.now()
-  const ok = store.grants.some((g) =>
-    live(g, now) && grantMatches(g, norm) &&
-    Object.entries(g.boardRole).some(([b, r]) => b in store.ceilings && RANK[r] >= RANK.view))
-  return ok ? 'granted' : 'none'
+/** Follow a verified rename: exact grants move to the address the same subject
+ *  now holds - the owner granted the person, and the address is a label on
+ *  them (docs promise: renames follow the subject). Domain grants never move;
+ *  they simply re-evaluate against the new address. A grant already existing
+ *  for the new address wins (it is the newer statement of intent). */
+export function renamePrincipalGrants(dir: string, fromEmail: string, toEmail: string) {
+  withLock(dir, () => {
+    const store = loadShare(dir)
+    if (!store) return
+    const from = normEmail(fromEmail), to = normEmail(toEmail)
+    let changed = false
+    for (const g of store.grants) {
+      if (g.principal !== from) continue
+      if (store.grants.some((o) => o !== g && o.principal === to && o.scope === g.scope)) continue
+      g.principal = to
+      changed = true
+    }
+    if (changed) {
+      store.grants = store.grants.filter((g) => g.principal !== from)
+      saveShare(dir, store)
+    }
+  }, '.share.lock')
 }
 
 // ---- the resolver ----
@@ -248,12 +287,17 @@ const live = (g: ShareGrant, now: number) => !g.expires || Date.parse(g.expires)
  * `email: null` is an anonymous caller - someone past a password gate or on a
  * public canvas. They have no principal to match and cannot be blocked (there
  * is no identity to block), which is 01-sharing §3.4 stated as code.
+ *
+ * `exactOnly` drops domain grants from consideration: the password sign-in
+ * door uses it, because domain membership is only meaningful when an identity
+ * service verified the address (01-sharing §4.4).
  */
 export function resolveAccess(input: {
   email: string | null
   userRole?: 'owner' | 'member'
   store: ShareStore
   ceilings: Ceilings
+  exactOnly?: boolean
 }): Resolution {
   const { store, ceilings } = input
   const email = input.email ? normEmail(input.email) : null
@@ -268,7 +312,9 @@ export function resolveAccess(input: {
   }
   trace.push({ where: 'blocklist', role: 'none', why: email ? 'not blocked' : 'anonymous - no identity to block', win: false })
 
-  const matching = email ? store.grants.filter((g) => live(g, now) && grantMatches(g, email)) : []
+  const matching = email
+    ? store.grants.filter((g) => live(g, now) && grantMatches(g, email) && !(input.exactOnly && g.principal.startsWith('@')))
+    : []
   const anonView: ShareRole = store.general.mode !== 'private' ? 'view' : 'none'
 
   let top: ShareRole = 'none'
@@ -281,7 +327,7 @@ export function resolveAccess(input: {
     top = roleMax(top, r)
   }
 
-  if (input.userRole === 'owner') trace.push({ where: 'role', role: roleMin('comment', 'comment'), why: 'canvas owner - precedes principal matching', win: true })
+  if (input.userRole === 'owner') trace.push({ where: 'role', role: 'comment', why: 'canvas owner - precedes principal matching', win: true })
   if (matching.length) {
     const best = matching.map((g) => `${g.principal} ${g.assigned}${g.expires ? ` until ${g.expires.slice(0, 10)}` : ''}`).join(', ')
     trace.push({ where: 'grants', role: top, why: `highest of: ${best}`, win: input.userRole !== 'owner' })
@@ -311,6 +357,43 @@ export function commentAllowed(dir: string, user: { email: string; role: 'owner'
   if (!store) return ceilings[board] === 'comment'
   if (ceilings[board] !== 'comment') return false
   return resolveAccess({ email: user.email, userRole: user.role, store, ceilings }).boards[board] === 'comment'
+}
+
+/**
+ * The provisioning doors' question: may this address be admitted at all.
+ * `blocked` beats everything. With ceilings in hand (every real server has
+ * them) the answer is the ONE resolver's entry test; without them (bare test
+ * harnesses only) it falls back to the materialised entries, which are
+ * ceiling-clamped already. `aliases` lets a verified rename count the grants
+ * the subject held under its previous address.
+ */
+export function provisionVerdict(
+  store: ShareStore, email: string,
+  opts: { ceilings?: Ceilings; exactOnly?: boolean; aliases?: string[] } = {},
+): 'blocked' | 'granted' | 'none' {
+  const addresses = [email, ...(opts.aliases ?? [])].map(normEmail)
+  for (const a of addresses) if (store.blocked.some((b) => normEmail(b) === a)) return 'blocked'
+  const now = Date.now()
+  for (const a of addresses) {
+    if (opts.ceilings) {
+      if (resolveAccess({ email: a, store: { ...store, general: { mode: 'private', role: 'view' } }, ceilings: opts.ceilings, exactOnly: opts.exactOnly }).entry) return 'granted'
+    } else if (store.grants.some((g) =>
+      live(g, now) && grantMatches(g, a) && !(opts.exactOnly && g.principal.startsWith('@')) &&
+      Object.values(g.boardRole).some((r) => RANK[r] >= RANK.view))) return 'granted'
+  }
+  return 'none'
+}
+
+/** An unexpired v1 invite, redeemed after migration, materialises the same
+ *  canvas-scoped comment grant an existing account received (01-sharing §10) -
+ *  because that is exactly what claiming it would have produced under v1.
+ *  A no-op before migration (no store) and on an address already granted. */
+export function grantFromInviteRedemption(dir: string, email: string, ceilings: Ceilings = {}) {
+  const store = shareState(dir)
+  if (!store) return
+  const principal = normEmail(email)
+  if (store.grants.some((g) => g.principal === principal && g.scope === 'canvas')) return
+  upsertGrant(dir, ceilings, { principal, scope: 'canvas', assigned: 'comment', by: 'invite' })
 }
 
 /** The operative general mode: what the environment can actually enforce clamps

@@ -13,7 +13,7 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { grantFromInviteRedemption, provisionVerdict, shareState } from './share.ts'
+import { grantFromInviteRedemption, provisionVerdict, removePrincipalGrants, renamePrincipalGrants, shareState, type Ceilings } from './share.ts'
 
 // scrypt cost: N=2^15 (OWASP fallback tier), per-user random salt. Params are recorded
 // per user so a future cost bump verifies old hashes and upgrades on next sign-in.
@@ -153,6 +153,7 @@ export function createInvite(dir: string, email: string): { token: string; exp: 
 /** Claim an invite: burns it, creates the account, opens the first session. */
 export function claimInvite(
   dir: string, rawToken: string, profile: { password: string; name: string; avatar?: string },
+  ceilings: Ceilings = {},
 ): { user: User; session: string } {
   if (profile.password.length < 8) throw new Error('password must be at least 8 characters')
   if (!profile.name.trim()) throw new Error('a display name is required')
@@ -180,7 +181,7 @@ export function claimInvite(
   }
   store.users.push(user)
   // the invite materialises its grant on redemption (01-sharing §10)
-  grantFromInviteRedemption(dir, invite.emailNorm)
+  grantFromInviteRedemption(dir, invite.emailNorm, ceilings)
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
@@ -188,7 +189,7 @@ export function claimInvite(
 }
 
 /** Password sign-in. One generic failure - never reveal whether the email exists. */
-export function signIn(dir: string, email: string, password: string): { user: User; session: string } | null {
+export function signIn(dir: string, email: string, password: string, ceilings?: Ceilings): { user: User; session: string } | null {
   return withLock(dir, () => {
   const store = loadStore(dir)
   const found = findUser(store, email)
@@ -205,10 +206,12 @@ export function signIn(dir: string, email: string, password: string): { user: Us
   // The resolver answers this door too (04-solution §2.2.1): a blocked or
   // fully-revoked member fails sign-in with the same generic refusal - a
   // correct password is who they are, not whether they are still let in.
-  // The owner keeps standing; pre-migration stores keep legacy behaviour.
+  // exactOnly: a password canvas never verified who holds an address, so a
+  // domain grant means nothing at this door (01-sharing §4.4). The owner
+  // keeps standing; pre-migration stores keep legacy behaviour.
   const share = shareState(dir)
   if (share && user.role !== 'owner') {
-    const verdict = provisionVerdict(share, user.email)
+    const verdict = provisionVerdict(share, user.email, { ceilings, exactOnly: true })
     if (verdict !== 'granted') return null
   }
   const session = pushSession(store, user)
@@ -239,7 +242,7 @@ export function provisionFromMarverId(
     /** Display name from the assertion, already bounded by the verifier. */
     name?: string
   },
-  opts: { ownerEmail?: string } = {},
+  opts: { ownerEmail?: string; ceilings?: Ceilings } = {},
 ): { user: User; session: string } | null {
   const emailNorm = normEmail(identity.email)
   if (!emailNorm) return null
@@ -274,10 +277,11 @@ export function provisionFromMarverId(
     // be the owner. Refusing is the only safe answer: the rename is genuine but
     // the destination is occupied, and a canvas cannot tell which of the two
     // people is meant to keep it.
+    let vacated: string | null = null
     if (bound && normEmail(bound.email) !== emailNorm) {
       const clash = findUser(store, emailNorm)
       if (clash && clash !== bound) return null
-      const vacated = normEmail(bound.email)
+      vacated = normEmail(bound.email)
       bound.email = emailNorm
 
       // Every session issued under the OLD address dies with it.
@@ -317,9 +321,16 @@ export function provisionFromMarverId(
     // bootstrap path keep their standing (someone must administer), and a
     // pending invite still admits (it materialises a grant below). Without a
     // roster (pre-migration) the legacy chain is exactly what runs.
+    //
+    // A rename counts BOTH addresses: the grants the subject held under its
+    // previous address still admit it (the owner granted the person; the
+    // address is a label) - and a block on either address refuses, so a
+    // rename is never a way out of the blocklist.
     const share = shareState(dir)
     if (share) {
-      const verdict = provisionVerdict(share, emailNorm)
+      const verdict = provisionVerdict(share, emailNorm, {
+        ceilings: opts.ceilings, aliases: vacated ? [vacated] : undefined,
+      })
       if (verdict === 'blocked') return null
       const standing = verdict === 'granted' || existing?.role === 'owner' || !!invite || isBootstrapOwner
       if (!standing) return null
@@ -378,8 +389,10 @@ export function provisionFromMarverId(
     }
     // A redeemed invite materialises the canvas-scoped comment grant it always
     // meant (01-sharing §10) - so the person it admitted keeps commenting after
-    // the invite itself is gone. Separate lock file, so no re-entrancy here.
-    if (invite) grantFromInviteRedemption(dir, emailNorm)
+    // the invite itself is gone. A verified rename carries the subject's exact
+    // grants to the address it now holds. Separate lock file, no re-entrancy.
+    if (invite) grantFromInviteRedemption(dir, emailNorm, opts.ceilings)
+    if (vacated) renamePrincipalGrants(dir, vacated, emailNorm)
     const session = pushSession(store, user)
     saveStore(dir, store)
     return { user, session }
@@ -653,6 +666,11 @@ export function revokeUser(dir: string, email: string) {
   store.invites = store.invites.filter((i) => i.emailNorm !== normEmail(email))
   saveStore(dir, store)
   })
+  // The GRANT goes with the account, or the next identity sign-in quietly
+  // re-provisions what was just removed. Their domain's grant, if any, stays -
+  // narrowing one person out of a domain is the blocklist's job, and the
+  // dialog offers exactly that verb.
+  removePrincipalGrants(dir, email)
 }
 
 /** The public shape of a user - what other viewers (and events) may see. */

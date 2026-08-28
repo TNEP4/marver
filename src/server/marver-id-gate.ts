@@ -111,7 +111,7 @@ export function safeHash(raw: string | null): string | null {
   return value
 }
 
-export function marverIdHandler(dir: string, issuer: string, canvasName?: string, branding = true) {
+export function marverIdHandler(dir: string, issuer: string, canvasName?: string, branding = true, ceilings: Record<string, 'none' | 'view' | 'comment'> = {}) {
   const transactions = new TransactionStore()
 
   // The canvas's own origin, pinned by the operator.
@@ -287,7 +287,7 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       const session = provisionFromMarverId(
         dir,
         { ...result.identity, issuer },
-        { ownerEmail: process.env.MARVER_OWNER_EMAIL },
+        { ownerEmail: process.env.MARVER_OWNER_EMAIL, ceilings },
       )
 
       if (!session) {

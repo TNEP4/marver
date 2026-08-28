@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
 import { serve } from '../src/server/serve.ts'
-import { claimInvite, createInvite } from '../src/server/auth.ts'
+import { claimInvite, createInvite, provisionFromMarverId, revokeUser, signIn } from '../src/server/auth.ts'
 import {
   ceilingsFromRights, commentAllowed, ensureShare, entryAllowed, loadShare, provisionVerdict,
   reclampShare, resolveAccess, saveShare, upsertGrant, type ShareStore,
@@ -101,7 +101,7 @@ describe('seeds out of the web root (acceptance 3)', () => {
 
 const CEILINGS = ceilingsFromRights({ 'release-review': 'comment', roadmap: 'comment', internal: 'read' } as any)
 const baseStore = (over: Partial<ShareStore> = {}): ShareStore => ({
-  version: 1, general: { mode: 'private', role: 'view' }, blocked: [], grants: [], ceilings: CEILINGS, ...over,
+  version: 1, general: { mode: 'private', role: 'view' }, blocked: [], grants: [], ...over,
 })
 
 describe('resolveAccess - blocklist, additive grants, ceiling clamp', () => {
@@ -169,7 +169,7 @@ describe('boardRole ratchet - ceiling round-trip never silently re-promotes', ()
     const dir = join(root, 'data')
     const both = ceilingsFromRights({ a: 'comment', b: 'comment' } as any)
     ensureShare(dir, 'private', [], both)
-    upsertGrant(dir, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    upsertGrant(dir, both, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'comment', by: 'owner' })
     expect(loadShare(dir)!.grants[0].boardRole).toEqual({ a: 'comment', b: 'comment' })
 
     // the owner lowers board a's ceiling and redeploys
@@ -190,7 +190,7 @@ describe('boardRole ratchet - ceiling round-trip never silently re-promotes', ()
   it('a board new to this build gets its entry at min(assigned, ceiling) on the boot that first sees it', () => {
     const dir = join(root, 'data')
     ensureShare(dir, 'private', [], ceilingsFromRights({ a: 'comment' } as any))
-    upsertGrant(dir, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    upsertGrant(dir, ceilingsFromRights({ a: 'comment' } as any), { principal: 'dana@acme.co', scope: 'canvas', assigned: 'comment', by: 'owner' })
     reclampShare(dir, ceilingsFromRights({ a: 'comment', later: 'read' } as any))
     expect(loadShare(dir)!.grants[0].boardRole).toEqual({ a: 'comment', later: 'view' })
   })
@@ -255,14 +255,128 @@ describe('a revoked or blocked member is refused at every door', () => {
     const data = join(root, 'data')
     const ceil = ceilingsFromRights({ main: 'comment' } as any)
     ensureShare(data, 'private', [], ceil)
-    upsertGrant(data, { principal: 'writer@x.test', scope: 'canvas', assigned: 'comment', by: 'owner' })
-    upsertGrant(data, { principal: 'reader@x.test', scope: 'canvas', assigned: 'view', by: 'owner' })
+    upsertGrant(data, ceil, { principal: 'writer@x.test', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    upsertGrant(data, ceil, { principal: 'reader@x.test', scope: 'canvas', assigned: 'view', by: 'owner' })
     expect(commentAllowed(data, { email: 'writer@x.test', role: 'member' }, 'main', ceil)).toBe(true)
     expect(commentAllowed(data, { email: 'reader@x.test', role: 'member' }, 'main', ceil)).toBe(false)
     expect(entryAllowed(data, { email: 'reader@x.test', role: 'member' }, ceil)).toBe(true)
     // expiry crossing mid-session: the next request is the one that notices
-    upsertGrant(data, { principal: 'writer@x.test', scope: 'canvas', assigned: 'comment', by: 'owner', expires: new Date(Date.now() - 1000).toISOString() })
+    upsertGrant(data, ceil, { principal: 'writer@x.test', scope: 'canvas', assigned: 'comment', by: 'owner', expires: new Date(Date.now() - 1000).toISOString() })
     expect(commentAllowed(data, { email: 'writer@x.test', role: 'member' }, 'main', ceil)).toBe(false)
     expect(entryAllowed(data, { email: 'writer@x.test', role: 'member' }, ceil)).toBe(false)
+  })
+})
+
+// ---- store coherence across auth.json and share.json ----
+
+describe('the two stores stay coherent', () => {
+  const CEIL = ceilingsFromRights({ main: 'comment' } as any)
+  const ISSUER = 'https://id.example.test'
+
+  it('revoking an account removes its grant too - the next sign-in cannot re-provision it', () => {
+    const data = join(root, 'data')
+    ensureShare(data, 'private', [], CEIL)
+    // an identity owner, then a granted member who signed in once
+    provisionFromMarverId(data, { email: 'owner@x.test', subject: 's-own', issuer: ISSUER }, { ownerEmail: 'owner@x.test', ceilings: CEIL })
+    upsertGrant(data, CEIL, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    expect(provisionFromMarverId(data, { email: 'dana@x.test', subject: 's-dana', issuer: ISSUER }, { ceilings: CEIL })).not.toBeNull()
+
+    revokeUser(data, 'dana@x.test')
+    expect(loadShare(data)!.grants.some((g) => g.principal === 'dana@x.test')).toBe(false)
+    // the door stays shut: no account, no invite, no grant
+    expect(provisionFromMarverId(data, { email: 'dana@x.test', subject: 's-dana', issuer: ISSUER }, { ceilings: CEIL })).toBeNull()
+  })
+
+  it('a verified rename carries the exact grant to the new address, and a block on either address refuses', () => {
+    const data = join(root, 'data')
+    ensureShare(data, 'private', [], CEIL)
+    provisionFromMarverId(data, { email: 'owner@x.test', subject: 's-own', issuer: ISSUER }, { ownerEmail: 'owner@x.test', ceilings: CEIL })
+    upsertGrant(data, CEIL, { principal: 'old@corp.test', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    expect(provisionFromMarverId(data, { email: 'old@corp.test', subject: 's-ren', issuer: ISSUER }, { ceilings: CEIL })).not.toBeNull()
+
+    // the same subject returns under a new address: admitted, grant follows
+    const renamed = provisionFromMarverId(data, { email: 'new@corp.test', subject: 's-ren', issuer: ISSUER }, { ceilings: CEIL })
+    expect(renamed).not.toBeNull()
+    const grants = loadShare(data)!.grants
+    expect(grants.some((g) => g.principal === 'new@corp.test')).toBe(true)
+    expect(grants.some((g) => g.principal === 'old@corp.test')).toBe(false)
+
+    // and a rename is never a way out of the blocklist
+    const share = loadShare(data)!
+    share.blocked = ['new@corp.test']
+    saveShare(data, share)
+    expect(provisionFromMarverId(data, { email: 'third@corp.test', subject: 's-ren', issuer: ISSUER }, { ceilings: CEIL })).toBeNull()
+  })
+
+  it('v1 refuses board-scoped grants and domain grants outside identity mode at creation', () => {
+    const data = join(root, 'data')
+    ensureShare(data, 'private', [], CEIL)
+    expect(() => upsertGrant(data, CEIL, { principal: 'x@y.test', scope: 'board:main', assigned: 'view', by: 'o' }))
+      .toThrow(/canvas-scoped/)
+    expect(() => upsertGrant(data, CEIL, { principal: '@y.test', scope: 'canvas', assigned: 'view', by: 'o' }))
+      .toThrow(/identity gate/)
+    expect(upsertGrant(data, CEIL, { principal: '@y.test', scope: 'canvas', assigned: 'view', by: 'o' }, { identityMode: true }).principal).toBe('@y.test')
+  })
+
+  it('a malformed share.json fails closed, never open', () => {
+    const data = join(root, 'data')
+    mkdirSync(data, { recursive: true })
+    writeFileSync(join(data, 'share.json'), JSON.stringify({
+      version: 1, general: { mode: 'privat', role: 'view' }, blocked: [], grants: [],
+    }))
+    expect(() => loadShare(data)).toThrow(/malformed/)
+    writeFileSync(join(data, 'share.json'), JSON.stringify({
+      version: 1, general: { mode: 'private', role: 'view' }, blocked: [],
+      grants: [{ principal: 'a@b.c', scope: 'canvas', assigned: 'comment', boardRole: { main: 'commment' }, expires: null, by: 'o', at: 't' }],
+    }))
+    expect(() => loadShare(data)).toThrow(/malformed/)
+  })
+
+  it('an invite redeemed after migration materialises the comment grant it always meant', () => {
+    const data = join(root, 'data')
+    ensureShare(data, 'private', [], CEIL)
+    const inv = createInvite(data, 'late@x.test')
+    claimInvite(data, inv.token, { password: 'long-enough-pass', name: 'Late' }, CEIL)
+    const g = loadShare(data)!.grants.find((x) => x.principal === 'late@x.test')
+    expect(g?.assigned).toBe('comment')
+    expect(g?.boardRole).toEqual({ main: 'comment' })
+    // and sign-in works through the resolver door
+    expect(signIn(data, 'late@x.test', 'long-enough-pass', CEIL)).not.toBeNull()
+  })
+
+  it('migration matrix: identity mode → Private; ungated+data → Public', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    await boot({ MARVER_DATA_DIR: data })          // no gate at all
+    expect(loadShare(data)!.general.mode).toBe('public')
+  })
+})
+
+// ---- writes through the real route after revocation ----
+
+describe('comment POST refuses after a grant is revoked mid-session', () => {
+  it('the same session writes, loses the grant, and cannot write again', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const inv1 = createInvite(data, 'owner@x.test')
+    claimInvite(data, inv1.token, { password: 'long-enough-pass', name: 'Owner' })
+    const inv2 = createInvite(data, 'member@x.test')
+    const member = claimInvite(data, inv2.token, { password: 'long-enough-pass', name: 'Member' })
+    await boot({ MARVER_DATA_DIR: data, MARVER_PASSWORD: 'canvas-pw' })
+
+    const post = () => fetch(`http://localhost:${PORT}/__mv/api/comments/main`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${member.session}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [{ id: crypto.randomUUID(), ts: Date.now(), type: 'create', commentId: crypto.randomUUID(), frame: 'x/y', anchor: {}, author: { email: 'member@x.test', name: 'Member' }, body: 'hi' }] }),
+    })
+    expect((await post()).status).toBe(200)
+
+    // the owner downgrades the member to view - same session, next request refused
+    const share = loadShare(data)!
+    const g = share.grants.find((x) => x.principal === 'member@x.test')!
+    g.assigned = 'view'
+    g.boardRole = { main: 'view' }
+    saveShare(data, share)
+    expect((await post()).status).toBe(403)
   })
 })
