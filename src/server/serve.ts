@@ -30,7 +30,7 @@ export async function serve(root: string, portFlag?: number) {
     process.exit(1)
   }
   const realDist = realpathSync(dist)
-  let meta: { name: string; branding: boolean; logo?: string } = { name: 'Marver', branding: true }
+  let meta: { name: string; branding: boolean; logo?: string; rights?: Record<string, 'read' | 'comment'> } = { name: 'Marver', branding: true }
   try { meta = { ...meta, ...JSON.parse(readFileSync(join(dist, 'meta.json'), 'utf8')) } } catch { /* defaults */ }
 
   // ---- collaboration: on when MARVER_DATA_DIR names a durable home ----
@@ -38,6 +38,10 @@ export async function serve(root: string, portFlag?: number) {
   let bearerCheck: ((token: string) => unknown) | null = null
   let operatorCheck: ((token: string, req: any, url: URL) => boolean) | null = null
   let sessionCheck: ((req: any) => unknown) | null = null
+  /** Whether the anonymous door (canvas password / guest cookie) is open at all:
+   *  general access can be set to Private on a password canvas, and then only
+   *  accounts get in. Null when there is no roster to consult. */
+  let guestDoorOpen: (() => boolean) | null = null
   if (process.env.MARVER_DATA_DIR) {
     const { collabHandler } = await import('./collab.ts')
     const { appendEvents, readLog } = await import('./comments.ts')
@@ -58,7 +62,22 @@ export async function serve(root: string, portFlag?: number) {
     }
     collab = collabHandler(dir, dist)
     const { loadStore, createInvite, normEmail, operatorUser, sessionUser } = await import('./auth.ts')
-    bearerCheck = (token) => sessionUser(dir, token)
+    const share = await import('./share.ts')
+    const ceilings = share.ceilingsFromRights(meta.rights ?? {})
+    // Gate admission consults the resolver (04-solution §2.2.1): a session is a
+    // fact about who you are; whether you are still let in is the resolver's
+    // answer - blocked, expired or revoked people lose the BUNDLE, not just the
+    // comment POST. Pre-migration (no roster) a session admits, as it always did.
+    const admitted = (u: { email: string; role: 'owner' | 'member' } | null): boolean =>
+      !!u && share.entryAllowed(dir, u, ceilings)
+    guestDoorOpen = () => {
+      const s = share.shareState(dir)
+      return !s || s.general.mode !== 'private'
+    }
+    bearerCheck = (token) => {
+      const u = sessionUser(dir, token)
+      return admitted(u) ? u : null
+    }
     // The operator secret opens the gate for ONE request: the exchange that turns
     // it into a session. Letting it pass generally was a real widening - the gate
     // is the outer READ boundary, and behind it `/boards`, a published board's
@@ -71,7 +90,8 @@ export async function serve(root: string, portFlag?: number) {
     // shared canvas password, so members never touch the shared secret again
     sessionCheck = (req) => {
       const tok = /(?:^|;\s*)mv_s=([\w-]+)/.exec(String(req.headers.cookie ?? ''))?.[1]
-      return tok ? sessionUser(dir, tok) : null
+      const u = tok ? sessionUser(dir, tok) : null
+      return admitted(u) ? u : null
     }
     // bootstrap: a fresh store has no owner to mint invites. MARVER_OWNER_EMAIL names
     // the first account; its one-time claim token prints HERE (deploy logs are the
@@ -196,6 +216,27 @@ export async function serve(root: string, portFlag?: number) {
   // disclosure bug.
   const gated = Boolean(verifier || idIssuer)
 
+  // ---- the sharing roster: migrated once, re-clamped every boot ----
+  //
+  // First boot with a data dir writes share.json from the migration matrix
+  // (01-sharing §10): general access mirrors the gate the environment already
+  // configures, and every existing account gets the canvas-scoped comment
+  // grant that reproduces exactly what it could do yesterday. Every later
+  // boot re-clamps the per-board ratchet against this build's ceilings -
+  // atomically, before the first request is answered - which is the whole
+  // non-promotion invariant (01-sharing §3.6).
+  if (collab) {
+    const { ensureShare, reclampShare, ceilingsFromRights } = await import('./share.ts')
+    const { loadStore } = await import('./auth.ts')
+    const { dataDir } = await import('./comments.ts')
+    const dir = dataDir()
+    const ceilings = ceilingsFromRights(meta.rights ?? {})
+    const mode = idIssuer ? 'private' as const : verifier ? 'password' as const : 'public' as const
+    const { created } = ensureShare(dir, mode, loadStore(dir).users, ceilings)
+    if (created) console.log(`  share: roster migrated → ${join(dir, 'share.json')} (general: ${mode}, ${loadStore(dir).users.length} account grant${loadStore(dir).users.length === 1 ? '' : 's'})`)
+    reclampShare(dir, ceilings)
+  }
+
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
 
@@ -203,6 +244,10 @@ export async function serve(root: string, portFlag?: number) {
       // Password POST only exists in password mode. In identity mode there is no
       // shared secret to compare against, and this endpoint must not answer at all.
       if (verifier && req.method === 'POST' && url.pathname === '/__mv/auth') {
+        // General access can close the anonymous door entirely: on Private the
+        // shared password authenticates nobody, however correct it is.
+        if (guestDoorOpen && !guestDoorOpen())
+          return gate(res, meta, !!collab, 'This canvas is members-only - sign in with your account instead', !!idIssuer)
         let body = ''
         req.on('data', (c) => { body += c; if (body.length > 10_000) req.destroy() })
         req.on('end', () => {
@@ -233,8 +278,10 @@ export async function serve(root: string, portFlag?: number) {
       // filenames (no traversal): the static handler decodes too, so a raw-encoded
       // `/__mv/favicon/%2f..%2f..%2findex.html` must not slip the gate as "cosmetic".
       const cosmetic = isCosmetic(url.pathname)
-      // a member session opens the gate outright (account > shared secret)
-      if (!authed(req) && !cosmetic && !sessionCheck?.(req)) {
+      // a member session opens the gate outright (account > shared secret); a
+      // guest cookie counts only while general access keeps the anonymous door open
+      const guestOk = authed(req) && (guestDoorOpen?.() ?? true)
+      if (!guestOk && !cosmetic && !sessionCheck?.(req)) {
         // bearer requests (dev proxy / agent CLI) may pierce the gate to the API,
         // but only a VALID session token counts - `Bearer garbage` must not read
         // comment bodies or subscribe to events

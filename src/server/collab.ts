@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { ceilingsFromRights, commentAllowed, entryAllowed, shareState } from './share.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
@@ -26,12 +27,19 @@ const MAX_BODY = 256 * 1024
 
 type Rights = Record<string, 'read' | 'comment'>
 
-/** The permission seam: v1 derives from publish policy + membership;
- *  a per-user ACL can replace the internals without touching a single route. */
-export function can(user: User | null, rights: Rights, board: string, action: 'read' | 'comment' | 'resolve' | 'admin'): boolean {
+/** The permission seam, per-person since the sharing release: `read` stays
+ *  board-level (is it published - no read-privacy claim in v1), `admin` stays
+ *  the owner role, and `comment` (which resolve/reopen ride, 01-sharing §7.4)
+ *  asks the resolver - blocklist, grants, expiry, ceiling - freshly on every
+ *  call, so a revocation or an expiry crossing bites on the next request.
+ *  `dataDir` is what connects the seam to the roster; without a roster the
+ *  legacy rule (any signed-in user on a comment board) is exactly what runs. */
+export function can(user: User | null, rights: Rights, board: string, action: 'read' | 'comment' | 'resolve' | 'admin', dataDir?: string): boolean {
   if (action === 'read') return board in rights
   if (action === 'admin') return user?.role === 'owner'
-  return !!user && rights[board] === 'comment'
+  if (!user || rights[board] !== 'comment') return false
+  if (!dataDir) return true
+  return commentAllowed(dataDir, user, board, ceilingsFromRights(rights))
 }
 
 const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])
@@ -138,16 +146,41 @@ export function collabHandler(dataDir: string, distDir: string) {
   const bootEpoch = randomBytes(4).toString('hex')
   let seq = 0
   const ring: { seq: number; data: string }[] = []          // last 500 broadcast frames
-  const clients = new Set<ServerResponse>()
+  // each client keeps the token it connected with, so the stream can be
+  // re-authorized long after the gate let it in
+  const clients = new Map<ServerResponse, { tok: string | null }>()
   const broadcast = (board: string, events: CommentEvent[]) => {
     for (const ev of events) {
       const frame = `id: ${bootEpoch}-${++seq}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
       ring.push({ seq, data: frame })
       if (ring.length > 500) ring.shift()
-      for (const res of clients) res.write(frame)
+      for (const res of clients.keys()) res.write(frame)
     }
   }
-  setInterval(() => { for (const res of clients) res.write(': keepalive\n\n') }, 240_000).unref()
+  setInterval(() => { for (const res of clients.keys()) res.write(': keepalive\n\n') }, 240_000).unref()
+
+  // ---- SSE re-authorization (04-solution §2.2.1, acceptance 2) ----
+  // A stream is admitted once and would otherwise outlive every revocation: a
+  // blocked or expired member kept receiving each board's events for as long as
+  // the socket held. So the resolver's answer is re-checked on a timer, and a
+  // refused stream is CLOSED - the client's reconnect then faces the gate.
+  // Anonymous streams (past a password gate / public canvas) stay only while
+  // general access still says anyone may read.
+  const ceilings = ceilingsFromRights(rights)
+  const streamAllowed = (tok: string | null): boolean => {
+    const store = shareState(dataDir)
+    if (!store) return true                                 // pre-migration: legacy behaviour
+    if (!tok) return store.general.mode !== 'private'
+    const u = sessionUser(dataDir, tok)
+    return !!u && entryAllowed(dataDir, u, ceilings)
+  }
+  setInterval(() => {
+    for (const [res, c] of clients) {
+      if (streamAllowed(c.tok)) continue
+      clients.delete(res)
+      try { res.end() } catch { /* already gone */ }
+    }
+  }, 60_000).unref()
 
   // ---- rate limit on auth attempts, keyed by BOTH network peer and target email.
   // X-Forwarded-For is client-controlled; trust it only when the deployer says the
@@ -264,6 +297,9 @@ export function collabHandler(dataDir: string, distDir: string) {
           return json(res, info ? 200 : 404, info ?? { error: 'this invite link is invalid, expired, or already used' }), true
         }
         if (path === 'events') {
+          // the same answer the periodic re-check gives, asked at the door
+          const tok = sessionToken(req)
+          if (!streamAllowed(tok)) return json(res, 401, { error: 'not authorized' }), true
           res.statusCode = 200
           res.setHeader('content-type', 'text/event-stream')
           res.setHeader('cache-control', 'no-store')
@@ -282,7 +318,7 @@ export function collabHandler(dataDir: string, distDir: string) {
               else for (const r of missed) res.write(r.data)
             }
           }
-          clients.add(res)
+          clients.set(res, { tok })
           req.on('close', () => clients.delete(res))
           return true
         }
@@ -372,7 +408,7 @@ export function collabHandler(dataDir: string, distDir: string) {
       const m = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
       if (m) {
         const u = currentUser(req)
-        if (!can(u, rights, m[1], 'comment'))
+        if (!can(u, rights, m[1], 'comment', dataDir))
           return json(res, u ? 403 : 401, { error: u ? `this board is read-only - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` : 'sign in to comment' }), true
         const b = await readBody(req)
         const incoming: CommentEvent[] = Array.isArray(b.events) ? b.events : []

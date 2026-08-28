@@ -13,6 +13,7 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { grantFromInviteRedemption, provisionVerdict, shareState } from './share.ts'
 
 // scrypt cost: N=2^15 (OWASP fallback tier), per-user random salt. Params are recorded
 // per user so a future cost bump verifies old hashes and upgrades on next sign-in.
@@ -100,9 +101,9 @@ function saveStore(dir: string, store: Store) {
  *  without it, a sign-in that loaded a pre-revoke snapshot could rename it back over a
  *  successful revoke. A crashed holder's lock is stolen after 10s; waiting past 5s
  *  fails loudly rather than hanging. */
-function withLock<T>(dir: string, fn: () => T): T {
+export function withLock<T>(dir: string, fn: () => T, lockName = '.auth.lock'): T {
   mkdirSync(dir, { recursive: true })
-  const lock = join(dir, '.auth.lock')
+  const lock = join(dir, lockName)
   const nap = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
   const deadline = Date.now() + 5000
   for (;;) {
@@ -178,6 +179,8 @@ export function claimInvite(
     params: SCRYPT, createdAt: Date.now(),
   }
   store.users.push(user)
+  // the invite materialises its grant on redemption (01-sharing §10)
+  grantFromInviteRedemption(dir, invite.emailNorm)
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
@@ -199,6 +202,15 @@ export function signIn(dir: string, email: string, password: string): { user: Us
   const got = scryptSync(password, salt, params.keylen, params)
   const want = user ? Buffer.from(user.hash!, 'hex') : randomBytes(SCRYPT.keylen)
   if (!user || got.length !== want.length || !timingSafeEqual(got, want)) return null
+  // The resolver answers this door too (04-solution §2.2.1): a blocked or
+  // fully-revoked member fails sign-in with the same generic refusal - a
+  // correct password is who they are, not whether they are still let in.
+  // The owner keeps standing; pre-migration stores keep legacy behaviour.
+  const share = shareState(dir)
+  if (share && user.role !== 'owner') {
+    const verdict = provisionVerdict(share, user.email)
+    if (verdict !== 'granted') return null
+  }
   const session = pushSession(store, user)
   saveStore(dir, store)
   return { user, session }
@@ -296,7 +308,22 @@ export function provisionFromMarverId(
     const reservedForOwner = !!ownerNorm && !store.users.length && ownerNorm !== emailNorm
     const isBootstrapOwner = !!ownerNorm && !store.users.length && ownerNorm === emailNorm
     if (reservedForOwner) return null
-    if (!existing && !invite && !isBootstrapOwner) return null
+
+    // The resolver precedes the legacy chain (04-solution §2.2.1). With a
+    // roster present: a blocked address is refused whatever else is true, a
+    // domain or exact grant admits without an invite, and an existing MEMBER
+    // whose grants are gone no longer walks in on the strength of having
+    // existed - revocation has to be real at this door too. The owner and the
+    // bootstrap path keep their standing (someone must administer), and a
+    // pending invite still admits (it materialises a grant below). Without a
+    // roster (pre-migration) the legacy chain is exactly what runs.
+    const share = shareState(dir)
+    if (share) {
+      const verdict = provisionVerdict(share, emailNorm)
+      if (verdict === 'blocked') return null
+      const standing = verdict === 'granted' || existing?.role === 'owner' || !!invite || isBootstrapOwner
+      if (!standing) return null
+    } else if (!existing && !invite && !isBootstrapOwner) return null
 
     // An invite that authorises entry is SPENT by it. Leaving it pending would
     // leave a password-based second door into an account that now exists.
@@ -349,6 +376,10 @@ export function provisionFromMarverId(
     if (identity.name && (!user.name || user.name === emailNorm.split('@')[0])) {
       user.name = identity.name
     }
+    // A redeemed invite materialises the canvas-scoped comment grant it always
+    // meant (01-sharing §10) - so the person it admitted keeps commenting after
+    // the invite itself is gone. Separate lock file, so no re-entrancy here.
+    if (invite) grantFromInviteRedemption(dir, emailNorm)
     const session = pushSession(store, user)
     saveStore(dir, store)
     return { user, session }
