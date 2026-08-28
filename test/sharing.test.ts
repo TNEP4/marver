@@ -815,3 +815,50 @@ describe('review-round regressions', () => {
     delete process.env.MARVER_PUBLIC_ORIGIN
   })
 })
+
+// ---- acceptance 6: one invite notification per grant, re-inviting sends nothing ----
+
+describe('the canvas fires the relay on real transitions only', () => {
+  it('grant → one call; same-role re-grant → none; revoke + re-grant → one again', async () => {
+    const data = join(root, 'data')
+    const ceil = ceilingsFromRights({ main: 'comment' } as any)
+    ensureShare(data, 'private', [], ceil)
+    const { relayNotify, transitionId } = await import('../src/server/notify.ts')
+    const { removePrincipalGrants } = await import('../src/server/share.ts')
+    const calls: string[] = []
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (url: any, init: any) => {
+      calls.push(String(url))
+      return new Response('{"ok":true}', { status: 202 })
+    }) as any
+    try {
+      const ctx = { dataDir: data, issuer: 'https://id.example.test', origin: 'https://canvas.example.test', enabled: true }
+      const send = (g: { principal: string; assigned: string; at: string; changed: boolean }) => {
+        if (g.changed) relayNotify(ctx, 'invited', g.principal, transitionId('invited', g.principal, g.assigned, g.at))
+      }
+      // the exact sequence collab.ts runs on PUT grant
+      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'view', by: 'o' }))
+      expect(calls).toHaveLength(1)
+      // a same-role re-invite is not a transition
+      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'view', by: 'o' }))
+      expect(calls).toHaveLength(1)
+      // a role CHANGE is one
+      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'o' }))
+      expect(calls).toHaveLength(2)
+      // revoke then re-invite is a fresh transition - it must mail again
+      removePrincipalGrants(data, 'dana@x.test')
+      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'o' }))
+      expect(calls).toHaveLength(3)
+      // a domain principal has no inbox - never a call
+      send(upsertGrant(data, ceil, { principal: '@x.test', scope: 'canvas', assigned: 'view', by: 'o' }, { identityMode: true }))
+      expect(calls).toHaveLength(3)
+      // notify: false declines the relay entirely
+      send.call(null, { ...upsertGrant(data, ceil, { principal: 'late@x.test', scope: 'canvas', assigned: 'view', by: 'o' }) })
+      relayNotify({ ...ctx, enabled: false }, 'invited', 'x@y.test', 'ev')
+      await new Promise((r) => setTimeout(r, 30))
+      expect(calls.filter((c) => c.includes('relay/notify')).length).toBe(4)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+})
