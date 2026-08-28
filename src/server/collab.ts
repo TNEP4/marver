@@ -164,6 +164,7 @@ export function collabHandler(dataDir: string, distDir: string) {
   }
   const threads = new Map<string, BoardThreads>()
   for (const b of Object.keys(rights)) threads.set(b, deriveThreads(readLog(commentsDir, b)))
+  const summaryJtis = new Map<string, number>()
   const boardType = (b: string) => meta.boards?.[b]?.type ?? 'mix'
   const cors = (res: ServerResponse) => {
     res.setHeader('access-control-allow-origin', appOrigin)
@@ -350,6 +351,15 @@ export function collabHandler(dataDir: string, distDir: string) {
         const { verifyBearerJwt } = await import('./marver-id.ts')
         const v = await verifyBearerJwt({ token: tok, origin: publicOrigin!, issuer: idIssuer!, typ: 'marver-summary+jwt', azp: appOrigin, maxAgeS: 120 })
         if (!v.ok) return json(res, 401, { error: 'not authorized' }), true
+        // jti replay rejection (02-home §3): a captured summary token is dead
+        // after its first use; the set stays tiny because tokens live 120s
+        const jti = typeof v.claims.jti === 'string' ? v.claims.jti : ''
+        if (jti) {
+          const now = Date.now()
+          for (const [k, e] of summaryJtis) if (e < now) summaryJtis.delete(k)
+          if (summaryJtis.has(jti)) return json(res, 401, { error: 'not authorized' }), true
+          summaryJtis.set(jti, now + 150_000)
+        }
         // authorize BEFORE computing anything; no grant = an opaque 404 - a
         // valid token for an origin is not a right to learn a canvas is there
         const share = shareState(dataDir)
@@ -406,14 +416,17 @@ export function collabHandler(dataDir: string, distDir: string) {
         // "someone asked for access" - to the owner, carrying only "someone";
         // the transition id is the asker alone, so a note-replacing repeat
         // request sends nothing
-        const tellOwner = (asker: string) => {
+        const tellOwner = (asker: string, put: { fresh: boolean; at: string }) => {
+          // only a FRESH ask is a transition - a note-replacing repeat request
+          // sends nothing; a request resolved and asked again mails again
+          if (!put.fresh) return
           const owner = loadStore(dataDir).users.find((u) => u.role === 'owner')
-          if (owner) relayNotify(notifyCtx, 'access-requested', owner.email, transitionId('asked', asker))
+          if (owner) relayNotify(notifyCtx, 'access-requested', owner.email, transitionId('asked', asker, put.at))
         }
         if (b && tok) {
           const v = verifyCanvasJws(dataDir, tok, 'marver-reqaccess+jwt', publicOrigin)
           if (v.ok && typeof v.claims.email === 'string' && notBlocked(v.claims.email)) {
-            putRequest(dataDir, {
+            const put = putRequest(dataDir, {
               email: v.claims.email,
               name: typeof v.claims.name === 'string' ? v.claims.name : undefined,
               picture: typeof v.claims.picture === 'string' ? v.claims.picture : undefined,
@@ -421,12 +434,11 @@ export function collabHandler(dataDir: string, distDir: string) {
               target: typeof v.claims.target === 'string' && v.claims.target ? v.claims.target.slice(0, 300) : undefined,
               note,
             })
-            tellOwner(v.claims.email)
+            tellOwner(v.claims.email, put)
           }
         } else if (sessionCaller && csrfOk(req) && notBlocked(sessionCaller.email)) {
           // the admitted viewer's "Ask to comment" - same queue, same shape
-          putRequest(dataDir, { email: sessionCaller.email, name: sessionCaller.name, requestedRole, note })
-          tellOwner(sessionCaller.email)
+          tellOwner(sessionCaller.email, putRequest(dataDir, { email: sessionCaller.email, name: sessionCaller.name, requestedRole, note }))
         }
         return json(res, 202, { ok: true }), true
       }
@@ -445,14 +457,19 @@ export function collabHandler(dataDir: string, distDir: string) {
           return res.end(), true
         }
         // the CORS/cookie pairing (04 §2.5): a route that receives CORS refuses
-        // cookie authentication OUTRIGHT - Bearer is the only way in here
-        if (/(?:^|;\s*)mv_[sa]=/.test(String(req.headers.cookie ?? ''))) { cors(res); return json(res, 403, { error: 'owner only' }), true }
-        const body = req.method === 'GET' ? '' : await new Promise<string>((resolve, reject) => {
-          let raw = ''
-          req.on('data', (c) => { raw += c; if (raw.length > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
-          req.on('end', () => resolve(raw))
+        // cookie authentication OUTRIGHT - ANY cookie riding in, not just ours
+        if (String(req.headers.cookie ?? '').trim()) { cors(res); return json(res, 403, { error: 'owner only' }), true }
+        // raw BYTES, concatenated as buffers: the digest is over the exact
+        // UTF-8 the app hashed, and a multibyte character split across chunks
+        // must not become replacement characters
+        const bodyBuf = req.method === 'GET' ? Buffer.alloc(0) : await new Promise<Buffer>((resolve, reject) => {
+          const chunks: Buffer[] = []
+          let size = 0
+          req.on('data', (c: Buffer) => { chunks.push(c); size += c.length; if (size > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
+          req.on('end', () => resolve(Buffer.concat(chunks)))
           req.on('error', () => reject(new Error('request failed')))
         })
+        const body = bodyBuf.toString('utf8')
         const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
         const owner = loadStore(dataDir).users.find((u) => u.role === 'owner')
         let allowed = false
@@ -476,8 +493,13 @@ export function collabHandler(dataDir: string, distDir: string) {
               const etag = rosterEtag(dataDir)
               const claimedEtag = typeof v.claims.etag === 'string' ? v.claims.etag : ''
               if (claimedEtag && claimedEtag !== etag) { cors(res); return json(res, 409, { error: 'roster changed - re-read and retry' }), true }
-              const bodyHash = createHash('sha256').update(body).digest('hex')
-              const want = createHash('sha256').update(`${req.method}\n${url.pathname}\n${bodyHash}\n${etag}`).digest('hex')
+              // the digest is BLINDED by a salt the app sends only HERE (the
+              // x-mv-salt header) - the id service holds the digest it signed
+              // but not the salt, so a low-entropy body (three general-access
+              // modes) cannot be recovered by enumeration at the minting side
+              const salt = String(req.headers['x-mv-salt'] ?? '')
+              const bodyHash = createHash('sha256').update(bodyBuf).digest('hex')
+              const want = createHash('sha256').update(`${req.method}\n${url.pathname}\n${bodyHash}\n${etag}${salt ? `\n${salt}` : ''}`).digest('hex')
               if (v.claims.digest === want) allowed = true
             }
           }
@@ -489,20 +511,42 @@ export function collabHandler(dataDir: string, distDir: string) {
         const ceilings = ceilingsFromRights(rights)
         const roster = () => {
           const s = loadShare(dataDir)
+          // distinct historical authors per board - what the dialog's history
+          // warning needs to be honest (resolved threads still carry emails)
+          const history: Record<string, number> = {}
+          for (const [b, st] of threads) {
+            const authors = new Set<string>()
+            for (const e of st.events) if (e.author?.email) authors.add(e.author.email.toLowerCase())
+            if (authors.size) history[b] = authors.size
+          }
           return {
             general: s?.general ?? { mode: 'private', role: 'view' },
             blocked: s?.blocked ?? [],
             grants: s?.grants ?? [],
             requests: loadRequests(dataDir).map(({ exp, ...r }) => r),
             etag: rosterEtag(dataDir),
+            ceilings,
+            history,
+            gate: idIssuer ? 'identity' as const : process.env.MARVER_PASSWORD ? 'password' as const : 'open' as const,
           }
         }
+        const withEtag = (r: ReturnType<typeof roster>) => { res.setHeader('etag', `"${r.etag}"`); return r }
         try {
           const sub = path.slice('share/'.length)
           if (sub === 'roster' && req.method === 'GET') {
-            const r = roster()
-            res.setHeader('etag', `"${r.etag}"`)
-            return json(res, 200, r), true
+            return json(res, 200, withEtag(roster())), true
+          }
+          if (sub === 'explain' && req.method === 'GET') {
+            // the resolver's trace, from the SAME pure function every door
+            // enforces with - what the dialog's Who-sees-what renders, so the
+            // terminal and the dialog can never disagree (acceptance 9)
+            const who = String(url.searchParams.get('who') ?? '')
+            if (!who) return json(res, 422, { error: 'who is required' }), true
+            const s = loadShare(dataDir)
+            if (!s) return json(res, 422, { error: 'no roster yet' }), true
+            const account = loadStore(dataDir).users.find((u) => normEmail(u.email) === normEmail(who))
+            const r = resolveAccess({ email: who.startsWith('@') ? null : who, userRole: account?.role, store: s, ceilings })
+            return json(res, 200, { who, entry: r.entry, role: r.role, boards: r.boards, trace: r.trace }), true
           }
           if (sub === 'grant' && req.method === 'PUT') {
             const g = upsertGrant(dataDir, ceilings, {
@@ -511,18 +555,21 @@ export function collabHandler(dataDir: string, distDir: string) {
               expires: typeof b.expires === 'string' ? b.expires : null,
               by: owner?.email ?? 'owner',
             } as any, { identityMode: !!idIssuer })
-            // "you were invited" - sent the moment a grant lands on an address;
-            // the transition id makes a same-role re-invite send nothing
-            relayNotify(notifyCtx, 'invited', g.principal, transitionId('invited', g.principal, g.assigned))
-            return json(res, 200, roster()), true
+            // "you were invited" - sent the moment a grant lands on an
+            // address, and ONLY on a real state transition: a same-role
+            // re-invite changed nothing and sends nothing, while revoke and
+            // re-invite is a new transition and mails again (the instance id
+            // carries the grant's own timestamp)
+            if (g.changed) relayNotify(notifyCtx, 'invited', g.principal, transitionId('invited', g.principal, g.assigned, g.at))
+            return json(res, 200, withEtag(roster())), true
           }
           if (sub === 'grant' && req.method === 'DELETE') {
             removeGrant(dataDir, String(b.principal ?? ''), b.scope === 'canvas' ? 'canvas' : String(b.scope ?? '') as any)
-            return json(res, 200, roster()), true
+            return json(res, 200, withEtag(roster())), true
           }
           if (sub === 'reconfirm' && req.method === 'POST') {
             reconfirmGrant(dataDir, ceilings, String(b.principal ?? ''), b.scope === 'canvas' ? 'canvas' : String(b.scope ?? '') as any, String(b.board ?? ''))
-            return json(res, 200, roster()), true
+            return json(res, 200, withEtag(roster())), true
           }
           if (sub === 'general' && req.method === 'PUT') {
             const mode = String(b.mode ?? '')
@@ -532,14 +579,14 @@ export function collabHandler(dataDir: string, distDir: string) {
             // or Public behind an identity gate (04-solution §2.1's honesty rule)
             const operative = operativeMode(mode, { password: !!process.env.MARVER_PASSWORD && !idIssuer, issuer: !!idIssuer })
             setGeneralMode(dataDir, operative)
-            const r = roster()
+            const r = withEtag(roster())
             return json(res, 200, operative === mode ? r : { ...r, clamped: { asked: mode, operative } }), true
           }
           if (sub === 'block' && (req.method === 'PUT' || req.method === 'DELETE')) {
             const address = String(b.address ?? '')
             if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) return json(res, 422, { error: 'a valid address is required' }), true
             setBlocked(dataDir, address, req.method === 'PUT')
-            return json(res, 200, roster()), true
+            return json(res, 200, withEtag(roster())), true
           }
           const rm = /^request\/(.+)$/.exec(sub)
           if (rm && req.method === 'POST') {
@@ -547,15 +594,17 @@ export function collabHandler(dataDir: string, distDir: string) {
             const approved = b.approve === true ? { assigned: (b.assigned === 'comment' ? 'comment' : 'view') as 'view' | 'comment', by: owner?.email ?? 'owner' } : null
             const hit = resolveRequest(dataDir, ceilings, email, approved)
             if (!hit) return json(res, 422, { error: 'no pending request for that address' }), true
-            // "your request was approved" - on approval; declines stay silent
-            if (approved) relayNotify(notifyCtx, 'request-approved', email, transitionId('approved', email, approved.assigned))
-            return json(res, 200, roster()), true
+            // "your request was approved" - on approval; declines stay
+            // silent; each approval is its own transition instance
+            if (approved) relayNotify(notifyCtx, 'request-approved', email, transitionId('approved', email, approved.assigned, new Date().toISOString()))
+            return json(res, 200, withEtag(roster())), true
           }
         } catch (err) {
-          const msg = (err as Error).message
-          return json(res, /canvas-scoped|identity gate|no such/.test(msg) ? 422 : 400, { error: msg }), true
+          // the owner API's normative refusals are 403/409/422 - anything a
+          // route threw is a schema-or-state problem, never a new status
+          return json(res, 422, { error: (err as Error).message }), true
         }
-        return json(res, 404, { error: 'not found' }), true
+        return json(res, 422, { error: 'no such share route' }), true
       }
 
       if (path === 'seen' && req.method === 'POST') {

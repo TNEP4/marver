@@ -200,7 +200,12 @@ export function upsertGrant(
   dir: string, ceilings: Ceilings,
   input: { principal: string; scope: ShareGrant['scope']; assigned: 'view' | 'comment'; expires?: string | null; by: string },
   opts: { identityMode?: boolean } = {},
-): ShareGrant {
+): ShareGrant & {
+  /** False when an equivalent live grant already existed (same principal,
+   *  scope and role) - the caller's "was this a real state transition"
+   *  question, which is what decides whether an invite mail goes out. */
+  changed: boolean
+} {
   if (input.scope !== 'canvas') throw new Error('v1 accepts canvas-scoped grants only - board scopes arrive with read privacy (v2)')
   if (input.principal.startsWith('@') && !opts.identityMode)
     throw new Error('domain grants need the identity gate - a password canvas cannot verify who holds an address')
@@ -208,6 +213,9 @@ export function upsertGrant(
     const store = loadShare(dir)
     if (!store) throw new Error('no share store - the canvas has not booted under v2 yet')
     const principal = input.principal.startsWith('@') ? input.principal.toLowerCase().trim() : normEmail(input.principal)
+    const now = Date.now()
+    const prior = store.grants.find((g) => g.principal === principal && g.scope === input.scope && live(g, now))
+    const changed = !prior || prior.assigned !== input.assigned
     store.grants = store.grants.filter((g) => !(g.principal === principal && g.scope === input.scope))
     const g: ShareGrant = {
       principal, scope: input.scope, assigned: input.assigned, boardRole: {},
@@ -216,7 +224,7 @@ export function upsertGrant(
     materialise(g, ceilings)
     store.grants.push(g)
     saveShare(dir, store)
-    return g
+    return { ...g, changed }
   }, '.share.lock')
 }
 
@@ -502,11 +510,17 @@ function saveRequests(dir: string, rows: AccessRequest[]) {
   renameSync(tmp, file)
 }
 
-export function putRequest(dir: string, req: Omit<AccessRequest, 'at' | 'exp'>) {
-  withLock(dir, () => {
-    const rows = loadRequests(dir).filter((r) => normEmail(r.email) !== normEmail(req.email))
-    rows.push({ ...req, email: normEmail(req.email), at: new Date().toISOString(), exp: Date.now() + 30 * 24 * 3600_000 })
+export function putRequest(dir: string, req: Omit<AccessRequest, 'at' | 'exp'>): { fresh: boolean; at: string } {
+  return withLock(dir, () => {
+    const existing = loadRequests(dir)
+    // one pending row per address: a repeat replaces the note and role and is
+    // NOT a fresh ask - the owner was already told once
+    const fresh = !existing.some((r) => normEmail(r.email) === normEmail(req.email))
+    const at = new Date().toISOString()
+    const rows = existing.filter((r) => normEmail(r.email) !== normEmail(req.email))
+    rows.push({ ...req, email: normEmail(req.email), at, exp: Date.now() + 30 * 24 * 3600_000 })
     saveRequests(dir, rows)
+    return { fresh, at }
   }, '.share.lock')
 }
 
