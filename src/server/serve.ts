@@ -313,7 +313,13 @@ export async function serve(root: string, portFlag?: number) {
           || (!!idIssuer && (
             (req.method === 'GET' && url.pathname === '/__mv/id/start') ||
             (req.method === 'GET' && url.pathname === '/__mv/id/finish') ||
-            (req.method === 'POST' && url.pathname === '/__mv/id/callback')))
+            (req.method === 'POST' && url.pathname === '/__mv/id/callback') ||
+            // the front door's routes carry their OWN auth (a summary token is
+            // not a session; key discovery is public by design) - the handler
+            // refuses cookie-bearing summary calls before anything else
+            (req.method === 'GET' && url.pathname === '/__mv/api/summary') ||
+            (req.method === 'OPTIONS' && url.pathname === '/__mv/api/summary') ||
+            (req.method === 'GET' && url.pathname === '/__mv/api/identity')))
         if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
       }
     }

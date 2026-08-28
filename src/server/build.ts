@@ -527,6 +527,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   writeFileSync(join(outDir, 'meta.json'), JSON.stringify({
     name, branding: config.share.branding, logo, rights,
     boards: boardsMeta, reveal: policy.reveal,
+    ...(config.share.frontDoor === false ? { frontDoor: false } : {}),
+    ...(config.share.notify === false ? { notify: false } : {}),
   }))
 
   console.log(`\n  ${NAME} build → design/.dist`)

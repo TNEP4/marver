@@ -18,8 +18,9 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
-import { claimInvite, createInvite, inviteInfo, issueDeviceSession, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
-import { ceilingsFromRights, commentAllowed, entryAllowed, shareState } from './share.ts'
+import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { ceilingsFromRights, commentAllowed, entryAllowed, resolveAccess, shareState } from './share.ts'
+import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, type BoardThreads } from './summary.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
@@ -141,8 +142,31 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
 
 export function collabHandler(dataDir: string, distDir: string) {
   let rights: Rights = {}
-  try { rights = JSON.parse(readFileSync(join(distDir, 'meta.json'), 'utf8')).rights ?? {} } catch { /* no policy = no boards */ }
+  let meta: { name?: string; boards?: Record<string, { type?: string }>; frontDoor?: boolean } = {}
+  try {
+    meta = JSON.parse(readFileSync(join(distDir, 'meta.json'), 'utf8'))
+    rights = (meta as any).rights ?? {}
+  } catch { /* no policy = no boards */ }
   const commentsDir = join(dataDir, 'comments')
+
+  // ---- the front door's summary machinery (04-solution §9.1-9.2) ----
+  // On only when the canvas already trusts an identity issuer, and not opted
+  // out. The thread counters are MAINTAINED - built once here (boot reads the
+  // logs anyway) and updated on each append - never rescanned per probe.
+  const idIssuer = (process.env.MARVER_ID_ISSUER ?? '').trim() || null
+  const publicOrigin = (process.env.MARVER_PUBLIC_ORIGIN ?? '').trim() || null
+  const appOrigin = (process.env.MARVER_APP_ORIGIN ?? '').trim() || 'https://app.marver.design'
+  const frontDoorOn = !!idIssuer && !!publicOrigin && meta.frontDoor !== false
+  const threads = new Map<string, BoardThreads>()
+  for (const b of Object.keys(rights)) threads.set(b, deriveThreads(readLog(commentsDir, b)))
+  const boardType = (b: string) => meta.boards?.[b]?.type ?? 'mix'
+  const cors = (res: ServerResponse) => {
+    res.setHeader('access-control-allow-origin', appOrigin)
+    res.setHeader('vary', 'origin')
+    res.setHeader('access-control-allow-methods', 'GET, OPTIONS')
+    res.setHeader('access-control-allow-headers', 'authorization')
+    res.setHeader('access-control-max-age', '600')
+  }
 
   // ---- SSE hub ----
   // ids are `<bootEpoch>-<seq>`: a reconnect from a previous boot cannot silently
@@ -296,6 +320,76 @@ export function collabHandler(dataDir: string, distDir: string) {
       ? String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '?').split(',')[0].trim()
       : String(req.socket.remoteAddress ?? '?')
     try {
+      // ---- the front door (pre-gate; each route carries its own auth) ----
+      if (frontDoorOn && path === 'summary' && req.method === 'OPTIONS') {
+        cors(res)
+        res.statusCode = 204
+        return res.end(), true
+      }
+      if (frontDoorOn && path === 'identity' && req.method === 'GET') {
+        // key discovery: public by design (02-home §2) - the browser pins the
+        // kid at first consent and verifies every summary against it
+        const id = canvasIdentity(dataDir)
+        return json(res, 200, { kid: id.kid, jwk: id.publicJwk }), true
+      }
+      if (frontDoorOn && path === 'summary' && req.method === 'GET') {
+        cors(res)
+        // Bearer-only, by profile: a cookie-bearing request is refused before
+        // anything else - the pairing (summary never accepts cookies, cookie
+        // routes never receive CORS) is the whole CSRF invariant (04 §2.5)
+        if (/(?:^|;\s*)mv_[sa]=/.test(String(req.headers.cookie ?? ''))) return json(res, 401, { error: 'not authorized' }), true
+        if (limited(`sum:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
+        const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
+        const { verifyBearerJwt } = await import('./marver-id.ts')
+        const v = await verifyBearerJwt({ token: tok, origin: publicOrigin!, issuer: idIssuer!, typ: 'marver-summary+jwt', azp: appOrigin })
+        if (!v.ok) return json(res, 401, { error: 'not authorized' }), true
+        // authorize BEFORE computing anything; no grant = an opaque 404 - a
+        // valid token for an origin is not a right to learn a canvas is there
+        const share = shareState(dataDir)
+        const ceilings = ceilingsFromRights(rights)
+        const account = loadStore(dataDir).users.find((u) => normEmail(u.email) === normEmail(v.email))
+        const role = account?.role === 'owner' ? 'owner' as const : 'member' as const
+        const resolution = share ? resolveAccess({ email: v.email, userRole: account?.role, store: share, ceilings }) : null
+        const admitted = share ? (role === 'owner' || resolution!.entry) : !!account
+        if (!admitted) return json(res, 404, { error: 'not found' }), true
+        // totals from the maintained counters + this caller's seen marks
+        const marks = loadSeen(dataDir)[normEmail(v.email)] ?? {}
+        let open = 0, unread = 0
+        for (const [b, st] of threads) { open += st.open.size; unread += unreadCount(st, marks[b]) }
+        const boardNames = Object.keys(rights)
+        const payload = {
+          v: 1,
+          name: meta.name ?? 'Marver',
+          role: resolution?.role ?? (account ? 'comment' : 'view'),
+          type: boardType(boardNames[0] ?? ''),
+          boards: boardNames.map((b) => ({ name: b, role: resolution?.boards[b] ?? (rights[b] === 'comment' ? 'comment' : 'view'), type: boardType(b) })),
+          threads: { open, unread },
+          owner: role === 'owner',
+          ...(role === 'owner' ? { people: loadStore(dataDir).users.length } : {}),
+          kid: canvasIdentity(dataDir).kid,
+        }
+        res.statusCode = 200
+        res.setHeader('content-type', 'application/jose')
+        res.setHeader('cache-control', 'no-store')
+        return res.end(signCanvasJws(dataDir, payload)), true
+      }
+      if (path === 'seen' && req.method === 'POST') {
+        // the canvas's own client calling home: ordinary session, no CORS -
+        // and a cookie session pays the same double-submit toll as every
+        // other mutation (this route sits above the shared POST gate)
+        if (!csrfOk(req)) return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
+        const u = currentUser(req)
+        if (!u) return json(res, 401, { error: 'sign in first' }), true
+        const b = await readBody(req)
+        const board = String(b.board ?? '')
+        const st = threads.get(board)
+        if (!st) return json(res, 422, { error: 'unknown board' }), true
+        const latest = st.events[st.events.length - 1]?.id
+        if (latest) markSeen(dataDir, normEmail(u.email), board, latest)
+        res.statusCode = 204
+        return res.end(), true
+      }
+
       if (req.method === 'GET') {
         if (path === 'me') {
           // the session response carries the viewer's OWN opaque id once -
@@ -443,6 +537,11 @@ export function collabHandler(dataDir: string, distDir: string) {
         const bad = validateEvents(incoming, log, u!, m[1])
         if (bad) return json(res, 400, { error: bad }), true
         const fresh = appendEvents(commentsDir, m[1], incoming)
+        // the maintained thread counters follow every append (02-home §3)
+        if (fresh.length) {
+          const st = threads.get(m[1])
+          threads.set(m[1], deriveThreads([...(st?.events ?? []), ...fresh]))
+        }
         broadcast(m[1], fresh.map(project))   // the stream is a browser transport
         return json(res, 200, { accepted: fresh.length }), true
       }

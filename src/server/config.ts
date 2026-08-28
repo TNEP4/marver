@@ -23,7 +23,14 @@ export interface ShConfig {
   /** Publish options: branding=false removes the gate page footer.
    *  name/logo override the auto-detected gate identity (host package.json name;
    *  design/logo.svg|png → public/logo.* → public/favicon.svg → the Marver mark). */
-  share: { branding: boolean; name?: string; logo?: string }
+  share: {
+    branding: boolean; name?: string; logo?: string
+    /** false = the canvas never answers front-door summary probes (02-home §3). */
+    frontDoor?: boolean
+    /** false = decline the notification relay entirely; the dialog's
+     *  "copy invite message" is the sovereign fallback (04-solution §2.3). */
+    notify?: boolean
+  }
   /** Live Jam daemon. On by default with the detected agent; `jam: false` in
    *  design/config.ts is the off switch. Undefined = off - `jamOff` says why. */
   jam?: JamConfig
@@ -67,6 +74,8 @@ export async function loadConfig(root: string): Promise<ShConfig> {
         branding: (user.share as { branding?: unknown } | undefined)?.branding !== false,
         name: typeof (user.share as any)?.name === 'string' ? (user.share as any).name : undefined,
         logo: typeof (user.share as any)?.logo === 'string' ? (user.share as any).logo : undefined,
+        frontDoor: (user.share as any)?.frontDoor !== false && (user.share as any)?.front_door !== false,
+        notify: (user.share as any)?.notify !== false,
       },
       ...jamFields(user.jam),
     }

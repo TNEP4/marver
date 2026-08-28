@@ -448,6 +448,58 @@ async function verifySignature(parts: string[], kid: string, issuer: string): Pr
 }
 
 /**
+ * Verify a short-lived bearer JWT the identity service minted for a NON-gate
+ * purpose (the front door's summary token, 04-solution §9.1). Same trust root
+ * and JWKS as the assertion path, but a distinct `typ` - so neither token can
+ * ever be replayed at the other door - and no nonce: the token is not a
+ * sign-in, it is a capability that expires in seconds.
+ */
+export async function verifyBearerJwt(opts: {
+  token: string
+  /** This canvas's own origin - what `aud` must equal, exactly. */
+  origin: string
+  issuer: string
+  /** The pinned typ, e.g. `marver-summary+jwt`. */
+  typ: string
+  /** The party the token was minted to (`azp`), when the profile demands one. */
+  azp?: string
+}): Promise<{ ok: true; sub: string; email: string } | { ok: false; reason: string }> {
+  const { token, origin, issuer, typ } = opts
+  if (!token || token.length > MAX_TOKEN_BYTES) return { ok: false, reason: 'token size' }
+  const parts = token.split('.')
+  if (parts.length !== 3) return { ok: false, reason: 'not a jws' }
+  let header: Record<string, unknown>
+  let claims: Record<string, unknown>
+  try {
+    const h = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8')) as unknown
+    const c = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as unknown
+    if (!isPlainObject(h) || !isPlainObject(c)) return { ok: false, reason: 'malformed json' }
+    header = h
+    claims = c
+  } catch { return { ok: false, reason: 'malformed json' } }
+  if (header.alg !== 'ES256') return { ok: false, reason: 'alg' }
+  if (header.typ !== typ) return { ok: false, reason: 'typ' }
+  if ('jku' in header || 'x5u' in header || 'jwk' in header) return { ok: false, reason: 'header injection' }
+  const kid = typeof header.kid === 'string' ? header.kid : null
+  if (!kid || kid.length > 128) return { ok: false, reason: 'kid' }
+  if (claims.iss !== issuer) return { ok: false, reason: 'iss' }
+  if (claims.aud !== origin) return { ok: false, reason: 'aud' }
+  if (opts.azp && claims.azp !== opts.azp) return { ok: false, reason: 'azp' }
+  const sub = typeof claims.sub === 'string' ? claims.sub : ''
+  const email = typeof claims.email === 'string' ? claims.email : ''
+  if (!sub || !email) return { ok: false, reason: 'missing claims' }
+  const now = Math.floor(Date.now() / 1000)
+  const exp = typeof claims.exp === 'number' ? claims.exp : 0
+  const iat = typeof claims.iat === 'number' ? claims.iat : 0
+  if (!exp || exp + CLOCK_TOLERANCE_S < now) return { ok: false, reason: 'expired' }
+  if (!iat || iat - CLOCK_TOLERANCE_S > now) return { ok: false, reason: 'issued in the future' }
+  let verified = false
+  try { verified = await verifySignature(parts, kid, issuer) } catch { return { ok: false, reason: 'key fetch failed' } }
+  if (!verified) return { ok: false, reason: 'signature' }
+  return { ok: true, sub, email }
+}
+
+/**
  * The optional display claims, taken only if they are the right shape.
  *
  * Deliberately forgiving: a malformed name or picture drops that ONE field and

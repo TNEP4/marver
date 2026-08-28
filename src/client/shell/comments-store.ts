@@ -182,6 +182,10 @@ export const useComments = create<CommentsState>((set, get) => {
         local: !!me.data.local, connected: !!me.data.connected,
       })
       await fetchAll()
+      // mark-seen: the board was actually PRESENTED (load runs on open, never
+      // from the background poll), so the viewer's unread mark advances - the
+      // front door's counter moves on this and nothing else (02-home §4)
+      if (!get().local && get().me) void api('seen', { board }).catch(() => {})
     },
 
     /** Liveness: SSE on the published serve; dev has no event rail (its sync loop

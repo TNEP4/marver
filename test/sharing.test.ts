@@ -471,3 +471,109 @@ describe('resolvePolicy - v2 policy with v1 read-compat', () => {
     expect(() => resolvePolicy(root, boards())).toThrow(/needs "max"/)
   })
 })
+
+// ---- the front door: /__mv/api/summary + identity + seen (04-solution §9.1-9.2) ----
+
+describe('the summary endpoint', () => {
+  it('answers a valid summary token with a signed JWS; refuses cookies, strangers and junk', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const ISSUER_PORT = PORT + 1
+    // a pretend identity service: one keypair, one JWKS route
+    const { generateKeyPairSync, createSign, createVerify } = await import('node:crypto')
+    const kp = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    const jwk = { ...kp.publicKey.export({ format: 'jwk' }), kid: 'iss-kid', alg: 'ES256', use: 'sig' }
+    const { createServer } = await import('node:http')
+    const issuer = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ keys: [jwk] })) })
+    await new Promise<void>((r) => issuer.listen(ISSUER_PORT, r))
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const mint = (claims: Record<string, unknown>, typ = 'marver-summary+jwt') => {
+      const h = b64({ alg: 'ES256', kid: 'iss-kid', typ })
+      const p = b64(claims)
+      const s = createSign('SHA256'); s.update(`${h}.${p}`); s.end()
+      return `${h}.${p}.${s.sign({ key: kp.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
+    }
+    const now = () => Math.floor(Date.now() / 1000)
+    const claims = (email: string, over: Record<string, unknown> = {}) => ({
+      iss: `http://localhost:${ISSUER_PORT}`, aud: `http://localhost:${PORT}`, azp: 'https://app.marver.design',
+      sub: `sub-${email}`, email, iat: now(), exp: now() + 60, ...over,
+    })
+
+    // an identity-mode canvas with an owner and one granted member
+    const { provisionFromMarverId: prov } = await import('../src/server/auth.ts')
+    const ceil = ceilingsFromRights({ main: 'comment' } as any)
+    ensureShare(data, 'private', [], ceil)
+    prov(data, { email: 'owner@x.test', subject: 's-own', issuer: `http://localhost:${ISSUER_PORT}` }, { ownerEmail: 'owner@x.test', ceilings: ceil })
+    upsertGrant(data, ceil, { principal: 'member@x.test', scope: 'canvas', assigned: 'comment', by: 'owner' })
+    // a comment so the thread counters have something to count
+    const { appendEvents } = await import('../src/server/comments.ts')
+    appendEvents(join(data, 'comments'), 'main', [
+      { id: 'ev-1', ts: Date.now(), type: 'create', commentId: 'th-1', frame: 'x/y', author: { email: 'owner@x.test' }, body: 'open thread' } as any,
+    ])
+
+    await boot({
+      MARVER_DATA_DIR: data,
+      MARVER_ID_ISSUER: `http://localhost:${ISSUER_PORT}`,
+      MARVER_PUBLIC_ORIGIN: `http://localhost:${PORT}`,
+    })
+
+    // key discovery is public
+    const idr = await (await get('/__mv/api/identity')).json() as any
+    expect(idr.kid).toMatch(/^[0-9a-f]{64}$/)
+    expect(idr.jwk.kty).toBe('EC')
+
+    // a valid token for a granted member: 200, a compact JWS that verifies
+    const ok = await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: `Bearer ${mint(claims('member@x.test'))}` } })
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get('access-control-allow-origin')).toBe('https://app.marver.design')
+    const jws = await ok.text()
+    const [h, p, sg] = jws.split('.')
+    const vf = createVerify('SHA256'); vf.update(`${h}.${p}`); vf.end()
+    const { createPublicKey } = await import('node:crypto')
+    expect(vf.verify({ key: createPublicKey({ key: idr.jwk, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, Buffer.from(sg, 'base64url'))).toBe(true)
+    const body = JSON.parse(Buffer.from(p, 'base64url').toString())
+    expect(body.role).toBe('comment')
+    expect(body.boards).toEqual([{ name: 'main', role: 'comment', type: 'mix' }])
+    expect(body.threads).toEqual({ open: 1, unread: 1 })
+    expect(body.owner).toBe(false)
+    expect(body.people).toBeUndefined()
+    expect(body.kid).toBe(idr.kid)
+    expect(JSON.parse(Buffer.from(h, 'base64url').toString()).kid).toBe(idr.kid)
+
+    // the owner sees people; a stranger gets an opaque 404; junk gets 401
+    const own = await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: `Bearer ${mint(claims('owner@x.test'))}` } })
+    const ownBody = JSON.parse(Buffer.from((await own.text()).split('.')[1], 'base64url').toString())
+    expect(ownBody.owner).toBe(true)
+    expect(ownBody.people).toBe(1)
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: `Bearer ${mint(claims('nobody@x.test'))}` } })).status).toBe(404)
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: 'Bearer junk' } })).status).toBe(401)
+    // a gate-typ token is refused at this door (distinct typ, never replayable)
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: `Bearer ${mint(claims('member@x.test'), 'marver-assertion+jwt')}` } })).status).toBe(401)
+    // a cookie-bearing request is refused before routing
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: `Bearer ${mint(claims('member@x.test'))}`, cookie: 'mv_s=whatever' } })).status).toBe(401)
+    // preflight answers with exact-origin CORS
+    const pre = await fetch(`http://localhost:${PORT}/__mv/api/summary`, { method: 'OPTIONS' })
+    expect(pre.status).toBe(204)
+    expect(pre.headers.get('access-control-allow-origin')).toBe('https://app.marver.design')
+
+    // mark-seen zeroes unread and moves nothing else
+    const { sessionUser: _su } = await import('../src/server/auth.ts')
+    const member = prov(data, { email: 'member@x.test', subject: 's-mem', issuer: `http://localhost:${ISSUER_PORT}` }, { ceilings: ceil })!
+    const seen = await fetch(`http://localhost:${PORT}/__mv/api/seen`, {
+      method: 'POST', headers: { authorization: `Bearer ${member.session}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ board: 'main' }),
+    })
+    expect(seen.status).toBe(204)
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/seen`, {
+      method: 'POST', headers: { authorization: `Bearer ${member.session}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ board: 'ghost' }),
+    })).status).toBe(422)
+    const after = await fetch(`http://localhost:${PORT}/__mv/api/summary`, { headers: { authorization: `Bearer ${mint(claims('member@x.test'))}` } })
+    const afterBody = JSON.parse(Buffer.from((await after.text()).split('.')[1], 'base64url').toString())
+    expect(afterBody.threads).toEqual({ open: 1, unread: 0 })
+
+    await new Promise<void>((r) => issuer.close(() => r()))
+    delete process.env.MARVER_ID_ISSUER
+    delete process.env.MARVER_PUBLIC_ORIGIN
+  })
+})
