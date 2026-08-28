@@ -20,7 +20,10 @@ export interface CommentEvent {
   nodeKey?: string                // a frame can sit on a board twice - comments are node-scoped
   frame?: string
   anchor?: unknown                // anchor bundle; absent = frame-level comment; on 'reanchor' = the new anchor
-  author?: { email: string; name?: string; avatar?: string }
+  /** Canonical logs carry the email; the browser DTO replaces it with `id`, an
+   *  opaque per-canvas HMAC of it (01-sharing §7.5) - a member's address never
+   *  travels to another viewer's browser. Exactly one of the two is present. */
+  author?: { email?: string; id?: string; name?: string; avatar?: string }
   body?: string                   // plain text in v1
   emoji?: string                  // react events
   addressedIn?: string            // resolve events: the variant frame that answered
@@ -103,9 +106,11 @@ export function replay(events: CommentEvent[]): Thread[] {
         break
       }
       case 'react': {
-        // toggle keyed on comment+author+emoji: present removes, absent adds
+        // toggle keyed on comment+author+emoji: present removes, absent adds.
+        // The key is the opaque id when the transport is projected, the email
+        // when it is canonical - one store only ever sees one kind.
         const t = ev.commentId ? threads.get(ev.commentId) : undefined
-        const who = ev.author?.email
+        const who = ev.author?.id ?? ev.author?.email
         if (!t || !who || !ev.emoji) break
         const users = (t.reactions[ev.emoji] ??= [])
         const at = users.indexOf(who)

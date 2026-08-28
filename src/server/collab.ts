@@ -18,7 +18,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
-import { claimInvite, createInvite, inviteInfo, issueDeviceSession, ownerName, publicUser, revokeUser, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
+import { claimInvite, createInvite, inviteInfo, issueDeviceSession, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 import { ceilingsFromRights, commentAllowed, entryAllowed, shareState } from './share.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
@@ -86,6 +86,10 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     // separate trusted path, not this authenticated-client validator.
     if ((ev as { agent?: unknown }).agent !== undefined || (ev as { agentMeta?: unknown }).agentMeta !== undefined)
       return 'agent provenance is daemon-only'
+    // the opaque author id is a SERVER-projected field - a client-sent one would
+    // land in the canonical log and fork it from every other copy
+    if (ev.author && (ev.author as { id?: unknown }).id !== undefined)
+      return 'author id is server-assigned'
     // past timestamps are legitimate (sync carries repo history); the FUTURE is the
     // attack surface - a far-future edit would win replay forever
     if (typeof ev.ts !== 'number' || ev.ts < 1_577_836_800_000 || ev.ts > now + 60_000)
@@ -200,6 +204,21 @@ export function collabHandler(dataDir: string, distDir: string) {
     return hit
   }
 
+  // ---- the identity-minimised projection (01-sharing §7.5, acceptance 4) ----
+  // Canonical JSONL is untouched everywhere; the BROWSER transport replaces
+  // author.email with an opaque per-canvas id. One serialization per event for
+  // every SSE subscriber - nothing per-viewer is ever fanned out. Only the
+  // operator's own sessions (the CLI sync) receive canonical bytes.
+  const project = (ev: CommentEvent): CommentEvent => {
+    if (!ev.author?.email) return ev
+    const { email, ...rest } = ev.author
+    return { ...ev, author: { ...rest, id: opaqueId(dataDir, email) } }
+  }
+  const rawTransport = (req: IncomingMessage): boolean => {
+    const tok = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
+    return tok ? sessionIsOperator(dataDir, tok) : false
+  }
+
   const cookie = (req: IncomingMessage, name: string): string | undefined =>
     new RegExp(`(?:^|;\\s*)${name}=([\\w-]+)`).exec(String(req.headers.cookie ?? ''))?.[1]
   /** browser session cookie, or a bearer token (the dev proxy / agent CLI path -
@@ -279,8 +298,10 @@ export function collabHandler(dataDir: string, distDir: string) {
     try {
       if (req.method === 'GET') {
         if (path === 'me') {
+          // the session response carries the viewer's OWN opaque id once -
+          // "is this mine" is a client-side id comparison from then on
           const u = currentUser(req)
-          return json(res, u ? 200 : 401, u ? { user: publicUser(u), role: u.role } : { error: 'signed out' }), true
+          return json(res, u ? 200 : 401, u ? { user: publicUser(u), role: u.role, id: opaqueId(dataDir, u.email) } : { error: 'signed out' }), true
         }
         if (path === 'boards') {
           const name = ownerName(dataDir)
@@ -289,7 +310,8 @@ export function collabHandler(dataDir: string, distDir: string) {
         const m = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
         if (m) {
           if (!can(currentUser(req), rights, m[1], 'read')) return json(res, 404, { error: 'no such board' }), true
-          return json(res, 200, { events: readLog(commentsDir, m[1]) }), true
+          const events = readLog(commentsDir, m[1])
+          return json(res, 200, { events: rawTransport(req) ? events : events.map(project) }), true
         }
         if (path === 'invite-info') {
           if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
@@ -421,7 +443,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const bad = validateEvents(incoming, log, u!, m[1])
         if (bad) return json(res, 400, { error: bad }), true
         const fresh = appendEvents(commentsDir, m[1], incoming)
-        broadcast(m[1], fresh)
+        broadcast(m[1], fresh.map(project))   // the stream is a browser transport
         return json(res, 200, { accepted: fresh.length }), true
       }
       return false

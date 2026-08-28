@@ -74,7 +74,7 @@ export function Avatar({ author, size = 22 }: { author?: { email?: string; name?
   )
 }
 
-type Face = { email?: string; name?: string; avatar?: string; agent?: boolean }
+type Face = { email?: string; id?: string; name?: string; avatar?: string; agent?: boolean }
 
 /** The signal a marker (pin or stack) carries: WHO took part and HOW MANY comments
  *  in total - root + every reply, across all the given threads. Unique participants
@@ -89,7 +89,9 @@ function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
   // Avatar renders them all as the live identity - two keys would show identical twin faces.
   const add = (a: Face | undefined, agent?: boolean) => {
     const face: Face | undefined = agent ? { agent: true } : a
-    const k = agent ? 'marver' : a?.email ? `e:${a.email.toLowerCase()}` : 'local'
+    // published transport carries the opaque id instead of an email - same
+    // namespacing rule, different stable key
+    const k = agent ? 'marver' : a?.email ? `e:${a.email.toLowerCase()}` : a?.id ? `i:${a.id}` : 'local'
     if (face && !seen.has(k)) seen.set(k, face)
   }
   for (const t of threads) {
@@ -465,8 +467,10 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   const local = useComments((s) => s.local)
   const canComment = local || !!me      // dev is always "me"; published needs a session
   // Owner-authored @marver is a live trigger (bold accent); anyone else's is context (plain + tooltip).
-  // Match by email when we know the owner's; in dev without a profile, local writes are the owner.
-  const isOwner = (a?: { email?: string }) => (me?.email ? a?.email === me.email : local)
+  // Match by opaque id on the projected transport, by email locally; in dev
+  // without a profile, local writes are the owner.
+  const isOwner = (a?: { email?: string; id?: string }) =>
+    me?.id && a?.id ? a.id === me.id : me?.email ? a?.email === me.email : local
   const [text, setText] = useState('')
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)

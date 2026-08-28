@@ -10,7 +10,7 @@
  * State lives in MARVER_DATA_DIR as two small JSON files rewritten atomically -
  * users change rarely; the event-log treatment is reserved for comments.
  */
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { grantFromInviteRedemption, provisionVerdict, removePrincipalGrants, renamePrincipalGrants, shareState, type Ceilings } from './share.ts'
@@ -491,6 +491,53 @@ function pushSession(store: Store, user: User): string {
   const raw = token()
   store.sessions.push({ tokenHash: sha256(raw), emailNorm: normEmail(user.email), exp: Date.now() + SESSION_TTL })
   return raw
+}
+
+/**
+ * The canvas secret - the HMAC key behind opaque author ids (01-sharing §7.5).
+ *
+ * Generated once onto the volume, 0600, cached per process. The id it derives
+ * is stable within a canvas and meaningless across canvases; a bare hash of an
+ * email is guessable (the address space is small), which is why this is keyed.
+ */
+const secretCache = new Map<string, Buffer>()
+export function canvasSecret(dir: string): Buffer {
+  const hit = secretCache.get(dir)
+  if (hit) return hit
+  const file = join(dir, 'canvas.secret')
+  const read = (): Buffer | null => {
+    try {
+      const key = Buffer.from(readFileSync(file, 'utf8').trim(), 'hex')
+      return key.length === 32 ? key : null
+    } catch { return null }
+  }
+  const key = read() ?? withLock(dir, () => {
+    const again = read()
+    if (again) return again
+    const fresh = randomBytes(32)
+    const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+    const fd = openSync(tmp, 'wx', 0o600)
+    try { writeSync(fd, fresh.toString('hex')); fsyncSync(fd) } finally { closeSync(fd) }
+    renameSync(tmp, file)
+    return fresh
+  })
+  secretCache.set(dir, key)
+  return key
+}
+
+/** The opaque per-canvas author id: HMAC(canvas secret, lowercased email). */
+export function opaqueId(dir: string, email: string): string {
+  return createHmac('sha256', canvasSecret(dir)).update(normEmail(email)).digest('hex').slice(0, 24)
+}
+
+/** Was this session minted by the operator credential? The CLI sync path keeps
+ *  the RAW author profile (the agent needs real addresses and the operator
+ *  already owns the canvas); every other caller gets the projection. */
+export function sessionIsOperator(dir: string, rawToken: string): boolean {
+  const store = loadStore(dir)
+  const hash = sha256(rawToken)
+  const s = store.sessions.find((s) => s.tokenHash === hash && s.exp > Date.now())
+  return !!s?.via && s.via === operatorFingerprint()
 }
 
 export function sessionUser(dir: string, rawToken: string): User | null {

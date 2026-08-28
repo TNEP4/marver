@@ -380,3 +380,53 @@ describe('comment POST refuses after a grant is revoked mid-session', () => {
     expect((await post()).status).toBe(403)
   })
 })
+
+// ---- the identity-minimised projection (acceptance 4) ----
+
+describe('no member email travels to a browser', () => {
+  it('projects GET + keeps the CLI operator raw + refuses client-sent ids', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const inv1 = createInvite(data, 'owner@x.test')
+    const owner = claimInvite(data, inv1.token, { password: 'long-enough-pass', name: 'Owner' })
+    const inv2 = createInvite(data, 'member@x.test')
+    const member = claimInvite(data, inv2.token, { password: 'long-enough-pass', name: 'Member' })
+    const secret = 'a'.repeat(48)
+    await boot({ MARVER_DATA_DIR: data, MARVER_PASSWORD: 'canvas-pw', MARVER_CLI_TOKEN: secret })
+
+    // the owner writes a comment through the API
+    const post = (author: any) => fetch(`http://localhost:${PORT}/__mv/api/comments/main`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${owner.session}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [{ id: crypto.randomUUID(), ts: Date.now(), type: 'create', commentId: crypto.randomUUID(), frame: 'x/y', anchor: {}, author, body: 'note' }] }),
+    })
+    expect((await post({ email: 'owner@x.test', name: 'Owner' })).status).toBe(200)
+    // a client-sent opaque id is refused - it would fork the canonical log
+    expect((await post({ email: 'owner@x.test', name: 'Owner', id: 'forged' })).status).toBe(400)
+
+    // the member's browser transport: no email anywhere, opaque ids instead
+    const asMember = { headers: { authorization: `Bearer ${member.session}` } }
+    const got = await (await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, asMember)).json() as any
+    expect(JSON.stringify(got)).not.toContain('owner@x.test')
+    expect(got.events[0].author.id).toMatch(/^[0-9a-f]{24}$/)
+    expect(got.events[0].author.name).toBe('Owner')
+
+    // the session response carries the viewer's own id, and their own email stays theirs
+    const me = await (await fetch(`http://localhost:${PORT}/__mv/api/me`, asMember)).json() as any
+    expect(me.id).toMatch(/^[0-9a-f]{24}$/)
+    expect(me.user.email).toBe('member@x.test')
+    expect(me.id).not.toBe(got.events[0].author.id)
+
+    // the operator's session (CLI sync) still receives canonical bytes
+    const cli = await (await fetch(`http://localhost:${PORT}/__mv/api/cli-session`, {
+      method: 'POST', headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' }, body: '{}',
+    })).json() as any
+    const raw = await (await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, { headers: { authorization: `Bearer ${cli.token}` } })).json() as any
+    expect(raw.events[0].author.email).toBe('owner@x.test')
+    expect(raw.events[0].author.id).toBeUndefined()
+
+    // and the canonical log on disk is untouched
+    expect(readFileSync(join(data, 'comments', 'main.jsonl'), 'utf8')).toContain('owner@x.test')
+    delete process.env.MARVER_CLI_TOKEN
+  })
+})

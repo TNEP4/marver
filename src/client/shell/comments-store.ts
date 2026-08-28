@@ -8,7 +8,19 @@ import { create } from 'zustand'
 import { replay, type CommentEvent, type Thread } from '../../shared/events.ts'
 import { ROUTE } from '../const.ts'
 
-export interface Me { email: string; name: string; avatar?: string }
+export interface Me {
+  email: string
+  name: string
+  avatar?: string
+  /** The viewer's own opaque author id on a published canvas - what projected
+   *  events carry instead of an email. "Is this mine" compares ids first. */
+  id?: string
+}
+
+/** The author snapshot a POST carries: the canonical profile, never the opaque
+ *  id - that field is server-assigned, and the server refuses it in writes. */
+const postAuthor = (me: Me | null): { email: string; name?: string; avatar?: string } | undefined =>
+  me ? { email: me.email, name: me.name, ...(me.avatar ? { avatar: me.avatar } : {}) } : undefined
 
 interface CommentsState {
   events: CommentEvent[]              // EVERY board's log, unioned - comments are frame-scoped
@@ -165,7 +177,10 @@ export const useComments = create<CommentsState>((set, get) => {
       else set({ board })
       const me = await api('me')
       if (me.status === 404) { apiOff = true; return }   // static serve: no comments API at all
-      if (me.ok) set({ me: me.data.user ?? null, local: !!me.data.local, connected: !!me.data.connected })
+      if (me.ok) set({
+        me: me.data.user ? { ...me.data.user, ...(me.data.id ? { id: me.data.id } : {}) } : null,
+        local: !!me.data.local, connected: !!me.data.connected,
+      })
       await fetchAll()
     },
 
@@ -228,7 +243,7 @@ export const useComments = create<CommentsState>((set, get) => {
       const ok = await get().send([{
         id: uuid(), ts: Date.now(), type: 'create', commentId: id,
         nodeKey: draft.nodeKey, frame: draft.frame, anchor: draft.anchor,
-        author: me ?? undefined, body: body.trim(),
+        author: postAuthor(me), body: body.trim(),
       }], draft.board)
       if (ok) set({ draft: null, active: id, commentMode: false })
     },
@@ -241,7 +256,7 @@ export const useComments = create<CommentsState>((set, get) => {
       const origin = get().threads.find((t) => t.id === threadId)?.board
       return get().send([{
         id: uuid(), ts: Date.now(), type: 'reply', commentId: uuid(), parentId: threadId,
-        author: get().me ?? undefined, body: body.trim(),
+        author: postAuthor(get().me), body: body.trim(),
       }], origin)
     },
 
@@ -281,14 +296,15 @@ export const useComments = create<CommentsState>((set, get) => {
 // dev-only debug handle - the canvas store exposes the same
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvComments = useComments
 
-/** Initials + deterministic hue for avatarless authors - the whole fallback ladder. */
-export const avatarFallback = (author?: { email?: string; name?: string }) => {
+/** Initials + deterministic hue for avatarless authors - the whole fallback ladder.
+ *  Hue keys on the stable identity: email locally, the opaque id when projected. */
+export const avatarFallback = (author?: { email?: string; id?: string; name?: string }) => {
   const name = author?.name || author?.email || '?'
   // the unset dev default ("You", no account) renders in the COMMENT green - it's the mode's
   // own hue, not a fake identity color, until a real profile is set
-  if (name === 'You' && !author?.email) return { initials: 'Y', hue: 131 }
+  if (name === 'You' && !author?.email && !author?.id) return { initials: 'Y', hue: 131 }
   const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   let h = 0
-  for (const c of (author?.email || name)) h = (h * 31 + c.charCodeAt(0)) % 360
+  for (const c of (author?.email || author?.id || name)) h = (h * 31 + c.charCodeAt(0)) % 360
   return { initials, hue: h }
 }
