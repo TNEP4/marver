@@ -463,6 +463,9 @@ export async function verifyBearerJwt(opts: {
   typ: string
   /** The party the token was minted to (`azp`), when the profile demands one. */
   azp?: string
+  /** Maximum accepted lifetime in seconds - a profile that says "expiry ≤ 120s"
+   *  must refuse a token minted for a week, however valid its signature. */
+  maxAgeS?: number
 }): Promise<{ ok: true; sub: string; email: string; claims: Record<string, unknown> } | { ok: false; reason: string }> {
   const { token, origin, issuer, typ } = opts
   if (!token || token.length > MAX_TOKEN_BYTES) return { ok: false, reason: 'token size' }
@@ -493,6 +496,7 @@ export async function verifyBearerJwt(opts: {
   const iat = typeof claims.iat === 'number' ? claims.iat : 0
   if (!exp || exp + CLOCK_TOLERANCE_S < now) return { ok: false, reason: 'expired' }
   if (!iat || iat - CLOCK_TOLERANCE_S > now) return { ok: false, reason: 'issued in the future' }
+  if (opts.maxAgeS && exp - iat > opts.maxAgeS) return { ok: false, reason: 'lifetime' }
   let verified = false
   try { verified = await verifySignature(parts, kid, issuer) } catch { return { ok: false, reason: 'key fetch failed' } }
   if (!verified) return { ok: false, reason: 'signature' }

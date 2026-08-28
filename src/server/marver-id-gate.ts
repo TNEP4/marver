@@ -325,7 +325,13 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
             }, 'marver-reqaccess+jwt')
           }
         } catch { /* no data dir or no key - the refusal stands alone */ }
-        return json(res, 403, { error: 'not invited', email: result.identity.email, ...(request ? { request } : {}) })
+        return json(res, 403, {
+          error: 'not invited', email: result.identity.email,
+          ...(request ? { request } : {}),
+          // the refused screen names the thing the link pointed at (acceptance
+          // 12) - context for the ask, never a scope claim
+          ...(request && landing ? { target: landing } : {}),
+        })
       }
 
       // Their picture, fetched only now - after they are in, and outside the
@@ -591,9 +597,21 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
 
   /** The door a refusal offers: role, note, one send. The response is the same
    *  whatever the server recognised (no probe oracle) - "sent" is all it says. */
-  function offerRequest(token) {
+  function offerRequest(token, target) {
     var req = document.getElementById('req'), go = document.getElementById('rgo')
     req.hidden = false
+    // name what the link pointed at - context the owner sees with the ask
+    if (target) {
+      var lead = req.querySelector('p.lead')
+      if (lead) {
+        lead.textContent = 'Or ask for access - the owner decides. Your request will name what this link pointed at ('
+        var b = document.createElement('code')
+        b.textContent = target
+        b.style.font = '500 11.5px ui-monospace, monospace'
+        lead.appendChild(b)
+        lead.appendChild(document.createTextNode(').'))
+      }
+    }
     go.addEventListener('click', function () {
       go.disabled = true
       var role = (document.querySelector('input[name="rrole"]:checked') || {}).value === 'comment' ? 'comment' : 'view'
@@ -641,7 +659,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
         who ? refused(who) : stop("You haven't been invited",
           'That account is not on the invite list for this canvas. Ask whoever owns it to add your address.',
           'Use a different account')
-        if (who && body && typeof body.request === 'string') offerRequest(body.request)
+        if (who && body && typeof body.request === 'string') offerRequest(body.request, typeof body.target === 'string' ? body.target : '')
       }, function () {
         stop("You haven't been invited",
           'That account is not on the invite list for this canvas.',

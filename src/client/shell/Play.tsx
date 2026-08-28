@@ -11,10 +11,10 @@
  * next) stays prototype-only.
  */
 import { useEffect, useRef, useState } from 'react'
-import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, type Node } from './store.ts'
+import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, type Node } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
-import { canvasCtl } from './canvas/Canvas.tsx'
+import { canvasCtl } from './canvas/ctl.ts'
 import { Tip } from './Tip.tsx'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DraftComposer, hueVars, MarkerFace, ThreadCard } from './Comments.tsx'
@@ -44,6 +44,8 @@ function playList(): string[] {
  *  off-board frames, so a link captured mid-flow must restore to the same screen. */
 export function enterPlay(over?: { at?: string; device?: string; theme?: string }) {
   const s = useStore.getState()
+  // the lock freezes what open pinned: a board locked to another mode never plays
+  if (!modeAllowed(s.board, 'present')) return
   const list = playList()
   if (!list.length) { s.toast('nothing to play on this board'); return }
   const overAt = over?.at && s.manifest?.frames.some((f) => f.id === over.at && f.kind === 'tsx') ? over.at : undefined
@@ -72,6 +74,11 @@ export function enterPlay(over?: { at?: string; device?: string; theme?: string 
  */
 export function enterFocus(at?: string, over?: { device?: string; theme?: string; deep?: boolean }) {
   const s = useStore.getState()
+  // a frame deep link may focus anywhere EXCEPT a board locked away from focus
+  // is still allowed - the lock caps THIS board's disclosure, and a deep link
+  // into a locked board stays in focus on that frame (01-sharing §6.1 rule 4);
+  // a non-deep focus entry respects the lock like any other mode change
+  if (!over?.deep && !modeAllowed(s.board, 'focus')) return
   const list = playList()
   const target = at && s.manifest?.frames.some((f) => f.id === at && f.kind === 'tsx') ? at : list[0]
   if (!target) { s.toast('nothing to focus here'); return }

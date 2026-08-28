@@ -87,8 +87,10 @@ export async function shareCommand(root: string, action: string, value: string |
     case 'general': {
       if (value !== 'private' && value !== 'password' && value !== 'public')
         throw new Error('general needs a mode: private · password · public')
-      await api(root, 'PUT', 'share/general', { mode: value })
-      console.log(`  general access → ${value}${value === 'public' ? ' (anyone with the URL reads - Public is called Public)' : ''}`)
+      const r = await api(root, 'PUT', 'share/general', { mode: value })
+      if (r.clamped)
+        console.log(`  general access → ${r.clamped.operative} (you asked for ${r.clamped.asked}, but the gate this canvas runs cannot enforce it - the roster never claims a state the server does not hold)`)
+      else console.log(`  general access → ${value}${value === 'public' ? ' (anyone with the URL reads - Public is called Public)' : ''}`)
       return
     }
     case 'list': {

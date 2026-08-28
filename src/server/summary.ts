@@ -126,9 +126,32 @@ export function unreadCount(state: BoardThreads, markId: string | undefined): nu
 
 // ---- verifying the canvas's OWN tokens (the request token, §9.3) ----
 // Signed by the canvas identity key, verified against it - no network, no
-// issuer. jti is single-use in memory: one instance is the deployment rule.
+// issuer. jti is single-use and the spent set PERSISTS - a restart must not
+// resurrect a captured token. Tokens live 15 minutes, so the file stays tiny;
+// expired entries sweep on every write.
 
 const spentJti = new Map<string, number>()
+let jtiLoaded = false
+const jtiFile = (dir: string) => join(dir, 'spent-jti.json')
+function loadSpentJti(dir: string) {
+  if (jtiLoaded) return
+  jtiLoaded = true
+  try {
+    const p = JSON.parse(readFileSync(jtiFile(dir), 'utf8'))
+    const now = Math.floor(Date.now() / 1000)
+    if (typeof p === 'object' && p !== null)
+      for (const [k, e] of Object.entries(p)) if (typeof e === 'number' && e > now) spentJti.set(k, e)
+  } catch { /* none yet */ }
+}
+function persistSpentJti(dir: string) {
+  const now = Math.floor(Date.now() / 1000)
+  for (const [k, e] of spentJti) if (e < now) spentJti.delete(k)
+  const file = jtiFile(dir)
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  const fd = openSync(tmp, 'wx', 0o600)
+  try { writeSync(fd, JSON.stringify(Object.fromEntries(spentJti))); fsyncSync(fd) } finally { closeSync(fd) }
+  renameSync(tmp, file)
+}
 
 export function verifyCanvasJws(dir: string, token: string, typ: string, aud: string):
   { ok: true; claims: Record<string, any> } | { ok: false } {
@@ -154,9 +177,10 @@ export function verifyCanvasJws(dir: string, token: string, typ: string, aud: st
   if (!v.verify({ key: canvasPublicKey(dir), dsaEncoding: 'ieee-p1363' }, sig)) return { ok: false }
   // single use, after the signature held (a forgery must not burn a real jti)
   if (typeof claims.jti === 'string') {
-    if (spentJti.size > 10_000) for (const [k, e] of spentJti) { if (e < now) spentJti.delete(k) }
+    loadSpentJti(dir)
     if (spentJti.has(claims.jti)) return { ok: false }
     spentJti.set(claims.jti, claims.exp)
+    try { persistSpentJti(dir) } catch { /* the in-memory set still holds this boot */ }
   }
   return { ok: true, claims }
 }

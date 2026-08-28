@@ -91,6 +91,12 @@ export function landingMode(board: string): 'canvas' | 'board' | 'present' | 'fo
  *  out into other modes, and (published) no sidebar ever renders for it. */
 export const boardLocked = (board: string): boolean => BOARD_POLICY[board]?.lock === true
 
+/** May this board enter `mode`? A lock freezes what open pinned - a board
+ *  locked to canvas must refuse present just as one locked to present refuses
+ *  canvas. Unlocked boards enter anything. */
+export const modeAllowed = (board: string, mode: 'present' | 'focus'): boolean =>
+  !boardLocked(board) || landingMode(board) === mode
+
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'

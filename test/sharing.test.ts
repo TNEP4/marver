@@ -735,3 +735,83 @@ describe('the app credential: per-mutation owner-api tokens', () => {
     delete process.env.MARVER_PUBLIC_ORIGIN
   })
 })
+
+// ---- the second review round's regressions ----
+
+describe('review-round regressions', () => {
+  it('a blocked identity cannot file a request; over-long summary tokens and cookie-bearing owner calls refuse; general clamps', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const ISSUER_PORT = PORT + 1
+    const { generateKeyPairSync, createSign } = await import('node:crypto')
+    const kp = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    const jwk = { ...kp.publicKey.export({ format: 'jwk' }), kid: 'iss-kid', alg: 'ES256', use: 'sig' }
+    const { createServer } = await import('node:http')
+    const issuer = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ keys: [jwk] })) })
+    await new Promise<void>((r) => issuer.listen(ISSUER_PORT, r))
+    const { _resetJwksCache } = await import('../src/server/marver-id.ts')
+    _resetJwksCache()
+
+    const ceil = ceilingsFromRights({ main: 'comment' } as any)
+    ensureShare(data, 'private', [], ceil)
+    const { provisionFromMarverId: prov } = await import('../src/server/auth.ts')
+    const owner = prov(data, { email: 'owner@x.test', subject: 's-own', issuer: `http://localhost:${ISSUER_PORT}` }, { ownerEmail: 'owner@x.test', ceilings: ceil })!
+
+    await boot({
+      MARVER_DATA_DIR: data,
+      MARVER_ID_ISSUER: `http://localhost:${ISSUER_PORT}`,
+      MARVER_PUBLIC_ORIGIN: `http://localhost:${PORT}`,
+    })
+    const asOwner = { authorization: `Bearer ${owner.session}` }
+
+    // a valid request token whose ADDRESS is then blocked stores nothing
+    const share = loadShare(data)!
+    share.blocked = ['dana@acme.test']
+    saveShare(data, share)
+    const { signCanvasJws } = await import('../src/server/summary.ts')
+    const now = Math.floor(Date.now() / 1000)
+    const reqTok = signCanvasJws(data, { aud: `http://localhost:${PORT}`, sub: 's-dana', email: 'dana@acme.test', iat: now, exp: now + 900, jti: 'jti-blk' }, 'marver-reqaccess+jwt')
+    const r1 = await fetch(`http://localhost:${PORT}/__mv/api/request-access`, {
+      method: 'POST', headers: { authorization: `Bearer ${reqTok}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ requestedRole: 'view' }),
+    })
+    expect(r1.status).toBe(202)   // uniform, but...
+    const roster = await (await fetch(`http://localhost:${PORT}/__mv/api/share/roster`, { headers: asOwner })).json() as any
+    expect(roster.requests).toHaveLength(0)
+    // and the spent-jti record persisted to the volume
+    expect(readFileSync(join(data, 'spent-jti.json'), 'utf8')).toContain('jti-blk')
+
+    // a malformed body still answers the uniform 202
+    expect((await fetch(`http://localhost:${PORT}/__mv/api/request-access`, { method: 'POST', body: 'garbage' })).status).toBe(202)
+
+    // a summary token minted for a week is refused however valid its signature
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+    const mint = (claims: Record<string, unknown>) => {
+      const h = b64({ alg: 'ES256', kid: 'iss-kid', typ: 'marver-summary+jwt' })
+      const p = b64(claims)
+      const s = createSign('SHA256'); s.update(`${h}.${p}`); s.end()
+      return `${h}.${p}.${s.sign({ key: kp.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`
+    }
+    const week = await fetch(`http://localhost:${PORT}/__mv/api/summary`, {
+      headers: { authorization: `Bearer ${mint({ iss: `http://localhost:${ISSUER_PORT}`, aud: `http://localhost:${PORT}`, azp: 'https://app.marver.design', sub: 's-own', email: 'owner@x.test', iat: now, exp: now + 7 * 86400 })}` },
+    })
+    expect(week.status).toBe(401)
+
+    // a cookie riding an owner-API call refuses outright - the CORS/cookie pairing
+    const ck = await fetch(`http://localhost:${PORT}/__mv/api/share/roster`, { headers: { ...asOwner, cookie: 'mv_s=whatever' } })
+    expect(ck.status).toBe(403)
+
+    // general access clamps to what the gate enforces: an identity canvas is Private in v1
+    const gen = await fetch(`http://localhost:${PORT}/__mv/api/share/general`, {
+      method: 'PUT', headers: { ...asOwner, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'public' }),
+    })
+    const genBody = await gen.json() as any
+    expect(genBody.general.mode).toBe('private')
+    expect(genBody.clamped).toEqual({ asked: 'public', operative: 'private' })
+
+    await new Promise<void>((r) => issuer.close(() => r()))
+    delete process.env.MARVER_ID_ISSUER
+    delete process.env.MARVER_PUBLIC_ORIGIN
+  })
+})

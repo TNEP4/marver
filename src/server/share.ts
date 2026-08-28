@@ -408,11 +408,15 @@ export function operativeMode(stored: GeneralMode, env: { password: boolean; iss
 // ---- roster mutations (the owner API's verbs, 04-solution §9.4) ----
 
 /** The strong ETag mutations are conditioned on: a hash of the exact stored
- *  roster bytes. Any intervening change fails a replayed digest's precondition. */
+ *  roster bytes - share.json AND the pending requests, because approving a
+ *  request is a mutation the roster read included, and a replay after any
+ *  intervening change (a re-ask, a decline) must fail its precondition. */
 export function rosterEtag(dir: string): string {
   let raw = ''
   try { raw = readFileSync(shareFile(dir), 'utf8') } catch { /* absent = empty */ }
-  return createHash('sha256').update(raw).digest('hex').slice(0, 32)
+  let reqRaw = ''
+  try { reqRaw = readFileSync(join(dir, 'requests.json'), 'utf8') } catch { /* none */ }
+  return createHash('sha256').update(raw).update('\n').update(reqRaw).digest('hex').slice(0, 32)
 }
 
 export function removeGrant(dir: string, principal: string, scope: ShareGrant['scope']) {

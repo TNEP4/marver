@@ -14,7 +14,7 @@
 import { build as viteBuild } from 'vite'
 import type { Plugin, Rollup } from 'vite'
 import react from '@vitejs/plugin-react'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -170,9 +170,9 @@ function readBoards(root: string): Record<string, any> {
  * precomputed per key, because the path-walking logic needs the very strings
  * being hidden.
  */
-function registrySourceOpaque(root: string, frames: { id: string; file: string }[]): string {
+function registrySourceOpaque(root: string, frames: { id: string; file: string }[], salt: string): string {
   const bases = ['/design/scenes', '/design/components']
-  const opaque = (s: string) => 'k' + createHash('sha256').update(s).digest('hex').slice(0, 10)
+  const opaque = (s: string) => 'k' + createHash('sha256').update(salt).update(s).digest('hex').slice(0, 10)
   const layoutFiles = new Set<string>()
   const chainFor = (key: string): string[] => {
     const base = bases.find((b) => key.startsWith(b + '/')) ?? bases[0]
@@ -268,8 +268,12 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // the source strip (01-sharing §6.2): with reveal.source off - the published
   // default - no repo path reaches the bundle. Manifest `file` fields, registry
   // keys, HTML frame paths and chunk names all go opaque; laser's copy degrades.
+  // Every opaque token is KEYED by a per-build random salt: an unkeyed hash of a
+  // path is an offline confirmation oracle (guess the path, hash it, compare) -
+  // the salt never ships, so the published tokens confirm nothing.
   const strip = !policy.reveal.source
-  const opaquePath = (id: string, ext: string) => `__mv/f/mv${createHash('sha256').update(id).digest('hex').slice(0, 12)}${ext}`
+  const buildSalt = randomBytes(16).toString('hex')
+  const opaquePath = (id: string, ext: string) => `__mv/f/mv${createHash('sha256').update(buildSalt).update(id).digest('hex').slice(0, 12)}${ext}`
   // switcher order: curated boards ranked by each board's `order` (then name); all-scenes always LAST
   // (it is the expensive everything-board, never the landing). `default` (where `/` opens) is the first.
   const boardOrder = (n: string): number => {
@@ -329,15 +333,22 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // only - excluded frames never enter the bundle) AND whenever the source
   // strip is on (opaque keys - repo paths never enter it either).
   const registryFile = posix(join(clientDir, 'frame-host', 'registry.ts'))
+  const lockedFile = posix(join(clientDir, 'shell', 'LockedApp.tsx'))
   const tsxFrames = frames.filter((f) => f.kind === 'tsx')
   const overrides: Plugin = {
     name: 'marver-build',
     enforce: 'pre',
-    resolveId(id) { if (id === 'virtual:sh-data') return '\0sh-data-build' },
+    resolveId(id, importer) {
+      if (id === 'virtual:sh-data') return '\0sh-data-build'
+      // all-boards-locked: the canvas shell is ABSENT, not hidden - main.tsx's
+      // App import resolves to the locked entry and App.tsx (sidebar, canvas,
+      // toolbar) never enters the bundle (01-sharing §5.1)
+      if (lockedShell && (id === './App.tsx' || id.endsWith('/shell/App.tsx')) && importer && posix(importer).endsWith('/shell/main.tsx')) return lockedFile
+    },
     load(id) {
       if (id === '\0sh-data-build') return `export default ${JSON.stringify(data)}`
       if (posix(id) === registryFile) {
-        if (strip) return registrySourceOpaque(root, tsxFrames.map((f) => ({ id: f.id, file: posix(f.file) })))
+        if (strip) return registrySourceOpaque(root, tsxFrames.map((f) => ({ id: f.id, file: posix(f.file) })), buildSalt)
         if (!includeAll) return registrySource(root, tsxFrames.map((f) => '/' + posix(f.file)))
       }
     },

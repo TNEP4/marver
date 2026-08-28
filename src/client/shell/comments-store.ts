@@ -27,6 +27,9 @@ interface CommentsState {
   threads: Thread[]                   // derived on every change; each carries its origin board
   board: string | null
   me: Me | null                       // null on published until signed in
+  /** The viewer's effective role per board (published) - what makes a locked
+   *  capability honest: `view` on a comment board = "not available for you YET". */
+  myBoards: Record<string, string> | null
   local: boolean                      // dev mirror (identity is the local profile)
   connected: boolean                  // dev only: a connect account provides name/email (read-only here)
   commentMode: boolean                // C - picking + composing
@@ -60,6 +63,8 @@ interface CommentsState {
   claim(token: string, password: string, name: string, avatar?: string): Promise<string | null>
   saveProfile(patch: Partial<Me>): Promise<string | null>
   dismissIdentity(): void
+  /** The admitted viewer's "Ask to comment" - one request into the owner's queue. */
+  askToComment(): Promise<boolean>
 }
 
 const uuid = () => crypto.randomUUID()
@@ -157,7 +162,7 @@ export const useComments = create<CommentsState>((set, get) => {
   }
 
   return {
-    events: [], threads: [], board: null, me: null, local: false, connected: false,
+    events: [], threads: [], board: null, me: null, myBoards: null, local: false, connected: false,
     commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
 
     poke(board) {
@@ -179,6 +184,7 @@ export const useComments = create<CommentsState>((set, get) => {
       if (me.status === 404) { apiOff = true; return }   // static serve: no comments API at all
       if (me.ok) set({
         me: me.data.user ? { ...me.data.user, ...(me.data.id ? { id: me.data.id } : {}) } : null,
+        myBoards: me.data.boards && typeof me.data.boards === 'object' ? me.data.boards : null,
         local: !!me.data.local, connected: !!me.data.connected,
       })
       await fetchAll()
@@ -293,6 +299,10 @@ export const useComments = create<CommentsState>((set, get) => {
       if (!res.ok) return res.data?.error ?? 'could not save - try again'
       set({ me: res.data.user })
       return null
+    },
+    async askToComment() {
+      const res = await api('request-access', { requestedRole: 'comment' })
+      return res.ok
     },
   }
 })

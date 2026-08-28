@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
-import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
+import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
@@ -328,7 +328,9 @@ export function collabHandler(dataDir: string, distDir: string) {
       }
       if (frontDoorOn && path === 'identity' && req.method === 'GET') {
         // key discovery: public by design (02-home §2) - the browser pins the
-        // kid at first consent and verifies every summary against it
+        // kid at first consent and verifies every summary against it. CORS,
+        // because the pinning READER is the app's cross-origin JavaScript.
+        cors(res)
         const id = canvasIdentity(dataDir)
         return json(res, 200, { kid: id.kid, jwk: id.publicJwk }), true
       }
@@ -341,7 +343,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         if (limited(`sum:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
         const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
         const { verifyBearerJwt } = await import('./marver-id.ts')
-        const v = await verifyBearerJwt({ token: tok, origin: publicOrigin!, issuer: idIssuer!, typ: 'marver-summary+jwt', azp: appOrigin })
+        const v = await verifyBearerJwt({ token: tok, origin: publicOrigin!, issuer: idIssuer!, typ: 'marver-summary+jwt', azp: appOrigin, maxAgeS: 120 })
         if (!v.ok) return json(res, 401, { error: 'not authorized' }), true
         // authorize BEFORE computing anything; no grant = an opaque 404 - a
         // valid token for an origin is not a right to learn a canvas is there
@@ -380,18 +382,25 @@ export function collabHandler(dataDir: string, distDir: string) {
       // whether anything was stored is not the caller's to learn.
       if (idIssuer && publicOrigin && path === 'request-access' && req.method === 'POST') {
         if (limited(`req:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
-        const b = await readBody(req)
-        const requestedRole = b.requestedRole === 'comment' ? 'comment' as const : 'view' as const
-        const note = typeof b.note === 'string' ? b.note.slice(0, 500) : undefined
+        // the uniform-202 contract (§9.3): a malformed body is answered exactly
+        // like a well-formed one nothing was stored for
+        const b = await readBody(req).catch(() => null)
+        const requestedRole = b?.requestedRole === 'comment' ? 'comment' as const : 'view' as const
+        const note = typeof b?.note === 'string' ? b.note.slice(0, 500) : undefined
+        // the blocklist beats request-access eligibility too (04 §2.2.1): a
+        // block landing AFTER a token was minted - or on a live session - must
+        // close this door as silently as every other
+        const share = shareState(dataDir)
+        const notBlocked = (email: string) => !share || provisionVerdict(share, email) !== 'blocked'
         // a request token is a JWS (it has dots); a session token never does -
         // the admitted viewer's upgrade ask arrives over the ordinary session,
         // Bearer or cookie alike
         const tok0 = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
         const tok = tok0?.includes('.') ? tok0 : undefined
-        const sessionCaller = tok ? null : currentUser(req)
-        if (tok) {
+        const sessionCaller = tok || !b ? null : currentUser(req)
+        if (b && tok) {
           const v = verifyCanvasJws(dataDir, tok, 'marver-reqaccess+jwt', publicOrigin)
-          if (v.ok && typeof v.claims.email === 'string') {
+          if (v.ok && typeof v.claims.email === 'string' && notBlocked(v.claims.email)) {
             putRequest(dataDir, {
               email: v.claims.email,
               name: typeof v.claims.name === 'string' ? v.claims.name : undefined,
@@ -401,7 +410,7 @@ export function collabHandler(dataDir: string, distDir: string) {
               note,
             })
           }
-        } else if (sessionCaller && csrfOk(req)) {
+        } else if (sessionCaller && csrfOk(req) && notBlocked(sessionCaller.email)) {
           // the admitted viewer's "Ask to comment" - same queue, same shape
           putRequest(dataDir, { email: sessionCaller.email, name: sessionCaller.name, requestedRole, note })
         }
@@ -421,6 +430,9 @@ export function collabHandler(dataDir: string, distDir: string) {
           res.statusCode = 204
           return res.end(), true
         }
+        // the CORS/cookie pairing (04 §2.5): a route that receives CORS refuses
+        // cookie authentication OUTRIGHT - Bearer is the only way in here
+        if (/(?:^|;\s*)mv_[sa]=/.test(String(req.headers.cookie ?? ''))) { cors(res); return json(res, 403, { error: 'owner only' }), true }
         const body = req.method === 'GET' ? '' : await new Promise<string>((resolve, reject) => {
           let raw = ''
           req.on('data', (c) => { raw += c; if (raw.length > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
@@ -439,8 +451,12 @@ export function collabHandler(dataDir: string, distDir: string) {
         // construction, not by state
         if (!allowed && tok && idIssuer && publicOrigin) {
           const { verifyBearerJwt } = await import('./marver-id.ts')
-          const v = await verifyBearerJwt({ token: tok, origin: publicOrigin, issuer: idIssuer, typ: 'marver-owner-api+jwt', azp: appOrigin })
-          if (v.ok && owner && normEmail(v.email) === normEmail(owner.email)) {
+          const v = await verifyBearerJwt({ token: tok, origin: publicOrigin, issuer: idIssuer, typ: 'marver-owner-api+jwt', azp: appOrigin, maxAgeS: 300 })
+          // mapped to the local owner by the STABLE subject when one is bound -
+          // the address is a label people change; the subject is who they are.
+          // Email alone identifies only an owner that never signed in via id.
+          const subjectOk = owner?.idSubject ? owner.idSubject === `${idIssuer}#${v.ok ? v.sub : ''}` : true
+          if (v.ok && owner && subjectOk && normEmail(v.email) === normEmail(owner.email)) {
             if (req.method === 'GET') allowed = true
             else {
               const etag = rosterEtag(dataDir)
@@ -494,8 +510,13 @@ export function collabHandler(dataDir: string, distDir: string) {
           if (sub === 'general' && req.method === 'PUT') {
             const mode = String(b.mode ?? '')
             if (mode !== 'private' && mode !== 'password' && mode !== 'public') return json(res, 422, { error: 'mode must be private | password | public' }), true
-            setGeneralMode(dataDir, mode)
-            return json(res, 200, roster()), true
+            // what the environment can actually enforce clamps what is stored -
+            // a roster must never claim Private on a canvas whose gate is open,
+            // or Public behind an identity gate (04-solution §2.1's honesty rule)
+            const operative = operativeMode(mode, { password: !!process.env.MARVER_PASSWORD && !idIssuer, issuer: !!idIssuer })
+            setGeneralMode(dataDir, operative)
+            const r = roster()
+            return json(res, 200, operative === mode ? r : { ...r, clamped: { asked: mode, operative } }), true
           }
           if (sub === 'block' && (req.method === 'PUT' || req.method === 'DELETE')) {
             const address = String(b.address ?? '')
@@ -538,9 +559,16 @@ export function collabHandler(dataDir: string, distDir: string) {
       if (req.method === 'GET') {
         if (path === 'me') {
           // the session response carries the viewer's OWN opaque id once -
-          // "is this mine" is a client-side id comparison from then on
+          // "is this mine" is a client-side id comparison from then on - plus
+          // their effective per-board roles, so the client can render locked
+          // capabilities honestly ("commenting is not available for you yet")
           const u = currentUser(req)
-          return json(res, u ? 200 : 401, u ? { user: publicUser(u), role: u.role, id: opaqueId(dataDir, u.email) } : { error: 'signed out' }), true
+          if (!u) return json(res, 401, { error: 'signed out' }), true
+          const share = shareState(dataDir)
+          const boards = share
+            ? resolveAccess({ email: u.email, userRole: u.role, store: share, ceilings: ceilingsFromRights(rights) }).boards
+            : Object.fromEntries(Object.entries(rights).map(([b, r]) => [b, r === 'comment' ? 'comment' : 'view']))
+          return json(res, 200, { user: publicUser(u), role: u.role, id: opaqueId(dataDir, u.email), boards }), true
         }
         if (path === 'boards') {
           const name = ownerName(dataDir)

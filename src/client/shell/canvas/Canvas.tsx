@@ -84,21 +84,11 @@ export function animateLayout(ms = 360) {
   presetTimer = window.setTimeout(() => w.classList.remove('sh-preset'), ms)
 }
 
-/** B0.2: one wheel event, whatever its origin - a shell-document wheel over the canvas, or
- *  a wheel forwarded from a passive frame's iframe. clientX/Y are shell-viewport pixels. */
-export interface CanvasWheelInput {
-  deltaX: number; deltaY: number; deltaMode: number
-  ctrlKey: boolean; metaKey: boolean; clientX: number; clientY: number
-}
-
-export const canvasCtl = {
-  fitNode(_key: string) {},
-  fitNodes(_keys: string[]) {},
-  fitAll() {},
-  zoomTo(_scale: number) {},
-  zoom100() { canvasCtl.zoomTo(1) },
-  wheel(_input: CanvasWheelInput) {},
-}
+// the control channel lives in ctl.ts so play/focus can import it without
+// dragging the canvas into a locked-shell bundle; Canvas assigns the real
+// implementations below when it mounts
+import { canvasCtl, type CanvasWheelInput } from './ctl.ts'
+export { canvasCtl, type CanvasWheelInput }
 
 /** Variant-group captions: "Landing · 3 variants" above each group with
  *  2+ members on this board. World-space (scales with the canvas); min screen size via

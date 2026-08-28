@@ -102,10 +102,31 @@ export function LaserButton() {
   )
 }
 
-/** Comment toggle - store-level, identical on canvas and prototype. */
+/** Comment toggle - store-level, identical on canvas and prototype.
+ *  A viewer whose role stops at view on this board sees the LOCKED capability:
+ *  the honest message ("not available for you yet") and the Ask-to-comment
+ *  path into the owner's request queue (04-solution §2.35). */
 export function CommentButton() {
   const commentMode = useComments((s) => s.commentMode)
   const show = useComments((s) => s.show)
+  const me = useComments((s) => s.me)
+  const myBoards = useComments((s) => s.myBoards)
+  const board = useStore((s) => s.board)
+  const asked = useRef(0)
+  const lockedOut = !!me && !!myBoards && myBoards[board] === 'view'
+  if (lockedOut) {
+    return (
+      <Tip side="bottom" label={<><b>Commenting is not available for you yet</b><span>click to ask the owner</span></>}>
+        <button className="sh-pill-btn" style={{ opacity: .55 }} onClick={() => {
+          const s = useStore.getState()
+          if (Date.now() - asked.current < 8000) return
+          asked.current = Date.now()
+          void commentsStore().askToComment().then((ok) =>
+            s.toast(ok ? 'asked the owner for comment access - they decide' : 'could not send the request - try again'))
+        }}><CommentIcon size={16} /></button>
+      </Tip>
+    )
+  }
   return (
     <Tip side="bottom" label={<TipRows rows={[['Comment', 'C'], [show ? 'Hide pins' : 'Show pins', '⇧C']]} />}>
       <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
