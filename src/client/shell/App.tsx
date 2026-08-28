@@ -1,6 +1,6 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, PUBLISHED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
@@ -26,7 +26,10 @@ function copyToClipboard(text: string, okMsg: string) {
 
 /** The address a frame copies - the same string from the sidebar right-click, the floating
  *  toolbar, and ⇧P: the board it sits on, the frame id, and its file. */
-const framePath = (board: string, f: { id: string; file: string }) => `board: ${board} · frame: ${f.id}  (${f.file})`
+// stripped build: the file column would only show the opaque token, so the
+// copy keeps what is still honest - the board and the frame id
+const framePath = (board: string, f: { id: string; file: string }) =>
+  SOURCE_REVEALED ? `board: ${board} · frame: ${f.id}  (${f.file})` : `board: ${board} · frame: ${f.id}`
 
 type MenuItem = { label: string; icon: ReactNode; onClick: () => void }
 type MenuState = { x: number; y: number; items: MenuItem[] }
@@ -820,7 +823,7 @@ export function App() {
       if (e.key === 't') { animateLayout(); runTidy() }
       // laser and comment mode are one-at-a-time: comment mode already highlights
       // what you'd click, so stacking the full rainbow on top only adds noise
-      if (e.key === 'l') {
+      if (e.key === 'l' && SOURCE_REVEALED) {
         if (!s.laser) commentsStore().setMode(false)
         s.setLaser(!s.laser)
       }

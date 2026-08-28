@@ -11,7 +11,7 @@
  * next) stays prototype-only.
  */
 import { useEffect, useRef, useState } from 'react'
-import { useStore, CONFIG, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
+import { useStore, CONFIG, SOURCE_REVEALED, boardLabel, cap, fetchBoardNames, type Node } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
@@ -398,7 +398,7 @@ function PlayInner() {
     if (key === ']') { switchVariant(1); return }
     if (key === 'r') { restart(); return }
     if (key === 'h') { toggleHideUI(); return }
-    if (key === 'l') { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
+    if (key === 'l' && SOURCE_REVEALED) { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
     if (key === 'c') { const c = commentsStore(); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
     if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
     if (key === 'L') { const c = commentsStore(); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus

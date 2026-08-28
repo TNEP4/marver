@@ -430,3 +430,44 @@ describe('no member email travels to a browser', () => {
     delete process.env.MARVER_CLI_TOKEN
   })
 })
+
+// ---- publish.json v2 (01-sharing §5.1) ----
+
+describe('resolvePolicy - v2 policy with v1 read-compat', () => {
+  const write = (policy: unknown) => {
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'a.json'), '{}')
+    writeFileSync(join(root, 'design', 'boards', 'deck.json'), '{}')
+    writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify(policy))
+  }
+  const boards = () => ({ a: {}, deck: {} })
+
+  it('reads a v1 policy unchanged and defaults type to mix, source to OFF', async () => {
+    const { resolvePolicy } = await import('../src/server/build.ts')
+    write({ boards: { a: 'comment' } })
+    const p = resolvePolicy(root, boards())
+    expect(p.boards.a).toEqual({ max: 'comment', type: 'mix' })
+    expect(p.reveal).toEqual({ structure: true, source: false })
+  })
+
+  it('parses v2 rows: max, type, open, lock', async () => {
+    const { resolvePolicy } = await import('../src/server/build.ts')
+    write({ version: 2, boards: { a: { max: 'comment', type: 'doc' }, deck: { max: 'read', type: 'slides', open: 'slides', lock: true } }, reveal: { source: true } })
+    const p = resolvePolicy(root, boards())
+    expect(p.boards.a).toEqual({ max: 'comment', type: 'doc' })
+    expect(p.boards.deck).toEqual({ max: 'read', type: 'slides', open: 'slides', lock: true })
+    expect(p.reveal.source).toBe(true)
+  })
+
+  it('lock without open fails the build; junk types and modes fail it too', async () => {
+    const { resolvePolicy } = await import('../src/server/build.ts')
+    write({ boards: { a: { max: 'read', lock: true } } })
+    expect(() => resolvePolicy(root, boards())).toThrow(/lock" without "open/)
+    write({ boards: { a: { max: 'read', type: 'movie' } } })
+    expect(() => resolvePolicy(root, boards())).toThrow(/type "movie"/)
+    write({ boards: { a: { max: 'read', open: 'cinema' } } })
+    expect(() => resolvePolicy(root, boards())).toThrow(/open "cinema"/)
+    write({ boards: { a: { type: 'doc' } } })
+    expect(() => resolvePolicy(root, boards())).toThrow(/needs "max"/)
+  })
+})

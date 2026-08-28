@@ -8,7 +8,7 @@
  */
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useStore, CONFIG, cap } from './store.ts'
+import { useStore, CONFIG, SOURCE_REVEALED, cap } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { Tip } from './Tip.tsx'
 import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SunIcon, deviceIcon } from './icons.tsx'
@@ -89,6 +89,9 @@ function TipRows({ rows }: { rows: [string, string][] }) {
 export function LaserButton() {
   const laser = useStore((s) => s.laser)
   const showAnchor = useComments((s) => s.showAnchor)
+  // stripped build: the paths are not in the bundle, so the button that would
+  // copy them has nothing honest to offer
+  if (!SOURCE_REVEALED) return null
   return (
     <Tip side="bottom" label={<TipRows rows={[['Laser mode', 'L'], [showAnchor ? 'Hide laser comment' : 'Show laser comment', '⇧L']]} />}>
       <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {

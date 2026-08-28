@@ -10,10 +10,23 @@ import shData from 'virtual:sh-data'
 /** Published-build data. Non-null = static site: no API, no saves, no live events.
  *  `names` is the switcher list (all-scenes only when actually published); `default`
  *  is where `/` opens - never a synthesized aggregate of a filtered build. */
-const DATA: { manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string } | null = shData
+const DATA: {
+  manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string
+  /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
+  policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean } }
+} | null = shData
 
 /** True on a published static canvas - no dev server, no API, no update checks. */
 export const PUBLISHED = DATA !== null
+
+/** May this bundle show source paths (laser copy)? Dev always; published only
+ *  when publish.json says `reveal.source: true`. The strip already removed the
+ *  paths from the bundle - this flag removes the affordance that would show
+ *  their opaque replacements (01-sharing §6.2). */
+export const SOURCE_REVEALED = DATA ? DATA.policy?.reveal?.source === true : true
+
+/** The published per-board artifact metadata (type, open, lock). Empty in dev. */
+export const BOARD_POLICY: Record<string, { type?: string; open?: string; lock?: boolean }> = DATA?.policy?.boards ?? {}
 
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
