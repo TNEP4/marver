@@ -240,7 +240,7 @@ export function init(root: string, opts: InitOpts) {
       providersTemplate(host.router, host.toaster, host.routerPkg))
     refresh('tsconfig.json', [STANDALONE_TSCONFIG], tsconfigNow())
   }
-  write('.gitignore', '.local/\n.dist/\n')
+  write('.gitignore', '.local/\n.dist/\n.dist-seeds/\n')
   // comment logs are append-only + id-keyed: two branches both appending never
   // truly conflict, so git's built-in union driver auto-merges them (worst case a
   // duplicate line, which replay dedupes). Multiplayer comments merge themselves.

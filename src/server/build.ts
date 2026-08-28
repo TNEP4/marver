@@ -14,7 +14,7 @@
 import { build as viteBuild } from 'vite'
 import type { Plugin, Rollup } from 'vite'
 import react from '@vitejs/plugin-react'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, ROUTE } from '../cli/name.ts'
@@ -160,7 +160,7 @@ export function layoutChain(fileKey) {
 `
 }
 
-export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag?: boolean) {
+export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag?: boolean, embedSeeds?: boolean) {
   const config = await loadConfig(root)
   const host = detectHost(root)
   const pkgDir = packageDir()
@@ -341,18 +341,27 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
 
   // comment logs for published boards ride along as the SEED: serve
-  // unions them into its live store on boot - a republish adds, never clobbers
+  // unions them into its live store on boot - a republish adds, never clobbers.
+  // Seeds live OUTSIDE the web root (design/.dist-seeds): every event carries its
+  // author's email, and anything under .dist is statically served to any
+  // gate-passer. --embed-seeds restores the old in-root copy for static-only
+  // hosts that will never run `marver serve` - a loud, identifying opt-in.
   const commentsDir = join(root, 'design', 'comments')
+  const seedOut = embedSeeds ? join(outDir, 'design', 'comments') : join(root, 'design', '.dist-seeds')
+  if (!embedSeeds) rmSync(seedOut, { recursive: true, force: true })   // no stale boards from a previous publish
   if (existsSync(commentsDir)) {
     let seeded = 0
     for (const n of publishedNames) {
       const f = join(commentsDir, `${n}.jsonl`)
       if (!existsSync(f)) continue
-      mkdirSync(join(outDir, 'design', 'comments'), { recursive: true })
-      cpSync(f, join(outDir, 'design', 'comments', `${n}.jsonl`))
+      mkdirSync(seedOut, { recursive: true })
+      cpSync(f, join(seedOut, `${n}.jsonl`))
       seeded++
     }
-    if (seeded) console.log(`  comments: ${seeded} board log${seeded === 1 ? '' : 's'} seeded`)
+    if (seeded) console.log(`  comments: ${seeded} board log${seeded === 1 ? '' : 's'} seeded${embedSeeds ? '' : ' (design/.dist-seeds, outside the web root)'}`)
+    if (seeded && embedSeeds) console.log(
+      `  WARNING: --embed-seeds put comment history in the web root - every event carries\n` +
+      `  its author's email, readable by anyone who can reach the deployed files.`)
   }
 
   // serve reads this: gate page title, branding footer, and the app's own logo when one

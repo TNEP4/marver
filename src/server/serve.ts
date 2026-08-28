@@ -45,13 +45,17 @@ export async function serve(root: string, portFlag?: number) {
     const dir = dataDir()
     // the load-bearing seed rule: store = union of bundle seed + what it already holds.
     // Republishing must never clobber feedback collected since the last deploy.
-    const seedDir = join(dist, 'design', 'comments')
-    if (existsSync(seedDir))
+    // Seeds live outside the web root now (design/.dist-seeds); the legacy in-root
+    // location is still read so an old build served by a new serve keeps its seeds
+    // (a version-skewed pair is a silent union, never a clobber).
+    for (const seedDir of [join(root, 'design', '.dist-seeds'), join(dist, 'design', 'comments')]) {
+      if (!existsSync(seedDir)) continue
       for (const f of readdirSync(seedDir)) {
         if (!f.endsWith('.jsonl')) continue
         const board = f.slice(0, -6)
         appendEvents(join(dir, 'comments'), board, readLog(seedDir, board))
       }
+    }
     collab = collabHandler(dir, dist)
     const { loadStore, createInvite, normEmail, operatorUser, sessionUser } = await import('./auth.ts')
     bearerCheck = (token) => sessionUser(dir, token)
@@ -297,6 +301,11 @@ export async function serve(root: string, portFlag?: number) {
     // Containment is realpath-based: encoded separators and symlinks cannot escape.
     let path: string
     try { path = decodeURIComponent(url.pathname) } catch { res.statusCode = 400; return res.end('bad request') }
+    // comment history is identity history - the API is its only transport under this
+    // server. A hard 404 here (not just relocation at build time) also covers an old
+    // build that still carries seeds in the web root, and beats the hash-routing
+    // fallback, which would otherwise answer a missing log with the shell and a 200.
+    if (path.startsWith('/design/comments/')) { res.statusCode = 404; return res.end('not found') }
     if (path.endsWith('/')) path += 'index.html'
     let file = resolve(dist, path.slice(1))
     try {
