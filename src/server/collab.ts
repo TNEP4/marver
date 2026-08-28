@@ -470,17 +470,34 @@ export function collabHandler(dataDir: string, distDir: string) {
         // UTF-8 the app hashed, and a multibyte character split across chunks
         // must not become replacement characters
         // an oversized body is a schema refusal like any other (422, never the
-        // outer 400 - the owner API's refusals are 403/409/422, closed set)
+        // outer 400 - the owner API's refusals are 403/409/422, closed set).
+        // The 422 must actually REACH the caller: destroying the socket before
+        // responding reads as a connection reset, so the stream is stopped by
+        // dropping the listeners, the refusal is written, and only then does
+        // the socket close (the request stays unconsumed, so node ends it).
         let bodyBuf: Buffer
         try {
           bodyBuf = req.method === 'GET' ? Buffer.alloc(0) : await new Promise<Buffer>((resolve, reject) => {
             const chunks: Buffer[] = []
             let size = 0
-            req.on('data', (c: Buffer) => { chunks.push(c); size += c.length; if (size > MAX_BODY) { req.destroy(); reject(new Error('body too large')) } })
+            const onData = (c: Buffer) => {
+              chunks.push(c)
+              size += c.length
+              if (size > MAX_BODY) {
+                req.removeListener('data', onData)
+                req.pause()
+                reject(new Error('body too large'))
+              }
+            }
+            req.on('data', onData)
             req.on('end', () => resolve(Buffer.concat(chunks)))
             req.on('error', () => reject(new Error('request failed')))
           })
-        } catch (err) { cors(res); return json(res, 422, { error: (err as Error).message }), true }
+        } catch (err) {
+          cors(res)
+          res.setHeader('connection', 'close')
+          return json(res, 422, { error: (err as Error).message }), true
+        }
         const body = bodyBuf.toString('utf8')
         const tok = /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? ''
         const owner = loadStore(dataDir).users.find((u) => u.role === 'owner')
@@ -557,12 +574,14 @@ export function collabHandler(dataDir: string, distDir: string) {
             // terminal and the dialog can never disagree (acceptance 9).
             // Explaining a DOMAIN means explaining a member of it: a synthetic
             // address at the domain, which the domain grants match - email:null
-            // would explain anonymous access and miss the grant entirely.
+            // would explain anonymous access and miss the grant entirely. The
+            // local part is random so it can never collide with a real exact
+            // grant, block or account someone actually holds at that domain.
             const who = String(url.searchParams.get('who') ?? '')
             if (!who) return json(res, 422, { error: 'who is required' }), true
             const s = loadShare(dataDir)
             if (!s) return json(res, 422, { error: 'no roster yet' }), true
-            const asEmail = who.startsWith('@') ? `member${who}` : who
+            const asEmail = who.startsWith('@') ? `probe-${randomBytes(8).toString('hex')}${who}` : who
             const account = loadStore(dataDir).users.find((u) => normEmail(u.email) === normEmail(asEmail))
             const r = resolveAccess({ email: asEmail, userRole: account?.role, store: s, ceilings })
             return json(res, 200, { who, entry: r.entry, role: r.role, boards: r.boards, trace: r.trace }), true
