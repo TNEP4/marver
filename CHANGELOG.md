@@ -2,6 +2,66 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.12.0 - 2026-08-29
+
+### Added
+
+- **Sharing: grant people access to a canvas, person by person, from the terminal or
+  the browser.** On a canvas with a persistent volume and an owner account, `marver share`
+  manages a roster of *people* - who may open the canvas, who may comment, and until when -
+  over the canvas's owner-only routes; the browser share dialog drives the same routes.
+  `add`, `remove`, `block`, `unblock`, `general <mode>`, `list`, `requests`, `explain`, and
+  `who` cover the whole surface. Exact-email grants work on a password canvas; domain grants
+  (`@acme.com`), refused-visitor access requests, and the front door need Marver Sign In.
+  The full guide is [docs/sharing.md](docs/sharing.md).
+
+  **One resolver, one place.** A single pure function answers "what can this person do here" -
+  blocklist first (the only deny), then the owner, then grants additive with the highest match
+  winning, then a general-access floor, all clamped by each board's published ceiling. The gate
+  and comment writes enforce from it, reading one `share.json`, so the policy is one thing in
+  one place rather than a rule re-implemented per door. `marver share explain <email>` traces
+  it for one person and `marver share who` prints the grant matrix (both convenience views -
+  the dialog is the accurate read for the owner and for domain principals).
+
+- **`design/publish.json` v2: a board can carry its artifact type and landing view, not just
+  its ceiling.** A board level may now be an object - `{ "max": "read" | "comment", "type":
+  "doc" | "slides" | "design" | "sketch" | "refs" | "mix", "open": "canvas" | "board" |
+  "present" | "focus" | "slides", "lock": true }` - where `max` is the ceiling (the only
+  field that affects access) and the rest choose how the board presents. `open` accepts all
+  five view names, but slides mode is v1.5: `open: "slides"` currently lands in `present`.
+  Every 0.11 canvas parses unchanged: a bare `"read"` or `"comment"` string is still a valid
+  row. (This is a schema version, unrelated to the read-privacy "v2" below.) Source paths
+  in a published bundle now go opaque by default (`reveal.source` defaults off) - the inlined
+  manifest used to carry every frame's repo path, which is a disclosure the moment a canvas
+  is shared beyond its own repo.
+
+- **Access requests: a refused visitor can ask, and you can approve from the terminal.** When
+  someone is turned away at the identity gate, the canvas offers a request form instead of a
+  dead end (authenticated by a short-lived, origin-bound, single-purpose token - the refused
+  visitor has no session). Requests surface in `marver share requests` and the dialog;
+  approving grants canvas-wide at the role you choose, declining resolves silently. One
+  pending row per address, swept after 30 days.
+
+- **The front door at `app.marver.design`.** A signed-in home page that lists the canvases a
+  person can reach, each row lit by a short summary the canvas itself signs and serves. The
+  front door holds no roster and makes no access decision - it asks each canvas, and each
+  canvas answers for itself, against browser-pinned keys. Keep a canvas silent there with
+  `share: { frontDoor: false }` in `design/config.ts`.
+
+### Notes
+
+- **Read privacy is still v2.** Sharing v1 controls who gets in and who may comment; every
+  admitted person can read every published board. The read boundary today is the bundle - a
+  board you do not publish is not in the build. Grants are canvas-scoped and approvals are
+  canvas-wide by design; `share.json` is already shaped for the per-board, per-person read
+  privacy that arrives in v2, served rather than bundled.
+
+- **First boot writes `share.json` from your live 0.11 state and changes nothing you did not
+  ask for.** Every existing account gets the canvas-wide `comment` grant it already had
+  (clamped per board); until that first boot, every door keeps the legacy rules. Raising a
+  board's ceiling never silently re-promotes anyone granted under the old one - the roster
+  ratchets down on every boot and only your explicit re-confirm raises an entry.
+
 ## 0.11.1 - 2026-08-27
 
 ### Fixed

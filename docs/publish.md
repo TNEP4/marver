@@ -72,7 +72,9 @@ silent there). The app ships no third-party analytics and no summary telemetry.
 at all. What a person who is in can **see** is decided at build time by
 `design/publish.json` - boards you do not publish are not in the bundle. One
 canvas per audience is the read boundary today; per-person read arrives in v2,
-served rather than bundled.
+served rather than bundled. Managing that roster - granting people, blocking
+them, approving access requests, and reading who-sees-what from the terminal -
+is its own guide: [Sharing a Marver canvas](sharing.md).
 
 ### Sovereign accounts (`MARVER_PASSWORD` + `MARVER_DATA_DIR`)
 

@@ -338,8 +338,8 @@ describe('the pages a person clicks, in a real browser', () => {
     await browser!.until(session, `document.getElementById('rgo').textContent === 'Request sent'`)
     // the page posted the exact token the refusal minted, as a Bearer
     expect(sawRequest, 'the request-access POST never fired').toBeTruthy()
-    expect(sawRequest.auth).toBe(`Bearer ${REQ_TOKEN}`)
-    expect(JSON.parse(sawRequest.body).requestedRole).toBe('comment')
+    expect(sawRequest!.auth).toBe(`Bearer ${REQ_TOKEN}`)
+    expect(JSON.parse(sawRequest!.body).requestedRole).toBe('comment')
 
     await browser!.send('Fetch.disable', {}, session)
   }, 90_000)
