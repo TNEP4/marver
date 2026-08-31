@@ -5,9 +5,12 @@
  * IS the whole interface, and on every canvas it calls the same owner routes
  * the app does, over the device credential `comments connect` stored. The
  * resolver ships with an explainer because a permission system nobody can
- * predict is not safe - `explain` and `who` run the SAME pure function the
- * server enforces with, on the same roster bytes, so the terminal and the
- * dialog can never disagree (acceptance 9).
+ * predict is not safe - `explain` asks the canvas's OWN `share/explain` route,
+ * so its trace is the resolver the doors enforce with (owner role filled,
+ * `@domain` explained through a synthetic member, the winning step marked) and
+ * cannot drift from the dialog's Who-sees-what (acceptance 9). `who` runs that
+ * same pure function locally over the fetched roster for the granted principals
+ * it lists - none of them the owner, so no server-only role handling applies.
  *
  * add <who>        grant view (default) or --role comment; --expires <iso>
  * remove <who>     remove the grant
@@ -47,15 +50,22 @@ const asStore = (roster: any): ShareStore => ({
   version: 1, general: roster.general, blocked: roster.blocked, grants: roster.grants,
 })
 
-/** The trace, rendered - what `explain` prints and what the dialog shows. */
-function renderExplain(who: string, store: ShareStore, ceilings: Ceilings): string {
-  const r = resolveAccess({ email: who.startsWith('@') ? null : who, store, ceilings })
+interface ExplainResult {
+  who: string
+  boards: Record<string, string>
+  trace: { where: string; role: string; why: string; win?: boolean }[]
+}
+
+/** The resolver's trace as the server returned it - the winning step marked with
+ *  an arrow, the same verdict the dialog's Who-sees-what draws. */
+function renderExplain(r: ExplainResult): string {
   const lines: string[] = []
-  for (const step of r.trace) lines.push(`  ${step.where.padEnd(14)} ${step.role.padEnd(9)} ${step.why}`)
+  for (const step of r.trace)
+    lines.push(`  ${step.win ? '→' : ' '} ${step.where.padEnd(14)} ${step.role.padEnd(9)} ${step.why}`)
   const boards = Object.entries(r.boards)
   const readable = boards.filter(([, role]) => role !== 'none').length
   const writable = boards.filter(([, role]) => role === 'comment').length
-  for (const [b, role] of boards) lines.push(`  board ${b.padEnd(14)} ${role}`)
+  for (const [b, role] of boards) lines.push(`    board ${b.padEnd(14)} ${role}`)
   lines.push(`  → ${readable} of ${boards.length} board${boards.length === 1 ? '' : 's'}, may comment on ${writable}`)
   return lines.join('\n')
 }
@@ -125,8 +135,11 @@ export async function shareCommand(root: string, action: string, value: string |
     }
     case 'explain': {
       if (!value) throw new Error('explain needs a principal to explain')
-      const [roster, ceilings] = await Promise.all([api(root, 'GET', 'share/roster'), fetchCeilings(root)])
-      console.log(`\n${renderExplain(value, asStore(roster), ceilings)}\n`)
+      // ask the canvas's own resolver, not a local re-run: the server fills the
+      // owner role and explains a @domain through a synthetic member, and marks
+      // the winning step - the three things a local resolveAccess drops.
+      const r = await api(root, 'GET', `share/explain?who=${encodeURIComponent(value)}`) as ExplainResult
+      console.log(`\n${renderExplain(r)}\n`)
       return
     }
     case 'who': {
