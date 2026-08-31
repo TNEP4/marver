@@ -2,6 +2,18 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Fixed
+
+- **`marver share explain` now asks the canvas's own resolver.** It called
+  `resolveAccess` locally over the fetched roster, which drops the three things only the
+  server's `explain` route does - fills the owner role (a fresh owner was explained as an
+  ordinary ungranted person), explains a `@domain` through a synthetic member, and marks
+  the winning step. It now fetches `GET /__mv/api/share/explain?who=`, so the terminal and
+  the browser dialog can never disagree. `who` stays local (it lists only granted
+  non-owner principals, where a local resolve is identical).
+
 ## 0.12.0 - 2026-08-31
 
 ### Added
