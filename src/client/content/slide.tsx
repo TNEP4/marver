@@ -14,7 +14,7 @@
  * arms the entrance presets (`data-animate`, run once after the swap
  * settles - the stage adds `data-sl-entered`).
  */
-import { createContext, useContext, type CSSProperties, type ReactNode } from 'react'
+import { createContext, useContext, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { FONT_STACK } from './palette.ts'
 
 export const SLIDE_W = 1280
@@ -23,6 +23,23 @@ export const SLIDE_H = 720
 /** Img (and anything else that cares) asks: am I inside a slide? */
 export const SlideCtx = createContext(false)
 export const useInSlide = () => useContext(SlideCtx)
+
+/**
+ * Is slides mode live? The STAGE owns the answer: it stamps `data-sl-play`
+ * on <html> (boot: the `slides` URL param; thereafter its own messages).
+ * CSS reacts to the attribute natively; React components (Chart's entrance,
+ * Video's player mount) subscribe here - a MutationObserver over the
+ * documentElement attribute, so the contract is one attribute, one owner,
+ * observable by anyone.
+ */
+const subscribePlay = (cb: () => void) => {
+  if (typeof document === 'undefined') return () => {}
+  const mo = new MutationObserver(cb)
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-sl-play', 'data-sl-entered'] })
+  return () => mo.disconnect()
+}
+const readPlay = () => typeof document !== 'undefined' && document.documentElement.hasAttribute('data-sl-play')
+export const useSlidePlay = (): boolean => useSyncExternalStore(subscribePlay, readPlay, () => false)
 
 const SLIDE_CSS = `
 .sl-root {
