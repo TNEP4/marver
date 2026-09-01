@@ -21,6 +21,14 @@ const params = new URLSearchParams(location.search)
 // token systems, .dark for class-keyed ones (Tailwind/shadcn). Missing the class made
 // play render class-keyed apps light while the canvas showed them dark.
 const bootTheme = params.get('theme') ?? 'light'
+// slides mode (v1.5): the shell says so in the URL; the stage stamps the ONE
+// attribute the content primitives observe (data-sl-play lifts the rest-state
+// motion reset; data-sl-entered arms the entrance presets after each swap
+// settles). `tr=none` and prefers-reduced-motion both skip view transitions.
+const slidesMode = params.get('slides') === '1'
+const deckTransition = params.get('tr') ?? 'fade'
+if (slidesMode) document.documentElement.setAttribute('data-sl-play', '')
+const reducedMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
 document.documentElement.dataset.theme = bootTheme
 document.documentElement.classList.toggle('dark', bootTheme === 'dark')
 const startId = params.get('at') ?? ''
@@ -96,8 +104,16 @@ function Stage() {
       // a pick / anchor-resolve landing mid-swap then carries the old id and the shell
       // guards drop it instead of stamping it onto the wrong frame.
       const apply = () => { if (seq === swapSeq.current) { flushSync(() => { setErr(null); setMounted(next) }); current.current = id } }
-      if (document.startViewTransition) document.startViewTransition(apply)
-      else { apply(); document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' }) }
+      // slides: the entrance presets re-arm per swap - drop `entered`, swap,
+      // then re-add once the transition settles (or immediately without one)
+      if (slidesMode) document.documentElement.removeAttribute('data-sl-entered')
+      const entered = () => { if (slidesMode && seq === swapSeq.current) document.documentElement.setAttribute('data-sl-entered', '') }
+      const skipVt = reducedMotion || (slidesMode && deckTransition === 'none')
+      if (document.startViewTransition && !skipVt) {
+        const vt = document.startViewTransition(apply)
+        vt.finished.then(entered, entered)
+      } else if (skipVt) { apply(); entered() }
+      else { apply(); entered(); document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' }) }
       if (announce) post({ type: 'sh:stage-at', at: id })
     } catch (e) {
       if (seq !== swapSeq.current) return

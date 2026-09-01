@@ -129,6 +129,27 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
     }
 
     try {
+      if (path === 'policy' && req.method === 'GET') {
+        // dev-only policy preview (v1.5): the shell hydrates BOARD_POLICY from
+        // the repo's publish.json so an author sees slides mode exactly as
+        // viewers will. Lenient by design - dev preview, not enforcement.
+        try {
+          const raw = JSON.parse(readFileSync(join(root, 'design', 'publish.json'), 'utf8'))
+          const boards: Record<string, unknown> = {}
+          for (const [n, level] of Object.entries(raw?.boards ?? {})) {
+            if (typeof level !== 'object' || level === null) continue
+            const p2 = level as Record<string, unknown>
+            boards[n] = {
+              ...(typeof p2.type === 'string' ? { type: p2.type } : {}),
+              ...(typeof p2.open === 'string' ? { open: p2.open } : {}),
+              ...(p2.lock === true ? { lock: true } : {}),
+              ...(typeof p2.transition === 'string' ? { transition: p2.transition } : {}),
+              ...(typeof p2.chrome === 'string' ? { chrome: p2.chrome } : {}),
+            }
+          }
+          return json(res, 200, { boards })
+        } catch { return json(res, 200, { boards: {} }) }
+      }
       if (path === 'boards' && req.method === 'GET') {
         mkdirSync(boardsDir, { recursive: true })
         const list = readdirSync(boardsDir)

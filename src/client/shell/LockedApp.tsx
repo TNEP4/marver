@@ -11,7 +11,7 @@
  */
 import { Component, useEffect, useRef, type ReactNode } from 'react'
 import { useStore, boardLabel, landingMode } from './store.ts'
-import { enterFocus, enterPlay, PlayOverlay, playCtl } from './Play.tsx'
+import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { useComments } from './comments-store.ts'
 
@@ -43,6 +43,7 @@ export function App() {
     if (s.play) return
     const mode = landingMode(s.board)
     if (mode === 'focus') enterFocus()
+    else if (mode === 'slides') enterSlides()
     else enterPlay()
   }
 
@@ -56,6 +57,7 @@ export function App() {
       urlReady.current = true
       if (!ok) return
       if (bootHash.focus) enterFocus(bootHash.focus.at, { ...bootHash.focus, deep: true })
+      else if (bootHash.play?.slides) enterSlides(bootHash.play)
       else if (bootHash.play) enterPlay(bootHash.play)
       else land()
     }
@@ -86,6 +88,7 @@ export function App() {
         return
       }
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })
+      else if (h.play?.slides) enterSlides(h.play)
       else if (h.play && s.play) playCtl.sync(h.play)
       else if (h.play) enterPlay(h.play)
     }

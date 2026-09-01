@@ -1,11 +1,11 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, landingMode, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, hydrateBoardPolicy, landingMode, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
-import { enterFocus, enterPlay, playCtl, PlayOverlay } from './Play.tsx'
+import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
@@ -553,6 +553,14 @@ export function App() {
     if (booted) return
     booted = true
     const start = async () => {
+      if (!PUBLISHED) {
+        // dev: hydrate board policy (slides/type/open) from the repo so P and
+        // deep links preview exactly what viewers get
+        try {
+          const r = await fetch(`${ROUTE}/api/policy`)
+          if (r.ok) hydrateBoardPolicy(((await r.json()) as { boards?: Record<string, never> }).boards ?? {})
+        } catch { /* dev server without the route - fine */ }
+      }
       if (bootHash.board) {
         if (bootHash.board !== useStore.getState().board)   // a deep link wins
           useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
@@ -569,7 +577,8 @@ export function App() {
         // (01-sharing §6.1 step 3) - the stage mounts any manifest frame, so no
         // board lookup is needed
         enterFocus(bootHash.focus.at, { ...bootHash.focus, deep: true })
-      } else if (ok && bootHash.play) enterPlay(bootHash.play)     // #/p/<board> alone = board start
+      } else if (ok && bootHash.play?.slides) enterSlides(bootHash.play)
+      else if (ok && bootHash.play) enterPlay(bootHash.play)     // #/p/<board> alone = board start
       else if (ok && PUBLISHED) {
         // published landing: explicit `open` beats the type default; canvas and
         // board land on the canvas surface (board-scoped already); a lock will
@@ -577,6 +586,7 @@ export function App() {
         const mode = landingMode(useStore.getState().board)
         if (mode === 'present') enterPlay()
         else if (mode === 'focus') enterFocus()
+        else if (mode === 'slides') enterSlides()
       }
     }
     void start()
@@ -835,7 +845,7 @@ export function App() {
         else if (s.laser) s.setLaser(false)          // Escape also exits laser mode (parity with comment)
         else s.interact ? setInteract(null) : select(null)
       }
-      if (e.key === 'p') enterPlay()
+      if (e.key === 'p') { if (landingMode(useStore.getState().board) === 'slides') enterSlides(); else enterPlay() }
       // H hides all chrome (shared binary Hide-UI); press again to reveal. Not persisted,
       // so a refresh always restores it (the safety net for a forgotten toggle).
       if (e.key === 'h') { toggleHideUI(); return }

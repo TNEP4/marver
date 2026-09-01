@@ -30,7 +30,14 @@ export const PUBLISHED = DATA !== null
 export const SOURCE_REVEALED = DATA ? DATA.policy?.reveal?.source === true : true
 
 /** The published per-board artifact metadata (type, open, lock). Empty in dev. */
-export const BOARD_POLICY: Record<string, { type?: string; open?: string; lock?: boolean }> = DATA?.policy?.boards ?? {}
+export const BOARD_POLICY: Record<string, { type?: string; open?: string; lock?: boolean; transition?: string; chrome?: string }> = DATA?.policy?.boards ?? {}
+
+/** Dev-only hydration: the shell loads the repo's publish.json boards so an
+ *  author previews slides mode exactly as viewers will get it. Published
+ *  builds carry the policy inline and never call this. */
+export function hydrateBoardPolicy(boards: Record<string, { type?: string; open?: string; lock?: boolean; transition?: string; chrome?: string }>) {
+  for (const [k, v] of Object.entries(boards)) if (!BOARD_POLICY[k]) BOARD_POLICY[k] = v
+}
 
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
@@ -83,12 +90,11 @@ export function landingMode(board: string): 'canvas' | 'board' | 'present' | 'fo
   const p = BOARD_POLICY[board]
   if (!p) return 'canvas'
   if (p.open && ['canvas', 'board', 'present', 'focus', 'slides'].includes(p.open)) {
-    // slides is v1.5 - until the mode exists it lands in present, its nearest kin
-    return p.open === 'slides' ? 'present' : p.open as any
+    return p.open as any
   }
   switch (p.type) {
     case 'doc': return 'focus'
-    case 'slides': return 'present'          // slides mode is v1.5; present until then
+    case 'slides': return 'slides'
     case 'design': case 'sketch': case 'refs': return 'board'
     default: return 'canvas'
   }
@@ -101,7 +107,7 @@ export const boardLocked = (board: string): boolean => BOARD_POLICY[board]?.lock
 /** May this board enter `mode`? A lock freezes what open pinned - a board
  *  locked to canvas must refuse present just as one locked to present refuses
  *  canvas. Unlocked boards enter anything. */
-export const modeAllowed = (board: string, mode: 'present' | 'focus'): boolean =>
+export const modeAllowed = (board: string, mode: 'present' | 'focus' | 'slides'): boolean =>
   !boardLocked(board) || landingMode(board) === mode
 
 export { cap, humanize } from './labels.ts'
@@ -214,7 +220,7 @@ interface State {
    *  fourth mode): no walking, doc reading preset when the board type is doc.
    *  `deep` = entered by a frame deep link - the chrome then carries no board
    *  name and no canvas door (presentation default of the link, 04 §2.35). */
-  play: { at: string; device: string; theme: string; focus?: boolean; deep?: boolean } | null
+  play: { at: string; device: string; theme: string; focus?: boolean; deep?: boolean; slides?: boolean } | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   laser: boolean                      // laser/inspect mode: frames outline their structure
   board: string                       // active board name; 'all-scenes' is the auto board

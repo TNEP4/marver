@@ -1249,3 +1249,13 @@ body.sh-hide-ui .sh-play-hint { display: none !important }
   color: rgba(255,255,255,.92); font: 700 13px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em }
 /* the title row is flex, which swallows the JSX whitespace - the verb carries its own gap */
 .sh-jam-frame .v { color: var(--glass-ink-2); font-weight: 500; margin-left: 4px; flex: none }
+
+/* v1.5 slides mode: the slim progress strip + the zero-chrome escape hatch */
+.sh-gone { display: none !important }
+.sh-slides-strip { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 30;
+  display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px;
+  background: var(--glass); border: 1px solid var(--glass-brd); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
+.sh-slides-strip .n { font: 600 12px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); white-space: nowrap }
+.sh-slides-strip .bar { width: 140px; height: 3px; border-radius: 999px; background: var(--glass-hover); overflow: hidden }
+.sh-slides-strip .bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .25s ease }
+@media (max-width: 480px) { .sh-slides-strip .bar { width: 80px } }

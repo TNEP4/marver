@@ -20,7 +20,7 @@ export interface HashState {
   n?: string[]
   c?: string
   invite?: string
-  play?: { at?: string; device?: string; theme?: string }
+  play?: { at?: string; device?: string; theme?: string; slides?: boolean }
   /** A frame deep link: lands that visit in focus, over every other rule. */
   focus?: { at: string; device?: string; theme?: string }
 }
@@ -58,6 +58,7 @@ export function parseHash(hash: string = location.hash): HashState {
         at: params.get('at') ?? undefined,
         device: params.get('device') ?? undefined,
         theme: params.get('theme') ?? undefined,
+        ...(params.get('slides') === '1' ? { slides: true } : {}),
       },
     }
   } catch { return {} }   // a malformed hash (#/b/%) is a default view, never a crash
@@ -75,6 +76,7 @@ export function buildHash(s: HashState): string {
     const p = new URLSearchParams({ at: s.play.at })
     if (s.play.device) p.set('device', s.play.device)
     if (s.play.theme) p.set('theme', s.play.theme)
+    if (s.play.slides) p.set('slides', '1')
     return `#/p/${s.board}?${p}`
   }
   if (!s.board || (s.board === 'all-scenes' && !s.n?.length && !s.c)) return '#/'
