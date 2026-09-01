@@ -2,6 +2,35 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **Slides.** A deck is a scene of `slide: true` frames: 1280×720 on the
+  canvas, the slide badge, and a real slides mode - full-bleed, arrows /
+  Space / click to advance, a slim progress strip, and **the board as the
+  sorter** (the deck plays in the board's reading order; drag to reorder).
+  Publish with `"type": "slides", "open": "slides"` plus `transition`
+  (`fade | none`) and `chrome` (`minimal | none`); viewers land straight in
+  the deck and the URL survives refresh. The full guide is
+  [docs/slides.md](docs/slides.md).
+- **The `Slide` root, `Chart`, and `Video` content primitives.** One root
+  owns the stage, theme-derived tokens, and type roles; `Chart` is Apache
+  ECharts (SVG, lazy chunk, house-themed, animation stripped at rest);
+  `Video` is poster-first with a glass control strip in play mode. The
+  motion contract is a build guarantee: a resting slide serializes to the
+  canvas's lean path - no canvas/video elements, no running animation -
+  so a 40-slide deck pans like 40 statics.
+- **Motion as the diff.** `view-transition-name` morphs between adjacent
+  slides are the animation system; build steps are sibling frames; three
+  one-shot entrance presets (`data-animate`) run after each transition
+  settles. Reduced motion flattens everything.
+- **The slides doctrine.** `marver init` ships
+  `design/instructions/slides.md` - assertion-first argument, the type
+  scale, 19 layout recipes with budgets and morph anchors, the choreography
+  rules, and a review gate - plus your project-owned `design/slides.md`
+  which overrides it and survives every upgrade.
+
 ## 0.13.0 - 2026-09-01
 
 ### Added
