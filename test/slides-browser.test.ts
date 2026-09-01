@@ -32,7 +32,7 @@ export const meta = { title: ${JSON.stringify(title)}, slide: true }
 export default function F() {
   return (
     <Slide>
-      <h1 className="sl-assertion" data-animate="fade-up">${title}</h1>
+      <h1 className="sl-assertion" style={{ viewTransitionName: 'headline' }} data-animate="fade-up">${title}</h1>
       ${body}
     </Slide>
   )
@@ -62,7 +62,7 @@ export const meta = { title: 'Motion', slide: true }
 export default function F() {
   return (
     <Slide>
-      <h1 className="sl-assertion">Motion</h1>
+      <h1 className="sl-assertion" style={{ viewTransitionName: 'headline' }} data-animate="fade-up">Motion</h1>
       <Video src="clip.mp4" poster="clip.png" />
     </Slide>
   )
@@ -92,7 +92,7 @@ beforeAll(async () => {
   symlinkSync(repoRoot, join(nm, '@marver-design', 'marver'))
   const deck = join(root, 'design', 'scenes', 'deck')
   mkdirSync(deck, { recursive: true })
-  writeFileSync(join(deck, '01-open.tsx'), slide('The opening', '<p className="sl-support">still at rest</p>'))
+  writeFileSync(join(deck, '01-open.tsx'), slide('The opening', '<p className="sl-support" data-animate="fade" data-animate-delay="1">still at rest</p>'))
   writeFileSync(join(deck, '02-chart.tsx'), chartSlide)
   writeFileSync(join(deck, '03-video.tsx'), videoSlide)
   const assets = join(root, 'design', 'assets')
@@ -172,10 +172,21 @@ describe('slides in a real published browser', () => {
     // the live stage carries the contract attributes the primitives react to
     await browser!.until(tab, `document.querySelector('.sh-play iframe')?.contentDocument?.documentElement?.hasAttribute('data-sl-play')`)
     await browser!.until(tab, `document.querySelector('.sh-play iframe')?.contentDocument?.documentElement?.hasAttribute('data-sl-entered')`)
+    // one transform owner, on entry too: the morph-named h1 loses data-animate,
+    // while the plain entrance <p> keeps it and lands fully visible
+    const doc = `document.querySelector('.sh-play iframe').contentDocument`
+    expect(await browser!.eval(tab, `${doc}.querySelector('h1').hasAttribute('data-animate')`)).toBe(false)
+    await browser!.until(tab, `${doc}.defaultView.getComputedStyle(${doc}.querySelector('p[data-animate]')).opacity === '1'`)
     // frozen order is (y, x): 01-open → 03-video (same row) → 02-chart (row 2)
     await key('ArrowRight')(tab)
     await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '2 / 3'`)
     expect(await browser!.eval(tab, `location.hash`)).toContain(encodeURIComponent('deck/03-video'))
+    // the morphed headline arrived with data-animate stripped BEFORE the new
+    // capture - it must be fully visible once the swap settles, never
+    // transparent-then-popping (the codex P1: capture-timing regression)
+    await browser!.until(tab, `document.querySelector('.sh-play iframe')?.contentDocument?.documentElement?.hasAttribute('data-sl-entered')`)
+    expect(await browser!.eval(tab, `${doc}.querySelector('h1').hasAttribute('data-animate')`)).toBe(false)
+    await browser!.until(tab, `${doc}.defaultView.getComputedStyle(${doc}.querySelector('h1')).opacity === '1'`)
     await key(' ')(tab)
     await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '3 / 3'`)
     expect(await browser!.eval(tab, `location.hash`)).toContain(encodeURIComponent('deck/02-chart'))
