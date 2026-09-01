@@ -459,9 +459,12 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
   p.lead { margin: 0; padding: 0 4px; font-size: 12.5px; line-height: 1.5;
            color: rgba(24,24,27,.66) }
   p.lead strong { color: #18181b; font-weight: 600 }
-  a.cta { height: 40px; border-radius: 999px; background: #18181b; color: #fafafa;
-          font: 600 13px -apple-system, system-ui, sans-serif; text-decoration: none;
-          display: flex; align-items: center; justify-content: center }
+  /* .cta, not a.cta: the request-access <button> wears the same dark pill as the
+     switch-account <a> - scoping to the tag left the button naked (a flat native
+     strip that read as disabled) */
+  .cta { height: 40px; border-radius: 999px; background: #18181b; color: #fafafa;
+         font: 600 13px -apple-system, system-ui, sans-serif; text-decoration: none;
+         display: flex; align-items: center; justify-content: center }
   footer a { display: inline-flex; align-items: center; gap: 7px;
              font: 600 12.5px -apple-system, system-ui, sans-serif;
              color: rgba(24,24,27,.5); text-decoration: none }
