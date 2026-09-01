@@ -447,7 +447,10 @@ export const useStore = create<State>((set, get) => {
               key,
               frame: n.frame,
               x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
-              w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
+              // slides are pinned to the intrinsic: stored w/h from boards saved
+              // under any other precedence would clip the fixed 1280×720 root
+              w: f?.slide ? d.w : typeof n.w === 'number' ? n.w : d.w,
+              h: f?.slide ? d.h : typeof n.h === 'number' ? n.h : d.h,
               ...(!f && typeof n.w !== 'number' && typeof n.h !== 'number' ? { sizeFallback: true } : {}),
               ...sizeMode,
               // pins persist as their own field (exact round-trip). Legacy boards stored a
@@ -860,7 +863,8 @@ export const useStore = create<State>((set, get) => {
         const nodes = s.nodes.map((n) => {
           const f = s.manifest?.frames.find((x) => x.id === n.frame)
           const content = !!f?.contentWidth
-          if (vp) return { ...n, w: vp.width, h: vp.height, ...(content ? { sizeMode: 'device' as const } : {}) }
+          // a device sweep never resizes a slide - the deck has ONE size
+          if (vp) return f?.slide ? n : { ...n, w: vp.width, h: vp.height, ...(content ? { sizeMode: 'device' as const } : {}) }
           // digit 0 on a CONTENT frame = back to auto: measured size, remeasure ahead
           const b = s.baseLayout?.[n.key]
           if (content && f) {
@@ -918,7 +922,8 @@ export const useStore = create<State>((set, get) => {
           if (!sel.has(n.key)) return n
           const f = s.manifest?.frames.find((x) => x.id === n.frame)
           const content = !!f?.contentWidth
-          if (vp) return { ...n, w: vp.width, h: vp.height, ...(content ? { sizeMode: 'device' as const } : {}) }
+          // a device sweep never resizes a slide - the deck has ONE size
+          if (vp) return f?.slide ? n : { ...n, w: vp.width, h: vp.height, ...(content ? { sizeMode: 'device' as const } : {}) }
           if (!f) return n
           const d = defaultSize(f)
           // digit 0 on a content frame clears provenance back to auto

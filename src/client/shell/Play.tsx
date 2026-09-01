@@ -638,7 +638,7 @@ function PlayInner() {
             <button className="sh-pill-btn" onClick={exit}><GridIcon size={16} /></button>
           </Tip>
         )}
-        {BRANDING && PUBLISHED && (
+        {BRANDING && PUBLISHED && !slides && (
           <Tip side="bottom" label={<b>Open in app</b>}>
             <a className="sh-pill-btn" href="https://app.marver.design" target="_blank" rel="noopener" aria-label="Open in app">
               <BrowsersIcon size={16} />

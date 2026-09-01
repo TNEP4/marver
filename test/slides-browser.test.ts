@@ -110,11 +110,13 @@ beforeAll(async () => {
   ]
   writeFileSync(join(boards, 'show.json'), JSON.stringify({ version: 1, name: 'show', order: 1, nodes }))
   writeFileSync(join(boards, 'rest.json'), JSON.stringify({ version: 1, name: 'rest', order: 2, nodes }))
+  writeFileSync(join(boards, 'pres.json'), JSON.stringify({ version: 1, name: 'pres', order: 3, nodes }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({
     version: 2,
     boards: {
       show: { max: 'read', type: 'slides' },                    // lands straight in slides mode
       rest: { max: 'read', type: 'slides', open: 'canvas' },    // the board surface - the resting state
+      pres: { max: 'read', open: 'present' },                   // the CONTROL: full present chrome
     },
   }))
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
@@ -161,6 +163,10 @@ describe('slides in a real published browser', () => {
     }
     // the chart really rendered (as SVG) rather than silently not mounting
     expect(audit.some((a: { svgs: number }) => a.svgs > 0)).toBe(true)
+    // the board JSON deliberately stores 640×360 on these nodes: slides are
+    // PINNED to the intrinsic on load - a stored size must never clip the root
+    const widths = await browser!.eval(tab, `[...document.querySelectorAll('.sh-node')].map((n) => n.offsetWidth)`)
+    expect(widths).toEqual([1280, 1280, 1280])
   })
 
   skippable('a slides board lands in slides mode, steps the frozen (y,x) order, and the stage wears the play contract', async () => {
@@ -221,10 +227,19 @@ describe('slides in a real published browser', () => {
     const tab = await browser!.tab({ width: 1600, height: 1000 })
     await browser!.go(tab, `${base}/#/b/show`)
     await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
-    // no device/theme pickers (.sh-theme wraps both), no walker, no dup position
+    // no device/theme pickers (.sh-theme wraps both), no walker, no dup
+    // position, no "Open in app" - the present chrome stays in present mode
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-pill .sh-theme')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-nav')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-pos')`)).toBe(false)
+    expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(false)
+    // the CONTROL: the same build's present board DOES carry those tools -
+    // the absences above are the slides trim, not a fixture without chrome
+    const ctl = await browser!.tab({ width: 1600, height: 1000 })
+    await browser!.go(ctl, `${base}/#/b/pres`)
+    await browser!.until(ctl, `!!document.querySelector('.sh-play-nav')`)
+    expect(await browser!.eval(ctl, `!!document.querySelector('.sh-play-pill .sh-theme')`)).toBe(true)
+    expect(await browser!.eval(ctl, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(true)
   })
 
   skippable('slides mode survives a refresh mid-deck via the hash', async () => {
