@@ -45,7 +45,7 @@ let chain: Promise<void> = Promise.resolve()
 /** WHO and WHAT an activity mail may say (07-v1.1 §D amendment 2): a bounded
  *  actor display name and comment snippet, riding the signed token. The relay
  *  re-bounds and HTML-escapes; the caps here just keep tokens small. */
-export interface MailContent { actor?: string; snippet?: string }
+export interface MailContent { actor?: string; snippet?: string; link?: string }
 
 const capped = (s: string | undefined, cap: number): string | undefined => {
   const t = s?.replace(/\s+/g, ' ').trim()
@@ -58,6 +58,7 @@ export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: 
   const { dataDir, origin } = ctx
   const actor = capped(content?.actor, 60)
   const snippet = capped(content?.snippet, 180)
+  const link = content?.link && content.link.length <= 160 ? content.link : undefined
   const url = `${ctx.issuer.replace(/\/+$/, '')}/relay/notify`
   // the token is minted WHEN its turn in the chain comes, not at enqueue - a
   // deep queue must never dispatch an already-expired credential
@@ -67,7 +68,7 @@ export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: 
     try {
       token = signCanvasJws(dataDir, {
         origin, template, recipient, eventId, iat: now, exp: now + 600,
-        ...(actor ? { actor } : {}), ...(snippet ? { snippet } : {}),
+        ...(actor ? { actor } : {}), ...(snippet ? { snippet } : {}), ...(link ? { link } : {}),
       }, 'marver-relay+jwt')
     } catch { return }                                // no identity key yet - nothing to sign with
     return fetch(url, {
@@ -102,7 +103,7 @@ export function notifyCommentActivity(
 ): void {
   if (!ctx.enabled || !ctx.issuer || !ctx.origin) return
   for (const [eventId, job] of activityJobs(board, accepted, log, allowed, Date.now()))
-    relayNotify(ctx, job.template, job.recipient, eventId, { actor: job.actor, snippet: job.snippet })
+    relayNotify(ctx, job.template, job.recipient, eventId, { actor: job.actor, snippet: job.snippet, link: job.link })
 }
 
 /** The pure half: which (template, recipient, transition) a batch owes. Split
@@ -110,8 +111,12 @@ export function notifyCommentActivity(
 export function activityJobs(
   board: string, accepted: CommentEvent[], log: CommentEvent[],
   allowed: (email: string) => boolean, now: number,
-): Map<string, { template: RelayTemplate; recipient: string; actor?: string; snippet?: string }> {
-  const jobs = new Map<string, { template: RelayTemplate; recipient: string; actor?: string; snippet?: string }>()
+): Map<string, { template: RelayTemplate; recipient: string; actor?: string; snippet?: string; link?: string }> {
+  const jobs = new Map<string, { template: RelayTemplate; recipient: string; actor?: string; snippet?: string; link?: string }>()
+  // the canvas's own thread deep link (hash.ts: #/b/<board>?c=<id>) - the mail
+  // CTA lands ON the conversation, not just the front door
+  const threadLink = (threadId: string | undefined) =>
+    threadId ? `/#/b/${encodeURIComponent(board)}?c=${encodeURIComponent(threadId)}` : undefined
   for (const ev of accepted) {
     if ((ev.type !== 'create' && ev.type !== 'reply') || Math.abs(now - ev.ts) > FRESH_MS) continue
     const author = ev.author?.email?.toLowerCase()
@@ -121,7 +126,8 @@ export function activityJobs(
       if (!email || email === author || !allowed(email)) continue
       mentioned.add(email)
       jobs.set(transitionId('mention', email, board, ev.commentId ?? ev.id),
-        { template: 'mentioned', recipient: email, actor: ev.author?.name, snippet: ev.body })
+        { template: 'mentioned', recipient: email, actor: ev.author?.name, snippet: ev.body,
+          link: threadLink(ev.type === 'reply' ? ev.parentId : ev.commentId) })
     }
     if (ev.type !== 'reply' || !ev.parentId) continue
     // thread participants, most recent first: prior replies to this thread + its root.
@@ -138,7 +144,7 @@ export function activityJobs(
     for (const email of recent) {
       if (!allowed(email)) continue
       jobs.set(transitionId('reply', email, board, ev.parentId, window),
-        { template: 'reply', recipient: email, actor: ev.author?.name, snippet: ev.body })
+        { template: 'reply', recipient: email, actor: ev.author?.name, snippet: ev.body, link: threadLink(ev.parentId) })
     }
   }
   return jobs
