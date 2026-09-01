@@ -11,7 +11,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Space / click to advance, a slim progress strip, and **the board as the
   sorter** (the deck plays in the board's reading order; drag to reorder).
   Publish with `"type": "slides", "open": "slides"` plus `transition`
-  (`fade | none`) and `chrome` (`minimal | none`); viewers land straight in
+  (`fade | none`) and `chrome` (`full | minimal | none`, full = the standard
+  prototype chrome); viewers land straight in
   the deck and the URL survives refresh. The full guide is
   [docs/slides.md](docs/slides.md).
 - **The `Slide` root, `Chart`, and `Video` content primitives.** One root

@@ -30,11 +30,13 @@ Publish it with:
 
 ```json
 { "boards": { "pitch": { "max": "comment", "type": "slides",
-  "open": "slides", "transition": "fade", "chrome": "minimal" } } }
+  "open": "slides", "transition": "fade" } } }
 ```
 
 - `transition`: `fade` (default) or `none`.
-- `chrome`: `minimal` (progress strip + comments) or `none`.
+- `chrome`: `full` (default - the standard prototype chrome: comment, laser,
+  theme, device including fill, the bottom-left walker, plus the progress
+  strip), `minimal` (progress strip + comments only), or `none` (bare stage).
 - Add `"lock": true` to share ONLY the deck (no canvas shell in the bundle).
 
 Viewers land straight in the deck; the URL survives refresh and back.

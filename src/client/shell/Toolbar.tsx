@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useStore, CONFIG, SOURCE_REVEALED, cap } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { Tip } from './Tip.tsx'
-import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SlideFrameIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -153,18 +153,20 @@ export function HideUIButton() {
 /** Controlled device dropdown. `value` is the active device name ('fill' allowed when
  *  includeFill), null = default/mixed. The trigger + menu chrome is shared; the adapter
  *  owns what select does. */
-export function DevicePicker({ value, onSelect, includeDefault, includeFill, hint, dark }: {
+export function DevicePicker({ value, onSelect, includeDefault, includeFill, includeSlide, hint, dark }: {
   value: string | null
   onSelect: (name: string | null) => void
   includeDefault?: boolean
   includeFill?: boolean
+  /** slides mode: the deck's own 1280×720 stage as a first-class device */
+  includeSlide?: boolean
   hint?: ReactNode
   dark?: boolean
 }) {
   const pop = usePopover()
   const entries = Object.entries(CONFIG.viewports)
   const pick = (name: string | null) => { onSelect(name); pop.setOpen(false) }
-  const triggerIcon = value === 'fill' ? <FrameCornersIcon size={16} /> : deviceIcon(value, 16)
+  const triggerIcon = value === 'fill' ? <FrameCornersIcon size={16} /> : value === 'slide' ? <SlideFrameIcon size={16} /> : deviceIcon(value, 16)
   return (
     <div className="sh-theme" ref={pop.boxRef}>
       <Tip side="bottom" label={<><b>Device view</b>{hint && <span>{hint}</span>}</>}>
@@ -174,6 +176,13 @@ export function DevicePicker({ value, onSelect, includeDefault, includeFill, hin
         </button>
       </Tip>
       <Popover pop={pop} dark={dark}>
+        {includeSlide && <>
+          <button onClick={() => pick('slide')} title="1280 × 720">
+            <SlideFrameIcon size={15} /><span>Slide</span>
+            {value === 'slide' && <CheckIcon size={13} className="chk" />}
+          </button>
+          <i className="div" />
+        </>}
         {includeDefault && <>
           <button onClick={() => pick(null)}>
             <DevicesIcon size={15} /><span>Default</span><kbd>0</kbd>

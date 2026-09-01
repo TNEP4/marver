@@ -91,7 +91,7 @@ export const VIEW_MODES = ['canvas', 'board', 'present', 'focus', 'slides'] as c
 export type ViewMode = typeof VIEW_MODES[number]
 
 export const DECK_TRANSITIONS = ['fade', 'none'] as const
-export const DECK_CHROME = ['minimal', 'none'] as const
+export const DECK_CHROME = ['full', 'minimal', 'none'] as const   // full (default) = the standard prototype chrome
 export interface BoardPolicy {
   max: 'read' | 'comment'; type: ArtifactType; open?: ViewMode; lock?: boolean
   /** Slides mode (v1.5): the deck's one transition and its chrome level. */

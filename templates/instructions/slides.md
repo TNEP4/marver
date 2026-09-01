@@ -175,12 +175,13 @@ order - rearrange the board to reorder the deck. Publish with:
 
 ```json
 { "boards": { "pitch": { "max": "comment", "type": "slides",
-  "open": "slides", "transition": "fade", "chrome": "minimal" } } }
+  "open": "slides", "transition": "fade" } } }
 ```
 
-`transition`: `fade` (default) or `none`. `chrome`: `minimal` (progress
-strip + comments) or `none`. Add `"lock": true` for a share that is ONLY
-the deck.
+`transition`: `fade` (default) or `none`. `chrome`: `full` (default - the
+standard prototype toolbars + the progress strip), `minimal` (progress
+strip + comments only), or `none`. Add `"lock": true` for a share that is
+ONLY the deck.
 
 ## The living list - `design/slides.md`
 

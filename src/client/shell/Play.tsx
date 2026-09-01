@@ -51,7 +51,7 @@ function currentDeck(): string[] {
   return frozenDeck
 }
 
-export function enterSlides(over?: { at?: string; theme?: string }) {
+export function enterSlides(over?: { at?: string; device?: string; theme?: string }) {
   const s = useStore.getState()
   if (!modeAllowed(s.board, 'slides')) return
   const frames = new Map((s.manifest?.frames ?? []).map((f) => [f.id, f]))
@@ -62,7 +62,10 @@ export function enterSlides(over?: { at?: string; theme?: string }) {
   const at = over?.at && deck.includes(over.at) ? over.at : deck[0]
   const frame = s.manifest?.frames.find((f) => f.id === at)
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined) ?? frame?.theme ?? s.viewTheme
-  s.setPlay({ at, device: 'slide', theme, slides: true })
+  // the deck's own stage is the default device; a restored link may carry a
+  // picked viewport or fill - the standard prototype picker works in slides
+  const device = over?.device && (CONFIG.viewports[over.device] || over.device === 'fill' || over.device === 'slide') ? over.device : 'slide'
+  s.setPlay({ at, device, theme, slides: true })
 }
 
 /** Enter play on the current board: first selected node starts, else the first node.
@@ -298,7 +301,9 @@ function PlayInner() {
   // links both drop the canvas door (lock as policy, deep as the link's chrome)
   const focus = !!play?.focus
   const slides = !!play?.slides
-  const deckChrome = BOARD_POLICY[board]?.chrome === 'none' ? 'none' : 'minimal'
+  const rawChrome = BOARD_POLICY[board]?.chrome
+  const deckChrome = rawChrome === 'none' || rawChrome === 'minimal' ? rawChrome : 'full'
+  const trimmed = slides && deckChrome !== 'full'   // minimal|none: strip the present tools
   const docPreset = focus && BOARD_POLICY[board]?.type === 'doc'
   const locked = boardLocked(board)
   const noDoor = locked || !!play?.deep
@@ -337,7 +342,7 @@ function PlayInner() {
 
   const setDevice = (name: string) => {
     const p = useStore.getState().play
-    if (p && (CONFIG.viewports[name] || name === 'fill')) useStore.getState().setPlay({ ...p, device: name })
+    if (p && (CONFIG.viewports[name] || name === 'fill' || (name === 'slide' && p.slides))) useStore.getState().setPlay({ ...p, device: name })
   }
   const setTheme = (t: string) => {
     const p = useStore.getState().play
@@ -351,9 +356,16 @@ function PlayInner() {
     const p = useStore.getState().play
     if (!p || p.focus) return                  // focus is one frame - no walking
     if (p.slides) {
-      // a deck never wraps: past the last slide is the end, before the first is the start
+      // a deck never wraps: past the last slide is the end, before the first is
+      // the start. A variant swap can put `at` off the frozen deck - step from
+      // its group's deck position, not from the top
       const deck = currentDeck()
-      const i = deck.indexOf(p.at)
+      let i = deck.indexOf(p.at)
+      if (i === -1) {
+        const frames = useStore.getState().manifest?.frames ?? []
+        const g = frames.find((f) => f.id === p.at)?.variantGroup
+        if (g) i = deck.findIndex((id) => frames.find((f) => f.id === id)?.variantGroup === g)
+      }
       const next = i === -1 ? deck[0] : deck[Math.min(deck.length - 1, Math.max(0, i + dir))]
       if (next && next !== p.at) goTo(next)
       return
@@ -485,8 +497,8 @@ function PlayInner() {
     if (key === 'ArrowRight') { step(1); return }
     if (key === 'ArrowLeft') { step(-1); return }
     if (key === ' ' && useStore.getState().play?.slides) { step(1); return }
-    if (key === '[') { if (!useStore.getState().play?.slides) switchVariant(-1); return }
-    if (key === ']') { if (!useStore.getState().play?.slides) switchVariant(1); return }
+    if (key === '[') { switchVariant(-1); return }
+    if (key === ']') { switchVariant(1); return }
     if (key === 'r') { restart(); return }
     if (key === 'h') { toggleHideUI(); return }
     if (key === 'l' && SOURCE_REVEALED) { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
@@ -528,12 +540,13 @@ function PlayInner() {
 
   // doc preset: reading width, natural document scrolling - the iframe takes the
   // window's height at min(width, 860) CSS pixels, unscaled, and scrolls itself
+  const slideDev = slides && play.device === 'slide'
   const vp = docPreset ? { width: Math.min(win.w, 860), height: win.h }
     : fill ? { width: win.w, height: win.h }
-    : slides ? { width: SLIDE_INTRINSIC.width, height: SLIDE_INTRINSIC.height }
-    : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
+    : slideDev ? { width: SLIDE_INTRINSIC.width, height: SLIDE_INTRINSIC.height }
+    : CONFIG.viewports[play.device] ?? (slides ? { width: SLIDE_INTRINSIC.width, height: SLIDE_INTRINSIC.height } : Object.values(CONFIG.viewports)[0])
   const scale = fill || docPreset ? 1
-    : slides ? Math.min(1, (win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
+    : slideDev ? Math.min(1, (win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
     : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   const names = Object.keys(CONFIG.viewports)
   const list = focus ? [play.at] : slides ? currentDeck() : playList()
@@ -574,7 +587,7 @@ function PlayInner() {
         <div className="sh-play-hint">← → to step · <kbd>c</kbd> to comment</div>
       )}
       {/* slides mode: the slim progress strip - count + a thin fill bar */}
-      {slides && deckChrome === 'minimal' && (
+      {slides && deckChrome !== 'none' && (
         <div className="sh-slides-strip" aria-label={`slide ${pos + 1} of ${list.length}`}>
           <span className="n">{pos === -1 ? '·' : pos + 1} / {list.length}</span>
           <span className="bar"><i style={{ width: `${list.length > 1 ? Math.max(2, ((pos + 1) / list.length) * 100) : 100}%` }} /></span>
@@ -610,10 +623,10 @@ function PlayInner() {
           <i className="sep" />
         </>}
         <CommentButton />
-        {!slides && <>
+        {!trimmed && <>
           <LaserButton />
           <i className="sep" />
-          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill hint={deviceHint} dark />}
+          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill includeSlide={slides} hint={deviceHint} dark />}
           <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
         </>}
         {playUpdateRevision && <>
@@ -622,7 +635,7 @@ function PlayInner() {
             <button className="sh-pill-btn sh-play-update" onClick={applyUpdate}><ReloadIcon size={13} /><span>Update</span></button>
           </Tip>
         </>}
-        {!slides && <>
+        {!trimmed && <>
         <i className="sep" />
         <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything · ⌘/</span></>}>
@@ -638,7 +651,7 @@ function PlayInner() {
             <button className="sh-pill-btn" onClick={exit}><GridIcon size={16} /></button>
           </Tip>
         )}
-        {BRANDING && PUBLISHED && !slides && (
+        {BRANDING && PUBLISHED && !trimmed && (
           <Tip side="bottom" label={<b>Open in app</b>}>
             <a className="sh-pill-btn" href="https://app.marver.design" target="_blank" rel="noopener" aria-label="Open in app">
               <BrowsersIcon size={16} />
@@ -654,7 +667,7 @@ function PlayInner() {
       </Tip>
       )}
 
-      {!focus && !slides && <div className="sh-play-nav">
+      {!focus && !trimmed && <div className="sh-play-nav">
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
           <button onClick={restart}><ReloadIcon size={14} /></button>
         </Tip>

@@ -110,13 +110,13 @@ beforeAll(async () => {
   ]
   writeFileSync(join(boards, 'show.json'), JSON.stringify({ version: 1, name: 'show', order: 1, nodes }))
   writeFileSync(join(boards, 'rest.json'), JSON.stringify({ version: 1, name: 'rest', order: 2, nodes }))
-  writeFileSync(join(boards, 'pres.json'), JSON.stringify({ version: 1, name: 'pres', order: 3, nodes }))
+  writeFileSync(join(boards, 'trim.json'), JSON.stringify({ version: 1, name: 'trim', order: 3, nodes }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({
     version: 2,
     boards: {
-      show: { max: 'read', type: 'slides' },                    // lands straight in slides mode
+      show: { max: 'read', type: 'slides' },                    // lands in slides, FULL chrome (default)
       rest: { max: 'read', type: 'slides', open: 'canvas' },    // the board surface - the resting state
-      pres: { max: 'read', open: 'present' },                   // the CONTROL: full present chrome
+      trim: { max: 'read', type: 'slides', chrome: 'minimal' }, // the publish-time trim
     },
   }))
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
@@ -223,23 +223,32 @@ describe('slides in a real published browser', () => {
     await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '1 / 3'`)
   })
 
-  skippable('slides chrome is the doctrine: no laser/theme/device tools, no board navigator', async () => {
+  skippable('slides wears the FULL prototype chrome by default: toolbars, theme, devices incl. fill', async () => {
     const tab = await browser!.tab({ width: 1600, height: 1000 })
     await browser!.go(tab, `${base}/#/b/show`)
     await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
-    // no device/theme pickers (.sh-theme wraps both), no walker, no dup
-    // position, no "Open in app" - the present chrome stays in present mode
+    // the classic top-right pill (device+theme pickers, .sh-theme wraps both)
+    // AND the classic bottom-left walker - slides use the actual play UI
+    expect(await browser!.eval(tab, `document.querySelectorAll('.sh-play-pill .sh-theme').length`)).toBe(2)
+    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-nav')`)).toBe(true)
+    expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(true)
+    // D flips the theme live (the hash follows), digit 5 = fill window
+    await key('d')(tab)
+    await browser!.until(tab, `location.hash.includes('theme=dark')`)
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', key: '5', code: 'Digit5' }, tab)
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', key: '5', code: 'Digit5' }, tab)
+    await browser!.until(tab, `location.hash.includes('device=fill')`)
+    const w = await browser!.eval(tab, `document.querySelector('.sh-play .dev iframe')?.getBoundingClientRect().width`)
+    expect(w).toBe(1600)
+  })
+
+  skippable('chrome: "minimal" trims to the strip + comments; the default board is its control', async () => {
+    const tab = await browser!.tab({ width: 1600, height: 1000 })
+    await browser!.go(tab, `${base}/#/b/trim`)
+    await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-pill .sh-theme')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-nav')`)).toBe(false)
-    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-pos')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(false)
-    // the CONTROL: the same build's present board DOES carry those tools -
-    // the absences above are the slides trim, not a fixture without chrome
-    const ctl = await browser!.tab({ width: 1600, height: 1000 })
-    await browser!.go(ctl, `${base}/#/b/pres`)
-    await browser!.until(ctl, `!!document.querySelector('.sh-play-nav')`)
-    expect(await browser!.eval(ctl, `!!document.querySelector('.sh-play-pill .sh-theme')`)).toBe(true)
-    expect(await browser!.eval(ctl, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(true)
   })
 
   skippable('slides mode survives a refresh mid-deck via the hash', async () => {
