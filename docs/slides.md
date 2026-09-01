@@ -41,7 +41,7 @@ Publish it with:
 - `transition`: `fade` (default) or `none`.
 - `chrome`: `full` (default - the standard prototype chrome: the top-right
   toolbar with comment, laser, theme, and devices including fill, plus the
-  bottom-left walker; published decks also carry the brand pill), `minimal`
+  bottom-left walker; a locked deck-only share also carries the brand pill), `minimal`
   (brand pill + a slim progress strip + comments only), or `none` (bare
   stage).
 - Add `"lock": true` to share ONLY the deck (no canvas shell in the bundle).

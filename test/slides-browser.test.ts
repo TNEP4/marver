@@ -111,12 +111,14 @@ beforeAll(async () => {
   writeFileSync(join(boards, 'show.json'), JSON.stringify({ version: 1, name: 'show', order: 1, nodes }))
   writeFileSync(join(boards, 'rest.json'), JSON.stringify({ version: 1, name: 'rest', order: 2, nodes }))
   writeFileSync(join(boards, 'trim.json'), JSON.stringify({ version: 1, name: 'trim', order: 3, nodes }))
+  writeFileSync(join(boards, 'share.json'), JSON.stringify({ version: 1, name: 'share', order: 4, nodes }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({
     version: 2,
     boards: {
       show: { max: 'read', type: 'slides' },                    // lands in slides, FULL chrome (default)
       rest: { max: 'read', type: 'slides', open: 'canvas' },    // the board surface - the resting state
       trim: { max: 'read', type: 'slides', chrome: 'minimal' }, // the publish-time trim
+      share: { max: 'read', type: 'slides', open: 'slides', lock: true },  // the deck-only share link
     },
   }))
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
@@ -236,7 +238,12 @@ describe('slides in a real published browser', () => {
     expect(await browser!.eval(tab, `document.querySelectorAll('.sh-play-pill .sh-theme').length`)).toBe(2)
     expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(true)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-slides-strip')`)).toBe(false)
-    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-brand')`)).toBe(true)   // this IS the published share
+    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-brand')`)).toBe(false)  // toolbars name the place
+    // the brand pill belongs to the LOCKED deck-only share, where no canvas door exists
+    const share = await browser!.tab({ width: 1600, height: 1000 })
+    await browser!.go(share, `${base}/#/b/share`)
+    await browser!.until(share, `!!document.querySelector('.sh-play-nav')`)
+    expect(await browser!.eval(share, `!!document.querySelector('.sh-play-brand')`)).toBe(true)
     // D flips the theme live (the hash follows), digit 5 = fill window
     await key('d')(tab)
     await browser!.until(tab, `location.hash.includes('theme=dark')`)
@@ -261,7 +268,7 @@ describe('slides in a real published browser', () => {
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-pill .sh-theme')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-nav')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(false)
-    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-brand')`)).toBe(true)   // the share keeps its name
+    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-brand')`)).toBe(false)
   })
 
   skippable('slides mode survives a refresh mid-deck via the hash', async () => {
