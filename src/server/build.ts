@@ -71,7 +71,14 @@ export type ArtifactType = typeof ARTIFACT_TYPES[number]
 export const VIEW_MODES = ['canvas', 'board', 'present', 'focus', 'slides'] as const
 export type ViewMode = typeof VIEW_MODES[number]
 
-export interface BoardPolicy { max: 'read' | 'comment'; type: ArtifactType; open?: ViewMode; lock?: boolean }
+export const DECK_TRANSITIONS = ['fade', 'none'] as const
+export const DECK_CHROME = ['minimal', 'none'] as const
+export interface BoardPolicy {
+  max: 'read' | 'comment'; type: ArtifactType; open?: ViewMode; lock?: boolean
+  /** Slides mode (v1.5): the deck's one transition and its chrome level. */
+  transition?: typeof DECK_TRANSITIONS[number]
+  chrome?: typeof DECK_CHROME[number]
+}
 export interface PublishPolicy {
   boards: Record<string, BoardPolicy>
   reveal: { structure: boolean; source: boolean }
@@ -125,11 +132,19 @@ export function resolvePolicy(
       throw new Error(`design/publish.json: board "${n}" has type "${type}" - use ${ARTIFACT_TYPES.join(' | ')}`)
     if (p.open !== undefined && !VIEW_MODES.includes(p.open as ViewMode))
       throw new Error(`design/publish.json: board "${n}" has open "${p.open}" - use ${VIEW_MODES.join(' | ')}`)
+    if (p.transition !== undefined && !DECK_TRANSITIONS.includes(p.transition as any))
+      throw new Error(`design/publish.json: board "${n}" has transition "${p.transition}" - use ${DECK_TRANSITIONS.join(' | ')}`)
+    if (p.chrome !== undefined && !DECK_CHROME.includes(p.chrome as any))
+      throw new Error(`design/publish.json: board "${n}" has chrome "${p.chrome}" - use ${DECK_CHROME.join(' | ')}`)
     // freezing an unspecified mode is meaningless - the lock caps disclosure,
     // and what it caps to must be a decision, never a default
     if (p.lock && p.open === undefined)
       throw new Error(`design/publish.json: board "${n}" sets "lock" without "open" - name the mode the lock freezes`)
-    out[n] = { max: p.max, type: type as ArtifactType, ...(p.open ? { open: p.open as ViewMode } : {}), ...(p.lock ? { lock: true } : {}) }
+    out[n] = {
+      max: p.max, type: type as ArtifactType,
+      ...(p.open ? { open: p.open as ViewMode } : {}), ...(p.lock ? { lock: true } : {}),
+      ...(p.transition ? { transition: p.transition as any } : {}), ...(p.chrome ? { chrome: p.chrome as any } : {}),
+    }
   }
   if (policy.reveal !== undefined) {
     if (typeof policy.reveal !== 'object' || policy.reveal === null) throw new Error('design/publish.json: "reveal" must be an object')
@@ -311,7 +326,10 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     .filter((n) => policy.boards[n])
     .map((n) => {
       const p = policy.boards[n]
-      return [n, { type: p.type, ...(p.open ? { open: p.open } : {}), ...(p.lock ? { lock: true } : {}) }]
+      return [n, {
+        type: p.type, ...(p.open ? { open: p.open } : {}), ...(p.lock ? { lock: true } : {}),
+        ...(p.transition ? { transition: p.transition } : {}), ...(p.chrome ? { chrome: p.chrome } : {}),
+      }]
     }))
   // when EVERY published board is locked to a stage mode, the canvas shell is
   // never offered - the bundle boots straight into the locked surface (§5.1's
