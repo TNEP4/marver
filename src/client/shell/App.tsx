@@ -7,7 +7,7 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, useComments } from './comments-store.ts'
@@ -1067,11 +1067,14 @@ export function App() {
                     const on = !!n && selection.includes(n.key)
                     rows.push(
                       <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} onContextMenu={(e) => cm.open(e, frameMenu(f))} title={f.intent}>
-                        {/* every frame leads with an icon: intent glyph for content
-                            frames, the plain frame rectangle for UI frames */}
-                        {f.intent
-                          ? <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />
-                          : <FrameRectIcon size={13} className="iicon" />}
+                        {/* every frame leads with an icon: the slide badge first (a deck
+                            frame is a deck frame whatever it imports), intent glyph for
+                            content frames, the plain rectangle for UI frames */}
+                        {f.slide
+                          ? <SlideFrameIcon size={13} className="iicon" role="img" aria-hidden={false} aria-label="slide" />
+                          : f.intent
+                            ? <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />
+                            : <FrameRectIcon size={13} className="iicon" />}
                         {cap(f.id.split('/').slice(1).join('/') || f.id)}
                       </div>,
                     )

@@ -158,13 +158,15 @@ describe('scanFrames on a real tree', async () => {
       writeFileSync(join(root, p), c)
     }
     mk('design/scenes/checkout/filled.tsx', `export const meta = { title: "Filled", viewport: "mobile" }\nexport default () => null\n`)
+    mk('design/scenes/deck/cover.tsx', `export const meta = { title: "Cover", slide: true }\nexport default () => null\n`)
     mk('design/scenes/checkout/_fixtures.ts')
     mk('design/scenes/checkout/_layout.tsx')
     mk('design/scenes/demo/plain.html', '<html></html>')
     mk('design/scenes/screens/nope.tsx')          // reserved scene → skipped
     mk('design/components/button/variants.tsx')
     const m = scanFrames(root)
-    expect(m.frames.map((f) => f.id)).toEqual(['checkout/filled', 'components/button/variants', 'demo/plain'])
+    expect(m.frames.map((f) => f.id)).toEqual(['checkout/filled', 'components/button/variants', 'deck/cover', 'demo/plain'])
+    expect(m.frames.find((f) => f.id === 'deck/cover')).toMatchObject({ slide: true })
     expect(m.frames.find((f) => f.id === 'checkout/filled')).toMatchObject({ kind: 'tsx', title: 'Filled', viewport: 'mobile', scene: 'checkout' })
     expect(m.frames.find((f) => f.id === 'demo/plain')?.kind).toBe('html')
     rmSync(root, { recursive: true, force: true })

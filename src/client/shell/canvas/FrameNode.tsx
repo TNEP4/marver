@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef } from 'react'
 import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
-import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, XIcon } from '../icons.tsx'
+import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { threadHostKey } from '../keys.ts'
@@ -361,8 +361,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         </div>
       )}
       <div className="sh-node-head sh-no-pan" onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
-        {/* content frames carry their intent glyph in the chrome */}
-        {frame.intent && <IntentGlyph intent={frame.intent} size={12} className="iicon sh-no-pan" aria-label={frame.intent} />}
+        {/* the chrome badge: slide first, else the content intent glyph */}
+        {frame.slide
+          ? <SlideFrameIcon size={12} className="iicon sh-no-pan" role="img" aria-hidden={false} aria-label="slide" />
+          : frame.intent && <IntentGlyph intent={frame.intent} size={12} className="iicon sh-no-pan" aria-label={frame.intent} />}
         <span className="id sh-no-pan">{frame.title ?? frame.id}</span>
         <span className="dim sh-no-pan">{Math.round(node.w)} · {node.theme}</span>
       </div>

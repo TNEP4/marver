@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, relative, sep } from 'node:path'
 import { CONTENT_WIDTH, PKG } from '../client/const.ts'
 
-export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string }
+export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean }
 export interface FrameEntry {
   id: string
   file: string
@@ -12,6 +12,9 @@ export interface FrameEntry {
   title?: string
   viewport?: string
   theme?: string
+  /** A deck slide (v1.5): 1280×720 intrinsic unless viewport authored, the
+   *  slide badge, and the slides-mode motion affordances. Literal-only. */
+  slide?: boolean
   /** Variant group id: inferred from 2+ letter-prefixed siblings in one
    *  directory, or declared via meta.of. Present only on grouped frames. */
   variantGroup?: string
@@ -41,6 +44,11 @@ export function extractMeta(src: string): FrameMeta {
     const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(['"\`])([^'"\`]*)\\1`).exec(body)
     return r ? r[2] : undefined
   }
+  // literal booleans, same boundary discipline as the string picker
+  const pickBool = (key: string) => {
+    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(true|false)\\b`).exec(body)
+    return r ? r[1] === 'true' : undefined
+  }
   const out: FrameMeta = {}
   const title = pick('title'); if (title) out.title = title
   const viewport = pick('viewport'); if (viewport) out.viewport = viewport
@@ -48,6 +56,7 @@ export function extractMeta(src: string): FrameMeta {
   const of = pick('of'); if (of) out.of = of
   const variant = pick('variant'); if (variant) out.variant = variant
   const intent = pick('intent'); if (intent) out.intent = intent
+  const slide = pickBool('slide'); if (slide !== undefined) out.slide = slide
   return out
 }
 
@@ -143,6 +152,7 @@ export function scanFrames(root: string): Manifest {
         if (meta.theme) entry.theme = meta.theme
         if (meta.of) entry.variantGroup = meta.of         // declared membership
         if (meta.variant) entry.variant = meta.variant
+        if (meta.slide) entry.slide = true
         const content = contentScan(src)
         // declared meta.intent DECLARES a content frame even when the primitives
         // arrive through a barrel the lexical scan can't see - the taught path

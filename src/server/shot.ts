@@ -45,12 +45,14 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
  *  overrides only the WIDTH. Non-content frames use their viewport (or mobile), fixed height. */
 export interface FrameSizing { width: number; initialHeight: number; fullHeight: boolean }
 export function planShot(
-  frame: { viewport?: string; contentWidth?: number },
+  frame: { viewport?: string; contentWidth?: number; slide?: boolean },
   viewports: Record<string, { width: number; height: number }>,
 ): FrameSizing {
   const cw = (typeof frame.contentWidth === 'number' && Number.isFinite(frame.contentWidth) && frame.contentWidth > 0)
     ? frame.contentWidth : undefined
   const vpObj = frame.viewport ? viewports[frame.viewport] : undefined      // undefined if the name is unknown
+  // the slide intrinsic beats content sizing; an authored viewport beats both
+  if (frame.slide && !vpObj) return { width: 1280, initialHeight: 720, fullHeight: false }
   const fallback = viewports.mobile ?? { width: 390, height: 844 }
   if (cw) {
     const width = clamp(vpObj?.width ?? cw, 320, 1600)                       // vpw wins for width, else contentWidth

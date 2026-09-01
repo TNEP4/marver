@@ -32,7 +32,7 @@ export const SOURCE_REVEALED = DATA ? DATA.policy?.reveal?.source === true : tru
 /** The published per-board artifact metadata (type, open, lock). Empty in dev. */
 export const BOARD_POLICY: Record<string, { type?: string; open?: string; lock?: boolean }> = DATA?.policy?.boards ?? {}
 
-export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number }
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number
@@ -172,7 +172,15 @@ const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change co
  * auto sizes are never serialized - a reload remeasures. */
 const measuredHeights = new Map<string, number>()
 
+/** The slide stage (v1.5): a runtime-reserved intrinsic, deliberately NOT a
+ *  config viewport - existing projects need no migration and device sweeps
+ *  never grow a "deck" device. */
+export const SLIDE_INTRINSIC = { width: 1280, height: 720 }
+
 function defaultSize(frame: FrameEntry) {
+  // the precedence chain (spec 09 slice 1): authored viewport → slide
+  // intrinsic → content sizing → default
+  if (frame.slide && !frame.viewport) return { w: SLIDE_INTRINSIC.width, h: SLIDE_INTRINSIC.height }
   // content frames: own width from Doc layout; height from the latest
   // measurement at that width, or a placeholder until sh:measure lands.
   // meta.viewport, when declared, wins - the existing precedence.

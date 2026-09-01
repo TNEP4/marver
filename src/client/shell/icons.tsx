@@ -71,6 +71,8 @@ export function IntentGlyph({ intent, size = 14, ...rest }: IconProps & { intent
     : ContentBlocksIcon
   return <I size={size} role="img" aria-hidden={false} aria-label={intent} {...({ title: intent } as object)} {...rest} />
 }
+/** The slide badge (v1.5): a 16:9 stage with the play wedge - a deck frame. */
+export const SlideFrameIcon = icon(<><rect x="24" y="60" width="208" height="136" rx="18" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M110 100 L158 128 L110 156 Z" fill="currentColor" /></>)
 export const PanelHollowIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" fill="none" stroke="currentColor" strokeWidth="14" /></>)
 /** Board glyphs: CardsThree = the built-in `all-scenes` board; Cards = curated boards. */
 export const CardsThreeIcon = icon(<path d="M208,88H48a16,16,0,0,0-16,16v96a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,112H48V104H208v96ZM48,64a8,8,0,0,1,8-8H200a8,8,0,0,1,0,16H56A8,8,0,0,1,48,64ZM64,32a8,8,0,0,1,8-8H184a8,8,0,0,1,0,16H72A8,8,0,0,1,64,32Z" />)
