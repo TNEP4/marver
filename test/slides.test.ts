@@ -27,3 +27,28 @@ describe('planShot - the slide precedence chain', () => {
     expect(planShot({}, VPS)).toEqual({ width: 390, initialHeight: 844, fullHeight: false })
   })
 })
+
+describe('Chart sanitizeOption - nothing moves at rest', async () => {
+  const { sanitizeOption } = await import('../src/client/content/chart.tsx')
+  it('kills animation everywhere at rest, enables it once in play', () => {
+    const option = {
+      animation: true, graphic: [{ type: 'circle', keyframeAnimation: {} }],
+      series: [
+        { type: 'bar', animation: true, animationDuration: 900, animationDelay: 100, data: [1] },
+        { type: 'line', data: [2] },
+      ],
+    }
+    const rest = sanitizeOption(option, false) as any
+    expect(rest.animation).toBe(false)
+    expect(rest.graphic).toBeUndefined()
+    expect(rest.series[0].animation).toBe(false)
+    expect(rest.series[0].animationDuration).toBeUndefined()
+    expect(rest.series[1].animation).toBe(false)
+    expect(rest.series[1].data).toEqual([2])
+    const play = sanitizeOption(option, true) as any
+    expect(play.animation).toBe(true)
+    expect(play.series[0].animation).toBe(true)
+    // the input is never mutated
+    expect((option.series[0] as any).animationDuration).toBe(900)
+  })
+})

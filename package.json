@@ -47,6 +47,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-react": "^6.0.0",
     "cac": "^7.0.0",
+    "echarts": "^6.1.0",
     "html-to-image": "^1.11.13",
     "marked": "^16.0.0",
     "mermaid": "^11.6.0",
