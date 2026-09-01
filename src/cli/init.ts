@@ -240,7 +240,29 @@ export function init(root: string, opts: InitOpts) {
       providersTemplate(host.router, host.toaster, host.routerPkg))
     refresh('tsconfig.json', [STANDALONE_TSCONFIG], tsconfigNow())
   }
-  write('.gitignore', '.local/\n.dist/\n.dist-seeds/\n')
+  write('.gitignore', '.local/\n.dist/\n.dist-seeds/\nslides-inspiration/\n')
+  // the living slide-layout list (v1.5): write-once, project-owned forever -
+  // survival across upgrades comes from write() refusing existing files
+  write('slides.md', [
+    '# This project\'s slide layouts and house rules',
+    '',
+    'The agent reads BOTH the shipped doctrine (instructions/slides.md) and this',
+    'file - and this file WINS where they disagree. Add your own layouts, house',
+    'rules, and banned moves here; it is yours and marver never touches it.',
+    '',
+    'To grow it from examples: drop decks (PPTX, PDF, screenshots) into',
+    'design/slides-inspiration/ and ask the agent to \"study my inspiration\" -',
+    'it will propose additions here for your review.',
+    '',
+    '## Layouts',
+    '',
+    '(none yet - the shipped recipe list applies)',
+    '',
+    '## House rules',
+    '',
+    '(none yet)',
+    '',
+  ].join('\n'))
   // comment logs are append-only + id-keyed: two branches both appending never
   // truly conflict, so git's built-in union driver auto-merges them (worst case a
   // duplicate line, which replay dedupes). Multiplayer comments merge themselves.

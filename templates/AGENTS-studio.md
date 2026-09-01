@@ -22,6 +22,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Iterate | changing a frame the human has seen, or retiring explorations | instructions/iterate.md |
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
+| Slides | a deck is asked for, or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
 | Live Jam | responding to an `@marver` comment (a spawned job); on by default - confirm it names YOUR tool | instructions/jam.md |
 

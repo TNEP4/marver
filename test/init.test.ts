@@ -251,3 +251,26 @@ describe('init: onboarding', () => {
     expect(readFileSync(setup, 'utf8')).toContain('MY NOTES')
   })
 })
+
+
+describe('v1.5: the living slide list is write-once', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { init } = await import('../src/cli/init.ts')
+
+  it('init writes design/slides.md once and never overwrites it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-slides-init-'))
+    try {
+      init(root, { mode: 'studio', demo: false })
+      const p = join(root, 'design', 'slides.md')
+      expect(existsSync(p)).toBe(true)
+      expect(readFileSync(p, 'utf8')).toContain('this file WINS')
+      writeFileSync(p, '# MY NOTES\n')
+      init(root, { mode: 'studio', demo: false })
+      expect(readFileSync(p, 'utf8')).toContain('MY NOTES')
+      // the shipped doctrine template landed too, managed
+      expect(existsSync(join(root, 'design', 'instructions', 'slides.md'))).toBe(true)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+})
