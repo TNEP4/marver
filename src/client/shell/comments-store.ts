@@ -37,6 +37,9 @@ interface CommentsState {
   show: boolean                       // Shift+C - pins visible at all
   showAnchor: boolean                 // Shift+L - light the tagged ELEMENT while its thread is open
   active: string | null               // open thread id
+  /** threadId -> when I last opened it; feeds the mention-alert pulse. This
+   *  browser only (localStorage) - a per-person server mark is v1.2 territory. */
+  mentionSeen: Record<string, number>
   // picked, composing. `board` is captured at pick time - the write must land in the
   // log of the board the user was LOOKING at, however long the composer stays open
   draft: { nodeKey: string; frame: string; anchor: unknown; board?: string } | null
@@ -69,6 +72,9 @@ interface CommentsState {
 }
 
 const uuid = () => crypto.randomUUID()
+const loadMentionSeen = (): Record<string, number> => {
+  try { return JSON.parse(localStorage.getItem('mv-mention-seen') ?? '{}') } catch { return {} }
+}
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const api = async (path: string, body?: unknown) => {
   const res = await fetch(`${ROUTE}/api/${path}`, body === undefined ? undefined : {
@@ -164,6 +170,7 @@ export const useComments = create<CommentsState>((set, get) => {
 
   return {
     events: [], threads: [], board: null, me: null, myBoards: null, local: false, connected: false,
+    mentionSeen: loadMentionSeen(),
     commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
 
     poke(board) {
@@ -281,7 +288,14 @@ export const useComments = create<CommentsState>((set, get) => {
     setMode(on) { set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
     setShow(show) { set({ show }) },
     setShowAnchor(showAnchor) { set({ showAnchor }) },
-    setActive(active) { set({ active }) },
+    setActive(active) {
+      // opening a thread is SEEING it - the mention pulse for it stops here
+      if (active) {
+        const mentionSeen = { ...get().mentionSeen, [active]: Date.now() }
+        try { localStorage.setItem('mv-mention-seen', JSON.stringify(mentionSeen)) } catch { /* private mode */ }
+        set({ active, mentionSeen })
+      } else set({ active })
+    },
     setDraft(draft) { set({ draft: draft ? { ...draft, board: draft.board ?? get().board ?? undefined } : null }) },
     dismissIdentity() { set({ needsIdentity: false }) },   // inviteToken survives dismissal - commenting later reopens the claim
 

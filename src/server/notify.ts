@@ -42,10 +42,22 @@ export const transitionId = (...parts: string[]): string =>
 
 let chain: Promise<void> = Promise.resolve()
 
-export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: string, eventId: string): void {
+/** WHO and WHAT an activity mail may say (07-v1.1 §D amendment 2): a bounded
+ *  actor display name and comment snippet, riding the signed token. The relay
+ *  re-bounds and HTML-escapes; the caps here just keep tokens small. */
+export interface MailContent { actor?: string; snippet?: string }
+
+const capped = (s: string | undefined, cap: number): string | undefined => {
+  const t = s?.replace(/\s+/g, ' ').trim()
+  return t ? (t.length > cap ? `${t.slice(0, cap - 1)}…` : t) : undefined
+}
+
+export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: string, eventId: string, content?: MailContent): void {
   if (!ctx.enabled || !ctx.issuer || !ctx.origin) return
   if (recipient.startsWith('@') || !recipient.includes('@')) return   // domains have no inbox
   const { dataDir, origin } = ctx
+  const actor = capped(content?.actor, 60)
+  const snippet = capped(content?.snippet, 180)
   const url = `${ctx.issuer.replace(/\/+$/, '')}/relay/notify`
   // the token is minted WHEN its turn in the chain comes, not at enqueue - a
   // deep queue must never dispatch an already-expired credential
@@ -55,6 +67,7 @@ export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: 
     try {
       token = signCanvasJws(dataDir, {
         origin, template, recipient, eventId, iat: now, exp: now + 600,
+        ...(actor ? { actor } : {}), ...(snippet ? { snippet } : {}),
       }, 'marver-relay+jwt')
     } catch { return }                                // no identity key yet - nothing to sign with
     return fetch(url, {
@@ -89,7 +102,7 @@ export function notifyCommentActivity(
 ): void {
   if (!ctx.enabled || !ctx.issuer || !ctx.origin) return
   for (const [eventId, job] of activityJobs(board, accepted, log, allowed, Date.now()))
-    relayNotify(ctx, job.template, job.recipient, eventId)
+    relayNotify(ctx, job.template, job.recipient, eventId, { actor: job.actor, snippet: job.snippet })
 }
 
 /** The pure half: which (template, recipient, transition) a batch owes. Split
@@ -97,8 +110,8 @@ export function notifyCommentActivity(
 export function activityJobs(
   board: string, accepted: CommentEvent[], log: CommentEvent[],
   allowed: (email: string) => boolean, now: number,
-): Map<string, { template: RelayTemplate; recipient: string }> {
-  const jobs = new Map<string, { template: RelayTemplate; recipient: string }>()
+): Map<string, { template: RelayTemplate; recipient: string; actor?: string; snippet?: string }> {
+  const jobs = new Map<string, { template: RelayTemplate; recipient: string; actor?: string; snippet?: string }>()
   for (const ev of accepted) {
     if ((ev.type !== 'create' && ev.type !== 'reply') || Math.abs(now - ev.ts) > FRESH_MS) continue
     const author = ev.author?.email?.toLowerCase()
@@ -107,7 +120,8 @@ export function activityJobs(
       const email = m.email?.toLowerCase()
       if (!email || email === author || !allowed(email)) continue
       mentioned.add(email)
-      jobs.set(transitionId('mention', email, board, ev.commentId ?? ev.id), { template: 'mentioned', recipient: email })
+      jobs.set(transitionId('mention', email, board, ev.commentId ?? ev.id),
+        { template: 'mentioned', recipient: email, actor: ev.author?.name, snippet: ev.body })
     }
     if (ev.type !== 'reply' || !ev.parentId) continue
     // thread participants, most recent first: prior replies to this thread + its root.
@@ -123,7 +137,8 @@ export function activityJobs(
     const window = String(Math.floor(now / REPLY_WINDOW_MS))
     for (const email of recent) {
       if (!allowed(email)) continue
-      jobs.set(transitionId('reply', email, board, ev.parentId, window), { template: 'reply', recipient: email })
+      jobs.set(transitionId('reply', email, board, ev.parentId, window),
+        { template: 'reply', recipient: email, actor: ev.author?.name, snippet: ev.body })
     }
   }
   return jobs

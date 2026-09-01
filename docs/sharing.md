@@ -261,8 +261,14 @@ place the blocklist does not have the last word.
 ## Mail, mentions, and the bell (v1.1)
 
 Sharing's mail rides one relay at the identity service, and the canvas can only
-ever choose a **template** - never a subject, a body, a board name, or any
-comment content. Three transactional moments (you were invited, your request
+ever choose a **template** - never a subject or a body. Activity mail carries
+exactly three variables beyond the origin: the commenter's display name, a
+comment snippet capped at 180 characters, and your own unsubscribe link -
+which means the identity service holds those snippets for its delivery window.
+That is a deliberate, disclosed widening (every collaboration product's
+mention mail shows who and what; a mail that names neither gets ignored).
+Transactional mail (invites, approvals, requests) carries no name and no
+content, and `share: { notify: false }` opts out of all of it. Three transactional moments (you were invited, your request
 was approved, someone asked for access) shipped with v1; v1.1 adds the two
 **activity** moments that pull collaborators back:
 

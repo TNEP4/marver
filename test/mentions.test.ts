@@ -102,7 +102,7 @@ describe('activityJobs - who a fresh batch mails', () => {
     const log = thread('t1', [A, B])
     const reply = ev({ type: 'reply', parentId: 't1', commentId: 't1-new', author: { email: B }, ts: now })
     const jobs = activityJobs('main', [reply], [...log, reply], all, now)
-    expect([...jobs.values()]).toEqual([{ template: 'reply', recipient: A }])
+    expect([...jobs.values()]).toEqual([{ template: 'reply', recipient: A, actor: undefined, snippet: 'x' }])
     const window = String(Math.floor(now / (6 * 3600_000)))
     expect([...jobs.keys()]).toEqual([transitionId('reply', A, 'main', 't1', window)])
   })
@@ -120,7 +120,7 @@ describe('activityJobs - who a fresh batch mails', () => {
     const stale = ev({ type: 'reply', parentId: 't1', commentId: 'old', author: { email: B }, ts: now - 16 * 60_000 })
     expect(activityJobs('main', [stale], thread('t1', [A]), all, now).size).toBe(0)
     const root = ev({ author: { email: A }, ts: now, mentions: [{ email: C, label: 'C' }] })
-    expect([...activityJobs('main', [root], [root], all, now).values()]).toEqual([{ template: 'mentioned', recipient: C }])
+    expect([...activityJobs('main', [root], [root], all, now).values()]).toEqual([{ template: 'mentioned', recipient: C, actor: undefined, snippet: 'x' }])
   })
   it('caps a deep thread at the 10 most recent distinct participants', () => {
     const authors = Array.from({ length: 14 }, (_, i) => `p${i}@x.co`)

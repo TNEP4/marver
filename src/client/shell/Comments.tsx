@@ -4,7 +4,7 @@
  * top-right stack; the thread card opens beside its pin. Pins keep a screen-space
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { useStore, type Node } from './store.ts'
@@ -13,7 +13,7 @@ import { canvasCtl } from './canvas/ctl.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
-import { mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
+import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
 import { ROUTE } from '../const.ts'
 import type { AgentMeta, Thread } from '../../shared/events.ts'
 
@@ -182,13 +182,15 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   const flankBadge = useStore((s) => !!s.frameFor(node)?.variantGroup)
   const flankShim = useStore((s) => s.working.includes(frameId))
   const drafting = draft?.nodeKey === node.key
+  const alertIds = useMentionAlerts()
   if (!show || (!open.length && !drafting)) return null
 
   // inactive frame: the stack - count + avatars, top-right
   const engaged = selected || open.some((t) => t.id === active) || drafting
   if (!engaged && open.length) {
     return (
-      <button className="cm-stack sh-no-pan" onClick={(e) => { e.stopPropagation(); useStore.getState().select(node.key); if (open[0]) setActive(open[0].id) }}>
+      <button className={`cm-stack sh-no-pan${open.some((t) => alertIds.has(t.id)) ? ' mention' : ''}`}
+        onClick={(e) => { e.stopPropagation(); useStore.getState().select(node.key); const hit = open.find((t) => alertIds.has(t.id)) ?? open[0]; if (hit) setActive(hit.id) }}>
         <MarkerFace threads={open} />
       </button>
     )
@@ -234,7 +236,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         const { x, y, orphan } = pinPos(t)
         const isActive = t.id === active
         return (
-          <div key={t.id} className={`cm-pin sh-no-pan${isActive ? ' on' : ''}${isActive && cardSide === 'r' ? ' tail-r' : ''}${orphan ? ' orphan' : ''}`}
+          <div key={t.id} className={`cm-pin sh-no-pan${isActive ? ' on' : ''}${isActive && cardSide === 'r' ? ' tail-r' : ''}${orphan ? ' orphan' : ''}${alertIds.has(t.id) ? ' mention' : ''}`}
             style={{ left: x, top: y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
@@ -259,11 +261,32 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 const AT_TIP = "Read like any other comment. Marver won't act on this unless the owner promotes it."
 
 /** The mentionable set, derived from everything the client has seen (published:
- *  projected ids + names; dev: canonical emails). The viewer themself is out. */
+ *  projected ids + names; dev: canonical emails). The viewer themself is out -
+ *  this is the COMPOSER's set (you cannot mention yourself). */
 function usePeople(): MentionPerson[] {
   const events = useComments((s) => s.events)
   const me = useComments((s) => s.me)
   return mentionPeople(events, me ?? undefined)
+}
+
+/** Everyone, self included - the RENDERING set: a mention of you must light up
+ *  hardest of all, not disappear (the bug that shipped: the excluded self made
+ *  your own mentions render as plain text exactly for the person they were for). */
+function useRenderPeople(): { people: MentionPerson[]; isMe: (p: MentionPerson) => boolean } {
+  const events = useComments((s) => s.events)
+  const me = useComments((s) => s.me)
+  const people = useMemo(() => mentionPeople(events), [events])
+  const isMe = (p: MentionPerson) =>
+    (!!p.id && p.id === me?.id) || (!!p.email && !!me?.email && p.email.toLowerCase() === me.email.toLowerCase())
+  return { people, isMe }
+}
+
+/** Threads holding an unseen mention of me - drives the pin/stack pulse. */
+function useMentionAlerts(): Set<string> {
+  const events = useComments((s) => s.events)
+  const me = useComments((s) => s.me)
+  const seen = useComments((s) => s.mentionSeen)
+  return useMemo(() => new Set(mentionAlerts(events, me, seen)), [events, me, seen])
 }
 
 /** A comment body with mentions styled. `@marver`: owner-authored → bold accent (a live
@@ -271,12 +294,12 @@ function usePeople(): MentionPerson[] {
  *  `@Person` (v1.1) → the person chip; the same segmentation that derived the
  *  event's mentions, so what lit up is what notified. */
 function CommentBody({ body, owner }: { body?: string; owner: boolean }) {
-  const people = usePeople()
+  const { people, isMe } = useRenderPeople()
   if (!body) return null
   return (
     <p className="cm-body">
       {parseBody(body, people).map((s, i) => s.person
-        ? <span key={i} className="cm-at person">{s.text}</span>
+        ? <span key={i} className={isMe(s.person) ? 'cm-at person me' : 'cm-at person'}>{s.text}</span>
         : !s.marver
           ? <span key={i}>{s.text}</span>
           : owner

@@ -104,3 +104,22 @@ export function mentionQueryAt(text: string, caret: number): { start: number; qu
   if (!m) return null
   return { start: (m.index ?? 0) + m[1].length, query: m[2] }
 }
+
+/** Thread ids holding a mention of ME newer than my seen mark - what the pin
+ *  pulse and unread ring key on. Pure; the store persists `seen` per thread. */
+export function mentionAlerts(
+  events: CommentEvent[], me: { id?: string; email?: string } | null | undefined,
+  seen: Record<string, number>,
+): string[] {
+  if (!me || (!me.id && !me.email)) return []
+  const mine = (m: Mention) =>
+    (!!m.id && m.id === me.id) || (!!m.email && !!me.email && m.email.toLowerCase() === me.email.toLowerCase())
+  const out = new Set<string>()
+  for (const ev of events) {
+    if (ev.type !== 'create' && ev.type !== 'reply') continue
+    if (!(ev.mentions ?? []).some(mine)) continue
+    const thread = ev.type === 'reply' ? ev.parentId : ev.commentId
+    if (thread && ev.ts > (seen[thread] ?? 0)) out.add(thread)
+  }
+  return [...out]
+}

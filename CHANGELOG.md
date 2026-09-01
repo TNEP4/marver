@@ -14,10 +14,17 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   comments list --json` now carries each comment's mentions.
 - **Reply mail.** A fresh reply mails the thread's other participants (the 10
   most recent, at most once per person per thread per 6-hour window; history
-  imports never mail). Every activity mail carries an unsubscribe link that
-  mutes email without touching the bell. Caveat: delivery needs Marver Sign In -
-  a sovereign canvas has no relay, and `share: { notify: false }` still declines
-  everything.
+  imports never mail). Activity mail reads like a comment - who wrote it and a
+  snippet of what they said (capped, escaped; the identity service holds those
+  snippets for its delivery window - a disclosed tradeoff, documented in
+  docs/sharing.md) - and carries an unsubscribe link that mutes email without
+  touching the bell. Caveat: delivery needs Marver Sign In - a sovereign canvas
+  has no relay, and `share: { notify: false }` still declines everything.
+- **Mentions light up in the canvas.** A mention of you pulses its comment pin
+  in accent blue until you open the thread, the marker stack opens on the
+  mentioning thread first, and a mention of YOU renders as the loudest chip -
+  including in your own view (they used to render plain exactly for the person
+  they were for). The @-picker got a solid background.
 
 ### Fixed
 

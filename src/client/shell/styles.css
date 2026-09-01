@@ -7,6 +7,7 @@
   --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2); --beam: rgba(0, 136, 255, .42); --beam-blur: 6px; --beam-bottom: -13px; --beam-h: 12px; --beam-inset: 12%; --edge-accent: rgba(0, 136, 255, .8); --inner-tint: rgba(0, 136, 255, .13); --tip-bg: #18181b; --tip-ink: #fafafa; --accent-wash: rgba(0, 136, 255, .07);
 
   --glass: rgba(255, 255, 255, .64);
+  --solid: #ffffff;
   --glass-brd: rgba(24, 24, 27, .1);
   --glass-ink: #18181b;
   --glass-ink-2: rgba(24, 24, 27, .66);
@@ -46,6 +47,7 @@
   --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .32); --beam: rgba(0, 136, 255, .5); --beam-blur: 3px; --beam-bottom: -13px; --beam-h: 16px; --beam-inset: 20%; --edge-accent: rgba(92, 179, 255, .85); --inner-tint: rgba(92, 179, 255, .16); --tip-bg: #f4f4f5; --tip-ink: #18181b; --accent-wash: rgba(0, 136, 255, .14);
 
   --glass: rgba(12, 12, 17, .72);
+  --solid: #17171b;
   --glass-brd: rgba(255, 255, 255, .16);
   --glass-ink: #f5f5f7;
   --glass-ink-2: rgba(245, 245, 247, .64);
@@ -1126,10 +1128,11 @@ body.sh-hide-ui .sh-play-hint { display: none !important }
 .cm-at.person { color: var(--cm-line, var(--comment)); font-weight: 600 }
 .cm-hl .cm-at.person { font-weight: inherit }
 /* The typeahead: a small glass list ABOVE the composer; rows follow the pick. */
+/* SOLID, never glass: the picker floats over thread text, and translucency
+   made the names unreadable */
 .cm-mentionlist { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 5; min-width: 180px; max-width: 260px;
   display: flex; flex-direction: column; padding: 4px; border-radius: 10px;
-  background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: 0 8px 24px rgba(0,0,0,.18);
-  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
+  background: var(--solid); border: 1px solid var(--glass-brd); box-shadow: 0 10px 28px rgba(0,0,0,.22) }
 .cm-mentionlist button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 7px;
   background: none; color: var(--glass-ink); font: 500 12.5px/1.2 inherit; text-align: left; cursor: pointer; white-space: nowrap }
 .cm-mentionlist button span { overflow: hidden; text-overflow: ellipsis }
@@ -1222,3 +1225,19 @@ body.sh-hide-ui .sh-play-hint { display: none !important }
    its children (pins, cards, stacks) fully interactive */
 .cm-layer { position: absolute; left: 0; width: 100%; pointer-events: none; z-index: 25 }
 .cm-layer > * { pointer-events: auto }
+
+/* v1.1: an unseen mention of YOU pulses the pin - accent lights until the
+   thread is opened (opening marks it seen). Motion-reduced readers keep a
+   steady accent ring instead of the pulse. */
+.cm-pin.mention, .cm-stack.mention { outline: 2px solid var(--accent); outline-offset: 1px;
+  animation: cm-mention-pulse 1.7s ease-out infinite }
+@keyframes cm-mention-pulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-ring), 0 0 0 0 rgba(0, 136, 255, .45) }
+  70% { box-shadow: 0 0 0 6px rgba(0, 136, 255, 0), 0 0 0 12px rgba(0, 136, 255, 0) }
+  100% { box-shadow: 0 0 0 0 rgba(0, 136, 255, 0), 0 0 0 0 rgba(0, 136, 255, 0) }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-pin.mention, .cm-stack.mention { animation: none }
+}
+/* a mention of YOU inside a thread: the loudest chip - accent, heavier */
+.cm-at.person.me { color: var(--accent); font-weight: 700 }
