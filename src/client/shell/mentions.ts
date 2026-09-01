@@ -53,13 +53,16 @@ export type BodySegment = { text: string; marver?: boolean; person?: MentionPers
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Segment a body against the known people: `@Label` runs (longest label wins
- *  at each position, case-insensitive, boundary-guarded) plus `@marver`. */
+ *  at each position, case-insensitive, boundary-guarded) plus `@marver`. The
+ *  agent trigger competes at ITS length too - a person labelled "Marver Team"
+ *  must beat the bare trigger, or they could never be mentioned at all. */
 export function parseBody(body: string, people: MentionPerson[]): BodySegment[] {
   if (!people.length) return parseMentions(body).map((s) => (s.mention ? { text: s.text, marver: true } : { text: s.text }))
   const byLength = [...people].sort((a, b) => b.label.length - a.label.length)
-  const pattern = new RegExp(
-    `@(?:marver\\b|${byLength.map((p) => escapeRe(p.label)).join('|')}(?![\\w]))`, 'gi',
-  )
+  const alts = byLength.map((p) => ({ len: p.label.length, pat: `${escapeRe(p.label)}(?![\\w])` }))
+  alts.push({ len: 'marver'.length, pat: 'marver\\b' })
+  alts.sort((a, b) => b.len - a.len)
+  const pattern = new RegExp(`@(?:${alts.map((a) => a.pat).join('|')})`, 'gi')
   const out: BodySegment[] = []
   let last = 0
   for (const m of body.matchAll(pattern)) {

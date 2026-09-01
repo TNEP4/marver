@@ -54,6 +54,13 @@ describe('parseBody + mentionsIn - one segmentation, two consumers', () => {
     const body = many.map((p) => `@${p.label}`).join(' ')
     expect(mentionsIn(body, many)!.length).toBe(8)
   })
+  it('a label longer than the agent trigger beats it at its position', () => {
+    const crew = [{ label: 'Marver Team', id: '3'.repeat(24) }]
+    const segs = parseBody('cc @Marver Team and @marver', crew)
+    expect(segs.find((s) => s.person)?.text).toBe('@Marver Team')
+    expect(segs.find((s) => s.marver)?.text).toBe('@marver')
+    expect(mentionsIn('@Marver Team please', crew)).toEqual([{ id: '3'.repeat(24), label: 'Marver Team' }])
+  })
   it('with nobody known, only @marver segments', () => {
     const segs = parseBody('hi @marver and @Sam', [])
     expect(segs.find((s) => s.marver)?.text).toBe('@marver')
