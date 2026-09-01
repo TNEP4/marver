@@ -14,14 +14,10 @@ export const CONTENT_WIDTH: Record<string, number> = { document: 760, wide: 1280
  *  sweeps. Dependency-neutral so server (shot) and shell (store) share it. */
 export const SLIDE_INTRINSIC = { width: 1280, height: 720 }
 
-/** The one sizing precedence for slide frames, shared by canvas and shot:
- *  a RESOLVED authored viewport wins; an unknown viewport name on a slide is
- *  meaningless and the intrinsic wins; content sizing loses to the intrinsic. */
-export function slideSize(
-  frame: { slide?: boolean; viewport?: string },
-  viewports: Record<string, { width: number; height: number }>,
-): { width: number; height: number } | null {
-  if (!frame.slide) return null
-  if (frame.viewport && viewports[frame.viewport]) return null   // authored + resolved wins
-  return SLIDE_INTRINSIC
+/** The one sizing rule for slide frames, shared by canvas and shot:
+ *  `slide: true` IS the size. The Slide root renders a fixed 1280×720 stage,
+ *  so an authored viewport on a slide could only clip it - the slide flag
+ *  wins over viewport, content sizing, everything. */
+export function slideSize(frame: { slide?: boolean }): { width: number; height: number } | null {
+  return frame.slide ? SLIDE_INTRINSIC : null
 }

@@ -1,6 +1,6 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, hydrateBoardPolicy, landingMode, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, hydrateBoardPolicy, landingMode, playsAsSlides, type FrameEntry } from './store.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
@@ -629,7 +629,10 @@ export function App() {
       if (h.focus) {
         enterFocus(h.focus.at, { ...h.focus, deep: true })
       } else if (h.play) {
-        if (s.play) playCtl.sync(h.play)
+        // sync only holds WITHIN a mode: a slides hash over a present stage (or
+        // the reverse) re-enters, which remounts the stage with the right src
+        if (s.play && !!h.play.slides === !!s.play.slides) playCtl.sync(h.play)
+        else if (h.play.slides) enterSlides(h.play)
         else enterPlay(h.play)
       } else {
         if (s.play) s.setPlay(null)
@@ -845,7 +848,9 @@ export function App() {
         else if (s.laser) s.setLaser(false)          // Escape also exits laser mode (parity with comment)
         else s.interact ? setInteract(null) : select(null)
       }
-      if (e.key === 'p') { if (landingMode(useStore.getState().board) === 'slides') enterSlides(); else enterPlay() }
+      // a slides board PLAYS as slides even when its landing is the canvas -
+      // the deck is what the board IS; landing only says where viewers arrive
+      if (e.key === 'p') { if (playsAsSlides(useStore.getState().board)) enterSlides(); else enterPlay() }
       // H hides all chrome (shared binary Hide-UI); press again to reveal. Not persisted,
       // so a refresh always restores it (the safety net for a forgotten toggle).
       if (e.key === 'h') { toggleHideUI(); return }
@@ -1117,7 +1122,7 @@ export function App() {
         <i className="sep" />
         {/* far right: view management - prototype, hide, collapse */}
         <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
-          <button className="sh-pill-btn" onClick={() => enterPlay()}><PlayIcon size={15} /></button>
+          <button className="sh-pill-btn" onClick={() => (playsAsSlides(useStore.getState().board) ? enterSlides() : enterPlay())}><PlayIcon size={15} /></button>
         </Tip>
         <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>

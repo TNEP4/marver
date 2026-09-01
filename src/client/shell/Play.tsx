@@ -142,7 +142,11 @@ export function PlayOverlay() {
   const play = useStore((s) => s.play)
   const board = useStore((s) => s.board)
   if (!play) return null
-  return <PlayInner key={board} />
+  // slides is part of the key: the stage src is frozen at mount (slides=1 rides
+  // it), so crossing present↔slides MUST remount - a synced present stage would
+  // otherwise keep playing while the URL and store say slides. Focus↔present
+  // share a src shape and deliberately keep the live mount.
+  return <PlayInner key={play.slides ? `${board}:slides` : board} />
 }
 
 /** Board switcher dropdown in the play pill - the shared glass popover. */
@@ -580,7 +584,8 @@ function PlayInner() {
       {/* top-left: brand + place (the present chrome's identity pill). A deep-link
           focus visit names only the frame - single-frame chrome, no board (04 §2.35);
           branding: false strips the mark (invariant 21). */}
-      <nav className={`sh-pill sh-play-pill sh-play-brand${pillOpen ? '' : ' closed'}${slides && deckChrome === 'none' ? ' sh-gone' : ''}`} aria-hidden={!pillOpen}>
+      {!(slides && deckChrome === 'none') && (
+      <nav className={`sh-pill sh-play-pill sh-play-brand${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
         {BRANDING && <>
           <span className="sh-play-mark"><ParallelogramDuoIcon size={19} /><span className="wd">Marver</span></span>
           <i className="sep" />
@@ -592,23 +597,32 @@ function PlayInner() {
           </Tip>
         )}
       </nav>
+      )}
 
-      <nav className={`sh-pill sh-play-pill${pillOpen ? '' : ' closed'}${slides && deckChrome === 'none' ? ' sh-gone' : ''}`} aria-hidden={!pillOpen}>
-        {!focus && list.length > 1 && <>
+      {/* the toolbar. Slides trims it to the doctrine's chrome: comment
+          affordance + the canvas door (+ a pending update) - laser, theme,
+          device, position, and collapse are present-mode tools. chrome: none
+          renders NO pill at all (and no FAB below) - not hidden, absent. */}
+      {!(slides && deckChrome === 'none') && (
+      <nav className={`sh-pill sh-play-pill${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
+        {!focus && !slides && list.length > 1 && <>
           <span className="sh-play-pos">{pos === -1 ? '·' : pos + 1} / {list.length}</span>
           <i className="sep" />
         </>}
         <CommentButton />
-        <LaserButton />
-        <i className="sep" />
-        {!docPreset && !slides && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill hint={deviceHint} dark />}
-        <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
+        {!slides && <>
+          <LaserButton />
+          <i className="sep" />
+          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill hint={deviceHint} dark />}
+          <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
+        </>}
         {playUpdateRevision && <>
           <i className="sep" />
           <Tip side="bottom" label={<><b>Update ready</b><span>an edit landed - reload this prototype</span></>}>
             <button className="sh-pill-btn sh-play-update" onClick={applyUpdate}><ReloadIcon size={13} /><span>Update</span></button>
           </Tip>
         </>}
+        {!slides && <>
         <i className="sep" />
         <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything · ⌘/</span></>}>
@@ -616,6 +630,7 @@ function PlayInner() {
             <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
+        </>}
         {/* the canvas door: absent on a locked board (policy) and on a frame
             deep link (the link's chrome) - not hidden, not rendered */}
         {!noDoor && (
@@ -631,10 +646,13 @@ function PlayInner() {
           </Tip>
         )}
       </nav>
+      )}
+      {!(slides && deckChrome === 'none') && (
       <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
         <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
           aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
+      )}
 
       {!focus && !slides && <div className="sh-play-nav">
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>

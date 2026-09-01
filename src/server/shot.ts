@@ -52,8 +52,8 @@ export function planShot(
   const cw = (typeof frame.contentWidth === 'number' && Number.isFinite(frame.contentWidth) && frame.contentWidth > 0)
     ? frame.contentWidth : undefined
   const vpObj = frame.viewport ? viewports[frame.viewport] : undefined      // undefined if the name is unknown
-  // the slide intrinsic beats content sizing; a RESOLVED authored viewport beats both
-  const sl = slideSize(frame, viewports)
+  // the slide intrinsic beats everything - the Slide root IS 1280×720
+  const sl = slideSize(frame)
   if (sl) return { width: sl.width, initialHeight: sl.height, fullHeight: false }
   const fallback = viewports.mobile ?? { width: 390, height: 844 }
   if (cw) {

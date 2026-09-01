@@ -103,17 +103,25 @@ function Stage() {
       // inspect.getId() never reports the new frame while the old DOM is still live -
       // a pick / anchor-resolve landing mid-swap then carries the old id and the shell
       // guards drop it instead of stamping it onto the wrong frame.
-      const apply = () => { if (seq === swapSeq.current) { flushSync(() => { setErr(null); setMounted(next) }); current.current = id } }
-      // slides: the entrance presets re-arm per swap - drop `entered`, swap,
-      // then re-add once the transition settles (or immediately without one)
-      if (slidesMode) document.documentElement.removeAttribute('data-sl-entered')
-      const entered = () => {
-        if (!slidesMode || seq !== swapSeq.current) return
+      // slides: the entrance presets re-arm per swap. The disarm (drop `entered`,
+      // strip data-animate from morph-owned elements) runs INSIDE the transition's
+      // update callback - after the new DOM commits, before the NEW-state capture.
+      // Disarming before startViewTransition would capture the OUTGOING slide with
+      // its [data-animate] elements at opacity 0 (they'd vanish from the old
+      // snapshot), and a morphed element still carrying data-animate would be
+      // captured transparent and pop in after the morph.
+      const disarm = () => {
+        if (!slidesMode) return
+        document.documentElement.removeAttribute('data-sl-entered')
         // one transform owner: an element that morphs must not also run an
         // entrance preset - CSS cannot see a computed view-transition-name,
         // so the stage strips data-animate from morph-owned elements here
         for (const el of document.querySelectorAll('[data-animate]'))
           if (getComputedStyle(el).viewTransitionName !== 'none') el.removeAttribute('data-animate')
+      }
+      const apply = () => { if (seq === swapSeq.current) { flushSync(() => { setErr(null); setMounted(next) }); current.current = id; disarm() } }
+      const entered = () => {
+        if (!slidesMode || seq !== swapSeq.current) return
         document.documentElement.setAttribute('data-sl-entered', '')
       }
       const skipVt = reducedMotion || (slidesMode && deckTransition === 'none')
@@ -156,7 +164,7 @@ function Stage() {
       // slides: a background click advances (posted as the Space key) - never
       // on anything interactive, and data-goto (below) always wins
       if (slidesMode && e.target instanceof Element
-        && !e.target.closest('a, button, input, textarea, select, video, [contenteditable], [data-goto]')) {
+        && !e.target.closest('a, button, input, textarea, select, video, .mv-video, [contenteditable], [data-goto]')) {
         post({ type: 'sh:stage-key', key: ' ', code: 'Space' })
       }
       const el = e.target instanceof Element ? e.target.closest('[data-goto]') : null
@@ -180,7 +188,7 @@ function Stage() {
       if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'l', 'c', 'C', '[', ']', 'ArrowRight', 'ArrowLeft'].includes(e.key))
         post({ type: 'sh:stage-key', key: e.key, code: e.code })
       // slides: Space advances - but never stolen from anything interactive
-      if (slidesMode && e.key === ' ' && !(e.target instanceof Element && e.target.closest('button, input, textarea, select, video, a, [contenteditable]'))) {
+      if (slidesMode && e.key === ' ' && !(e.target instanceof Element && e.target.closest('button, input, textarea, select, video, .mv-video, a, [contenteditable]'))) {
         e.preventDefault()
         post({ type: 'sh:stage-key', key: ' ', code: e.code })
       }

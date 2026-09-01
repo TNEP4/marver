@@ -102,6 +102,14 @@ export function landingMode(board: string): 'canvas' | 'board' | 'present' | 'fo
   }
 }
 
+/** Does this board PLAY as a deck? A `type: slides` board is a deck whatever
+ *  its landing (`open: canvas` only says where viewers arrive) - the P key and
+ *  the play button route here, never through landingMode. */
+export function playsAsSlides(board: string): boolean {
+  const p = BOARD_POLICY[board]
+  return p?.type === 'slides' || p?.open === 'slides'
+}
+
 /** Is this board frozen to its landing mode? The lock caps disclosure - no way
  *  out into other modes, and (published) no sidebar ever renders for it. */
 export const boardLocked = (board: string): boolean => BOARD_POLICY[board]?.lock === true
@@ -181,9 +189,10 @@ const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change co
 const measuredHeights = new Map<string, number>()
 
 function defaultSize(frame: FrameEntry) {
-  // the precedence chain (spec 09 slice 1): RESOLVED authored viewport →
-  // slide intrinsic → content sizing → default (one helper, shared with shot)
-  const sl = slideSize(frame, CONFIG.viewports)
+  // the precedence chain (spec 09 slice 1): slide intrinsic → authored
+  // viewport → content sizing → default (one helper, shared with shot) -
+  // the Slide root renders fixed 1280×720, so nothing may size it smaller
+  const sl = slideSize(frame)
   if (sl) return { w: sl.width, h: sl.height }
   // content frames: own width from Doc layout; height from the latest
   // measurement at that width, or a placeholder until sh:measure lands.

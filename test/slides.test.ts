@@ -3,7 +3,7 @@ import { extractMeta } from '../src/server/manifest.ts'
 import { planShot } from '../src/server/shot.ts'
 
 /** v1.5 slides - slice 1: the frame type. Literal-boolean meta, and the
- *  sizing precedence chain (authored viewport → slide intrinsic → content
+ *  sizing precedence chain (slide intrinsic → authored viewport → content
  *  sizing → default) at the shot planner, which mirrors the canvas. */
 
 const VPS = { mobile: { width: 390, height: 844 }, laptop: { width: 1280, height: 832 } }
@@ -19,10 +19,10 @@ describe('extractMeta - literal booleans (slide)', () => {
 })
 
 describe('planShot - the slide precedence chain', () => {
-  it('slide intrinsic wins over content sizing; authored viewport wins over both', () => {
+  it('the slide intrinsic wins over content sizing AND authored viewport - the Slide root is fixed', () => {
     expect(planShot({ slide: true }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
     expect(planShot({ slide: true, contentWidth: 760 }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
-    expect(planShot({ slide: true, viewport: 'mobile' }, VPS)).toEqual({ width: 390, initialHeight: 844, fullHeight: false })
+    expect(planShot({ slide: true, viewport: 'mobile' }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
     expect(planShot({ contentWidth: 760 }, VPS).fullHeight).toBe(true)
     expect(planShot({}, VPS)).toEqual({ width: 390, initialHeight: 844, fullHeight: false })
   })
@@ -97,13 +97,11 @@ describe('deckOrder - the board is the sorter (pure)', async () => {
   })
 })
 
-describe('slideSize - one precedence, shared by canvas and shot', async () => {
+describe('slideSize - one rule, shared by canvas and shot', async () => {
   const { slideSize, SLIDE_INTRINSIC } = await import('../src/client/const.ts')
-  const VPS2 = { mobile: { width: 390, height: 844 } }
-  it('resolved viewport wins; unknown viewport falls to the intrinsic; non-slides get null', () => {
-    expect(slideSize({ slide: true }, VPS2)).toEqual(SLIDE_INTRINSIC)
-    expect(slideSize({ slide: true, viewport: 'mobile' }, VPS2)).toBeNull()
-    expect(slideSize({ slide: true, viewport: 'no-such' }, VPS2)).toEqual(SLIDE_INTRINSIC)
-    expect(slideSize({}, VPS2)).toBeNull()
+  it('slide: true IS the size - the fixed Slide root would only be clipped by a viewport', () => {
+    expect(slideSize({ slide: true })).toEqual(SLIDE_INTRINSIC)
+    expect(slideSize({ slide: true, viewport: 'mobile' } as never)).toEqual(SLIDE_INTRINSIC)
+    expect(slideSize({})).toBeNull()
   })
 })

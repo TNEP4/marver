@@ -1251,7 +1251,6 @@ body.sh-hide-ui .sh-play-hint { display: none !important }
 .sh-jam-frame .v { color: var(--glass-ink-2); font-weight: 500; margin-left: 4px; flex: none }
 
 /* v1.5 slides mode: the slim progress strip + the zero-chrome escape hatch */
-.sh-gone { display: none !important }
 .sh-slides-strip { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 30;
   display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px;
   background: var(--glass); border: 1px solid var(--glass-brd); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }

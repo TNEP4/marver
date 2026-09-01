@@ -88,8 +88,10 @@ export function App() {
         return
       }
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })
+      // sync only holds WITHIN a mode: same-mode restores drive the MOUNTED
+      // stage (sh:stage-set); crossing present↔slides re-enters and remounts
+      else if (h.play && s.play && !!h.play.slides === !!s.play.slides) playCtl.sync(h.play)
       else if (h.play?.slides) enterSlides(h.play)
-      else if (h.play && s.play) playCtl.sync(h.play)
       else if (h.play) enterPlay(h.play)
     }
     window.addEventListener('popstate', onPop)
