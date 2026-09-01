@@ -14,7 +14,7 @@
  * arms the entrance presets (`data-animate`, run once after the swap
  * settles - the stage adds `data-sl-entered`).
  */
-import { createContext, useContext, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { FONT_STACK } from './palette.ts'
 
 export const SLIDE_W = 1280
@@ -42,6 +42,10 @@ const readPlay = () => typeof document !== 'undefined' && document.documentEleme
 export const useSlidePlay = (): boolean => useSyncExternalStore(subscribePlay, readPlay, () => false)
 
 const SLIDE_CSS = `
+/* the frame document must not pad the stage: a 1280px root in a margined
+   body overflows the intrinsic by 16px - reset where a slide lives */
+body:has(.sl-root) { margin: 0 }
+.sl-root, .sl-root * { box-sizing: border-box }
 .sl-root {
   --sl-ink: var(--marver-slide-ink, #18181b);
   --sl-ground: var(--marver-slide-ground, #ffffff);
@@ -65,10 +69,14 @@ const SLIDE_CSS = `
 .sl-body { font-size: 24px; line-height: 1.45; margin: 0 }
 .sl-caption { font-size: 18px; line-height: 1.4; color: var(--sl-muted); margin: 0 }
 
-/* THE MOTION RESET - at rest, a slide is still. Slides mode (the stage sets
-   data-sl-play on <html>) lifts it. */
-:root:not([data-sl-play]) .sl-root, :root:not([data-sl-play]) .sl-root * {
-  animation-play-state: paused !important;
+/* THE MOTION RESET - at rest, a slide is still: animation NONE (not paused -
+   none is deterministic; paused can freeze mid-keyframe) and no transitions.
+   Slides mode (the stage sets data-sl-play on <html>) lifts it. This governs
+   EVERY descendant - spinners and loaders included - and that is the Slide
+   contract, documented in instructions/slides.md. */
+:root:not([data-sl-play]) .sl-root, :root:not([data-sl-play]) .sl-root *,
+:root:not([data-sl-play]) .sl-root *::before, :root:not([data-sl-play]) .sl-root *::after {
+  animation: none !important;
   transition: none !important;
 }
 
@@ -94,10 +102,10 @@ const SLIDE_CSS = `
 }
 `
 
-let injected = false
 function ensureSlideStyles() {
-  if (injected || typeof document === 'undefined') return
-  injected = true
+  // keyed by the DOCUMENT, not a module boolean - HMR reloads and multiple
+  // roots must not double- or under-inject
+  if (typeof document === 'undefined' || document.querySelector('style[data-mv-slide]')) return
   const el = document.createElement('style')
   el.setAttribute('data-mv-slide', '')
   el.textContent = SLIDE_CSS
@@ -106,9 +114,26 @@ function ensureSlideStyles() {
 
 export function Slide({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   ensureSlideStyles()
+  const ref = useRef<HTMLDivElement>(null)
+  // dev overflow marker: a slide that outgrows its stage is a VISIBLE defect
+  // (outline + console), never a silent clip decision left to chance
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const check = () => {
+      const over = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1
+      el.style.outline = over ? '3px solid #ff4d4f' : ''
+      if (over) console.warn('[marver slide] content overflows the 1280×720 stage - split the slide, never shrink the type')
+    }
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    for (const child of el.children) ro.observe(child)
+    check()
+    return () => ro.disconnect()
+  }, [])
   return (
     <SlideCtx.Provider value={true}>
-      <div className="sl-root" style={style}>{children}</div>
+      <div ref={ref} className="sl-root" style={style}>{children}</div>
     </SlideCtx.Provider>
   )
 }

@@ -11,6 +11,7 @@
  * children, then wait for fonts. A frame that never mounts fails with the page's own
  * exception text - which is exactly what the agent needs to fix it.
  */
+import { slideSize } from '../client/const.ts'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -51,8 +52,9 @@ export function planShot(
   const cw = (typeof frame.contentWidth === 'number' && Number.isFinite(frame.contentWidth) && frame.contentWidth > 0)
     ? frame.contentWidth : undefined
   const vpObj = frame.viewport ? viewports[frame.viewport] : undefined      // undefined if the name is unknown
-  // the slide intrinsic beats content sizing; an authored viewport beats both
-  if (frame.slide && !vpObj) return { width: 1280, initialHeight: 720, fullHeight: false }
+  // the slide intrinsic beats content sizing; a RESOLVED authored viewport beats both
+  const sl = slideSize(frame, viewports)
+  if (sl) return { width: sl.width, initialHeight: sl.height, fullHeight: false }
   const fallback = viewports.mobile ?? { width: 390, height: 844 }
   if (cw) {
     const width = clamp(vpObj?.width ?? cw, 320, 1600)                       // vpw wins for width, else contentWidth

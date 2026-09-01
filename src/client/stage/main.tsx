@@ -107,7 +107,15 @@ function Stage() {
       // slides: the entrance presets re-arm per swap - drop `entered`, swap,
       // then re-add once the transition settles (or immediately without one)
       if (slidesMode) document.documentElement.removeAttribute('data-sl-entered')
-      const entered = () => { if (slidesMode && seq === swapSeq.current) document.documentElement.setAttribute('data-sl-entered', '') }
+      const entered = () => {
+        if (!slidesMode || seq !== swapSeq.current) return
+        // one transform owner: an element that morphs must not also run an
+        // entrance preset - CSS cannot see a computed view-transition-name,
+        // so the stage strips data-animate from morph-owned elements here
+        for (const el of document.querySelectorAll('[data-animate]'))
+          if (getComputedStyle(el).viewTransitionName !== 'none') el.removeAttribute('data-animate')
+        document.documentElement.setAttribute('data-sl-entered', '')
+      }
       const skipVt = reducedMotion || (slidesMode && deckTransition === 'none')
       if (document.startViewTransition && !skipVt) {
         const vt = document.startViewTransition(apply)
@@ -145,6 +153,12 @@ function Stage() {
     // laser/comment click owns the press instead - it must not navigate.
     const onClick = (e: MouseEvent) => {
       if (inspect.modeActive()) return
+      // slides: a background click advances (posted as the Space key) - never
+      // on anything interactive, and data-goto (below) always wins
+      if (slidesMode && e.target instanceof Element
+        && !e.target.closest('a, button, input, textarea, select, video, [contenteditable], [data-goto]')) {
+        post({ type: 'sh:stage-key', key: ' ', code: 'Space' })
+      }
       const el = e.target instanceof Element ? e.target.closest('[data-goto]') : null
       if (!el) return
       e.preventDefault()
@@ -165,6 +179,11 @@ function Stage() {
       // l/c toggle laser/comment, C (shift+c) hides pins; the shell acts and broadcasts back.
       if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'l', 'c', 'C', '[', ']', 'ArrowRight', 'ArrowLeft'].includes(e.key))
         post({ type: 'sh:stage-key', key: e.key, code: e.code })
+      // slides: Space advances - but never stolen from anything interactive
+      if (slidesMode && e.key === ' ' && !(e.target instanceof Element && e.target.closest('button, input, textarea, select, video, a, [contenteditable]'))) {
+        e.preventDefault()
+        post({ type: 'sh:stage-key', key: ' ', code: e.code })
+      }
     }
     window.addEventListener('keydown', onKey)
 

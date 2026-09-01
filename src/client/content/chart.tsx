@@ -13,31 +13,14 @@
  * splits into its own lazy chunk: canvases without charts ship zero echarts
  * bytes.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { FONT_STACK } from './palette.ts'
 import { useSlidePlay } from './slide.tsx'
 
-type EChartsCore = typeof import('echarts/core')
+type Engine = typeof import('./chart-engine.ts')
 
-let corePromise: Promise<EChartsCore> | null = null
-async function loadECharts(): Promise<EChartsCore> {
-  corePromise ??= (async () => {
-    const [core, { SVGRenderer }, charts, components] = await Promise.all([
-      import('echarts/core'),
-      import('echarts/renderers'),
-      import('echarts/charts'),
-      import('echarts/components'),
-    ])
-    core.use([
-      SVGRenderer,
-      charts.BarChart, charts.LineChart, charts.ScatterChart, charts.PieChart,
-      components.GridComponent, components.TooltipComponent, components.LegendComponent,
-      components.DatasetComponent, components.TitleComponent, components.MarkLineComponent,
-    ])
-    return core
-  })()
-  return corePromise
-}
+let enginePromise: Promise<Engine> | null = null
+const loadEngine = (): Promise<Engine> => (enginePromise ??= import('./chart-engine.ts'))
 
 /** Strip every way an option can keep moving at rest: top-level and
  *  per-series animation flags, and graphic keyframe animations. Pure and
@@ -80,24 +63,37 @@ function houseTheme(el: HTMLElement) {
   }
 }
 
+/** The frame's visual theme (light/dark), observed the same way the play
+ *  flag is - the stage flips documentElement class/data-theme on sh:set-theme
+ *  and a themed chart must follow, not stay stale. */
+const subscribeTheme = (cb: () => void) => {
+  if (typeof document === 'undefined') return () => {}
+  const mo = new MutationObserver(cb)
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] })
+  return () => mo.disconnect()
+}
+const readTheme = () => (typeof document !== 'undefined' && (document.documentElement.classList.contains('dark') || document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light')
+const useFrameTheme = (): string => useSyncExternalStore(subscribeTheme, readTheme, () => 'light')
+
 export function Chart({ option, h = 420 }: { option: Record<string, unknown>; h?: number }) {
   const ref = useRef<HTMLDivElement>(null)
   const play = useSlidePlay()
+  const theme = useFrameTheme()
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     const el = ref.current
     if (!el) return
     let disposed = false
-    let chart: ReturnType<EChartsCore['init']> | null = null
-    void loadECharts().then((core) => {
+    let chart: import('./chart-engine.ts').EChartsInstance | null = null
+    void loadEngine().then((engine) => {
       if (disposed || !ref.current) return
-      core.registerTheme('marver', houseTheme(ref.current))
-      chart = core.init(ref.current, 'marver', { renderer: 'svg' })
+      // a theme OBJECT per init - never a stale global registration
+      chart = engine.init(ref.current, houseTheme(ref.current), { renderer: 'svg' })
       chart.setOption(sanitizeOption(option, play))
     }).catch(() => setFailed(true))
     return () => { disposed = true; chart?.dispose() }
-    // re-init on play flip: the entrance is the point of the flip
-  }, [option, play])
+    // re-init on play flip (the entrance) and on theme flip (fresh tokens)
+  }, [option, play, theme])
   if (failed) return <div className="mv-block mv-imgerr"><b>chart unavailable</b><span>echarts failed to load</span></div>
   return <div ref={ref} className="mv-block mv-chart" style={{ width: '100%', height: h }} />
 }

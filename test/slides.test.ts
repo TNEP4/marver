@@ -65,3 +65,45 @@ describe('scanAssetRefs - Video joins the pipeline', async () => {
     expect(() => scanAssetRefs(`<Img src={x} />`, 'm')).toThrow(/computed/)
   })
 })
+
+describe('deckOrder - the board is the sorter (pure)', async () => {
+  const { deckOrder } = await import('../src/client/shell/play-order.ts')
+  const frames = new Map([
+    ['d/one', { id: 'd/one', kind: 'tsx' as const, slide: true }],
+    ['d/two', { id: 'd/two', kind: 'tsx' as const, slide: true }],
+    ['d/three', { id: 'd/three', kind: 'tsx' as const, slide: true }],
+    ['d/ui', { id: 'd/ui', kind: 'tsx' as const }],
+    ['d/page', { id: 'd/page', kind: 'html' as const, slide: true }],
+  ])
+  it('orders by (y, x, index), dedupes, excludes non-slides with names', () => {
+    const nodes = [
+      { frame: 'd/two', x: 800, y: 0 },
+      { frame: 'd/ui', x: 0, y: 0 },
+      { frame: 'd/three', x: 0, y: 900 },
+      { frame: 'd/one', x: 0, y: 0 },
+      { frame: 'd/page', x: 400, y: 0 },
+      { frame: 'd/two', x: 1600, y: 0 },              // dup node - first position wins
+      { frame: 'd/gone', x: 0, y: 0, missing: true },
+    ]
+    const { deck, excluded } = deckOrder(nodes, frames)
+    expect(deck).toEqual(['d/one', 'd/two', 'd/three'])
+    expect(excluded.sort()).toEqual(['d/page', 'd/ui'])
+  })
+  it('same (y,x) falls back to node order', () => {
+    const { deck } = deckOrder([
+      { frame: 'd/two', x: 0, y: 0 }, { frame: 'd/one', x: 0, y: 0 },
+    ], frames)
+    expect(deck).toEqual(['d/two', 'd/one'])
+  })
+})
+
+describe('slideSize - one precedence, shared by canvas and shot', async () => {
+  const { slideSize, SLIDE_INTRINSIC } = await import('../src/client/const.ts')
+  const VPS2 = { mobile: { width: 390, height: 844 } }
+  it('resolved viewport wins; unknown viewport falls to the intrinsic; non-slides get null', () => {
+    expect(slideSize({ slide: true }, VPS2)).toEqual(SLIDE_INTRINSIC)
+    expect(slideSize({ slide: true, viewport: 'mobile' }, VPS2)).toBeNull()
+    expect(slideSize({ slide: true, viewport: 'no-such' }, VPS2)).toEqual(SLIDE_INTRINSIC)
+    expect(slideSize({}, VPS2)).toBeNull()
+  })
+})

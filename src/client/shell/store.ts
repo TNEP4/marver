@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { ROUTE } from '../const.ts'
+import { ROUTE, slideSize } from '../const.ts'
 import { tidy, parseLayout, type BoardLayout } from './tidy.ts'
 import { stableNodeKey } from './keys.ts'
 // @ts-expect-error virtual module provided by the plugin
@@ -31,6 +31,8 @@ export const SOURCE_REVEALED = DATA ? DATA.policy?.reveal?.source === true : tru
 
 /** The published per-board artifact metadata (type, open, lock). Empty in dev. */
 export const BOARD_POLICY: Record<string, { type?: string; open?: string; lock?: boolean; transition?: string; chrome?: string }> = DATA?.policy?.boards ?? {}
+
+export { SLIDE_INTRINSIC } from '../const.ts'
 
 /** Dev-only hydration: the shell loads the repo's publish.json boards so an
  *  author previews slides mode exactly as viewers will get it. Published
@@ -178,15 +180,11 @@ const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change co
  * auto sizes are never serialized - a reload remeasures. */
 const measuredHeights = new Map<string, number>()
 
-/** The slide stage (v1.5): a runtime-reserved intrinsic, deliberately NOT a
- *  config viewport - existing projects need no migration and device sweeps
- *  never grow a "deck" device. */
-export const SLIDE_INTRINSIC = { width: 1280, height: 720 }
-
 function defaultSize(frame: FrameEntry) {
-  // the precedence chain (spec 09 slice 1): authored viewport → slide
-  // intrinsic → content sizing → default
-  if (frame.slide && !frame.viewport) return { w: SLIDE_INTRINSIC.width, h: SLIDE_INTRINSIC.height }
+  // the precedence chain (spec 09 slice 1): RESOLVED authored viewport →
+  // slide intrinsic → content sizing → default (one helper, shared with shot)
+  const sl = slideSize(frame, CONFIG.viewports)
+  if (sl) return { w: sl.width, h: sl.height }
   // content frames: own width from Doc layout; height from the latest
   // measurement at that width, or a placeholder until sh:measure lands.
   // meta.viewport, when declared, wins - the existing precedence.

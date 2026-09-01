@@ -341,6 +341,16 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
   // per-board artifact metadata rides beside rights: the type picks the landing
   // view, open/lock are the owner's explicit calls (04-solution §2.35)
+  // a slides board full of non-slide frames plays as an empty deck - warn at
+  // build, when the author can still fix it (frames silently vanishing from
+  // play was the old failure shape)
+  for (const n of publishedNames) {
+    if (policy.boards[n]?.type !== 'slides') continue
+    const ids = new Set((boards[n]?.nodes ?? []).map((x: { frame: string }) => x.frame))
+    const off = pubManifest.frames.filter((f) => ids.has(f.id) && !(f.kind === 'tsx' && f.slide))
+    if (off.length)
+      console.warn(`  warning: board "${n}" is type "slides" but ${off.length} frame(s) are not slides (${off.slice(0, 4).map((f) => f.id).join(', ')}${off.length > 4 ? ', …' : ''}) - they will not play`)
+  }
   const boardsMeta = Object.fromEntries(publishedNames
     .filter((n) => policy.boards[n])
     .map((n) => {

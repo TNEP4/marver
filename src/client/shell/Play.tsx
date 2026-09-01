@@ -12,6 +12,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, SLIDE_INTRINSIC, type Node } from './store.ts'
+import { deckOrder } from './play-order.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
 import { canvasCtl } from './canvas/ctl.ts'
@@ -42,26 +43,21 @@ function playList(): string[] {
  *  (y, then x) over slide frames - frozen at entry, so what you see arranged
  *  is what plays, and a mid-show board edit never yanks the presenter. */
 let frozenDeck: string[] | null = null
-export function deckList(): string[] {
+function currentDeck(): string[] {
+  if (frozenDeck) return frozenDeck
   const s = useStore.getState()
-  const rows = s.nodes
-    .filter((n) => !n.missing)
-    .map((n) => ({ n, f: s.frameFor(n) }))
-  const excluded = rows.filter(({ f }) => f && (f.kind !== 'tsx' || !f.slide))
-  if (excluded.length) s.toast(`${excluded.length} non-slide frame${excluded.length === 1 ? '' : 's'} on this board won't play in slides mode`)
-  const seen = new Set<string>()
-  return rows
-    .filter(({ f }) => f?.kind === 'tsx' && f.slide)
-    .sort((a, b) => a.n.y - b.n.y || a.n.x - b.n.x)
-    .filter(({ n }) => !seen.has(n.frame) && (seen.add(n.frame), true))
-    .map(({ n }) => n.frame)
+  const frames = new Map((s.manifest?.frames ?? []).map((f) => [f.id, f]))
+  frozenDeck = deckOrder(s.nodes, frames).deck
+  return frozenDeck
 }
 
 export function enterSlides(over?: { at?: string; theme?: string }) {
   const s = useStore.getState()
   if (!modeAllowed(s.board, 'slides')) return
-  const deck = deckList()
+  const frames = new Map((s.manifest?.frames ?? []).map((f) => [f.id, f]))
+  const { deck, excluded } = deckOrder(s.nodes, frames)
   if (!deck.length) { s.toast('no slides on this board - add slide: true frames'); return }
+  if (excluded.length) s.toast(`${excluded.length} non-slide frame${excluded.length === 1 ? '' : 's'} on this board won't play in slides mode`)
   frozenDeck = deck
   const at = over?.at && deck.includes(over.at) ? over.at : deck[0]
   const frame = s.manifest?.frames.find((f) => f.id === at)
@@ -352,8 +348,7 @@ function PlayInner() {
     if (!p || p.focus) return                  // focus is one frame - no walking
     if (p.slides) {
       // a deck never wraps: past the last slide is the end, before the first is the start
-      const deck = frozenDeck ?? deckList()
-      frozenDeck ??= deck
+      const deck = currentDeck()
       const i = deck.indexOf(p.at)
       const next = i === -1 ? deck[0] : deck[Math.min(deck.length - 1, Math.max(0, i + dir))]
       if (next && next !== p.at) goTo(next)
@@ -365,7 +360,12 @@ function PlayInner() {
     // an off-board frame has no position: → restarts, ← goes to the last board frame
     goTo(i === -1 ? (dir === 1 ? list[0] : list[list.length - 1]) : list[(i + dir + list.length) % list.length])
   }
-  const restart = () => { if (useStore.getState().play?.focus) return; const list = playList(); if (list.length) goTo(list[0]) }
+  const restart = () => {
+    const p = useStore.getState().play
+    if (p?.focus) return
+    const list = p?.slides ? currentDeck() : playList()
+    if (list.length) goTo(list[0])
+  }
 
   /** Variant siblings of the CURRENT frame present on this board: the
    *  review question is "which direction is better on THIS screen" - switch in place,
@@ -532,7 +532,7 @@ function PlayInner() {
     : slides ? Math.min(1, (win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
     : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   const names = Object.keys(CONFIG.viewports)
-  const list = focus ? [play.at] : slides ? (frozenDeck ?? deckList()) : playList()
+  const list = focus ? [play.at] : slides ? currentDeck() : playList()
   const pos = list.indexOf(play.at)
   const variants = variantList()
   const frameEntry = useStore.getState().manifest?.frames.find((f) => f.id === play.at)
@@ -636,7 +636,7 @@ function PlayInner() {
           aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
 
-      {!focus && <div className="sh-play-nav">
+      {!focus && !slides && <div className="sh-play-nav">
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
           <button onClick={restart}><ReloadIcon size={14} /></button>
         </Tip>

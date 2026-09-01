@@ -115,7 +115,7 @@ function Player({ src, poster }: { src: string; poster?: string }) {
             {muted ? <path d="m16 9 6 6 M22 9 l-6 6" /> : <path d="M15.5 8.5 a5 5 0 0 1 0 7 M18.5 6 a9 9 0 0 1 0 12" />}
           </svg>
         </button>
-        <button aria-label="Fullscreen" onClick={() => void ref.current?.requestFullscreen?.()}>
+        <button aria-label="Fullscreen" onClick={(e) => void (e.currentTarget.closest('.mv-video') as HTMLElement | null)?.requestFullscreen?.()}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M8 3 H4 a1 1 0 0 0 -1 1 v4 M16 3 h4 a1 1 0 0 1 1 1 v4 M8 21 H4 a1 1 0 0 1 -1 -1 v-4 M16 21 h4 a1 1 0 0 0 1 -1 v-4" />
           </svg>
