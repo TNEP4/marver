@@ -283,6 +283,11 @@ was approved, someone asked for access) shipped with v1; v1.1 adds the two
   in the browser mentions travel as the same opaque ids authors do, so no
   member's address ever reaches another viewer.
 
+While you are ON the canvas, the same moments notify in place: a mention (or a
+reply in your thread) raises a bottom-right pill with the author's face and
+message plus a soft ping, and the mentioned thread's pin pulses in accent blue
+until you open it. The mail's button deep-links straight to that thread.
+
 Only people who still resolve to at least `view` are mailed - a revoked or
 blocked participant's mail stops with their access. Every activity mail carries
 an **unsubscribe link**: it can mute replies, mentions, or all activity mail,

@@ -25,6 +25,16 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   mentioning thread first, and a mention of YOU renders as the loudest chip -
   including in your own view (they used to render plain exactly for the person
   they were for). The @-picker got a solid background.
+- **In-app notifications, with sound.** A fresh mention of you - or a reply in
+  a thread you are part of - raises a person-first pill while you are on the
+  canvas: the author's avatar, "name mentioned you", their message, and View,
+  with a soft two-tone ping (best-effort under browser autoplay rules; one
+  ping per batch). Same pill family the Live Jam agent uses, so they stack
+  together. History and first loads never announce.
+- **Mail lands on the thread.** The activity mail's button ("Open the comment"
+  / "Open the thread") deep-links straight to the conversation
+  (`#/b/<board>?c=<thread>`); the relay refuses any other link shape, so mail
+  can only ever point a reader back into the canvas that sent it.
 
 ### Fixed
 
