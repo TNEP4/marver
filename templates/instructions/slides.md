@@ -11,6 +11,18 @@ real components, the project theme, comments, variants, promotion. What
 changes is the CRAFT BAR - a deck is an argument wearing the product's
 clothes, and every rule below is binding.
 
+**The stage fits every screen.** You author at exactly 1280×720 and the
+Slide root scales and centers itself to any viewport - fill window, a
+laptop, a viewer's phone. One coordinate system: your px, Tailwind classes,
+and charts scale together, so what you compose is what plays. This is a
+guarantee to LEAN ON, not to fight:
+- lay out with flex/grid and the stage's own proportions (percentages,
+  `--sl-margin`, the type roles) - never against the window;
+- no viewport units (`vw/vh`) and no media queries inside a slide - the
+  stage is the world, and it is always 1280×720 to your code;
+- images and video posters at 2x the box they sit in, so an upscaled fill
+  stage stays sharp.
+
 ```tsx
 import { Slide } from '@marver-design/marver/content'
 export const meta = { title: 'Cover', slide: true }
@@ -200,6 +212,7 @@ audience-mismatched jargon · filler words · passive voice · claims missing
 numbers · formatting drift between slides · a weak closing.
 
 Then: the sequence test (titles alone tell the argument) · BOTH themes ·
-the 1280×720 view and one 390px glance · every slide still at rest (no
-loops, no autoplay) · recipe variety (not the same two twice in a row) ·
-one anchor morph per adjacent pair.
+the slide view AND fill window (the fit scales your composition - check
+nothing relied on the window) and one 390px glance · every slide still at
+rest (no loops, no autoplay) · recipe variety (not the same two twice in a
+row) · one anchor morph per adjacent pair.

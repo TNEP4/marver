@@ -134,6 +134,9 @@ afterAll(() => {
 const skippable = (name: string, fn: () => Promise<void>, ms = 90_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); await fn() }, ms)
 
+// full chrome: the bottom-left walker carries the position ("1/3")
+const POS = `document.querySelector('.sh-play-nav .pos')?.textContent`
+
 const key = (k: string) => async (tab: string) => {
   await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: k === ' ' ? 'Space' : k }, tab)
   await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: k === ' ' ? 'Space' : k }, tab)
@@ -172,9 +175,9 @@ describe('slides in a real published browser', () => {
   skippable('a slides board lands in slides mode, steps the frozen (y,x) order, and the stage wears the play contract', async () => {
     const tab = await browser!.tab({ width: 1600, height: 1000 })
     await browser!.go(tab, `${base}/#/b/show`)
-    await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
+    await browser!.until(tab, `!!document.querySelector('.sh-play-nav')`)
     expect(await browser!.eval(tab, `location.hash.includes('slides=1')`)).toBe(true)
-    expect(await browser!.eval(tab, `document.querySelector('.sh-slides-strip .n')?.textContent`)).toBe('1 / 3')
+    expect(await browser!.eval(tab, POS)).toBe('1/3')
     // the live stage carries the contract attributes the primitives react to
     await browser!.until(tab, `document.querySelector('.sh-play iframe')?.contentDocument?.documentElement?.hasAttribute('data-sl-play')`)
     await browser!.until(tab, `document.querySelector('.sh-play iframe')?.contentDocument?.documentElement?.hasAttribute('data-sl-entered')`)
@@ -185,7 +188,7 @@ describe('slides in a real published browser', () => {
     await browser!.until(tab, `${doc}.defaultView.getComputedStyle(${doc}.querySelector('p[data-animate]')).opacity === '1'`)
     // frozen order is (y, x): 01-open → 03-video (same row) → 02-chart (row 2)
     await key('ArrowRight')(tab)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '2 / 3'`)
+    await browser!.until(tab, `${POS} === '2/3'`)
     expect(await browser!.eval(tab, `location.hash`)).toContain(encodeURIComponent('deck/03-video'))
     // the morphed headline arrived with data-animate stripped BEFORE the new
     // capture - it must be fully visible once the swap settles, never
@@ -194,12 +197,12 @@ describe('slides in a real published browser', () => {
     expect(await browser!.eval(tab, `${doc}.querySelector('h1').hasAttribute('data-animate')`)).toBe(false)
     await browser!.until(tab, `${doc}.defaultView.getComputedStyle(${doc}.querySelector('h1')).opacity === '1'`)
     await key(' ')(tab)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '3 / 3'`)
+    await browser!.until(tab, `${POS} === '3/3'`)
     expect(await browser!.eval(tab, `location.hash`)).toContain(encodeURIComponent('deck/02-chart'))
     // no wrap: the deck ends, it does not loop
     await key('ArrowRight')(tab)
     await new Promise((r) => setTimeout(r, 300))
-    expect(await browser!.eval(tab, `document.querySelector('.sh-slides-strip .n')?.textContent`)).toBe('3 / 3')
+    expect(await browser!.eval(tab, POS)).toBe('3/3')
   })
 
   skippable('back/forward walks the deck in place, and crossing canvas↔slides re-enters the mode', async () => {
@@ -209,29 +212,31 @@ describe('slides in a real published browser', () => {
     await browser!.go(tab, `${base}/#/b/rest`)
     await browser!.until(tab, `!!document.querySelector('.sh-panel')`)
     await key('p')(tab)
-    await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
+    await browser!.until(tab, `!!document.querySelector('.sh-play-nav')`)
     expect(await browser!.eval(tab, `location.hash.includes('slides=1')`)).toBe(true)
     // same-mode back: the MOUNTED stage walks (no remount, position restored)
     await key('ArrowRight')(tab)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '2 / 3'`)
+    await browser!.until(tab, `${POS} === '2/3'`)
     await browser!.eval(tab, `history.back()`)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '1 / 3'`)
+    await browser!.until(tab, `${POS} === '1/3'`)
     // cross-mode back: the canvas surface returns; forward re-enters slides
     await browser!.eval(tab, `history.back()`)
     await browser!.until(tab, `!!document.querySelector('.sh-panel') && !document.querySelector('.sh-play')`)
     await browser!.eval(tab, `history.forward()`)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '1 / 3'`)
+    await browser!.until(tab, `${POS} === '1/3'`)
   })
 
-  skippable('slides wears the FULL prototype chrome by default: toolbars, theme, devices incl. fill', async () => {
+  skippable('slides wears the FULL prototype chrome: toolbars + walker, no duplicate strip', async () => {
     const tab = await browser!.tab({ width: 1600, height: 1000 })
     await browser!.go(tab, `${base}/#/b/show`)
-    await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
+    await browser!.until(tab, `!!document.querySelector('.sh-play-nav')`)
     // the classic top-right pill (device+theme pickers, .sh-theme wraps both)
-    // AND the classic bottom-left walker - slides use the actual play UI
+    // AND the classic bottom-left walker - slides use the actual play UI;
+    // the strip belongs to the minimal trim, the brand pill to the share
     expect(await browser!.eval(tab, `document.querySelectorAll('.sh-play-pill .sh-theme').length`)).toBe(2)
-    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-nav')`)).toBe(true)
     expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(true)
+    expect(await browser!.eval(tab, `!!document.querySelector('.sh-slides-strip')`)).toBe(false)
+    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-brand')`)).toBe(true)   // this IS the published share
     // D flips the theme live (the hash follows), digit 5 = fill window
     await key('d')(tab)
     await browser!.until(tab, `location.hash.includes('theme=dark')`)
@@ -240,6 +245,13 @@ describe('slides in a real published browser', () => {
     await browser!.until(tab, `location.hash.includes('device=fill')`)
     const w = await browser!.eval(tab, `document.querySelector('.sh-play .dev iframe')?.getBoundingClientRect().width`)
     expect(w).toBe(1600)
+    // THE FIT: in fill, the 1280×720 stage scales up and centers - the slide
+    // root's rendered box must span the window's width (1600 = 1280 × 1.25)
+    const doc = `document.querySelector('.sh-play iframe').contentDocument`
+    await browser!.until(tab, `Math.round(${doc}.querySelector('.sl-root')?.getBoundingClientRect().width ?? 0) === 1600`)
+    const box = await browser!.eval(tab, `(() => { const r = ${doc}.querySelector('.sl-root').getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top) } })()`)
+    expect(box.l).toBe(0)                                     // width-limited: flush horizontally...
+    expect(box.t).toBeGreaterThan(0)                          // ...and centered vertically
   })
 
   skippable('chrome: "minimal" trims to the strip + comments; the default board is its control', async () => {
@@ -249,17 +261,18 @@ describe('slides in a real published browser', () => {
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-pill .sh-theme')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-nav')`)).toBe(false)
     expect(await browser!.eval(tab, `!!document.querySelector('a[aria-label="Open in app"]')`)).toBe(false)
+    expect(await browser!.eval(tab, `!!document.querySelector('.sh-play-brand')`)).toBe(true)   // the share keeps its name
   })
 
   skippable('slides mode survives a refresh mid-deck via the hash', async () => {
     const tab = await browser!.tab({ width: 1600, height: 1000 })
     await browser!.go(tab, `${base}/#/b/show`)
-    await browser!.until(tab, `!!document.querySelector('.sh-slides-strip')`)
+    await browser!.until(tab, `!!document.querySelector('.sh-play-nav')`)
     await key('ArrowRight')(tab)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '2 / 3'`)
+    await browser!.until(tab, `${POS} === '2/3'`)
     const href = await browser!.eval(tab, `location.href`)
     await browser!.go(tab, href)
-    await browser!.until(tab, `document.querySelector('.sh-slides-strip .n')?.textContent === '2 / 3'`)
+    await browser!.until(tab, `${POS} === '2/3'`)
     expect(await browser!.eval(tab, `location.hash.includes('slides=1')`)).toBe(true)
   })
 })

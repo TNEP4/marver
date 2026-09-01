@@ -12,7 +12,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   sorter** (the deck plays in the board's reading order; drag to reorder).
   Publish with `"type": "slides", "open": "slides"` plus `transition`
   (`fade | none`) and `chrome` (`full | minimal | none`, full = the standard
-  prototype chrome); viewers land straight in
+  prototype chrome); the Slide stage scales and centers itself to ANY
+  viewport (fill window, phones - author px and Tailwind scale together);
+  viewers land straight in
   the deck and the URL survives refresh. The full guide is
   [docs/slides.md](docs/slides.md).
 - **The `Slide` root, `Chart`, and `Video` content primitives.** One root

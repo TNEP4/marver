@@ -12,9 +12,13 @@ export default () => (
 )
 ```
 
-It renders 1280×720 on the canvas (an authored `viewport` still wins), wears
-the slide badge, and everything you know - comments, lasers, variants,
-promotion, Live Jam - keeps working. One scene = one deck; numbered files
+It renders 1280×720 on the canvas, wears the slide badge, and everything
+you know - comments, lasers, variants, promotion, Live Jam - keeps working.
+**The stage fits every screen**: you author at exactly 1280×720, and the
+slide scales and centers itself to whatever viewport plays it - fill window,
+a laptop, a viewer's phone - author px, Tailwind classes, and charts all
+scale together, so the composition you approved is the composition everyone
+sees. One scene = one deck; numbered files
 (`01-cover.tsx`) are the authoring order; **the board's reading order is the
 played order** - drag slides around the canvas to reorder the deck.
 
@@ -25,7 +29,8 @@ after `marver init`; your own layouts and house rules live in
 ## Playing and publishing a deck
 
 Press `P` on a board whose publish row says slides and you get slides mode:
-full-bleed 16:9, arrows / Space / click to advance, a slim progress strip.
+the 16:9 stage with the standard prototype toolbars - arrows / Space / click
+to advance, `D` for theme, devices including fill window.
 Publish it with:
 
 ```json
@@ -34,9 +39,11 @@ Publish it with:
 ```
 
 - `transition`: `fade` (default) or `none`.
-- `chrome`: `full` (default - the standard prototype chrome: comment, laser,
-  theme, device including fill, the bottom-left walker, plus the progress
-  strip), `minimal` (progress strip + comments only), or `none` (bare stage).
+- `chrome`: `full` (default - the standard prototype chrome: the top-right
+  toolbar with comment, laser, theme, and devices including fill, plus the
+  bottom-left walker; published decks also carry the brand pill), `minimal`
+  (brand pill + a slim progress strip + comments only), or `none` (bare
+  stage).
 - Add `"lock": true` to share ONLY the deck (no canvas shell in the bundle).
 
 Viewers land straight in the deck; the URL survives refresh and back.

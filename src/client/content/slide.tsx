@@ -43,8 +43,11 @@ export const useSlidePlay = (): boolean => useSyncExternalStore(subscribePlay, r
 
 const SLIDE_CSS = `
 /* the frame document must not pad the stage: a 1280px root in a margined
-   body overflows the intrinsic by 16px - reset where a slide lives */
-body:has(.sl-root) { margin: 0 }
+   body overflows the intrinsic by 16px - reset where a slide lives. The body
+   also paints the slide ground, so the letterbox around a scaled stage is
+   seamless instead of a default-white halo. */
+body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) }
+.dark body:has(.sl-root), [data-theme="dark"] body:has(.sl-root) { background: var(--marver-slide-ground-dark, #101014) }
 .sl-root, .sl-root * { box-sizing: border-box }
 .sl-root {
   --sl-ink: var(--marver-slide-ink, #18181b);
@@ -53,7 +56,15 @@ body:has(.sl-root) { margin: 0 }
   --sl-muted: var(--marver-slide-muted, rgba(24, 24, 27, .55));
   --sl-tempo: var(--marver-slide-tempo, 350ms);
   --sl-margin: 7%;
-  position: relative; width: ${SLIDE_W}px; height: ${SLIDE_H}px; overflow: hidden;
+  /* THE FIT: authored at exactly ${SLIDE_W}x${SLIDE_H}, then scaled and
+     centered to the largest box the viewport gives it - fill window, any
+     device, any published viewer's screen. One coordinate system, so the
+     author's px, Tailwind classes, and charts all scale together (--sl-fit
+     is set inline by the component; 1 on the canvas, where the frame IS
+     ${SLIDE_W}x${SLIDE_H}). */
+  position: absolute; inset: 0; margin: auto;
+  width: ${SLIDE_W}px; height: ${SLIDE_H}px; overflow: hidden;
+  transform: scale(var(--sl-fit, 1)); transform-origin: center center;
   background: var(--sl-ground); color: var(--sl-ink);
   font-family: ${FONT_STACK};
   padding: var(--sl-margin); box-sizing: border-box;
@@ -115,6 +126,20 @@ function ensureSlideStyles() {
 export function Slide({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   ensureSlideStyles()
   const ref = useRef<HTMLDivElement>(null)
+  // THE FIT: scale the authored stage to the viewport (up AND down - a fill
+  // window grows the slide, a phone shrinks it). Inline on the element so the
+  // lean serializer captures the correct scale (the lean doc runs no JS).
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const fit = () => {
+      const s = Math.min(window.innerWidth / SLIDE_W, window.innerHeight / SLIDE_H)
+      el.style.setProperty('--sl-fit', String(Math.max(0.05, Math.round(s * 10000) / 10000)))
+    }
+    fit()
+    window.addEventListener('resize', fit)
+    return () => window.removeEventListener('resize', fit)
+  }, [])
   // dev overflow marker: a slide that outgrows its stage is a VISIBLE defect
   // (outline + console), never a silent clip decision left to chance
   useEffect(() => {

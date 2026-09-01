@@ -586,8 +586,9 @@ function PlayInner() {
       {!focus && !slides && list.length > 1 && (
         <div className="sh-play-hint">← → to step · <kbd>c</kbd> to comment</div>
       )}
-      {/* slides mode: the slim progress strip - count + a thin fill bar */}
-      {slides && deckChrome !== 'none' && (
+      {/* the slim progress strip: the MINIMAL trim's one affordance - full
+          chrome already carries progress in the walker, so no duplicate */}
+      {slides && deckChrome === 'minimal' && (
         <div className="sh-slides-strip" aria-label={`slide ${pos + 1} of ${list.length}`}>
           <span className="n">{pos === -1 ? '·' : pos + 1} / {list.length}</span>
           <span className="bar"><i style={{ width: `${list.length > 1 ? Math.max(2, ((pos + 1) / list.length) * 100) : 100}%` }} /></span>
@@ -597,7 +598,10 @@ function PlayInner() {
       {/* top-left: brand + place (the present chrome's identity pill). A deep-link
           focus visit names only the frame - single-frame chrome, no board (04 §2.35);
           branding: false strips the mark (invariant 21). */}
-      {!(slides && deckChrome === 'none') && (
+      {/* the brand/place pill: in slides it belongs to the PUBLISHED share
+          (the link people view and comment) - a working session already knows
+          what it is playing, the toolbars are enough */}
+      {(!slides || (PUBLISHED && deckChrome !== 'none')) && (
       <nav className={`sh-pill sh-play-pill sh-play-brand${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
         {BRANDING && <>
           <span className="sh-play-mark"><ParallelogramDuoIcon size={19} /><span className="wd">Marver</span></span>
