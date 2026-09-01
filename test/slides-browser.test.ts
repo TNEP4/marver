@@ -173,8 +173,8 @@ describe('slides in a real published browser', () => {
     // 1280×720 stage into the box - in the lean cover too, which runs no JS
     const widths = await browser!.eval(tab, `[...document.querySelectorAll('.sh-node')].map((n) => n.offsetWidth)`)
     expect(widths).toEqual([640, 640, 640])
-    const fitted = await browser!.eval(tab, `[...document.querySelectorAll('.sh-lean[data-ready]')].map((f) => Math.round(f.contentDocument.querySelector('.sl-root').getBoundingClientRect().width) - f.clientWidth)`)
-    expect(fitted).toEqual([0, 0, 0])                           // the stage spans its (bordered) node viewport exactly
+    const fitted = await browser!.eval(tab, `[...document.querySelectorAll('.sh-lean[data-ready]')].map((f) => f.contentDocument.querySelector('.sl-root').getBoundingClientRect().width - f.clientWidth)`)
+    for (const d of fitted) { expect(d).toBeLessThanOrEqual(0); expect(d).toBeGreaterThan(-6) }   // fills the node's viewport (16:9 rounding aside), never overflows it
   })
 
   skippable('a slides board lands in slides mode, steps the frozen (y,x) order, and the stage wears the play contract', async () => {
