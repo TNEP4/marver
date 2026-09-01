@@ -8,6 +8,7 @@
  * can give the frame a natural size (the shell alone owns node dimensions).
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useInSlide } from './slide.tsx'
 import { CONTENT_WIDTH } from '../const.ts'
 import { assetUrl, renderMarkdown, FAMILIES } from './md.ts'
 import { lodSupported, registerLodImage } from './img-lod.ts'
@@ -17,6 +18,7 @@ const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
   `.mv-md .mv-c-${f}{color:${c.light}}.dark .mv-md .mv-c-${f},[data-theme="dark"] .mv-md .mv-c-${f}{color:${c.dark}}`).join('\n')
 
 export { Diagram } from './diagram.tsx'
+export { Slide, SLIDE_W, SLIDE_H } from './slide.tsx'
 
 const UNIT = 16   // one gap unit, px - plain adjacency on boards is one gutter; same feel here
 
@@ -81,13 +83,17 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
   const url = assetUrl(src)
   const [err, setErr] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  // inside a <Slide>, the LOD canvas is OFF: a resting slide must serialize to
+  // the lean-DOM path, and a <canvas> element pins its frame live (v1.5 §7)
+  const inSlide = useInSlide()
   // LOD: paint the image on a <canvas> decoded to its on-screen size (never the full 17MB bitmap), and
   // re-pick resolution only when the canvas settles after a zoom. See img-lod.ts. Falls back to a plain
   // <img> where createImageBitmap/bitmaprenderer isn't available (correctness over the optimization).
+  const lodOn = lodSupported && !inSlide
   useEffect(() => {
-    if (!url || err || !lodSupported || !canvasRef.current) return
+    if (!url || err || !lodOn || !canvasRef.current) return
     return registerLodImage(canvasRef.current, url)
-  }, [url, err])
+  }, [url, err, lodOn])
   if (!url || err) {
     return (
       <div className="mv-block mv-imgerr">
@@ -106,7 +112,7 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
   const style = undefined
   return (
     <figure className="mv-block mv-img">
-      {lodSupported
+      {lodOn
         ? <canvas ref={canvasRef} className="mv-img-el" role="img" aria-label={alt ?? caption ?? ''} style={style} />
         : <img className="mv-img-el" src={url} alt={alt ?? caption ?? ''} loading="lazy" style={style} onError={() => setErr(true)} />}
       {caption && <figcaption>{caption}</figcaption>}

@@ -1,0 +1,97 @@
+/**
+ * The Slide root (v1.5) - the ONE slide primitive. Owns the 1280×720 stage,
+ * the tokens, the type roles, and the rest-state motion reset. Recipes are
+ * prose in instructions/slides.md; markup composes INSIDE <Slide> with the
+ * project's own classes - nothing else is an API.
+ *
+ * Tokens read documented host variables (--marver-slide-*) from the frame's
+ * theme when the host defines them, and fall back to the palette - an
+ * unthemed repo still gets a coherent deck.
+ *
+ * Motion law: at rest (canvas), everything inside a slide is STILL - CSS
+ * animations and transitions are suspended. Slides mode lifts the reset by
+ * setting `data-sl-play` on <html> (the stage owns that flag), which also
+ * arms the entrance presets (`data-animate`, run once after the swap
+ * settles - the stage adds `data-sl-entered`).
+ */
+import { createContext, useContext, type CSSProperties, type ReactNode } from 'react'
+import { FONT_STACK } from './palette.ts'
+
+export const SLIDE_W = 1280
+export const SLIDE_H = 720
+
+/** Img (and anything else that cares) asks: am I inside a slide? */
+export const SlideCtx = createContext(false)
+export const useInSlide = () => useContext(SlideCtx)
+
+const SLIDE_CSS = `
+.sl-root {
+  --sl-ink: var(--marver-slide-ink, #18181b);
+  --sl-ground: var(--marver-slide-ground, #ffffff);
+  --sl-accent: var(--marver-slide-accent, #0088ff);
+  --sl-muted: var(--marver-slide-muted, rgba(24, 24, 27, .55));
+  --sl-tempo: var(--marver-slide-tempo, 350ms);
+  --sl-margin: 7%;
+  position: relative; width: ${SLIDE_W}px; height: ${SLIDE_H}px; overflow: hidden;
+  background: var(--sl-ground); color: var(--sl-ink);
+  font-family: ${FONT_STACK};
+  padding: var(--sl-margin); box-sizing: border-box;
+  display: flex; flex-direction: column; justify-content: center; gap: 20px;
+}
+.dark .sl-root, [data-theme="dark"] .sl-root {
+  --sl-ink: var(--marver-slide-ink-dark, #f5f5f7);
+  --sl-ground: var(--marver-slide-ground-dark, #101014);
+  --sl-muted: var(--marver-slide-muted-dark, rgba(245, 245, 247, .55));
+}
+.sl-assertion { font-size: 56px; line-height: 1.08; font-weight: 750; letter-spacing: -.02em; margin: 0 }
+.sl-support { font-size: 30px; line-height: 1.25; font-weight: 500; margin: 0 }
+.sl-body { font-size: 24px; line-height: 1.45; margin: 0 }
+.sl-caption { font-size: 18px; line-height: 1.4; color: var(--sl-muted); margin: 0 }
+
+/* THE MOTION RESET - at rest, a slide is still. Slides mode (the stage sets
+   data-sl-play on <html>) lifts it. */
+:root:not([data-sl-play]) .sl-root, :root:not([data-sl-play]) .sl-root * {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+
+/* Entrance presets: inert until the stage marks the swap settled. An element
+   carrying a morph name must not carry data-animate (one transform owner) -
+   the doctrine says so; the selector below cannot check it, the review gate does. */
+[data-sl-play] .sl-root [data-animate] { opacity: 0 }
+[data-sl-play][data-sl-entered] .sl-root [data-animate] {
+  opacity: 1; animation-duration: 400ms; animation-timing-function: cubic-bezier(.2, .7, .2, 1);
+  animation-fill-mode: both;
+}
+[data-sl-play][data-sl-entered] .sl-root [data-animate="fade-up"] { animation-name: sl-fade-up }
+[data-sl-play][data-sl-entered] .sl-root [data-animate="fade"] { animation-name: sl-fade }
+[data-sl-play][data-sl-entered] .sl-root [data-animate="scale-in"] { animation-name: sl-scale-in }
+[data-sl-play][data-sl-entered] .sl-root [data-animate-delay="1"] { animation-delay: 80ms }
+[data-sl-play][data-sl-entered] .sl-root [data-animate-delay="2"] { animation-delay: 160ms }
+[data-sl-play][data-sl-entered] .sl-root [data-animate-delay="3"] { animation-delay: 240ms }
+@keyframes sl-fade-up { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+@keyframes sl-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sl-scale-in { from { opacity: 0; transform: scale(.94) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) {
+  [data-sl-play] .sl-root [data-animate] { opacity: 1; animation: none !important }
+}
+`
+
+let injected = false
+function ensureSlideStyles() {
+  if (injected || typeof document === 'undefined') return
+  injected = true
+  const el = document.createElement('style')
+  el.setAttribute('data-mv-slide', '')
+  el.textContent = SLIDE_CSS
+  document.head.appendChild(el)
+}
+
+export function Slide({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
+  ensureSlideStyles()
+  return (
+    <SlideCtx.Provider value={true}>
+      <div className="sl-root" style={style}>{children}</div>
+    </SlideCtx.Provider>
+  )
+}
