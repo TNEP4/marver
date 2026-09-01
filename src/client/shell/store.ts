@@ -60,9 +60,16 @@ export interface Node {
    *  on every fresh navigation. */
   readyRetried?: boolean
 }
-/** A Live Jam notification: a persistent bottom-right glass pill for a Marver
- *  reply. Frame-first: the FRAME is the news (icon + title, blue), Marver + preview below. */
-export interface JamNote { threadId: string; board: string; preview: string; ts: number; frame?: string; frameTitle?: string; intent?: string }
+/** A comment notification: a persistent bottom-right glass pill. Three kinds
+ *  share it - a Marver (agent) reply renders frame-first with the mark; a
+ *  human `mention`/`reply` renders person-first: their avatar, "«name»
+ *  mentioned you" / "«name» replied", the message underneath. */
+export interface JamNote {
+  threadId: string; board: string; preview: string; ts: number
+  frame?: string; frameTitle?: string; intent?: string
+  kind?: 'mention' | 'reply'                      // absent = the agent pill
+  author?: { name?: string; avatar?: string; id?: string; email?: string }
+}
 export interface Toast { id: number; text: string; jam?: JamNote }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean } = shConfig
@@ -1029,7 +1036,8 @@ export const useStore = create<State>((set, get) => {
      *  supersedes), capped so the stack stays small. */
     jamToast(note) {
       const id = ++toastSeq
-      set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text: 'Marver replied', jam: note }].slice(-8) }))
+      const text = note.kind === 'mention' ? 'You were mentioned' : note.kind === 'reply' ? 'New reply' : 'Marver replied'
+      set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text, jam: note }].slice(-8) }))
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },

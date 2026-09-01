@@ -10,7 +10,7 @@ import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
-import { useComments } from './comments-store.ts'
+import { avatarFallback, useComments } from './comments-store.ts'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -1169,6 +1169,15 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   )
 }
 
+/** The pill's face for a human notification - the author's picture, or the
+ *  house initials fallback (same ladder the thread avatars use). */
+function JamAvatar({ author }: { author: { name?: string; avatar?: string; id?: string; email?: string } }) {
+  const { initials, hue } = avatarFallback(author)
+  return author.avatar
+    ? <img className="sh-jam-ava" src={author.avatar} alt="" referrerPolicy="no-referrer" />
+    : <span className="sh-jam-ava init" style={{ background: `hsl(${hue} 55% 45%)` }}>{initials}</span>
+}
+
 /** A data-goto whose target frame is not on the current board follows the frame HOME:
  *  the first curated board (switcher rank) that pins it is switched to and the frame
  *  focused there - a link is navigation, and navigation never edits a board. Only a
@@ -1239,11 +1248,18 @@ async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void)
  *  `badge` shows the +N deck count (replacing View); `inert` disables inner clicks (the deck handles it). */
 function JamToast({ id, note, badge, inert }: { id: number; note: import('./store.ts').JamNote; badge?: number; inert?: boolean }) {
   const dismiss = () => useStore.getState().dismissToast(id)
+  // human pills are person-first: their avatar, "name mentioned you"; the
+  // agent pill keeps its frame-first shape with the mark
+  const human = note.kind && note.author
   return (
     <div className="sh-toast jam">
-      <span className="sh-jam-mark"><ParallelogramFillIcon size={17} /></span>
+      {human
+        ? <JamAvatar author={note.author!} />
+        : <span className="sh-jam-mark"><ParallelogramFillIcon size={17} /></span>}
       <div className="sh-jam-txt">
-        <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>
+        {human
+          ? <b className="sh-jam-frame"><span className="t">{note.author!.name ?? 'Someone'}</span> <span className="v">{note.kind === 'mention' ? 'mentioned you' : 'replied'}</span></b>
+          : <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>}
         <span className="sh-jam-prev">{note.preview}</span>
       </div>
       {badge != null

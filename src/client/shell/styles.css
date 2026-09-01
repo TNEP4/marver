@@ -1241,3 +1241,9 @@ body.sh-hide-ui .sh-play-hint { display: none !important }
 }
 /* a mention of YOU inside a thread: the loudest chip - accent, heavier */
 .cm-at.person.me { color: var(--accent); font-weight: 700 }
+
+/* human notification pill: the author's face, then "name mentioned you" */
+.sh-jam-ava { width: 22px; height: 22px; border-radius: 999px; object-fit: cover; flex: none }
+.sh-jam-ava.init { display: inline-flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,.92); font: 700 9px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em }
+.sh-jam-frame .v { color: var(--glass-ink-2); font-weight: 500 }

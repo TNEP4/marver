@@ -7,6 +7,7 @@
 import { create } from 'zustand'
 import { replay, type CommentEvent, type Thread } from '../../shared/events.ts'
 import { mentionPeople, mentionsIn } from './mentions.ts'
+import { playPing } from './sound.ts'
 import { ROUTE } from '../const.ts'
 
 export interface Me {
@@ -125,6 +126,41 @@ export const useComments = create<CommentsState>((set, get) => {
       }
     })
   }
+  // A HUMAN's fresh comment that concerns me raises the same pill the agent
+  // gets, person-first: a mention of me anywhere, or a reply in a thread I am
+  // part of. Same freshness rules as notifyAgent; one ping per batch, not per
+  // event - a burst must not become a drum roll.
+  const notifyHuman = (fresh: CommentEvent[]) => {
+    const me = get().me
+    if (!me) return
+    const isMe = (a?: { id?: string; email?: string }) =>
+      !!a && ((!!a.id && a.id === me.id) || (!!a.email && !!me.email && a.email.toLowerCase() === me.email.toLowerCase()))
+    const news = fresh.filter((e) => !e.agent && (e.type === 'create' || e.type === 'reply') && e.author && !isMe(e.author))
+    if (!news.length) return
+    const notes: { e: CommentEvent; kind: 'mention' | 'reply' }[] = []
+    for (const e of news) {
+      if ((e.mentions ?? []).some((m) => isMe(m))) { notes.push({ e, kind: 'mention' }); continue }
+      if (e.type !== 'reply' || !e.parentId) continue
+      const t = get().threads.find((t) => t.id === e.parentId)
+      const mine = !!t && (isMe(t.author) || t.replies.some((r) => r.id !== e.commentId && isMe(r.author)))
+      if (mine) notes.push({ e, kind: 'reply' })
+    }
+    if (!notes.length) return
+    playPing()
+    void import('./store.ts').then(({ useStore }) => {
+      const s = useStore.getState()
+      for (const { e, kind } of notes) {
+        const threadId = e.type === 'reply' ? e.parentId! : e.commentId!
+        const t = get().threads.find((t) => t.id === threadId)
+        const entry = t?.frame ? s.manifest?.frames.find((f) => f.id === t.frame) : undefined
+        s.jamToast({
+          threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts, kind, author: e.author,
+          preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
+          frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
+        })
+      }
+    })
+  }
   // events are append-only everywhere, so union is ALWAYS safe - the one rule is the
   // baseline, PER BOARD: a board's first successful read must never replay its history
   // as notifications (the switcher list can arrive after the first sweep, so a global
@@ -138,7 +174,9 @@ export const useComments = create<CommentsState>((set, get) => {
     const fresh = events.filter((e) => !have.has(key(e)) && (have.add(key(e)), true))
     if (!fresh.length) return
     set(derive([...get().events, ...fresh]))
-    notifyAgent(fresh.filter((e) => (e.board && baselinedBoards.has(e.board)) || e.ts > bootTs))
+    const news = fresh.filter((e) => (e.board && baselinedBoards.has(e.board)) || e.ts > bootTs)
+    notifyAgent(news)
+    notifyHuman(news)
   }
   /** Legacy logs (0.8.0 clients never sent `board`) get it from the endpoint they came
    *  from - without it, replies to their threads would route to whatever board is open. */
