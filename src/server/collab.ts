@@ -21,7 +21,8 @@ import { appendEvents, listBoards, readLog, type CommentEvent } from './comments
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
-import { relayNotify, transitionId, type NotifyCtx } from './notify.ts'
+import { notifyCommentActivity, relayNotify, transitionId, type NotifyCtx } from './notify.ts'
+import type { Mention } from '../shared/events.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
@@ -67,16 +68,44 @@ export function validAvatar(s: unknown): s is string {
   return magic[m[1]]?.(head) ?? false
 }
 
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+const OPAQUE_ID = /^[0-9a-f]{24}$/
+
+/** Mention shape rules (07-v1.1 §B). One generic refusal for every violation -
+ *  no per-cause oracle. The browser form carries the opaque `id` and NEVER an
+ *  email (a browser-supplied email is a membership probe); the operator form
+ *  (CLI sync - canonical bytes) carries `email` and never an id. */
+function badMentions(ev: CommentEvent, operator: boolean): boolean {
+  if (ev.mentions === undefined) return false
+  if (ev.type !== 'create' && ev.type !== 'reply') return true
+  if (!Array.isArray(ev.mentions) || ev.mentions.length > 8) return true
+  const seen = new Set<string>()
+  for (const m of ev.mentions) {
+    if (!m || typeof m !== 'object' || Object.keys(m).some((k) => k !== 'id' && k !== 'email' && k !== 'label')) return true
+    if (typeof m.label !== 'string' || !m.label.trim() || m.label.length > 80 || /^@?marver$/i.test(m.label.trim())) return true
+    const who = operator ? m.email : m.id
+    if (operator ? (typeof m.email !== 'string' || !EMAIL_SHAPE.test(m.email) || m.email.length > 254 || m.id !== undefined)
+                 : (typeof m.id !== 'string' || !OPAQUE_ID.test(m.id) || m.email !== undefined)) return true
+    const key = who!.toLowerCase()
+    if (seen.has(key)) return true
+    seen.add(key)
+  }
+  return false
+}
+
 /** Reject anything the log must not absorb. Returns an error string or null.
  *  Events are append-only and synced by id, so acceptance is forever - validate hard. */
-export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u: User, board: string): string | null {
+export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u: User, board: string, opts: { operator?: boolean } = {}): string | null {
   const now = Date.now()
   const creates = new Map<string, CommentEvent>()
+  const comments = new Set<string>()                      // every create + reply commentId in the log
   const authors = new Map<string, string>()               // commentId -> author email (create + reply)
   for (const ev of log) {
     if (ev.type === 'create' && ev.commentId && !creates.has(ev.commentId)) creates.set(ev.commentId, ev)
-    if ((ev.type === 'create' || ev.type === 'reply') && ev.commentId && ev.author?.email && !authors.has(ev.commentId))
-      authors.set(ev.commentId, ev.author.email.toLowerCase())
+    if ((ev.type === 'create' || ev.type === 'reply') && ev.commentId) {
+      comments.add(ev.commentId)
+      if (ev.author?.email && !authors.has(ev.commentId)) authors.set(ev.commentId, ev.author.email.toLowerCase())
+    }
   }
   const me = u.email.toLowerCase()
   for (const ev of incoming) {
@@ -98,7 +127,13 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
       return 'event timestamp out of bounds'
     if (ev.board !== undefined && ev.board !== board) return 'event board does not match the endpoint'
     if (ev.body !== undefined && (typeof ev.body !== 'string' || ev.body.length > MAX_BODY_TEXT)) return 'body too long'
-    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor'
+    // a mail trigger must never fire for an event replay would shrug at - and a blank
+    // comment is not a comment (the UI already refuses to send one)
+    if ((ev.type === 'create' || ev.type === 'reply') && !ev.body?.trim()) return 'a comment needs a body'
+    if (badMentions(ev, !!opts.operator)) return 'invalid mentions'
+    // `profile` is in this set deliberately: an unbound author on a profile event let a
+    // browser submit arbitrary emails and read their opaque ids off the projection
+    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile'
     if (needsAuthor && ev.author?.email?.toLowerCase() !== me)
       return 'event author must be the signed-in account'
     if (typeof ev.commentId !== 'string' || !ID_RE.test(ev.commentId)) {
@@ -108,11 +143,16 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
       case 'create':
         if (creates.has(ev.commentId!)) return 'a thread with that id already exists'
         creates.set(ev.commentId!, ev)
+        comments.add(ev.commentId!)
         if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
         break
       case 'reply':
         if (typeof ev.parentId !== 'string' || (!creates.has(ev.parentId) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.parentId)))
           return 'reply parent does not exist'
+        // replay silently ignores a duplicate reply id - the validator must agree, or
+        // a discarded event could still trigger mail
+        if (comments.has(ev.commentId!)) return 'a comment with that id already exists'
+        comments.add(ev.commentId!)
         if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
         break
       case 'edit': {
@@ -240,9 +280,39 @@ export function collabHandler(dataDir: string, distDir: string) {
   // every SSE subscriber - nothing per-viewer is ever fanned out. Only the
   // operator's own sessions (the CLI sync) receive canonical bytes.
   const project = (ev: CommentEvent): CommentEvent => {
-    if (!ev.author?.email) return ev
-    const { email, ...rest } = ev.author
-    return { ...ev, author: { ...rest, id: opaqueId(dataDir, email) } }
+    let out = ev
+    if (ev.author?.email) {
+      const { email, ...rest } = ev.author
+      out = { ...out, author: { ...rest, id: opaqueId(dataDir, email) } }
+    }
+    // the mention leg is independent of the author leg on purpose: a malformed or
+    // imported event must never carry a canonical email past this line
+    if (Array.isArray(ev.mentions) && ev.mentions.length)
+      out = { ...out, mentions: ev.mentions.map((m) => (m?.email ? { id: opaqueId(dataDir, m.email), label: m.label } : m)) }
+    return out
+  }
+  /** Every opaque id the canvas can resolve back to an address: accounts, plus
+   *  every author and mention across the boards' logs. Broader than any one
+   *  composer can see, and safely so - ids are HMACs under the canvas secret,
+   *  so a valid id for an unseen person cannot be manufactured to probe with. */
+  const mentionTargets = (): Map<string, string> => {
+    const map = new Map<string, string>()
+    const add = (email?: string) => { if (email) map.set(opaqueId(dataDir, email), normEmail(email)) }
+    for (const usr of loadStore(dataDir).users) add(usr.email)
+    for (const st of threads.values()) for (const ev of st.events) {
+      add(ev.author?.email)
+      for (const mn of ev.mentions ?? []) add(mn.email)
+    }
+    return map
+  }
+  /** May this address still read this board - the activity-mail eligibility
+   *  filter, asked at enqueue time (delivery cannot re-check; 07-v1.1 §A). */
+  const mailAllowed = (board: string, email: string): boolean => {
+    const store = shareState(dataDir)
+    if (!store) return true                               // pre-migration: legacy behaviour
+    const owner = loadStore(dataDir).users.find((x) => x.role === 'owner')
+    const userRole = owner && normEmail(owner.email) === normEmail(email) ? 'owner' as const : 'member' as const
+    return (resolveAccess({ email, userRole, store, ceilings }).boards[board] ?? 'none') !== 'none'
   }
   const rawTransport = (req: IncomingMessage): boolean => {
     const tok = /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
@@ -812,9 +882,30 @@ export function collabHandler(dataDir: string, distDir: string) {
         // (sync compares ids only - a server that mutates content forks the stores).
         // The author claim must match the session; ownership gates edits; timestamps
         // are bounded so nobody time-travels over someone else's thread.
+        // The ONE exception is the inverse projection below, which is convergence-safe:
+        // projecting the stored form returns byte-for-value what the browser sent.
+        const operator = rawTransport(req)
         const log = readLog(commentsDir, m[1])
-        const bad = validateEvents(incoming, log, u!, m[1])
+        const bad = validateEvents(incoming, log, u!, m[1], { operator })
         if (bad) return json(res, 400, { error: bad }), true
+        // the inverse projection (07-v1.1 §B): browser mentions arrive as opaque ids
+        // and are stored canonically as emails - the exact mirror of `project`. An
+        // unknown or self id is REFUSED with the same generic error as every other
+        // mention violation: a silent drop would fork the client's copy, and ids are
+        // unforgeable, so the refusal discloses nothing a probe could use.
+        if (!operator && incoming.some((ev) => ev.mentions?.length)) {
+          const targets = mentionTargets()
+          for (const ev of incoming) {
+            if (!ev.mentions?.length) continue
+            const mapped: Mention[] = []
+            for (const mn of ev.mentions) {
+              const email = targets.get(mn.id!)
+              if (!email || email === normEmail(u!.email)) return json(res, 400, { error: 'invalid mentions' }), true
+              mapped.push({ email, label: mn.label })
+            }
+            ev.mentions = mapped
+          }
+        }
         const fresh = appendEvents(commentsDir, m[1], incoming)
         // the maintained thread counters follow every append (02-home §3)
         if (fresh.length) {
@@ -822,6 +913,9 @@ export function collabHandler(dataDir: string, distDir: string) {
           threads.set(m[1], deriveThreads([...(st?.events ?? []), ...fresh]))
         }
         broadcast(m[1], fresh.map(project))   // the stream is a browser transport
+        // activity mail (07-v1.1 §A/§B): a fresh reply pulls its thread back, a
+        // mention pulls its person - history imports never mail (freshness gate)
+        if (fresh.length) notifyCommentActivity(notifyCtx, m[1], fresh, threads.get(m[1])?.events ?? [], (email) => mailAllowed(m[1], email))
         return json(res, 200, { accepted: fresh.length }), true
       }
       return false

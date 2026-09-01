@@ -6,6 +6,7 @@
  */
 import { create } from 'zustand'
 import { replay, type CommentEvent, type Thread } from '../../shared/events.ts'
+import { mentionPeople, mentionsIn } from './mentions.ts'
 import { ROUTE } from '../const.ts'
 
 export interface Me {
@@ -250,10 +251,11 @@ export const useComments = create<CommentsState>((set, get) => {
       const { draft, me } = get()
       if (!draft || !body.trim()) return
       const id = uuid()
+      const mentions = mentionsIn(body.trim(), mentionPeople(get().events, me ?? undefined))
       const ok = await get().send([{
         id: uuid(), ts: Date.now(), type: 'create', commentId: id,
         nodeKey: draft.nodeKey, frame: draft.frame, anchor: draft.anchor,
-        author: postAuthor(me), body: body.trim(),
+        author: postAuthor(me), body: body.trim(), ...(mentions ? { mentions } : {}),
       }], draft.board)
       if (ok) set({ draft: null, active: id, commentMode: false })
     },
@@ -264,9 +266,10 @@ export const useComments = create<CommentsState>((set, get) => {
       // route to the thread's ORIGIN log - the viewer may be reading it from another
       // board (frame-scoped display); a reply landing in the wrong log would fork it
       const origin = get().threads.find((t) => t.id === threadId)?.board
+      const mentions = mentionsIn(body.trim(), mentionPeople(get().events, get().me ?? undefined))
       return get().send([{
         id: uuid(), ts: Date.now(), type: 'reply', commentId: uuid(), parentId: threadId,
-        author: postAuthor(get().me), body: body.trim(),
+        author: postAuthor(get().me), body: body.trim(), ...(mentions ? { mentions } : {}),
       }], origin)
     },
 

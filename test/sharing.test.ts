@@ -833,27 +833,30 @@ describe('the canvas fires the relay on real transitions only', () => {
     }) as any
     try {
       const ctx = { dataDir: data, issuer: 'https://id.example.test', origin: 'https://canvas.example.test', enabled: true }
-      const send = (g: { principal: string; assigned: string; at: string; changed: boolean }) => {
+      // v1.1: dispatch rides the sequential relay chain - flush it before asserting
+      const flush = () => new Promise((r) => setTimeout(r, 0))
+      const send = async (g: { principal: string; assigned: string; at: string; changed: boolean }) => {
         if (g.changed) relayNotify(ctx, 'invited', g.principal, transitionId('invited', g.principal, g.assigned, g.at))
+        await flush()
       }
       // the exact sequence collab.ts runs on PUT grant
-      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'view', by: 'o' }))
+      await send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'view', by: 'o' }))
       expect(calls).toHaveLength(1)
       // a same-role re-invite is not a transition
-      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'view', by: 'o' }))
+      await send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'view', by: 'o' }))
       expect(calls).toHaveLength(1)
       // a role CHANGE is one
-      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'o' }))
+      await send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'o' }))
       expect(calls).toHaveLength(2)
       // revoke then re-invite is a fresh transition - it must mail again
       removePrincipalGrants(data, 'dana@x.test')
-      send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'o' }))
+      await send(upsertGrant(data, ceil, { principal: 'dana@x.test', scope: 'canvas', assigned: 'comment', by: 'o' }))
       expect(calls).toHaveLength(3)
       // a domain principal has no inbox - never a call
-      send(upsertGrant(data, ceil, { principal: '@x.test', scope: 'canvas', assigned: 'view', by: 'o' }, { identityMode: true }))
+      await send(upsertGrant(data, ceil, { principal: '@x.test', scope: 'canvas', assigned: 'view', by: 'o' }, { identityMode: true }))
       expect(calls).toHaveLength(3)
       // notify: false declines the relay entirely
-      send.call(null, { ...upsertGrant(data, ceil, { principal: 'late@x.test', scope: 'canvas', assigned: 'view', by: 'o' }) })
+      void send({ ...upsertGrant(data, ceil, { principal: 'late@x.test', scope: 'canvas', assigned: 'view', by: 'o' }) })
       relayNotify({ ...ctx, enabled: false }, 'invited', 'x@y.test', 'ev')
       await new Promise((r) => setTimeout(r, 30))
       expect(calls.filter((c) => c.includes('relay/notify')).length).toBe(4)
@@ -881,5 +884,71 @@ describe('a same-role upsert carries the ratchet forward', () => {
     const g2 = upsertGrant(dir, both, { principal: 'dana@acme.co', scope: 'canvas', assigned: 'view', by: 'owner' })
     expect(g2.changed).toBe(true)
     expect(loadShare(dir)!.grants[0].boardRole).toEqual({ a: 'view' })
+  })
+})
+
+// ---- sharing v1.1: mentions cross the write boundary through the inverse projection ----
+
+describe('mentions: opaque ids in, canonical emails stored, ids back out', () => {
+  it('round-trips the projection, refuses probes, keeps the CLI canonical', async () => {
+    scaffold()
+    const data = join(root, 'data')
+    const inv1 = createInvite(data, 'owner@x.test')
+    const owner = claimInvite(data, inv1.token, { password: 'long-enough-pass', name: 'Owner' })
+    const inv2 = createInvite(data, 'member@x.test')
+    const member = claimInvite(data, inv2.token, { password: 'long-enough-pass', name: 'Member' })
+    const secret = 'a'.repeat(48)
+    await boot({ MARVER_DATA_DIR: data, MARVER_PASSWORD: 'canvas-pw', MARVER_CLI_TOKEN: secret })
+
+    const post = (session: string, ev: any) => fetch(`http://localhost:${PORT}/__mv/api/comments/main`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${session}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [ev] }),
+    })
+    const rootId = crypto.randomUUID()
+    expect((await post(owner.session, {
+      id: crypto.randomUUID(), ts: Date.now(), type: 'create', commentId: rootId,
+      frame: 'x/y', anchor: {}, author: { email: 'owner@x.test', name: 'Owner' }, body: 'root note',
+    })).status).toBe(200)
+
+    // the member's browser learns the owner's opaque id off the projection
+    const asMember = { headers: { authorization: `Bearer ${member.session}` } }
+    const seen = await (await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, asMember)).json() as any
+    const ownerId = seen.events[0].author.id as string
+    expect(ownerId).toMatch(/^[0-9a-f]{24}$/)
+    const me = await (await fetch(`http://localhost:${PORT}/__mv/api/me`, asMember)).json() as any
+
+    // mention by opaque id - accepted, stored canonically, projected back to the id
+    const reply = (mentions: any) => post(member.session, {
+      id: crypto.randomUUID(), ts: Date.now(), type: 'reply', commentId: crypto.randomUUID(), parentId: rootId,
+      author: { email: 'member@x.test', name: 'Member' }, body: '@Owner ping', mentions,
+    })
+    expect((await reply([{ id: ownerId, label: 'Owner' }])).status).toBe(200)
+    const after = await (await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, asMember)).json() as any
+    const projected = after.events.find((e: any) => e.type === 'reply')
+    expect(projected.mentions).toEqual([{ id: ownerId, label: 'Owner' }])
+    expect(JSON.stringify(after)).not.toContain('owner@x.test')
+
+    // the disk and the operator transport carry the email form
+    expect(readFileSync(join(data, 'comments', 'main.jsonl'), 'utf8')).toContain('"mentions":[{"email":"owner@x.test","label":"Owner"}]')
+    const cli = await (await fetch(`http://localhost:${PORT}/__mv/api/cli-session`, {
+      method: 'POST', headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' }, body: '{}',
+    })).json() as any
+    const raw = await (await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, { headers: { authorization: `Bearer ${cli.token}` } })).json() as any
+    expect(raw.events.find((e: any) => e.type === 'reply').mentions).toEqual([{ email: 'owner@x.test', label: 'Owner' }])
+
+    // every probe shape gets the SAME generic refusal: a raw email, an unknown id,
+    // a self-mention, the reserved label
+    for (const bad of [
+      [{ email: 'guess@x.test', label: 'Guess' }],
+      [{ id: 'f'.repeat(24), label: 'Ghost' }],
+      [{ id: me.id, label: 'Member' }],
+      [{ id: ownerId, label: 'marver' }],
+    ]) {
+      const res = await reply(bad)
+      expect(res.status).toBe(400)
+      expect(((await res.json()) as any).error).toBe('invalid mentions')
+    }
+    delete process.env.MARVER_CLI_TOKEN
   })
 })

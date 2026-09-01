@@ -10,6 +10,13 @@ export type EventType = 'create' | 'reply' | 'edit' | 'resolve' | 'reopen' | 're
 // Live Jam: provenance stamped by the daemon on agent-authored events (who orchestrated the change).
 export interface AgentMeta { devUser?: string; harness?: string; model?: string; effort?: string }
 
+/** A person named in a comment (sharing v1.1). Splits exactly like `author`:
+ *  canonical logs carry `email`, browser transports carry `id` (the same
+ *  opaque per-canvas HMAC) - exactly one of the two is present. `label` is the
+ *  display name the composer inserted (bodies stay plain text; rendering
+ *  highlights `@label` runs by matching it). */
+export interface Mention { email?: string; id?: string; label: string }
+
 export interface CommentEvent {
   id: string                      // client-generated UUID - the idempotency key
   ts: number                      // ms epoch at creation
@@ -25,6 +32,7 @@ export interface CommentEvent {
    *  travels to another viewer's browser. Exactly one of the two is present. */
   author?: { email?: string; id?: string; name?: string; avatar?: string }
   body?: string                   // plain text in v1
+  mentions?: Mention[]            // create/reply only - people named in the body (v1.1)
   emoji?: string                  // react events
   addressedIn?: string            // resolve events: the variant frame that answered
   // --- Live Jam additions ---
@@ -44,7 +52,8 @@ export interface Thread {
   addressedIn?: string
   agent?: boolean                 // root authored by the agent
   agentMeta?: AgentMeta
-  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta }[]
+  mentions?: Mention[]
+  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[] }[]
   reactions: Record<string, string[]>   // emoji -> author emails (toggle semantics)
 }
 
@@ -67,7 +76,7 @@ export function replay(events: CommentEvent[]): Thread[] {
     threads.set(ev.commentId, {
       id: ev.commentId, board: ev.board, nodeKey: ev.nodeKey, frame: ev.frame,
       anchor: ev.anchor, author: ev.author, body: ev.body, ts: ev.ts,
-      resolved: false, agent: ev.agent, agentMeta: ev.agentMeta, replies: [], reactions: {},
+      resolved: false, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, replies: [], reactions: {},
     })
   }
   for (const ev of ordered) {
@@ -75,7 +84,7 @@ export function replay(events: CommentEvent[]): Thread[] {
       case 'reply': {
         const t = ev.parentId ? threads.get(ev.parentId) : undefined
         if (!t || !ev.commentId || t.replies.some((r) => r.id === ev.commentId)) break
-        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta })
+        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions })
         break
       }
       case 'edit': {

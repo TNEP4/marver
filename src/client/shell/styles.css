@@ -1121,6 +1121,20 @@ body.sh-hide-ui .sh-play-hint { display: none !important }
 .cm-hl .cm-at { font-weight: inherit; -webkit-text-stroke: .4px currentColor }
 .cm-at-tip { display: block; max-width: 220px; line-height: 1.4 }
 
+/* v1.1: @Person mentions - the comment accent, medium weight (the mirror rule above
+   already keeps composer metrics honest: color + stroke only, never font-weight). */
+.cm-at.person { color: var(--cm-line, var(--comment)); font-weight: 600 }
+.cm-hl .cm-at.person { font-weight: inherit }
+/* The typeahead: a small glass list ABOVE the composer; rows follow the pick. */
+.cm-mentionlist { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 5; min-width: 180px; max-width: 260px;
+  display: flex; flex-direction: column; padding: 4px; border-radius: 10px;
+  background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur) }
+.cm-mentionlist button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 7px;
+  background: none; color: var(--glass-ink); font: 500 12.5px/1.2 inherit; text-align: left; cursor: pointer; white-space: nowrap }
+.cm-mentionlist button span { overflow: hidden; text-overflow: ellipsis }
+.cm-mentionlist button.on { background: var(--glass-hover) }
+
 /* Marver identity: the agent's avatar mark + provenance tooltip (§7). Always accent, never a hue. */
 .cm-avatar.cm-marver { background: var(--mv-blue); color: rgba(255,255,255,.9); cursor: default }   /* white/90 mark, embedded in the accent */
 .cm-marver-wrap { display: inline-flex; border-radius: 50% }

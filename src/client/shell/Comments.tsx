@@ -13,7 +13,7 @@ import { canvasCtl } from './canvas/ctl.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
-import { parseMentions } from './mentions.ts'
+import { mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
 import { ROUTE } from '../const.ts'
 import type { AgentMeta, Thread } from '../../shared/events.ts'
 
@@ -258,17 +258,30 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
 const AT_TIP = "Read like any other comment. Marver won't act on this unless the owner promotes it."
 
-/** A comment body with @marver mentions styled: owner-authored → bold accent (a live trigger);
- *  anyone else's → plain + a teaching tooltip (context, not a command). */
+/** The mentionable set, derived from everything the client has seen (published:
+ *  projected ids + names; dev: canonical emails). The viewer themself is out. */
+function usePeople(): MentionPerson[] {
+  const events = useComments((s) => s.events)
+  const me = useComments((s) => s.me)
+  return mentionPeople(events, me ?? undefined)
+}
+
+/** A comment body with mentions styled. `@marver`: owner-authored → bold accent (a live
+ *  trigger); anyone else's → plain + a teaching tooltip (context, not a command).
+ *  `@Person` (v1.1) → the person chip; the same segmentation that derived the
+ *  event's mentions, so what lit up is what notified. */
 function CommentBody({ body, owner }: { body?: string; owner: boolean }) {
+  const people = usePeople()
   if (!body) return null
   return (
     <p className="cm-body">
-      {parseMentions(body).map((s, i) => !s.mention
-        ? <span key={i}>{s.text}</span>
-        : owner
-          ? <span key={i} className="cm-at owner">{s.text}</span>
-          : <Tip key={i} side="top" label={<span className="cm-at-tip">{AT_TIP}</span>}><span className="cm-at">{s.text}</span></Tip>)}
+      {parseBody(body, people).map((s, i) => s.person
+        ? <span key={i} className="cm-at person">{s.text}</span>
+        : !s.marver
+          ? <span key={i}>{s.text}</span>
+          : owner
+            ? <span key={i} className="cm-at owner">{s.text}</span>
+            : <Tip key={i} side="top" label={<span className="cm-at-tip">{AT_TIP}</span>}><span className="cm-at">{s.text}</span></Tip>)}
     </p>
   )
 }
@@ -339,6 +352,27 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   const ref = useRef<HTMLTextAreaElement>(null)
   const hlRef = useRef<HTMLDivElement>(null)
   const [busy, setBusy] = useState(false)
+  // ---- @-mention typeahead (v1.1): the token under the caret filters the people the
+  // client has seen; picking completes `@Label ` in place. Escape dismisses THIS token
+  // only (the composer keeps its own Escape = cancel semantics when no list is open).
+  const people = usePeople()
+  const [caret, setCaret] = useState(0)
+  const [pick, setPick] = useState(0)
+  const [dismissed, setDismissed] = useState<number | null>(null)
+  const q = mentionQueryAt(value, caret)
+  const matches = q && dismissed !== q.start
+    ? people.filter((p) => p.label.toLowerCase().startsWith(q.query.toLowerCase())).slice(0, 5)
+    : []
+  const listOpen = matches.length > 0
+  useEffect(() => { setPick(0) }, [q?.start, q?.query])
+  const track = () => setCaret(ref.current?.selectionStart ?? 0)
+  const choose = (p: MentionPerson) => {
+    if (!q) return
+    const pos = q.start + p.label.length + 2                        // '@' + label + ' '
+    onChange(value.slice(0, q.start) + '@' + p.label + ' ' + value.slice(caret))
+    setCaret(pos)
+    requestAnimationFrame(() => { const el = ref.current; if (el) { el.focus(); el.setSelectionRange(pos, pos) } })
+  }
   // +2: scrollHeight excludes the 1px borders, but border-box height includes them - without
   // it every line is squeezed 2px and the single-line pill renders off-center
   const grow = () => { const el = ref.current; if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, 132) + 'px' } }
@@ -352,18 +386,38 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   }
   return (
     <div className="cm-inputwrap">
-      {/* Live mention highlight: a mirror layer behind the transparent-text textarea, so @marver shows
-          its trigger colour AS YOU TYPE (owner = accent-blue "this will run"; else muted). */}
+      {/* Live mention highlight: a mirror layer behind the transparent-text textarea, so @marver
+          shows its trigger colour AS YOU TYPE (owner = accent-blue "this will run"; else muted)
+          and a completed @Person wears the chip it will render with. */}
       <div className="cm-hl" ref={hlRef} aria-hidden>
-        {parseMentions(value).map((s, i) => s.mention
-          ? <span key={i} className={owner ? 'cm-at owner' : 'cm-at'}>{s.text}</span>
-          : <span key={i}>{s.text}</span>)}
+        {parseBody(value, people).map((s, i) => s.person
+          ? <span key={i} className="cm-at person">{s.text}</span>
+          : s.marver
+            ? <span key={i} className={owner ? 'cm-at owner' : 'cm-at'}>{s.text}</span>
+            : <span key={i}>{s.text}</span>)}
         {value.endsWith('\n') ? '​' : ''}
       </div>
+      {listOpen && (
+        <div className="cm-mentionlist" role="listbox">
+          {matches.map((p, i) => (
+            <button key={p.id ?? p.email} type="button" className={i === pick ? 'on' : ''} role="option" aria-selected={i === pick}
+              onMouseDown={(e) => { e.preventDefault(); choose(p) }} onMouseEnter={() => setPick(i)}>
+              <Avatar author={{ ...p, name: p.label }} size={18} /><span>{p.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <textarea ref={ref} rows={1} value={value} placeholder={placeholder} disabled={busy} spellCheck={false}
-        onChange={(e) => onChange(e.target.value)} onInput={grow} onScroll={syncScroll}
+        onChange={(e) => { onChange(e.target.value); setDismissed(null); setCaret(e.target.selectionStart ?? 0) }}
+        onInput={grow} onScroll={syncScroll} onClick={track} onKeyUp={track}
         onKeyDown={(e) => {
           e.stopPropagation()
+          if (listOpen) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setPick((v) => (v + 1) % matches.length); return }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setPick((v) => (v + matches.length - 1) % matches.length); return }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choose(matches[pick] ?? matches[0]); return }
+            if (e.key === 'Escape') { setDismissed(q!.start); return }
+          }
           if (e.key === 'Escape') { onCancel?.(); return }
           if (e.key === 'Enter') {
             if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return   // IME: mid-composition Enter must not send
