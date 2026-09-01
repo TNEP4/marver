@@ -31,13 +31,15 @@ export interface MentionPerson { label: string; id?: string; email?: string; ava
 const personKey = (p: { id?: string; email?: string }) => p.id ? `i:${p.id}` : `e:${p.email?.toLowerCase()}`
 
 /** The mentionable set: named humans from the event log, first-seen order,
- *  minus the viewer themself and the reserved agent. */
+ *  minus the viewer themself and the reserved agent NAMESPACE - any label
+ *  STARTING with the word "marver" is out, because the Live Jam daemon's own
+ *  watcher sees `@marver` inside `@Marver Team` and would run the agent. */
 export function mentionPeople(events: CommentEvent[], self?: { id?: string; email?: string }): MentionPerson[] {
   const seen = new Map<string, MentionPerson>()
   const selfKey = self && (self.id || self.email) ? personKey(self) : null
   const add = (a?: { id?: string; email?: string; name?: string; avatar?: string }, label?: string) => {
     const name = (label ?? a?.name)?.trim()
-    if (!a || (!a.id && !a.email) || !name || /^marver$/i.test(name)) return
+    if (!a || (!a.id && !a.email) || !name || /^marver\b/i.test(name)) return
     const k = personKey(a)
     if (k !== selfKey && !seen.has(k)) seen.set(k, { label: name, id: a.id, email: a.email, avatar: a.avatar })
   }
@@ -53,16 +55,16 @@ export type BodySegment = { text: string; marver?: boolean; person?: MentionPers
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Segment a body against the known people: `@Label` runs (longest label wins
- *  at each position, case-insensitive, boundary-guarded) plus `@marver`. The
- *  agent trigger competes at ITS length too - a person labelled "Marver Team"
- *  must beat the bare trigger, or they could never be mentioned at all. */
+ *  at each position, case-insensitive, trailing-boundary-guarded, and only at
+ *  a mention START - after whitespace, an opener, or the beginning; `foo@Sam`
+ *  is an address shape, not a mention, exactly the rule the typeahead uses)
+ *  plus `@marver` (whose namespace mentionPeople already reserves). */
 export function parseBody(body: string, people: MentionPerson[]): BodySegment[] {
   if (!people.length) return parseMentions(body).map((s) => (s.mention ? { text: s.text, marver: true } : { text: s.text }))
   const byLength = [...people].sort((a, b) => b.label.length - a.label.length)
-  const alts = byLength.map((p) => ({ len: p.label.length, pat: `${escapeRe(p.label)}(?![\\w])` }))
-  alts.push({ len: 'marver'.length, pat: 'marver\\b' })
-  alts.sort((a, b) => b.len - a.len)
-  const pattern = new RegExp(`@(?:${alts.map((a) => a.pat).join('|')})`, 'gi')
+  const alts = byLength.map((p) => `${escapeRe(p.label)}(?![\\w])`)
+  alts.push('marver\\b')
+  const pattern = new RegExp(`(?<=^|[\\s(])@(?:${alts.join('|')})`, 'gim')
   const out: BodySegment[] = []
   let last = 0
   for (const m of body.matchAll(pattern)) {
@@ -79,13 +81,16 @@ export function parseBody(body: string, people: MentionPerson[]): BodySegment[] 
 
 /** The mentions a body carries, in event form - derived from the SAME
  *  segmentation the highlight uses: what lights up is what notifies. ≤ 8,
- *  the validator's cap. */
+ *  the validator's cap. An ambiguous label (two people wearing the same
+ *  display name) mentions EVERY bearer - deterministic and stateless, where
+ *  remembering which twin was picked would depend on hidden composer state. */
 export function mentionsIn(body: string, people: MentionPerson[]): Mention[] | undefined {
   const out = new Map<string, Mention>()
-  for (const seg of parseBody(body, people)) {
-    const p = seg.person
-    if (!p || out.size >= 8) continue
-    out.set(personKey(p), p.id ? { id: p.id, label: p.label } : { email: p.email, label: p.label })
+  const hit = new Set([...parseBody(body, people)].flatMap((s) => (s.person ? [s.person.label.toLowerCase()] : [])))
+  for (const p of people) {
+    if (out.size >= 8) break
+    if (hit.has(p.label.toLowerCase()))
+      out.set(personKey(p), p.id ? { id: p.id, label: p.label } : { email: p.email, label: p.label })
   }
   return out.size ? [...out.values()] : undefined
 }

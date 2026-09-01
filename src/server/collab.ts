@@ -82,7 +82,9 @@ function badMentions(ev: CommentEvent, operator: boolean): boolean {
   const seen = new Set<string>()
   for (const m of ev.mentions) {
     if (!m || typeof m !== 'object' || Object.keys(m).some((k) => k !== 'id' && k !== 'email' && k !== 'label')) return true
-    if (typeof m.label !== 'string' || !m.label.trim() || m.label.length > 80 || /^@?marver$/i.test(m.label.trim())) return true
+    // the whole marver-prefixed namespace is reserved: the Live Jam watcher sees
+    // `@marver` inside `@Marver Team` and would run the agent on a person mention
+    if (typeof m.label !== 'string' || !m.label.trim() || m.label.length > 80 || /^@?marver\b/i.test(m.label.trim())) return true
     const who = operator ? m.email : m.id
     if (operator ? (typeof m.email !== 'string' || !EMAIL_SHAPE.test(m.email) || m.email.length > 254 || m.id !== undefined)
                  : (typeof m.id !== 'string' || !OPAQUE_ID.test(m.id) || m.email !== undefined)) return true
@@ -285,10 +287,22 @@ export function collabHandler(dataDir: string, distDir: string) {
       const { email, ...rest } = ev.author
       out = { ...out, author: { ...rest, id: opaqueId(dataDir, email) } }
     }
-    // the mention leg is independent of the author leg on purpose: a malformed or
-    // imported event must never carry a canonical email past this line
-    if (Array.isArray(ev.mentions) && ev.mentions.length)
-      out = { ...out, mentions: ev.mentions.map((m) => (m?.email ? { id: opaqueId(dataDir, m.email), label: m.label } : m)) }
+    // the mention leg is independent of the author leg on purpose, and FAIL-CLOSED:
+    // readLog never validates historical lines, so a malformed mentions value (a bare
+    // string, a primitive entry, an unexpected field) must never carry a canonical
+    // email past this line. Only the two known shapes survive, reduced to {id, label}.
+    if (ev.mentions !== undefined) {
+      const safe = Array.isArray(ev.mentions)
+        ? ev.mentions.flatMap((m) => {
+            if (!m || typeof m !== 'object') return []
+            const label = typeof m.label === 'string' ? m.label : ''
+            if (typeof m.email === 'string') return [{ id: opaqueId(dataDir, m.email), label }]
+            if (typeof m.id === 'string') return [{ id: m.id, label }]
+            return []
+          })
+        : []
+      out = { ...out, mentions: safe.length ? safe : undefined }
+    }
     return out
   }
   /** Every opaque id the canvas can resolve back to an address: accounts, plus

@@ -54,12 +54,23 @@ describe('parseBody + mentionsIn - one segmentation, two consumers', () => {
     const body = many.map((p) => `@${p.label}`).join(' ')
     expect(mentionsIn(body, many)!.length).toBe(8)
   })
-  it('a label longer than the agent trigger beats it at its position', () => {
-    const crew = [{ label: 'Marver Team', id: '3'.repeat(24) }]
-    const segs = parseBody('cc @Marver Team and @marver', crew)
-    expect(segs.find((s) => s.person)?.text).toBe('@Marver Team')
-    expect(segs.find((s) => s.marver)?.text).toBe('@marver')
-    expect(mentionsIn('@Marver Team please', crew)).toEqual([{ id: '3'.repeat(24), label: 'Marver Team' }])
+  it('the marver NAMESPACE is reserved - a "Marver Team" member is not mentionable', () => {
+    // the Live Jam watcher sees @marver inside @Marver Team; offering the person
+    // would make a person mention run the agent
+    const events = [ev({ author: { id: '3'.repeat(24), name: 'Marver Team' } })]
+    expect(mentionPeople(events)).toEqual([])
+  })
+  it('a mention starts at a boundary - foo@Sam is an address shape, not a mention', () => {
+    expect(mentionsIn('mail foo@Sam about it', people)).toBeUndefined()
+    expect(mentionsIn('(@Sam saw it)', people)).toEqual([{ id: '1'.repeat(24), label: 'Sam' }])
+    expect(mentionsIn('line one\n@Sam line two', people)).toEqual([{ id: '1'.repeat(24), label: 'Sam' }])
+  })
+  it('an ambiguous label mentions every bearer', () => {
+    const twins = [{ label: 'Sam', id: '1'.repeat(24) }, { label: 'Sam', id: '2'.repeat(24) }]
+    expect(mentionsIn('ping @Sam', twins)).toEqual([
+      { id: '1'.repeat(24), label: 'Sam' },
+      { id: '2'.repeat(24), label: 'Sam' },
+    ])
   })
   it('with nobody known, only @marver segments', () => {
     const segs = parseBody('hi @marver and @Sam', [])

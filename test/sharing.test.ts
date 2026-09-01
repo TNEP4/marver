@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
@@ -949,6 +949,15 @@ describe('mentions: opaque ids in, canonical emails stored, ids back out', () =>
       expect(res.status).toBe(400)
       expect(((await res.json()) as any).error).toBe('invalid mentions')
     }
+
+    // a malformed historical line (readLog never validates) must project fail-closed:
+    // a bare-string mentions value or primitive entries never reach a browser
+    appendFileSync(join(data, 'comments', 'main.jsonl'),
+      JSON.stringify({ id: 'legacy-mal-01', ts: 3, type: 'create', commentId: 'c-legacy-mal', frame: 'x/y',
+        author: { email: 'owner@x.test', name: 'Owner' }, body: 'old', mentions: ['hidden@x.test', { email: 'also@x.test' }, 42] }) + '\n')
+    const leaked = await (await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, asMember)).json() as any
+    expect(JSON.stringify(leaked)).not.toContain('hidden@x.test')
+    expect(JSON.stringify(leaked)).not.toContain('also@x.test')
     delete process.env.MARVER_CLI_TOKEN
   })
 })

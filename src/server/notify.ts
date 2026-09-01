@@ -45,21 +45,24 @@ let chain: Promise<void> = Promise.resolve()
 export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: string, eventId: string): void {
   if (!ctx.enabled || !ctx.issuer || !ctx.origin) return
   if (recipient.startsWith('@') || !recipient.includes('@')) return   // domains have no inbox
-  const now = Math.floor(Date.now() / 1000)
-  let token: string
-  try {
-    token = signCanvasJws(ctx.dataDir, {
-      origin: ctx.origin, template, recipient, eventId, iat: now, exp: now + 600,
-    }, 'marver-relay+jwt')
-  } catch { return }                                  // no identity key yet - nothing to sign with
+  const { dataDir, origin } = ctx
   const url = `${ctx.issuer.replace(/\/+$/, '')}/relay/notify`
-  chain = chain.then(() =>
-    fetch(url, {
+  // the token is minted WHEN its turn in the chain comes, not at enqueue - a
+  // deep queue must never dispatch an already-expired credential
+  chain = chain.then(() => {
+    const now = Math.floor(Date.now() / 1000)
+    let token: string
+    try {
+      token = signCanvasJws(dataDir, {
+        origin, template, recipient, eventId, iat: now, exp: now + 600,
+      }, 'marver-relay+jwt')
+    } catch { return }                                // no identity key yet - nothing to sign with
+    return fetch(url, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
-    }).then(() => undefined, () => undefined),        // the outbox is the relay's problem; nothing waits on mail
-  )
+    }).then(() => undefined, () => undefined)         // the outbox is the relay's problem; nothing waits on mail
+  })
 }
 
 // ---- comment activity (v1.1) ----
