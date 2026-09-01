@@ -62,9 +62,12 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
      author's px, Tailwind classes, and charts all scale together (--sl-fit
      is set inline by the component; 1 on the canvas, where the frame IS
      ${SLIDE_W}x${SLIDE_H}). */
-  position: absolute; inset: 0; margin: auto;
+  /* translate-center, not inset+margin:auto - an overconstrained absolute
+     box (1280px stage in a 390px viewport) resolves margins to 0 and the
+     scaled slide drifts off-center; translate(-50%,-50%) centers at ANY size */
+  position: absolute; left: 50%; top: 50%;
   width: ${SLIDE_W}px; height: ${SLIDE_H}px; overflow: hidden;
-  transform: scale(var(--sl-fit, 1)); transform-origin: center center;
+  transform: translate(-50%, -50%) scale(var(--sl-fit, 1)); transform-origin: center center;
   background: var(--sl-ground); color: var(--sl-ink);
   font-family: ${FONT_STACK};
   padding: var(--sl-margin); box-sizing: border-box;
