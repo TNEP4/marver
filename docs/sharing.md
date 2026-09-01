@@ -258,6 +258,33 @@ board". Note the gate's own entry check short-circuits step 1 for the owner - th
 owner is always admitted so the canvas can be administered - which is the one
 place the blocklist does not have the last word.
 
+## Mail, mentions, and the bell (v1.1)
+
+Sharing's mail rides one relay at the identity service, and the canvas can only
+ever choose a **template** - never a subject, a body, a board name, or any
+comment content. Three transactional moments (you were invited, your request
+was approved, someone asked for access) shipped with v1; v1.1 adds the two
+**activity** moments that pull collaborators back:
+
+- **A thread you are in moved.** A fresh reply mails the thread's other
+  participants - the 10 most recent distinct people, at most one mail per
+  person per thread per 6-hour window, and only for replies just written
+  (history imports and syncs never mail anyone).
+- **Somebody named you.** Typing `@` in the comment composer offers the people
+  already visible in the canvas's comments; a completed `@Name` mails that
+  person once for that comment and rings their bell on the front door. You can
+  only mention people you can already see - the roster is never disclosed, and
+  in the browser mentions travel as the same opaque ids authors do, so no
+  member's address ever reaches another viewer.
+
+Only people who still resolve to at least `view` are mailed - a revoked or
+blocked participant's mail stops with their access. Every activity mail carries
+an **unsubscribe link**: it can mute replies, mentions, or all activity mail,
+for that canvas or everywhere, and it mutes **email only** - the bell keeps
+working. Invitations and approvals are never muted (an invite you cannot
+receive is a lockout, not a courtesy). `share: { notify: false }` still
+declines the relay entirely, activity mail included.
+
 ## What v1 does not do
 
 Sharing v1 controls **who gets in** and **who may comment**. It does **not** yet

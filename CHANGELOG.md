@@ -4,7 +4,29 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## Unreleased
 
+### Added
+
+- **@-mentions in comments.** Type `@` in the composer to name someone already
+  visible in the canvas's comments - they get one mail for that comment and a
+  bell notification on the front door. Mentions ride the same identity-minimised
+  projection as authors: browsers only ever see opaque ids, and you can only
+  mention people you can already see. The agent side is real too: `marver
+  comments list --json` now carries each comment's mentions.
+- **Reply mail.** A fresh reply mails the thread's other participants (the 10
+  most recent, at most once per person per thread per 6-hour window; history
+  imports never mail). Every activity mail carries an unsubscribe link that
+  mutes email without touching the bell. Caveat: delivery needs Marver Sign In -
+  a sovereign canvas has no relay, and `share: { notify: false }` still declines
+  everything.
+
 ### Fixed
+
+- **Comment `profile` events now bind to the signed-in author.** They were
+  accepted with an arbitrary `author.email`, which let any commenter read the
+  opaque id of any guessed address off the projection.
+- **Blank bodies and duplicate reply ids are refused.** Replay always discarded
+  them silently; the validator now agrees, so nothing downstream (like mail)
+  can fire for an event that was never going to render.
 
 - **`marver share explain` now asks the canvas's own resolver.** It called
   `resolveAccess` locally over the fetched roster, which drops the three things only the
