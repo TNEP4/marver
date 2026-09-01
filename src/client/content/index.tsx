@@ -20,6 +20,7 @@ const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
 export { Diagram } from './diagram.tsx'
 export { Slide, SLIDE_W, SLIDE_H } from './slide.tsx'
 export { Chart } from './chart.tsx'
+export { Video } from './video.tsx'
 
 const UNIT = 16   // one gap unit, px - plain adjacency on boards is one gutter; same feel here
 

@@ -46,10 +46,29 @@ export function scanAssetRefs(src: string, moduleId: string): string[] {
   const stripped = code
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|\s)\/\/.*$/gm, '$1')
-  if (/<Img\b[^>]*\bsrc\s*=\s*\{/.test(stripped))
-    throw new Error(`${moduleId}: <Img src={...}> is computed - published builds copy only statically referenced assets. Use a string literal.`)
+  for (const tag of ['Img', 'Video'] as const) {
+    const computed = new RegExp(`<${tag}\\b[^>]*\\b(?:src|poster)\\s*=\\s*\\{`)
+    if (computed.test(stripped))
+      throw new Error(`${moduleId}: <${tag}> has a computed src/poster - published builds copy only statically referenced assets. Use a string literal.`)
+  }
   const out: string[] = []
   for (const m of stripped.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
+  // Video: src AND poster ride the pipeline; remote https sources stay remote
+  // (isLocalAssetRef filters them downstream exactly like markdown images).
+  // A LOCAL Video src without a poster fails closed - the poster IS the
+  // slide's rendering at rest.
+  for (const m of stripped.matchAll(/<Video\b[^>]*>|<Video\b[^>]*\/>/g)) {
+    const tag = m[0]
+    const srcM = /\bsrc\s*=\s*["']([^"']+)["']/.exec(tag)
+    const posterM = /\bposter\s*=\s*["']([^"']+)["']/.exec(tag)
+    if (srcM) {
+      const remote = /^https:\/\//.test(srcM[1])
+      if (!remote && !posterM)
+        throw new Error(`${moduleId}: <Video src="${srcM[1]}"> is a local file without a poster - the poster is the slide at rest. Add poster="...".`)
+      out.push(srcM[1])
+    }
+    if (posterM) out.push(posterM[1])
+  }
   for (const tpl of templates)
     for (const m of tpl.matchAll(/!\[[^\]]*\]\(([^)\s"']+)\)/g)) out.push(m[1])
   return out
