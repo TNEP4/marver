@@ -168,10 +168,13 @@ describe('slides in a real published browser', () => {
     }
     // the chart really rendered (as SVG) rather than silently not mounting
     expect(audit.some((a: { svgs: number }) => a.svgs > 0)).toBe(true)
-    // the board JSON deliberately stores 640×360 on these nodes: slides are
-    // PINNED to the intrinsic on load - a stored size must never clip the root
+    // the board JSON stores 640×360 on these nodes: the canvas honors it like
+    // any frame (devices and resizing work on slides) and THE FIT scales the
+    // 1280×720 stage into the box - in the lean cover too, which runs no JS
     const widths = await browser!.eval(tab, `[...document.querySelectorAll('.sh-node')].map((n) => n.offsetWidth)`)
-    expect(widths).toEqual([1280, 1280, 1280])
+    expect(widths).toEqual([640, 640, 640])
+    const fitted = await browser!.eval(tab, `[...document.querySelectorAll('.sh-lean[data-ready]')].map((f) => Math.round(f.contentDocument.querySelector('.sl-root').getBoundingClientRect().width) - f.clientWidth)`)
+    expect(fitted).toEqual([0, 0, 0])                           // the stage spans its (bordered) node viewport exactly
   })
 
   skippable('a slides board lands in slides mode, steps the frozen (y,x) order, and the stage wears the play contract', async () => {

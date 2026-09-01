@@ -58,10 +58,12 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   --sl-margin: 7%;
   /* THE FIT: authored at exactly ${SLIDE_W}x${SLIDE_H}, then scaled and
      centered to the largest box the viewport gives it - fill window, any
-     device, any published viewer's screen. One coordinate system, so the
-     author's px, Tailwind classes, and charts all scale together (--sl-fit
-     is set inline by the component; 1 on the canvas, where the frame IS
-     ${SLIDE_W}x${SLIDE_H}). */
+     device, a canvas node resized to a phone, any published viewer's screen.
+     One coordinate system, so the author's px, Tailwind classes, and charts
+     all scale together. Pure CSS (tan(atan2(a, b)) is the unitless ratio
+     a / b), so a lean cover - which runs no JS - reflows to the right scale
+     the moment its node is resized. 1 wherever the viewport IS the stage. */
+  --sl-fit: min(tan(atan2(100vw, ${SLIDE_W}px)), tan(atan2(100vh, ${SLIDE_H}px)));
   /* translate-center, not inset+margin:auto - an overconstrained absolute
      box (1280px stage in a 390px viewport) resolves margins to 0 and the
      scaled slide drifts off-center; translate(-50%,-50%) centers at ANY size */
@@ -129,20 +131,6 @@ function ensureSlideStyles() {
 export function Slide({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   ensureSlideStyles()
   const ref = useRef<HTMLDivElement>(null)
-  // THE FIT: scale the authored stage to the viewport (up AND down - a fill
-  // window grows the slide, a phone shrinks it). Inline on the element so the
-  // lean serializer captures the correct scale (the lean doc runs no JS).
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const fit = () => {
-      const s = Math.min(window.innerWidth / SLIDE_W, window.innerHeight / SLIDE_H)
-      el.style.setProperty('--sl-fit', String(Math.max(0.05, Math.round(s * 10000) / 10000)))
-    }
-    fit()
-    window.addEventListener('resize', fit)
-    return () => window.removeEventListener('resize', fit)
-  }, [])
   // dev overflow marker: a slide that outgrows its stage is a VISIBLE defect
   // (outline + console), never a silent clip decision left to chance
   useEffect(() => {
