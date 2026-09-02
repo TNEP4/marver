@@ -139,6 +139,12 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     expect(readdirSync(join(root, 'design', '.local', 'shots'))).toContain('app--home--light.png')
   })
 
+  skippable('control: an UNGESTURED image write is refused in a fresh context - so the copies above ride the key\'s activation', async () => {
+    const s = await openAndSelect(browser!, 'home')
+    const r = await browser!.eval(s, `navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array([137,80,78,71])], { type: 'image/png' }) })]).then(() => 'wrote', (e) => e.name)`)
+    expect(r).toBe('NotAllowedError')
+  })
+
   skippable('Shift+I copies a slide at 4x - 5120×2880 whatever size the node has on the canvas', async () => {
     const s = await openAndSelect(browser!, 'slide')
     await browser!.press(s, 'I', { shift: true })
@@ -177,7 +183,7 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     expect(await browser!.eval(s, `[window.__mvStore.getState().imageBusy, window.__mvStore.getState().imagePulse]`)).toEqual([false, 1])
   })
 
-  it('the endpoint refuses a bad scale and streams PNG bytes with the summary header on format=png', async () => {
+  skippable('the endpoint refuses a bad scale and streams PNG bytes with the summary header on format=png', async () => {
     // owner-gated: mint the cookie the shell gets on its first GET, echo it as x-mv-c
     const first = await fetch(`${ORIGIN}/__mv/api/boards`)
     const cookie = /mv_c=([\w-]+)/.exec(first.headers.get('set-cookie') ?? '')?.[1] ?? ''
@@ -189,7 +195,7 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     const png = await fetch(`${ORIGIN}/__mv/api/shot?frame=app/home&scale=1&w=320&h=200&format=png`, { headers: h })
     expect(png.status).toBe(200)
     expect(png.headers.get('content-type')).toBe('image/png')
-    expect(JSON.parse(png.headers.get('x-mv-shot') ?? '{}')).toMatchObject({ frame: 'app/home', width: 320, height: 200, scale: 1 })
+    expect(JSON.parse(Buffer.from(png.headers.get('x-mv-shot') ?? '', 'base64url').toString())).toMatchObject({ frame: 'app/home', width: 320, height: 200, scale: 1 })
     const buf = Buffer.from(await png.arrayBuffer())
     expect(buf.subarray(1, 4).toString()).toBe('PNG')
     expect([buf.readUInt32BE(16), buf.readUInt32BE(20)]).toEqual([320, 200])

@@ -293,7 +293,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // scale 1-4 (default 2); w/h = the canvas node's size when the shell asks for "what the
         // node shows" (planShot clamps); format=png streams the bytes back (the shell's copy-as-
         // image) with the JSON summary riding in x-mv-shot - the file still lands in .local/shots.
-        const scale = url.searchParams.has('scale') ? Number(url.searchParams.get('scale')) : 2
+        const scale = url.searchParams.has('scale') ? Number(url.searchParams.get('scale')) : undefined
         const dim = (k: string) => { const v = Math.round(Number(url.searchParams.get(k))); return url.searchParams.has(k) && Number.isFinite(v) ? v : undefined }   // CDP wants integers
         const size = { w: dim('w'), h: dim('h') }
         const asPng = url.searchParams.get('format') === 'png'
@@ -307,7 +307,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const summary = { path: r.path, frame: frameId, theme, width: r.width, height: r.height, scale: r.scale, ...(r.truncated ? { truncated: true } : {}), ...(r.note ? { note: r.note } : {}) }
         if (!asPng) return json(res, 200, summary)
         const png = readFileSync(join(root, r.path))
-        res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store', 'x-mv-shot': JSON.stringify(summary) })
+        // base64url: a header must be ASCII, a frame id or note need not be
+        res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store', 'x-mv-shot': Buffer.from(JSON.stringify(summary)).toString('base64url') })
         return res.end(png)
       }
 

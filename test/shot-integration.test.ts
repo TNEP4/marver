@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { inflateSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AREA, capture, findChrome } from '../src/server/shot.ts'
@@ -34,12 +35,53 @@ const page = (h: number, busyMs: number, mode: string) => {
 
 const pngSize = (path: string) => { const b = readFileSync(path); return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) } }
 
+/** Decode one pixel of a non-interlaced 8-bit RGB/RGBA PNG (what Chrome writes) - enough to ask
+ *  "did the late image paint?" without an image dependency. */
+function pngPixel(path: string, x: number, y: number): [number, number, number] {
+  const b = readFileSync(path)
+  const w = b.readUInt32BE(16), ct = b[25]
+  const bpp = ct === 6 ? 4 : 3
+  let pos = 8; const idat: Buffer[] = []
+  while (pos < b.length) {
+    const len = b.readUInt32BE(pos), type = b.toString('ascii', pos + 4, pos + 8)
+    if (type === 'IDAT') idat.push(b.subarray(pos + 8, pos + 8 + len))
+    pos += 12 + len
+  }
+  const raw = inflateSync(Buffer.concat(idat))
+  const stride = w * bpp
+  let prev = Buffer.alloc(stride)
+  for (let row = 0; row <= y; row++) {
+    const f = raw[row * (stride + 1)]
+    const line = Buffer.from(raw.subarray(row * (stride + 1) + 1, (row + 1) * (stride + 1)))
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? line[i - bpp] : 0, up = prev[i], c = i >= bpp ? prev[i - bpp] : 0
+      if (f === 1) line[i] = (line[i] + a) & 255
+      else if (f === 2) line[i] = (line[i] + up) & 255
+      else if (f === 3) line[i] = (line[i] + ((a + up) >> 1)) & 255
+      else if (f === 4) { const p = a + up - c, pa = Math.abs(p - a), pb = Math.abs(p - up), pc = Math.abs(p - c); line[i] = (line[i] + (pa <= pb && pa <= pc ? a : pb <= pc ? up : c)) & 255 }
+    }
+    prev = line
+  }
+  return [prev[x * bpp], prev[x * bpp + 1], prev[x * bpp + 2]]
+}
+// a 1x1 red PNG, served late to prove the settle waits for in-viewport images
+const RED_PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64')
+
 describe.skipIf(!hasChrome)('shot capture - full-height path against real Chrome', () => {
   let server: Server, base = '', dir = ''
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'mv-shotint-'))
     server = createServer((req, res) => {
       const u = new URL(req.url ?? '/', 'http://localhost')
+      if (u.pathname === '/slow.png') {   // the late image: bytes after `d` ms
+        setTimeout(() => { res.setHeader('content-type', 'image/png'); res.end(RED_PX) }, Number(u.searchParams.get('d') ?? 900))
+        return
+      }
+      if (u.pathname === '/late-image') {
+        res.setHeader('content-type', 'text/html')
+        res.end(`<!doctype html><html><body style="margin:0;background:#fff"><div id="root"><img src="/slow.png?d=${u.searchParams.get('d') ?? 900}" width="300" height="300" style="display:block"></div></body></html>`)
+        return
+      }
       res.setHeader('content-type', 'text/html')
       res.end(page(Number(u.searchParams.get('h') ?? 1000), Number(u.searchParams.get('busy') ?? 0), u.searchParams.get('mode') ?? 'static'))
     })
@@ -106,6 +148,22 @@ describe.skipIf(!hasChrome)('shot capture - full-height path against real Chrome
     expect(next.ok).toBe(true)
     if (next.ok) { expect(next.width).toBe(390); expect(next.height).toBe(844); expect(next.scale).toBe(2) }
   }, 40_000)
+
+  // ---- settle: a fixed-viewport frame whose image arrives late must still show it
+  it('an in-viewport image that arrives 900ms late IS in the capture (the settle waits for it)', async () => {
+    const r = await capture({ url: `${base}/late-image?d=900`, width: 400, height: 400, out: join(dir, 'late-img.png'), fullHeight: false, scale: 1 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(pngPixel(join(dir, 'late-img.png'), 150, 150)).toEqual([255, 0, 0])
+  }, 30_000)
+
+  it('an image slower than the settle budget (5s) does not hang the shot - it captures without it, bounded', async () => {
+    const t = Date.now()
+    const r = await capture({ url: `${base}/late-image?d=5000`, width: 400, height: 400, out: join(dir, 'never-img.png'), fullHeight: false, scale: 1 })
+    expect(r.ok).toBe(true)
+    expect(Date.now() - t).toBeLessThan(12_000)
+    if (r.ok) expect(pngPixel(join(dir, 'never-img.png'), 150, 150)).toEqual([255, 255, 255])
+  }, 30_000)
 
   // ---- scale (copy-as-image 4x, `marver shot --scale`)
   it('scale 4 on a fixed frame: 1280×720 -> a 5120×2880 PNG, no note', async () => {

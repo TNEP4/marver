@@ -21,8 +21,12 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `note`; the file name carries the scale actually used (`…@4x.png`), so a
   4x file always holds 4x pixels.
 - **Render settle.** Every shot (not only content frames) now waits - bounded
-  to 3 s - for in-flight images, LOD decodes and echarts instances before
-  capturing, so a slide with a chart or a photo is never shot half-drawn.
+  to 3 s, and again in the final viewport of a full-height capture - for fonts,
+  in-viewport images, LOD decodes, echarts instances and mermaid diagrams before
+  capturing, so a slide with a chart or a photo is never shot half-drawn. Shot
+  file names: a default request keeps its unsuffixed name whatever scale the
+  capture settled on; an explicit scale gets `@4x`, or `@4x-as-2x` when it had
+  to step down, so nothing an agent reads moves and `@4x` never lies.
 
 ### Fixed
 

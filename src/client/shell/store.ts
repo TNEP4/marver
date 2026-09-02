@@ -1044,14 +1044,16 @@ export const useStore = create<State>((set, get) => {
       let meta: { scale?: number; note?: string } = {}
       const png = fetch(`${ROUTE}/api/shot?${qs}`, { headers: { 'x-mv-c': csrf() }, signal: ctl.signal }).then(async (r) => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `shot failed (${r.status})`)
-        try { meta = JSON.parse(r.headers.get('x-mv-shot') ?? '{}') } catch { /* summary is advisory */ }
+        try { meta = JSON.parse(atob((r.headers.get('x-mv-shot') ?? '').replace(/-/g, '+').replace(/_/g, '/'))) } catch { /* summary is advisory */ }
         return r.blob()
       }).finally(() => clearTimeout(timer))
-      png.catch(() => {})   // consumed by clipboard.write below; keep it from also going unhandled
-      const fail = async (err: unknown) => {
+      let renderErr = ''
+      png.catch((e: Error) => { renderErr = e.name === 'AbortError' ? 'timed out - the renderer is busy' : e.message })
+      const fail = (err: unknown) => {
         done()
-        // was it the render or the clipboard? the fetch promise knows
-        const renderErr = await png.then(() => '', (e: Error) => (e.name === 'AbortError' ? 'timed out - the renderer is busy' : e.message))
+        // a prompt clipboard refusal (no gesture, focus lost) must not wait a minute on the
+        // render: abandon the fetch, toast now. A render failure surfaces its own cause.
+        if (!renderErr) ctl.abort()
         s.toast(renderErr ? `render failed - ${renderErr}` : (err as Error)?.name === 'NotAllowedError' ? 'copy blocked - click the canvas first' : `copy failed - ${(err as Error)?.message ?? err}`)
       }
       try {
@@ -1063,7 +1065,7 @@ export const useStore = create<State>((set, get) => {
             set((st) => ({ imagePulse: st.imagePulse + 1 }))
           },
           fail)
-      } catch (err) { void fail(err) }   // a synchronous constructor/type error must not wedge busy
+      } catch (err) { fail(err) }   // a synchronous constructor/type error must not wedge busy
     },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
     // global theme = the VIEW preference: persists across boards + reloads, clears

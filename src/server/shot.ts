@@ -13,7 +13,8 @@
  */
 import { slideSize } from '../client/const.ts'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
@@ -96,18 +97,49 @@ export async function shootFrame(opts: {
   const plan = planShot(frame, viewports, size)
   const shotsDir = join(root, 'design', '.local', 'shots')
   mkdirSync(shotsDir, { recursive: true })
-  // a non-default scale gets its own file, so a 4x still never overwrites the agent's 2x. Named
-  // from the scale actually USED (the capture may step down), so `@4x` always holds 4x pixels.
-  const relFor = (sc: number) => `design/.local/shots/${slug(frameId)}--${theme}${sc === 2 ? '' : `@${sc}x`}.png`
-  const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${process.pid}.tmp.png`)
+  sweepTemps(shotsDir)
+  // File naming. A DEFAULT request (no explicit scale - the CLI, the jam inbox) keeps the legacy
+  // unsuffixed name whatever scale the capture settled on, so nothing an agent reads moves; an
+  // explicit 2x that lands at 2x is the same picture, same name. Any other EXPLICIT scale gets its
+  // own file (`@4x`), so it never overwrites the agent's default shot; when
+  // the capture had to step down, the name says both (`@4x-as-2x`) so `@4x` never lies.
+  const explicit = opts.scale !== undefined
+  const relFor = (used: number) => {
+    const tag = !explicit || (scale === 2 && used === 2) ? '' : used === scale ? `@${scale}x` : `@${scale}x-as-${used}x`
+    return `design/.local/shots/${slug(frameId)}--${theme}${tag}.png`
+  }
+  const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${randomBytes(6).toString('hex')}.tmp.png`)
   const target = frame.kind === 'html'
     ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
     : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frameId)}&theme=${encodeURIComponent(theme)}`
   const result = await capture({ url: target, width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale })
-  if (!result.ok) { try { rmSync(tmp, { force: true }) } catch { /* nothing written */ } return result }
+  if (!result.ok) { rmSync(tmp, { force: true }); return result }
   const rel = relFor(result.scale)
-  renameSync(tmp, join(root, rel))
+  // rename, with the Windows replace fallback the boards writer uses; the temp never outlives this call
+  try {
+    try { renameSync(tmp, join(root, rel)) } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== 'EEXIST' && code !== 'EPERM') throw err
+      copyFileSync(tmp, join(root, rel))
+    }
+  } catch (err) { return { ok: false, error: `could not write the shot - ${(err as Error).message}` } }
+  finally { rmSync(tmp, { force: true }) }
   return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.note ? { note: result.note } : {}) }
+}
+
+/** A crashed process can leave a `.tmp.png` behind; sweep them (older than a minute, so an in-
+ *  flight capture in this process is never touched) at the next shot. */
+let sweptAt = 0
+function sweepTemps(dir: string) {
+  if (Date.now() - sweptAt < 60_000) return
+  sweptAt = Date.now()
+  try {
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith('.tmp.png')) continue
+      const p = join(dir, f)
+      try { if (Date.now() - statSync(p).mtimeMs > 60_000) rmSync(p, { force: true }) } catch { /* gone */ }
+    }
+  } catch { /* dir vanished */ }
 }
 
 /** One capture at a time: shots are seconds apart at most, and a Chrome per concurrent
@@ -224,29 +256,44 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     }
     if (!ready) return { ok: false, error: `the frame never rendered${lastException ? ` - the page threw: ${lastException}` : ' (no exception surfaced - is the dev server reachable from this machine?)'}` }
 
-    await send('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true, returnByValue: true }, sessionId).catch(() => null)
-    // Content settle, for EVERY path (a fixed frame or a slide has charts and images too): tell the
-    // LOD pipeline the camera is at rest at 1:1 (it decodes full-res on that), then wait - bounded -
-    // for the async work a rendered frame still has in flight: LOD decodes, <img> loads, echarts
-    // instances (a lazy chunk; the SVG lands after init). A frame that never settles still captures
-    // once the budget is spent, so this is quality, never a hang.
-    await send('Runtime.evaluate', { expression: `window.postMessage({type:'sh:camera',moving:false,scale:1}, location.origin)`, returnByValue: true }, sessionId).catch(() => null)
+    // Content settle, for EVERY path (a fixed frame or a slide has charts, diagrams and images
+    // too): tell the LOD pipeline the camera is at rest at 1:1 (it decodes full-res on that), then
+    // wait - bounded by an absolute deadline, every probe on sendD so a wedged CDP call cannot hold
+    // the queue - for the async work a rendered frame still has in flight: fonts, LOD decodes, in-
+    // viewport <img> loads (lazy ones included - a lazy image outside the viewport is not in the
+    // picture), echarts instances (a lazy chunk; the SVG lands after init), mermaid diagrams (the
+    // SVG lands after an async render, or the error card shows). Then two frames for the paint.
+    // A frame that never settles still captures once the budget is spent: quality, never a hang.
     const SETTLED = `(() => {
       if (typeof window.__mvLodBusy === 'function' && window.__mvLodBusy() > 0) return false
-      for (const im of document.images) if (!im.complete && im.loading !== 'lazy') return false
+      const H = window.innerHeight, W = window.innerWidth
+      for (const im of document.images) {
+        if (im.complete) continue
+        const r = im.getBoundingClientRect()
+        if (r.bottom < 0 || r.top > H || r.right < 0 || r.left > W) continue
+        return false
+      }
       for (const c of document.querySelectorAll('.mv-chart')) if (!c.querySelector('svg, canvas')) return false
+      for (const d of document.querySelectorAll('.mv-diagram')) if (!d.querySelector('.mv-diagram-svg svg, .mv-diagram-err')) return false
       return true
     })()`
-    const settleBy = Date.now() + 3000
-    let settled = false
-    while (Date.now() < settleBy) {
-      const r = await send('Runtime.evaluate', { expression: SETTLED, returnByValue: true }, sessionId).catch(() => null)
-      if (r?.result?.value === true) { settled = true; break }
-      await new Promise((r2) => setTimeout(r2, 100))
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const settle = async (budgetMs: number): Promise<boolean> => {
+      const by = Date.now() + budgetMs
+      const left = () => Math.max(50, by - Date.now())
+      await sendD('Runtime.evaluate', { expression: `window.postMessage({type:'sh:camera',moving:false,scale:1}, location.origin)`, returnByValue: true }, left()).catch(() => null)
+      await sendD('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true, returnByValue: true }, left()).catch(() => null)
+      let ok = false
+      while (Date.now() < by) {
+        const r = await sendD('Runtime.evaluate', { expression: SETTLED, returnByValue: true }, left()).catch(() => null)
+        if (r?.result?.value === true) { ok = true; break }
+        await wait(100)
+      }
+      await sendD('Runtime.evaluate', { expression: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', awaitPromise: true, returnByValue: true }, 1000).catch(() => null)
+      await wait(ok ? 150 : 250)   // decode margin (images paint after `complete`)
+      return ok
     }
-    // two frames for the paint after the last load/init, then a short decode margin
-    await send('Runtime.evaluate', { expression: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', awaitPromise: true, returnByValue: true }, sessionId).catch(() => null)
-    await new Promise((r2) => setTimeout(r2, settled ? 150 : 250))
+    await settle(3000)
 
     // A frame that THREW renders the frame-host's error card - which has DOM, so readiness
     // above passed. The host stamps the crash on window.__mvFrameError; surface it so an agent
@@ -260,7 +307,6 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     // first-decode pins each image's aspect-ratio -> stable height), measure, then capture full.
     let capW = width, capH = height, truncated = false, note = ''
     if (fullHeight) {
-      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
       const measureH = async (): Promise<number> => {
         const r = await sendD('Runtime.evaluate', {
           expression: `Math.ceil((document.querySelector('.mv-doc')||document.getElementById('root')||document.body).getBoundingClientRect().height)`,
@@ -327,16 +373,12 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       // this failure: a wrong viewport would make the returned dimensions/scale disagree with the
       // PNG. Let it throw -> ok:false. Its own 5s per-call deadline bounds it.
       await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: scale, mobile: false }, 5000)
-      // LOD sharpen is OPTIONAL quality (aspect-ratios are already pinned, so height won't move):
-      // skip it entirely once the settle budget is spent, so it never adds to the settle time. When
-      // there IS budget, nudge every image to full-res - img-lod DEBOUNCES 220ms before enqueuing,
-      // so wait past the debounce first, then poll for idle.
-      if (Date.now() < settleDeadline) {
-        await sendD('Runtime.evaluate', { expression: `window.postMessage({type:'sh:camera',moving:false,scale:1}, location.origin)`, returnByValue: true }).catch(() => null)
-        await wait(300)
-        for (let j = 0; j < 20 && Date.now() < settleDeadline && !(await lodIdle()); j++) await wait(100)
-        await sendD('Runtime.evaluate', { expression: 'document.fonts.ready.then(()=>true)', awaitPromise: true, returnByValue: true }).catch(() => null)
-      }
+      // The final viewport is what gets captured: settle AGAIN in it (the general check - LOD at
+      // full-res, images now in view, charts/diagrams), with whatever is left of the settle budget
+      // plus a floor, so a late load never ships half-drawn. img-lod DEBOUNCES 220ms before
+      // enqueuing a sharpen, so the floor covers that too.
+      await wait(300)
+      await settle(Math.max(1200, settleDeadline - Date.now()))
     }
 
     // clip in DIP + scale:1 so the PNG is exactly capW*deviceScaleFactor x capH*deviceScaleFactor;
