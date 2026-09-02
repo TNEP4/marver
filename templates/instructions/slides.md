@@ -67,20 +67,37 @@ tell the complete argument - specifically enough that a stranger could guess
 whose deck this is. Generic titles mean the thinking is not done; fix the
 titles before touching layout.
 
-**4. Choose layouts.** For each slide, first write one sentence on what the
-slide WANTS visually (concept before catalog), then scan the WHOLE recipe
-list (below + the atlas in reference/deck-layouts.md + `design/slides.md`)
-and pick against the content's real volume. A deck that keeps reaching for
-the same two recipes is a defect. A recipe's budget breached = a different
-recipe or a split - decided now, before markup. Slides that describe parts
-of one concept (three pillars, four pipeline stages) share ONE layout -
-variety comes between groups, never within one.
+**4. Storyboard the silhouettes.** Before any markup, one line per slide:
+
+`message | dominant object | silhouette | density | recipe`
+
+The dominant object first - what the eye lands on (a number, a quote, a
+chart, the claim itself; for a grid the peer set as one shape, for a stream
+the path) - then the silhouette that serves it (the seven, below), density (airy / balanced / dense), and only
+then the recipe from the list below + the atlas in
+reference/deck-layouts.md + `design/slides.md`, picked against the content's
+real volume. Read the finished list as THUMBNAILS, not as recipe names.
+Pacing, for any deck of eight or more content slides:
+- no silhouette on more than 40% of the deck;
+- no silhouette twice running, except inside a declared visual group
+  (three pillars, four pipeline stages - those share ONE layout, variety
+  comes between groups) or a build sequence;
+- never three dense slides in a row;
+- an airy statement, hero, or bookend at the opening answer, at every
+  major turn of the argument, and at the close.
+Do not alternate mechanically - pace follows the argument. A recipe's
+budget breached = a different recipe or a split, decided here.
 
 **5. Build.** Real markup inside `<Slide>`, the project's own classes and
 components, the type roles, the theme's tokens. Name morph anchors as you
-go (choreography, below). HTML stays honest: the assertion is the `h1`,
-images carry `alt`, a chart or diagram gets a one-line text summary in a
-caption, and every colour pair reads in both themes.
+go (choreography, below). The assertion is always the `h1`, but it need not
+sit at the top or be the largest thing: when the slide is about a number,
+a quote, a chart, or a source, THAT dominates and the assertion frames it.
+Never write one wrapper that fixes the title geometry for every slide -
+share tokens, the source treatment, and primitives; give each silhouette
+its own shell. HTML stays honest: images carry `alt`, a chart or diagram
+gets a one-line text summary in a caption, every colour pair reads in both
+themes.
 
 **6. The review gate.** Run it before presenting, every time (bottom of this
 file).
@@ -101,9 +118,10 @@ file).
 - Negatives in brackets: (123). Units once, in the header or axis; within a
   metric family one unit and one time-basis ($M everywhere revenue appears,
   FY or CY - never both).
-- Sources live in an `sl-caption` line at the foot of the slide: source,
-  date, and the chart's data origin. Same position on every slide that
-  cites.
+- Sources are a short `sl-caption` slug at the foot of the slide - "OpenAI
+  technical report, §IV.B" - never a bibliographic sentence; that band
+  repeated seventeen times is a report template. Full citations go in the
+  frame's comment.
 - The closing slide is a specific, time-bound ask. "Questions?" is not a
   closing slide.
 
@@ -114,7 +132,7 @@ The values are fixed (one coordinate system with the stage):
 
 | Role class | Size | Job |
 |---|---|---|
-| `sl-display` | 160px | the ONE oversize: a hero number, a section numeral, the manifesto line - never running text, at most once a deck |
+| `sl-display` | 160px | the oversize: a hero number, a section numeral, the manifesto line - never running text; at most once per argument group, never on adjacent slides |
 | `sl-stat` | 88px | a ROW of figures (3-4 across), where `sl-display` would not fit |
 | `sl-assertion` | 56px, heavy | the one-line claim (~40 characters full-width, ~20 inside a split - two lines is the ceiling, verify the render) |
 | `sl-support` | 30px | the second voice |
@@ -122,8 +140,41 @@ The values are fixed (one coordinate system with the stage):
 | `sl-caption` | 18px | sources, footnotes, kickers |
 
 Nothing smaller than 18px, ever. One family (`--marver-slide-font`, the
-theme's); the roles carry their weights - add none of your own. One focal point per slide. Consecutive slides keep
-shared elements in the SAME position unless the movement is the message.
+theme's); the roles carry their weights - add none of your own. One
+reading intent per slide - a single object, a peer set, or a path, never two
+competing. Within a visual group, shared elements keep the SAME
+position unless the movement is the message.
+
+## Silhouette - the deck at thumbnail size
+
+A silhouette is the largest geometry the eye sees when the words are
+blurred. Swapping a card row for a stat row under the same standing header
+changes nothing at thumbnail size, and the review gate looks at thumbnails.
+Choose the silhouette before the recipe. Seven:
+
+- **statement** - one claim owns the canvas. No kicker, no header, at most
+  one short support line. The opening answer, a turn, a synthesis.
+- **hero** - one number, quote, image, or source object owns 60-80% of the
+  canvas; the assertion frames it, smaller, and does not compete.
+- **split** - two UNEQUAL fields, 40/60 or 60/40: one argues, one proves.
+- **grid** - 2-6 true peers in one field. Equal weight only when the ideas
+  are equal - a 2×2 of causes makes them look like feature cards.
+- **stream** - a path across the canvas: time, sequence, causality,
+  escalation, hand-off. The path IS the geometry, not a ruled list.
+- **field** - one chart, table, diagram, or document fragment fills the
+  slide; the assertion sits at an edge or inside the field.
+- **bookend** - cover, section turn, closing: a statement or hero that
+  ALSO carries the mark and drops the source line, so it reads as a door,
+  not a page. Count it as its own silhouette only when that geometry is
+  visibly different from the statements around it.
+
+The kicker + assertion + hairline over a body is ONE way to build a grid or
+split - it is not the default shell for content slides, and shared margins
+never require shared title geometry. Whitespace needs no defence when it
+establishes dominance; an added companion panel does. Alignment before
+enclosure: if spacing and a hairline establish the group, remove the box -
+cards, panels, and badges are interface furniture, and a deck of them reads
+as a dashboard.
 
 ## The space IS the design
 
@@ -134,19 +185,20 @@ is the tallest band on the slide. Content box: **1104×632px**, at every
 viewport. (Override `--sl-pad-x` / `--sl-pad-y` in px, never a percentage:
 a percentage resolves against the viewport, not the stage.)
 
-The three bands, top to bottom, in the same place on every content slide:
+When a slide carries a title band (grids and splits usually do; statements,
+heroes, and fields usually do not), the three bands are:
 
 | Band | Height | Holds |
 |---|---|---|
 | Title | ~113px | kicker (18px) over the assertion (56px), a hairline under |
 | Body | **~438px** | the recipe - and it is the star, so give it the room |
-| Foot | ~25px | the source line, or the takeaway bar above it |
+| Foot | ~25px | the source slug, or the takeaway bar above it |
 
-**The 85% rule.** Body content fills at most ~85% of the body band (≈372 of
-438px). The remaining sliver is not waste - it is the void that makes a
-slide read as a slide. If your content fills the band, you have a document:
-cut a sentence, drop a card, or split the slide. Never close the gap by
-shrinking type.
+**The 85% rule.** Content fills at most ~85% of whatever band it lives in
+(≈372 of a 438px body). The remaining sliver is not waste - it is the void
+that makes a slide read as a slide. If your content fills the band, you
+have a document: cut a sentence, drop a card, or split the slide. Never
+close the gap by shrinking type.
 
 **One spacing scale**, in px, every value from it and nothing between:
 
@@ -165,7 +217,8 @@ do to a slide. Gaps go on the parent (`gap`), never as per-child margins.
 
 ## The evidence
 
-- **One anchor visual per slide, at most.**
+- **One anchor visual per slide, at most** - a peer set or a path counts as
+  one.
 - **Charts** (`Chart`): pick the FORM from the Apache ECharts docs
   (https://echarts.apache.org/en/option.html) - marver injects the house
   theme (colors, type, tooltip) and strips yours, so pass DATA and
@@ -186,39 +239,55 @@ do to a slide. Gaps go on the parent (`gap`), never as per-child margins.
 ## The recipes
 
 Scan all of them (plus `design/slides.md`) for every slide. Each entry:
-when · skeleton · budget (breach = split, never shrink) · morph anchor.
+silhouette · skeleton · budget (breach = split, never shrink) · anchor (the
+element that morphs INSIDE a group or build; "none" = a hard cut).
 
-1. **cover** - deck title + one line + the mark. Budget: title ≤6 words.
-   Anchor: the mark.
-2. **section** - an oversized numeral/word divider in `sl-display`. Budget:
-   ≤3 words. Anchor: none (hard cuts live here).
-3. **assertion-evidence** - the workhorse: `sl-assertion` + ONE visual.
-   Budget: assertion 1 line, caption 1 line. Anchor: the visual.
-4. **big-number** - one `sl-display` stat + a context line. Budget: 1 stat.
-   Anchor: the number.
-5. **stat-row** - 3-4 quick proofs in a row. Budget: each ≤4 words + value.
-6. **metric-grid** - a 2×2 of labeled values. Budget: 4 cells exactly.
-7. **quote** - the words, the person, nothing else. Budget: ≤30 words.
-8. **quote-wall** - 3-6 short quotes. Budget: each ≤15 words.
-9. **two-up** - comparison / before-after. Budget: ≤4 rows per side.
-10. **two-stage** - diagnosis → prescription with a connector. Budget: one
-    sentence per stage.
-11. **numbered-reasons** - 3-5 ordered points. Budget: each ≤12 words.
-12. **bento** - 3-5 cells for a system view. Budget: cell = title + 1 line.
-13. **timeline** - a horizontal spine, 3-6 beats. Budget: beat ≤5 words.
-14. **roadmap-phases** - 2-4 phases with contents. Budget: ≤3 items/phase.
-15. **matrix** - a 2×2 positioning. Budget: ≤6 plotted items.
-16. **full-bleed** - image + scrim + assertion. Budget: assertion only.
-17. **chart-focus** - one `Chart`, near full-slide. Anchor: the chart.
-18. **wall** - logos/team grid. Budget: 6-12 cells, no captions.
-19. **closing** - the ask, one CTA, contact. Budget: ask ≤2 lines.
+1. **cover** (bookend) - deck title + one line + the mark. Budget: title ≤6
+   words. Anchor: the mark.
+2. **section** (bookend) - an oversized numeral/word divider in
+   `sl-display`. Budget: ≤3 words. Anchor: none.
+3. **assertion-evidence** (split or field) - the workhorse: `sl-assertion`
+   + ONE visual. Budget: assertion 1 line, caption 1 line. Anchor: the
+   visual.
+4. **big-number** (hero) - one `sl-display` stat + a context line. Budget:
+   1 stat. Anchor: the number.
+5. **stat-row** (grid) - 3-4 quick proofs in a row. Budget: each ≤4 words +
+   value. Anchor: the row.
+6. **metric-grid** (grid) - a 2×2 of labeled values. Budget: 4 cells
+   exactly. Anchor: the grid.
+7. **quote** (hero) - the words, the person, nothing else. Budget: ≤30
+   words. Anchor: none.
+8. **quote-wall** (grid) - 3-6 short quotes. Budget: each ≤15 words.
+   Anchor: the wall.
+9. **two-up** (split) - comparison / before-after. Budget: ≤4 rows per
+   side. Anchor: the divider.
+10. **two-stage** (stream) - diagnosis → prescription with a connector.
+    Budget: one sentence per stage. Anchor: the connector.
+11. **numbered-reasons** (grid) - 3-5 ordered points. Budget: each ≤12
+    words. Anchor: the numerals.
+12. **bento** (grid) - 3-5 cells for a system view. Budget: cell = title +
+    1 line. Anchor: the largest cell.
+13. **timeline** (stream) - a horizontal spine, 3-6 beats. Budget: beat ≤5
+    words. Anchor: the spine.
+14. **roadmap-phases** (stream) - 2-4 phases with contents. Budget: ≤3
+    items/phase. Anchor: the phase heads.
+15. **matrix** (field) - a 2×2 positioning. Budget: ≤6 plotted items.
+    Anchor: the axes.
+16. **full-bleed** (hero) - image + scrim + assertion. Budget: assertion
+    only. Anchor: the image.
+17. **chart-focus** (field) - one `Chart`, near full-slide. Anchor: the
+    chart.
+18. **wall** (grid) - logos/team grid. Budget: 6-12 cells, no captions.
+    Anchor: the grid.
+19. **closing** (bookend) - the ask, one CTA, contact. Budget: ask ≤2
+    lines. Anchor: none.
 
 These are the core. The atlas in reference/deck-layouts.md carries the rest
 - split, cards, spectrum, insight + evidence, trajectory, table, scenarios,
 flow, cycle, chain, swim lanes, funnel, schedule, layers, concentric,
 pyramid, number line, capability matrix, scorecard, heat map, tracker,
 testimonials, team, manifesto, framed source - each with its budget, plus
-the composition grid they all sit on. Scan it for every slide.
+the shared stage, margins, and the optional banded grid they draw from. Scan it for every slide.
 
 ## Choreography - the diff IS the animation
 
@@ -237,9 +306,13 @@ timeline: design motion by designing the diff.
 | reveal | new element + `data-animate` | "and then" |
 
 **Binding rules:**
-- Every adjacent pair shares AT LEAST one stable named element - the anchor.
-  (Each recipe names its default above; the assertion is the fallback.)
-- A hard cut (zero shared names) is punctuation - section boundaries only.
+- Adjacent slides inside a visual group or a build share AT LEAST one stable
+  named element - the anchor (each recipe names its default above). Across
+  a turn of the argument, or into and out of a statement, hero, or bookend,
+  a HARD CUT (zero shared names) is the right punctuation - use it. Never
+  name the assertion `headline` on every slide as a deck-wide fallback: a
+  title that morphs into the next title on seventeen slides is the
+  strongest possible signal that every slide has the same shape.
 - AT MOST one element changes position or size per transition. Persist
   freely, travel once.
 - Build steps are sibling frames (`03a-`, `03b-`) sharing morph names -
@@ -297,10 +370,9 @@ numbers · formatting drift between slides · a weak closing.
 Then: the sequence test (titles alone tell the argument) · BOTH themes ·
 the slide view AND fill window (the fit scales your composition - check
 nothing relied on the window) and one 390px glance · every slide still at
-rest (no loops, no autoplay) · recipe variety (the same composition twice
-in a row only inside a declared visual group or a build sequence; more than
-three in a row anywhere earns a breather slide) · one anchor morph per
-adjacent pair.
+rest (no loops, no autoplay) · the silhouette pacing from step 4, checked
+against the storyboard, not the recipe names · anchors inside groups, hard
+cuts at the turns.
 
 Then the two reads that catch what polish hides:
 - **Landing, per slide.** Read each slide cold - no presenter, no
@@ -313,9 +385,12 @@ Then the two reads that catch what polish hides:
   - take the gap to the human as a narrative question, do not polish
   around it.
 
-Finally the contact sheet: all frames small on the canvas. One layout on
-more than half the deck, dense slides clumped together, accent fills
-bunched on neighbours, a card row where one card is 8 words and the others
-40 - each a defect. Iterate until the gate passes; after three passes that
+Finally the contact sheet: all frames small on the canvas, then squint. If
+the deck blurs into one repeated shape with different fillings, it failed -
+whatever the recipe names say. One silhouette on more than 40% of the
+content slides (decks of eight or more), the same top and bottom horizon on
+every slide, dense slides clumped
+together, accent fills bunched on neighbours, a card row where one card is
+8 words and the others 40 - each a defect. Iterate until the gate passes; after three passes that
 still surface defects, the remaining list goes to the human and the deck
 ships at their call.

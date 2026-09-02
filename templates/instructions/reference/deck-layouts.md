@@ -1,8 +1,8 @@
 # Deck layouts - the atlas, the grid, the budgets
 
 Required reading at step 4 of every deck. The doctrine's recipe list is the core;
-this is the full atlas grouped by the JOB a slide does, the composition grid every
-recipe sits on, and the content budgets that keep type at design size. The atlas
+this is the full atlas grouped by the JOB a slide does, the shared stage and the
+optional banded grid recipes draw from, and the content budgets that keep type at design size. The atlas
 is a vocabulary, not a fence: when nothing fits the concept you wrote for the
 slide, compose it from divs.
 
@@ -11,15 +11,18 @@ Words used below: **kicker** = the small-caps `sl-caption` label above a title;
 low-contrast number behind or beside a card that carries order; **display** =
 `sl-display`, the one oversize role; **stat** = `sl-stat`, the row-of-figures size.
 
-## The grid (the padded content box is 1104×632px)
+## The stage and the banded grid (content box 1104×632px)
 
 Stage margins are asymmetric: 88px at the sides, 44px top and bottom, in px
-at every viewport. Inside that box, three bands (the doctrine's 85% rule and
-spacing scale govern what goes in them):
+at every viewport. Every silhouette shares those margins and nothing else.
+The BANDED grid below is the shell for grid and split recipes that carry a
+title band; statements, heroes, fields, and bookends build their own
+geometry inside the same margins. (The doctrine's 85% rule and spacing scale
+govern every silhouette.)
 
 - **Title band** - the top ~113px: kicker (18px, one line) over the assertion
-  (56px, one line), a hairline under. Same position on every content slide -
-  the eye learns it once, and a travelling title morph lands where it left.
+  (56px, one line), a hairline under. Within a visual group it sits in the
+  same place on each slide, so a travelling title lands where it left.
 - **Body band** - full width, ~438px, starting 48px below the title block.
   Content fills at most ~372px of it. This band is the slide.
 - **Foot** - the source line (25px), 48px under the body. A takeaway bar sits
@@ -29,16 +32,18 @@ spacing scale govern what goes in them):
   holds ~20 characters a line - write to it.
 - **Columns** - three equal at a 32px gap (~347px each); five narrow (~192px)
   for spectrums; a 2×2 when the four cells are peers. Card padding 32px.
-- **Fill the canvas.** A half-width block needs a companion on the other half.
-  An empty half is a defect unless the whitespace IS the point (a single anchor
-  number, one quote) - then say so in the frame's comment.
+- **Dominance before containers.** Decide what is biggest on the slide before
+  choosing what holds the rest. Whitespace that makes the dominant object read
+  as dominant needs no defence; a companion panel added to "fill the other
+  half" does - if it is not evidence, leave the half empty.
 
-The canonical skeleton, in the project's own Tailwind:
+The banded skeleton, in the project's own Tailwind - for the grid and split
+slides that carry a title band, and only those:
 
 ```tsx
 <Slide>
   {/* one child at flex:1 claims the box, so the bands land in the same
-      place on every slide; gap 48 is the title-to-body / body-to-foot step */}
+      place across a visual group; gap 48 is the title-to-body / body-to-foot step */}
   <div className="flex-1 min-h-0 flex flex-col gap-12">
     <header className="shrink-0">
       <p className="sl-caption uppercase tracking-[.14em]">Retention</p>
@@ -57,7 +62,8 @@ The canonical skeleton, in the project's own Tailwind:
 
 ## The atlas (when · skeleton · budget · anchor)
 
-A recipe without a named anchor morphs on the assertion (the doctrine's fallback).
+A recipe without a named anchor does not morph - hard cut. Anchors are named
+only inside a declared visual group or build; never a deck-wide fallback.
 Budgets are heuristics: the rendered 1280×720 frame and the Slide's overflow
 outline are the authority - when they disagree with a number here, the frame
 wins. And a slide that merely FITS is not done: the 85% rule is the bar.
@@ -71,7 +77,7 @@ wins. And a slide that merely FITS is not done: the 85% rule is the bar.
   none (6-7).
 - **columns** - N headers + descriptions + an optional metric strip beneath:
   product lines, tracks, team areas. Budget: ≤4 columns with bodies, ≤6 without.
-- **stacked list** - 4-6 items on the right panel, argument on the left; the
+- **stacked list** - 4-6 items in the right field, argument on the left; the
   numbered variant carries ghost numerals for ordered reasons. Budget: item ≤2
   lines at 24px. Anchor: the list.
 - **split** - argument left (1-3 short paragraphs, optional `sl-support`
@@ -81,7 +87,8 @@ wins. And a slide that merely FITS is not done: the 85% rule is the bar.
   3-4 evidence items right (one-line title + one line). Anchor: the insight.
 
 **Proof**
-- **metric** - one hero number (`sl-display`) in a card with label + sub-line;
+- **metric** - one hero number (`sl-display`) with label + sub-line, enclosed
+  only when the boundary means something;
   pair with a split or a stat row. Budget: value ≤8 chars, label ≤20, sub ≤30.
 - **stat row** - 3-4 figures across in `sl-stat` with a label under each.
   Budget: value ≤7 chars at 3 across, ≤5 at 4; label ≤4 words. Anchor: the row.
