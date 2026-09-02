@@ -78,7 +78,8 @@ export default () => <Slide><Chart h={520} option={{ xAxis: { type: 'category', 
     await browser.go(s, `${ORIGIN}/`)
     const t1 = Date.now()
     while (Date.now() - t1 < 20_000 && !/optimized dependencies changed|dependencies optimized/.test(log)) await new Promise((r) => setTimeout(r, 200))
-    await new Promise((r) => setTimeout(r, 2_000))   // let the reload land
+    await new Promise((r) => setTimeout(r, 1_000))   // let the reload start
+    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 3 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
     await browser.send('Target.closeTarget', { targetId: (await browser.send('Target.getTargetInfo', {}, s)).targetInfo.targetId })
   }
 }, 120_000)

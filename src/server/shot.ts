@@ -129,10 +129,10 @@ export async function shootFrame(opts: {
 
 /** A crashed process can leave a `.tmp.png` behind; sweep them (older than a minute, so an in-
  *  flight capture in this process is never touched) at the next shot. */
-let sweptAt = 0
+const sweptAt = new Map<string, number>()
 function sweepTemps(dir: string) {
-  if (Date.now() - sweptAt < 60_000) return
-  sweptAt = Date.now()
+  if (Date.now() - (sweptAt.get(dir) ?? 0) < 60_000) return
+  sweptAt.set(dir, Date.now())
   try {
     for (const f of readdirSync(dir)) {
       if (!f.endsWith('.tmp.png')) continue
@@ -229,7 +229,13 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     // Overall watchdog: kill Chrome past a hard deadline, which closes the socket and rejects
     // any pending send. Covers the CDP calls that have no timeout of their own (setup, the
     // final captureScreenshot) - the readiness loop below bounds itself, these do not.
+    const hardBy = Date.now() + timeoutMs + 15_000
     watchdog = setTimeout(() => { try { chrome.kill('SIGKILL') } catch { /* already gone */ } }, timeoutMs + 15_000)
+    // Everything discretionary (settles, grow passes) is budgeted against the watchdog with this
+    // reserve kept back for the REQUIRED final resize (<=5s) and capture (<=15s), so a frame that
+    // took most of `timeoutMs` to mount can never push the capture into the kill.
+    const RESERVE = 21_000
+    const discretionary = () => hardBy - RESERVE - Date.now()
 
     const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -278,19 +284,24 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       return true
     })()`
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    // `budgetMs` is clamped to what the watchdog reserve leaves; every call inside, the rAF wait
+    // and the tail margin included, is bounded by that same absolute deadline. With no budget
+    // left it returns at once - the capture still happens, just unsettled.
     const settle = async (budgetMs: number): Promise<boolean> => {
-      const by = Date.now() + budgetMs
-      const left = () => Math.max(50, by - Date.now())
+      const total = Math.min(budgetMs, discretionary())
+      if (total <= 0) return false
+      const by = Date.now() + total
+      const left = () => Math.max(1, by - Date.now())
       await sendD('Runtime.evaluate', { expression: `window.postMessage({type:'sh:camera',moving:false,scale:1}, location.origin)`, returnByValue: true }, left()).catch(() => null)
       await sendD('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true, returnByValue: true }, left()).catch(() => null)
       let ok = false
       while (Date.now() < by) {
         const r = await sendD('Runtime.evaluate', { expression: SETTLED, returnByValue: true }, left()).catch(() => null)
         if (r?.result?.value === true) { ok = true; break }
-        await wait(100)
+        await wait(Math.min(100, left()))
       }
-      await sendD('Runtime.evaluate', { expression: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', awaitPromise: true, returnByValue: true }, 1000).catch(() => null)
-      await wait(ok ? 150 : 250)   // decode margin (images paint after `complete`)
+      if (Date.now() < by) await sendD('Runtime.evaluate', { expression: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', awaitPromise: true, returnByValue: true }, Math.min(1000, left())).catch(() => null)
+      if (Date.now() < by) await wait(Math.min(ok ? 150 : 250, left()))   // decode margin (images paint after `complete`)
       return ok
     }
     await settle(3000)
@@ -359,7 +370,7 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       // a never-settling frame can never wedge the single-flight queue. All grow passes SHARE this.
       // The ladder: try the asked scale; a frame taller than that scale's cap steps DOWN to 2, then
       // to 1 (DPR1 fits the tallest within the surface budget); only past the 1x cap is it truncated.
-      const settleDeadline = Date.now() + 6000
+      const settleDeadline = Date.now() + Math.max(0, Math.min(6000, discretionary()))
       const asked = scale
       await growFit(scale, capFor(width, scale), settleDeadline)
       if (measured > capFor(width, scale) && scale > 2) { scale = 2; await growFit(2, capFor(width, 2), settleDeadline) }
@@ -377,8 +388,16 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       // full-res, images now in view, charts/diagrams), with whatever is left of the settle budget
       // plus a floor, so a late load never ships half-drawn. img-lod DEBOUNCES 220ms before
       // enqueuing a sharpen, so the floor covers that too.
-      await wait(300)
+      await wait(Math.min(300, Math.max(0, discretionary())))
       await settle(Math.max(1200, settleDeadline - Date.now()))
+      // a late load in the final viewport (a below-fold image without reserved size) can still
+      // grow the document: remeasure once and, within the cap, take the taller box
+      const m2 = await measureH()
+      if (m2 > capH && m2 <= cap) {
+        capH = m2
+        await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: scale, mobile: false }, 5000)
+        await settle(600)
+      }
     }
 
     // clip in DIP + scale:1 so the PNG is exactly capW*deviceScaleFactor x capH*deviceScaleFactor;

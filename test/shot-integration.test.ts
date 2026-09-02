@@ -77,6 +77,11 @@ describe.skipIf(!hasChrome)('shot capture - full-height path against real Chrome
         setTimeout(() => { res.setHeader('content-type', 'image/png'); res.end(RED_PX) }, Number(u.searchParams.get('d') ?? 900))
         return
       }
+      if (u.pathname === '/late-mount') {   // #root stays empty until `m` ms, then shows a 10s-late image
+        res.setHeader('content-type', 'text/html')
+        res.end(`<!doctype html><html><body style="margin:0;background:#fff"><div id="root"></div><script>setTimeout(function(){document.getElementById('root').innerHTML='<img src="/slow.png?d=10000" width="300" height="300">'}, ${u.searchParams.get('m') ?? 3500})</script></body></html>`)
+        return
+      }
       if (u.pathname === '/late-image') {
         res.setHeader('content-type', 'text/html')
         res.end(`<!doctype html><html><body style="margin:0;background:#fff"><div id="root"><img src="/slow.png?d=${u.searchParams.get('d') ?? 900}" width="300" height="300" style="display:block"></div></body></html>`)
@@ -163,6 +168,15 @@ describe.skipIf(!hasChrome)('shot capture - full-height path against real Chrome
     expect(r.ok).toBe(true)
     expect(Date.now() - t).toBeLessThan(12_000)
     if (r.ok) expect(pngPixel(join(dir, 'never-img.png'), 150, 150)).toEqual([255, 255, 255])
+  }, 30_000)
+
+  it('a frame that mounts just before its readiness timeout gets NO settle budget and still captures inside the watchdog', async () => {
+    // timeoutMs 4s -> watchdog at 19s; the 21s reserve leaves nothing discretionary after a 3.5s
+    // mount, so the settle must be skipped (not wait 3s for the 10s image) and the shot returns
+    const t = Date.now()
+    const r = await capture({ url: `${base}/late-mount?m=3500`, width: 400, height: 400, out: join(dir, 'late-mount.png'), fullHeight: false, scale: 1, timeoutMs: 4000 })
+    expect(r.ok).toBe(true)
+    expect(Date.now() - t).toBeLessThan(8_000)
   }, 30_000)
 
   // ---- scale (copy-as-image 4x, `marver shot --scale`)
