@@ -99,9 +99,12 @@ export function Chart({ option, h = 420 }: { option: Record<string, unknown>; h?
   const play = useSlidePlay()
   const theme = useFrameTheme()
   const [failed, setFailed] = useState(false)
-  // options are plain data: key the effect on their CONTENT, so a parent re-render with a
-  // fresh inline literal (every UI frame with state) never disposes and re-inits the chart
+  // key the effect on the option's CONTENT, so a parent re-render with a fresh inline literal
+  // (every UI frame with state) never disposes and re-inits the chart. The live object still
+  // goes to setOption (a JSON round-trip would drop formatter functions); the ref carries it.
   const optionKey = JSON.stringify(option)
+  const optionRef = useRef(option)
+  optionRef.current = option
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -112,7 +115,7 @@ export function Chart({ option, h = 420 }: { option: Record<string, unknown>; h?
       if (disposed || !ref.current) return
       // a theme OBJECT per init - never a stale global registration
       chart = engine.init(ref.current, houseTheme(ref.current, theme === 'dark'), { renderer: 'svg' })
-      chart.setOption(sanitizeOption(JSON.parse(optionKey), play))
+      chart.setOption(sanitizeOption(optionRef.current, play))
       // a slide is a fixed stage, but a UI screen or a Doc reflows (device pills, responsive
       // layouts): follow the box, or the SVG keeps its mount-time size
       if (typeof ResizeObserver !== 'undefined') {

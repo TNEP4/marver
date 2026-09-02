@@ -16,9 +16,11 @@
  * degraded) - an explicit, per-video choice.
  * Leaving (play flips off / unmount) pauses everything.
  *
- * Sources: a design-asset path (poster REQUIRED - it is the canvas
- * rendering) or a public https direct-file URL (mp4/webm; HLS where the
- * browser supports it natively). `ratio` is the CSS aspect-ratio of the box
+ * Sources: a design-asset path or a public https direct-file URL (mp4/webm;
+ * HLS where the browser supports it natively). The poster is the frame at
+ * rest: authored, or - omitted on a local clip - the generated
+ * `<clip>.poster.png` beside it (server/poster.ts renders it; the primitive
+ * asks the dev server once when the file is missing). `ratio` is the CSS aspect-ratio of the box
  * (default 16 / 9; "9 / 16" for a vertical clip inside a phone screen).
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -95,8 +97,9 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   // missing -> requested -> ready (reload with a cache-buster) or failed (the card)
   const generated = !poster && !isRemote(src) ? posterNameFor(src) : null
   const [gen, setGen] = useState<'idle' | 'ready' | 'failed'>('idle')
+  const [bust] = useState(() => Date.now())     // one cache-buster per mount, not per render
   const posterUrl = poster ? resolve(poster) : generated ? resolve(generated) : null
-  const posterSrc = posterUrl && generated && gen === 'ready' ? `${posterUrl}?v=${Date.now()}` : posterUrl
+  const posterSrc = posterUrl && generated && gen === 'ready' ? `${posterUrl}?v=${bust}` : posterUrl
   const srcUrl = resolve(src)
   const style = ratio ? ({ '--mv-video-ratio': ratio } as CSSProperties) : undefined
   const onPosterError = () => {
