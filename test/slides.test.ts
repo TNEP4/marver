@@ -55,11 +55,11 @@ describe('Chart sanitizeOption - nothing moves at rest', async () => {
 
 describe('scanAssetRefs - Video joins the pipeline', async () => {
   const { scanAssetRefs } = await import('../src/server/build.ts')
-  it('collects src + poster literals; remote src may skip poster; computed and posterless-local fail closed', () => {
+  it('collects src + poster literals; remote src may skip poster; computed fails closed; a posterless local clip references its generated poster', () => {
     expect(scanAssetRefs(`<Video src="intro.mp4" poster="intro.jpg" />`, 'm')).toEqual(['intro.mp4', 'intro.jpg'])
     expect(scanAssetRefs(`<Video src="https://cdn.x/v.mp4" />`, 'm')).toEqual(['https://cdn.x/v.mp4'])
     expect(() => scanAssetRefs(`<Video src={dyn} poster="p.jpg" />`, 'm')).toThrow(/computed/)
-    expect(() => scanAssetRefs(`<Video src="intro.mp4" />`, 'm')).toThrow(/poster/)
+    expect(scanAssetRefs(`<Video src="intro.mp4" />`, 'm')).toEqual(['intro.mp4', 'intro.mp4.poster.png'])
     // Img behavior unchanged
     expect(scanAssetRefs(`<Img src="a.png" />`, 'm')).toEqual(['a.png'])
     expect(() => scanAssetRefs(`<Img src={x} />`, 'm')).toThrow(/computed/)

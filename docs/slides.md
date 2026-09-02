@@ -113,7 +113,10 @@ slides and the entrance presets.
   styling you pass override the theme - so pass data and structure only.
   SVG-rendered, in a lazy chunk chart-free canvases never download.
 - `<Video src="intro.mp4" poster="intro.jpg" />` - the poster is the frame
-  at rest (required for local files). In slides mode the glass strip mounts
+  at rest. Omit it on a local clip and marver renders one from the clip's own
+  first moments (`intro.mp4.poster.png` beside it - the dev server on first
+  sight, `marver build` before publishing; needs Chrome, like `shot`). An
+  authored poster always wins. In slides mode the glass strip mounts
   on its own (play/pause, seek, mute, fullscreen); in any other live frame -
   interact mode, play, a published prototype - the poster is the play button.
   `ratio="9 / 16"` for a vertical clip; `autoplay` for a muted ambient loop

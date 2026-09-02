@@ -66,6 +66,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   the auto-mounted player. New: `ratio="9 / 16"` for vertical clips, and
   `autoplay` for a muted ambient loop (an explicit choice - that frame stays
   live on the canvas). `shape.md` and `craft.md` teach it.
+- **Posters render themselves.** A local clip without `poster` no longer fails
+  the build: marver renders `<clip>.poster.png` beside it from the clip's own
+  first moments (at 0.5 s, past the usual black opening) in the same headless
+  Chrome the shot renderer uses - the dev server on first sight (the frame
+  asks when its conventional poster is missing), `marver build` before assets
+  are copied. An authored poster always wins; without Chrome the build says
+  exactly which file to add.
 - **A screen with a chart is still a screen.** Importing anything from
   `@marver-design/marver/content` used to turn the frame into a content
   document (spec badge, measured height, no device). Content frames are now

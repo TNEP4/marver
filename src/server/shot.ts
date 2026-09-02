@@ -36,7 +36,12 @@ export function findChrome(): string | null {
 
 /** `scale` = device pixels per CSS px (1-4; default 2). The full-height path may step it
  *  DOWN (never up) to fit Chrome's capture surface - the result reports what was used. */
-export interface ShotRequest { url: string; width: number; height: number; out: string; fullHeight?: boolean; timeoutMs?: number; scale?: number }
+export interface ShotRequest {
+  url: string; width: number; height: number; out: string; fullHeight?: boolean; timeoutMs?: number; scale?: number
+  /** Capture only this element (a CSS selector) instead of the viewport - the poster generator's
+   *  way of shooting a video's first frame at the clip's own size. Excludes fullHeight. */
+  clip?: string
+}
 export type ShotResult =
   | { ok: true; width: number; height: number; scale: number; truncated?: boolean; note?: string }
   | { ok: false; error: string }
@@ -162,7 +167,7 @@ const fits = (w: number, h: number, dsf: number) => w * dsf <= SURFACE && h * ds
 /** The tallest CSS height a full-height capture of `width` can hold at `dsf`. */
 const capFor = (width: number, dsf: number) => Math.max(1, Math.min(Math.floor(SURFACE / dsf), Math.floor(AREA / (width * dsf * dsf))))
 
-async function captureNow({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2 }: ShotRequest): Promise<ShotResult> {
+async function captureNow({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest): Promise<ShotResult> {
   // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
   let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
   while (scale > 1 && !fits(width, height, scale)) scale--
@@ -400,10 +405,22 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       }
     }
 
+    // element clip: the selector's box, in CSS px, at the viewport's scale
+    let capX = 0, capY = 0
+    if (clip) {
+      const r = await sendD('Runtime.evaluate', {
+        expression: `(() => { const el = document.querySelector(${JSON.stringify(clip)}); if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height } })()`,
+        returnByValue: true,
+      }, 2000).catch(() => null)
+      const box = r?.result?.value as { x: number; y: number; w: number; h: number } | null
+      if (!box || box.w < 1 || box.h < 1) return { ok: false, error: `nothing to capture at "${clip}"` }
+      capX = Math.max(0, Math.floor(box.x)); capY = Math.max(0, Math.floor(box.y))
+      capW = Math.max(1, Math.round(box.w)); capH = Math.max(1, Math.round(box.h))
+    }
     // clip in DIP + scale:1 so the PNG is exactly capW*deviceScaleFactor x capH*deviceScaleFactor;
     // captureBeyondViewport is a belt-and-suspenders for the clip. Deadline-bounded (a tall capture
     // is legitimately a few seconds) so a hung capture can't wedge the queue either.
-    const shot = await sendD('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: capW, height: capH, scale: 1 } }, 15000)
+    const shot = await sendD('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: capX, y: capY, width: capW, height: capH, scale: 1 } }, 15000)
     writeFileSync(out, Buffer.from(String(shot.data), 'base64'))
     return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(note ? { note } : {}) }
   } catch (err) {

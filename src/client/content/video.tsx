@@ -22,11 +22,28 @@
  * (default 16 / 9; "9 / 16" for a vertical clip inside a phone screen).
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { ROUTE } from '../const.ts'
 import { assetUrl } from './md.ts'
 import { useSlidePlay } from './slide.tsx'
 
 const isRemote = (s: string) => /^https:\/\//.test(s)
 const resolve = (s: string): string | null => (isRemote(s) ? s : assetUrl(s))
+/** The generated poster's conventional name (server/poster.ts owns the rule). */
+const posterNameFor = (src: string) => `${src}.poster.png`
+
+// One generation request per clip per document: the dev server renders the poster from
+// the clip's own first moments (server/poster.ts) and the <img> reloads. A published canvas
+// has no such API (build already generated the file); a failed request just keeps the card.
+const requested = new Map<string, Promise<boolean>>()
+const requestPoster = (src: string): Promise<boolean> => {
+  let p = requested.get(src)
+  if (!p) {
+    const csrf = /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+    p = fetch(`${ROUTE}/api/poster?src=${encodeURIComponent(src)}`, { headers: { 'x-mv-c': csrf } }).then((r) => r.ok, () => false)
+    requested.set(src, p)
+  }
+  return p
+}
 
 const VIDEO_CSS = `
 .mv-video { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: var(--mv-video-ratio, 16 / 9) }
@@ -68,16 +85,25 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   ensureCss()
   const play = useSlidePlay()
   const [armed, setArmed] = useState(false)      // the poster was clicked in a live frame
-  const posterUrl = poster ? resolve(poster) : null
+  // poster omitted on a local clip: the generated one, by convention; `gen` walks
+  // missing -> requested -> ready (reload with a cache-buster) or failed (the card)
+  const generated = !poster && !isRemote(src) ? posterNameFor(src) : null
+  const [gen, setGen] = useState<'idle' | 'ready' | 'failed'>('idle')
+  const posterUrl = poster ? resolve(poster) : generated ? resolve(generated) : null
+  const posterSrc = posterUrl && generated && gen === 'ready' ? `${posterUrl}?v=${Date.now()}` : posterUrl
   const srcUrl = resolve(src)
   const style = ratio ? ({ '--mv-video-ratio': ratio } as CSSProperties) : undefined
-  const bad = !srcUrl || (!isRemote(src) && !posterUrl)
+  const onPosterError = () => {
+    if (!generated || gen !== 'idle') return
+    void requestPoster(src).then((ok) => setGen(ok ? 'ready' : 'failed'))
+  }
+  const bad = !srcUrl || (!isRemote(src) && !posterUrl) || gen === 'failed'
   if (bad) {
     return (
       <div className="mv-block mv-imgerr">
         <b>video unavailable</b>
         <span>{src}</span>
-        <span className="dim">{!srcUrl ? 'must be a design/assets/ path or an https file URL' : 'a local video needs a poster - it IS the frame at rest'}</span>
+        <span className="dim">{!srcUrl ? 'must be a design/assets/ path or an https file URL' : `no poster - add poster="…", or put ${generated} beside the clip (the dev server renders it when Chrome is installed)`}</span>
       </div>
     )
   }
@@ -85,7 +111,7 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   if (autoplay) {
     return (
       <div className="mv-block mv-video" style={style}>
-        <video src={srcUrl!} poster={posterUrl ?? undefined} autoPlay muted loop playsInline preload="auto" />
+        <video src={srcUrl!} poster={posterSrc ?? undefined} autoPlay muted loop playsInline preload="auto" />
       </div>
     )
   }
@@ -94,12 +120,12 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   if (!play && !armed) {
     return (
       <div className="mv-block mv-video armed" style={style} role="button" aria-label="Play video" onClick={() => setArmed(true)}>
-        {posterUrl ? <img src={posterUrl} alt="" loading="lazy" /> : null}
+        {posterSrc ? <img src={posterSrc} alt="" loading="lazy" onError={onPosterError} /> : null}
         <div className="glyph"><span><PlayGlyph /></span></div>
       </div>
     )
   }
-  return <Player src={srcUrl!} poster={posterUrl ?? undefined} style={style} autoStart={armed} />
+  return <Player src={srcUrl!} poster={posterSrc ?? undefined} style={style} autoStart={armed} />
 }
 
 /** The glass strip - deliberately four controls and a clock, nothing more. */

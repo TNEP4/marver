@@ -105,7 +105,8 @@ export default () => (
   Label inside the plot on narrow blocks (an outside pie label past the edge is
   dropped). Data comes from a fixture, never invented in the option.
 - `Video` (`src`, `poster`) embeds a clip the same way: a design-asset file
-  (poster required - it is the frame at rest) or an https direct URL. Still at
+  or an https direct URL. The poster is the frame at rest; omit it and marver
+  renders one from the clip (`<clip>.poster.png` beside it). Still at
   rest; click the poster to play wherever the frame is live. `ratio="9 / 16"`
   for a vertical clip. A walkthrough recording or a competitor's motion belongs
   in a spec as a `Video`, never as a link the reader has to leave for.

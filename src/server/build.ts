@@ -55,17 +55,17 @@ export function scanAssetRefs(src: string, moduleId: string): string[] {
   for (const m of stripped.matchAll(/<Img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/g)) out.push(m[1])
   // Video: src AND poster ride the pipeline; remote https sources stay remote
   // (isLocalAssetRef filters them downstream exactly like markdown images).
-  // A LOCAL Video src without a poster fails closed - the poster IS the
-  // slide's rendering at rest.
+  // A LOCAL Video src without a poster references the GENERATED one by
+  // convention (`<clip>.poster.png`, server/poster.ts) - the build renders it
+  // before assets are copied, so the poster IS there at rest.
   for (const m of stripped.matchAll(/<Video\b[^>]*>|<Video\b[^>]*\/>/g)) {
     const tag = m[0]
     const srcM = /\bsrc\s*=\s*["']([^"']+)["']/.exec(tag)
     const posterM = /\bposter\s*=\s*["']([^"']+)["']/.exec(tag)
     if (srcM) {
       const remote = /^https:\/\//.test(srcM[1])
-      if (!remote && !posterM)
-        throw new Error(`${moduleId}: <Video src="${srcM[1]}"> is a local file without a poster - the poster is the slide at rest. Add poster="...".`)
       out.push(srcM[1])
+      if (!remote && !posterM) out.push(`${srcM[1]}.poster.png`)
     }
     if (posterM) out.push(posterM[1])
   }
@@ -536,6 +536,15 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
   let copiedAssets = 0
   const realAssets = existsSync(assetsDir) ? realpathSync(assetsDir) : null
+  // generated posters first: a `<clip>.poster.png` ref whose file is missing is rendered
+  // from the clip now (Chrome), so the copy below finds it - or the build says exactly why not
+  for (const r of refs) {
+    if (!isLocalAssetRef(r) || !r.endsWith('.poster.png') || existsSync(join(assetsDir, r))) continue
+    const { ensurePoster } = await import('./poster.ts')
+    const g = await ensurePoster(assetsDir, r.slice(0, -'.poster.png'.length))
+    if (!g.ok) throw new Error(`design/assets/${r}: ${g.error}`)
+    console.log(`  poster: rendered design/assets/${r} (${g.width}×${g.height})`)
+  }
   for (const r of refs) {
     if (!isLocalAssetRef(r)) continue          // external md refs render as "unavailable" at runtime
     const srcFile = join(assetsDir, r)

@@ -312,6 +312,20 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return res.end(png)
       }
 
+      // ---- poster: render `<clip>.poster.png` for a local video that has none (the Video
+      // primitive asks when its conventional poster 404s). Owner-gated like shot: it spawns a
+      // browser and writes into design/assets/. Idempotent - an existing file is never redone.
+      if (path === 'poster' && req.method === 'GET') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const src = url.searchParams.get('src') ?? ''
+        const { ensurePoster, isLocalClip } = await import('./poster.ts')
+        const { isLocalAssetRef } = await import('./build.ts')
+        if (!isLocalAssetRef(src) || !isLocalClip(src)) return json(res, 400, { error: 'src must be a clip under design/assets/' })
+        const r = await ensurePoster(join(root, 'design', 'assets'), src)
+        if (!r.ok) return json(res, r.error.includes('does not exist') ? 404 : 503, { error: r.error })
+        return json(res, 200, { path: `design/assets/${src}.poster.png`, generated: r.generated })
+      }
+
       // ---- comments: the dev mirror of serve's collab API - same shapes,
       // so the shell ships ONE client. Identity is the local profile (it's the
       // designer's machine); rights are 'comment' everywhere locally.

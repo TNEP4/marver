@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -76,6 +76,12 @@ export default () => (
   </main>
 )
 `)
+  // a REAL (tiny, Chrome-recorded) clip with NO poster: the dev server must render one on demand
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'clip.webm'), join(assets, 'real.webm'))
+  writeFileSync(join(scenes, 'noposter.tsx'), `import { Video } from '@marver-design/marver/content'
+export const meta = { title: 'No poster', viewport: 'mobile' }
+export default () => <main style={{ padding: 16 }}><Video src="real.webm" /></main>
+`)
   const boards = join(root, 'design', 'boards')
   mkdirSync(boards, { recursive: true })
   writeFileSync(join(boards, 'main.json'), JSON.stringify({
@@ -86,6 +92,7 @@ export default () => (
       { key: 'chart', frame: 'app/chart', x: 500, y: 500, w: 640, h: 360 },
       { key: 'dash', frame: 'app/dash', x: 0, y: 1000, w: 390, h: 844 },
       { key: 'clip', frame: 'app/clip', x: 500, y: 1000, w: 390, h: 844 },
+      { key: 'noposter', frame: 'app/noposter', x: 1000, y: 1000, w: 390, h: 844 },
     ],
   }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
@@ -108,7 +115,7 @@ export default () => (
     const t1 = Date.now()
     while (Date.now() - t1 < 20_000 && !/optimized dependencies changed|dependencies optimized/.test(log)) await new Promise((r) => setTimeout(r, 200))
     await new Promise((r) => setTimeout(r, 1_000))   // let the reload start
-    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 5 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
+    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 6 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
     await browser.send('Target.closeTarget', { targetId: (await browser.send('Target.getTargetInfo', {}, s)).targetInfo.targetId })
   }
 }, 120_000)
@@ -126,7 +133,7 @@ async function openAndSelect(b: Browser, key: string): Promise<string> {
   // activation (kept alive across the render by the promise-valued ClipboardItem). Read-back
   // permission is granted only afterwards, in clipboardImage().
   await b.go(s, `${ORIGIN}/`)
-  await b.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 5 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000)
+  await b.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 6 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000)
   await b.eval(s, `window.__mvStore.getState().select(${JSON.stringify(key)})`)
   await b.send('Page.bringToFront', {}, s)
   await b.send('Emulation.setFocusEmulationEnabled', { enabled: true }, s)
@@ -260,6 +267,37 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     await browser!.until(s, `!!document.querySelector('.mv-video video')`, 5_000)
     expect(await browser!.eval(s, `(() => { const a = document.querySelector('.mv-video'); const v = a.querySelector('video'); return { src: v.getAttribute('src'), strip: !!a.querySelector('.strip'), muted: v.muted } })()`))
       .toMatchObject({ src: expect.stringContaining('clip.mp4'), strip: true, muted: false })
+  })
+
+  skippable('a local clip with NO poster gets one rendered on demand - the frame asks, the dev server draws it from the clip, the poster shows', async () => {
+    const posterFile = join(root, 'design', 'assets', 'real.webm.poster.png')
+    // an earlier test's canvas may already have asked for it (the feature at work) - start clean
+    rmSync(posterFile, { force: true })
+    const s = await browser!.tab({ width: 390, height: 844 })
+    await browser!.go(s, `${ORIGIN}/__mv/frame/?id=app/noposter&theme=light`)
+    // the poster <img> 404s -> the primitive asks /api/poster -> the file lands -> the img reloads and decodes
+    await browser!.until(s, `(() => { const im = document.querySelector('.mv-video img'); return !!im && im.complete && im.naturalWidth > 0 })()`, 40_000)
+    expect(existsSync(posterFile)).toBe(true)
+    const b = readFileSync(posterFile)
+    expect([b.readUInt32BE(16), b.readUInt32BE(20)]).toEqual([320, 180])   // the clip's own size
+    expect(await browser!.eval(s, `document.querySelector('.mv-video img').naturalWidth`)).toBe(320)
+    // and the frame is playable like any other: one click mounts the player with the clip
+    const box = await browser!.eval(s, `(() => { const r = document.querySelector('.mv-video').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+    await browser!.until(s, `!!document.querySelector('.mv-video video')`, 5_000)
+    // a real clip in a real player: it actually advances
+    await browser!.until(s, `document.querySelector('.mv-video video').currentTime > 0.2`, 10_000)
+    // the BUILD renders a missing poster too, before copying assets - a published canvas never
+    // ships a poster-less clip. Remove the generated file and build the board.
+    rmSync(posterFile)
+    writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ version: 2, boards: { main: { max: 'read' } } }))
+    const out = execFileSync(process.execPath, [CLI, 'build', '--root', root], { cwd: root, encoding: 'utf8', stdio: 'pipe' })
+    expect(out).toMatch(/poster: rendered design\/assets\/real\.webm\.poster\.png \(320×180\)/)
+    expect(existsSync(posterFile)).toBe(true)
+    const shipped = readdirSync(join(root, 'design', '.dist'), { recursive: true }) as string[]
+    expect(shipped.some((f) => f.endsWith('real.webm.poster.png'))).toBe(true)
+    expect(shipped.some((f) => f.endsWith('real.webm'))).toBe(true)
   })
 
   skippable('the endpoint refuses a bad scale and streams PNG bytes with the summary header on format=png', async () => {

@@ -108,8 +108,10 @@ thing - changes everything. This section is binding, not aspiration:
   phone screen: `Video` from `@marver-design/marver/content` - poster-first
   (still on the canvas, no media fetched at rest), click-to-play wherever the
   frame is live, `ratio="9 / 16"` for vertical, `autoplay` for a muted ambient
-  loop (an explicit choice: that frame stays live on the canvas). Local files
-  need a poster; `design/assets/` holds both. Never a gray "video" box, never
+  loop (an explicit choice: that frame stays live on the canvas). The poster
+  is rendered from the clip when you omit it (`<clip>.poster.png` beside it in
+  `design/assets/`); author one when the opening frame is not the picture.
+  Never a gray "video" box, never
   a static screenshot standing in for motion the design depends on.
 - **Licensing sanity, briefly:** brand marks from official sources shown to
   identify the brand are fine; photos come from sources that permit the use.
