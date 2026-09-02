@@ -64,11 +64,11 @@ export function extractMeta(src: string): FrameMeta {
 /** Content-frame detection: LEXICAL by convention - the frame file itself imports
  *  PKG/content (an import specifier scan, so "<Diagram" inside a string in a UI frame can
  *  never misbadge it; barrels/re-exports are not detected - meta.intent is the taught path
- *  and always works) AND renders a DOCUMENT primitive: Doc, Md or Diagram. The import alone
- *  is not enough - Chart, Img, Video, Row, Col and Space are shared blocks a UI screen or a
- *  slide uses too, and a dashboard with one <Chart> is still a screen (device height, no
- *  document measuring), never a spec. Returns the inferred intent + natural width, or null
- *  for UI frames. */
+ *  and always works) AND renders a DOCUMENT primitive: Doc, Md, Diagram or Img (reference
+ *  imagery - a moodboard is Rows of Img). The import alone is not enough - Chart, Video, Row,
+ *  Col and Space are shared blocks a UI screen or a slide uses too, and a dashboard with one
+ *  <Chart> is still a screen (device height, no document measuring), never a spec. Returns
+ *  the inferred intent + natural width, or null for UI frames. */
 const CONTENT_IMPORT = new RegExp(`from\\s+['"]${PKG}/content['"]`)
 const WIDE_DOC = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/
 export const contentWidthOf = (src: string): number => (WIDE_DOC.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document)
@@ -79,7 +79,7 @@ export function contentScan(src: string): { intent: string; width: number } | nu
   const diagrams = count(/<Diagram[\s>/]/g)
   const imgs = count(/<Img[\s>/]/g)
   const mds = count(/<Md[\s>/]/g)
-  if (docs + diagrams + mds === 0) return null
+  if (docs + diagrams + mds + imgs === 0) return null
   const intent = diagrams > 0 ? 'diagram' : imgs > mds ? 'moodboard' : 'spec'
   return { intent, width: contentWidthOf(src) }
 }

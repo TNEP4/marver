@@ -732,11 +732,12 @@ describe('content frames', () => {
     const r = contentScan(`${CONTENT}export default () => <Doc><Img src="a.png" /><Img src="b.png" /><Md>{'x'}</Md></Doc>`)
     expect(r).toEqual({ intent: 'moodboard', width: 760 })
   })
-  it('contentScan: the import ALONE is not a content frame - a screen with a Chart/Img/Video/Row stays a UI frame', async () => {
+  it('contentScan: the import ALONE is not a content frame - a screen with a Chart/Video/Row stays a UI frame; Img still reads as content (moodboards)', async () => {
     const { contentScan } = await import('../src/server/manifest.ts')
-    const UI = `import { Chart, Img, Row, Col } from '@marver-design/marver/content'\n`
+    const UI = `import { Chart, Img, Row, Col, Video } from '@marver-design/marver/content'\n`
     expect(contentScan(`${UI}export default () => <main><h1>Dash</h1><Chart option={{}} /></main>`)).toBeNull()
-    expect(contentScan(`${UI}export default () => <Row><Img src="a.png" /><Img src="b.png" /></Row>`)).toBeNull()
+    expect(contentScan(`${UI}export default () => <main><Video src="a.mp4" poster="a.png" /><Row><Col /></Row></main>`)).toBeNull()
+    expect(contentScan(`${UI}export default () => <Row><Img src="a.png" /><Img src="b.png" /></Row>`)?.intent).toBe('moodboard')
     // a Doc, an Md or a Diagram makes it a document
     expect(contentScan(`${UI}export default () => <Doc><Chart option={{}} /></Doc>`)?.intent).toBe('spec')
     expect(contentScan(`${UI}export default () => <div><Md>{'x'}</Md></div>`)?.intent).toBe('spec')

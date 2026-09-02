@@ -76,7 +76,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **A screen with a chart is still a screen.** Importing anything from
   `@marver-design/marver/content` used to turn the frame into a content
   document (spec badge, measured height, no device). Content frames are now
-  those that render `Doc`, `Md` or `Diagram`; `Chart`, `Img`, `Video`, `Row`,
+  those that render `Doc`, `Md`, `Diagram` or `Img`; `Chart`, `Video`, `Row`,
   `Col` and `Space` are shared blocks a screen or a slide uses freely. The
   block card (padding, hairline, surface) is a document treatment: inside a
   slide or a screen a block is bare, so charts no longer carry 32px of
