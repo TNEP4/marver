@@ -68,14 +68,17 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
 /* ----------------------------- layout blocks ------------------------------ */
 
 export function Row({ space = 1, children }: { space?: number; children?: ReactNode }) {
+  ensureStyles()
   return <div className="mv-row" style={{ gap: space * UNIT }}>{children}</div>
 }
 
 export function Col({ space = 1, children }: { space?: number; children?: ReactNode }) {
+  ensureStyles()
   return <div className="mv-col" style={{ gap: space * UNIT }}>{children}</div>
 }
 
 export function Space({ n = 1 }: { n?: number }) {
+  ensureStyles()
   return <div aria-hidden className="mv-space" style={{ flex: `0 0 ${n * UNIT}px`, minWidth: n * UNIT, minHeight: n * UNIT }} />
 }
 

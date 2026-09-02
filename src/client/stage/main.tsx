@@ -133,8 +133,10 @@ function Stage() {
         // no view transitions here: a plain crossfade at the deck's tempo, so
         // the one-tempo contract holds even where morphs cannot
         apply(); entered()
-        const tempo = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--marver-slide-tempo')) || 350
-        document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: tempo, easing: 'ease-out' })
+        const raw = getComputedStyle(document.documentElement).getPropertyValue('--marver-slide-tempo').trim()
+        const m = /^(\d*\.?\d+)\s*(ms|s)?$/i.exec(raw)
+        const tempo = m ? parseFloat(m[1]) * (m[2]?.toLowerCase() === 's' ? 1000 : 1) : 350   // a CSS <time>: 350ms or .35s; 0 is honoured
+        if (tempo > 0) document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: tempo, easing: 'ease-out' })
       }
       if (announce) post({ type: 'sh:stage-at', at: id })
     } catch (e) {

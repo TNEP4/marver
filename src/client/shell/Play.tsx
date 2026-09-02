@@ -60,7 +60,7 @@ export function enterSlides(over?: { at?: string; device?: string; theme?: strin
     // 0.13.0 let a slides board play its ordinary frames as a prototype - keep
     // that as the fallback so an upgraded (or locked) board never dead-ends
     s.toast('no slide: true frames on this board - playing it as a prototype')
-    enterPlay(over)
+    enterPlay(over, { legacyDeck: true })   // enterPlay never calls back into enterSlides: no recursion
     return
   }
   if (excluded.length) s.toast(`${excluded.length} non-slide frame${excluded.length === 1 ? '' : 's'} on this board won't play in slides mode`)
@@ -78,10 +78,12 @@ export function enterSlides(over?: { at?: string; device?: string; theme?: strin
  *  `over` (deep links) can pin the start frame, device, and theme - the start may be any
  *  playable manifest frame, not just a board node: the stage itself allows data-goto to
  *  off-board frames, so a link captured mid-flow must restore to the same screen. */
-export function enterPlay(over?: { at?: string; device?: string; theme?: string }) {
+export function enterPlay(over?: { at?: string; device?: string; theme?: string }, opts?: { legacyDeck?: boolean }) {
   const s = useStore.getState()
-  // the lock freezes what open pinned: a board locked to another mode never plays
-  if (!modeAllowed(s.board, 'present')) return
+  // the lock freezes what open pinned: a board locked to another mode never
+  // plays - except the legacy-deck fallback, where the lock pinned `slides`
+  // and the prototype IS what 0.13.0 showed for that board
+  if (!opts?.legacyDeck && !modeAllowed(s.board, 'present')) return
   const list = playList()
   if (!list.length) { s.toast('nothing to play on this board'); return }
   const overAt = over?.at && s.manifest?.frames.some((f) => f.id === over.at && f.kind === 'tsx') ? over.at : undefined

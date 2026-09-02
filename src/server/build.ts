@@ -356,7 +356,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     const ids = new Set((boards[n]?.nodes ?? []).map((x: { frame: string }) => x.frame))
     const on = pubManifest.frames.filter((f) => ids.has(f.id))
     const off = on.filter((f) => !(f.kind === 'tsx' && f.slide))
-    if (on.length && off.length === on.length)
+    if (off.length === on.length)     // zero slides - including an EMPTY board, which is a deck of nothing
       throw new Error(`design/publish.json: board "${n}" plays as slides but none of its ${on.length} frame(s) carry \`slide: true\` - add it to the frames' meta, or set "type"/"open" to "present" (0.13.0 let slides alias present; 0.14.0 plays only slide frames)`)
     if (off.length)
       console.warn(`  warning: board "${n}" plays as slides but ${off.length} frame(s) are not slides (${off.slice(0, 4).map((f) => f.id).join(', ')}${off.length > 4 ? ', …' : ''}) - they will not play`)
