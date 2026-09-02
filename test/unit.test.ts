@@ -742,6 +742,9 @@ describe('content frames', () => {
     expect(contentScan(`${UI}export default () => <main><Chart option={{}} /><pre>{'<Diagram title="x">'}</pre></main>`)).toBeNull()
     expect(contentScan(`${UI}// TODO: add a <Md> intro\nexport default () => <main><Chart option={{}} /></main>`)).toBeNull()
     expect(contentScan(`${UI}export default () => <div><p>it's here</p><Diagram>{'flowchart'}</Diagram><p>don't</p></div>`)?.intent).toBe('diagram')
+    // ordinary code strings and regex literals are data too
+    expect(contentScan(`${UI}const u = { href: "https://host/<Diagram>" }\nexport default () => <main><Chart option={{}} /></main>`)).toBeNull()
+    expect(contentScan(`${UI}const re = /["']<Md>/g\nexport default () => <main><Chart option={{}} /></main>`)).toBeNull()
     // a Doc, an Md or a Diagram makes it a document
     expect(contentScan(`${UI}export default () => <Doc><Chart option={{}} /></Doc>`)?.intent).toBe('spec')
     expect(contentScan(`${UI}export default () => <div><Md>{'x'}</Md></div>`)?.intent).toBe('spec')

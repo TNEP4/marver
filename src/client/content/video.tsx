@@ -121,9 +121,15 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   const posterSrc = posterUrl && generated && gen === 'ready' ? `${posterUrl}?v=${bust}` : posterUrl
   const srcUrl = resolve(src)
   const style = ratio ? ({ '--mv-video-ratio': ratio } as CSSProperties) : undefined
+  const srcRef = useRef(src)
+  srcRef.current = src
   const onPosterError = () => {
     if (!generated || gen !== 'idle') return
-    void requestPoster(src).then((ok) => { setBust(Date.now()); setGen(ok ? 'ready' : 'failed') })
+    const asked = src
+    void requestPoster(src).then((ok) => {
+      if (srcRef.current !== asked) return   // the clip changed meanwhile - this answer is not ours
+      setBust(Date.now()); setGen(ok ? 'ready' : 'failed')
+    })
   }
   // every branch probes the generated poster, not only the resting <img>: a slides-mode or
   // autoplay mount would otherwise never ask (a <video poster> 404 is silent)

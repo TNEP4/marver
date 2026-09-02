@@ -127,9 +127,10 @@ export function Chart({ option, h = 420 }: { option: Record<string, unknown>; h?
     }).catch(() => setFailed(true))
     return () => { disposed = true; ro?.disconnect(); chartRef.current?.dispose(); chartRef.current = null }
   }, [play, theme])
-  // option changes (content OR a function inside it) reach the live instance; notMerge so a
-  // removed series disappears rather than lingering from the previous option
-  useEffect(() => { chartRef.current?.setOption(sanitizeOption(option, play), true) }, [option, play])
+  // option changes (content OR a function inside it) reach the live instance: a normal merge
+  // that REPLACES the series list (a removed series disappears) while a viewer's dataZoom,
+  // legend selection and the like survive - notMerge would reset them on every parent render
+  useEffect(() => { chartRef.current?.setOption(sanitizeOption(option, play), { replaceMerge: ['series'] }) }, [option, play])
   if (failed) return <div className="mv-block mv-imgerr"><b>chart unavailable</b><span>echarts failed to load</span></div>
   // contain: inline-size - echarts sizes its inner box in px, which would otherwise pin the
   // author's flex/grid column at that width (min-content) and defeat the ResizeObserver above

@@ -12,7 +12,7 @@
  * so nothing has to be served; readiness is the video element appearing in #root once
  * the seek lands, which is the shot renderer's own readiness rule.
  */
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, sep } from 'node:path'
@@ -79,8 +79,12 @@ export async function ensurePoster(assetsDir: string, src: string): Promise<{ ok
   try {
     const r = await capture({ url: pathToFileURL(page).href, width: 1920, height: 1080, scale: 1, out: tmp, fullHeight: false, clip: '#root video', timeoutMs: 20_000 })
     if (!r.ok) return { ok: false, error: `could not render a poster for ${basename(src)} - ${r.error}` }
-    if (existsSync(out)) return { ok: true, path: out, width: r.width, height: r.height, generated: false }
-    renameSync(tmp, out)
+    // EXCLUSIVE install: a poster that appeared while we rendered (authored, or a sibling
+    // request's) wins - COPYFILE_EXCL makes that atomic instead of a check-then-rename race
+    try { copyFileSync(tmp, out, constants.COPYFILE_EXCL) } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return { ok: true, path: out, width: r.width, height: r.height, generated: false }
+      throw err
+    }
     return { ok: true, path: out, width: r.width, height: r.height, generated: true }
   } finally {
     rmSync(tmp, { force: true })

@@ -82,7 +82,10 @@ export const codeOnly = (src: string): string =>
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:])\/\/.*$/gm, '$1')
     .replace(/\{\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')\s*\}/g, '{""}')
-    .replace(/=\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')/g, '=""')
+    // a string or a regex literal in CODE position - after an operator, a bracket, a comma, a
+    // colon or `return` - is data, not markup; prose quotes (no such prefix) stay untouched
+    .replace(/([=(,:[{?+|&!]|\breturn)\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')/g, '$1""')
+    .replace(/([=(,:[{?+|&!]|\breturn)\s*\/(?:[^/\\\n[]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[gimsuy]*/g, '$1/re/')
 export function contentScan(src: string): { intent: string; width: number } | null {
   if (!CONTENT_IMPORT.test(src)) return null
   const code = codeOnly(src)
