@@ -182,8 +182,9 @@ This is what separates a deck that looks made from one that looks typed.
 The stage is 1280×720 with ASYMMETRIC margins - 88px at the sides, 44px top
 and bottom - so the title sits high, the footnote sits low, and the middle
 is the tallest band on the slide. Content box: **1104×632px**, at every
-viewport. (Override `--sl-pad-x` / `--sl-pad-y` in px, never a percentage:
-a percentage resolves against the viewport, not the stage.)
+viewport. (Override `--marver-slide-pad-x` / `--marver-slide-pad-y` in px,
+never a percentage: a percentage resolves against the viewport, not the
+stage.)
 
 When a slide carries a title band (grids and splits usually do; statements,
 heroes, and fields usually do not), the three bands are:
@@ -220,9 +221,10 @@ do to a slide. Gaps go on the parent (`gap`), never as per-child margins.
 - **One anchor visual per slide, at most** - a peer set or a path counts as
   one.
 - **Charts** (`Chart`): pick the FORM from the Apache ECharts docs
-  (https://echarts.apache.org/en/option.html) - marver injects the house
-  theme (colors, type, tooltip) and strips yours, so pass DATA and
-  STRUCTURE, never styling. One message per chart; the takeaway is the
+  (https://echarts.apache.org/en/option.html), inside the supported surface
+  - series bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap, sunburst, sankey, boxplot; components grid, polar, radar, tooltip, legend, title, dataset (+ transform), markLine, markPoint, markArea, visualMap, dataZoom; anything else is dropped without an
+  error. marver supplies the house theme (colors, type, tooltip); styling
+  you pass overrides it, so pass DATA and STRUCTURE, never styling. One message per chart; the takeaway is the
   slide's assertion; direct labels over legends; bar baselines at zero
   (lines may zoom - annotate when they do); hue = category, shade = variant,
   fixed across the whole deck.

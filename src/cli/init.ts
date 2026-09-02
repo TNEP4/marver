@@ -241,6 +241,16 @@ export function init(root: string, opts: InitOpts) {
     refresh('tsconfig.json', [STANDALONE_TSCONFIG], tsconfigNow())
   }
   write('.gitignore', '.local/\n.dist/\n.dist-seeds/\nslides-inspiration/\n')
+  // a pre-1.5 .gitignore predates the inspiration folder: append the one rule
+  // (never rewrite - the file is theirs), or a dropped PPTX gets committed
+  {
+    const gi = join(design, '.gitignore')
+    const cur = readFileSync(gi, 'utf8')
+    if (!cur.split('\n').some((l) => l.trim() === 'slides-inspiration/' || l.trim() === 'slides-inspiration')) {
+      writeFileSync(gi, cur + (cur.endsWith('\n') || cur === '' ? '' : '\n') + 'slides-inspiration/\n')
+      created.push('design/.gitignore (+ slides-inspiration/)')
+    }
+  }
   // the living slide-layout list (v1.5): write-once, project-owned forever -
   // survival across upgrades comes from write() refusing existing files
   write('slides.md', [

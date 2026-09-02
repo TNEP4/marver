@@ -155,6 +155,10 @@ export function resolvePolicy(
       throw new Error(`design/publish.json: board "${n}" has transition "${p.transition}" - use ${DECK_TRANSITIONS.join(' | ')}`)
     if (p.chrome !== undefined && !DECK_CHROME.includes(p.chrome as any))
       throw new Error(`design/publish.json: board "${n}" has chrome "${p.chrome}" - use ${DECK_CHROME.join(' | ')}`)
+    // the deck fields are inert off a deck - a typo'd board type would otherwise
+    // carry them silently
+    if ((p.transition !== undefined || p.chrome !== undefined) && type !== 'slides' && p.open !== 'slides')
+      throw new Error(`design/publish.json: board "${n}" sets transition/chrome but is not a slides board - set "type": "slides" or "open": "slides", or drop them`)
     // freezing an unspecified mode is meaningless - the lock caps disclosure,
     // and what it caps to must be a decision, never a default
     if (p.lock && p.open === undefined)
@@ -341,15 +345,21 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
   // per-board artifact metadata rides beside rights: the type picks the landing
   // view, open/lock are the owner's explicit calls (04-solution §2.35)
-  // a slides board full of non-slide frames plays as an empty deck - warn at
-  // build, when the author can still fix it (frames silently vanishing from
-  // play was the old failure shape)
+  // a slides board (type OR open) plays only its slide: true frames. Non-slide
+  // frames on it are a warning; a board with NO slides at all is an error -
+  // 0.13.0 let `slides` alias present, so an upgraded project could otherwise
+  // publish an empty deck in silence (frames silently vanishing from play
+  // was the old failure shape)
   for (const n of publishedNames) {
-    if (policy.boards[n]?.type !== 'slides') continue
+    const pb = policy.boards[n]
+    if (pb?.type !== 'slides' && pb?.open !== 'slides') continue
     const ids = new Set((boards[n]?.nodes ?? []).map((x: { frame: string }) => x.frame))
-    const off = pubManifest.frames.filter((f) => ids.has(f.id) && !(f.kind === 'tsx' && f.slide))
+    const on = pubManifest.frames.filter((f) => ids.has(f.id))
+    const off = on.filter((f) => !(f.kind === 'tsx' && f.slide))
+    if (on.length && off.length === on.length)
+      throw new Error(`design/publish.json: board "${n}" plays as slides but none of its ${on.length} frame(s) carry \`slide: true\` - add it to the frames' meta, or set "type"/"open" to "present" (0.13.0 let slides alias present; 0.14.0 plays only slide frames)`)
     if (off.length)
-      console.warn(`  warning: board "${n}" is type "slides" but ${off.length} frame(s) are not slides (${off.slice(0, 4).map((f) => f.id).join(', ')}${off.length > 4 ? ', …' : ''}) - they will not play`)
+      console.warn(`  warning: board "${n}" plays as slides but ${off.length} frame(s) are not slides (${off.slice(0, 4).map((f) => f.id).join(', ')}${off.length > 4 ? ', …' : ''}) - they will not play`)
   }
   const boardsMeta = Object.fromEntries(publishedNames
     .filter((n) => policy.boards[n])

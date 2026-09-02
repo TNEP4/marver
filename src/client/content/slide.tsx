@@ -65,8 +65,8 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
      the slide. Percentages are wrong here twice over: they would resolve
      against this absolutely positioned box's containing block (the viewport,
      not the stage), and one value for all four sides squeezes the middle. */
-  --sl-pad-x: ${PAD_X}px;
-  --sl-pad-y: ${PAD_Y}px;
+  --sl-pad-x: var(--marver-slide-pad-x, ${PAD_X}px);
+  --sl-pad-y: var(--marver-slide-pad-y, ${PAD_Y}px);
   --sl-margin: var(--sl-pad-x);          /* the side margin, for author math */
   /* THE FIT: authored at exactly ${SLIDE_W}x${SLIDE_H}, then scaled and
      centered to the largest box the viewport gives it - fill window, any
@@ -74,8 +74,11 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
      One coordinate system, so the author's px, Tailwind classes, and charts
      all scale together. Pure CSS (tan(atan2(a, b)) is the unitless ratio
      a / b), so a lean cover - which runs no JS - reflows to the right scale
-     the moment its node is resized. 1 wherever the viewport IS the stage. */
-  --sl-fit: min(tan(atan2(100vw, ${SLIDE_W}px)), tan(atan2(100vh, ${SLIDE_H}px)));
+     the moment its node is resized. 1 wherever the viewport IS the stage.
+     Declared under @supports below: an engine without CSS trig would keep
+     the invalid tokens, defeat the var() fallback, and invalidate the whole
+     transform - unscaled AND uncentered. */
+  --sl-fit: 1;
   /* translate-center, not inset+margin:auto - an overconstrained absolute
      box (1280px stage in a 390px viewport) resolves margins to 0 and the
      scaled slide drifts off-center; translate(-50%,-50%) centers at ANY size */
@@ -86,6 +89,9 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   font-family: var(--sl-font);
   padding: var(--sl-pad-y) var(--sl-pad-x); box-sizing: border-box;
   display: flex; flex-direction: column; justify-content: center; gap: 28px;
+}
+@supports (width: calc(1px * tan(atan2(1px, 1px)))) {
+  .sl-root { --sl-fit: min(tan(atan2(100vw, ${SLIDE_W}px)), tan(atan2(100vh, ${SLIDE_H}px))) }
 }
 .dark .sl-root, [data-theme="dark"] .sl-root {
   --sl-ink: var(--marver-slide-ink-dark, #f5f5f7);
@@ -155,62 +161,50 @@ function ensureSlideStyles() {
 export function Slide({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   ensureSlideStyles()
   const ref = useRef<HTMLDivElement>(null)
-  // dev overflow marker: a slide that outgrows its stage is a VISIBLE defect
-  // (outline + console), never a silent clip decision left to chance.
-  // scrollHeight alone is NOT enough: inside a flex column a body at flex:1
-  // gets a fixed height and ITS children spill over the header instead of
-  // growing the root, so the root measures clean while the slide is broken.
-  // The truth is geometric - nothing may escape the stage's content box.
+  // DEV overflow marker: a slide that outgrows its stage is a VISIBLE defect
+  // (outline + console + data-sl-over), never a silent clip decision left to
+  // chance. Development only - a published deck paints no diagnostics.
+  // Two tests, both in the stage's LAYOUT space (rects are post-transform,
+  // the fit scales the stage, so rect offsets are divided by the scale):
+  //  1. escape - a box leaving the 1280x720 stage. Measured against the
+  //     STAGE, not the padded content box: full-bleed images and clipped
+  //     photos break the margins on purpose.
+  //  2. collision - a flex/grid child outgrowing its parent's content box.
+  //     Inside a flex column a body at flex:1 keeps its own box while ITS
+  //     children spill over the neighbouring bands, all still inside the
+  //     stage, which test 1 never sees.
   useEffect(() => {
+    if (!import.meta.env.DEV) return
     const el = ref.current
     if (!el || typeof ResizeObserver === 'undefined') return
     let last: boolean | null = null
+    let raf = 0
     const check = () => {
-      const cs = getComputedStyle(el)
+      raf = 0
       const r = el.getBoundingClientRect()
-      // rects are POST-transform (the fit scales the stage) while computed
-      // padding is not, so every comparison happens in the stage's own
-      // LAYOUT space: divide rect offsets by the measured scale. Mixing the
-      // two spaces reads every slide as overflowing at any fitted size.
       const k = el.offsetWidth ? r.width / el.offsetWidth : 1
       const pad = (v: string) => parseFloat(v) || 0
-      const top = pad(cs.paddingTop), left = pad(cs.paddingLeft)
-      const bottom = el.offsetHeight - pad(cs.paddingBottom)
-      const right = el.offsetWidth - pad(cs.paddingRight)
+      const W = el.offsetWidth, H = el.offsetHeight
       let over = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1
       let culprit: Element | null = null
-      // The collision case: a flex/grid child that outgrows its parent's
-      // content box. Inside a flex column a body at flex:1 keeps its own box
-      // while ITS children spill over the neighbouring bands - all still
-      // inside the stage, so the escape test below never sees it. Out-of-flow
-      // children and parents that clip on purpose are decisions, not defects.
       const all = el.querySelectorAll('*')
-      for (let i = 0; !over && i < all.length && i < 600; i++) {
+      const n = Math.min(all.length, 600)
+      for (let i = 0; !over && i < n; i++) {
         const c = all[i]
+        const b = c.getBoundingClientRect()
+        if (!b.width && !b.height) continue
+        const y0 = (b.top - r.top) / k, y1 = (b.bottom - r.top) / k
+        const x0 = (b.left - r.left) / k, x1 = (b.right - r.left) / k
+        if (y1 > H + 1.5 || y0 < -1.5 || x1 > W + 1.5 || x0 < -1.5) { over = true; culprit = c; break }
         const par = c.parentElement
         if (!par || !par.clientHeight) continue
         const ps = getComputedStyle(par)
-        if (!/flex|grid/.test(ps.display)) continue
-        if (ps.overflowY !== 'visible' || ps.overflowX !== 'visible') continue
+        if (!/flex|grid/.test(ps.display) || ps.overflowY !== 'visible' || ps.overflowX !== 'visible') continue
         if (/absolute|fixed/.test(getComputedStyle(c).position)) continue
-        const pr = par.getBoundingClientRect(), cr = c.getBoundingClientRect()
-        if (!cr.height && !cr.width) continue
-        const lo = (pr.top - cr.top) / k + pad(ps.paddingTop)
-        const hi = (cr.bottom - pr.bottom) / k + pad(ps.paddingBottom)
-        if (lo > 2 || hi > 2) { over = true; culprit = c }
-      }
-      if (!over) {
-        // bounded walk: the first element whose box escapes the content box wins
-        for (let i = 0; i < all.length && i < 600; i++) {
-          const n = all[i]
-          const b = n.getBoundingClientRect()
-          if (b.width === 0 && b.height === 0) continue
-          const y0 = (b.top - r.top) / k, y1 = (b.bottom - r.top) / k
-          const x0 = (b.left - r.left) / k, x1 = (b.right - r.left) / k
-          if (y1 > bottom + 1.5 || y0 < top - 1.5 || x1 > right + 1.5 || x0 < left - 1.5) {
-            over = true; culprit = n; break
-          }
-        }
+        const pr = par.getBoundingClientRect()
+        const lo = (pr.top - b.top) / k + pad(ps.paddingTop)
+        const hi = (b.bottom - pr.bottom) / k + pad(ps.paddingBottom)
+        if (lo > 2 || hi > 2) { over = true; culprit = c; break }
       }
       if (over === last) return                       // idempotent: never write the same state twice
       last = over
@@ -218,16 +212,23 @@ export function Slide({ children, style }: { children?: ReactNode; style?: CSSPr
       el.dataset.slOver = over ? '1' : ''
       if (over) console.warn('[marver slide] content overflows the 1280×720 stage - split the slide, never shrink the type', culprit ?? el)
     }
-    // observe every descendant, not just direct children: a flex child at
-    // flex:1 keeps its own box while ITS content grows past the stage, and a
-    // root-only observer never hears about that. Bounded, and the only writes
-    // are outline + a data attribute, neither of which resizes anything.
-    const ro = new ResizeObserver(check)
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(check) }
+    // observe every descendant (bounded): a flex child keeps its box while its
+    // content grows, and a root-only observer never hears about that. Nodes
+    // added later are picked up by the childList observer - childList ONLY,
+    // so our own outline/data writes (attribute mutations) cannot re-trigger.
+    const ro = new ResizeObserver(schedule)
+    const seen = new WeakSet<Element>()
+    const observeAll = () => {
+      const all = el.querySelectorAll('*')
+      for (let i = 0; i < all.length && i < 600; i++) { if (!seen.has(all[i])) { seen.add(all[i]); ro.observe(all[i]) } }
+    }
     ro.observe(el)
-    const all = el.querySelectorAll('*')
-    for (let i = 0; i < all.length && i < 600; i++) ro.observe(all[i])
-    check()
-    return () => ro.disconnect()
+    observeAll()
+    const mo = new MutationObserver(() => { observeAll(); schedule() })
+    mo.observe(el, { childList: true, subtree: true })
+    schedule()
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); mo.disconnect() }
   }, [])
   return (
     <SlideCtx.Provider value={true}>

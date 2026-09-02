@@ -27,6 +27,7 @@
     "src/client",
     "src/shared",
     "templates",
+    "docs",
     "README.md",
     "LICENSE",
     "NOTICE",

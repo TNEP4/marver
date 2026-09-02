@@ -459,6 +459,18 @@ describe('resolvePolicy - v2 policy with v1 read-compat', () => {
     expect(p.reveal.source).toBe(true)
   })
 
+  it('deck fields (transition, chrome) are accepted on a slides board and refused elsewhere', async () => {
+    const { resolvePolicy } = await import('../src/server/build.ts')
+    write({ boards: { deck: { max: 'read', type: 'slides', transition: 'none', chrome: 'minimal' } } })
+    expect(resolvePolicy(root, boards()).boards.deck).toMatchObject({ transition: 'none', chrome: 'minimal' })
+    write({ boards: { deck: { max: 'read', open: 'slides', chrome: 'none' } } })
+    expect(resolvePolicy(root, boards()).boards.deck).toMatchObject({ chrome: 'none' })
+    write({ boards: { a: { max: 'read', type: 'doc', transition: 'fade' } } })
+    expect(() => resolvePolicy(root, boards())).toThrow(/not a slides board/)
+    write({ boards: { a: { max: 'read', chrome: 'full' } } })
+    expect(() => resolvePolicy(root, boards())).toThrow(/not a slides board/)
+  })
+
   it('lock without open fails the build; junk types and modes fail it too', async () => {
     const { resolvePolicy } = await import('../src/server/build.ts')
     write({ boards: { a: { max: 'read', lock: true } } })

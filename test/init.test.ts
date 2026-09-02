@@ -259,6 +259,20 @@ describe('v1.5: the living slide list is write-once', async () => {
   const { join } = await import('node:path')
   const { init } = await import('../src/cli/init.ts')
 
+  it('init appends slides-inspiration/ to a pre-1.5 .gitignore without rewriting it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-gi-init-'))
+    try {
+      mkdirSync(join(root, 'design'), { recursive: true })
+      writeFileSync(join(root, 'design', '.gitignore'), '.local/\n.dist/\n# mine\nsecret.env\n')
+      init(root, { mode: 'studio', demo: false })
+      const gi = readFileSync(join(root, 'design', '.gitignore'), 'utf8')
+      expect(gi.startsWith('.local/\n.dist/\n# mine\nsecret.env\n')).toBe(true)   // theirs, untouched
+      expect(gi.trim().split('\n').filter((l) => l === 'slides-inspiration/').length).toBe(1)
+      init(root, { mode: 'studio', demo: false })                                  // idempotent
+      expect(readFileSync(join(root, 'design', '.gitignore'), 'utf8')).toBe(gi)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   it('init writes design/slides.md once and never overwrites it', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mv-slides-init-'))
     try {

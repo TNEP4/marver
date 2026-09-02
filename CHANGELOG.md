@@ -23,13 +23,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   (`--marver-slide-ground/-ink/-muted` with dark twins, `-accent`, `-font`,
   `-tempo` timing both entrances and morphs), fixed type roles
   (`sl-display` 160, `sl-stat` 88, `sl-assertion` 56, `sl-support` 30,
-  `sl-body` 24, `sl-caption` 18), and a dev overflow marker that catches
-  content escaping the stage OR colliding inside it; `Chart` is Apache
-  ECharts (SVG, lazy chunk, house-themed, animation stripped at rest);
-  `Video` is poster-first with a glass control strip in play mode. The
-  motion contract is a build guarantee: a resting slide serializes to the
-  canvas's lean path - no canvas/video elements, no running animation -
-  so a 40-slide deck pans like 40 statics.
+  `sl-body` 24, `sl-caption` 18), and a development-only overflow marker
+  that catches content escaping the stage OR colliding inside it; `Chart`
+  is Apache ECharts on a fixed supported surface (series bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap, sunburst, sankey, boxplot; SVG, lazy
+  chunk, house-themed, animation stripped at rest); `Video` is
+  poster-first with a glass control strip in play mode. The motion
+  contract: a resting slide built from the shipped primitives serializes
+  to the canvas's lean path - no canvas/video elements, no running
+  animation - so a 40-slide deck pans like 40 statics (a slide that embeds
+  its own canvas, video, or shadow DOM stays live, as any frame would).
 - **Motion as the diff.** `view-transition-name` morphs between adjacent
   slides are the animation system; build steps are sibling frames; three
   one-shot entrance presets (`data-animate`) run after each transition
@@ -49,6 +51,18 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   look** template (tokens, type, mark, colour meaning, numbers, voice) the
   agent drafts on the first deck - which overrides the doctrine and survives
   every upgrade.
+
+### Changed
+
+- **A `slides` board plays only its `slide: true` frames.** 0.13.0 accepted
+  `type: "slides"` / `open: "slides"` and played them as `present`. From
+  0.14.0 the deck is the board's slide frames in reading order; non-slide
+  frames on such a board warn at build, and a board with none fails the
+  build with the fix in the message (`open: "present"` to keep the old
+  behaviour, or `slide: true` on the frames). In the app an empty deck
+  falls back to the prototype with a toast. `transition` / `chrome` are
+  refused on non-slide boards. `marver init` appends `slides-inspiration/`
+  to an existing `design/.gitignore`. `docs/` now ships in the package.
 
 ## 0.13.0 - 2026-09-01
 

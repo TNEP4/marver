@@ -17,10 +17,18 @@ import { lodSupported, registerLodImage } from './img-lod.ts'
 const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
   `.mv-md .mv-c-${f}{color:${c.light}}.dark .mv-md .mv-c-${f},[data-theme="dark"] .mv-md .mv-c-${f}{color:${c.dark}}`).join('\n')
 
-export { Diagram } from './diagram.tsx'
-export { Slide, SLIDE_W, SLIDE_H } from './slide.tsx'
-export { Chart } from './chart.tsx'
-export { Video } from './video.tsx'
+import { Diagram as DiagramRoot } from './diagram.tsx'
+export function Diagram(props: Parameters<typeof DiagramRoot>[0]) { ensureStyles(); return <DiagramRoot {...props} /> }
+import { Slide as SlideRoot } from './slide.tsx'
+import { Chart as ChartRoot } from './chart.tsx'
+import { Video as VideoRoot } from './video.tsx'
+export { SLIDE_W, SLIDE_H } from './slide.tsx'
+// the shared stylesheet used to ride in with Doc alone; a slide composes Img,
+// Chart, and Video straight inside <Slide> with no Doc, so every public
+// primitive installs it - once per document, idempotent
+export function Slide(props: Parameters<typeof SlideRoot>[0]) { ensureStyles(); return <SlideRoot {...props} /> }
+export function Chart(props: Parameters<typeof ChartRoot>[0]) { ensureStyles(); return <ChartRoot {...props} /> }
+export function Video(props: Parameters<typeof VideoRoot>[0]) { ensureStyles(); return <VideoRoot {...props} /> }
 
 const UNIT = 16   // one gap unit, px - plain adjacency on boards is one gutter; same feel here
 
@@ -74,6 +82,7 @@ export function Space({ n = 1 }: { n?: number }) {
 /* ---------------------------------- Md ------------------------------------ */
 
 export function Md({ children }: { children?: ReactNode }) {
+  ensureStyles()
   const src = typeof children === 'string' ? children : Array.isArray(children) ? children.join('') : String(children ?? '')
   const html = useMemo(() => renderMarkdown(src), [src])
   return <div className="mv-md" dangerouslySetInnerHTML={{ __html: html }} />
@@ -82,6 +91,7 @@ export function Md({ children }: { children?: ReactNode }) {
 /* ---------------------------------- Img ----------------------------------- */
 
 export function Img({ src, caption, alt, h }: { src: string; caption?: string; alt?: string; h?: number }) {
+  ensureStyles()
   const url = assetUrl(src)
   const [err, setErr] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)

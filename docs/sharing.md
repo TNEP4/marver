@@ -131,14 +131,21 @@ the read-privacy work also called "v2" further down.)
 - **`type`** is one of `doc`, `slides`, `design`, `sketch`, `refs`, `mix`
   (default `mix`). It picks the board's default landing view and its card icon;
   nothing infers a type from content.
-- **`open`** names the landing view. The parser accepts five names - `canvas`,
-  `board`, `present`, `focus`, `slides` - but not all are distinct surfaces yet:
-  today `canvas` and `board` both land on the canvas, `present` and `focus` are
-  their own modes, and **`slides` currently aliases `present`** (slides mode is
-  v1.5). Absent means the type decides.
+- **`open`** names the landing view: `canvas`, `board`, `present`, `focus`,
+  or `slides`. `canvas` and `board` both land on the canvas; `present`,
+  `focus`, and `slides` are their own modes. Absent means the type decides
+  (`slides` → slides mode, `doc` → focus, `design` / `sketch` / `refs` →
+  board, `mix` → canvas).
 - **`lock`** freezes the canvas in the `open` view (no view switcher). It
   requires `open` - freezing an unnamed mode is meaningless, so the build refuses
   it.
+- **`transition`** (`"fade"` default | `"none"`) and **`chrome`** (`"full"`
+  default | `"minimal"` | `"none"`) shape slide playback only. They are
+  accepted on a board whose `type` or `open` is `slides` and refused
+  elsewhere. A slides board plays only its `slide: true` frames: non-slide
+  frames on it warn at build, a board with none errors (0.13.0 let `slides`
+  alias `present`; 0.14.0 plays only slides - set `open: "present"` to keep
+  the old behaviour, or add `slide: true`).
 - **`reveal.source`** defaults **off** on a published canvas: the bundle would
   otherwise carry every frame's repo path, which is a disclosure the moment a
   canvas is shared beyond its own repo. `reveal.structure` defaults on.

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -121,6 +121,23 @@ beforeAll(async () => {
       share: { max: 'read', type: 'slides', open: 'slides', lock: true },  // the deck-only share link
     },
   }))
+  // the 0.13.0 upgrade shape: a `slides` board whose frames are ordinary
+  // (no slide: true) must FAIL the build with the fix in the message - never
+  // publish an empty deck. Proven on a scratch frame, then removed.
+  const plain = join(root, 'design', 'scenes', 'plain')
+  mkdirSync(plain, { recursive: true })
+  writeFileSync(join(plain, 'page.tsx'), `export const meta = { title: 'Page' }\nexport default () => <main><h1>a page</h1></main>\n`)
+  writeFileSync(join(boards, 'legacy.json'), JSON.stringify({ version: 1, name: 'legacy', order: 9, nodes: [{ key: 'p1', frame: 'plain/page', x: 0, y: 0, w: 640, h: 360 }] }))
+  const withLegacy = JSON.parse(readFileSync(join(root, 'design', 'publish.json'), 'utf8'))
+  withLegacy.boards.legacy = { max: 'read', type: 'slides' }
+  writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify(withLegacy))
+  let failed = ''
+  try { execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' }) }
+  catch (e: any) { failed = String(e.stderr ?? e.stdout ?? e.message) }
+  if (!/none of its 1 frame\(s\) carry `slide: true`/.test(failed)) throw new Error(`legacy slides board must fail the build, got: ${failed.slice(0, 300)}`)
+  delete withLegacy.boards.legacy
+  writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify(withLegacy))
+  rmSync(join(boards, 'legacy.json')); rmSync(plain, { recursive: true, force: true })
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
   server = spawn(process.execPath, [CLI, 'serve', '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, MARVER_DATA_DIR: '', MARVER_PASSWORD: '', MARVER_ID_ISSUER: '' } })
   await new Promise((r) => setTimeout(r, 800))

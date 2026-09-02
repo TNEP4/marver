@@ -11,7 +11,7 @@
  * next) stays prototype-only.
  */
 import { useEffect, useRef, useState } from 'react'
-import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, SLIDE_INTRINSIC, type Node } from './store.ts'
+import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
@@ -56,7 +56,13 @@ export function enterSlides(over?: { at?: string; device?: string; theme?: strin
   if (!modeAllowed(s.board, 'slides')) return
   const frames = new Map((s.manifest?.frames ?? []).map((f) => [f.id, f]))
   const { deck, excluded } = deckOrder(s.nodes, frames)
-  if (!deck.length) { s.toast('no slides on this board - add slide: true frames'); return }
+  if (!deck.length) {
+    // 0.13.0 let a slides board play its ordinary frames as a prototype - keep
+    // that as the fallback so an upgraded (or locked) board never dead-ends
+    s.toast('no slide: true frames on this board - playing it as a prototype')
+    enterPlay(over)
+    return
+  }
   if (excluded.length) s.toast(`${excluded.length} non-slide frame${excluded.length === 1 ? '' : 's'} on this board won't play in slides mode`)
   frozenDeck = deck
   const at = over?.at && deck.includes(over.at) ? over.at : deck[0]
@@ -130,7 +136,10 @@ async function switchPlayBoard(name: string) {
   if (name === s.board) return
   const device = s.play?.device               // the device is the viewer's choice - it survives the switch
   await s.switchBoard(name)
-  if (useStore.getState().board === name) enterPlay(device ? { device } : undefined)
+  if (useStore.getState().board !== name) return
+  const dev = device && device !== 'slide' ? { device } : undefined   // the deck's own size does not follow to a prototype
+  if (playsAsSlides(name)) enterSlides(device ? { device } : undefined)
+  else enterPlay(dev)
 }
 
 /** Control channel for history restores: the popstate handler steers the mounted stage

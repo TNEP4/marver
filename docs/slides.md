@@ -71,10 +71,13 @@ mode, one-shot:
 
 ## Charts and video
 
-- `<Chart option={...} h={420} />` - the full Apache ECharts option surface
-  for FORM; marver injects the house theme (colors, type, tooltip) from your
-  `design/theme.css` tokens and strips animation at rest. SVG-rendered, in
-  a lazy chunk chart-free canvases never download.
+- `<Chart option={...} h={420} />` - an Apache ECharts option, on a
+  fixed supported surface: series bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap, sunburst, sankey, boxplot; components grid, polar, radar, tooltip, legend, title, dataset (+ transform), markLine, markPoint, markArea, visualMap, dataZoom. Anything outside
+  it is dropped by ECharts without an error, so stay inside. marver
+  supplies the house theme (colours, type, tooltip) from your
+  `design/theme.css` tokens, strips animation at rest, and lets any
+  styling you pass override the theme - so pass data and structure only.
+  SVG-rendered, in a lazy chunk chart-free canvases never download.
 - `<Video src="intro.mp4" poster="intro.jpg" />` - the poster is the slide
   at rest (required for local files); in slides mode the glass strip plays
   it (play/pause, seek, mute, fullscreen). Remote https direct files work
@@ -86,8 +89,11 @@ The `Slide` root reads `--marver-slide-ground / -ink / -muted` (each with a
 `-dark` variant), `--marver-slide-accent` (one value, both themes),
 `--marver-slide-font`, and `--marver-slide-tempo` (one duration that times
 both the entrances and the morphs between slides) from your theme and falls
-back to the house palette. The stage is 1280×720 with asymmetric margins (88px sides, 44px top and
-bottom; `--sl-pad-x` / `--sl-pad-y`), leaving a 1104×632 content box.
+back to the house palette. The stage is 1280×720 (`SLIDE_W` / `SLIDE_H`, exported from `/content`)
+with asymmetric margins - 88px sides, 44px top and bottom, overridable in
+px via `--marver-slide-pad-x` / `--marver-slide-pad-y` - leaving a 1104×632
+content box. Morphs between slides are progressive enhancement: where
+`document.startViewTransition` is missing, slides crossfade at the tempo.
 Type roles, fixed: `sl-display` (160px, the one
 oversize - a hero number, a section numeral), `sl-stat` (88px, a row of
 figures), `sl-assertion` (56px),
