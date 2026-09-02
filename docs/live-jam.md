@@ -102,7 +102,7 @@ obvious one:
   for humans and shell-ful agents - the same renderer, one line. Default 2x; `--scale 4` for a
   print-quality still (a slide comes back 5120×2880). A frame too tall for the asked scale steps
   down and says so in `note`; the file name carries the scale actually used (`…@4x.png`).
-  The canvas's **copy as image** (`i` / `⇧I`, the images-square toolbar button) is this same
+  The canvas's **copy as image** (`i` / `⇧i`, the images-square toolbar button) is this same
   renderer with `format=png`, so what a designer pastes and what an agent shoots is one picture.
 
 The generated jam instructions tell every agent to shoot and LOOK before replying "done".
