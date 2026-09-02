@@ -4,12 +4,13 @@
  *    utm_source   = the surface class ('published-canvas' | 'dev-canvas')
  *    utm_medium   = the link unit ('powered-by')
  *    utm_campaign = THIS canvas's name, slugged ("Marver tour" -> "marver-tour")
- *    utm_content  = the placement ('gate' badge | 'shell' wordmark | 'sign-in' finish page)
+ *    utm_content  = the placement ('gate' badge | 'shell' wordmark | 'sign-in' finish page |
+ *                   'play-brand' the present/slides brand pill)
  */
 export function poweredByUrl(
   canvasName: string | undefined,
   source: 'published-canvas' | 'dev-canvas',
-  content: 'gate' | 'shell' | 'sign-in',
+  content: 'gate' | 'shell' | 'sign-in' | 'play-brand',
 ): string {
   const slug = (canvasName ?? '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   const q = new URLSearchParams({

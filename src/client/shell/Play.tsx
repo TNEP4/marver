@@ -15,6 +15,7 @@ import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, b
 import { deckOrder } from './play-order.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
+import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { Tip } from './Tip.tsx'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
@@ -613,7 +614,13 @@ function PlayInner() {
       {(!slides || (locked && deckChrome !== 'none')) && (
       <nav className={`sh-pill sh-play-pill sh-play-brand${pillOpen ? '' : ' closed'}`} aria-hidden={!pillOpen}>
         {BRANDING && <>
-          <span className="sh-play-mark"><ParallelogramDuoIcon size={19} /><span className="wd">Marver</span></span>
+          <a
+            className="sh-play-mark"
+            href={poweredByUrl(CONFIG.projectName, PUBLISHED ? 'published-canvas' : 'dev-canvas', 'play-brand')}
+            target="_blank" rel="noreferrer" aria-label="marver.design"
+          >
+            <ParallelogramDuoIcon size={19} /><span className="wd">Marver</span>
+          </a>
           <i className="sep" />
         </>}
         {focus && <SpecDocIcon size={15} style={{ flex: 'none', opacity: .7, marginRight: -2 }} />}

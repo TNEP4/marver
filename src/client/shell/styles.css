@@ -845,11 +845,16 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 
 /* ---- present/focus chrome (sharing v1): brand pill top-left, counter in the
    toolbar, doc reading preset. Same glass skin as the play pill. */
-.sh-play-brand.sh-pill { left: var(--edge); right: auto; transform-origin: 22px 22px; padding: 5px 14px 5px 10px }
-.sh-play-mark { display: inline-flex; align-items: center; gap: 7px; padding: 0 2px 0 6px; color: rgba(245, 245, 247, .88) }
+/* the brand pill matches the toolbar pill to the pixel: the SAME .sh-pill
+   padding (5px) and the SAME 34px inner height as .sh-pill-btn - its two
+   children are sized like buttons, so text metrics never set the height */
+.sh-play-brand.sh-pill { left: var(--edge); right: auto; transform-origin: 22px 22px; padding: 5px 9px 5px 5px }
+.sh-play-mark { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 8px 0 10px; border-radius: 999px;
+  color: rgba(245, 245, 247, .88); text-decoration: none; cursor: pointer }
+.sh-play-mark:hover { background: rgba(255, 255, 255, .1); color: #f5f5f7 }
 .sh-play-mark svg { color: #6db3ff }
 .sh-play-mark .wd { font: 600 13px -apple-system, system-ui, sans-serif; letter-spacing: -.01em }
-.sh-play-title { font: 500 13px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .82);
+.sh-play-title { display: inline-block; height: 34px; line-height: 34px; font: 500 13px/34px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .82);
   max-width: 143px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px }
 .sh-play-pos { font: 500 12.5px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .64);
   font-variant-numeric: tabular-nums; padding: 0 8px; white-space: nowrap }
