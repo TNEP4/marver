@@ -23,8 +23,12 @@ sees. One scene = one deck; numbered files
 played order** - drag slides around the canvas to reorder the deck.
 
 The agent's full craft doctrine ships at `design/instructions/slides.md`
-after `marver init`; your own layouts and house rules live in
-`design/slides.md`, which the agent must honor and marver never overwrites.
+after `marver init`, with two depth references beside it -
+`instructions/reference/deck-story.md` (finding the answer, the evidence
+check, the words) and `instructions/reference/deck-layouts.md` (the layout
+atlas, the grid, content budgets, charts). Your own deck look, layouts and
+house rules live in `design/slides.md`, which the agent must honor and
+marver never overwrites.
 
 ## Playing and publishing a deck
 
@@ -78,7 +82,10 @@ mode, one-shot:
 
 ## Theme tokens
 
-The `Slide` root reads `--marver-slide-ink/-ground/-accent/-muted/-tempo`
-(plus `-dark` variants) from your theme and falls back to the house palette.
-Type roles: `sl-assertion` (48-64px), `sl-support` (28-32px), `sl-body`
-(24px floor), `sl-caption` (18px floor).
+The `Slide` root reads `--marver-slide-ground / -ink / -muted` (each with a
+`-dark` variant), `--marver-slide-accent` (one value, both themes),
+`--marver-slide-font`, and `--marver-slide-tempo` (one duration that times
+both the entrances and the morphs between slides) from your theme and falls
+back to the house palette. Type roles, fixed: `sl-display` (160px, the one
+oversize - big numbers, section numerals), `sl-assertion` (56px),
+`sl-support` (30px), `sl-body` (24px), `sl-caption` (18px).

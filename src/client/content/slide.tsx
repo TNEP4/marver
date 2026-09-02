@@ -55,6 +55,7 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   --sl-accent: var(--marver-slide-accent, #0088ff);
   --sl-muted: var(--marver-slide-muted, rgba(24, 24, 27, .55));
   --sl-tempo: var(--marver-slide-tempo, 350ms);
+  --sl-font: var(--marver-slide-font, ${FONT_STACK});
   --sl-margin: 7%;
   /* THE FIT: authored at exactly ${SLIDE_W}x${SLIDE_H}, then scaled and
      centered to the largest box the viewport gives it - fill window, any
@@ -71,7 +72,7 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   width: ${SLIDE_W}px; height: ${SLIDE_H}px; overflow: hidden;
   transform: translate(-50%, -50%) scale(var(--sl-fit, 1)); transform-origin: center center;
   background: var(--sl-ground); color: var(--sl-ink);
-  font-family: ${FONT_STACK};
+  font-family: var(--sl-font);
   padding: var(--sl-margin); box-sizing: border-box;
   display: flex; flex-direction: column; justify-content: center; gap: 20px;
 }
@@ -80,6 +81,10 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   --sl-ground: var(--marver-slide-ground-dark, #101014);
   --sl-muted: var(--marver-slide-muted-dark, rgba(245, 245, 247, .55));
 }
+/* type roles - fixed values, one coordinate system with the 1280x720 stage.
+   sl-display is the ONE sanctioned oversize: the big-number stat, a section
+   numeral, the manifesto line - never running text. */
+.sl-display { font-size: 160px; line-height: 1; font-weight: 800; letter-spacing: -.03em; margin: 0; font-variant-numeric: tabular-nums }
 .sl-assertion { font-size: 56px; line-height: 1.08; font-weight: 750; letter-spacing: -.02em; margin: 0 }
 .sl-support { font-size: 30px; line-height: 1.25; font-weight: 500; margin: 0 }
 .sl-body { font-size: 24px; line-height: 1.45; margin: 0 }
@@ -100,8 +105,13 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
    carrying a morph name must not carry data-animate (one transform owner) -
    the doctrine says so; the selector below cannot check it, the review gate does. */
 [data-sl-play] .sl-root [data-animate] { opacity: 0 }
+/* ONE tempo per deck: the token times the entrances AND the view-transition
+   morphs between slides (the stage document is this document). */
+::view-transition-group(*), ::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: var(--marver-slide-tempo, 350ms);
+}
 [data-sl-play][data-sl-entered] .sl-root [data-animate] {
-  opacity: 1; animation-duration: 400ms; animation-timing-function: cubic-bezier(.2, .7, .2, 1);
+  opacity: 1; animation-duration: var(--sl-tempo); animation-timing-function: cubic-bezier(.2, .7, .2, 1);
   animation-fill-mode: both;
 }
 [data-sl-play][data-sl-entered] .sl-root [data-animate="fade-up"] { animation-name: sl-fade-up }

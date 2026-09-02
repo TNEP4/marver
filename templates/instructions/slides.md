@@ -33,13 +33,26 @@ export default () => (
 )
 ```
 
+This file is the floor. Depth lives in instructions/reference/:
+
+| File | When |
+|---|---|
+| reference/deck-layouts.md | REQUIRED at step 4 of every deck - the full atlas, the grid, the budgets, charts; and BEFORE step 1 when rebuilding an existing deck (its mode decision comes first) |
+| reference/deck-story.md | when intake is thin or rich, the room is senior, the slide list reads like a table of contents, or the words need work |
+
 ## The pipeline (in order, no skipping)
 
 **1. The answer.** Before any frame: write the deck's one-paragraph answer -
 what the audience should believe or do when the last slide lands. If the
 human's material is too thin for a substantive deck, SAY SO and ask - never
 pad. Then the slide list: one line per slide, each line the slide's single
-message as a full-sentence assertion.
+message as a full-sentence assertion. Walk that list once more asking
+"could I draft this slide without inventing a single fact?" - the gaps
+become specific questions to the human, or a smaller deck (the evidence
+check, reference/deck-story.md). The scaffold (step 2) may carry gaps as
+visible placeholders; the build (step 5) may not - a factual gap blocks its
+slide until answered or cut, while editorial copy (framing, captions) you
+draft and label as proposed.
 
 **2. Show the deck.** Scaffold every listed slide immediately as a
 placeholder frame - `<Slide>` + its assertion in `sl-assertion` - in one
@@ -54,14 +67,20 @@ tell the complete argument - specifically enough that a stranger could guess
 whose deck this is. Generic titles mean the thinking is not done; fix the
 titles before touching layout.
 
-**4. Choose layouts.** For each slide, scan the WHOLE recipe list (below +
-`design/slides.md`) and pick against the content's real volume. A deck that
-keeps reaching for the same two recipes is a defect. A recipe's budget
-breached = a different recipe or a split - decided now, before markup.
+**4. Choose layouts.** For each slide, first write one sentence on what the
+slide WANTS visually (concept before catalog), then scan the WHOLE recipe
+list (below + the atlas in reference/deck-layouts.md + `design/slides.md`)
+and pick against the content's real volume. A deck that keeps reaching for
+the same two recipes is a defect. A recipe's budget breached = a different
+recipe or a split - decided now, before markup. Slides that describe parts
+of one concept (three pillars, four pipeline stages) share ONE layout -
+variety comes between groups, never within one.
 
 **5. Build.** Real markup inside `<Slide>`, the project's own classes and
 components, the type roles, the theme's tokens. Name morph anchors as you
-go (choreography, below).
+go (choreography, below). HTML stays honest: the assertion is the `h1`,
+images carry `alt`, a chart or diagram gets a one-line text summary in a
+caption, and every colour pair reads in both themes.
 
 **6. The review gate.** Run it before presenting, every time (bottom of this
 file).
@@ -69,33 +88,44 @@ file).
 ## The words
 
 - **Assertions, not labels.** "Q3 revenue beat plan by 12%" - never "Q3
-  revenue". One line, it commits to a position.
+  revenue". One line, it commits to a position. (The one exception: a
+  FAITHFUL rebuild of an existing deck keeps its titles as written -
+  reference/deck-layouts.md.)
 - **Overflow is a second slide.** Never fix a full slide by shrinking type.
-- Numbers over adjectives - every claim carries a figure, a name, or a date.
+- Numbers over adjectives - every FACTUAL claim carries a figure, a name, or
+  a date; a conceptual assertion earns its place by being specific to this
+  company, not generic.
 - Active voice. Write like you talk, then cut every word that isn't earning.
 - Kill on sight: "leverage", "robust", "world-class", "streamline",
   "going forward", "potentially", "we believe", "it is important to note".
-- Negatives in brackets: (123). Units once, in the header or axis - one
-  unit, one time-basis per deck.
+- Negatives in brackets: (123). Units once, in the header or axis; within a
+  metric family one unit and one time-basis ($M everywhere revenue appears,
+  FY or CY - never both).
+- Sources live in an `sl-caption` line at the foot of the slide: source,
+  date, and the chart's data origin. Same position on every slide that
+  cites.
 - The closing slide is a specific, time-bound ask. "Questions?" is not a
   closing slide.
 
 ## The type and the space
 
-The `<Slide>` root provides the roles - use them, never font-size by hand:
+The `<Slide>` root provides the roles - use them, never font-size by hand.
+The values are fixed (one coordinate system with the stage):
 
 | Role class | Size | Job |
 |---|---|---|
-| `sl-assertion` | 48-64px, heavy | the one-line claim |
-| `sl-support` | 28-32px | the second voice |
-| `sl-body` | 24px FLOOR | evidence text |
-| `sl-caption` | 18px FLOOR | sources, footnotes |
+| `sl-display` | 160px | the ONE oversize: a big-number stat, a section numeral, the manifesto line - never running text |
+| `sl-assertion` | 56px, heavy | the one-line claim (~40 characters full-width, ~20 inside a split - two lines is the ceiling, verify the render) |
+| `sl-support` | 30px | the second voice |
+| `sl-body` | 24px | evidence text - the floor for anything read |
+| `sl-caption` | 18px | sources, footnotes, kickers |
 
-Nothing smaller than 18px, ever. One family (the theme's), at most two
-weights on any slide. Margins come from the root (≥7%); compose on a
-12-column rhythm; one focal point per slide; generous space is the layout.
-Consecutive slides keep shared elements in the SAME position unless the
-movement is the message.
+Nothing smaller than 18px, ever. One family (`--marver-slide-font`, the
+theme's); the roles carry their weights - add none of your own. The root
+pads 7% of the stage width on every side (89.6px), so the content box is
+1101×541px; compose inside it on a 12-column rhythm, one focal point per
+slide, generous space as the layout. Consecutive slides keep shared
+elements in the SAME position unless the movement is the message.
 
 ## The evidence
 
@@ -124,11 +154,11 @@ when · skeleton · budget (breach = split, never shrink) · morph anchor.
 
 1. **cover** - deck title + one line + the mark. Budget: title ≤6 words.
    Anchor: the mark.
-2. **section** - an oversized numeral/word divider. Budget: ≤3 words.
-   Anchor: none (hard cuts live here).
+2. **section** - an oversized numeral/word divider in `sl-display`. Budget:
+   ≤3 words. Anchor: none (hard cuts live here).
 3. **assertion-evidence** - the workhorse: `sl-assertion` + ONE visual.
    Budget: assertion 1 line, caption 1 line. Anchor: the visual.
-4. **big-number** - one stat at 120-200px + a context line. Budget: 1 stat.
+4. **big-number** - one `sl-display` stat + a context line. Budget: 1 stat.
    Anchor: the number.
 5. **stat-row** - 3-4 quick proofs in a row. Budget: each ≤4 words + value.
 6. **metric-grid** - a 2×2 of labeled values. Budget: 4 cells exactly.
@@ -147,6 +177,13 @@ when · skeleton · budget (breach = split, never shrink) · morph anchor.
 18. **wall** - logos/team grid. Budget: 6-12 cells, no captions.
 19. **closing** - the ask, one CTA, contact. Budget: ask ≤2 lines.
 
+These are the core. The atlas in reference/deck-layouts.md carries the rest
+- split, cards, spectrum, insight + evidence, trajectory, table, scenarios,
+flow, cycle, chain, swim lanes, funnel, schedule, layers, concentric,
+pyramid, number line, capability matrix, scorecard, heat map, tracker,
+testimonials, team, manifesto, framed source - each with its budget, plus
+the composition grid they all sit on. Scan it for every slide.
+
 ## Choreography - the diff IS the animation
 
 You never animate. You name elements consistently, and slides mode
@@ -164,10 +201,11 @@ timeline: design motion by designing the diff.
 | reveal | new element + `data-animate` | "and then" |
 
 **Binding rules:**
-- Every slide shares ONE persistent element with its neighbor - the anchor.
+- Every adjacent pair shares AT LEAST one stable named element - the anchor.
   (Each recipe names its default above; the assertion is the fallback.)
 - A hard cut (zero shared names) is punctuation - section boundaries only.
-- ONE traveler per transition. Persist freely, travel once.
+- AT MOST one element changes position or size per transition. Persist
+  freely, travel once.
 - Build steps are sibling frames (`03a-`, `03b-`) sharing morph names -
   progressive disclosure that stays visible and commentable. Variants are
   for exploration, siblings for builds - never both on one slide.
@@ -191,13 +229,20 @@ order - rearrange the board to reorder the deck. Publish with:
 ```
 
 `transition`: `fade` (default) or `none`. `chrome`: `full` (default - the
-standard prototype toolbars + the progress strip), `minimal` (progress
-strip + comments only), or `none`. Add `"lock": true` for a share that is
-ONLY the deck.
+standard prototype toolbar and walker), `minimal` (a progress strip +
+comments only), or `none`. Add `"lock": true` for a share that is ONLY the
+deck.
 
 ## The living list - `design/slides.md`
 
-The project's own recipes and rules; it OVERRIDES this file. When the human
+The project's own recipes and rules; it OVERRIDES this file. Its first
+section, **the deck look**, is a fill-in template (tokens, type, the mark,
+colour meaning, imagery, tempo, numbers, voice, terminology, end card): on
+the FIRST deck in a project, draft it from `design/DESIGN.md` and
+`theme.css` as a reviewed edit, tell the human, and build on with the
+theme's tokens meanwhile - fields you cannot settle stay `TBD`, never
+invented. No DESIGN.md yet means the brand doc comes first
+(instructions/brand.md). When the human
 asks you to study `design/slides-inspiration/` (PPTX, PDFs, screenshots),
 propose additions to `design/slides.md` as a normal reviewed edit - each
 with a gap justification (what no existing recipe serves) and a stress pass
@@ -207,12 +252,34 @@ entry.
 ## The review gate (run it, every deck, before presenting)
 
 Twelve tells, each a defect: label titles · bullet walls · lines past ~15
-words · data without a "so what" · process slides · hedge language ·
+words · data without a "so what" · provenance slides (how the work was
+done - a process that IS the subject, an operating model or a rollout plan,
+is content) · hedge language ·
 audience-mismatched jargon · filler words · passive voice · claims missing
 numbers · formatting drift between slides · a weak closing.
 
 Then: the sequence test (titles alone tell the argument) · BOTH themes ·
 the slide view AND fill window (the fit scales your composition - check
 nothing relied on the window) and one 390px glance · every slide still at
-rest (no loops, no autoplay) · recipe variety (not the same two twice in a
-row) · one anchor morph per adjacent pair.
+rest (no loops, no autoplay) · recipe variety (the same composition twice
+in a row only inside a declared visual group or a build sequence; more than
+three in a row anywhere earns a breather slide) · one anchor morph per
+adjacent pair.
+
+Then the two reads that catch what polish hides:
+- **Landing, per slide.** Read each slide cold - no presenter, no
+  neighbours. Does it deliver the one message you planned for it? Landed ·
+  partial (present but buried or hedged) · missed. A missed message on a
+  polished slide is still a must-fix.
+- **The cold read, whole deck.** Read every assertion and every takeaway
+  bar in sequence, nothing else. Do they alone deliver the one thing the
+  human said the audience must leave with? If not, no surface edit fixes it
+  - take the gap to the human as a narrative question, do not polish
+  around it.
+
+Finally the contact sheet: all frames small on the canvas. One layout on
+more than half the deck, dense slides clumped together, accent fills
+bunched on neighbours, a card row where one card is 8 words and the others
+40 - each a defect. Iterate until the gate passes; after three passes that
+still surface defects, the remaining list goes to the human and the deck
+ships at their call.

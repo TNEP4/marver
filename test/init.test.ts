@@ -266,11 +266,14 @@ describe('v1.5: the living slide list is write-once', async () => {
       const p = join(root, 'design', 'slides.md')
       expect(existsSync(p)).toBe(true)
       expect(readFileSync(p, 'utf8')).toContain('this file WINS')
+      expect(readFileSync(p, 'utf8')).toContain('## The deck look')   // the fill-in template opens the file
       writeFileSync(p, '# MY NOTES\n')
       init(root, { mode: 'studio', demo: false })
       expect(readFileSync(p, 'utf8')).toContain('MY NOTES')
-      // the shipped doctrine template landed too, managed
+      // the shipped doctrine template landed too, managed, with its two depth references
       expect(existsSync(join(root, 'design', 'instructions', 'slides.md'))).toBe(true)
+      for (const f of ['deck-story', 'deck-layouts'])
+        expect(readFileSync(join(root, 'design', 'instructions', 'reference', `${f}.md`), 'utf8')).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 })

@@ -31,8 +31,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **The slides doctrine.** `marver init` ships
   `design/instructions/slides.md` - assertion-first argument, the type
   scale, 19 layout recipes with budgets and morph anchors, the choreography
-  rules, and a review gate - plus your project-owned `design/slides.md`
-  which overrides it and survives every upgrade.
+  rules, and a review gate - with two depth references behind it:
+  `reference/deck-story.md` (intake, answer-first structure, the evidence
+  check, audience calibration, the writing) and `reference/deck-layouts.md`
+  (the full layout atlas grouped by job, the composition grid, content
+  budgets, rebuilding an existing deck, chart craft). Plus your
+  project-owned `design/slides.md` - now opening with a fill-in **deck
+  look** template (tokens, type, mark, colour meaning, numbers, voice) the
+  agent drafts on the first deck - which overrides the doctrine and survives
+  every upgrade.
 
 ## 0.13.0 - 2026-09-01
 
