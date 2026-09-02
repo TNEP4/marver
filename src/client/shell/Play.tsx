@@ -592,9 +592,6 @@ function PlayInner() {
         <PlayComments iframe={iframeRef} frameId={play.at} vp={vp} dw={dw} dh={dh} ready={stageReady} />
       </div>
 
-      {!focus && !slides && list.length > 1 && (
-        <div className="sh-play-hint">← → to step · <kbd>c</kbd> to comment</div>
-      )}
       {/* the slim progress strip: the MINIMAL trim's one affordance - full
           chrome already carries progress in the walker, so no duplicate */}
       {slides && deckChrome === 'minimal' && (

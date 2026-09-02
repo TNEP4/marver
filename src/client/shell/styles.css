@@ -736,22 +736,6 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-play-chip:hover { color: #f5f5f7 }
 .sh-play-chip.idle { opacity: 0; pointer-events: none; transform: scale(.6) }
 
-/* the H coach bubble: hairline, translucent, teaches the way back from immersive mode.
-   Same pill geometry and separators as the bar it stands in for. */
-.sh-play-hint { position: absolute; top: 14px; right: 16px; display: flex; align-items: center; gap: 3px;
-  padding: 4px 4px 4px 14px; border-radius: 999px;
-  background: rgba(18, 18, 24, .6); border: 1px solid rgba(255, 255, 255, .14);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .85);
-  animation: sh-play-in .3s ease-out }
-.sh-play-hint .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 8px }
-.sh-play-hint kbd { font: 600 11px -apple-system, system-ui, sans-serif; padding: 1px 6px; border-radius: 5px;
-  background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .16) }
-.sh-play-hint button { height: 30px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer;
-  font: 600 11px -apple-system, system-ui, sans-serif; background: rgba(255, 255, 255, .14); color: #f5f5f7 }
-.sh-play-hint button:hover { background: rgba(255, 255, 255, .22) }
-.sh-play-hint button.dim { background: transparent; color: rgba(245, 245, 247, .5); font-weight: 500 }
-.sh-play-hint button.dim:hover { color: rgba(245, 245, 247, .8); background: rgba(255, 255, 255, .08) }
 
 /* ---- Focus: silent for pointer + shortcut use; ONE branded inset ring, and only while
    the user is actually Tab-navigating (body.sh-kbd, armed by Tab, disarmed by pointer).
@@ -869,14 +853,6 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   max-width: 143px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px }
 .sh-play-pos { font: 500 12.5px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .64);
   font-variant-numeric: tabular-nums; padding: 0 8px; white-space: nowrap }
-/* the hint pill: bottom center, the design's quiet keyboard cue */
-.sh-play-hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 31;
-  border-radius: 999px; padding: 7px 16px; white-space: nowrap;
-  background: rgba(18, 18, 24, .8); border: 1px solid rgba(255, 255, 255, .1);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  font: 500 12px -apple-system, system-ui, sans-serif; color: rgba(245, 245, 247, .64) }
-.sh-play-hint kbd { font: 500 11.5px ui-monospace, monospace }
-body.sh-hide-ui .sh-play-hint { display: none !important }
 /* doc preset: the page IS the surface - reading column on a calm ground, no
    device shell, natural document scrolling inside the frame */
 .sh-play.doc { background: #f4f4f6 }
