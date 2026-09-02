@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { capture, findChrome } from '../src/server/shot.ts'
+import { AREA, capture, findChrome } from '../src/server/shot.ts'
 
 // Real-Chrome coverage of the full-height capture path: grow-to-fit, height-stability, DPR
 // fallback, truncation, the __mvLodBusy idle poll, and single-flight queue recovery. Gated on
@@ -105,5 +105,58 @@ describe.skipIf(!hasChrome)('shot capture - full-height path against real Chrome
     const next = await capture({ url: `${base}/?h=900`, width: 390, height: 844, out: join(dir, 'after.png'), fullHeight: false })
     expect(next.ok).toBe(true)
     if (next.ok) { expect(next.width).toBe(390); expect(next.height).toBe(844); expect(next.scale).toBe(2) }
+  }, 40_000)
+
+  // ---- scale (copy-as-image 4x, `marver shot --scale`)
+  it('scale 4 on a fixed frame: 1280×720 -> a 5120×2880 PNG, no note', async () => {
+    const r = await capture({ url: `${base}/?h=720`, width: 1280, height: 720, out: join(dir, 'fixed4.png'), fullHeight: false, scale: 4 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r).toEqual({ ok: true, width: 1280, height: 720, scale: 4 })
+    expect(pngSize(join(dir, 'fixed4.png'))).toEqual({ w: 5120, h: 2880 })
+  }, 30_000)
+
+  it('scale 4 on short content: full height at 4x', async () => {
+    const r = await capture({ url: `${base}/?h=1200`, width: 1280, height: 960, out: join(dir, 'short4.png'), fullHeight: true, scale: 4 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.scale).toBe(4); expect(r.note).toBeUndefined()
+    expect(pngSize(join(dir, 'short4.png'))).toEqual({ w: 1280 * 4, h: r.height * 4 })
+  }, 30_000)
+
+  it('scale 4 on content taller than 4096 steps DOWN to 2x (not truncated) and says so', async () => {
+    const r = await capture({ url: `${base}/?h=5000`, width: 1280, height: 960, out: join(dir, 'tall4.png'), fullHeight: true, scale: 4 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.scale).toBe(2); expect(r.truncated).toBeUndefined()
+    expect(r.note).toMatch(/too tall for 4x, captured at 2x/)
+    expect(r.height).toBeGreaterThanOrEqual(4900); expect(r.height).toBeLessThanOrEqual(5100)
+    expect(pngSize(join(dir, 'tall4.png'))).toEqual({ w: 1280 * 2, h: r.height * 2 })
+  }, 40_000)
+
+  it('scale 1 is honoured on the fixed path', async () => {
+    const r = await capture({ url: `${base}/?h=844`, width: 390, height: 844, out: join(dir, 'fixed1.png'), fullHeight: false, scale: 1 })
+    expect(r.ok).toBe(true)
+    if (r.ok) { expect(r.scale).toBe(1); expect(pngSize(join(dir, 'fixed1.png'))).toEqual({ w: 390, h: 844 }) }
+  }, 30_000)
+})
+
+describe.skipIf(!hasChrome)('shot capture - the area budget on fixed frames', () => {
+  let server: Server, base = '', dir = ''
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'mv-shotarea-'))
+    server = createServer((_req, res) => { res.setHeader('content-type', 'text/html'); res.end(page(500, 0, 'static')) })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  }, 30_000)
+  afterAll(() => { server?.close(); if (dir) rmSync(dir, { recursive: true, force: true }) })
+
+  it('3840×2160 @4 (133M px) steps down to the largest scale inside the budget: 2 (33M px)', async () => {
+    expect(3840 * 2160 * 16).toBeGreaterThan(AREA); expect(3840 * 2160 * 4).toBeLessThanOrEqual(AREA)
+    const r = await capture({ url: `${base}/`, width: 3840, height: 2160, out: join(dir, 'uhd.png'), fullHeight: false, scale: 4 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.scale).toBe(2)
+    expect(pngSize(join(dir, 'uhd.png'))).toEqual({ w: 7680, h: 4320 })
   }, 40_000)
 })

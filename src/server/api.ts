@@ -290,14 +290,25 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
         const frameId = url.searchParams.get('frame') ?? ''
         const theme = url.searchParams.get('theme') ?? 'light'
+        // scale 1-4 (default 2); w/h = the canvas node's size when the shell asks for "what the
+        // node shows" (planShot clamps); format=png streams the bytes back (the shell's copy-as-
+        // image) with the JSON summary riding in x-mv-shot - the file still lands in .local/shots.
+        const scale = url.searchParams.has('scale') ? Number(url.searchParams.get('scale')) : 2
+        const dim = (k: string) => { const v = Math.round(Number(url.searchParams.get(k))); return url.searchParams.has(k) && Number.isFinite(v) ? v : undefined }   // CDP wants integers
+        const size = { w: dim('w'), h: dim('h') }
+        const asPng = url.searchParams.get('format') === 'png'
         // Origin from the ACTUAL listening socket, never the client-controlled Host header - so a
         // spoofed Host can't point the headless render at another server. Falls back to Host only
         // if the socket address is unavailable (the request already passed the owner/token gate).
         const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
         const { shootFrame } = await import('./shot.ts')
-        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin })
-        if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : r.error === 'invalid theme' ? 400 : 503, { error: r.error })
-        return json(res, 200, { path: r.path, frame: frameId, theme, width: r.width, height: r.height, scale: r.scale, ...(r.truncated ? { truncated: true, note: r.note } : {}) })
+        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin, scale, size })
+        if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : r.error.startsWith('invalid ') ? 400 : 503, { error: r.error })
+        const summary = { path: r.path, frame: frameId, theme, width: r.width, height: r.height, scale: r.scale, ...(r.truncated ? { truncated: true } : {}), ...(r.note ? { note: r.note } : {}) }
+        if (!asPng) return json(res, 200, summary)
+        const png = readFileSync(join(root, r.path))
+        res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store', 'x-mv-shot': JSON.stringify(summary) })
+        return res.end(png)
       }
 
       // ---- comments: the dev mirror of serve's collab API - same shapes,

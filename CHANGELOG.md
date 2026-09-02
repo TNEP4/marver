@@ -2,6 +2,35 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.15.0 - unreleased
+
+### Added
+
+- **Copy frame as image.** The floating toolbar gains an images-square button
+  (right of Copy path): one click puts the selected frame on the clipboard as
+  a **2x PNG**, rendered by the dev server's headless Chrome - the same picture
+  `marver shot` gives an agent. `i` is the shortcut; `⇧I` (or shift-click)
+  renders at **4x** (a slide is 5120×2880). The icon breathes while the render
+  runs and flashes a check on success, like Copy path. Sized to the node: a
+  frame resized to Laptop copies as Laptop; content frames capture in full;
+  slides are always the 1280×720 artwork. Dev canvases only - a published
+  container has no browser - and one frame at a time.
+- **`marver shot --scale <1-4>`** and `scale=`/`w=`/`h=`/`format=png` on
+  `/api/shot`. A frame too tall for the asked scale steps down (4 → 2 → 1)
+  inside a 16384px-per-side / 64M-pixel capture budget and reports it in
+  `note`; the file name carries the scale actually used (`…@4x.png`), so a
+  4x file always holds 4x pixels.
+- **Render settle.** Every shot (not only content frames) now waits - bounded
+  to 3 s - for in-flight images, LOD decodes and echarts instances before
+  capturing, so a slide with a chart or a photo is never shot half-drawn.
+
+### Fixed
+
+- **Dev server behind a symlinked path.** `marver dev` on a repo reached
+  through a symlink (`/tmp` → `/private/tmp`, a linked Dropbox folder) refused
+  to serve its own frames ("outside of Vite serving allow list"); the allow
+  list now carries the realpath too.
+
 ## 0.14.0 - 2026-09-02
 
 ### Added

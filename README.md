@@ -108,7 +108,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 
 **Board & chrome** - `t` tidy · `d` toggle light/dark for the board · `⌘\` (ctrl+\) collapse/open sidebar.
 
-**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · `⌘A` selects every frame on the board · `⇧P` copies the selected frames' paths (board, frame, and file) · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
+**Selection** - click selects · shift+click (canvas or sidebar) builds a multi-selection · `⌘A` selects every frame on the board · `⇧P` copies the selected frames' paths (board, frame, and file) · `i` copies the selected frame to the clipboard as a 2x PNG (`⇧I` for 4x; also the images-square button in the floating toolbar - dev canvases only, the renderer is the dev server's headless Chrome) · double-click enters interact mode (`esc` or click outside leaves) · drag the title bar to move, edges to resize (widths snap to devices).
 
 **Modes** - `c` comment mode · `l` laser mode · `⇧C` hide/show comment pins · `⇧L` laser comment (spotlight a thread's element) · `p` play (present, or slides on a slides board) · `h` hide all chrome.
 

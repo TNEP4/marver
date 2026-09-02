@@ -20,6 +20,9 @@ const portFree = (p: number): Promise<boolean> => new Promise((res) => {
   s.once('listening', () => s.close(() => res(true)))
   s.listen(p, '127.0.0.1')
 })
+/** realpath, or the path itself when it cannot be resolved (never throws at boot). */
+const safeReal = (p: string): string => { try { return realpathSync(p) } catch { return p } }
+
 /** C1: a deterministic per-project port in [5200,5399] derived from the root path. Two projects
  *  never collide, and the same project always lands on the same port across restarts. */
 const projectPort = (root: string): number => {
@@ -179,9 +182,11 @@ export async function dev(root: string, portFlag?: number) {
     server: {
       port: picked.port,
       strictPort: false,
-      // keep Vite's workspace-root allowance: monorepo hosts import sibling packages
+      // keep Vite's workspace-root allowance: monorepo hosts import sibling packages.
+      // Vite checks the REAL path of each file, so a root reached through a symlink
+      // (/tmp -> /private/tmp, a linked Dropbox folder) must be allowed by its realpath too.
       fs: {
-        allow: [...new Set([root, pkgDir, searchForWorkspaceRoot(root)])],
+        allow: [...new Set([root, safeReal(root), pkgDir, safeReal(pkgDir), searchForWorkspaceRoot(root)])],
         deny: FS_DENY,
       },
       // Spec §5.6: our own writes must never bounce off the watcher - an out-of-graph

@@ -58,11 +58,29 @@ export class Browser {
     })
   }
 
+  private contexts = new Map<string, string>()   // sessionId -> browserContextId
+
+  /** Grant browser permissions (e.g. clipboardReadWrite) to an origin in THIS tab's context -
+   *  what a person's "Allow" click would have done. */
+  grant(session: string, origin: string, permissions: string[]): Promise<void> {
+    return this.send('Browser.grantPermissions', { origin, permissions, browserContextId: this.contexts.get(session) })
+  }
+
+  /** A trusted key press (CDP Input, not a synthetic DOM event) - it carries user activation,
+   *  which clipboard writes require. `key` is the DOM key ('i', 'I'); shift adds the modifier. */
+  async press(session: string, key: string, opts: { shift?: boolean } = {}): Promise<void> {
+    const code = `Key${key.toUpperCase()}`
+    const base = { key, code, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0), modifiers: opts.shift ? 8 : 0 }
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, text: key }, session)
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, session)
+  }
+
   /** A tab in its own browser context - an incognito window, effectively. */
   async tab(viewport?: { width: number; height: number }): Promise<string> {
     const { browserContextId } = await this.send('Target.createBrowserContext', { disposeOnDetach: false })
     const { targetId } = await this.send('Target.createTarget', { url: 'about:blank', browserContextId })
     const { sessionId } = await this.send('Target.attachToTarget', { targetId, flatten: true })
+    this.contexts.set(sessionId, browserContextId)
     await this.send('Page.enable', {}, sessionId)
     await this.send('Runtime.enable', {}, sessionId)
     if (viewport) await this.send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: viewport.width < 500 }, sessionId)

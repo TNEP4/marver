@@ -7,7 +7,7 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CardsIcon, CardsThreeIcon, CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, useComments } from './comments-store.ts'
@@ -323,6 +323,17 @@ function SelectionBar() {
     const t = setTimeout(() => setCopied(false), 1400)
     return () => clearTimeout(t)
   }, [pathPulse])
+  // copy-as-image: same flash contract (imagePulse bumps only on a real clipboard write),
+  // plus a busy state for the 1-4s headless render - the icon dims and the button locks
+  const imagePulse = useStore((s) => s.imagePulse)
+  const imageBusy = useStore((s) => s.imageBusy)
+  const [copiedImage, setCopiedImage] = useState(false)
+  useEffect(() => {
+    if (!imagePulse) return
+    setCopiedImage(true)
+    const t = setTimeout(() => setCopiedImage(false), 1400)
+    return () => clearTimeout(t)
+  }, [imagePulse])
   if (!node || !frame || node.missing) return null
   // anchor: centered over the bounding box of ALL selected frames, above the topmost
   const selNodes = nodes.filter((n) => selection.includes(n.key))
@@ -401,6 +412,17 @@ function SelectionBar() {
               () => toast('copy blocked - click the canvas first'))
           }}>{copied ? <CheckIcon size={15} /> : <SignpostIcon size={15} />}</button>
       </Tip>
+      {/* copy as image: dev only (the renderer is the dev server's headless Chrome) and one
+          frame at a time (a clipboard holds one image). I = 2x, Shift+I = 4x. */}
+      {!PUBLISHED && (
+        <Tip label={multi ? 'Select one frame to copy as image' : <><b>Copy as image</b><span>2x PNG · ⇧I for 4x</span><span className="k">I</span></>}>
+          <button className={`icon${imageBusy ? ' busy' : ''}`} disabled={multi || imageBusy} aria-label="Copy as image"
+            data-state={copiedImage ? 'copied' : imageBusy ? 'busy' : 'idle'}
+            onClick={(e) => useStore.getState().copyFrameImage(e.shiftKey ? 4 : 2)}>
+            {copiedImage ? <CheckIcon size={15} /> : <ImagesSquareIcon size={15} />}
+          </button>
+        </Tip>
+      )}
     </div>
   )
 }
@@ -835,7 +857,11 @@ export function App() {
   // keyboard: t tidy · d theme · ⌘\ panel · Escape exit · shift+0/1/2 zoom
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      // anything that edits text owns its keys: inputs, textareas, selects, contenteditable (the
+      // comment composer), and an IME mid-composition
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) return
+      if (e.isComposing) return
       const s = useStore.getState()
       if (s.play) return                       // play mode owns the keyboard (Play.tsx)
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
@@ -878,6 +904,8 @@ export function App() {
         c.setShowAnchor(!c.showAnchor)
         toast(c.showAnchor ? 'laser comment off' : 'laser comment on')
       }
+      // I = copy the selected frame as a 2x PNG · Shift+I = 4x (dev only; one frame at a time)
+      if ((e.key === 'i' || e.key === 'I') && !PUBLISHED && !e.altKey && !e.repeat) { s.copyFrameImage(e.shiftKey ? 4 : 2); return }
       if (e.key === 'P' && e.shiftKey && s.selection.length) {
         const paths = s.selection
           .map((k) => { const n = s.nodes.find((x) => x.key === k); const f = n && s.frameFor(n); return f ? framePath(s.board, f) : undefined })

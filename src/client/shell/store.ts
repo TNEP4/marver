@@ -251,6 +251,8 @@ interface State {
   playUpdateRevision: string | null                        // a revision arrived while play is open
   playNav: number                                          // bumps to reload the play stage on demand
   pathPulse: number                                        // bumps on each successful path copy - flashes the toolbar icon into a check
+  imagePulse: number                                       // bumps on each successful image copy - same flash, the images-square icon
+  imageBusy: boolean                                       // a copy-as-image render is in flight (one at a time)
 
   boot(): Promise<boolean>
   applyManifest(m: Manifest): void
@@ -280,6 +282,7 @@ interface State {
   renameBoard(from: string, to: string): Promise<{ ok: boolean; error?: string }>
   reorderBoards(order: string[]): Promise<boolean>
   pulsePath(): void
+  copyFrameImage(scale: 2 | 4): void
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -564,7 +567,7 @@ export const useStore = create<State>((set, get) => {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false,
-    pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0,
+    pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
     async boot() {
       const seq = ++loadSeq
@@ -1017,6 +1020,51 @@ export const useStore = create<State>((set, get) => {
     },
     setScale(scale) { set({ scale }) },
     pulsePath() { set((s) => ({ pathPulse: s.pathPulse + 1 })) },
+    // Copy the ONE selected frame to the clipboard as a PNG - the dev server's headless
+    // renderer (/api/shot, the same picture `marver shot` gives an agent) sized to what the
+    // node shows, at 2x (or 4x). The ClipboardItem takes a PROMISE: clipboard.write runs
+    // inside the click/keydown gesture and the browser waits for the bytes - a plain
+    // await-then-write would have lost the transient activation during the 1-4s render.
+    copyFrameImage(scale) {
+      const s = get()
+      if (PUBLISHED || s.imageBusy || s.selection.length !== 1) return
+      const node = s.nodes.find((n) => n.key === s.selection[0])
+      if (!node || node.missing) return
+      const frame = s.frameFor(node)
+      if (!frame) { s.toast('frame is still indexing - try again in a second'); return }
+      const CI = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
+      if (!CI || !navigator.clipboard?.write || (CI.supports && !CI.supports('image/png'))) { s.toast("this browser can't put images on the clipboard - use Chrome, Edge or Safari"); return }
+      set({ imageBusy: true })
+      const done = () => set({ imageBusy: false })
+      const qs = new URLSearchParams({ frame: frame.id, theme: node.theme, scale: String(scale), w: String(Math.round(node.w)), h: String(Math.round(node.h)), format: 'png' })
+      // the render is serialized server-side behind any CLI/jam shots; a minute is the ceiling
+      // before the UI gives up on this copy (the server's own watchdog is 45s per shot)
+      const ctl = new AbortController()
+      const timer = setTimeout(() => ctl.abort(), 60_000)
+      let meta: { scale?: number; note?: string } = {}
+      const png = fetch(`${ROUTE}/api/shot?${qs}`, { headers: { 'x-mv-c': csrf() }, signal: ctl.signal }).then(async (r) => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `shot failed (${r.status})`)
+        try { meta = JSON.parse(r.headers.get('x-mv-shot') ?? '{}') } catch { /* summary is advisory */ }
+        return r.blob()
+      }).finally(() => clearTimeout(timer))
+      png.catch(() => {})   // consumed by clipboard.write below; keep it from also going unhandled
+      const fail = async (err: unknown) => {
+        done()
+        // was it the render or the clipboard? the fetch promise knows
+        const renderErr = await png.then(() => '', (e: Error) => (e.name === 'AbortError' ? 'timed out - the renderer is busy' : e.message))
+        s.toast(renderErr ? `render failed - ${renderErr}` : (err as Error)?.name === 'NotAllowedError' ? 'copy blocked - click the canvas first' : `copy failed - ${(err as Error)?.message ?? err}`)
+      }
+      try {
+        navigator.clipboard.write([new CI({ 'image/png': png })]).then(
+          () => {
+            done()
+            const used = meta.scale ?? scale
+            s.toast(used < scale ? `image copied at ${used}x - frame too tall for ${scale}x` : scale === 4 ? 'image copied (4x)' : 'image copied')
+            set((st) => ({ imagePulse: st.imagePulse + 1 }))
+          },
+          fail)
+      } catch (err) { void fail(err) }   // a synchronous constructor/type error must not wedge busy
+    },
     togglePanel() { set((s) => ({ panelOpen: !s.panelOpen })) },
     // global theme = the VIEW preference: persists across boards + reloads, clears
     // per-frame pins. Frames declaring meta.theme keep their mode (they only work there).

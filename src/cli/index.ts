@@ -155,6 +155,7 @@ cli
   .command('shot <frame>', 'Render one frame headless and print the PNG path (needs `dev` running)')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--theme <name>', 'Theme to render (default: light)')
+  .option('--scale <n>', 'Device pixels per CSS px, 1-4 (default: 2; 4 for print-quality stills)')
   .action(async (frame: string, opts) => {
     const { shotCommand } = await import('./shot.ts')
     try { await shotCommand(resolve(opts.root), frame, opts) }

@@ -13,7 +13,7 @@
  */
 import { slideSize } from '../client/const.ts'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
@@ -33,7 +33,9 @@ export function findChrome(): string | null {
   return CHROMES.find((p) => existsSync(p)) ?? null
 }
 
-export interface ShotRequest { url: string; width: number; height: number; out: string; fullHeight?: boolean; timeoutMs?: number }
+/** `scale` = device pixels per CSS px (1-4; default 2). The full-height path may step it
+ *  DOWN (never up) to fit Chrome's capture surface - the result reports what was used. */
+export interface ShotRequest { url: string; width: number; height: number; out: string; fullHeight?: boolean; timeoutMs?: number; scale?: number }
 export type ShotResult =
   | { ok: true; width: number; height: number; scale: number; truncated?: boolean; note?: string }
   | { ok: false; error: string }
@@ -45,22 +47,30 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
  *  with contentWidth is a content frame and ALWAYS auto-fits its height; a valid meta.viewport
  *  overrides only the WIDTH. Non-content frames use their viewport (or mobile), fixed height. */
 export interface FrameSizing { width: number; initialHeight: number; fullHeight: boolean }
+/** Optional canvas-node size - the copy-as-image contract: the frame at the NODE'S WIDTH.
+ *  Slides ignore it (the artwork is 1280×720; the canvas fit only scales it), content frames
+ *  take the width only (the whole document is captured, never the node's scroll window),
+ *  fixed frames take both (clamped to the canvas node range 120..3840 × 80..2160). */
+export interface SizeOverride { w?: number; h?: number }
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
 export function planShot(
   frame: { viewport?: string; contentWidth?: number; slide?: boolean },
   viewports: Record<string, { width: number; height: number }>,
+  override: SizeOverride = {},
 ): FrameSizing {
-  const cw = (typeof frame.contentWidth === 'number' && Number.isFinite(frame.contentWidth) && frame.contentWidth > 0)
-    ? frame.contentWidth : undefined
+  const cw = num(frame.contentWidth)
   const vpObj = frame.viewport ? viewports[frame.viewport] : undefined      // undefined if the name is unknown
+  const ow = num(override.w), oh = num(override.h)
   // the slide intrinsic beats everything - the Slide root IS 1280×720
   const sl = slideSize(frame)
   if (sl) return { width: sl.width, initialHeight: sl.height, fullHeight: false }
   const fallback = viewports.mobile ?? { width: 390, height: 844 }
   if (cw) {
-    const width = clamp(vpObj?.width ?? cw, 320, 1600)                       // vpw wins for width, else contentWidth
+    const width = clamp(ow ?? vpObj?.width ?? cw, 320, 1600)                 // node > vpw > contentWidth
     return { width, initialHeight: Math.round(width * 0.75), fullHeight: true }
   }
   const vp = vpObj ?? fallback
+  if (ow || oh) return { width: clamp(ow ?? vp.width, 120, 3840), initialHeight: clamp(oh ?? vp.height, 80, 2160), fullHeight: false }
   return { width: vp.width, initialHeight: vp.height, fullHeight: false }
 }
 
@@ -73,24 +83,31 @@ export async function shootFrame(opts: {
   frameId: string
   theme: string
   origin: string
+  scale?: number          // 1-4, default 2; anything else is refused
+  size?: SizeOverride     // the canvas node's size, when the caller wants "what the node shows"
 }): Promise<{ ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; note?: string } | { ok: false; error: string }> {
-  const { root, viewports, frameId, theme, origin } = opts
+  const { root, viewports, frameId, theme, origin, scale = 2, size } = opts
   if (!/^[a-z0-9-]+$/i.test(theme)) return { ok: false, error: 'invalid theme' }
-  let manifest: { frames?: { id: string; file: string; kind: string; viewport?: string; contentWidth?: number }[] } = {}
+  if (!Number.isInteger(scale) || scale < 1 || scale > 4) return { ok: false, error: 'invalid scale' }
+  let manifest: { frames?: { id: string; file: string; kind: string; viewport?: string; contentWidth?: number; slide?: boolean }[] } = {}
   try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
   const frame = (manifest.frames ?? []).find((f) => f.id === frameId)
   if (!frame) return { ok: false, error: `unknown frame "${frameId}" - ids are in design/manifest.json` }
-  const plan = planShot(frame, viewports)
+  const plan = planShot(frame, viewports, size)
   const shotsDir = join(root, 'design', '.local', 'shots')
   mkdirSync(shotsDir, { recursive: true })
-  const rel = `design/.local/shots/${slug(frameId)}--${theme}.png`
+  // a non-default scale gets its own file, so a 4x still never overwrites the agent's 2x. Named
+  // from the scale actually USED (the capture may step down), so `@4x` always holds 4x pixels.
+  const relFor = (sc: number) => `design/.local/shots/${slug(frameId)}--${theme}${sc === 2 ? '' : `@${sc}x`}.png`
+  const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${process.pid}.tmp.png`)
   const target = frame.kind === 'html'
     ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
     : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frameId)}&theme=${encodeURIComponent(theme)}`
-  const result = await capture({ url: target, width: plan.width, height: plan.initialHeight, out: join(root, rel), fullHeight: plan.fullHeight })
-  return result.ok
-    ? { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true, note: result.note } : {}) }
-    : result
+  const result = await capture({ url: target, width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale })
+  if (!result.ok) { try { rmSync(tmp, { force: true }) } catch { /* nothing written */ } return result }
+  const rel = relFor(result.scale)
+  renameSync(tmp, join(root, rel))
+  return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.note ? { note: result.note } : {}) }
 }
 
 /** One capture at a time: shots are seconds apart at most, and a Chrome per concurrent
@@ -103,7 +120,20 @@ export function capture(req: ShotRequest): Promise<ShotResult> {
   return run
 }
 
-async function captureNow({ url, width, height, out, fullHeight = false, timeoutMs = 30_000 }: ShotRequest): Promise<ShotResult> {
+/** The capture budget. Chrome's surface tops out near 16384 device px per SIDE, and a bitmap is
+ *  also bounded by its AREA: 64M device px (~256 MiB RGBA) is comfortably rendered, encoded and
+ *  pasted, where a 3840×2160@4 (133M px) can stall the renderer or the paste target. Both limits
+ *  are exported so the tests hold the same numbers. */
+export const SURFACE = 16384
+export const AREA = 64_000_000
+const fits = (w: number, h: number, dsf: number) => w * dsf <= SURFACE && h * dsf <= SURFACE && w * h * dsf * dsf <= AREA
+/** The tallest CSS height a full-height capture of `width` can hold at `dsf`. */
+const capFor = (width: number, dsf: number) => Math.max(1, Math.min(Math.floor(SURFACE / dsf), Math.floor(AREA / (width * dsf * dsf))))
+
+async function captureNow({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2 }: ShotRequest): Promise<ShotResult> {
+  // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
+  let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
+  while (scale > 1 && !fits(width, height, scale)) scale--
   const bin = findChrome()
   if (!bin) return { ok: false, error: 'no Chrome/Chromium found - install one or set MARVER_CHROME to a browser binary' }
 
@@ -171,7 +201,7 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
 
     const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
-    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: false }, sessionId)
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false }, sessionId)
     await send('Page.enable', {}, sessionId)
     await send('Runtime.enable', {}, sessionId)
     // A failed navigation (connection refused, DNS, cert) returns errorText AND still paints
@@ -195,7 +225,28 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     if (!ready) return { ok: false, error: `the frame never rendered${lastException ? ` - the page threw: ${lastException}` : ' (no exception surfaced - is the dev server reachable from this machine?)'}` }
 
     await send('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true, returnByValue: true }, sessionId).catch(() => null)
-    await new Promise((r2) => setTimeout(r2, 250))   // paint settle (images decoded after fonts)
+    // Content settle, for EVERY path (a fixed frame or a slide has charts and images too): tell the
+    // LOD pipeline the camera is at rest at 1:1 (it decodes full-res on that), then wait - bounded -
+    // for the async work a rendered frame still has in flight: LOD decodes, <img> loads, echarts
+    // instances (a lazy chunk; the SVG lands after init). A frame that never settles still captures
+    // once the budget is spent, so this is quality, never a hang.
+    await send('Runtime.evaluate', { expression: `window.postMessage({type:'sh:camera',moving:false,scale:1}, location.origin)`, returnByValue: true }, sessionId).catch(() => null)
+    const SETTLED = `(() => {
+      if (typeof window.__mvLodBusy === 'function' && window.__mvLodBusy() > 0) return false
+      for (const im of document.images) if (!im.complete && im.loading !== 'lazy') return false
+      for (const c of document.querySelectorAll('.mv-chart')) if (!c.querySelector('svg, canvas')) return false
+      return true
+    })()`
+    const settleBy = Date.now() + 3000
+    let settled = false
+    while (Date.now() < settleBy) {
+      const r = await send('Runtime.evaluate', { expression: SETTLED, returnByValue: true }, sessionId).catch(() => null)
+      if (r?.result?.value === true) { settled = true; break }
+      await new Promise((r2) => setTimeout(r2, 100))
+    }
+    // two frames for the paint after the last load/init, then a short decode margin
+    await send('Runtime.evaluate', { expression: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', awaitPromise: true, returnByValue: true }, sessionId).catch(() => null)
+    await new Promise((r2) => setTimeout(r2, settled ? 150 : 250))
 
     // A frame that THREW renders the frame-host's error card - which has DOM, so readiness
     // above passed. The host stamps the crash on window.__mvFrameError; surface it so an agent
@@ -204,10 +255,10 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     const frameError = typeof errEval?.result?.value === 'string' ? errEval.result.value : ''
     if (frameError) return { ok: false, error: `the frame rendered an error - ${frameError}` }
 
-    // Capture geometry. Non-content frames keep the fixed viewport set above (scale 2). Content
+    // Capture geometry. Non-content frames keep the fixed viewport set above (at `scale`). Content
     // frames auto-fit height: grow the viewport so all content lays out (lazy images load, LOD
     // first-decode pins each image's aspect-ratio -> stable height), measure, then capture full.
-    let capW = width, capH = height, scale = 2, truncated = false, note = ''
+    let capW = width, capH = height, truncated = false, note = ''
     if (fullHeight) {
       const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
       const measureH = async (): Promise<number> => {
@@ -255,19 +306,23 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
           h = Math.max(m, capped)
         }
       }
-      const CAP2 = 8192, CAP1 = 16384
-      // ONE absolute budget for the discretionary settle work (both grow passes + the optional
+      // ONE absolute budget for the discretionary settle work (every grow pass + the optional
       // sharpen). New timed awaits stop starting once it passes; only an already-in-flight per-call
       // deadline (<=1.5s) can overrun. The REQUIRED final resize (<=5s) and capture (<=15s) run
       // after with their own per-call deadlines, so total is bounded well under the 45s watchdog -
-      // a never-settling frame can never wedge the single-flight queue. Both grow passes SHARE this.
+      // a never-settling frame can never wedge the single-flight queue. All grow passes SHARE this.
+      // The ladder: try the asked scale; a frame taller than that scale's cap steps DOWN to 2, then
+      // to 1 (DPR1 fits the tallest within the surface budget); only past the 1x cap is it truncated.
       const settleDeadline = Date.now() + 6000
-      await growFit(2, CAP2, settleDeadline)
-      if (measured > CAP2) { scale = 1; await growFit(1, CAP1, settleDeadline) }   // DPR1 fits taller within the surface budget
-      const cap = scale === 2 ? CAP2 : CAP1
+      const asked = scale
+      await growFit(scale, capFor(width, scale), settleDeadline)
+      if (measured > capFor(width, scale) && scale > 2) { scale = 2; await growFit(2, capFor(width, 2), settleDeadline) }
+      if (measured > capFor(width, scale) && scale > 1) { scale = 1; await growFit(1, capFor(width, 1), settleDeadline) }
+      const cap = capFor(width, scale)
       capW = width
       if (measured > cap) { capH = cap; truncated = true; note = `frame is ${measured}px tall; captured the top ${cap}px - split it or reduce its height` }
       else capH = clamp(measured || height, 80, cap)
+      if (scale < asked && !truncated) note = `frame is ${measured}px tall - too tall for ${asked}x, captured at ${scale}x`
       // Final viewport IS the capture box (and fixes deviceScaleFactor to `scale`). Do NOT swallow
       // this failure: a wrong viewport would make the returned dimensions/scale disagree with the
       // PNG. Let it throw -> ok:false. Its own 5s per-call deadline bounds it.
@@ -289,7 +344,7 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     // is legitimately a few seconds) so a hung capture can't wedge the queue either.
     const shot = await sendD('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, width: capW, height: capH, scale: 1 } }, 15000)
     writeFileSync(out, Buffer.from(String(shot.data), 'base64'))
-    return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true, note } : {}) }
+    return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(note ? { note } : {}) }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   } finally {

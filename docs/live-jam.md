@@ -98,8 +98,12 @@ obvious one:
   `design/.local/shots/<slug>.request.json` with `{"frame":"<id>","theme":"<t>"}`; the dev
   server renders and writes `<slug>.result.json` with the PNG path or an error, which the
   agent Reads.
-- **`npx marver shot <frame>`** / `GET /api/shot?frame=<id>&theme=<t>` for humans and
-  shell-ful agents - the same renderer, one line.
+- **`npx marver shot <frame> [--scale 1-4]`** / `GET /api/shot?frame=<id>&theme=<t>&scale=<n>`
+  for humans and shell-ful agents - the same renderer, one line. Default 2x; `--scale 4` for a
+  print-quality still (a slide comes back 5120×2880). A frame too tall for the asked scale steps
+  down and says so in `note`; the file name carries the scale actually used (`…@4x.png`).
+  The canvas's **copy as image** (`i` / `⇧I`, the images-square toolbar button) is this same
+  renderer with `format=png`, so what a designer pastes and what an agent shoots is one picture.
 
 The generated jam instructions tell every agent to shoot and LOOK before replying "done".
 A frame that never mounts, or a dev server that isn't reachable, comes back as an honest

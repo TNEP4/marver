@@ -97,8 +97,9 @@ shot at its natural width and its FULL height, so a wide layout or a long spec r
 full, not cropped. A frame tall enough to hit the capture cap comes back with
 `"truncated":true` and a `note` - split it or shorten it and re-shoot.
 
-(If you DO have a shell - `npx marver shot <scene/frame> [--theme dark]` is the same thing
-in one line, printing the PNG path.)
+(If you DO have a shell - `npx marver shot <scene/frame> [--theme dark] [--scale 4]` is the
+same thing in one line, printing the PNG path. `--scale 4` is for a print-quality still - the
+human's "copy as image" on the canvas uses this same renderer, so you both see one picture.)
 
 Verification is best-effort, not a gate. If your model cannot read images, or the result
 reports no Chrome on the machine, still act on `ok`/`error` - and say plainly in your reply
