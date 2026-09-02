@@ -79,7 +79,7 @@ const VIDEO_CSS = `
 .mv-video .glyph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none }
 .mv-video .glyph span { width: 72px; height: 72px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
   background: rgba(16, 16, 20, .55); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, .28) }
-.mv-video .glyph svg { margin-left: 4px }
+.mv-video .glyph svg { margin-left: 2px }
 .mv-video .strip { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 10px;
   padding: 8px 12px; border-radius: 999px; background: rgba(16, 16, 20, .55); backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, .22); color: #fff; opacity: 1; transition: opacity .25s }
@@ -100,12 +100,19 @@ const ensureCss = () => {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
-const PlayGlyph = ({ size = 26 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="#fff"><path d="M8 5.5 19 12 8 18.5 Z" /></svg>
+// Phosphor icons (play/pause in the fill weight, speaker and corners regular), path data
+// inlined from @phosphor-icons/core - MIT (c) Phosphor Icons - the same way the shell's
+// icons.tsx does it: no icon dependency reaches the host.
+const P = ({ d, size }: { d: string; size: number }) => (
+  <svg width={size} height={size} viewBox="0 0 256 256" fill="#fff" aria-hidden><path d={d} /></svg>
 )
-const PauseGlyph = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
-)
+const PLAY = 'M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z'
+const PAUSE = 'M216,48V208a16,16,0,0,1-16,16H160a16,16,0,0,1-16-16V48a16,16,0,0,1,16-16h40A16,16,0,0,1,216,48ZM96,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H96a16,16,0,0,0,16-16V48A16,16,0,0,0,96,32Z'
+const SPEAKER = 'M155.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V32A8,8,0,0,0,155.51,24.81ZM32,96H72v64H32ZM144,207.64,88,164.09V91.91l56-43.55Zm54-106.08a40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.58,24,24,0,0,0,0-31.72,8,8,0,0,1,12-10.58ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z'
+const SPEAKER_SLASH = 'M53.92,34.62A8,8,0,1,0,42.08,45.38L73.55,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l69.84,54.31A8,8,0,0,0,160,224V175.09l42.08,46.29a8,8,0,1,0,11.84-10.76ZM32,96H72v64H32ZM144,207.64,88,164.09V95.89l56,61.6Zm42-63.77a24,24,0,0,0,0-31.72,8,8,0,1,1,12-10.57,40,40,0,0,1,0,52.88,8,8,0,0,1-12-10.59Zm-80.16-76a8,8,0,0,1,1.4-11.23l39.85-31A8,8,0,0,1,160,32v74.83a8,8,0,0,1-16,0V48.36l-26.94,21A8,8,0,0,1,105.84,67.91ZM248,128a79.9,79.9,0,0,1-20.37,53.34,8,8,0,0,1-11.92-10.67,64,64,0,0,0,0-85.33,8,8,0,1,1,11.92-10.67A79.83,79.83,0,0,1,248,128Z'
+const CORNERS = 'M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z'
+const PlayGlyph = ({ size = 30 }: { size?: number }) => <P d={PLAY} size={size} />
+const PauseGlyph = ({ size = 18 }: { size?: number }) => <P d={PAUSE} size={size} />
 
 export function Video({ src, poster, ratio, autoplay = false }: { src: string; poster?: string; ratio?: string; autoplay?: boolean }) {
   ensureCss()
@@ -205,15 +212,10 @@ function Player({ src, poster, style, autoStart = false }: { src: string; poster
           onChange={(e) => { const v = ref.current; if (v) { v.currentTime = Number(e.target.value); setT(v.currentTime) } }} />
         <span className="t">{fmt(dur)}</span>
         <button aria-label={muted ? 'Unmute' : 'Mute'} onClick={() => setMuted((m) => !m)}>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M11 5 6 9 H3 v6 h3 l5 4 Z" fill="#fff" stroke="none" />
-            {muted ? <path d="m16 9 6 6 M22 9 l-6 6" /> : <path d="M15.5 8.5 a5 5 0 0 1 0 7 M18.5 6 a9 9 0 0 1 0 12" />}
-          </svg>
+          <P d={muted ? SPEAKER_SLASH : SPEAKER} size={18} />
         </button>
         <button aria-label="Fullscreen" onClick={(e) => void (e.currentTarget.closest('.mv-video') as HTMLElement | null)?.requestFullscreen?.()}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 3 H4 a1 1 0 0 0 -1 1 v4 M16 3 h4 a1 1 0 0 1 1 1 v4 M8 21 H4 a1 1 0 0 1 -1 -1 v-4 M16 21 h4 a1 1 0 0 0 1 -1 v-4" />
-          </svg>
+          <P d={CORNERS} size={18} />
         </button>
       </div>
     </div>
