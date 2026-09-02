@@ -170,10 +170,17 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
 
   skippable('the button click copies too, and a multi-selection disables it', async () => {
     const s = await openAndSelect(browser!, 'home')
-    // a trusted click: CDP mouse events at the button's centre
-    const box = await browser!.eval(s, `(() => { const r = document.querySelector('.sh-ctx button[aria-label="Copy as image"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
-    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
-    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+    // a trusted click: CDP mouse events at the button's centre. The bar re-anchors as the
+    // selection settles (measured width, viewport clamp), so under load a click can land on
+    // the old position: re-read and click again if the store did not go busy.
+    const click = async () => {
+      const box = await browser!.eval(s, `(() => { const r = document.querySelector('.sh-ctx button[aria-label="Copy as image"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+      return browser!.until(s, `window.__mvStore.getState().imageBusy === true || window.__mvStore.getState().imagePulse === 1`, 2_000).then(() => true, () => false)
+    }
+    if (!(await click())) { await new Promise((r) => setTimeout(r, 500)); expect(await click()).toBe(true) }
     await browser!.until(s, `window.__mvStore.getState().imagePulse === 1`, 40_000)
     expect(await clipboardImage(browser!, s)).toMatchObject({ w: 780, h: 1688 })
     await browser!.eval(s, `window.__mvStore.getState().select('slide', true)`)
