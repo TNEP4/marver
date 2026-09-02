@@ -45,6 +45,8 @@ Frames appear on the canvas the moment the files land. That's the loop.
 - **Prototype links.** `data-goto="scene/frame"` on any element links frames into a walkable prototype - across boards, too.
 - **Five ways to view a board.** The canvas (frames on a plane), the board (the same, tidy), **present** (`p`: a full-screen clickable walkthrough - `data-goto` navigates, arrows step, `[` / `]` cycle variants, laser, comments, theme and device pickers in the toolbar), **focus** (one frame as a document - the reading preset for specs), and **slides** (a deck). A published board names its landing view; a frame deep link opens straight into it.
 - **Content frames.** Specs, Mermaid diagrams, mood boards, and slides live on the same canvas as the screens - import `Doc`, `Md`, `Diagram`, `Img`, `Slide`, `Chart`, `Video` from `@marver-design/marver/content` and think a feature through before any pixels exist. Works in a repo with no app at all: idea first, design second.
+- **Charts and video in any frame.** `Chart` (Apache ECharts, SVG, still at rest) inherits the ink, typeface and accent of whatever frame it sits in - a Tailwind dashboard, a dark spec, a slide - sizes its type to the context and follows the layout on resize. `Video` is poster-first everywhere: click to play wherever the frame is live, `autoplay` for an ambient loop, `ratio` for vertical clips; omit the poster and marver renders one from the clip. A screen with a chart or a clip is still a screen.
+- **Copy as image.** Select a frame, press `i` - a 2x PNG of it lands on the clipboard, rendered by the same headless Chrome that serves `marver shot`; `⇧i` for 4x (a slide is 5120×2880). Paste into Slack, a doc, or a chat with your agent.
 
 ## Slides
 
@@ -82,7 +84,7 @@ The trust boundary is hard: only comments written on the owner's machine trigger
 
 ## Working state
 
-The same glow, driven from the terminal. When your agent takes a request, it creates the frame files first, pins them on a board, and runs `npx marver work start <scene/frame ...>` - you see the work land on the canvas in seconds, watch it shimmer while subagents build in parallel, and see it settle on `work done`. Marks self-expire, so a crashed agent never leaves a frame glowing. And `npx marver shot <scene/frame>` renders one frame headless to a PNG, so the agent can look at what it built before it says it is done.
+The same glow, driven from the terminal. When your agent takes a request, it creates the frame files first, pins them on a board, and runs `npx marver work start <scene/frame ...>` - you see the work land on the canvas in seconds, watch it shimmer while subagents build in parallel, and see it settle on `work done`. Marks self-expire, so a crashed agent never leaves a frame glowing. And `npx marver shot <scene/frame> [--scale 4]` renders one frame headless to a PNG, so the agent can look at what it built before it says it is done - the same picture you get from the canvas's copy-as-image.
 
 ## Commands
 
@@ -95,7 +97,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver share …` | The roster (owner): `add <who> [--role]` · `remove` · `block` / `unblock` · `general <mode>` · `list` · `requests` · `explain <who>` · `who` |
 | `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` · `list` |
-| `npx marver shot <frame>` | Render one frame headless and print the PNG path (needs `dev` running) |
+| `npx marver shot <frame> [--scale 1-4]` | Render one frame headless and print the PNG path (needs `dev` running); 2x by default |
 
 ## Shortcuts
 

@@ -398,8 +398,9 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       // a late load in the final viewport (a below-fold image without reserved size) can still
       // grow the document: remeasure once and, within the cap, take the taller box
       const m2 = await measureH()
-      if (m2 > capH && m2 <= cap) {
-        capH = m2
+      if (m2 > capH) {
+        if (m2 <= cap) capH = m2
+        else { capH = cap; truncated = true; note = `frame is ${m2}px tall; captured the top ${cap}px - split it or reduce its height` }
         await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: scale, mobile: false }, 5000)
         await settle(600)
       }

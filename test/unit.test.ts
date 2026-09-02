@@ -738,6 +738,10 @@ describe('content frames', () => {
     expect(contentScan(`${UI}export default () => <main><h1>Dash</h1><Chart option={{}} /></main>`)).toBeNull()
     expect(contentScan(`${UI}export default () => <main><Video src="a.mp4" poster="a.png" /><Row><Col /></Row></main>`)).toBeNull()
     expect(contentScan(`${UI}export default () => <Row><Img src="a.png" /><Img src="b.png" /></Row>`)?.intent).toBe('moodboard')
+    // a tag name quoted in an example or a comment is not a rendered element - but prose apostrophes never hide a real one
+    expect(contentScan(`${UI}export default () => <main><Chart option={{}} /><pre>{'<Diagram title="x">'}</pre></main>`)).toBeNull()
+    expect(contentScan(`${UI}// TODO: add a <Md> intro\nexport default () => <main><Chart option={{}} /></main>`)).toBeNull()
+    expect(contentScan(`${UI}export default () => <div><p>it's here</p><Diagram>{'flowchart'}</Diagram><p>don't</p></div>`)?.intent).toBe('diagram')
     // a Doc, an Md or a Diagram makes it a document
     expect(contentScan(`${UI}export default () => <Doc><Chart option={{}} /></Doc>`)?.intent).toBe('spec')
     expect(contentScan(`${UI}export default () => <div><Md>{'x'}</Md></div>`)?.intent).toBe('spec')

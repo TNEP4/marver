@@ -69,7 +69,12 @@ window.addEventListener('message', (e) => {
   if (e.origin && e.origin !== location.origin) return   // a navigated frame must not spoof commands
   if (e?.data?.type === 'sh:set-theme') setTheme(e.data.theme)
   // B0.2: interact/play target owns its own wheel; passive frames forward it to the canvas
-  if (e?.data?.type === 'sh:interactive') { interactiveOn = !!e.data.on }
+  if (e?.data?.type === 'sh:interactive') {
+    interactiveOn = !!e.data.on
+    // mirrored on the document so content primitives can observe it (Video disarms its
+    // player when the human leaves interact mode - a playing clip must not outlive the mode)
+    document.documentElement.toggleAttribute('data-sh-interactive', interactiveOn)
+  }
 })
 
 if (isHtmlFrame) {

@@ -99,33 +99,37 @@ export function Chart({ option, h = 420 }: { option: Record<string, unknown>; h?
   const play = useSlidePlay()
   const theme = useFrameTheme()
   const [failed, setFailed] = useState(false)
-  // key the effect on the option's CONTENT, so a parent re-render with a fresh inline literal
-  // (every UI frame with state) never disposes and re-inits the chart. The live object still
-  // goes to setOption (a JSON round-trip would drop formatter functions); the ref carries it.
-  const optionKey = JSON.stringify(option)
+  // The instance lives in a ref: init/dispose follows the THEME and the play flip (a theme
+  // object per init, the entrance on play); the option rides a separate effect that calls
+  // setOption on the live instance - so a parent re-render, or an HMR edit to a formatter
+  // function, never disposes and re-inits the chart.
+  const chartRef = useRef<import('./chart-engine.ts').EChartsInstance | null>(null)
   const optionRef = useRef(option)
   optionRef.current = option
+  const playRef = useRef(play)
+  playRef.current = play
   useEffect(() => {
     const el = ref.current
     if (!el) return
     let disposed = false
-    let chart: import('./chart-engine.ts').EChartsInstance | null = null
     let ro: ResizeObserver | null = null
     void loadEngine().then((engine) => {
       if (disposed || !ref.current) return
-      // a theme OBJECT per init - never a stale global registration
-      chart = engine.init(ref.current, houseTheme(ref.current, theme === 'dark'), { renderer: 'svg' })
-      chart.setOption(sanitizeOption(optionRef.current, play))
+      const chart = engine.init(ref.current, houseTheme(ref.current, theme === 'dark'), { renderer: 'svg' })
+      chartRef.current = chart
+      chart.setOption(sanitizeOption(optionRef.current, playRef.current))
       // a slide is a fixed stage, but a UI screen or a Doc reflows (device pills, responsive
       // layouts): follow the box, or the SVG keeps its mount-time size
       if (typeof ResizeObserver !== 'undefined') {
-        ro = new ResizeObserver(() => { if (!disposed) chart?.resize() })
+        ro = new ResizeObserver(() => { if (!disposed) chart.resize() })
         ro.observe(ref.current)
       }
     }).catch(() => setFailed(true))
-    return () => { disposed = true; ro?.disconnect(); chart?.dispose() }
-    // re-init on play flip (the entrance) and on theme flip (fresh tokens)
-  }, [optionKey, play, theme])
+    return () => { disposed = true; ro?.disconnect(); chartRef.current?.dispose(); chartRef.current = null }
+  }, [play, theme])
+  // option changes (content OR a function inside it) reach the live instance; notMerge so a
+  // removed series disappears rather than lingering from the previous option
+  useEffect(() => { chartRef.current?.setOption(sanitizeOption(option, play), true) }, [option, play])
   if (failed) return <div className="mv-block mv-imgerr"><b>chart unavailable</b><span>echarts failed to load</span></div>
   // contain: inline-size - echarts sizes its inner box in px, which would otherwise pin the
   // author's flex/grid column at that width (min-content) and defeat the ResizeObserver above

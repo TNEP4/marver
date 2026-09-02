@@ -12,17 +12,27 @@
  * so nothing has to be served; readiness is the video element appearing in #root once
  * the seek lands, which is the shot renderer's own readiness rule.
  */
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { capture, findChrome } from './shot.ts'
 
 /** The conventional poster path for a local clip reference (relative to design/assets/). */
 export const posterNameFor = (src: string): string => `${src}.poster.png`
 
-/** Is this a video reference the generator handles (a local design-asset clip)? */
-export const isLocalClip = (src: string): boolean => !/^https?:\/\//.test(src) && /\.(mp4|webm|mov|m4v|ogv)$/i.test(src)
+/** Is this a video reference the generator handles (a local design-asset clip)? The same
+ *  grammar the client's assetUrl accepts: relative, forward slashes only, no dot segments. */
+export const isLocalClip = (src: string): boolean =>
+  !/^https?:\/\//.test(src) && /\.(mp4|webm|mov|m4v|ogv)$/i.test(src)
+  && !src.includes('\\') && !src.includes(':') && !src.startsWith('/')
+  && !src.split('/').some((seg) => seg === '..' || seg === '.' || seg === '')
+
+/** realpath(p) is base or inside it. */
+const inside = (p: string, base: string): boolean => {
+  try { const r = realpathSync(p); return r === base || r.startsWith(base + sep) } catch { return false }
+}
 
 const PAGE = (video: string) => `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;background:#000}#root video{display:block}
@@ -52,16 +62,28 @@ export async function ensurePoster(assetsDir: string, src: string): Promise<{ ok
   const out = join(assetsDir, posterNameFor(src))
   if (existsSync(out)) return { ok: true, path: out, width: 0, height: 0, generated: false }
   if (!existsSync(clip)) return { ok: false, error: `design/assets/${src} does not exist` }
+  // Containment by REAL path, both ways: the clip Chrome will read (a symlink under
+  // design/assets/ must not hand it an arbitrary local video) and the directory the poster
+  // lands in (a symlinked subfolder must not write outside design/assets/).
+  let realAssets: string
+  try { realAssets = realpathSync(assetsDir) } catch { return { ok: false, error: 'design/assets/ does not exist' } }
+  if (!inside(clip, realAssets)) return { ok: false, error: `design/assets/${src} resolves outside design/assets/ - not rendered` }
+  if (!inside(dirname(out), realAssets)) return { ok: false, error: `design/assets/${dirname(src)} resolves outside design/assets/ - not rendered` }
   if (!findChrome()) return { ok: false, error: `no Chrome/Chromium found to render a poster for ${src} - add poster="..." on the <Video>, or install Chrome` }
   const dir = mkdtempSync(join(tmpdir(), 'mv-poster-'))
   const page = join(dir, 'poster.html')
-  writeFileSync(page, PAGE(pathToFileURL(clip).href))
-  mkdirSync(dirname(out), { recursive: true })
+  writeFileSync(page, PAGE(pathToFileURL(realpathSync(clip)).href))
+  // render to a temp beside the target, then install atomically - and never over a poster that
+  // appeared meanwhile (an authored one, or a sibling request's)
+  const tmp = join(dirname(out), `.${basename(out)}.${randomBytes(6).toString('hex')}.tmp`)
   try {
-    const r = await capture({ url: pathToFileURL(page).href, width: 1920, height: 1080, scale: 1, out, fullHeight: false, clip: '#root video', timeoutMs: 20_000 })
+    const r = await capture({ url: pathToFileURL(page).href, width: 1920, height: 1080, scale: 1, out: tmp, fullHeight: false, clip: '#root video', timeoutMs: 20_000 })
     if (!r.ok) return { ok: false, error: `could not render a poster for ${basename(src)} - ${r.error}` }
+    if (existsSync(out)) return { ok: true, path: out, width: r.width, height: r.height, generated: false }
+    renameSync(tmp, out)
     return { ok: true, path: out, width: r.width, height: r.height, generated: true }
   } finally {
+    rmSync(tmp, { force: true })
     rmSync(dir, { recursive: true, force: true })
   }
 }

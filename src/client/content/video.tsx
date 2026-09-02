@@ -23,7 +23,7 @@
  * asks the dev server once when the file is missing). `ratio` is the CSS aspect-ratio of the box
  * (default 16 / 9; "9 / 16" for a vertical clip inside a phone screen).
  */
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { ROUTE } from '../const.ts'
 import { assetUrl } from './md.ts'
 import { useSlidePlay } from './slide.tsx'
@@ -49,9 +49,23 @@ const requestPoster = (src: string): Promise<boolean> => {
       return !!r?.ok
     })()
     requested.set(src, p)
+    // a failure is not forever: the next mount (a fix, Chrome installed) may ask again
+    void p.then((ok) => { if (!ok) requested.delete(src) })
   }
   return p
 }
+
+/** Is the human in the canvas's interact mode on this frame? The bridge mirrors sh:interactive
+ *  on the document. Absent everywhere else (play, focus, published) - only the true->false
+ *  transition matters: it disarms a playing clip when the mode is left. */
+const subscribeInteractive = (cb: () => void) => {
+  if (typeof document === 'undefined') return () => {}
+  const mo = new MutationObserver(cb)
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-sh-interactive'] })
+  return () => mo.disconnect()
+}
+const readInteractive = () => typeof document !== 'undefined' && document.documentElement.hasAttribute('data-sh-interactive')
+const useInteractive = (): boolean => useSyncExternalStore(subscribeInteractive, readInteractive, () => false)
 
 const VIDEO_CSS = `
 .mv-video { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: var(--mv-video-ratio, 16 / 9) }
@@ -92,20 +106,35 @@ const PauseGlyph = () => (
 export function Video({ src, poster, ratio, autoplay = false }: { src: string; poster?: string; ratio?: string; autoplay?: boolean }) {
   ensureCss()
   const play = useSlidePlay()
+  const interactive = useInteractive()
   const [armed, setArmed] = useState(false)      // the poster was clicked in a live frame
+  // leaving interact mode disarms: the clip pauses (Player unmounts) and the frame returns to
+  // its poster, so the canvas can serialize it lean again
+  useEffect(() => { if (!interactive) setArmed(false) }, [interactive])
   // poster omitted on a local clip: the generated one, by convention; `gen` walks
   // missing -> requested -> ready (reload with a cache-buster) or failed (the card)
   const generated = !poster && !isRemote(src) ? posterNameFor(src) : null
   const [gen, setGen] = useState<'idle' | 'ready' | 'failed'>('idle')
-  const [bust] = useState(() => Date.now())     // one cache-buster per mount, not per render
+  const [bust, setBust] = useState(() => Date.now())     // one cache-buster per generation, not per render
+  useEffect(() => { setGen('idle') }, [src])
   const posterUrl = poster ? resolve(poster) : generated ? resolve(generated) : null
   const posterSrc = posterUrl && generated && gen === 'ready' ? `${posterUrl}?v=${bust}` : posterUrl
   const srcUrl = resolve(src)
   const style = ratio ? ({ '--mv-video-ratio': ratio } as CSSProperties) : undefined
   const onPosterError = () => {
     if (!generated || gen !== 'idle') return
-    void requestPoster(src).then((ok) => setGen(ok ? 'ready' : 'failed'))
+    void requestPoster(src).then((ok) => { setBust(Date.now()); setGen(ok ? 'ready' : 'failed') })
   }
+  // every branch probes the generated poster, not only the resting <img>: a slides-mode or
+  // autoplay mount would otherwise never ask (a <video poster> 404 is silent)
+  useEffect(() => {
+    if (!generated || !posterUrl || gen !== 'idle') return
+    const probe = new Image()
+    probe.onerror = onPosterError
+    probe.src = posterUrl
+    return () => { probe.onerror = null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generated, posterUrl, gen])
   const bad = !srcUrl || (!isRemote(src) && !posterUrl) || gen === 'failed'
   if (bad) {
     return (

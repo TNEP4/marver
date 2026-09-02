@@ -537,7 +537,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   let copiedAssets = 0
   const realAssets = existsSync(assetsDir) ? realpathSync(assetsDir) : null
   // generated posters first: a `<clip>.poster.png` ref whose file is missing is rendered
-  // from the clip now (Chrome), so the copy below finds it - or the build says exactly why not
+  // from the clip now (Chrome; ensurePoster realpath-contains both the clip it reads and the
+  // folder it writes), so the copy below finds it - or the build says exactly why not
   for (const r of refs) {
     if (!isLocalAssetRef(r) || !r.endsWith('.poster.png') || existsSync(join(assetsDir, r))) continue
     const { ensurePoster } = await import('./poster.ts')

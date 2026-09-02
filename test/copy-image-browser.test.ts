@@ -267,6 +267,13 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     await browser!.until(s, `!!document.querySelector('.mv-video video')`, 5_000)
     expect(await browser!.eval(s, `(() => { const a = document.querySelector('.mv-video'); const v = a.querySelector('video'); return { src: v.getAttribute('src'), strip: !!a.querySelector('.strip'), muted: v.muted } })()`))
       .toMatchObject({ src: expect.stringContaining('clip.mp4'), strip: true, muted: false })
+    // leaving interact mode (the bridge mirrors sh:interactive as data-sh-interactive) disarms:
+    // the player unmounts and the poster is back, so the canvas can serialize the frame lean again
+    await browser!.eval(s, `document.documentElement.setAttribute('data-sh-interactive', '')`)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(await browser!.eval(s, `!!document.querySelector('.mv-video').querySelector('video')`)).toBe(true)     // still armed while in the mode
+    await browser!.eval(s, `document.documentElement.removeAttribute('data-sh-interactive')`)
+    await browser!.until(s, `(() => { const a = document.querySelector('.mv-video'); return !a.querySelector('video') && !!a.querySelector('img') })()`, 5_000)
   })
 
   skippable('a local clip with NO poster gets one rendered on demand - the frame asks, the dev server draws it from the clip, the poster shows', async () => {

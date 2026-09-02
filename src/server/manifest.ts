@@ -72,9 +72,21 @@ export function extractMeta(src: string): FrameMeta {
 const CONTENT_IMPORT = new RegExp(`from\\s+['"]${PKG}/content['"]`)
 const WIDE_DOC = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/
 export const contentWidthOf = (src: string): number => (WIDE_DOC.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document)
+/** The source with comments, template literals and CODE-shaped strings blanked (a JSX
+ *  expression string `{'<Diagram>'}`, an attribute value), so a tag name quoted in an example
+ *  or a comment never counts as a rendered element. Prose is left alone: JSX text has
+ *  apostrophes ("it's"), and a blanket quote match would swallow real tags between two of them. */
+export const codeOnly = (src: string): string =>
+  src
+    .replace(/`(?:[^`\\]|\\[\s\S])*`/g, '``')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    .replace(/\{\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')\s*\}/g, '{""}')
+    .replace(/=\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')/g, '=""')
 export function contentScan(src: string): { intent: string; width: number } | null {
   if (!CONTENT_IMPORT.test(src)) return null
-  const count = (re: RegExp) => (src.match(re) ?? []).length
+  const code = codeOnly(src)
+  const count = (re: RegExp) => (code.match(re) ?? []).length
   const docs = count(/<Doc[\s>/]/g)
   const diagrams = count(/<Diagram[\s>/]/g)
   const imgs = count(/<Img[\s>/]/g)
