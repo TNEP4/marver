@@ -35,11 +35,17 @@ const posterNameFor = (src: string) => `${src}.poster.png`
 // the clip's own first moments (server/poster.ts) and the <img> reloads. A published canvas
 // has no such API (build already generated the file); a failed request just keeps the card.
 const requested = new Map<string, Promise<boolean>>()
+const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const requestPoster = (src: string): Promise<boolean> => {
   let p = requested.get(src)
   if (!p) {
-    const csrf = /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
-    p = fetch(`${ROUTE}/api/poster?src=${encodeURIComponent(src)}`, { headers: { 'x-mv-c': csrf } }).then((r) => r.ok, () => false)
+    p = (async () => {
+      // the owner gate wants the double-submit cookie echoed; a frame host opened cold has not
+      // made an API GET yet, so prime it with the cheapest one first
+      if (!csrf()) await fetch(`${ROUTE}/api/policy`).catch(() => null)
+      const r = await fetch(`${ROUTE}/api/poster?src=${encodeURIComponent(src)}`, { headers: { 'x-mv-c': csrf() } }).catch(() => null)
+      return !!r?.ok
+    })()
     requested.set(src, p)
   }
   return p
