@@ -28,6 +28,27 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   capture settled on; an explicit scale gets `@4x`, or `@4x-as-2x` when it had
   to step down, so nothing an agent reads moves and `@4x` never lies.
 
+### Changed
+
+- **Three standing rules for the agent, from dogfooding** (`AGENTS.md`,
+  `boards.md`, `iterate.md`, `jam.md` - refreshed by `marver init`):
+  - **One horizontal band by default.** Every curated board carries a `layout`
+    recipe with the scenes side by side; a second band only when the agent can
+    say why the eye should move down, with a gap that reads as "below". (Without
+    a recipe the shell stacks every scene as its own row.)
+  - **Look sideways.** A pin or a pasted pointer marks where the human noticed
+    a problem, not the only place it lives: the agent checks the board's live
+    sibling frames, fixes the same defect in the same pass and names the frames,
+    or asks in-thread whether to roll it out - never one frame fixed and its
+    siblings left wrong. History (`archive/`, versions) is never a sibling.
+  - **Version the scene before a round.** A round of feedback on a reviewed
+    scene starts with a snapshot, `design/scenes/<scene>-v<N>/`, pinned as its
+    own band on the `archive` board (oldest at the top), with `data-goto`,
+    `goto:` links and `meta.of` re-pointed so the version plays on its own; then
+    the live frames are edited in place and threads answered. One snapshot per
+    round, git commits per version on offer, staging only the round's paths.
+    Rollback is a copy back; the archive is the proof of work.
+
 ### Fixed
 
 - **Charts everywhere, not only on slides.** `Chart` now takes its ink and

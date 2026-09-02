@@ -29,16 +29,58 @@ viewport and lays it out:
   EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
   never the landing board, and never write its file.
 - Do not edit board files while the canvas is open unless asked; the shell owns
-  their layout fields.
+  their layout fields (`x`/`y`/`w`/`h`, node keys). What is always yours, canvas
+  open or not: creating a board, appending nodes, and writing the `layout` recipe
+  of a board you curate (the `archive` board above all).
 - Use boards for comparisons: version A vs B vs C of a flow, side by side. Variant
   groups (letter-prefixed siblings) stay contiguous through every relayout
   automatically.
 - Content frames (specs, diagrams, mood boards - instructions/shape.md) are ordinary
   atoms in every layout scope: a feature-story board mixes them freely with UI frames.
-- The `archive` board (instructions/iterate.md) is the one board of retired
-  explorations: curated over design/scenes/archive/, tidied with a recipe,
-  every frame relabeled with what it was and why it retired. Winners live on
-  the feature boards; the archive answers "what did we try?".
+- The `archive` board (instructions/iterate.md) is the one board of history:
+  retired explorations (design/scenes/archive/, every frame relabeled with what
+  it was and why it retired) and **scene versions** (`<scene>-v1`, `<scene>-v2`
+  … - the whole flow as it stood before each round of feedback), one band per
+  version, oldest at the top. Winners live on the feature boards; the archive
+  answers "what did we try?" and "what did it look like before?".
+
+## The default composition: one horizontal band
+
+A board reads like a page: left to right first, down only for a reason. The
+default for every curated board is **one `rows` lane holding the scenes side by
+side, in reading order, each scene's frames flowing left to right** - the whole
+story on one horizontal band the human pans along. Without a recipe the shell
+stacks every scene as its own row (a vertical pile of unrelated bands), so a board
+without a `layout` is a board you have not composed yet.
+
+```json
+"layout": { "rows": [["onboarding", "checkout", "account"]] }
+```
+
+A **second band** is a decision, not a reflex. Open one when you can say in a
+sentence why the eye should move down - a different chapter of the story (the
+specs that argue for the flow above), a different audience (admin vs customer),
+an archive or a version history, a scene so wide that beside the others it would
+not be read. Then make the break unmistakable: the gap between bands must read as
+"below", never as "next". Units are adaptive (proportional to the touching
+frames), so judge the RENDERED gap: between rows of phone or laptop frames that
+is `{ "space": 4 }`; after a band of tall spec frames `{ "space": 2 }`-`3` already
+reads as a chapter break. Inside a band, `{ "space": 2 }`-`{ "space": 3 }`
+separates clusters (a variant run, a scene that ends one thought and starts
+another); plain adjacency joins.
+
+Two boards are multi-band BY DESIGN and set their own gaps: the feature-story
+board (instructions/shape.md - thinking, structure, answer, three bands) and the
+`archive` board (instructions/iterate.md - one band per version). Everything else
+starts as one band.
+
+```json
+"layout": { "rows": [["onboarding", "checkout", "account"], { "space": 4 }, ["checkout-specs"]] }
+```
+
+`columns` are for the rarer case where things must share a left edge (versions of
+one flow stacked as a timeline, a parked archive under a hero) - never as a way to
+fit more on screen.
 
 ## Composing the canvas: `layout`
 

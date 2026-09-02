@@ -19,7 +19,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
 | Brand | before the first hi-fi work: extract or create the world | instructions/brand.md |
 | Build | hi-fi frames from real components | instructions/craft.md + components.md |
-| Iterate | changing a frame the human has seen, or retiring explorations | instructions/iterate.md |
+| Iterate | changing a frame the human has seen, a round of feedback on a scene, or retiring explorations | instructions/iterate.md |
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
 | Slides | a deck is asked for, or `slide: true` frames exist | instructions/slides.md + design/slides.md |
@@ -57,6 +57,13 @@ Two channels carry element-precise feedback - honor both:
 - **A pinned comment** on an element: run `npx marver comments list --open --json` - each
   thread carries the anchored element (tag, quoted text, css path, frame). Work that queue
   per instructions/iterate.md; the comment names the div, so read the anchor before the words.
+
+Either way, **a pointer names where the human noticed it, not the only place it is.** Before
+you answer, look sideways: every other LIVE frame on that board that shares the component,
+the pattern, the copy or the state (never `archive/` or a `<scene>-v<N>` version - history is
+not a sibling). Same defect there? Fix it in the same pass and say which frames you touched.
+A judgment call? Do the pinned one, then ask in the thread or the reply whether to roll it
+across the others - never silently fix one and leave its siblings wrong.
 
 ## Show the work (working state)
 
@@ -148,9 +155,17 @@ A board is a saved canvas: `design/boards/<name>.json` - you create and manage t
 by writing files; `all-scenes` is auto-managed, never write it. Compose a board
 deliberately with `"layout"`: rows/columns lanes of scenes plus `{ "space": n }`
 whitespace tokens, and the same grammar per scene for frames (columns align left
-edges; a variant-group name is one indivisible atom). BEFORE creating a board or
-publishing anything, read instructions/boards.md (the layout grammar, file format,
-publishing rules).
+edges; a variant-group name is one indivisible atom). **The default composition is
+ONE horizontal band**: scenes side by side, frames flowing left to right; a second
+band only when you can say why the eye should move down, and then with generous
+vertical space. Without a recipe the shell stacks every scene as its own row - so
+every curated board carries one. BEFORE creating a board or publishing anything,
+read instructions/boards.md (the layout grammar, file format, publishing rules).
+
+A round of feedback on a scene the human has already reviewed starts with a
+**version snapshot** (`design/scenes/<scene>-v<N>/` on the `archive` board) BEFORE
+the first edit - the human iterates fast knowing every version is one board away.
+instructions/iterate.md has the mechanics.
 
 ## Upstream feedback (when marver itself misbehaves)
 
