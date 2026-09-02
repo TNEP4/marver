@@ -9,7 +9,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **Copy frame as image.** The floating toolbar gains an images-square button
   (right of Copy path): one click puts the selected frame on the clipboard as
   a **2x PNG**, rendered by the dev server's headless Chrome - the same picture
-  `marver shot` gives an agent. `i` is the shortcut; `⇧I` (or shift-click)
+  `marver shot` gives an agent. `i` is the shortcut; `⇧i` (or shift-click)
   renders at **4x** (a slide is 5120×2880). The icon breathes while the render
   runs and flashes a check on success, like Copy path. Sized to the node: a
   frame resized to Laptop copies as Laptop; content frames capture in full;
@@ -57,21 +57,26 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   screen or document, 18px on a slide), paints series labels in that ink with
   no halo, follows the layout on resize (a chart no longer pins its flex/grid
   column at mount width), and keys on the option's content so a parent
-  re-render never re-initialises it. Before this a chart in a dark screen or
-  dark spec drew dark-on-dark axis text at slide scale.
+  re-render never re-initialises it (a viewer's dataZoom or legend selection
+  survives, and a formatter edit reaches the live chart). Before this a chart
+  in a dark screen or dark spec drew dark-on-dark axis text at slide scale.
 - **Video plays everywhere, not only on slides.** The player used to mount
   only under the slides-mode contract, so a `Video` in a screen, a spec or a
   published prototype was a poster forever. Now the poster is the play button
   wherever the frame is live (interact, play, focus, published); slides keep
-  the auto-mounted player. New: `ratio="9 / 16"` for vertical clips, and
-  `autoplay` for a muted ambient loop (an explicit choice - that frame stays
-  live on the canvas). `shape.md` and `craft.md` teach it.
+  the auto-mounted player, and leaving interact mode on the canvas disarms a
+  playing clip so the frame goes still again. New: `ratio="9 / 16"` for
+  vertical clips, and `autoplay` for a muted ambient loop (an explicit choice -
+  that frame stays live on the canvas). The player's glyphs are Phosphor
+  (play, pause, speaker, corners). `shape.md` and `craft.md` teach it.
 - **Posters render themselves.** A local clip without `poster` no longer fails
   the build: marver renders `<clip>.poster.png` beside it from the clip's own
   first moments (at 0.5 s, past the usual black opening) in the same headless
   Chrome the shot renderer uses - the dev server on first sight (the frame
   asks when its conventional poster is missing), `marver build` before assets
-  are copied. An authored poster always wins; without Chrome the build says
+  are copied, and `shot` before a frame's first capture. Posters render on
+  their own capture lane, so a frame's poster never waits behind the shot that
+  needs it. An authored poster always wins; without Chrome the build says
   exactly which file to add.
 - **A screen with a chart is still a screen.** Importing anything from
   `@marver-design/marver/content` used to turn the frame into a content
