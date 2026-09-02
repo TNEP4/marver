@@ -36,9 +36,9 @@ Looking good at every size costs the agent nothing extra: the fit is pure
 CSS on the root (a resized canvas node, a phone, a projector all get the
 same composition, scaled), so the doctrine forbids `vw`/`vh` and media
 queries inside a slide and asks for flex/grid in the stage's own
-proportions. A dev-only overflow marker outlines any slide whose content
-escapes the stage or collides inside it - the agent sees the defect on the
-canvas, and the rule is always "cut or split, never shrink the type".
+proportions. A dev-only overflow marker outlines a slide whose content escapes the
+stage, or whose flex/grid child outgrows its parent - the agent sees the
+defect on the canvas, and the rule is always "cut or split, never shrink the type".
 
 The craft lives in prose, not code. `marver init` ships
 `design/instructions/slides.md` - the doctrine: assertion-first argument,
@@ -59,9 +59,10 @@ marver never overwrites.
 
 ## Playing and publishing a deck
 
-Press `P` on a board whose publish row says slides and you get slides mode:
-the 16:9 stage with the standard prototype toolbars - arrows / Space / click
-to advance, `D` for theme, devices including fill window.
+Press `p` on a board whose publish row says slides and you get slides mode:
+the 16:9 stage with the standard prototype toolbars (with `chrome: full`,
+the default) - arrows / Space / click to advance, `d` cycles the theme,
+devices including a 1280×720 Slide preset and fill window.
 Publish it with:
 
 ```json
@@ -72,10 +73,13 @@ Publish it with:
 - `transition`: `fade` (default) or `none`.
 - `chrome`: `full` (default - the standard prototype chrome: the top-right
   toolbar with comment, laser, theme, and devices including fill, plus the
-  bottom-left walker; a locked deck-only share also carries the brand pill), `minimal`
-  (a slim progress strip + comments only), or `none` (bare
+  bottom-left walker; a locked deck-only share also carries the brand pill),
+  `minimal` (a slim progress strip, comments, the canvas door when the
+  board is not locked, and a pending-update control), or `none` (bare
   stage).
-- Add `"lock": true` to share ONLY the deck (no canvas shell in the bundle).
+- Add `"lock": true` to freeze visitors in the deck - no way out to the
+  canvas. When every published board is locked to present, focus, or
+  slides, the canvas shell is left out of the bundle entirely.
 
 Viewers land straight in the deck; the URL survives refresh and back.
 
@@ -83,7 +87,9 @@ Viewers land straight in the deck; the URL survives refresh and back.
 
 A resting slide is STILL - that is a contract, not a hope: charts render
 final-state SVG, videos are posters (no `<video>` element exists), and the
-`Slide` root suspends every animation at rest. Motion happens in slides
+`Slide` root suspends every CSS animation and transition under it at rest.
+(Your own `<canvas>`, `<video>`, or JS-driven motion is outside the contract
+and stays live, as in any frame.) Motion happens in slides
 mode, one-shot:
 
 - **Morphs**: give the same `view-transition-name` to an element on two
@@ -94,7 +100,8 @@ mode, one-shot:
   `data-animate-delay="0-3"`, run once after the transition settles. Never
   on an element that carries a morph name.
 
-`prefers-reduced-motion` flattens everything.
+`prefers-reduced-motion` flattens marver's own motion - the morphs between
+slides and the entrance presets.
 
 ## Charts and video
 

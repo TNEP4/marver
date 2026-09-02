@@ -80,9 +80,11 @@ though comment authorization can still deny them. Blocking reliably denies an
 *identified, non-owner* person and their access requests; it is a complete entry
 denial only while general access is private.
 
-**`explain` and `who` are convenience views, not the enforcing trace.** They run
-the real resolver, but the *CLI* runs it locally over the roster it fetched, and
-it takes three shortcuts the enforcing doors do not:
+**`explain` asks the canvas; `who` is a local convenience view.** Since 0.13.0
+`marver share explain` calls the canvas's own `share/explain` route - the owner
+role, domain principals, and the winning step included - so it is the enforcing
+trace. `who` still runs the resolver locally over the roster it fetched, and
+takes three shortcuts the enforcing doors do not:
 
 - it does not pass the owner role, so a fresh owner with no grant of their own is
   explained as an ordinary ungranted person (the server's own `explain` route
@@ -93,9 +95,7 @@ it takes three shortcuts the enforcing doors do not:
   winning step, and the CLI renderer drops that mark, so read the trace as the
   inputs, not a highlighted verdict.
 
-So `explain <exact-email>` for an ordinary granted person is reliable and matches
-what the gate does; for the **owner** or a **`@domain`**, read it as a sketch and
-trust the dialog. `who` lists *granted principals* down the side (not the owner,
+So `explain` is reliable for anyone; `who` lists *granted principals* down the side (not the owner,
 who holds no grant row), the blocklist, and - when general access is open - an
 anonymous row; it is the grant matrix, not a census of everyone who could get in.
 
@@ -144,8 +144,9 @@ the read-privacy work also called "v2" further down.)
   accepted on a board whose `type` or `open` is `slides` and refused
   elsewhere. A slides board plays only its `slide: true` frames: non-slide
   frames on it warn at build, a board with none errors (0.13.0 let `slides`
-  alias `present`; 0.14.0 plays only slides - set `open: "present"` to keep
-  the old behaviour, or add `slide: true`).
+  alias `present`; 0.14.0 plays only slides - to keep the old behaviour set
+  a non-slides `type` such as `mix` AND `open: "present"`, or add
+  `slide: true` to the frames).
 - **`reveal.source`** defaults **off** on a published canvas: the bundle would
   otherwise carry every frame's repo path, which is a disclosure the moment a
   canvas is shared beyond its own repo. `reveal.structure` defaults on.

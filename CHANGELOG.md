@@ -24,7 +24,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `-tempo` timing both entrances and morphs), fixed type roles
   (`sl-display` 160, `sl-stat` 88, `sl-assertion` 56, `sl-support` 30,
   `sl-body` 24, `sl-caption` 18), and a development-only overflow marker
-  that catches content escaping the stage OR colliding inside it; `Chart`
+  that catches content escaping the stage, or a flex/grid child outgrowing
+  its parent; `Chart`
   is Apache ECharts on a fixed supported surface (series bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap, sunburst, sankey, boxplot; SVG, lazy
   chunk, house-themed, animation stripped at rest); `Video` is
   poster-first with a glass control strip in play mode. The motion
@@ -35,7 +36,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **Motion as the diff.** `view-transition-name` morphs between adjacent
   slides are the animation system; build steps are sibling frames; three
   one-shot entrance presets (`data-animate`) run after each transition
-  settles. Reduced motion flattens everything.
+  settles. Reduced motion flattens both. Slides mode offers a 1280×720
+  Slide device preset beside your devices and fill; `marver shot` renders a
+  slide at 1280×720 over any authored viewport; `/content` exports
+  `SLIDE_W` / `SLIDE_H`; `--marver-slide-pad-x/-y` set the stage margins.
 - **The slides doctrine.** `marver init` ships
   `design/instructions/slides.md` - assertion-first argument, the type
   scale, 19 layout recipes with budgets and morph anchors, the choreography
@@ -59,13 +63,14 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   The keyboard-hint pill is gone (two conflicting rules stretched it into a
   full-stage circle; the walker and toolbar already carry stepping and
   comment). Name your canvas - `share: { name }` - before containerising it:
-  the fallback is the root directory, which in a container is `app`.
+  the shell's fallback is the root directory, which in a container is `app`.
 - **A `slides` board plays only its `slide: true` frames.** 0.13.0 accepted
   `type: "slides"` / `open: "slides"` and played them as `present`. From
   0.14.0 the deck is the board's slide frames in reading order; non-slide
   frames on such a board warn at build, and a board with none fails the
-  build with the fix in the message (`open: "present"` to keep the old
-  behaviour, or `slide: true` on the frames). In the app an empty deck
+  build with the fix in the message (a non-slides `type` plus
+  `open: "present"` to keep the old behaviour, or `slide: true` on the
+  frames). In the app an empty deck
   falls back to the prototype with a toast. `transition` / `chrome` are
   refused on non-slide boards. `marver init` appends `slides-inspiration/`
   to an existing `design/.gitignore`. `docs/` now ships in the package.

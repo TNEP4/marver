@@ -48,21 +48,21 @@ Frames appear on the canvas the moment the files land. That's the loop.
 
 ## Slides
 
-A deck is a scene of `slide: true` frames. On the canvas they are 1280×720 frames like any other - comment on them, laser them, fork variants, drag them to reorder the deck (the board's reading order is the play order). Press `p` on a slides board and you get slides mode: the 16:9 stage, arrows / Space / click to advance, `d` for dark, devices including fill window, morphs between slides where the agent named the same element twice.
+A deck is a scene of `slide: true` frames. On the canvas they are 1280×720 frames like any other - comment on them, laser them, fork variants, drag them to reorder the deck (the board's reading order is the play order). Press `p` on a slides board and you get slides mode: the 16:9 stage, arrows / Space / click to advance, `d` cycles the theme, devices including fill window, morphs between slides where the agent named the same element twice.
 
 What makes it light on the agent side, and good on every screen:
 
 - **One primitive, no component library.** `Slide` owns the stage, the margins, six fixed type roles, your theme's tokens, and the motion contract. Everything inside is your project's own markup and components - a slide is built the way a screen is built.
-- **The fit is pure CSS.** The agent authors at exactly 1280×720; the root scales and centers itself to a phone, a laptop, a projector, or a resized canvas node. No `vw`, no media queries, no breakpoints - the composition you approved is the composition everyone sees, and a dev-only overflow marker outlines any slide that escapes the stage or collides inside it.
-- **Still at rest.** Charts are final-state SVG in a lazy chunk, videos are posters, every animation is suspended until slides mode plays - so a 40-slide deck pans like 40 statics on the canvas.
+- **The fit is pure CSS.** The agent authors at exactly 1280×720; the root scales and centers itself to a phone, a laptop, a projector, or a resized canvas node. No `vw`, no media queries, no breakpoints - the composition you approved is the composition everyone sees, and a dev-only overflow marker outlines a slide whose content escapes the stage, or whose flex/grid child outgrows its parent.
+- **Still at rest.** Charts are final-state SVG in a lazy chunk, videos are posters, and every CSS animation under `Slide` is suspended until slides mode plays - so a 40-slide deck of the shipped primitives pans like 40 statics on the canvas. (Your own `<canvas>`, `<video>`, or JS-driven motion stays live, as in any frame.)
 - **A doctrine, not a template.** `init` ships `design/instructions/slides.md`: assertion-first argument, the space (three bands, the 85% rule, one spacing scale), seven silhouettes chosen before any recipe so a deck never reads as one repeated shape, 19 recipes with budgets, choreography rules, and a review gate - plus two depth references and your own project-owned `design/slides.md` with a fill-in **deck look** the agent drafts from your brand.
 
-Publish a deck with `{ "pitch": { "max": "read", "type": "slides", "open": "slides", "lock": true } }` in `design/publish.json` and the link opens straight into the deck, read-only, with no canvas behind it. The [slides guide](docs/slides.md) has the rest - morphs, build steps, `Chart` and `Video`, the theme tokens.
+Publish a deck with `{ "boards": { "pitch": { "max": "read", "type": "slides", "open": "slides", "lock": true } } }` in `design/publish.json` and the link opens straight into the deck, read-only, with no canvas behind it. The [slides guide](docs/slides.md) has the rest - morphs, build steps, `Chart` and `Video`, the theme tokens.
 
 ## Collaboration
 
 - **Comments.** Google-Docs-style feedback pinned to actual elements. Press `c`, click a div inside a frame, write - the thread lives on that element and survives edits via a layered anchor (source semantics → structure → fuzzy text). Type `@` to mention someone who can already see the canvas; they get a mail with the comment and a link that lands on the thread, and the mention pulses its pin in their canvas with an in-app notification. A reply mails the thread's other participants, throttled per person and thread; anyone can mute a canvas's mail. `marver dev` syncs the same threads into `design/comments/*.jsonl`, where your agent works the queue: `npx marver comments list --open --json` → fork a variant → `resolve --addressed-in`. Live via SSE; one deploy, no extra services.
-- **Laser mode.** Press `l`: every element in every frame gets depth-hued outlines plus a hover label - the fastest way to see structure. Click any element to copy its full address (frame file + CSS path) for the agent.
+- **Laser mode.** Press `l`: every element in every frame gets depth-hued outlines plus a hover label - the fastest way to see structure. Click any element to copy its full address (frame file + CSS path) for the agent. (On a published canvas, laser needs `"reveal": { "source": true }` in `publish.json` - source paths go opaque by default.)
 - **Publishing.** `npx marver build` exports a static canvas (default-closed: `design/publish.json` names what ships, each board's ceiling - `read` or `comment` - and, since 0.12, its **type** and **landing view**: `{ "max", "type": "doc" | "slides" | "design" | "sketch" | "refs" | "mix", "open": "canvas" | "board" | "present" | "focus" | "slides", "lock": true }`); `npx marver serve` hosts it. One deploy on Railway, Docker, or any static host - the [publishing guide](docs/publish.md) has the one-pagers.
 - **Sharing, person by person.** On a canvas with a persistent volume, `marver share add sam@acme.com --role comment` (or the browser's share dialog) grants one person access, `@acme.com` grants a domain, `general private|password|public` sets the floor, and a refused visitor can ask to get in - approve from the terminal. One resolver answers "what can this person do here", and `marver share explain <email>` shows its reasoning. The [sharing guide](docs/sharing.md) has the whole surface.
 
@@ -112,13 +112,13 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 
 **Modes** - `c` comment mode · `l` laser mode · `⇧C` hide/show comment pins · `⇧L` laser comment (spotlight a thread's element) · `p` play (present, or slides on a slides board) · `h` hide all chrome.
 
-**In play** - `←` `→` or Space step · click advances a deck · `[` `]` cycle variants · `d` theme · digits pick a device, the digit after your last one fills the window · `esc` exits.
+**In play** - `←` `→` step (Space and click advance a deck) · `[` `]` cycle variants · `d` cycles the theme · digits pick a device, the digit after your last one fills the window · `esc` exits, unless the board is locked to that view.
 
 ## Notes
 
 - **Next.js**: supported with one caveat - frames render in Vite, outside Next. `next/font` CSS variables are undefined inside frames (give font tokens a fallback chain), `next/image`/`next/link` should be plain `img`/`data-goto` in frames, and Server Components cannot run there. `init` writes the specifics into `design/AGENTS.md` when it detects Next.
 - **Upgrade**: `npm i -D @marver-design/marver@latest && npx marver init`. The canvas tells you when a new version is out (one anonymous registry check per day, cached in `design/.local/`; `MARVER_NO_UPDATE_CHECK=1` disables), and warns when your `design/instructions/` predate the installed package. Re-running init refreshes the managed files (AGENTS.md, `design/instructions/`) - your edits to them are detected and preserved; when both you and a release changed a file, the fresh version is staged at `design/.local/latest/` for you (or your agent) to merge. Everything else in `design/` is yours and never touched.
-- **Name your canvas**: `share: { name: "Your App" }` in `design/config.ts` titles the gate and the brand pill and tags every powered-by link; unset, it falls back to the directory name - `app` inside most containers.
+- **Name your canvas**: `share: { name: "Your App" }` in `design/config.ts` titles the gate, labels the brand pill, and tags every powered-by link. Unset, the gate falls back to your `package.json` name and the canvas shell to the directory name - `app` inside most containers.
 - **Uninstall**: delete `design/`, remove the dependency. (If `init` patched your tsconfig `exclude`, revert that one line.)
 
 ## Status

@@ -27,7 +27,7 @@ MARVER_ID_ISSUER=https://id.marver.design \
 ```
 
 Deep links work verbatim: any `#/b/...` or `#/p/...` URL copied from your dev canvas
-opens the same view on the published site.
+opens the same view on the published site, as long as its board and frame shipped.
 
 **What ships**: the boards you list, the frames they reference, and the host `public/`
 directory in full (the `--boards` filter covers frames, not public assets). A flow you
@@ -236,9 +236,10 @@ mention from the page metadata, the sign-in screens included).
 
 `share: { name: "Your App" }` in `design/config.ts`. That name titles the gate,
 labels the brand pill, and becomes `utm_campaign` on every powered-by link the
-canvas emits, so site analytics can tell which canvas sent a visitor. Unset, it
-falls back to the root directory name - which inside a container is usually
-`app`, so every unnamed containerised canvas reports as one campaign.
+canvas emits, so site analytics can tell which canvas sent a visitor. Unset, the gate
+falls back to your `package.json` name and the canvas shell to the root
+directory name - which inside a container is usually `app`, so every unnamed
+containerised canvas reports as one campaign.
 
 ## Railway (the one-pager)
 
