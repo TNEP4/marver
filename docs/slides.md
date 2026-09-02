@@ -22,12 +22,39 @@ sees. One scene = one deck; numbered files
 (`01-cover.tsx`) are the authoring order; **the board's reading order is the
 played order** - drag slides around the canvas to reorder the deck.
 
-The agent's full craft doctrine ships at `design/instructions/slides.md`
-after `marver init`, with two depth references beside it -
-`instructions/reference/deck-story.md` (finding the answer, the evidence
-check, the words) and `instructions/reference/deck-layouts.md` (the layout
-atlas, the grid, content budgets, charts). Your own deck look, layouts and
-house rules live in `design/slides.md`, which the agent must honor and
+## Why it stays light for the agent
+
+There is no slide component library to learn. `Slide` is the ONE primitive:
+it owns the 1280×720 stage, the asymmetric margins, six fixed type roles
+(`sl-display` 160 · `sl-stat` 88 · `sl-assertion` 56 · `sl-support` 30 ·
+`sl-body` 24 · `sl-caption` 18), your theme's tokens, and the motion
+contract. Everything inside it is your project's own markup, classes, and
+components - the same ones the app ships - so a slide is built the way a
+screen is built, and an approved slide can be promoted like one.
+
+Looking good at every size costs the agent nothing extra: the fit is pure
+CSS on the root (a resized canvas node, a phone, a projector all get the
+same composition, scaled), so the doctrine forbids `vw`/`vh` and media
+queries inside a slide and asks for flex/grid in the stage's own
+proportions. A dev-only overflow marker outlines any slide whose content
+escapes the stage or collides inside it - the agent sees the defect on the
+canvas, and the rule is always "cut or split, never shrink the type".
+
+The craft lives in prose, not code. `marver init` ships
+`design/instructions/slides.md` - the doctrine: assertion-first argument,
+the type roles, **the space IS the design** (three bands, the 85% rule, one
+px spacing scale), **seven silhouettes chosen before any recipe** (statement
+/ hero / split / grid / stream / field / bookend) with a storyboard step
+and pacing rules so a deck never reads as one repeated shape, 19 core
+recipes with budgets and morph anchors, the choreography rules, and a
+review gate that squints the contact sheet. Two depth references sit
+beside it: `instructions/reference/deck-story.md` (intake, answer-first
+structure, the evidence check, audience calibration, the words) and
+`instructions/reference/deck-layouts.md` (the full layout atlas by job, the
+grid, content budgets, rebuilding an existing deck, chart craft). Your own
+**deck look** (tokens, type, the mark, colour meaning, numbers, voice - a
+fill-in template the agent drafts on the first deck), layouts, and house
+rules live in `design/slides.md`, which overrides the doctrine and which
 marver never overwrites.
 
 ## Playing and publishing a deck

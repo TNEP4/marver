@@ -9,6 +9,12 @@ across deploys (`MARVER_OWNER_EMAIL` bootstraps the first owner account).
 
 Publishing is default-closed: `design/publish.json` names the boards that ship and
 their rights (`"read"` or `"comment"`) - no policy and no explicit flag means no build.
+A board row can also be an object that says how the board presents - its `type`
+(`doc`, `slides`, `design`, `sketch`, `refs`, `mix`), the view visitors land in
+(`open`: `canvas`, `board`, `present`, `focus`, `slides`), `lock` to freeze them
+there, and for decks `transition` / `chrome` - the fields are spelled out in the
+[sharing guide](sharing.md#publishjson-v2---the-ceiling-and-the-boards-shape) and,
+for decks, the [slides guide](slides.md).
 
 ```bash
 npx marver build                      # boards named in design/publish.json → design/.dist
