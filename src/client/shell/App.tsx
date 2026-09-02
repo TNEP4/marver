@@ -415,7 +415,7 @@ function SelectionBar() {
       {/* copy as image: dev only (the renderer is the dev server's headless Chrome) and one
           frame at a time (a clipboard holds one image). I = 2x, Shift+I = 4x. */}
       {!PUBLISHED && (
-        <Tip label={multi ? 'Select one frame to copy as image' : <><b>Copy as image</b><span>2x PNG · ⇧I for 4x</span><span className="k">I</span></>}>
+        <Tip label={multi ? 'Select one frame to copy as image' : <><b>Copy as image</b><span className="k">⇧i</span></>}>
           <button className={`icon${imageBusy ? ' busy' : ''}`} disabled={multi || imageBusy} aria-label="Copy as image"
             data-state={copiedImage ? 'copied' : imageBusy ? 'busy' : 'idle'}
             onClick={(e) => useStore.getState().copyFrameImage(e.shiftKey ? 4 : 2)}>
