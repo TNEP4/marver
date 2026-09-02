@@ -19,6 +19,9 @@ import { FONT_STACK } from './palette.ts'
 
 export const SLIDE_W = 1280
 export const SLIDE_H = 720
+/** Stage margins: wide at the sides, tight top and bottom (content 1104x632). */
+const PAD_X = 88
+const PAD_Y = 44
 
 /** Img (and anything else that cares) asks: am I inside a slide? */
 export const SlideCtx = createContext(false)
@@ -56,12 +59,15 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   --sl-muted: var(--marver-slide-muted, rgba(24, 24, 27, .55));
   --sl-tempo: var(--marver-slide-tempo, 350ms);
   --sl-font: var(--marver-slide-font, ${FONT_STACK});
-  /* 7% OF THE STAGE, in px. A bare percentage would resolve against this
-     absolutely positioned box's containing block - the viewport - so the
-     margin would grow and shrink with the window and the authored 1280x720
-     composition would not survive the fit. Override in px or a calc against
-     the stage, never a bare %. */
-  --sl-margin: calc(${SLIDE_W}px * 0.07);
+  /* THE STAGE MARGINS, in px and ASYMMETRIC - the shape every well-made deck
+     uses. Generous at the sides, tighter top and bottom, so the title sits
+     high, the footnote sits low, and the middle band is the tallest thing on
+     the slide. Percentages are wrong here twice over: they would resolve
+     against this absolutely positioned box's containing block (the viewport,
+     not the stage), and one value for all four sides squeezes the middle. */
+  --sl-pad-x: ${PAD_X}px;
+  --sl-pad-y: ${PAD_Y}px;
+  --sl-margin: var(--sl-pad-x);          /* the side margin, for author math */
   /* THE FIT: authored at exactly ${SLIDE_W}x${SLIDE_H}, then scaled and
      centered to the largest box the viewport gives it - fill window, any
      device, a canvas node resized to a phone, any published viewer's screen.
@@ -78,8 +84,8 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   transform: translate(-50%, -50%) scale(var(--sl-fit, 1)); transform-origin: center center;
   background: var(--sl-ground); color: var(--sl-ink);
   font-family: var(--sl-font);
-  padding: var(--sl-margin); box-sizing: border-box;
-  display: flex; flex-direction: column; justify-content: center; gap: 20px;
+  padding: var(--sl-pad-y) var(--sl-pad-x); box-sizing: border-box;
+  display: flex; flex-direction: column; justify-content: center; gap: 28px;
 }
 .dark .sl-root, [data-theme="dark"] .sl-root {
   --sl-ink: var(--marver-slide-ink-dark, #f5f5f7);
@@ -173,15 +179,28 @@ export function Slide({ children, style }: { children?: ReactNode; style?: CSSPr
       const right = el.offsetWidth - pad(cs.paddingRight)
       let over = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1
       let culprit: Element | null = null
-      // a direct child whose own content outgrows it: the flex-compression
-      // case, where a body at flex:1 keeps its box and paints over the header
-      for (let i = 0; !over && i < el.children.length; i++) {
-        const c = el.children[i]
-        if (c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1) { over = true; culprit = c }
+      // The collision case: a flex/grid child that outgrows its parent's
+      // content box. Inside a flex column a body at flex:1 keeps its own box
+      // while ITS children spill over the neighbouring bands - all still
+      // inside the stage, so the escape test below never sees it. Out-of-flow
+      // children and parents that clip on purpose are decisions, not defects.
+      const all = el.querySelectorAll('*')
+      for (let i = 0; !over && i < all.length && i < 600; i++) {
+        const c = all[i]
+        const par = c.parentElement
+        if (!par || !par.clientHeight) continue
+        const ps = getComputedStyle(par)
+        if (!/flex|grid/.test(ps.display)) continue
+        if (ps.overflowY !== 'visible' || ps.overflowX !== 'visible') continue
+        if (/absolute|fixed/.test(getComputedStyle(c).position)) continue
+        const pr = par.getBoundingClientRect(), cr = c.getBoundingClientRect()
+        if (!cr.height && !cr.width) continue
+        const lo = (pr.top - cr.top) / k + pad(ps.paddingTop)
+        const hi = (cr.bottom - pr.bottom) / k + pad(ps.paddingBottom)
+        if (lo > 2 || hi > 2) { over = true; culprit = c }
       }
       if (!over) {
         // bounded walk: the first element whose box escapes the content box wins
-        const all = el.querySelectorAll('*')
         for (let i = 0; i < all.length && i < 600; i++) {
           const n = all[i]
           const b = n.getBoundingClientRect()

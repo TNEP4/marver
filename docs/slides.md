@@ -86,7 +86,9 @@ The `Slide` root reads `--marver-slide-ground / -ink / -muted` (each with a
 `-dark` variant), `--marver-slide-accent` (one value, both themes),
 `--marver-slide-font`, and `--marver-slide-tempo` (one duration that times
 both the entrances and the morphs between slides) from your theme and falls
-back to the house palette. Type roles, fixed: `sl-display` (160px, the one
+back to the house palette. The stage is 1280×720 with asymmetric margins (88px sides, 44px top and
+bottom; `--sl-pad-x` / `--sl-pad-y`), leaving a 1104×632 content box.
+Type roles, fixed: `sl-display` (160px, the one
 oversize - a hero number, a section numeral), `sl-stat` (88px, a row of
 figures), `sl-assertion` (56px),
 `sl-support` (30px), `sl-body` (24px), `sl-caption` (18px).

@@ -122,12 +122,46 @@ The values are fixed (one coordinate system with the stage):
 | `sl-caption` | 18px | sources, footnotes, kickers |
 
 Nothing smaller than 18px, ever. One family (`--marver-slide-font`, the
-theme's); the roles carry their weights - add none of your own. The root
-pads 89.6px (7% of the stage) on every side, so the content box is
-1101×541px at every viewport - override `--sl-margin` in px or a calc
-against the stage, never a bare percentage; compose inside it on a 12-column rhythm, one focal point per
-slide, generous space as the layout. Consecutive slides keep shared
-elements in the SAME position unless the movement is the message.
+theme's); the roles carry their weights - add none of your own. One focal point per slide. Consecutive slides keep
+shared elements in the SAME position unless the movement is the message.
+
+## The space IS the design
+
+This is what separates a deck that looks made from one that looks typed.
+The stage is 1280×720 with ASYMMETRIC margins - 88px at the sides, 44px top
+and bottom - so the title sits high, the footnote sits low, and the middle
+is the tallest band on the slide. Content box: **1104×632px**, at every
+viewport. (Override `--sl-pad-x` / `--sl-pad-y` in px, never a percentage:
+a percentage resolves against the viewport, not the stage.)
+
+The three bands, top to bottom, in the same place on every content slide:
+
+| Band | Height | Holds |
+|---|---|---|
+| Title | ~113px | kicker (18px) over the assertion (56px), a hairline under |
+| Body | **~438px** | the recipe - and it is the star, so give it the room |
+| Foot | ~25px | the source line, or the takeaway bar above it |
+
+**The 85% rule.** Body content fills at most ~85% of the body band (≈372 of
+438px). The remaining sliver is not waste - it is the void that makes a
+slide read as a slide. If your content fills the band, you have a document:
+cut a sentence, drop a card, or split the slide. Never close the gap by
+shrinking type.
+
+**One spacing scale**, in px, every value from it and nothing between:
+
+| Step | Use |
+|---|---|
+| 8 | label to its value, icon to its text |
+| 16 | rows inside one list, line to hairline |
+| 24 | siblings inside a card or a group |
+| 32 | padding inside a card; between columns |
+| 40 | between distinct groups in the body |
+| 48 | title block to body, body to the foot |
+
+Rhythm comes from CONTRAST between those steps - tight inside a group, wide
+between groups. One value repeated everywhere is the flattest thing you can
+do to a slide. Gaps go on the parent (`gap`), never as per-child margins.
 
 ## The evidence
 

@@ -11,23 +11,24 @@ Words used below: **kicker** = the small-caps `sl-caption` label above a title;
 low-contrast number behind or beside a card that carries order; **display** =
 `sl-display`, the one oversize role; **stat** = `sl-stat`, the row-of-figures size.
 
-## The grid (the padded content box is 1101×541px)
+## The grid (the padded content box is 1104×632px)
 
-The root pads 89.6px (7% of the stage) on every side, at every viewport.
-Inside that box:
+Stage margins are asymmetric: 88px at the sides, 44px top and bottom, in px
+at every viewport. Inside that box, three bands (the doctrine's 85% rule and
+spacing scale govern what goes in them):
 
-- **Title zone** - the top ~86px: kicker (18px, one line) over the assertion
-  (56px, one line). Same position on every content slide - the eye learns it
-  once. The root's 20px gap follows, so the body starts ~106px down.
-- **Body zone** - full width, ~435px tall with no footer, ~390px when the
-  one-line source footer is present (its 25px + the gap).
-- **Takeaway zone** - the last 56px of the body, taken ONLY when a slide carries
-  a takeaway bar; the body above then has ~330px.
+- **Title band** - the top ~113px: kicker (18px, one line) over the assertion
+  (56px, one line), a hairline under. Same position on every content slide -
+  the eye learns it once, and a travelling title morph lands where it left.
+- **Body band** - full width, ~438px, starting 48px below the title block.
+  Content fills at most ~372px of it. This band is the slide.
+- **Foot** - the source line (25px), 48px under the body. A takeaway bar sits
+  between them: 56px tall, 40px clear above it.
 - **Split** - text left at 43% of the width, visual right at 48%, a 9% gutter.
   Argument reads first, proof confirms it. A `sl-assertion` in a 43% column
   holds ~20 characters a line - write to it.
-- **Columns** - three equal at a 2% gap (~350px each); five narrow (~205px) for
-  spectrums; a 2×2 when the four cells are peers.
+- **Columns** - three equal at a 32px gap (~347px each); five narrow (~192px)
+  for spectrums; a 2×2 when the four cells are peers. Card padding 32px.
 - **Fill the canvas.** A half-width block needs a companion on the other half.
   An empty half is a defect unless the whitespace IS the point (a single anchor
   number, one quote) - then say so in the frame's comment.
@@ -36,16 +37,21 @@ The canonical skeleton, in the project's own Tailwind:
 
 ```tsx
 <Slide>
-  <header className="shrink-0">
-    <p className="sl-caption uppercase tracking-[.14em]">Retention</p>
-    <h1 className="sl-assertion">Churn halved after onboarding v2</h1>
-  </header>
-  <div className="flex-1 min-h-0 grid grid-cols-[43fr_9fr_48fr] items-center">
-    <div className="sl-body space-y-4">…argument…</div>
-    <div />
-    <Chart option={…} />
+  {/* one child at flex:1 claims the box, so the bands land in the same
+      place on every slide; gap 48 is the title-to-body / body-to-foot step */}
+  <div className="flex-1 min-h-0 flex flex-col gap-12">
+    <header className="shrink-0">
+      <p className="sl-caption uppercase tracking-[.14em]">Retention</p>
+      <h1 className="sl-assertion mt-2">Churn halved after onboarding v2</h1>
+      <hr className="mt-5 border-0 h-px bg-black/10" />
+    </header>
+    <div className="flex-1 min-h-0 grid grid-cols-[43fr_9fr_48fr] items-center gap-8">
+      <div className="sl-body space-y-6">…argument…</div>
+      <div />
+      <Chart option={…} />
+    </div>
+    <footer className="sl-caption shrink-0">Source: product analytics, Aug 2026</footer>
   </div>
-  <footer className="sl-caption">Source: product analytics, Aug 2026</footer>
 </Slide>
 ```
 
@@ -53,7 +59,8 @@ The canonical skeleton, in the project's own Tailwind:
 
 A recipe without a named anchor morphs on the assertion (the doctrine's fallback).
 Budgets are heuristics: the rendered 1280×720 frame and the Slide's overflow
-outline are the authority - when they disagree with a number here, the frame wins.
+outline are the authority - when they disagree with a number here, the frame
+wins. And a slide that merely FITS is not done: the 85% rule is the bar.
 
 **Parallel points**
 - **cards** - 2-6 equal cards (kicker · hero · body), ghost numerals for order,
