@@ -96,6 +96,14 @@ thing - changes everything. This section is binding, not aspiration:
 - **Imagery is real imagery.** When the design calls for photos or screenshots,
   fetch and commit them locally with names that say what they are - never
   hotlink (published canvases make zero external requests, and remote URLs rot).
+- **Charts are real charts.** A dashboard, a report, an analytics screen gets
+  `Chart` from `@marver-design/marver/content` - Apache ECharts behind a house
+  theme that inherits the SCREEN's ink, typeface and accent (light and dark),
+  renders SVG, sits still at rest and follows the layout on resize. Importing it
+  does not make the screen a content frame: it keeps its device, its height and
+  its place in the flow. Write the ECharts `option` with fixture data; never
+  set colors, fonts or animation in it. Never a static chart image, never
+  hand-drawn bars from divs when the real thing is one import away.
 - **Licensing sanity, briefly:** brand marks from official sources shown to
   identify the brand are fine; photos come from sources that permit the use.
   Unsure about one? Use it, and flag it to the human in the same message.

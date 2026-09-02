@@ -176,8 +176,11 @@ body { margin: 0; }
 .mv-col { display: flex; flex-direction: column; min-width: 0; }
 
 /* the rubber: diagram + image blocks own their breathing room. The surface is
-   a whisper, not a card - the content pops, the block only frames it */
-.mv-block { margin: 0; padding: ${UNIT}px; border: 1px solid var(--mv-block-line);
+   a whisper, not a card - the content pops, the block only frames it. The card is a
+   DOCUMENT treatment: inside a Slide or a UI screen a block is bare (the author's own
+   card or the slide's grid frames it), so it takes no invisible ${UNIT}px of padding there. */
+.mv-block { margin: 0; }
+.mv-doc .mv-block { padding: ${UNIT}px; border: 1px solid var(--mv-block-line);
   border-radius: 10px; background: var(--mv-block-bg); }
 /* an image block is NOT a card: the screenshot IS the content. Drop the surface + border so we don't
    frame a frame; give the image itself a hairline edge and a whisper of shadow so it reads as a clean,

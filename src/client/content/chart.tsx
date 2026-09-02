@@ -40,28 +40,46 @@ export function sanitizeOption(option: Record<string, unknown>, animate: boolean
   return out
 }
 
-/** The house theme, from the slide tokens at render time (computed style so
- *  host overrides and dark scheme are both honored). */
-function houseTheme(el: HTMLElement) {
-  const css = getComputedStyle(el)
-  const v = (name: string, fb: string) => css.getPropertyValue(name).trim() || fb
-  const ink = v('--sl-ink', '#18181b')
-  const muted = v('--sl-muted', 'rgba(24,24,27,.55)')
-  const accent = v('--sl-accent', '#0088ff')
-  const font = v('--sl-font', FONT_STACK)        // the deck's family, so chart text matches the slide
+/** The chart's palette, pure so the tests own it. `inSlide` picks the slide type scale
+ *  (18px labels on a 1280-wide stage) over the document/UI scale (12px). */
+export function chartTheme(t: { ink: string; font: string; accent: string; ground: string; grid: string; dark: boolean; inSlide: boolean }) {
+  const fs = t.inSlide ? 18 : 12
+  const muted = t.dark ? 'rgba(242,242,247,.5)' : 'rgba(28,28,30,.5)'
   return {
-    color: [accent, '#7c5cff', '#00b8a9', '#f0883e', '#d6608c', '#5b8def'],
-    textStyle: { fontFamily: font, color: ink },
+    color: [t.accent, '#7c5cff', '#00b8a9', '#f0883e', '#d6608c', '#5b8def'],
+    textStyle: { fontFamily: t.font, color: t.ink },
     axisPointer: { lineStyle: { color: muted } },
-    categoryAxis: { axisLine: { lineStyle: { color: muted } }, axisLabel: { color: ink, fontSize: 18 }, splitLine: { show: false } },
-    valueAxis: { axisLabel: { color: ink, fontSize: 18 }, splitLine: { lineStyle: { color: v('--sl-grid', 'rgba(127,127,127,.15)') } } },
-    legend: { textStyle: { color: ink, fontSize: 18 } },
+    categoryAxis: { axisLine: { lineStyle: { color: muted } }, axisLabel: { color: t.ink, fontSize: fs }, splitLine: { show: false } },
+    valueAxis: { axisLabel: { color: t.ink, fontSize: fs }, splitLine: { lineStyle: { color: t.grid } } },
+    legend: { textStyle: { color: t.ink, fontSize: fs } },
+    title: { textStyle: { color: t.ink, fontFamily: t.font }, subtextStyle: { color: muted, fontFamily: t.font } },
+    // series labels (pie/funnel/bar values): the frame's ink, no halo - echarts' default paints
+    // #333 with a white 2px text border, which reads as outlined glyphs on a dark ground
+    label: { color: t.ink, fontSize: fs, textBorderWidth: 0 },
     tooltip: {
-      backgroundColor: v('--sl-ground', '#fff'), borderColor: 'rgba(127,127,127,.25)',
-      textStyle: { color: ink, fontFamily: font },
+      backgroundColor: t.ground, borderColor: 'rgba(127,127,127,.25)',
+      textStyle: { color: t.ink, fontFamily: t.font, fontSize: fs === 18 ? 16 : 12 },
       extraCssText: 'border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.14);backdrop-filter:blur(8px)',
     },
   }
+}
+
+/** The house theme, read from the frame the chart sits in, at render time. Ink and font are
+ *  the element's own COMPUTED color and font-family - so a chart inherits a UI screen's
+ *  Tailwind text colour and typeface, a Doc's tokens, or a Slide's, with no per-context
+ *  wiring. Accent and ground come from slide tokens, then Doc tokens, then the mode palette. */
+function houseTheme(el: HTMLElement, dark: boolean) {
+  const css = getComputedStyle(el)
+  const v = (...names: string[]) => { for (const n of names) { const x = css.getPropertyValue(n).trim(); if (x) return x } return '' }
+  return chartTheme({
+    ink: css.color || (dark ? '#F2F2F7' : '#1C1C1E'),
+    font: v('--sl-font') || css.fontFamily || FONT_STACK,
+    accent: v('--sl-accent', '--mv-accent') || (dark ? '#0091FF' : '#0088FF'),
+    ground: v('--sl-ground', '--mv-surface', '--mv-bg') || (dark ? '#1C1C1E' : '#FFFFFF'),
+    grid: v('--sl-grid') || (dark ? 'rgba(242,242,247,.12)' : 'rgba(28,28,30,.1)'),
+    dark,
+    inSlide: !!el.closest('.sl-root'),
+  })
 }
 
 /** The frame's visual theme (light/dark), observed the same way the play
@@ -81,20 +99,32 @@ export function Chart({ option, h = 420 }: { option: Record<string, unknown>; h?
   const play = useSlidePlay()
   const theme = useFrameTheme()
   const [failed, setFailed] = useState(false)
+  // options are plain data: key the effect on their CONTENT, so a parent re-render with a
+  // fresh inline literal (every UI frame with state) never disposes and re-inits the chart
+  const optionKey = JSON.stringify(option)
   useEffect(() => {
     const el = ref.current
     if (!el) return
     let disposed = false
     let chart: import('./chart-engine.ts').EChartsInstance | null = null
+    let ro: ResizeObserver | null = null
     void loadEngine().then((engine) => {
       if (disposed || !ref.current) return
       // a theme OBJECT per init - never a stale global registration
-      chart = engine.init(ref.current, houseTheme(ref.current), { renderer: 'svg' })
-      chart.setOption(sanitizeOption(option, play))
+      chart = engine.init(ref.current, houseTheme(ref.current, theme === 'dark'), { renderer: 'svg' })
+      chart.setOption(sanitizeOption(JSON.parse(optionKey), play))
+      // a slide is a fixed stage, but a UI screen or a Doc reflows (device pills, responsive
+      // layouts): follow the box, or the SVG keeps its mount-time size
+      if (typeof ResizeObserver !== 'undefined') {
+        ro = new ResizeObserver(() => { if (!disposed) chart?.resize() })
+        ro.observe(ref.current)
+      }
     }).catch(() => setFailed(true))
-    return () => { disposed = true; chart?.dispose() }
+    return () => { disposed = true; ro?.disconnect(); chart?.dispose() }
     // re-init on play flip (the entrance) and on theme flip (fresh tokens)
-  }, [option, play, theme])
+  }, [optionKey, play, theme])
   if (failed) return <div className="mv-block mv-imgerr"><b>chart unavailable</b><span>echarts failed to load</span></div>
-  return <div ref={ref} className="mv-block mv-chart" style={{ width: '100%', height: h }} />
+  // contain: inline-size - echarts sizes its inner box in px, which would otherwise pin the
+  // author's flex/grid column at that width (min-content) and defeat the ResizeObserver above
+  return <div ref={ref} className="mv-block mv-chart" style={{ width: '100%', height: h, minWidth: 0, contain: 'inline-size' }} />
 }

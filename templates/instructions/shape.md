@@ -58,7 +58,7 @@ primitives. Import them directly in the frame file (not through a barrel -
 detection is lexical), and declare `intent` on every content frame:
 
 ```tsx
-import { Doc, Row, Col, Md, Diagram, Img } from '@marver-design/marver/content'
+import { Doc, Row, Col, Md, Diagram, Img, Chart } from '@marver-design/marver/content'
 
 export const meta = { title: 'Checkout - how it works', intent: 'diagram' }
 
@@ -96,6 +96,14 @@ export default () => (
   natural aspect ratio - never cropped, never letterboxed. Size it by how many images
   share its `Row` (fewer = bigger), not by a fixed height. Blocks carry their own
   padding, border, and surface - never hand-manage spacing around them.
+- `Chart` is Apache ECharts, the Diagram way: you write the ECharts `option`
+  (any series - bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap,
+  sunburst, sankey, boxplot), marver injects the house look - the frame's own ink
+  and typeface, the accent, light and dark - and renders SVG, still at rest.
+  `<Chart h={360} option={{ xAxis: {...}, yAxis: {...}, series: [...] }} />`.
+  Never set colors, fonts or `animation` in the option: the theme owns them.
+  Label inside the plot on narrow blocks (an outside pie label past the edge is
+  dropped). Data comes from a fixture, never invented in the option.
 - `intent` (`diagram` | `spec` | `moodboard` | `notes`) is the frame's PURPOSE,
   not its content mix - a frame with two diagrams and a paragraph is still the
   "diagram frame" if diagrams are why it exists. It drives the icon the human

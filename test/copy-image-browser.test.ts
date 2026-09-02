@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -49,6 +49,19 @@ export default () => <Slide><h1 className="sl-display" style={{ margin: 0 }}>Hel
 export const meta = { title: 'Chart', slide: true }
 export default () => <Slide><Chart h={520} option={{ xAxis: { type: 'category', data: ['a', 'b', 'c', 'd'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [40, 80, 60, 95], itemStyle: { color: '#ff3b30' } }] }} /></Slide>
 `)
+  // a DARK UI screen with a chart in a responsive grid: the chart must inherit the screen's
+  // ink and typeface, the frame must stay a UI frame (device height, no document measuring)
+  writeFileSync(join(scenes, 'dash.tsx'), `import { Chart } from '@marver-design/marver/content'
+export const meta = { title: 'Dash', viewport: 'mobile', theme: 'dark' }
+export default () => (
+  <main style={{ fontFamily: 'Georgia, serif', background: '#0f1115', color: 'rgb(230, 230, 230)', minHeight: '100vh', padding: 16 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+      <section><Chart h={200} option={{ xAxis: { type: 'category', data: ['a', 'b'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [1, 2] }] }} /></section>
+      <section><Chart h={200} option={{ series: [{ type: 'pie', radius: '60%', label: { position: 'inside' }, data: [{ value: 1, name: 'X' }, { value: 2, name: 'Y' }] }] }} /></section>
+    </div>
+  </main>
+)
+`)
   const boards = join(root, 'design', 'boards')
   mkdirSync(boards, { recursive: true })
   writeFileSync(join(boards, 'main.json'), JSON.stringify({
@@ -57,6 +70,7 @@ export default () => <Slide><Chart h={520} option={{ xAxis: { type: 'category', 
       { key: 'home', frame: 'app/home', x: 0, y: 0, w: 390, h: 844 },
       { key: 'slide', frame: 'app/slide', x: 500, y: 0, w: 640, h: 360 },
       { key: 'chart', frame: 'app/chart', x: 500, y: 500, w: 640, h: 360 },
+      { key: 'dash', frame: 'app/dash', x: 0, y: 1000, w: 390, h: 844 },
     ],
   }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
@@ -79,7 +93,7 @@ export default () => <Slide><Chart h={520} option={{ xAxis: { type: 'category', 
     const t1 = Date.now()
     while (Date.now() - t1 < 20_000 && !/optimized dependencies changed|dependencies optimized/.test(log)) await new Promise((r) => setTimeout(r, 200))
     await new Promise((r) => setTimeout(r, 1_000))   // let the reload start
-    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 3 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
+    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 4 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
     await browser.send('Target.closeTarget', { targetId: (await browser.send('Target.getTargetInfo', {}, s)).targetInfo.targetId })
   }
 }, 120_000)
@@ -97,7 +111,7 @@ async function openAndSelect(b: Browser, key: string): Promise<string> {
   // activation (kept alive across the render by the promise-valued ClipboardItem). Read-back
   // permission is granted only afterwards, in clipboardImage().
   await b.go(s, `${ORIGIN}/`)
-  await b.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 3 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000)
+  await b.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 4 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000)
   await b.eval(s, `window.__mvStore.getState().select(${JSON.stringify(key)})`)
   await b.send('Page.bringToFront', {}, s)
   await b.send('Emulation.setFocusEmulationEnabled', { enabled: true }, s)
@@ -189,6 +203,30 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     await browser!.press(s, 'i')
     await new Promise((r) => setTimeout(r, 400))
     expect(await browser!.eval(s, `[window.__mvStore.getState().imageBusy, window.__mvStore.getState().imagePulse]`)).toEqual([false, 1])
+  })
+
+  skippable('a chart in a DARK UI screen inherits the screen\'s ink + typeface, keeps the frame a UI frame, and follows a resize', async () => {
+    // classification: importing Chart did not turn the screen into a document
+    const manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8'))
+    const dash = manifest.frames.find((f: { id: string }) => f.id === 'app/dash')
+    expect(dash).toMatchObject({ viewport: 'mobile', theme: 'dark' })
+    expect(dash.contentWidth).toBeUndefined(); expect(dash.intent).toBeUndefined()
+    // the rendered chart, in the frame host: labels painted in the screen's ink and family
+    const s = await browser!.tab({ width: 390, height: 844 })
+    await browser!.go(s, `${ORIGIN}/__mv/frame/?id=app/dash&theme=dark`)
+    await browser!.until(s, `document.querySelectorAll('.mv-chart svg').length === 2`, 30_000)
+    const label = await browser!.eval(s, `(() => { const t = document.querySelector('.mv-chart svg text'); const c = getComputedStyle(t); return { fill: t.getAttribute('fill'), stroke: t.getAttribute('stroke'), font: c.fontFamily, size: t.getAttribute('font-size') ?? c.fontSize } })()`)
+    expect(label.fill).toBe('rgb(230, 230, 230)'); expect(label.stroke).toBeNull()
+    expect(label.font).toMatch(/Georgia/)
+    expect(String(label.size)).toMatch(/^12/)   // UI scale, not the 18px slide scale
+    // the pie's inside labels all rendered (no #333-on-dark, no clipped outside label)
+    expect(await browser!.eval(s, `[...document.querySelectorAll('.mv-chart')[1].querySelectorAll('text')].map((t) => t.textContent).sort().join()`)).toBe('X,Y')
+    // resize: the 2fr column narrows with the viewport, and the SVG follows it
+    const w1 = await browser!.eval(s, `Number(document.querySelector('.mv-chart svg').getAttribute('width'))`)
+    await browser!.send('Emulation.setDeviceMetricsOverride', { width: 300, height: 844, deviceScaleFactor: 1, mobile: true }, s)
+    await browser!.until(s, `Number(document.querySelector('.mv-chart svg').getAttribute('width')) < ${w1} - 40`, 5_000)
+    const box = await browser!.eval(s, `Math.round(document.querySelector('.mv-chart').getBoundingClientRect().width)`)
+    expect(await browser!.eval(s, `Number(document.querySelector('.mv-chart svg').getAttribute('width'))`)).toBe(box)
   })
 
   skippable('the endpoint refuses a bad scale and streams PNG bytes with the summary header on format=png', async () => {

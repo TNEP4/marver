@@ -105,3 +105,18 @@ describe('slideSize - one rule, shared by canvas and shot', async () => {
     expect(slideSize({})).toBeNull()
   })
 })
+
+describe('chartTheme - the house look outside a slide', () => {
+  it('slide scale is 18px labels, document/UI scale is 12px; ink and font are the frame\'s', async () => {
+    const { chartTheme } = await import('../src/client/content/chart.tsx')
+    const base = { ink: 'rgb(230, 230, 230)', font: 'Georgia, serif', accent: '#0091FF', ground: '#1a1d24', grid: 'rgba(242,242,247,.12)', dark: true }
+    const slide = chartTheme({ ...base, inSlide: true }) as any
+    const ui = chartTheme({ ...base, inSlide: false }) as any
+    expect(slide.categoryAxis.axisLabel.fontSize).toBe(18)
+    expect(ui.categoryAxis.axisLabel.fontSize).toBe(12)
+    expect(ui.textStyle).toEqual({ fontFamily: 'Georgia, serif', color: 'rgb(230, 230, 230)' })
+    expect(ui.label).toEqual({ color: 'rgb(230, 230, 230)', fontSize: 12, textBorderWidth: 0 })   // no #333 + white halo
+    expect(ui.color[0]).toBe('#0091FF')
+    expect(ui.tooltip.backgroundColor).toBe('#1a1d24')
+  })
+})

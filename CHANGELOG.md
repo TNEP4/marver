@@ -30,6 +30,22 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Fixed
 
+- **Charts everywhere, not only on slides.** `Chart` now takes its ink and
+  typeface from the frame it sits in (a UI screen's Tailwind colour and font, a
+  Doc's tokens, a Slide's), sizes its type to the context (12px labels in a
+  screen or document, 18px on a slide), paints series labels in that ink with
+  no halo, follows the layout on resize (a chart no longer pins its flex/grid
+  column at mount width), and keys on the option's content so a parent
+  re-render never re-initialises it. Before this a chart in a dark screen or
+  dark spec drew dark-on-dark axis text at slide scale.
+- **A screen with a chart is still a screen.** Importing anything from
+  `@marver-design/marver/content` used to turn the frame into a content
+  document (spec badge, measured height, no device). Content frames are now
+  those that render `Doc`, `Md` or `Diagram`; `Chart`, `Img`, `Video`, `Row`,
+  `Col` and `Space` are shared blocks a screen or a slide uses freely. The
+  block card (padding, hairline, surface) is a document treatment: inside a
+  slide or a screen a block is bare, so charts no longer carry 32px of
+  invisible padding there. `shape.md` and `craft.md` now teach `Chart`.
 - **Dev server behind a symlinked path.** `marver dev` on a repo reached
   through a symlink (`/tmp` → `/private/tmp`, a linked Dropbox folder) refused
   to serve its own frames ("outside of Vite serving allow list"); the allow
