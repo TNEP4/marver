@@ -7,18 +7,24 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 ### Added
 
 - **Slides.** A deck is a scene of `slide: true` frames: 1280×720 on the
-  canvas, the slide badge, and a real slides mode - full-bleed, arrows /
-  Space / click to advance, a slim progress strip, and **the board as the
-  sorter** (the deck plays in the board's reading order; drag to reorder).
-  Publish with `"type": "slides", "open": "slides"` plus `transition`
-  (`fade | none`) and `chrome` (`full | minimal | none`, full = the standard
-  prototype chrome); the Slide stage scales and centers itself to ANY
-  viewport (fill window, phones - author px and Tailwind scale together);
-  viewers land straight in
-  the deck and the URL survives refresh. The full guide is
+  canvas, the slideshow badge, and a real slides mode - the standard
+  prototype toolbar and walker, arrows / Space / click to advance, and
+  **the board as the sorter** (the deck plays in the board's reading
+  order; drag to reorder). Publish with `"type": "slides", "open":
+  "slides"` plus `transition` (`fade | none`) and `chrome` (`full |
+  minimal | none`); the Slide stage scales and centers itself to ANY
+  viewport with pure CSS (fill window, phones, a resized canvas node -
+  author px and Tailwind scale together); viewers land straight in the
+  deck and the URL survives refresh. The full guide is
   [docs/slides.md](docs/slides.md).
 - **The `Slide` root, `Chart`, and `Video` content primitives.** One root
-  owns the stage, theme-derived tokens, and type roles; `Chart` is Apache
+  owns the stage (asymmetric margins - 88px sides, 44px top and bottom - so
+  the middle band breathes; content box 1104×632), the theme tokens
+  (`--marver-slide-ground/-ink/-muted` with dark twins, `-accent`, `-font`,
+  `-tempo` timing both entrances and morphs), fixed type roles
+  (`sl-display` 160, `sl-stat` 88, `sl-assertion` 56, `sl-support` 30,
+  `sl-body` 24, `sl-caption` 18), and a dev overflow marker that catches
+  content escaping the stage OR colliding inside it; `Chart` is Apache
   ECharts (SVG, lazy chunk, house-themed, animation stripped at rest);
   `Video` is poster-first with a glass control strip in play mode. The
   motion contract is a build guarantee: a resting slide serializes to the
@@ -31,7 +37,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **The slides doctrine.** `marver init` ships
   `design/instructions/slides.md` - assertion-first argument, the type
   scale, 19 layout recipes with budgets and morph anchors, the choreography
-  rules, and a review gate - with two depth references behind it:
+  rules, "the space IS the design" (three bands, the 85% rule, one px
+  spacing scale), and a review gate - with two depth references behind it:
   `reference/deck-story.md` (intake, answer-first structure, the evidence
   check, audience calibration, the writing) and `reference/deck-layouts.md`
   (the full layout atlas grouped by job, the composition grid, content
