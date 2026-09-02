@@ -104,6 +104,13 @@ thing - changes everything. This section is binding, not aspiration:
   its place in the flow. Write the ECharts `option` with fixture data; never
   set colors, fonts or animation in it. Never a static chart image, never
   hand-drawn bars from divs when the real thing is one import away.
+- **Video is a real video.** A hero loop, an onboarding clip, a story in a
+  phone screen: `Video` from `@marver-design/marver/content` - poster-first
+  (still on the canvas, no media fetched at rest), click-to-play wherever the
+  frame is live, `ratio="9 / 16"` for vertical, `autoplay` for a muted ambient
+  loop (an explicit choice: that frame stays live on the canvas). Local files
+  need a poster; `design/assets/` holds both. Never a gray "video" box, never
+  a static screenshot standing in for motion the design depends on.
 - **Licensing sanity, briefly:** brand marks from official sources shown to
   identify the brand are fine; photos come from sources that permit the use.
   Unsure about one? Use it, and flag it to the human in the same message.

@@ -62,6 +62,20 @@ export default () => (
   </main>
 )
 `)
+  // a UI screen with a Video: poster at rest, click-to-play when live; an ambient loop beside it
+  const assets = join(root, 'design', 'assets')
+  mkdirSync(assets, { recursive: true })
+  writeFileSync(join(assets, 'poster.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64'))
+  writeFileSync(join(assets, 'clip.mp4'), Buffer.from('stub - never decoded'))
+  writeFileSync(join(scenes, 'clip.tsx'), `import { Video } from '@marver-design/marver/content'
+export const meta = { title: 'Clip', viewport: 'mobile' }
+export default () => (
+  <main style={{ padding: 16 }}>
+    <Video src="clip.mp4" poster="poster.png" ratio="9 / 16" />
+    <Video src="clip.mp4" poster="poster.png" autoplay />
+  </main>
+)
+`)
   const boards = join(root, 'design', 'boards')
   mkdirSync(boards, { recursive: true })
   writeFileSync(join(boards, 'main.json'), JSON.stringify({
@@ -71,6 +85,7 @@ export default () => (
       { key: 'slide', frame: 'app/slide', x: 500, y: 0, w: 640, h: 360 },
       { key: 'chart', frame: 'app/chart', x: 500, y: 500, w: 640, h: 360 },
       { key: 'dash', frame: 'app/dash', x: 0, y: 1000, w: 390, h: 844 },
+      { key: 'clip', frame: 'app/clip', x: 500, y: 1000, w: 390, h: 844 },
     ],
   }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
@@ -93,7 +108,7 @@ export default () => (
     const t1 = Date.now()
     while (Date.now() - t1 < 20_000 && !/optimized dependencies changed|dependencies optimized/.test(log)) await new Promise((r) => setTimeout(r, 200))
     await new Promise((r) => setTimeout(r, 1_000))   // let the reload start
-    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 4 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
+    await browser.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 5 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000).catch(() => {})
     await browser.send('Target.closeTarget', { targetId: (await browser.send('Target.getTargetInfo', {}, s)).targetInfo.targetId })
   }
 }, 120_000)
@@ -111,7 +126,7 @@ async function openAndSelect(b: Browser, key: string): Promise<string> {
   // activation (kept alive across the render by the promise-valued ClipboardItem). Read-back
   // permission is granted only afterwards, in clipboardImage().
   await b.go(s, `${ORIGIN}/`)
-  await b.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 4 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000)
+  await b.until(s, `(() => { const st = window.__mvStore?.getState(); return !!st && st.nodes.length === 5 && st.nodes.every((n) => n.status === 'ready') })()`, 60_000)
   await b.eval(s, `window.__mvStore.getState().select(${JSON.stringify(key)})`)
   await b.send('Page.bringToFront', {}, s)
   await b.send('Emulation.setFocusEmulationEnabled', { enabled: true }, s)
@@ -227,6 +242,24 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     await browser!.until(s, `Number(document.querySelector('.mv-chart svg').getAttribute('width')) < ${w1} - 40`, 5_000)
     const box = await browser!.eval(s, `Math.round(document.querySelector('.mv-chart').getBoundingClientRect().width)`)
     expect(await browser!.eval(s, `Number(document.querySelector('.mv-chart svg').getAttribute('width'))`)).toBe(box)
+  })
+
+  skippable('a Video in a UI screen is a poster at rest and mounts its player on ONE click; autoplay mounts an ambient loop', async () => {
+    const manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8'))
+    expect(manifest.frames.find((f: { id: string }) => f.id === 'app/clip')).toMatchObject({ viewport: 'mobile' })   // a screen, not a spec
+    const s = await browser!.tab({ width: 390, height: 844 })
+    await browser!.go(s, `${ORIGIN}/__mv/frame/?id=app/clip&theme=light`)
+    await browser!.until(s, `document.querySelectorAll('.mv-video').length === 2`, 30_000)
+    // at rest: the first is a poster with NO <video>; the ambient one already holds a muted looping element
+    expect(await browser!.eval(s, `(() => { const [a, b] = document.querySelectorAll('.mv-video'); return { aVideo: !!a.querySelector('video'), aImg: !!a.querySelector('img'), aRatio: getComputedStyle(a).aspectRatio, bVideo: !!b.querySelector('video'), bMuted: b.querySelector('video')?.muted, bLoop: b.querySelector('video')?.loop, bStrip: !!b.querySelector('.strip') } })()`))
+      .toEqual({ aVideo: false, aImg: true, aRatio: '9 / 16', bVideo: true, bMuted: true, bLoop: true, bStrip: false })
+    // one trusted click on the poster mounts the player (video element + glass strip) with the clip
+    const box = await browser!.eval(s, `(() => { const r = document.querySelector('.mv-video').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: box.x, y: box.y, button: 'left', clickCount: 1 }, s)
+    await browser!.until(s, `!!document.querySelector('.mv-video video')`, 5_000)
+    expect(await browser!.eval(s, `(() => { const a = document.querySelector('.mv-video'); const v = a.querySelector('video'); return { src: v.getAttribute('src'), strip: !!a.querySelector('.strip'), muted: v.muted } })()`))
+      .toMatchObject({ src: expect.stringContaining('clip.mp4'), strip: true, muted: false })
   })
 
   skippable('the endpoint refuses a bad scale and streams PNG bytes with the summary header on format=png', async () => {

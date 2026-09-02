@@ -1,18 +1,27 @@
 /**
- * Video (v1.5) - poster-first, glass-controlled.
+ * Video - poster-first, glass-controlled, in EVERY kind of frame.
  *
  * At rest there is NO <video> element and no media fetch: the poster <img>
- * plus a play glyph IS the slide (lean-DOM safe - a <video> element would
- * pin the frame live). In slides mode (useSlidePlay) the real element
- * mounts with the glass control strip: play/pause, seekable progress, mute,
- * fullscreen, auto-hiding. Leaving the slide (play flips off / unmount)
- * pauses everything.
+ * plus a play glyph IS the frame (lean-DOM safe - a <video> element would
+ * pin the frame live). The real element mounts with the glass control strip
+ * (play/pause, seekable progress, mute, fullscreen, auto-hiding) in two ways:
+ *   - anywhere a frame is live (interact mode, play/present, focus, a
+ *     published prototype): the poster is the play button - one click mounts
+ *     the player and starts it, inside that gesture, so sound is allowed;
+ *   - in slides mode (useSlidePlay): the player mounts on its own, the deck's
+ *     entrance contract.
+ * `autoplay` is the third shape - an ambient loop (muted, no strip) for a hero
+ * or a product mockup; it mounts the element as soon as the frame is live,
+ * which keeps that frame live on the canvas (the serializer marks <video>
+ * degraded) - an explicit, per-video choice.
+ * Leaving (play flips off / unmount) pauses everything.
  *
  * Sources: a design-asset path (poster REQUIRED - it is the canvas
  * rendering) or a public https direct-file URL (mp4/webm; HLS where the
- * browser supports it natively).
+ * browser supports it natively). `ratio` is the CSS aspect-ratio of the box
+ * (default 16 / 9; "9 / 16" for a vertical clip inside a phone screen).
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { assetUrl } from './md.ts'
 import { useSlidePlay } from './slide.tsx'
 
@@ -20,7 +29,9 @@ const isRemote = (s: string) => /^https:\/\//.test(s)
 const resolve = (s: string): string | null => (isRemote(s) ? s : assetUrl(s))
 
 const VIDEO_CSS = `
-.mv-video { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: 16 / 9 }
+.mv-video { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: var(--mv-video-ratio, 16 / 9) }
+.mv-video.armed { cursor: pointer }
+.mv-video.armed:hover .glyph span { background: rgba(16, 16, 20, .75) }
 .mv-video > img, .mv-video > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block }
 .mv-video .glyph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none }
 .mv-video .glyph span { width: 72px; height: 72px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
@@ -53,35 +64,46 @@ const PauseGlyph = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
 )
 
-export function Video({ src, poster }: { src: string; poster?: string }) {
+export function Video({ src, poster, ratio, autoplay = false }: { src: string; poster?: string; ratio?: string; autoplay?: boolean }) {
   ensureCss()
   const play = useSlidePlay()
+  const [armed, setArmed] = useState(false)      // the poster was clicked in a live frame
   const posterUrl = poster ? resolve(poster) : null
   const srcUrl = resolve(src)
+  const style = ratio ? ({ '--mv-video-ratio': ratio } as CSSProperties) : undefined
   const bad = !srcUrl || (!isRemote(src) && !posterUrl)
   if (bad) {
     return (
       <div className="mv-block mv-imgerr">
         <b>video unavailable</b>
         <span>{src}</span>
-        <span className="dim">{!srcUrl ? 'must be a design/assets/ path or an https file URL' : 'a local video needs a poster - it IS the slide at rest'}</span>
+        <span className="dim">{!srcUrl ? 'must be a design/assets/ path or an https file URL' : 'a local video needs a poster - it IS the frame at rest'}</span>
       </div>
     )
   }
-  // AT REST: the poster and nothing else - no <video>, no fetch, still.
-  if (!play) {
+  // Ambient: a muted loop, no chrome - the author accepted that this frame stays live.
+  if (autoplay) {
     return (
-      <div className="mv-block mv-video">
+      <div className="mv-block mv-video" style={style}>
+        <video src={srcUrl!} poster={posterUrl ?? undefined} autoPlay muted loop playsInline preload="auto" />
+      </div>
+    )
+  }
+  // AT REST: the poster and nothing else - no <video>, no fetch, still. In a lean cover the
+  // click never fires (no script); in a live frame it arms the player inside the gesture.
+  if (!play && !armed) {
+    return (
+      <div className="mv-block mv-video armed" style={style} role="button" aria-label="Play video" onClick={() => setArmed(true)}>
         {posterUrl ? <img src={posterUrl} alt="" loading="lazy" /> : null}
         <div className="glyph"><span><PlayGlyph /></span></div>
       </div>
     )
   }
-  return <Player src={srcUrl!} poster={posterUrl ?? undefined} />
+  return <Player src={srcUrl!} poster={posterUrl ?? undefined} style={style} autoStart={armed} />
 }
 
 /** The glass strip - deliberately four controls and a clock, nothing more. */
-function Player({ src, poster }: { src: string; poster?: string }) {
+function Player({ src, poster, style, autoStart = false }: { src: string; poster?: string; style?: CSSProperties; autoStart?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
@@ -95,9 +117,11 @@ function Player({ src, poster }: { src: string; poster?: string }) {
     idleTimer.current = setTimeout(() => setIdle(true), 2200)
   }
   useEffect(() => () => { if (idleTimer.current) clearTimeout(idleTimer.current); ref.current?.pause() }, [])
+  // armed by a click on the poster: start now - still inside that gesture's activation
+  useEffect(() => { if (autoStart) { void ref.current?.play().catch(() => {}); poke() } }, [autoStart])
   const toggle = () => { const v = ref.current; if (!v) return; if (v.paused) { void v.play(); poke() } else v.pause() }
   return (
-    <div className="mv-block mv-video" onPointerMove={poke} onClick={(e) => { if (e.target === ref.current) toggle() }}>
+    <div className="mv-block mv-video" style={style} onPointerMove={poke} onClick={(e) => { if (e.target === ref.current) toggle() }}>
       <video ref={ref} src={src} poster={poster} preload="metadata" muted={muted} playsInline
         onPlay={() => { setPlaying(true); poke() }} onPause={() => { setPlaying(false); setIdle(false) }}
         onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}

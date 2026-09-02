@@ -233,7 +233,9 @@ do to a slide. Gaps go on the parent (`gap`), never as per-child margins.
 - **Images** (`Img`): full-bleed with a scrim and a short assertion, or
   generously matted. Never a small image floating in space.
 - **Video** (`Video src poster`): the poster IS the slide at rest - choose
-  it like a photograph. Local sources require a poster.
+  it like a photograph. Local sources require a poster. In slides mode the
+  player mounts on its own; everywhere else a frame is live, the poster is
+  the play button (the same primitive serves screens and specs).
 - **Backgrounds are code**: theme-derived gradients, an oversized numeral, a
   clipped photo, one geometric accent. ONE effect per slide, and decoration
   never touches the evidence's contrast.

@@ -59,6 +59,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   column at mount width), and keys on the option's content so a parent
   re-render never re-initialises it. Before this a chart in a dark screen or
   dark spec drew dark-on-dark axis text at slide scale.
+- **Video plays everywhere, not only on slides.** The player used to mount
+  only under the slides-mode contract, so a `Video` in a screen, a spec or a
+  published prototype was a poster forever. Now the poster is the play button
+  wherever the frame is live (interact, play, focus, published); slides keep
+  the auto-mounted player. New: `ratio="9 / 16"` for vertical clips, and
+  `autoplay` for a muted ambient loop (an explicit choice - that frame stays
+  live on the canvas). `shape.md` and `craft.md` teach it.
 - **A screen with a chart is still a screen.** Importing anything from
   `@marver-design/marver/content` used to turn the frame into a content
   document (spec badge, measured height, no device). Content frames are now

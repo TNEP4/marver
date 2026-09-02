@@ -104,6 +104,11 @@ export default () => (
   Never set colors, fonts or `animation` in the option: the theme owns them.
   Label inside the plot on narrow blocks (an outside pie label past the edge is
   dropped). Data comes from a fixture, never invented in the option.
+- `Video` (`src`, `poster`) embeds a clip the same way: a design-asset file
+  (poster required - it is the frame at rest) or an https direct URL. Still at
+  rest; click the poster to play wherever the frame is live. `ratio="9 / 16"`
+  for a vertical clip. A walkthrough recording or a competitor's motion belongs
+  in a spec as a `Video`, never as a link the reader has to leave for.
 - `intent` (`diagram` | `spec` | `moodboard` | `notes`) is the frame's PURPOSE,
   not its content mix - a frame with two diagrams and a paragraph is still the
   "diagram frame" if diagrams are why it exists. It drives the icon the human

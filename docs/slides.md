@@ -112,9 +112,12 @@ slides and the entrance presets.
   `design/theme.css` tokens, strips animation at rest, and lets any
   styling you pass override the theme - so pass data and structure only.
   SVG-rendered, in a lazy chunk chart-free canvases never download.
-- `<Video src="intro.mp4" poster="intro.jpg" />` - the poster is the slide
-  at rest (required for local files); in slides mode the glass strip plays
-  it (play/pause, seek, mute, fullscreen). Remote https direct files work
+- `<Video src="intro.mp4" poster="intro.jpg" />` - the poster is the frame
+  at rest (required for local files). In slides mode the glass strip mounts
+  on its own (play/pause, seek, mute, fullscreen); in any other live frame -
+  interact mode, play, a published prototype - the poster is the play button.
+  `ratio="9 / 16"` for a vertical clip; `autoplay` for a muted ambient loop
+  (that frame then stays live on the canvas). Remote https direct files work
   too.
 
 ## Theme tokens
