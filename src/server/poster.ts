@@ -77,7 +77,7 @@ export async function ensurePoster(assetsDir: string, src: string): Promise<{ ok
   // appeared meanwhile (an authored one, or a sibling request's)
   const tmp = join(dirname(out), `.${basename(out)}.${randomBytes(6).toString('hex')}.tmp`)
   try {
-    const r = await capture({ url: pathToFileURL(page).href, width: 1920, height: 1080, scale: 1, out: tmp, fullHeight: false, clip: '#root video', timeoutMs: 20_000 })
+    const r = await capture({ url: pathToFileURL(page).href, width: 1920, height: 1080, scale: 1, out: tmp, fullHeight: false, clip: '#root video', timeoutMs: 20_000 }, 'poster')
     if (!r.ok) return { ok: false, error: `could not render a poster for ${basename(src)} - ${r.error}` }
     // EXCLUSIVE install: a poster that appeared while we rendered (authored, or a sibling
     // request's) wins - COPYFILE_EXCL makes that atomic instead of a check-then-rename race

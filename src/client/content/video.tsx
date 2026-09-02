@@ -38,6 +38,10 @@ const posterNameFor = (src: string) => `${src}.poster.png`
 // has no such API (build already generated the file); a failed request just keeps the card.
 const requested = new Map<string, Promise<boolean>>()
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+// in-flight probes + generations, for the shot renderer's settle (like __mvLodBusy): a
+// screenshot taken while a poster is still being rendered would show the empty box
+let busy = 0
+if (typeof window !== 'undefined') (window as { __mvPosterBusy?: () => number }).__mvPosterBusy = () => busy
 const requestPoster = (src: string): Promise<boolean> => {
   let p = requested.get(src)
   if (!p) {
@@ -111,36 +115,33 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   // leaving interact mode disarms: the clip pauses (Player unmounts) and the frame returns to
   // its poster, so the canvas can serialize it lean again
   useEffect(() => { if (!interactive) setArmed(false) }, [interactive])
-  // poster omitted on a local clip: the generated one, by convention; `gen` walks
-  // missing -> requested -> ready (reload with a cache-buster) or failed (the card)
+  // poster omitted on a local clip: the generated one, by convention. `gen` walks
+  // probing -> ready (the file exists, or was just rendered - reloaded with a cache-buster)
+  // or failed (the card). The <img> mounts only once ready: no broken-image glyph while the
+  // dev server renders the poster, and a shot taken meanwhile waits on __mvPosterBusy.
   const generated = !poster && !isRemote(src) ? posterNameFor(src) : null
-  const [gen, setGen] = useState<'idle' | 'ready' | 'failed'>('idle')
-  const [bust, setBust] = useState(() => Date.now())     // one cache-buster per generation, not per render
-  useEffect(() => { setGen('idle') }, [src])
+  const [gen, setGen] = useState<'probing' | 'ready' | 'failed'>(generated ? 'probing' : 'ready')
+  const [bust, setBust] = useState(0)
   const posterUrl = poster ? resolve(poster) : generated ? resolve(generated) : null
-  const posterSrc = posterUrl && generated && gen === 'ready' ? `${posterUrl}?v=${bust}` : posterUrl
+  const posterSrc = posterUrl && bust ? `${posterUrl}?v=${bust}` : posterUrl
   const srcUrl = resolve(src)
   const style = ratio ? ({ '--mv-video-ratio': ratio } as CSSProperties) : undefined
-  const srcRef = useRef(src)
-  srcRef.current = src
-  const onPosterError = () => {
-    if (!generated || gen !== 'idle') return
-    const asked = src
-    void requestPoster(src).then((ok) => {
-      if (srcRef.current !== asked) return   // the clip changed meanwhile - this answer is not ours
-      setBust(Date.now()); setGen(ok ? 'ready' : 'failed')
-    })
-  }
-  // every branch probes the generated poster, not only the resting <img>: a slides-mode or
-  // autoplay mount would otherwise never ask (a <video poster> 404 is silent)
   useEffect(() => {
-    if (!generated || !posterUrl || gen !== 'idle') return
+    if (!generated || !posterUrl) { setGen('ready'); return }
+    let alive = true, pending = true
+    setGen('probing'); setBust(0)
+    busy++
+    const done = () => { if (pending) { pending = false; busy-- } }
     const probe = new Image()
-    probe.onerror = onPosterError
+    const settle = (state: 'ready' | 'failed', rebust = false) => { done(); if (!alive) return; if (rebust) setBust(Date.now()); setGen(state) }
+    probe.onload = () => settle('ready')
+    probe.onerror = () => {
+      // not there yet: ask the dev server to render it (once per clip per document)
+      void requestPoster(src).then((ok) => settle(ok ? 'ready' : 'failed', ok))
+    }
     probe.src = posterUrl
-    return () => { probe.onerror = null }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generated, posterUrl, gen])
+    return () => { alive = false; probe.onload = probe.onerror = null; done() }
+  }, [generated, posterUrl, src])
   const bad = !srcUrl || (!isRemote(src) && !posterUrl) || gen === 'failed'
   if (bad) {
     return (
@@ -155,7 +156,7 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   if (autoplay) {
     return (
       <div className="mv-block mv-video" style={style}>
-        <video src={srcUrl!} poster={posterSrc ?? undefined} autoPlay muted loop playsInline preload="auto" />
+        <video src={srcUrl!} poster={gen === 'ready' ? posterSrc ?? undefined : undefined} autoPlay muted loop playsInline preload="auto" />
       </div>
     )
   }
@@ -164,12 +165,12 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   if (!play && !armed) {
     return (
       <div className="mv-block mv-video armed" style={style} role="button" aria-label="Play video" onClick={() => setArmed(true)}>
-        {posterSrc ? <img src={posterSrc} alt="" loading="lazy" onError={onPosterError} /> : null}
+        {posterSrc && gen === 'ready' ? <img src={posterSrc} alt="" loading="lazy" /> : null}
         <div className="glyph"><span><PlayGlyph /></span></div>
       </div>
     )
   }
-  return <Player src={srcUrl!} poster={posterSrc ?? undefined} style={style} autoStart={armed} />
+  return <Player src={srcUrl!} poster={gen === 'ready' ? posterSrc ?? undefined : undefined} style={style} autoStart={armed} />
 }
 
 /** The glass strip - deliberately four controls and a clock, nothing more. */

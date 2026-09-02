@@ -100,6 +100,16 @@ export async function shootFrame(opts: {
   const frame = (manifest.frames ?? []).find((f) => f.id === frameId)
   if (!frame) return { ok: false, error: `unknown frame "${frameId}" - ids are in design/manifest.json` }
   const plan = planShot(frame, viewports, size)
+  // the frame's own posterless clips first, so the first shot of a never-seen frame already
+  // carries its posters (build does the same before copying assets)
+  if (frame.kind !== 'html') {
+    try {
+      const { scanAssetRefs } = await import('./build.ts')
+      const { ensurePoster } = await import('./poster.ts')
+      const refs = scanAssetRefs(readFileSync(join(root, frame.file), 'utf8'), frame.file)   // file is design/-relative to root
+      for (const r of refs) if (r.endsWith('.poster.png')) await ensurePoster(join(root, 'design', 'assets'), r.slice(0, -'.poster.png'.length))
+    } catch { /* a scan that cannot run never blocks the shot */ }
+  }
   const shotsDir = join(root, 'design', '.local', 'shots')
   mkdirSync(shotsDir, { recursive: true })
   sweepTemps(shotsDir)
@@ -147,13 +157,16 @@ function sweepTemps(dir: string) {
   } catch { /* dir vanished */ }
 }
 
-/** One capture at a time: shots are seconds apart at most, and a Chrome per concurrent
- *  request would stampede the machine mid-jam. */
-let chain: Promise<unknown> = Promise.resolve()
+/** One capture at a time PER LANE: shots are seconds apart at most, and a Chrome per
+ *  concurrent request would stampede the machine mid-jam. Posters have their own lane - a
+ *  frame being shot may ask for its poster mid-render, and on the shot's lane that request
+ *  would wait for the very shot that is waiting for it. */
+const chains = new Map<string, Promise<unknown>>()
 
-export function capture(req: ShotRequest): Promise<ShotResult> {
-  const run = chain.then(() => captureNow(req), () => captureNow(req))
-  chain = run
+export function capture(req: ShotRequest, lane = 'shot'): Promise<ShotResult> {
+  const prev = chains.get(lane) ?? Promise.resolve()
+  const run = prev.then(() => captureNow(req), () => captureNow(req))
+  chains.set(lane, run)
   return run
 }
 
@@ -277,6 +290,7 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     // A frame that never settles still captures once the budget is spent: quality, never a hang.
     const SETTLED = `(() => {
       if (typeof window.__mvLodBusy === 'function' && window.__mvLodBusy() > 0) return false
+      if (typeof window.__mvPosterBusy === 'function' && window.__mvPosterBusy() > 0) return false
       const H = window.innerHeight, W = window.innerWidth
       for (const im of document.images) {
         if (im.complete) continue
