@@ -226,6 +226,14 @@ the tool spreads - we'd love it if you keep it. It's yours to remove, no strings
 `share: { branding: false }` in `design/config.ts` (this also strips every Marver
 mention from the page metadata, the sign-in screens included).
 
+### Name the canvas
+
+`share: { name: "Your App" }` in `design/config.ts`. That name titles the gate,
+labels the brand pill, and becomes `utm_campaign` on every powered-by link the
+canvas emits, so site analytics can tell which canvas sent a visitor. Unset, it
+falls back to the root directory name - which inside a container is usually
+`app`, so every unnamed containerised canvas reports as one campaign.
+
 ## Railway (the one-pager)
 
 1. Push your repo to GitHub and create a Railway service from it.
@@ -239,7 +247,7 @@ Deploy. The repo itself is the deployable - nothing to export, nothing to sync.
 
 ```dockerfile
 FROM node:22-slim
-WORKDIR /app
+WORKDIR /app                      # set share.name in design/config.ts - the fallback name is this directory
 COPY . .
 RUN npm ci && npx marver build
 ENV PORT=8080

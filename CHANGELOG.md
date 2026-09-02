@@ -54,6 +54,12 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Changed
 
+- **The play brand pill is a powered-by link** (marver.design, standard UTM
+  set, `utm_content=play-brand`), sized to the pixel like the toolbar pill.
+  The keyboard-hint pill is gone (two conflicting rules stretched it into a
+  full-stage circle; the walker and toolbar already carry stepping and
+  comment). Name your canvas - `share: { name }` - before containerising it:
+  the fallback is the root directory, which in a container is `app`.
 - **A `slides` board plays only its `slide: true` frames.** 0.13.0 accepted
   `type: "slides"` / `open: "slides"` and played them as `present`. From
   0.14.0 the deck is the board's slide frames in reading order; non-slide
