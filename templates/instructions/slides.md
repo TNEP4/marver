@@ -114,7 +114,8 @@ The values are fixed (one coordinate system with the stage):
 
 | Role class | Size | Job |
 |---|---|---|
-| `sl-display` | 160px | the ONE oversize: a big-number stat, a section numeral, the manifesto line - never running text |
+| `sl-display` | 160px | the ONE oversize: a hero number, a section numeral, the manifesto line - never running text, at most once a deck |
+| `sl-stat` | 88px | a ROW of figures (3-4 across), where `sl-display` would not fit |
 | `sl-assertion` | 56px, heavy | the one-line claim (~40 characters full-width, ~20 inside a split - two lines is the ceiling, verify the render) |
 | `sl-support` | 30px | the second voice |
 | `sl-body` | 24px | evidence text - the floor for anything read |
@@ -122,8 +123,9 @@ The values are fixed (one coordinate system with the stage):
 
 Nothing smaller than 18px, ever. One family (`--marver-slide-font`, the
 theme's); the roles carry their weights - add none of your own. The root
-pads 7% of the stage width on every side (89.6px), so the content box is
-1101×541px; compose inside it on a 12-column rhythm, one focal point per
+pads 89.6px (7% of the stage) on every side, so the content box is
+1101×541px at every viewport - override `--sl-margin` in px or a calc
+against the stage, never a bare percentage; compose inside it on a 12-column rhythm, one focal point per
 slide, generous space as the layout. Consecutive slides keep shared
 elements in the SAME position unless the movement is the message.
 

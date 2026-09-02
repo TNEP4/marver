@@ -48,16 +48,17 @@ function houseTheme(el: HTMLElement) {
   const ink = v('--sl-ink', '#18181b')
   const muted = v('--sl-muted', 'rgba(24,24,27,.55)')
   const accent = v('--sl-accent', '#0088ff')
+  const font = v('--sl-font', FONT_STACK)        // the deck's family, so chart text matches the slide
   return {
     color: [accent, '#7c5cff', '#00b8a9', '#f0883e', '#d6608c', '#5b8def'],
-    textStyle: { fontFamily: FONT_STACK, color: ink },
+    textStyle: { fontFamily: font, color: ink },
     axisPointer: { lineStyle: { color: muted } },
     categoryAxis: { axisLine: { lineStyle: { color: muted } }, axisLabel: { color: ink, fontSize: 18 }, splitLine: { show: false } },
     valueAxis: { axisLabel: { color: ink, fontSize: 18 }, splitLine: { lineStyle: { color: v('--sl-grid', 'rgba(127,127,127,.15)') } } },
     legend: { textStyle: { color: ink, fontSize: 18 } },
     tooltip: {
       backgroundColor: v('--sl-ground', '#fff'), borderColor: 'rgba(127,127,127,.25)',
-      textStyle: { color: ink, fontFamily: FONT_STACK },
+      textStyle: { color: ink, fontFamily: font },
       extraCssText: 'border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.14);backdrop-filter:blur(8px)',
     },
   }

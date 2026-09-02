@@ -87,5 +87,6 @@ The `Slide` root reads `--marver-slide-ground / -ink / -muted` (each with a
 `--marver-slide-font`, and `--marver-slide-tempo` (one duration that times
 both the entrances and the morphs between slides) from your theme and falls
 back to the house palette. Type roles, fixed: `sl-display` (160px, the one
-oversize - big numbers, section numerals), `sl-assertion` (56px),
+oversize - a hero number, a section numeral), `sl-stat` (88px, a row of
+figures), `sl-assertion` (56px),
 `sl-support` (30px), `sl-body` (24px), `sl-caption` (18px).

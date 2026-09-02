@@ -9,11 +9,12 @@ slide, compose it from divs.
 Words used below: **kicker** = the small-caps `sl-caption` label above a title;
 **hero** = a card's one-line headline in `sl-support`; **ghost numeral** = a large,
 low-contrast number behind or beside a card that carries order; **display** =
-`sl-display`, the one oversize role.
+`sl-display`, the one oversize role; **stat** = `sl-stat`, the row-of-figures size.
 
 ## The grid (the padded content box is 1101×541px)
 
-The root pads 7% of the stage width (89.6px) on every side. Inside that box:
+The root pads 89.6px (7% of the stage) on every side, at every viewport.
+Inside that box:
 
 - **Title zone** - the top ~86px: kicker (18px, one line) over the assertion
   (56px, one line). Same position on every content slide - the eye learns it
@@ -75,6 +76,8 @@ outline are the authority - when they disagree with a number here, the frame win
 **Proof**
 - **metric** - one hero number (`sl-display`) in a card with label + sub-line;
   pair with a split or a stat row. Budget: value ≤8 chars, label ≤20, sub ≤30.
+- **stat row** - 3-4 figures across in `sl-stat` with a label under each.
+  Budget: value ≤7 chars at 3 across, ≤5 at 4; label ≤4 words. Anchor: the row.
 - **trajectory** - stacked from → to pairs with a label ("$100k → $480k MRR").
   Budget: 3-4 pairs. Anchor: the arrows.
 - **table** - header row with a rule under it, zebra rows, numbers right-aligned,

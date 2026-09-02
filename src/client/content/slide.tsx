@@ -56,7 +56,12 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
   --sl-muted: var(--marver-slide-muted, rgba(24, 24, 27, .55));
   --sl-tempo: var(--marver-slide-tempo, 350ms);
   --sl-font: var(--marver-slide-font, ${FONT_STACK});
-  --sl-margin: 7%;
+  /* 7% OF THE STAGE, in px. A bare percentage would resolve against this
+     absolutely positioned box's containing block - the viewport - so the
+     margin would grow and shrink with the window and the authored 1280x720
+     composition would not survive the fit. Override in px or a calc against
+     the stage, never a bare %. */
+  --sl-margin: calc(${SLIDE_W}px * 0.07);
   /* THE FIT: authored at exactly ${SLIDE_W}x${SLIDE_H}, then scaled and
      centered to the largest box the viewport gives it - fill window, any
      device, a canvas node resized to a phone, any published viewer's screen.
@@ -85,6 +90,9 @@ body:has(.sl-root) { margin: 0; background: var(--marver-slide-ground, #ffffff) 
    sl-display is the ONE sanctioned oversize: the big-number stat, a section
    numeral, the manifesto line - never running text. */
 .sl-display { font-size: 160px; line-height: 1; font-weight: 800; letter-spacing: -.03em; margin: 0; font-variant-numeric: tabular-nums }
+/* sl-stat is the ROW size: three or four figures side by side, where one
+   sl-display would not fit and sl-assertion would not read as a number. */
+.sl-stat { font-size: 88px; line-height: 1.02; font-weight: 700; letter-spacing: -.03em; margin: 0; font-variant-numeric: tabular-nums }
 .sl-assertion { font-size: 56px; line-height: 1.08; font-weight: 750; letter-spacing: -.02em; margin: 0 }
 .sl-support { font-size: 30px; line-height: 1.25; font-weight: 500; margin: 0 }
 .sl-body { font-size: 24px; line-height: 1.45; margin: 0 }
@@ -142,18 +150,63 @@ export function Slide({ children, style }: { children?: ReactNode; style?: CSSPr
   ensureSlideStyles()
   const ref = useRef<HTMLDivElement>(null)
   // dev overflow marker: a slide that outgrows its stage is a VISIBLE defect
-  // (outline + console), never a silent clip decision left to chance
+  // (outline + console), never a silent clip decision left to chance.
+  // scrollHeight alone is NOT enough: inside a flex column a body at flex:1
+  // gets a fixed height and ITS children spill over the header instead of
+  // growing the root, so the root measures clean while the slide is broken.
+  // The truth is geometric - nothing may escape the stage's content box.
   useEffect(() => {
     const el = ref.current
     if (!el || typeof ResizeObserver === 'undefined') return
+    let last: boolean | null = null
     const check = () => {
-      const over = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1
+      const cs = getComputedStyle(el)
+      const r = el.getBoundingClientRect()
+      // rects are POST-transform (the fit scales the stage) while computed
+      // padding is not, so every comparison happens in the stage's own
+      // LAYOUT space: divide rect offsets by the measured scale. Mixing the
+      // two spaces reads every slide as overflowing at any fitted size.
+      const k = el.offsetWidth ? r.width / el.offsetWidth : 1
+      const pad = (v: string) => parseFloat(v) || 0
+      const top = pad(cs.paddingTop), left = pad(cs.paddingLeft)
+      const bottom = el.offsetHeight - pad(cs.paddingBottom)
+      const right = el.offsetWidth - pad(cs.paddingRight)
+      let over = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1
+      let culprit: Element | null = null
+      // a direct child whose own content outgrows it: the flex-compression
+      // case, where a body at flex:1 keeps its box and paints over the header
+      for (let i = 0; !over && i < el.children.length; i++) {
+        const c = el.children[i]
+        if (c.scrollHeight > c.clientHeight + 1 || c.scrollWidth > c.clientWidth + 1) { over = true; culprit = c }
+      }
+      if (!over) {
+        // bounded walk: the first element whose box escapes the content box wins
+        const all = el.querySelectorAll('*')
+        for (let i = 0; i < all.length && i < 600; i++) {
+          const n = all[i]
+          const b = n.getBoundingClientRect()
+          if (b.width === 0 && b.height === 0) continue
+          const y0 = (b.top - r.top) / k, y1 = (b.bottom - r.top) / k
+          const x0 = (b.left - r.left) / k, x1 = (b.right - r.left) / k
+          if (y1 > bottom + 1.5 || y0 < top - 1.5 || x1 > right + 1.5 || x0 < left - 1.5) {
+            over = true; culprit = n; break
+          }
+        }
+      }
+      if (over === last) return                       // idempotent: never write the same state twice
+      last = over
       el.style.outline = over ? '3px solid #ff4d4f' : ''
-      if (over) console.warn('[marver slide] content overflows the 1280×720 stage - split the slide, never shrink the type')
+      el.dataset.slOver = over ? '1' : ''
+      if (over) console.warn('[marver slide] content overflows the 1280×720 stage - split the slide, never shrink the type', culprit ?? el)
     }
+    // observe every descendant, not just direct children: a flex child at
+    // flex:1 keeps its own box while ITS content grows past the stage, and a
+    // root-only observer never hears about that. Bounded, and the only writes
+    // are outline + a data attribute, neither of which resizes anything.
     const ro = new ResizeObserver(check)
     ro.observe(el)
-    for (const child of el.children) ro.observe(child)
+    const all = el.querySelectorAll('*')
+    for (let i = 0; i < all.length && i < 600; i++) ro.observe(all[i])
     check()
     return () => ro.disconnect()
   }, [])
