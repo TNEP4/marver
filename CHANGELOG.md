@@ -37,8 +37,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **The slides doctrine.** `marver init` ships
   `design/instructions/slides.md` - assertion-first argument, the type
   scale, 19 layout recipes with budgets and morph anchors, the choreography
-  rules, "the space IS the design" (three bands, the 85% rule, one px
-  spacing scale), and a review gate - with two depth references behind it:
+  rules, "the space IS the design" (asymmetric margins, the 85% rule, one
+  px spacing scale), seven silhouettes chosen before any recipe with a
+  storyboard step and pacing rules, and a review gate that squints the
+  contact sheet - with two depth references behind it:
   `reference/deck-story.md` (intake, answer-first structure, the evidence
   check, audience calibration, the writing) and `reference/deck-layouts.md`
   (the full layout atlas grouped by job, the composition grid, content
