@@ -14,7 +14,7 @@ const DATA: {
   manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string
   /** the sidebar's folder tree over the published boards (0.16.0 bundles; older ones have none) */
   tree?: TreeItem[]
-  /** slug → title of the published boards (0.17.0 bundles); folder titles ride on `tree` */
+  /** slug → title of the published boards (0.16.1 bundles); folder titles ride on `tree` */
   titles?: Record<string, string>
   /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
