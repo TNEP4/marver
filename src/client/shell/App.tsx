@@ -9,7 +9,7 @@ import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
-import { readTitle } from '../../shared/board-tree.ts'
+import { humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, useComments } from './comments-store.ts'
@@ -805,7 +805,9 @@ export function App() {
                   setSceneNaming(null)
                   const title = raw === null ? undefined : readTitle(raw)
                   if (!title || title === sceneLabel(sc.name)) return                    // Escape, empty, or unchanged = never mind
-                  useStore.getState().renameScene(sc.name, title).then((r) => { if (!r.ok) toast(r.error ?? 'rename failed') })
+                  if (scenes.some((o) => o.name !== sc.name && sceneLabel(o.name) === title)) { toast(`a scene called "${title}" already exists`); return }
+                  // typing what the directory reads as anyway clears the title - the brief stays clean
+                  useStore.getState().renameScene(sc.name, title === slugLabel(sc.name) ? '' : title).then((r) => { if (!r.ok) toast(r.error ?? 'rename failed') })
                 }}
                 onContextMenu={(e) => cm.open(e, [{
                   label: 'Copy path',

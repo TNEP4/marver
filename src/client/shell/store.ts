@@ -132,14 +132,14 @@ import { buildTree, flatten, labelOf, toWire, type TreeItem } from '../../shared
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
 export interface TreeBase { boards: Record<string, string>; folders: string | null }
-export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase }
+export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase; titles: Record<string, string> }
 
 /** The sidebar tree: root boards and folders in rank order, each folder's boards inside
  *  (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
  *  is pinned last by the callers. Throws on transport failure and on a malformed registry
  *  (the server's 422 message) - callers keep their last known tree. */
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
-  if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null } }
+  if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {} }
   const [boards, reg] = await Promise.all([
     fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
@@ -148,14 +148,17 @@ export async function fetchBoardTree(): Promise<TreeSnapshot> {
       return j
     }),
   ])
-  const tree = buildTree(boards, reg.folders ?? [])
-  rememberTitles(tree, Object.fromEntries(boards.flatMap((b) => (b.title ? [[b.name, b.title]] : []))))
-  return { tree, base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null } }
+  return {
+    tree: buildTree(boards, reg.folders ?? []),
+    base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null },
+    titles: Object.fromEntries(boards.flatMap((b) => (b.title ? [[b.name, b.title]] : []))),
+  }
 }
-/** Every read of the tree refreshes the board titles the labels use. Folder titles ride on
- *  the tree's folder items (a board and a folder may share a slug - never one map). */
-function rememberTitles(_tree: TreeItem[], boards: Record<string, string>) {
-  if (JSON.stringify(useStore.getState().boardTitles) !== JSON.stringify(boards)) useStore.setState({ boardTitles: boards })
+/** A tree read's board titles become the labels' - called by the reader once it knows the
+ *  read is its latest (an older response must not overwrite a newer one's labels). Folder
+ *  titles ride on the tree's folder items: a board and a folder may share a slug, never one map. */
+export function rememberTitles(titles: Record<string, string>) {
+  if (JSON.stringify(useStore.getState().boardTitles) !== JSON.stringify(titles)) useStore.setState({ boardTitles: titles })
 }
 
 /** Board names for switchers: the sidebar's reading order (folders flattened depth-first) and
@@ -163,7 +166,9 @@ function rememberTitles(_tree: TreeItem[], boards: Record<string, string>) {
  *  Throws on transport failure - callers keep their last known list. */
 export async function fetchBoardNames(): Promise<string[]> {
   if (DATA) return DATA.names
-  return [...flatten((await fetchBoardTree()).tree), 'all-scenes']
+  const snap = await fetchBoardTree()
+  rememberTitles(snap.titles)
+  return [...flatten(snap.tree), 'all-scenes']
 }
 /** Does the switcher carry the auto `all-scenes` board? Always in dev; published only when it shipped. */
 export const HAS_ALL_SCENES = !DATA || DATA.names.includes('all-scenes')
@@ -218,6 +223,7 @@ const initialViewTheme = () => {
 }
 const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change counts, not just added/removed ids
 let scenesRev = 0                                                // bumps per sh:scenes, so a load that straddled one keeps the live labels
+let liveScenes: Manifest['scenes'] | null = null                 // the last sh:scenes payload - applied late when it beat the first manifest
 
 /** Latest measured content heights, keyed frameId@width. TRANSIENT by design:
  * auto sizes are never serialized - a reload remeasures. */
@@ -636,7 +642,7 @@ export const useStore = create<State>((set, get) => {
       set(next)
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
-      else if (live && scenesRev !== scenesAtStart) set({ manifest: { ...get().manifest!, scenes: live.scenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
+      else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
       return true
     },
 
@@ -670,7 +676,7 @@ export const useStore = create<State>((set, get) => {
       set({ board: name, interact: null, ...next })
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
-      else if (live && scenesRev !== scenesAtStart) set({ manifest: { ...get().manifest!, scenes: live.scenes } })
+      else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })
     },
 
     renameBoard(name, title, baseHash) {
@@ -718,10 +724,11 @@ export const useStore = create<State>((set, get) => {
       return { ok: true }
     },
     setScenes(scenes) {
-      const m = get().manifest
-      if (!m || !Array.isArray(scenes)) return
+      if (!Array.isArray(scenes)) return
       scenesRev++
-      set({ manifest: { ...m, scenes } })
+      liveScenes = scenes
+      const m = get().manifest
+      if (m) set({ manifest: { ...m, scenes } })   // before the first manifest: kept for the boot's commit
     },
 
     // The whole sidebar tree in one write: order, membership, the folders themselves. The

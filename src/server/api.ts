@@ -210,6 +210,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (!parsedBoard || typeof parsedBoard !== 'object' || Array.isArray(parsedBoard)) return json(res, 422, { error: `board "${from}" is not a JSON object - fix the file` })
           obj = parsedBoard as Record<string, unknown>
         }
+        let next: string | undefined
+        if (obj) {
+          const title = readTitle(titleRaw)
+          if (title) obj.title = title; else delete obj.title
+          next = JSON.stringify(obj, null, 2) + '\n'
+        }
         if (to !== from) {
           // Persisted comments are board-keyed in three places a file move can't follow (the
           // local JSONL, the client's in-memory union, and the remote-canonical sync). A move is
@@ -217,28 +223,28 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (isConnected(root)) return json(res, 409, { error: 'disconnect before renaming boards - comment sync is board-keyed' })
           if (existsSync(join(root, 'design', 'comments', `${from}.jsonl`))) return json(res, 409, { error: 'rename a board before commenting on it - this board has threads' })
           if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })   // lstat: a dangling symlink counts
-          // Atomic no-clobber: link() refuses (EEXIST) if the destination name exists - closing the
-          // check->rename TOCTOU. Then drop the old name. A crash between leaves both names on one
-          // inode (identical content), never a clobbered board. Filesystems without hardlinks fall
-          // back to the checked rename (the nodeExists guard above already covered the common race).
-          try { linkSync(fromPath, toPath); rmSync(fromPath) }
+          // Atomic no-clobber: the destination is created with `wx` (a title rides in it) or
+          // link()ed (EEXIST if the name exists) - closing the check->move TOCTOU - then the old
+          // name is dropped. A crash between leaves both names, never a clobbered board and never
+          // a moved-but-untitled one. Filesystems without hardlinks fall back to the checked
+          // rename (the nodeExists guard above already covered the common race).
+          try { if (next !== undefined) writeFileSync(toPath, next, { flag: 'wx' }); else linkSync(fromPath, toPath) }
           catch (err) {
             const code = (err as NodeJS.ErrnoException).code
             if (code === 'EEXIST') return json(res, 409, { error: `a board named "${to}" already exists` })
             // ONLY a filesystem that genuinely lacks hardlinks falls back to a checked rename; any
             // other error (ENOSPC, EACCES, ...) rethrows to the outer 500 rather than silently
             // taking the clobber-prone path.
-            if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw err
+            if (next !== undefined || (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP')) throw err
             if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })
             renameSync(fromPath, toPath)
+            return json(res, 200, { name: to })
           }
+          rmSync(fromPath)
+          return json(res, 200, { name: to, ...(next !== undefined ? { sha256: hash(next) } : {}) })
         }
-        if (!obj) return json(res, 200, { name: to })
-        const title = readTitle(titleRaw)
-        if (title) obj.title = title; else delete obj.title
-        const next = JSON.stringify(obj, null, 2) + '\n'
-        atomicWrite(toPath, next)
-        return json(res, 200, { name: to, sha256: hash(next) })
+        atomicWrite(toPath, next!)
+        return json(res, 200, { name: to, sha256: hash(next!) })
       }
 
       // A scene's title - what humans see in the sidebar. Written into the YAML front matter of
@@ -254,7 +260,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { scene, title } = parsed as { scene?: unknown; title?: unknown }
         // a scene is what the manifest scan calls one: a directory under design/scenes with
         // frames in it - no other grammar, and never a path
-        if (typeof scene !== 'string' || !scene || scene.length > 128 || /[\\/]/.test(scene) || scene.startsWith('.') || scene.startsWith('_')) return json(res, 400, { error: 'invalid scene name' })
+        if (typeof scene !== 'string' || !scene || scene.length > 128 || /[\\/]/.test(scene) || scene === '.' || scene === '..') return json(res, 400, { error: 'invalid scene name' })
         if (typeof title !== 'string' || Array.from(title).length > TITLE_MAX) return json(res, 400, { error: 'invalid title' })
         if (!scanFrames(root).scenes.some((sc) => sc.name === scene)) return json(res, 400, { error: `scene "${scene}" does not exist (no frames under design/scenes/${scene}/)` })
         const e = setSceneTitle(root, scene, readTitle(title) ?? '')

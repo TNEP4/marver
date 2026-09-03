@@ -168,10 +168,14 @@ describe('boards/rename + boards/reorder routes', () => {
     writeFileSync(brief, '---\ntitle: Old\n---\n' + body)
     await drive(root, 'POST', 'scenes/rename', { scene: 'checkout', title: '' }, OWNER)
     expect(readFileSync(brief, 'utf8')).toBe(body)
-    // CRLF briefs keep their line endings
+    // CRLF briefs keep their line endings; a BOM stays where it was and never hides the block
     writeFileSync(brief, '# Title\r\n\r\nBody\r\n')
     await drive(root, 'POST', 'scenes/rename', { scene: 'checkout', title: 'T' }, OWNER)
     expect(readFileSync(brief, 'utf8')).toBe('---\r\ntitle: "T"\r\n---\r\n\r\n# Title\r\n\r\nBody\r\n')
+    writeFileSync(brief, '\uFEFF---\ntitle: Old\n---\nbody\n')
+    await drive(root, 'POST', 'scenes/rename', { scene: 'checkout', title: 'New' }, OWNER)
+    expect(readFileSync(brief, 'utf8')).toBe('\uFEFF---\ntitle: "New"\n---\nbody\n')
+    expect((await import('../src/server/manifest.ts')).sceneBrief(root, 'checkout').title).toBe('New')
     // an unclosed front matter block is refused untouched - the brief is the agent's document
     writeFileSync(brief, '---\ntitle: Old\nbody without a closing delimiter\n')
     r = await drive(root, 'POST', 'scenes/rename', { scene: 'checkout', title: 'T' }, OWNER)
@@ -183,6 +187,17 @@ describe('boards/rename + boards/reorder routes', () => {
     rmSync(brief)
     mkdirSync(join(root, 'design', 'scenes', 'empty'))
     expect((await drive(root, 'POST', 'scenes/rename', { scene: 'empty', title: 'x' }, OWNER)).status).toBe(400)
+    // a scene is whatever the scanner lists - an underscore directory included
+    mkdirSync(join(root, 'design', 'scenes', '_draft')); writeFileSync(join(root, 'design', 'scenes', '_draft', 'home.tsx'), 'export default () => null\n')
+    expect((await drive(root, 'POST', 'scenes/rename', { scene: '_draft', title: 'Draft' }, OWNER)).status).toBe(200)
+    expect(readFileSync(join(root, 'design', 'scenes', '_draft', '_brief.md'), 'utf8')).toBe('---\ntitle: "Draft"\n---\n')
+    // a symlinked design/scenes would land the write outside the project: refused, nothing written
+    const outside = join(root, 'outside'); mkdirSync(join(outside, 'far'), { recursive: true }); writeFileSync(join(outside, 'far', 'x.tsx'), 'export default () => null\n')
+    const linked = mkdtempSync(join(tmpdir(), 'mv-linked-')); mkdirSync(join(linked, 'design')); symlinkSync(outside, join(linked, 'design', 'scenes'))
+    try {
+      expect((await drive(linked, 'POST', 'scenes/rename', { scene: 'far', title: 'T' }, OWNER)).status).toBe(400)
+      expect(existsSync(join(outside, 'far', '_brief.md'))).toBe(false)
+    } finally { rmSync(linked, { recursive: true, force: true }) }
     // gate + validation
     expect((await drive(root, 'POST', 'scenes/rename', { scene: 'checkout', title: 'x' })).status).toBe(403)
     expect((await drive(root, 'POST', 'scenes/rename', { scene: '../etc', title: 'x' }, OWNER)).status).toBe(400)

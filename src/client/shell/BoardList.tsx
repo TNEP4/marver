@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, type TreeBase } from './store.ts'
+import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, rememberTitles, type TreeBase } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
@@ -51,7 +51,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   // drag runs on pointer events, NOT native drag-and-drop: native DnD hands the cursor to
   // the OS (arrow/move), so a grabbing hand can't persist. Owning the gesture lets us hold
   // the grabbing cursor for the whole drag via a body class.
-  const gestureRef = useRef<{ pointerId: number; startX: number; startY: number; item: Drag; dragging: boolean; el: HTMLElement } | null>(null)
+  const gestureRef = useRef<{ pointerId: number; startX: number; startY: number; item: Drag; dragging: boolean; el: HTMLElement; x: number; y: number } | null>(null)
   const treeRef = useRef(tree)
   treeRef.current = tree
   const namingRef = useRef(naming)                                   // commit reads the LIVE naming state, never a stale closure (Escape, then a late blur)
@@ -71,6 +71,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       if (seq !== loadSeq.current) return false                    // an older read landing late never overwrites a newer one
       confirmedRef.current = snap.tree
       baseRef.current = snap.base
+      rememberTitles(snap.titles)                                    // the labels follow the same latest-wins rule
       lastErr.current = ''
       show()
       return true
@@ -177,8 +178,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       if (n.kind === 'board') {
         if (title === label(n.name)) { setNaming(null); return }
         if (boardsIn(tree).some((b) => b !== n.name && label(b) === title) || (HAS_ALL_SCENES && label('all-scenes') === title)) { taken('board'); return }
-        const r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])
-        if (!r.ok) { useStore.getState().toast(r.error ?? 'rename failed'); if (r.stale) refresh(); return }   // stay editing (a stale file re-reads first)
+        let r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])
+        if (!r.ok && r.stale && await load()) r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])   // the file moved on (a drag just before, an agent): re-read, once more
+        if (!r.ok) { useStore.getState().toast(r.error ?? 'rename failed'); return }   // stay editing
         setNaming(null)
         refresh()
         return
@@ -233,11 +235,12 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (e.button !== 0) return                                    // left button only; right-click opens the menu
     const el = e.currentTarget
     try { el.setPointerCapture(e.pointerId) } catch { /* capture can fail on rapid input */ }
-    gestureRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, item, dragging: false, el }
+    gestureRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, item, dragging: false, el, x: e.clientX, y: e.clientY }
   }
   const onPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const g = gestureRef.current
     if (!g || g.pointerId !== e.pointerId) return
+    g.x = e.clientX; g.y = e.clientY
     if (!g.dragging) {
       if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < 5) return   // click vs drag threshold
       g.dragging = true
@@ -246,6 +249,13 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     }
     showDrop(dropAt(e.clientX, e.clientY, g.item))
   }
+  // the tree changed under a drag in progress (a poll, an agent's write): the seam is re-read
+  // against the rows as they are NOW, from where the pointer is - never a slot that no longer means it
+  useEffect(() => {
+    const g = gestureRef.current
+    if (g?.dragging) showDrop(dropAt(g.x, g.y, g.item))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree])
   const onPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const g = gestureRef.current
     if (!g || g.pointerId !== e.pointerId) return
@@ -336,13 +346,14 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     return drop.index === index ? ' drop-before' : last && drop.index === index + 1 ? ' drop-after' : ''
   }
   const boardRow = (n: string, parent: string | null, index: number, last: boolean) => {
+    const dragging = drag?.kind === 'board' && drag.name === n
+    const dropCls = dragging ? '' : n === 'all-scenes' ? (drop && !('into' in drop) && drop.list === null && drop.index === tree.length ? ' drop-before' : '') : seam(parent, index, last)
+    // the row being renamed is still a row: measured by a drag (its slot exists) and it draws its seam
     if (naming?.kind === 'board' && naming.name === n) return (
-      <div key={n} className={`it board editing${parent ? ' in-folder' : ''}`}><CardsIcon size={14} />{input(label(n))}</div>
+      <div key={n} data-board-row data-board={n} data-folder={parent ?? undefined} className={`it board editing${parent ? ' in-folder' : ''}${dropCls}`}><CardsIcon size={14} />{input(label(n))}</div>
     )
     const canDrag = !PUBLISHED && n !== 'all-scenes'
     const item: Drag = { kind: 'board', name: n }
-    const dragging = drag?.kind === 'board' && drag.name === n
-    const dropCls = dragging ? '' : n === 'all-scenes' ? (drop && !('into' in drop) && drop.list === null && drop.index === tree.length ? ' drop-before' : '') : seam(parent, index, last)
     return (
       <button key={`${parent ?? ''}/${n}`} data-board-row data-board={n} data-folder={parent ?? undefined} data-reorderable={canDrag || undefined}
         className={`it board${parent ? ' in-folder' : ''}${n === board ? ' cur' : ''}${dragging ? ' dragging' : ''}${dropCls}`}
@@ -366,7 +377,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     const open = !closed[f]
     const rows: ReactNode[] = []
     if (naming?.kind === 'folder' && naming.name === f) {
-      rows.push(<div key={`f:${f}`} className="it folder editing">{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}{input(labelOf(f, it.title))}</div>)
+      rows.push(<div key={`f:${f}`} data-folder-row={f} data-open={open ? '1' : '0'} className={`it folder editing${seam(null, index, false)}`}>{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}{input(labelOf(f, it.title))}</div>)
     } else {
       const item: Drag = { kind: 'folder', name: f }
       const dragging = drag?.kind === 'folder' && drag.name === f

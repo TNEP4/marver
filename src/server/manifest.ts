@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { join, relative, sep } from 'node:path'
 import { CONTENT_WIDTH, PKG } from '../client/const.ts'
 import { buildTree, flatten, isBoardName, readDescription, readTitle } from '../shared/board-tree.ts'
-import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
+import { boardFields, checkBoardsDir, checkRealDirs, listBoardFiles, readRegistry } from './boards.ts'
 import { hash } from './hash.ts'
 
 export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean; description?: string }
@@ -195,7 +195,7 @@ export function sceneBrief(root: string, scene: string): { title?: string; descr
   if (!existsSync(abs)) return {}
   let title: string | undefined, description: string | undefined
   try {
-    const lines = readFileSync(abs, 'utf8').split(/\r?\n/)
+    const lines = readFileSync(abs, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/)
     const fm = frontMatter(lines)
     title = readTitle(fm.fields.title)
     const line = lines.slice(fm.end).map((l) => l.trim()).find((l) => l)
@@ -211,12 +211,18 @@ export function sceneBrief(root: string, scene: string): { title?: string; descr
  *  that never closes, is refused untouched - the brief is the agent's document, never rewritten
  *  from a guess. Returns the error, or null. */
 export function setSceneTitle(root: string, scene: string, title: string): string | null {
-  const dir = join(root, 'design', 'scenes', scene)
-  try { const st = lstatSync(dir); if (st.isSymbolicLink()) return `design/scenes/${scene} is a symlink - refusing to write through it`; if (!st.isDirectory()) return `"${scene}" is not a scene directory` } catch { return `scene "${scene}" does not exist` }
+  const design = join(root, 'design'), scenes = join(design, 'scenes'), dir = join(scenes, scene)
+  // design, design/scenes and the scene itself must be real directories inside the project -
+  // a symlinked design/scenes would land this write outside it
+  const de = checkRealDirs(root, [[design, 'design'], [scenes, 'design/scenes'], [dir, `design/scenes/${scene}`]])
+  if (de) return de
+  try { if (!lstatSync(dir).isDirectory()) return `"${scene}" is not a scene directory` } catch { return `scene "${scene}" does not exist` }
   const file = join(dir, '_brief.md')
   let had = false
   try { const st = lstatSync(file); if (!st.isFile()) return `design/scenes/${scene}/_brief.md is not a regular file - refusing to write it`; had = true } catch { /* no brief yet */ }
-  const raw = had ? readFileSync(file, 'utf8') : ''
+  const text = had ? readFileSync(file, 'utf8') : ''
+  const bom = text.startsWith('\uFEFF') ? '\uFEFF' : ''     // a BOM is kept where it was, never counted as text
+  const raw = text.slice(bom.length)
   const eol = raw.includes('\r\n') ? '\r\n' : '\n'
   const lines = raw.split(/\r?\n/)
   const fm = frontMatter(lines)
@@ -234,8 +240,8 @@ export function setSceneTitle(root: string, scene: string, title: string): strin
   }
   if (!out.join('').trim()) { if (had) rmSync(file); return null }
   const tmp = join(dir, `.brief-${randomBytes(6).toString('hex')}.tmp`)
-  writeFileSync(tmp, out.join(eol))
-  renameSync(tmp, file)
+  try { writeFileSync(tmp, bom + out.join(eol)); renameSync(tmp, file) }
+  catch (err) { rmSync(tmp, { force: true }); throw err }   // never a stray temp file beside the brief
   return null
 }
 

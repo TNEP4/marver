@@ -23,12 +23,16 @@ export function underRoot(root: string, dir: string): boolean {
  *  it; a link outside would publish foreign JSON) and must resolve inside the root. Absent
  *  is fine (no boards yet). Returns the error, or null. */
 export function checkBoardsDir(root: string, boardsDir: string): string | null {
-  // every EXISTING component from the root down (design, design/boards) must be a real
-  // directory - a symlinked `design` with no boards dir yet would otherwise be followed by
-  // the mkdir that creates it
-  const design = join(boardsDir, '..')
-  for (const [p, label] of [[design, 'design'], [boardsDir, 'design/boards']] as const) {
-    try { if (lstatSync(p).isSymbolicLink()) return `${label} must be a real directory, not a symlink` } catch { return null }   // absent = fine, nothing beneath it exists either
+  return checkRealDirs(root, [[join(boardsDir, '..'), 'design'], [boardsDir, 'design/boards']])
+}
+
+/** Every EXISTING path in `dirs` (root-down order) must be a real directory inside the root -
+ *  a symlinked `design` with no boards dir yet would otherwise be followed by the mkdir that
+ *  creates it; a symlinked `design/scenes` would let a brief write land outside the project.
+ *  An absent one ends the walk (nothing beneath it exists either). Returns the error, or null. */
+export function checkRealDirs(root: string, dirs: readonly (readonly [string, string])[]): string | null {
+  for (const [p, label] of dirs) {
+    try { if (lstatSync(p).isSymbolicLink()) return `${label} must be a real directory, not a symlink` } catch { return null }
     if (!underRoot(root, p)) return `${label} escapes the project`
   }
   return null
