@@ -250,7 +250,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'board', name: n }) })
     // the new folder takes the board's own slot (or the slot after its current folder)
     items.push({ label: 'Move to new folder', icon: <FolderPlusIcon size={15} />, onClick: () => newFolderAt(newFolderSlot(treeRef.current, n), n) })
-    for (const f of foldersIn(tree)) if (f !== parent) items.push({ label: `Move to ${boardLabel(f)}`, icon: <FolderIcon size={15} />, onClick: () => { setOpen(f, true); mutate((t) => moveBoard(t, n, f)) } })
+    // moving into an EXISTING folder is a drag, not a menu - the list stays short
     if (parent) items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => { const p = folderOf(t, n); return moveBoard(t, n, null, p ? rootIndex(t, 'folder', p) + 1 : undefined) }) })
     return items
   }
@@ -377,7 +377,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         {/* the quiet way in: a folder-plus on the header (the right-click menu is the other) */}
         {!PUBLISHED && (
           <Tip side="bottom" label="New folder">
-            <button className="sh-hd-add" aria-label="New folder" onClick={() => newFolderAt(treeRef.current.length)}><FolderPlusIcon size={14} /></button>
+            <FolderPlusIcon size={17} className="sh-hd-add" role="button" tabIndex={0} aria-label="New folder"
+              onClick={() => newFolderAt(treeRef.current.length)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); newFolderAt(treeRef.current.length) } }} />
           </Tip>
         )}
       </div>

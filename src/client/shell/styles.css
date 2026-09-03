@@ -531,10 +531,12 @@ body.sh-commenting .sh-lean { opacity: 0 }
 /* the Boards header carries a quiet folder-plus: tertiary, shows on hover of the header row */
 .sh-panel .sh-boards .hd { display: flex; align-items: center; margin-right: 6px }
 .sh-panel .sh-boards .hd span { flex: 1 }
-.sh-panel .sh-hd-add { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 6px;
-  background: none; color: var(--glass-ink-3); cursor: pointer; opacity: 0; transition: opacity .15s ease, color .15s ease }
+/* a bare glyph, no button chrome (padding would shrink it): tertiary, pointer, full ink on hover */
+.sh-panel .sh-hd-add { flex: none; color: var(--glass-ink-3); cursor: pointer; outline: none; border-radius: 4px;
+  opacity: 0; transition: opacity .15s ease, color .15s ease }
 .sh-panel .sh-boards .hd:hover .sh-hd-add, .sh-panel .sh-hd-add:focus-visible { opacity: 1 }
-.sh-panel .sh-hd-add:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-panel .sh-hd-add:hover { color: var(--glass-ink) }
+.sh-panel .sh-hd-add:focus-visible { box-shadow: 0 0 0 2px var(--accent) }
 /* frame rows: one indent in (aligned to the label line), quieter ink */
 .sh-panel .sub { display: flex; align-items: center; height: 28px; padding: 0 8px 0 31px; margin-bottom: 1px;
   color: var(--glass-ink-2); font-size: 13px; font-weight: 400; border-radius: 8px; cursor: pointer }
