@@ -126,8 +126,10 @@ describe('board folders - real dev server, real browser, real files', () => {
     await rightClick(browser!, s, c.x, c.y)
     await pickMenu(browser!, s, 'Move to new folder')
     await browser!.until(s, `document.activeElement?.placeholder === 'Folder name'`)
-    // the board already shows inside the draft, in its own slot
-    expect(await browser!.eval(s, `Array.from(document.querySelectorAll('.sh-boards .it')).map((e) => e.textContent).join('|')`)).toContain('Flow||Specs|Archive')   // the empty input, then the board under it
+    // the board already shows INSIDE the draft (indented, one row, its old root row gone), in its own slot
+    expect(await browser!.eval(s, `Array.from(document.querySelectorAll('.sh-boards .it')).map((e) => e.textContent).join('|')`)).toBe('Overview|Flow||Specs|Archive|All Scenes')   // the empty input, then the board under it
+    expect(await browser!.eval(s, `document.querySelectorAll('[data-board="specs"]').length`)).toBe(0)
+    expect(await browser!.eval(s, `document.querySelector('.sh-boards .it.draft').classList.contains('in-folder')`)).toBe(true)
     await type(browser!, s, 'Research')
     await enter(browser!, s)
     await browser!.until(s, `${ROWS}.join() === 'overview,flow,folder:research,  specs,archive,all-scenes'`)
@@ -136,6 +138,40 @@ describe('board folders - real dev server, real browser, real files', () => {
     expect(readBoard('archive').order).toBe(3)
     expect(readBoard('archive').folder).toBeUndefined()
     expect(registry()).toEqual({ version: 1, folders: [{ name: 'research', order: 2 }] })
+  })
+
+  skippable('naming: Escape cancels a new folder (nothing written); a taken name stays editing with a toast; Enter then blur writes ONCE', async () => {
+    writeBoard('specs', { order: 2, folder: 'research' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 2 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${ROWS}.includes('folder:research')`)
+    const hd = await centre(browser!, s, '.sh-boards .hd')
+    await rightClick(browser!, s, hd.x, hd.y)
+    await pickMenu(browser!, s, 'New folder')
+    await browser!.until(s, `document.activeElement?.placeholder === 'Folder name'`)
+    await type(browser!, s, 'Never mind')
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, s)
+    await browser!.until(s, `!document.querySelector('.sh-boards input')`)
+    await settle()
+    expect(registry()).toEqual({ version: 1, folders: [{ name: 'research', order: 2 }] })
+    expect(await browser!.eval(s, `performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/api/boards/reorder')).length`)).toBe(0)
+    // a collision: "Research" slugs to the existing folder
+    await rightClick(browser!, s, hd.x, hd.y)
+    await pickMenu(browser!, s, 'New folder')
+    await browser!.until(s, `document.activeElement?.placeholder === 'Folder name'`)
+    await type(browser!, s, 'Research')
+    await enter(browser!, s)
+    await browser!.until(s, `window.__mvStore.getState().toasts.some((t) => /already exists/.test(t.text))`)
+    expect(await browser!.eval(s, `document.activeElement?.placeholder`)).toBe('Folder name')   // still editing
+    // fix the name, Enter, then the blur that follows: one write, one folder
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'Ideas')
+    await enter(browser!, s)
+    await browser!.eval(s, `document.activeElement?.blur?.()`)
+    await browser!.until(s, `${ROWS}.includes('folder:ideas')`)
+    await settle()
+    expect(registry().folders.map((f: any) => f.name)).toEqual(['research', 'ideas'])
+    expect(await browser!.eval(s, `performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/api/boards/reorder')).length`)).toBe(1)
   })
 
   skippable('DRAG a board onto a folder row → it moves inside (file + registry); drag it back out to a root seam → `folder` gone', async () => {
@@ -274,5 +310,41 @@ describe('board folders - real dev server, real browser, real files', () => {
     expect(await rows(browser!, s)).toContain('folder:research')
     // the proof it went through the 409: TWO tree writes left the page (the refused one, then the replay)
     expect(await browser!.eval(s, `performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/api/boards/reorder')).length`)).toBe(2)
+  })
+
+  skippable('two quick drags on a stale sidebar both survive: the batch replays over the fresh files', async () => {
+    const s = await open(browser!)
+    await browser!.eval(s, `(() => {
+      const orig = window.fetch.bind(window); const frozen = {}; window.__mvFrozen = true; window.__mvHold = null
+      window.fetch = async (u, o) => {
+        const url = String(u)
+        if (o?.method === 'POST' && url.endsWith('/api/boards/reorder')) { window.__mvFrozen = false; if (window.__mvHold) await window.__mvHold }
+        const r = await orig(u, o)
+        if (window.__mvFrozen && /\\/api\\/(boards|folders)$/.test(url)) {
+          if (!frozen[url]) frozen[url] = { status: r.status, body: await r.clone().text() }
+          return new Response(frozen[url].body, { status: frozen[url].status, headers: { 'content-type': 'application/json' } })
+        }
+        return r
+      }
+    })()`)
+    await browser!.eval(s, `Promise.all([fetch('/__mv/api/boards'), fetch('/__mv/api/folders')])`)
+    writeBoard('specs', { order: 2, folder: 'research' })          // the agent's edit the sidebar cannot see
+    await new Promise((r) => setTimeout(r, 600))
+    // hold the FIRST write on the wire so the second drag queues behind it
+    await browser!.eval(s, `(window.__mvHold = new Promise((r) => { window.__mvRelease = r }), 'held')`)   // the eval must not await the promise it makes
+    const archive = await centre(browser!, s, '[data-board="archive"]')
+    const overview = await centre(browser!, s, '[data-board="overview"]')
+    await drag(browser!, s, archive, { x: overview.x, y: overview.top + 3 })          // archive → first
+    await browser!.until(s, `${ROWS}[0] === 'archive'`)
+    const flow = await centre(browser!, s, '[data-board="flow"]')
+    const all = await centre(browser!, s, '[data-board="all-scenes"]')
+    await drag(browser!, s, flow, { x: all.x, y: all.y })                             // flow → last
+    await browser!.until(s, `${ROWS}.join() === 'archive,overview,specs,flow,all-scenes'`)
+    await browser!.eval(s, `window.__mvRelease()`)
+    await browser!.until(s, `${ROWS}.join() === 'archive,overview,folder:research,  specs,flow,all-scenes'`, 10_000)
+    await settle(); await settle()
+    expect(readBoard('archive').order).toBe(0)
+    expect(readBoard('flow').order).toBe(3)
+    expect(readBoard('specs').folder).toBe('research')
   })
 })

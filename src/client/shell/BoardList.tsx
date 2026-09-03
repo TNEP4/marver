@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { useStore, PUBLISHED, boardLabel, fetchBoardTree, type TreeBase } from './store.ts'
+import { useStore, HAS_ALL_SCENES, PUBLISHED, boardLabel, fetchBoardTree, type TreeBase } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
@@ -36,44 +36,52 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const [closed, setClosed] = useState<Record<string, true>>(readClosed)
   const [drag, setDrag] = useState<Drag | null>(null)
   const [drop, setDrop] = useState<Drop | null>(null)
-  // genRef invalidates every async setTree: a mutation bumps it, so a poll/fetch that
-  // STARTED earlier can never clobber a fresh optimistic tree or a just-renamed list.
-  const genRef = useRef(0)
-  const busyRef = useRef(0)                                            // writes in flight; while >0 polls hold off
-  const pendingRef = useRef(false)                                     // a refresh asked for while busy - runs when the chain drains
+  // What the sidebar shows = the CONFIRMED tree (the last read of the files) with every
+  // unconfirmed intent projected on top, in order. A read never loses an optimistic move
+  // (the queue re-applies over whatever came back) and a failure never rolls back to another
+  // unconfirmed state - only ever to the files. Reads are latest-wins by sequence.
+  const confirmedRef = useRef<TreeItem[]>([])
+  const baseRef = useRef<TreeBase>({ boards: {}, folders: null })     // the hashes the confirmed tree was read from
+  const queueRef = useRef<Intent[]>([])                                // applied on screen, not yet written
+  const flushing = useRef(false)
+  const loadSeq = useRef(0)
   const commitBusy = useRef(false)                                    // guards Enter+blur firing two commits
-  const chainRef = useRef<Promise<unknown>>(Promise.resolve())         // serializes tree POSTs
-  const baseRef = useRef<TreeBase>({ boards: {}, folders: null })     // the hashes the current tree was read from
-  const lastErr = useRef('')                                          // a malformed registry toasts once per message
+  const lastErr = useRef('')                                          // a server-side error (malformed registry, symlinked dir) toasts once per message
   // drag runs on pointer events, NOT native drag-and-drop: native DnD hands the cursor to
   // the OS (arrow/move), so a grabbing hand can't persist. Owning the gesture lets us hold
   // the grabbing cursor for the whole drag via a body class.
   const gestureRef = useRef<{ pointerId: number; startX: number; startY: number; item: Drag; dragging: boolean; el: HTMLElement } | null>(null)
   const treeRef = useRef(tree)
   treeRef.current = tree
+  const namingRef = useRef(naming)                                   // commit reads the LIVE naming state, never a stale closure (Escape, then a late blur)
+  namingRef.current = naming
 
-  const load = async (): Promise<TreeItem[] | null> => {
-    const gen = genRef.current
+  /** The confirmed tree with the queue projected on top - what the human sees. */
+  const show = () => {
+    let t = confirmedRef.current
+    for (const intent of queueRef.current) t = intent(t) ?? t
+    treeRef.current = t
+    setTree(t)
+  }
+  const load = async (): Promise<boolean> => {
+    const seq = ++loadSeq.current
     try {
       const snap = await fetchBoardTree()
-      if (gen !== genRef.current) return null
+      if (seq !== loadSeq.current) return false                    // an older read landing late never overwrites a newer one
+      confirmedRef.current = snap.tree
       baseRef.current = snap.base
-      setTree(snap.tree)
-      treeRef.current = snap.tree
       lastErr.current = ''
-      return snap.tree
+      show()
+      return true
     } catch (e) {
-      // a malformed registry is the one error worth saying out loud (once); transport
-      // failures keep the last known tree quietly
+      // a server-side error (a malformed registry, a symlinked boards dir) is worth saying
+      // out loud, once; transport failures keep the last known tree quietly
       const msg = e instanceof Error ? e.message : ''
-      if (/_folders\.json/.test(msg) && msg !== lastErr.current) { lastErr.current = msg; useStore.getState().toast(msg) }
-      return null
+      if (/design\/boards/.test(msg) && msg !== lastErr.current) { lastErr.current = msg; useStore.getState().toast(msg) }
+      return false
     }
   }
-  const refresh = () => {
-    if (busyRef.current > 0) { pendingRef.current = true; return }   // a write is mid-flight; re-read once it settles
-    void load()
-  }
+  const refresh = () => { void load() }
   useEffect(() => {
     refresh()
     const t = setInterval(refresh, 8000)
@@ -99,48 +107,43 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     setTimeout(() => canvasCtl.fitAll(), 60)
   }
 
-  /** The one write path: apply the intent to the current tree, show it now, persist it. A 409
-   *  (a concurrent agent or tab wrote first) re-reads the tree and replays the intent once;
-   *  any other failure rolls back and says so. */
-  const mutate = (intent: Intent) => {
-    const prev = treeRef.current
-    const next = intent(prev)
-    if (!next) return
-    genRef.current++
-    const gen = genRef.current
-    busyRef.current++                                             // hold polls off until this settles
-    setTree(next)
-    treeRef.current = next
-    chainRef.current = chainRef.current.then(async () => {
-      const fail = (msg: string) => { setTree(prev); treeRef.current = prev; useStore.getState().toast(msg) }
-      try {
-        let r = await useStore.getState().arrangeBoards(next, baseRef.current)
-        if (gen !== genRef.current) return                        // a newer write superseded this one
+  /** The one write path: queue the intent, show it at once, persist. The flush takes EVERY
+   *  queued intent as one batch over the confirmed tree and writes the result; a 409 (a
+   *  concurrent agent or tab wrote first) re-reads the files and replays the whole batch on
+   *  what is there now, once. A terminal failure drops the batch, says so, and re-reads -
+   *  the screen returns to the files, never to another unconfirmed state. Returns false when
+   *  the intent cannot apply to what is shown (nothing queued). */
+  const mutate = (intent: Intent): boolean => {
+    if (!intent(treeRef.current)) return false
+    queueRef.current.push(intent)
+    show()
+    void flush()
+    return true
+  }
+  const flush = async () => {
+    if (flushing.current) return
+    flushing.current = true
+    try {
+      while (queueRef.current.length) {
+        const batch = [...queueRef.current]
+        const reduce = (t: TreeItem[]) => batch.reduce<TreeItem[]>((acc, i) => i(acc) ?? acc, t)
+        let r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
         if (!r.ok && r.stale) {
-          // someone else moved first: re-read, replay the same intent on what is there now
-          const fresh = await load()
-          if (gen !== genRef.current) return
-          const again = fresh && intent(fresh)
-          if (!again) { useStore.getState().toast('boards changed - try again'); return }
-          setTree(again); treeRef.current = again
-          r = await useStore.getState().arrangeBoards(again, baseRef.current)
-          if (gen !== genRef.current) return
-          if (!r.ok) { await load(); useStore.getState().toast(r.error ?? 'boards changed - try again'); return }
-        } else if (!r.ok) { fail(r.error ?? 'could not save order'); return }
-        // the write moved the hashes on - re-read so the next write's base is true
-        await load()
-      } catch { if (gen === genRef.current) fail('could not save order') }
-      finally {
-        busyRef.current--
-        if (busyRef.current === 0 && pendingRef.current) { pendingRef.current = false; refresh() }
+          if (!(await load())) { useStore.getState().toast('boards changed - try again'); queueRef.current.splice(0, batch.length); show(); break }
+          r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
+        }
+        queueRef.current.splice(0, batch.length)               // written, or given up on - either way no longer pending
+        if (!r.ok) { useStore.getState().toast(r.error ?? 'could not save order'); await load(); break }
+        await load()                                          // the write moved the hashes on; the next batch needs the true base
       }
-    })
+    } catch { queueRef.current = []; useStore.getState().toast('could not save order'); await load() }
+    finally { flushing.current = false; if (queueRef.current.length) void flush() }
   }
 
   // ---- inline naming (rename a board, rename a folder, name a new folder) ----
   const commit = async (raw: string) => {
-    const n = naming
-    if (!n || commitBusy.current) return                      // Enter already fired this; ignore the follow-up blur
+    const n = namingRef.current
+    if (!n || commitBusy.current) return                      // Enter already fired this (or Escape cancelled); ignore the follow-up blur
     commitBusy.current = true
     try {
       if (n.kind === 'board') {
@@ -150,7 +153,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
           useStore.getState().toast('use a free name - lowercase letters, numbers and dashes'); return   // stay editing
         }
         const r = await useStore.getState().renameBoard(n.name, next)
-        if (r.ok) { setNaming(null); genRef.current++; refresh() }
+        if (r.ok) { setNaming(null); refresh() }
         else useStore.getState().toast(r.error ?? 'rename failed')                                      // stay editing
         return
       }
@@ -162,10 +165,12 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       if (foldersIn(tree).includes(slug)) { useStore.getState().toast(`a folder named "${slug}" already exists`); return }
       setNaming(null)
       if (n.kind === 'folder') {
-        if (closed[n.name]) { setOpen(n.name, true); setOpen(slug, false) }    // the collapsed flag follows the name
+        const wasClosed = !!closed[n.name]
+        setOpen(n.name, true); setOpen(slug, !wasClosed)                          // the collapsed flag follows the name, and only that
         mutate((t) => renameFolder(t, n.name, slug))
       } else if (n.kind === 'new') {
-        mutate((t) => createFolder(t, slug, n.index, n.board))
+        setOpen(slug, true)                                                       // a new folder opens, whatever an old namesake left behind
+        if (!mutate((t) => createFolder(t, slug, n.index, n.board))) useStore.getState().toast('that board is gone - nothing changed')
       }
     } finally { commitBusy.current = false }
   }
@@ -254,7 +259,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (PUBLISHED) return items
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) })
     // folders organise, never own: deleting one puts its boards back at the top level, in order
-    items.push({ label: 'Delete folder', icon: <FolderMinusIcon size={15} />, onClick: () => mutate((t) => deleteFolder(t, f)) })
+    items.push({ label: 'Delete folder', icon: <FolderMinusIcon size={15} />, onClick: () => { setOpen(f, true); mutate((t) => deleteFolder(t, f)) } })
     return items
   }
   /** Right-click on the sidebar itself (the Boards header, gaps between rows, the blank space
@@ -285,7 +290,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         if (e.key === 'Enter') { e.preventDefault(); void commit(e.currentTarget.value) }
         else if (e.key === 'Escape') { e.preventDefault(); setNaming(null) }
       }}
-      onBlur={(e) => { if (naming) void commit(e.currentTarget.value) }} />
+      onBlur={(e) => { if (namingRef.current) void commit(e.currentTarget.value) }} />
   )
   // ONE seam per gap, from the insertion index: drop-before the row AT that index, or drop-after
   // the last row of a folder's list. Overlay (::after), so no layout shift. Never on the row
@@ -352,11 +357,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
 
   // a new folder being named is drawn at its future slot, its board (if any) already inside;
   // that board leaves its usual row for the duration
-  const draft = naming?.kind === 'new' ? naming : null
+  const draft = naming?.kind === 'new' ? (naming.board && !boardsIn(tree).includes(naming.board) ? { ...naming, board: undefined } : naming) : null   // a board deleted mid-naming leaves the draft
   const rows: ReactNode[] = []
   const draftRows = draft ? [
     <div key="f:new" className="it folder editing"><FolderOpenIcon size={14} />{input('', 'Folder name')}</div>,
-    ...(draft.board ? [<div key="new/board" className="it board in-folder draft"><CardsIcon size={14} /><span>{boardLabel(draft.board)}</span></div>] : []),
+    ...(draft.board ? [<div key="new/board" className={`it board in-folder draft${draft.board === board ? ' cur' : ''}`}><CardsIcon size={14} /><span>{boardLabel(draft.board)}</span></div>] : []),
   ] : []
   tree.forEach((it, i) => {
     if (draft && draft.index === i) rows.push(...draftRows)
@@ -364,7 +369,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     else rows.push(...folderRow(it.name, draft?.board ? it.boards.filter((b) => b !== draft.board) : it.boards, i))
   })
   if (draft && draft.index >= tree.length) rows.push(...draftRows)
-  rows.push(boardRow('all-scenes', null, -1, false))
+  if (HAS_ALL_SCENES) rows.push(boardRow('all-scenes', null, -1, false))   // a published bundle without it shows none
   return (
     <div className="sh-boards" ref={rootRef} onContextMenu={(e: ReactMouseEvent) => blankMenu(e)}>
       <div className="hd">

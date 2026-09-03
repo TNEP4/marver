@@ -24,7 +24,7 @@ import { detectHost } from './detect.ts'
 import { scanFrames, type Manifest } from './manifest.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { buildTree, flatten, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
-import { listBoardFiles, readRegistry } from './boards.ts'
+import { checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -190,8 +190,11 @@ export function resolvePublish(
 /** Read every board file; returns name -> parsed json. Bad JSON fails the build loudly, and so
  *  does a board-named entry that is not a regular file (a symlink could publish JSON from
  *  outside the project - the build fails closed rather than skipping it quietly). */
-function readBoards(root: string): Record<string, any> {
-  const { boards, skipped } = listBoardFiles(join(root, 'design', 'boards'))
+export function readBoards(root: string): Record<string, any> {
+  const dir = join(root, 'design', 'boards')
+  const de = checkBoardsDir(root, dir)
+  if (de) throw new Error(de)
+  const { boards, skipped } = listBoardFiles(dir)
   if (skipped.length) throw new Error(`design/boards/${skipped[0]} is not a regular file (a symlinked board cannot be published)`)
   const out: Record<string, any> = {}
   for (const b of boards) {

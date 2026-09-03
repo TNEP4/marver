@@ -28,7 +28,7 @@ export function useContextMenu() {
   const [menu, setMenu] = useState<MenuState | null>(null)
   const open: MenuOpener = (e, items) => {
     e.preventDefault()
-    const MENU_W = 184
+    const MENU_W = 240   // the CSS max-width; labels ellipsize inside it
     // a menu taller than the window (many "Move to …" folders) pins to the top edge and scrolls
     const h = Math.min(items.length * 32 + 12, window.innerHeight - 16)
     setMenu({ x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - h - 8)), items })

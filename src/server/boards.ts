@@ -18,6 +18,16 @@ export function underRoot(root: string, dir: string): boolean {
   } catch { return false }
 }
 
+/** Is design/boards a directory we may read and write? It must not be a symlink at all (a
+ *  link to the repo root would list package.json as a board and let a tree write rewrite
+ *  it; a link outside would publish foreign JSON) and must resolve inside the root. Absent
+ *  is fine (no boards yet). Returns the error, or null. */
+export function checkBoardsDir(root: string, boardsDir: string): string | null {
+  try { if (lstatSync(boardsDir).isSymbolicLink()) return 'design/boards must be a real directory, not a symlink' } catch { return null }
+  if (!underRoot(root, boardsDir)) return 'design/boards escapes the project'
+  return null
+}
+
 /** A regular file (lstat: a symlink is never followed, a dangling one is not "absent"). */
 export const isRegularFile = (p: string): boolean => { try { return lstatSync(p).isFile() } catch { return false } }
 /** Is there ANY node at p (a dangling symlink counts)? */

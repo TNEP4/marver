@@ -159,6 +159,8 @@ export async function fetchBoardNames(): Promise<string[]> {
   if (DATA) return DATA.names
   return [...flatten((await fetchBoardTree()).tree), 'all-scenes']
 }
+/** Does the switcher carry the auto `all-scenes` board? Always in dev; published only when it shipped. */
+export const HAS_ALL_SCENES = !DATA || DATA.names.includes('all-scenes')
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 export const boardLabel = (n: string) => humanize(n)
 
@@ -340,8 +342,18 @@ export const useStore = create<State>((set, get) => {
   let editRev = 0                                    // bumps per edit; a stale save response may never clear dirty over a newer edit
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
-  let renameLock = false                             // while a board file is being renamed, autosave must not fire against the OLD name (a mustExist PUT would 409-gone and clear dirty, losing the in-flight edit)
-  const scheduleSave = () => { editRev++; if (renameLock) return; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
+  // While a board file is being renamed or rewritten by a structural write (rename, the
+  // sidebar's tree arrange), autosave must not fire against it (a mustExist PUT would
+  // 409-gone and clear dirty, losing the in-flight edit; a stale baseHash would 409 and
+  // reload). A COUNT, not a flag: two holders never release each other. Structural writes
+  // also run one at a time through `structChain`, so a rename can never interleave a
+  // tree write on the same file.
+  let saveHolds = 0
+  const holdSaves = () => { saveHolds++; clearTimeout(saveTimer) }
+  const releaseSaves = () => { if (--saveHolds === 0 && get().dirty) scheduleSave() }
+  let structChain: Promise<unknown> = Promise.resolve()
+  const structural = <T,>(fn: () => Promise<T>): Promise<T> => { const p = structChain.then(fn, fn); structChain = p.catch(() => {}); return p }
+  const scheduleSave = () => { editRev++; if (saveHolds > 0) return; clearTimeout(saveTimer); saveTimer = setTimeout(() => get().save(), 500) }
 
   // One cancelable, BOARD-SCOPED reflow after content measurements settle.
   // The captured board name is the generation guard - a debounce surviving a board
@@ -639,37 +651,38 @@ export const useStore = create<State>((set, get) => {
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
     },
 
-    async renameBoard(from, to) {
-      const active = from === get().board
-      // Renaming the ACTIVE board renames its file out from under the autosave. Flush any
-      // pending write FIRST (switchBoard's pattern), so a mustExist PUT never races the move.
-      if (active) {
-        let ok = true
-        for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
-        if (get().dirty) return { ok: false, error: 'unsaved changes - try again' }
-        // hold autosave across the round-trip: an edit landing mid-rename must NOT save to the
-        // old name (a mustExist PUT would 409-gone and clear dirty, losing the edit)
-        renameLock = true
-        clearTimeout(saveTimer)
-      }
-      // Release the lock and resume autosave. Re-read the LIVE board, not the captured `active`:
-      // a board switch may have completed while we awaited, so only the board that is STILL
-      // `from` gets renamed to `to` in state (a switched-away board keeps its own name/nodes).
-      const release = () => { if (active) { renameLock = false; if (get().dirty) scheduleSave() } }
-      let res: Response
-      try { res = await postOwner('boards/rename', { from, to }) }
-      catch { release(); return { ok: false, error: 'could not reach the dev server' } }
-      if (!res.ok) {
+    renameBoard(from, to) {
+      return structural(async () => {
+        const active = from === get().board
+        // Renaming the ACTIVE board renames its file out from under the autosave. Flush any
+        // pending write FIRST (switchBoard's pattern), so a mustExist PUT never races the move.
+        if (active) {
+          let ok = true
+          for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
+          if (get().dirty) return { ok: false, error: 'unsaved changes - try again' }
+          // hold autosave across the round-trip: an edit landing mid-rename must NOT save to the
+          // old name (a mustExist PUT would 409-gone and clear dirty, losing the edit)
+          holdSaves()
+        }
+        // Release the hold and resume autosave. Re-read the LIVE board, not the captured `active`:
+        // a board switch may have completed while we awaited, so only the board that is STILL
+        // `from` gets renamed to `to` in state (a switched-away board keeps its own name/nodes).
+        const release = () => { if (active) releaseSaves() }
+        let res: Response
+        try { res = await postOwner('boards/rename', { from, to }) }
+        catch { release(); return { ok: false, error: 'could not reach the dev server' } }
+        if (!res.ok) {
+          release()
+          const e = await res.json().catch(() => ({} as { error?: string }))
+          return { ok: false, error: e?.error ?? `rename failed (${res.status})` }
+        }
+        // Content is byte-identical after a file move, so boardHash still matches for the next
+        // autosave; only the name (and the URL, via the board-change subscription) changes. Set
+        // the new name BEFORE releasing the hold so a resumed save targets `to`.
+        if (active && get().board === from) set({ board: to })
         release()
-        const e = await res.json().catch(() => ({} as { error?: string }))
-        return { ok: false, error: e?.error ?? `rename failed (${res.status})` }
-      }
-      // Content is byte-identical after a file move, so boardHash still matches for the next
-      // autosave; only the name (and the URL, via the board-change subscription) changes. Set
-      // the new name BEFORE releasing the lock so a resumed save targets `to`.
-      if (active && get().board === from) set({ board: to })
-      release()
-      return { ok: true }
+        return { ok: true }
+      })
     },
 
     // The whole sidebar tree in one write: order, membership, the folders themselves. The
@@ -678,26 +691,26 @@ export const useStore = create<State>((set, get) => {
     // advance boardHash to the hash the server answered - the autosave's CAS token stays
     // true and the watcher's echo is filtered as our own. `base` carries the hashes the
     // sidebar last saw; a 409 (`stale`) means someone else wrote first - refetch and replay.
-    async arrangeBoards(tree, base) {
-      let ok = true
-      for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
-      if (get().dirty) return { ok: false, stale: false, error: 'unsaved changes - try again' }
-      renameLock = true
-      clearTimeout(saveTimer)
-      const release = () => { renameLock = false; if (get().dirty) scheduleSave() }
-      // the active board's hash is freshest in the store (an autosave may have landed since
-      // the sidebar looked); every other board's is the sidebar's
-      const active = get().board
-      const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
-      let res: Response
-      try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders } }) }
-      catch { release(); return { ok: false, stale: false, error: 'could not reach the dev server' } }
-      const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
-      if (!res.ok) { release(); return { ok: false, stale: res.status === 409, error: body?.error } }
-      const sha = body?.sha256?.boards?.[get().board]
-      if (sha) set({ boardHash: sha })
-      release()
-      return { ok: true }
+    arrangeBoards(tree, base) {
+      return structural(async () => {
+        let ok = true
+        for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
+        if (get().dirty) return { ok: false as const, stale: false, error: 'unsaved changes - try again' }
+        holdSaves()
+        // the active board's hash is freshest in the store (an autosave may have landed since
+        // the sidebar looked); every other board's is the sidebar's
+        const active = get().board
+        const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
+        let res: Response
+        try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders } }) }
+        catch { releaseSaves(); return { ok: false as const, stale: false, error: 'could not reach the dev server' } }
+        const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
+        if (!res.ok) { releaseSaves(); return { ok: false as const, stale: res.status === 409, error: body?.error } }
+        const sha = body?.sha256?.boards?.[get().board]
+        if (sha) set({ boardHash: sha })
+        releaseSaves()
+        return { ok: true as const }
+      })
     },
 
     applyManifest(m) {
@@ -1186,7 +1199,7 @@ export const useStore = create<State>((set, get) => {
     save() {
       // a rename is moving this board's file - defer every save so nothing writes to the OLD
       // name mid-move (renameBoard reschedules once the move commits under the new name)
-      if (renameLock) return Promise.resolve(false)
+      if (saveHolds > 0) return Promise.resolve(false)
       // a resize gesture in flight = torn state (new sizes, pre-recipe positions):
       // even a PREVIOUSLY scheduled timer must defer to the gesture-end save
       if (get().gesture && resizedInGesture) { scheduleSave(); return Promise.resolve(false) }

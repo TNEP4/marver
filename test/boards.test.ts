@@ -216,7 +216,7 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
   it('a board the tree does not name is untouched; a folder the tree drops leaves the registry', async () => {
     writeBoard('one', { version: 1, nodes: [], order: 7, folder: 'keep' }); writeBoard('two')
     writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'gone', order: 0 }, { name: 'keep', order: 1 }] }))
-    const r = await post([{ folder: 'keep', boards: ['two'] }], base('two'))
+    const r = await post([{ folder: 'keep', boards: ['two'] }], base('one', 'two'))   // seen both, names only `two`
     expect(r.status).toBe(200)
     expect(read('one')).toMatchObject({ order: 7, folder: 'keep' })
     expect(read(REG).folders).toEqual([{ name: 'keep', order: 0 }])
@@ -274,6 +274,39 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     expect(f.status).toBe(422)
     const r2 = await post(['one'], { ...base('one'), folders: null })
     expect(r2.status).toBe(422)
+  })
+
+  it('a symlinked design/boards DIRECTORY is refused everywhere: list 422, folders 422, write 400, build throws', async () => {
+    const real = join(root, 'elsewhere')
+    mkdirSync(real)
+    writeFileSync(join(real, 'one.json'), JSON.stringify({ version: 1, nodes: [] }))
+    rmSync(boardsDir(), { recursive: true, force: true })
+    symlinkSync(real, boardsDir())                                 // inside the root, still refused: a link to the root would list package.json as a board
+    expect((await drive(root, 'GET', 'boards')).status).toBe(422)
+    expect((await drive(root, 'GET', 'folders')).status).toBe(422)
+    const r = await drive(root, 'POST', 'boards/reorder', { tree: ['one'], base: { boards: { one: hash(readFileSync(join(real, 'one.json'), 'utf8')) }, folders: null } }, OWNER)
+    expect(r.status).toBe(400)
+    expect(JSON.parse(readFileSync(join(real, 'one.json'), 'utf8')).order).toBeUndefined()
+    const { readBoards } = await import('../src/server/build.ts')
+    expect(() => readBoards(root)).toThrow(/symlink/)
+  })
+
+  it('a board that appeared since the client looked makes the write stale (409) - a deleted folder cannot outlive the delete', async () => {
+    writeBoard('one', { version: 1, nodes: [], folder: 'f' })
+    writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'f', order: 0 }] }))
+    const b = base('one')
+    writeBoard('late', { version: 1, nodes: [], folder: 'f' })       // the agent adds a board into the folder
+    const r = await post(['one'], b)                                  // the human deletes the folder (stale tree)
+    expect(r.status).toBe(409)
+    expect(r.json.stale).toEqual(['late'])
+    expect(read('one').folder).toBe('f')
+  })
+
+  it('a board name over 64 chars is refused on every path (it could never be listed)', async () => {
+    const long = 'a'.repeat(65)
+    expect((await drive(root, 'GET', `boards/${long}`)).status).toBe(400)
+    const r = await drive(root, 'POST', 'boards/rename', { from: 'x', to: long }, OWNER)
+    expect(r.status).toBe(400)
   })
 
   it('the autosave PUT carries `folder` (and `order`) over from disk when the shell omits them', async () => {

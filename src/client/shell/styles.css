@@ -591,9 +591,9 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-menu button span { flex: 1; text-transform: capitalize }
 /* the sidebar right-click menu keeps its labels verbatim (they match the toolbar exactly);
    it scrolls rather than overflowing the window when the folder list grows long */
-.sh-ctxmenu { max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: thin }
-.sh-ctxmenu button { flex: none }
-.sh-ctxmenu button span { text-transform: none; white-space: nowrap }
+.sh-ctxmenu { max-height: calc(100vh - 16px); max-width: 240px; overflow-y: auto; scrollbar-width: thin }
+.sh-ctxmenu button { flex: none; max-width: 100% }
+.sh-ctxmenu button span { text-transform: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
 .sh-menu .chk { color: var(--glass-accent) }
 .sh-menu kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }

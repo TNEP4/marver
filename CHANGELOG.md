@@ -2,6 +2,55 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.16.0 - Unreleased
+
+### Added
+
+- **Board folders.** The sidebar's boards can live in folders, one level deep.
+  Right-click the Boards header (or its `+`) for a new folder and name it
+  inline - what you type becomes a slug ("Old stuff" → `old-stuff`, shown "Old
+  Stuff"); right-click a board for **Move to new folder** (the folder takes the
+  board's slot, the input has focus), **Move to <folder>**, **Move to top
+  level**; right-click a folder to **Rename** or **Delete** it (its boards go
+  back to the top level - folders organise, never own). And **drag**: the board
+  drag-and-drop now lands boards inside folders (drop on the folder row), in
+  any slot inside one, back out to the root (or the left gutter of a folder's
+  rows), and drags folders among boards. A click collapses a folder; the
+  choice is remembered per browser. The folder holding the active board keeps
+  the ancestor wash so its home stays visible collapsed.
+- **Folders are files, for agents too.** `"folder": "<name>"` on a board file
+  puts it in a folder (`order` ranks it among its folder siblings);
+  `design/boards/_folders.json` names empty folders and ranks folders at the
+  root. A folder two boards name exists without the registry. The landing
+  board is the first board in sidebar order, folders included. Agent contract
+  and `instructions/boards.md` carry the grammar and the rename/delete
+  choreography.
+- **Published bundles** carry the folder tree of the published boards only; a
+  folder with nothing published never reaches the bundle. The published
+  sidebar shows folders read-only.
+
+### Changed
+
+- `POST /__mv/api/boards/reorder` takes the WHOLE tree (`{ tree, base }`) in
+  place of `{ order }`: root boards as strings, folders as `{ folder, boards }`,
+  plus the sha256 the client last saw for every board it names and for the
+  registry. The server preflights every named board (present, a regular file,
+  well-formed, unchanged) BEFORE writing anything - a 409 names the stale
+  boards and the shell re-reads and replays its move once, so an agent's
+  concurrent `folder` edit and a human's drag can never silently erase each
+  other. It answers the new hashes, and the shell's autosave of the active
+  board keeps its CAS token current - a reorder no longer reboots the board
+  you are editing. `GET /__mv/api/boards` gains `folder`; `GET
+  /__mv/api/folders` is new.
+- Board enumeration (dev API, build, `--all-boards`) counts only regular files
+  on the board-name grammar: `_folders.json`, temp files and symlinks are never
+  boards - the build fails closed on a symlinked board. A malformed
+  `_folders.json` is a 422 the sidebar toasts (and a build error), never a
+  silently empty registry the next drag would overwrite.
+- The sidebar re-reads its list on a coalesced `sh:boards` broadcast (any add,
+  write or delete under `design/boards/`), so agent-written boards and folders
+  show in under half a second instead of the 8 s poll.
+
 ## 0.15.0 - 2026-09-02
 
 ### Added

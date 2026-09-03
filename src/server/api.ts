@@ -6,7 +6,7 @@ import { ROUTE } from '../cli/name.ts'
 import { hash } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, FOLDERS_FILE, validateWire, type WireItem } from '../shared/board-tree.ts'
-import { boardFields, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, underRoot as dirUnderRoot } from './boards.ts'
+import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -89,7 +89,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   const foldersPath = join(boardsDir, FOLDERS_FILE)
 
   const boardPath = (name: string): string | null => {
-    if (!BOARD_NAME.test(name)) return null
+    if (!validName(name)) return null                   // the grammar AND the 64 bound - a longer file would hide from every lister
     mkdirSync(boardsDir, { recursive: true })
     const p = resolve(boardsDir, `${name}.json`)
     return contained(p, boardsDir) ? p : null
@@ -98,8 +98,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   // A board name off the wire: a string, bounded, and matching the on-disk grammar. The
   // length bound caps a pathological rewrite/filename; BOARD_NAME already blocks separators.
   const validName = (n: unknown): n is string => typeof n === 'string' && n.length >= 1 && n.length <= 64 && BOARD_NAME.test(n)
-  // realpath(dir) must stay inside realpath(root) - a symlinked design/boards can't escape.
-  const underRoot = (dir: string): boolean => dirUnderRoot(root, dir)
+  // design/boards itself: never a symlink, always inside the root (boards.ts) - checked before
+  // every read and write of the directory
+  const dirError = (): string | null => checkBoardsDir(root, boardsDir)
   // a symlinked board FILE could redirect a follow-through write; contained() only vets the
   // resolved target's directory, not the link itself, so check the link node directly. lstat,
   // so a DANGLING symlink is refused too (existsSync would call it absent).
@@ -148,6 +149,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         } catch { return json(res, 200, { boards: {} }) }
       }
       if (path === 'boards' && req.method === 'GET') {
+        const de = dirError(); if (de) return json(res, 422, { error: de })
         mkdirSync(boardsDir, { recursive: true })
         // regular files on the board grammar only (boards.ts): never `_folders.json`, a temp
         // file, or a symlink. `order` ranks the board among its siblings; `folder` names the
@@ -161,6 +163,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       // resource (not boards/<name>) so it can never shadow a board named "folders". Malformed
       // is a 422 the sidebar shows - never a silently empty registry the next drag overwrites.
       if (path === 'folders' && req.method === 'GET') {
+        const de = dirError(); if (de) return json(res, 422, { error: de })
         const reg = readRegistry(boardsDir)
         if (reg.state === 'malformed') return json(res, 422, { error: reg.error })
         return json(res, 200, { folders: reg.folders, sha256: reg.sha256 })
@@ -178,7 +181,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { from, to } = parsed as { from?: unknown; to?: unknown }
         if (!validName(from) || !validName(to)) return json(res, 400, { error: 'invalid board name' })
         if (to === 'all-scenes' || from === 'all-scenes' || to === from) return json(res, 400, { error: 'invalid rename' })
-        if (!underRoot(boardsDir)) return json(res, 400, { error: 'boards directory escapes the project' })
+        { const de = dirError(); if (de) return json(res, 400, { error: de }) }
         const fromPath = boardPath(from), toPath = boardPath(to)
         if (!fromPath || !toPath) return json(res, 400, { error: 'invalid board name' })
         if (!existsSync(fromPath)) return json(res, 404, { error: `board "${from}" does not exist` })
@@ -234,11 +237,15 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (bad) return json(res, 400, { error: bad })
         const b = base as { boards?: Record<string, unknown>; folders?: unknown } | null
         if (!b || typeof b !== 'object' || !b.boards || typeof b.boards !== 'object' || (b.folders !== null && typeof b.folders !== 'string')) return json(res, 400, { error: 'expected base hashes' })
-        if (!underRoot(boardsDir)) return json(res, 400, { error: 'boards directory escapes the project' })
-        // preflight the registry
+        { const de = dirError(); if (de) return json(res, 400, { error: de }) }
+        // preflight the registry, and the LIST: a board that appeared since the client looked is
+        // stale too (a folder it names would outlive the client's "delete folder"; the replay
+        // sees it and moves it with the rest)
         const reg = readRegistry(boardsDir)
         if (reg.state === 'malformed') return json(res, 422, { error: reg.error })
         if (reg.sha256 !== b.folders) return json(res, 409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
+        const unseen = listBoardFiles(boardsDir).boards.map((x) => x.name).filter((n) => !(n in b.boards!))
+        if (unseen.length) return json(res, 409, { error: 'boards changed on disk', stale: unseen })
         // preflight every named board: present, regular, well-formed, unchanged since the client looked
         const plan: { name: string; path: string; obj: Record<string, unknown>; order: number; folder: string | null }[] = []
         const stale: string[] = []
