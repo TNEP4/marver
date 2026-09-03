@@ -107,7 +107,8 @@ export function App() {
     return c.live(board)
   }, [board])
 
-  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board])
+  const titles = useStore((s) => s.boardTitles)
+  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board, titles])
 
   return (
     <div tabIndex={-1} className="sh-app dark">

@@ -2,6 +2,63 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.17.0 - 2026-09-03
+
+### Added
+
+- **Titles: name a board, a folder or a scene anything.** "MVP", "UI",
+  "Checkout (v2) 🛒" - any casing, punctuation, emoji. Rename in the sidebar
+  (boards, folders, and now scenes) edits the **title**; the file name, the
+  folder key and the scene directory are the object's identity - what agents,
+  `publish.json`, URLs and comment threads address - and never move from the
+  sidebar. Without a title the sidebar Title-Cases the slug, as before, so
+  nothing changes for existing canvases; typing exactly what a slug reads as
+  clears its title again. The title lives with the object: `"title"` in the
+  board JSON, `title` on the `_folders.json` entry, `title` in the YAML front
+  matter of the scene's `_brief.md`. It reaches everywhere the object is
+  named: sidebar, tab title, play switcher, published bundles, the manifest,
+  `npx marver boards`. Two boards (or two folders) cannot show the same name.
+- **Agents know titles.** `design/manifest.json` carries `title` on boards,
+  folders and scenes beside `description`, so "the Checkout A/B board" resolves
+  to its slug in one read; `instructions/boards.md`, `discover.md` and the AGENTS
+  templates teach the field, and that a slug rename is a deliberate refactor, not
+  a side effect of naming.
+
+### Fixed
+
+- **Drops land where the seam shows.** The sidebar's drop resolver reads the
+  pointer against the rows it rendered - the nearest gap by row midlines, the
+  folder header's middle band for "into" - instead of hit-testing one row with a
+  28 px left gutter. A board grabbed by its icon and dragged between two folder
+  boards now lands between them in one move (the gutter made that read as "after
+  the folder"); a folder board released on the root row under it, or in the blank
+  under the list, leaves the folder (those releases were silent no-ops); after a
+  folder's last board the gap belongs to the row under the pointer - still over
+  that board = inside, over the root row below = out. The release applies the
+  seam that was on screen, never a recomputation; a release outside the panel
+  cancels. An open empty folder shows its indented seam under its own header.
+- **A project reached through a symlink lost its live updates.** `marver dev`
+  (and every command) now resolves the root's real path before watching it: a
+  root under a linked folder (macOS `/var` → `/private/var`, a linked projects
+  directory) was watched under the link while the OS reported events under the
+  real path, so new frames, brief edits and `design/config.ts` changes went
+  unseen until a restart.
+
+### Changed
+
+- `POST /__mv/api/boards/rename` takes `{ from, to?, title?, baseHash? }`: title
+  only when `to` is omitted (answers the file's new `sha256`); `baseHash` makes it
+  compare-and-set (409 with the hash on disk when the file changed since) - a
+  title never overwrites an agent's concurrent edit. A move runs first, so a
+  refused move (comment threads, a live connection) changes nothing. New
+  `POST /__mv/api/scenes/rename { scene, title }` writes the brief's front matter
+  (atomically; a block that never closes, a symlinked brief or scene directory is
+  refused untouched). The tree write's folder items carry `title`; `PUT` on a
+  board carries `title` over from disk like `order`, `folder` and `description`.
+  `marver dev` broadcasts `sh:scenes` when a brief changed with the frames
+  intact - labels update, no iframe re-keys. Published bundles carry board
+  titles (`titles`) and folder titles on the tree.
+
 ## 0.16.0 - 2026-09-03
 
 ### Added

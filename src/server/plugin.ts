@@ -199,12 +199,16 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       // §5.6), and a board/folder/description edit (the manifest carries those now) must
       // never re-key the live iframes. The file itself is rewritten on any change.
       let framesKey = JSON.stringify(manifest.frames)
+      let scenesKey = JSON.stringify(manifest.scenes)
       const regen = debounce(() => {
         manifest = scanFrames(root, projectInfo())   // keep the cached manifest fresh for affectedFrameIds
         const changed = writeManifest(root, manifest)
-        const key = JSON.stringify(manifest.frames)
+        const key = JSON.stringify(manifest.frames), sKey = JSON.stringify(manifest.scenes)
         if (changed && key !== framesKey) server.ws.send('sh:manifest', manifest as any)
-        framesKey = key
+        // a scene's title or description changed (its brief) with the frames intact: the shell
+        // relabels its rows off `sh:scenes` - no manifest apply, no iframe re-keyed
+        else if (changed && sKey !== scenesKey) server.ws.send('sh:scenes', { scenes: manifest.scenes } as any)
+        framesKey = key; scenesKey = sKey
       }, 150)
 
       const watched = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]

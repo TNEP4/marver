@@ -45,7 +45,19 @@ e.g. `# Checkout - the buyer's path from cart to receipt (v2, after the pricing 
 That line lands in `design/manifest.json` as the scene's `description`, so a later
 session reads it without opening the brief; keep it true as the scene moves on (a
 scene that only needs a gist - a version snapshot, an archive - gets a one-line brief).
-Show it. Get the nod.
+A scene's directory is its identity (every frame id starts with it); what humans SEE
+for it is `title` in the brief's YAML front matter - optional, free text - the sidebar
+Title-Cases the directory otherwise (`checkout` → "Checkout", but `mvp` → "Mvp"):
+
+```md
+---
+title: "Checkout (v2)"
+---
+# Checkout - the buyer's path from cart to receipt (v2, after the pricing pivot)
+```
+
+The human's Rename on a scene writes exactly that line; leave the block alone and
+never rename the directory for a title. Show the brief. Get the nod.
 
 **Unattended?** When the human is away or has said "don't ask", the interview and
 the nod convert to obligations, not blockers: answer the five questions yourself

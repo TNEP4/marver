@@ -8,7 +8,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { hash } from './hash.ts'   // not manifest.ts: manifest imports this module
-import { FOLDERS_FILE, isBoardFile, parseFolders, readDescription, type FolderRow } from '../shared/board-tree.ts'
+import { FOLDERS_FILE, isBoardFile, parseFolders, readDescription, readTitle, type FolderRow } from '../shared/board-tree.ts'
 
 /** Does realpath(dir) stay inside realpath(root)? A symlinked design/boards can't escape. */
 export function underRoot(root: string, dir: string): boolean {
@@ -58,13 +58,16 @@ export function listBoardFiles(boardsDir: string): { boards: BoardFile[]; skippe
   return { boards, skipped }
 }
 
-/** The author-owned sidebar fields off a board's JSON, leniently. */
-export function boardFields(json: unknown, validName: (n: unknown) => n is string): { order?: number; folder?: string; description?: string } {
-  const o = json as { order?: unknown; folder?: unknown; description?: unknown } | null
+/** The author-owned sidebar fields off a board's JSON, leniently: rank, folder, the title
+ *  humans see, the sentence agents read. */
+export function boardFields(json: unknown, validName: (n: unknown) => n is string): { order?: number; folder?: string; title?: string; description?: string } {
+  const o = json as { order?: unknown; folder?: unknown; title?: unknown; description?: unknown } | null
+  const title = readTitle(o?.title)
   const description = readDescription(o?.description)
   return {
     ...(typeof o?.order === 'number' && Number.isFinite(o.order) ? { order: o.order } : {}),
     ...(validName(o?.folder) ? { folder: o.folder } : {}),
+    ...(title ? { title } : {}),
     ...(description ? { description } : {}),
   }
 }

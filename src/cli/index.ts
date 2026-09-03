@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { cac } from 'cac'
-import { readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { readFileSync, realpathSync } from 'node:fs'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
 
@@ -28,6 +28,11 @@ function version(): string {
     return JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version
   } catch { return '0.0.0' }
 }
+
+/** The project root, REAL path. A root reached through a symlink (macOS's /var → /private/var,
+ *  a linked projects folder) would be watched under the link while the OS reports events under
+ *  the real path - and every frame add, brief edit and config change would go unseen. */
+const resolve = (dir: string): string => { const p = resolvePath(dir); try { return realpathSync(p) } catch { return p } }
 
 const cli = cac(NAME)
 

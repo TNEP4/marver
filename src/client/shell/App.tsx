@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, hydrateBoardPolicy, landingMode, playsAsSlides, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
@@ -8,7 +8,8 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
-import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { readTitle } from '../../shared/board-tree.ts'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, useComments } from './comments-store.ts'
@@ -19,17 +20,31 @@ const commentsStore = () => useComments.getState()
 let booted = false                             // survives Fast Refresh; see the boot effect
 
 /** One collapsible scene group in the sidebar. `held` marks a scene that contains a
- *  selected frame - a quiet secondary wash so ancestry survives collapsing the group. */
-function SceneGroup({ name, count, held, onPick, onContextMenu, children }: { name: string; count: number; held: boolean; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; children: ReactNode }) {
+ *  selected frame - a quiet secondary wash so ancestry survives collapsing the group.
+ *  `renaming` swaps the label for an input: the scene's TITLE (its brief's front matter) -
+ *  the directory never moves from here. */
+function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onContextMenu, children }: { name: string; label: string; count: number; held: boolean; renaming?: boolean; onRename?: (title: string | null) => void; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; children: ReactNode }) {
   const [open, setOpen] = useState(true)
+  const done = useRef(false)   // Enter then blur: one commit
+  if (renaming) { done.current = false }
+  const finish = (v: string | null) => { if (done.current) return; done.current = true; onRename?.(v) }
   return (
     <div>
-      <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)} onContextMenu={onContextMenu}>
-        <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
-        {/* the NAME selects every frame in the scene; the caret/row still collapses */}
-        <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{humanize(name) || '(root)'}</span>
-        <small>{count}</small>
-      </button>
+      {renaming ? (
+        <div className="it editing">
+          <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
+          <input autoFocus defaultValue={label} spellCheck={false} onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); finish(e.currentTarget.value) } else if (e.key === 'Escape') { e.preventDefault(); finish(null) } }}
+            onBlur={(e) => finish(e.currentTarget.value)} />
+        </div>
+      ) : (
+        <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)} onContextMenu={onContextMenu}>
+          <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
+          {/* the NAME selects every frame in the scene; the caret/row still collapses */}
+          <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{label || '(root)'}</span>
+          <small>{count}</small>
+        </button>
+      )}
       {open && children}
     </div>
   )
@@ -325,6 +340,7 @@ export function App() {
   const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
   const [pillOpen, setPillOpen] = useState(true)
   const cm = useContextMenu()   // shared sidebar right-click menu (boards + scenes)
+  const [sceneNaming, setSceneNaming] = useState<string | null>(null)   // the scene whose title is being edited inline
 
   // boot honors the deep link: board before load, play mode after it.
   // Selection + camera intent are restored by the Canvas boot effect. The module-level
@@ -431,9 +447,10 @@ export function App() {
     return () => { window.removeEventListener('popstate', onPop); window.removeEventListener('hashchange', onPop) }
   }, [])
 
-  // page title follows the open board
+  // page title follows the open board (and its title, when one is set)
   const board = useStore((s) => s.board)
-  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board])
+  const titles = useStore((s) => s.boardTitles)
+  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board, titles])
 
   // favicon follows the mode: blue pack in design mode, purple pack in interact.
   // The links are rebuilt (not toggled) so the set stays deterministic; the .ico is
@@ -484,6 +501,8 @@ export function App() {
   useEffect(() => {
     if (!import.meta.hot) return
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // a brief's title or description changed with the frames intact: relabel, never re-key
+    import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
     // Live Jam presence: the daemon broadcasts the set of frames Marver is editing.
     // Camera-safe by construction - this only toggles a glow class, never moves the view.
     import.meta.hot.on('sh:jam-activity', (m: any) => useStore.getState().setWorking(Array.isArray(m?.frames) ? m.frames.filter((x: unknown) => typeof x === 'string') : []))
@@ -779,15 +798,22 @@ export function App() {
             <BoardList onMenu={cm.open} />
             <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
-              <SceneGroup key={sc.name} name={sc.name} count={sc.frames}
+              <SceneGroup key={sc.name} name={sc.name} label={sceneLabel(sc.name)} count={sc.frames}
                 held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}
+                renaming={sceneNaming === sc.name}
+                onRename={(raw) => {
+                  setSceneNaming(null)
+                  const title = raw === null ? undefined : readTitle(raw)
+                  if (!title || title === sceneLabel(sc.name)) return                    // Escape, empty, or unchanged = never mind
+                  useStore.getState().renameScene(sc.name, title).then((r) => { if (!r.ok) toast(r.error ?? 'rename failed') })
+                }}
                 onContextMenu={(e) => cm.open(e, [{
                   label: 'Copy path',
                   icon: <SignpostIcon size={15} />,
                   onClick: () => copyToClipboard(sc.name
                     ? `board: ${useStore.getState().board} · scene: ${sc.name}  (design/scenes/${sc.name}/)`
                     : `board: ${useStore.getState().board} · scene: (root)`, 'path copied'),
-                }])}
+                }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : [])])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   if (!keys.length) return

@@ -168,6 +168,7 @@ export function PlayOverlay() {
 function BoardMenu({ current }: { current: string }) {
   const pop = usePopover()
   const [names, setNames] = useState<string[]>([current])
+  useStore((s) => s.boardTitles)   // labels follow titles (the fetch below refreshes them)
   // refreshed on every open - agents create boards while you present
   useEffect(() => { if (pop.open) fetchBoardNames().then(setNames).catch(() => {}) }, [pop.open])
   return (

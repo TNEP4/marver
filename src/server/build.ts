@@ -23,8 +23,8 @@ import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
 import { scanFrames, type FrameEntry, type Manifest } from './manifest.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
-import { buildTree, flatten, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
-import { checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
+import { buildTree, flatten, isBoardName, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
+import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -210,9 +210,8 @@ export function readBoards(root: string): Record<string, any> {
  *  the landing). `names[0]` is where `/` opens. Folder names of published boards are structure,
  *  like board names: they ship. */
 export function publishedTree(published: string[], allBoards: Record<string, any>, folders: FolderRow[]): { tree: TreeItem[]; names: string[] } {
-  const field = (n: string, k: 'order' | 'folder') => (allBoards[n] as Record<string, unknown> | undefined)?.[k]
   const tree = buildTree(
-    published.filter((n) => n !== 'all-scenes').map((n) => ({ name: n, order: field(n, 'order') as number | undefined, folder: field(n, 'folder') as string | undefined })),
+    published.filter((n) => n !== 'all-scenes').map((n) => ({ name: n, ...boardFields(allBoards[n], isBoardName) })),
     folders,
   ).filter((it) => it.kind === 'board' || it.boards.length > 0)
   return { tree, names: [...flatten(tree), ...(published.includes('all-scenes') ? ['all-scenes'] : [])] }
@@ -232,7 +231,7 @@ export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], p
     ...(pubFolders.length ? { folders: pubFolders } : {}),
     ...(pubBoards.length ? { boards: pubBoards } : {}),
     scenes: manifest.scenes.filter((s) => pubScenes.has(s.name))
-      .map(({ name, description, brief }) => ({ name, frames: pubFrames.filter((f) => f.scene === name).length, ...(description ? { description } : {}), ...(brief && !strip ? { brief } : {}) })),
+      .map(({ name, title, description, brief }) => ({ name, frames: pubFrames.filter((f) => f.scene === name).length, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(brief && !strip ? { brief } : {}) })),
     frames: pubFrames,
   }
 }
@@ -413,8 +412,10 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   })
   // names drives the published board switcher (all-scenes only when actually published);
   // default is where `/` opens - the first published board, never a synthesized aggregate
+  // titles: what the published switcher labels boards by (folder titles ride on the tree)
+  const titles = Object.fromEntries(publishedNames.flatMap((n) => { const t = boardFields(allBoards[n], isBoardName).title; return t ? [[n, t]] : [] }))
   const data = {
-    manifest: pubManifest, boards, names: publishedNames, tree,
+    manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}),
     default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],
     rights, policy: { boards: boardsMeta, reveal: policy.reveal, ...(lockedShell ? { lockedShell: true } : {}) },
   }

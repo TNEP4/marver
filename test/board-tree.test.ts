@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  applyDrop, buildTree, createFolder, deleteFolder, flatten, fromWire, isOwnSlot, moveBoard, newFolderSlot, parseFolders, renameFolder, resolveDrop, slugify, toWire, validateWire,
-  type Hit, type TreeItem,
+  applyDrop, buildTree, createFolder, deleteFolder, flatten, fromWire, INDENT, isOwnSlot, moveBoard, newFolderSlot, parseFolders, readTitle, resolveDrop, retitleFolder, slugFor, slugify, toWire, validateWire,
+  type Row, type TreeItem,
 } from '../src/shared/board-tree.ts'
 
 // The sidebar's folder tree is pure and MANDATORY-tested here: ranking, the wire contract, every
@@ -34,8 +34,10 @@ describe('buildTree - ranking from the files', () => {
 })
 
 describe('parseFolders - the registry is strict', () => {
-  it('reads rows, ignores a missing order', () => {
+  it('reads rows, ignores a missing order; a title and a description ride along, cleaned', () => {
     expect(parseFolders({ version: 1, folders: [{ name: 'a', order: 2 }, { name: 'b' }] })).toEqual([{ name: 'a', order: 2 }, { name: 'b' }])
+    expect(parseFolders({ version: 1, folders: [{ name: 'ui', title: '  UI  🚀 ', description: 'x' }, { name: 'b', title: '' }] })).toEqual([{ name: 'ui', title: 'UI 🚀', description: 'x' }, { name: 'b' }])
+    expect(buildTree([{ name: 'x', folder: 'ui' }], [{ name: 'ui', title: 'UI' }])).toEqual([{ kind: 'folder', name: 'ui', boards: ['x'], title: 'UI' }])
   })
   it('names what is wrong instead of reading an empty registry', () => {
     expect(typeof parseFolders(null)).toBe('string')
@@ -48,10 +50,16 @@ describe('parseFolders - the registry is strict', () => {
 })
 
 describe('the wire contract', () => {
-  it('round-trips', () => {
+  it('round-trips; a folder title rides the wire (it lives in the registry the write rewrites)', () => {
     const tree = [B('a'), F('f', ['x', 'y']), B('b')]
     expect(fromWire(toWire(tree))).toEqual(tree)
     expect(toWire(tree)).toEqual(['a', { folder: 'f', boards: ['x', 'y'] }, 'b'])
+    const titled: TreeItem[] = [{ kind: 'folder', name: 'ui', boards: [], title: 'UI', description: 'd' }]
+    expect(toWire(titled)).toEqual([{ folder: 'ui', boards: [], title: 'UI', description: 'd' }])
+    expect(fromWire(toWire(titled))).toEqual(titled)
+    expect(validateWire([{ folder: 'ui', boards: [], title: 'UI 🚀' }])).toBeNull()
+    expect(validateWire([{ folder: 'ui', boards: [], title: 'x'.repeat(121) }])).toMatch(/title/)
+    expect(validateWire([{ folder: 'ui', boards: [], title: 5 }])).toMatch(/title/)
   })
   it('validateWire refuses every malformed shape and accepts the sound one', () => {
     expect(validateWire(['a', { folder: 'f', boards: ['x'] }])).toBeNull()
@@ -67,6 +75,31 @@ describe('the wire contract', () => {
     expect(validateWire([{ folder: 'f' }])).toMatch(/invalid folder/)
     expect(validateWire([null])).toMatch(/invalid/)
     expect(validateWire(Array.from({ length: 51 }, (_, i) => ({ folder: `f${i}`, boards: [] })))).toMatch(/too large/)
+  })
+})
+
+describe('readTitle - what humans see', () => {
+  it('keeps casing, punctuation and emoji; drops control characters; collapses whitespace; caps in code points', () => {
+    expect(readTitle('  MVP  ')).toBe('MVP')
+    expect(readTitle('Checkout (v2) 🚀')).toBe('Checkout (v2) 🚀')
+    expect(readTitle('a\u0000b\tc\nd')).toBe('a b c d')
+    expect(readTitle('')).toBeUndefined(); expect(readTitle('   ')).toBeUndefined(); expect(readTitle(5)).toBeUndefined()
+    const emoji = readTitle('🚀'.repeat(200))!
+    expect(Array.from(emoji).length).toBe(120)
+    expect(emoji.endsWith('🚀')).toBe(true)   // never a half surrogate
+  })
+})
+
+describe('slugFor - a new folder mints its slug from its title, once', () => {
+  it('a taken slug gets -2, -3; nothing to slug gets the fallback; always on-grammar', () => {
+    expect(slugFor('Old stuff', [])).toBe('old-stuff')
+    expect(slugFor('MVP 🚀', [])).toBe('mvp')
+    expect(slugFor('Old stuff', ['old-stuff'])).toBe('old-stuff-2')
+    expect(slugFor('Old stuff', ['old-stuff', 'old-stuff-2'])).toBe('old-stuff-3')
+    expect(slugFor('🚀', [])).toBe('folder')
+    expect(slugFor('🚀', ['folder'])).toBe('folder-2')
+    const long = slugFor('a'.repeat(64), ['a'.repeat(64)])
+    expect(long.length).toBeLessThanOrEqual(64); expect(long.endsWith('-2')).toBe(true)
   })
 })
 
@@ -105,9 +138,11 @@ describe('mutations', () => {
     expect(newFolderSlot(tree(), 'b')).toBe(2)
     expect(newFolderSlot(tree(), 'y')).toBe(2)
   })
-  it('renameFolder keeps the boards; refuses a taken name', () => {
-    expect(toWire(renameFolder(tree(), 'f', 'g')!)).toEqual(['a', { folder: 'g', boards: ['x', 'y'] }, 'b'])
-    expect(renameFolder([...tree(), F('g', [])], 'f', 'g')).toBeNull()
+  it('retitleFolder sets or clears the title; the slug and the boards never move; a new folder can carry one', () => {
+    expect(retitleFolder(tree(), 'f', 'F!')![1]).toEqual({ kind: 'folder', name: 'f', boards: ['x', 'y'], title: 'F!' })
+    expect(retitleFolder(retitleFolder(tree(), 'f', 'F!')!, 'f', '')![1]).toEqual({ kind: 'folder', name: 'f', boards: ['x', 'y'] })
+    expect(retitleFolder(tree(), 'nope', 'x')).toBeNull()
+    expect(createFolder(tree(), 'ui', 0, undefined, 'UI')![0]).toEqual({ kind: 'folder', name: 'ui', boards: [], title: 'UI' })
   })
   it('deleteFolder puts the boards back at the root in its slot, in order', () => {
     expect(toWire(deleteFolder(tree(), 'f')!)).toEqual(['a', 'x', 'y', 'b'])
@@ -115,37 +150,149 @@ describe('mutations', () => {
   })
 })
 
-describe('resolveDrop + isOwnSlot + applyDrop - every boundary', () => {
-  // a  |  f: [x, y]  |  b  |  all-scenes   (f expanded)
+describe('resolveDrop - the gap model over the rendered rows', () => {
+  // a  |  f: [x, y]  |  b  |  all-scenes   (f expanded) - rows 28px tall, 1px apart, from y=100, left edge 10
   const tree = () => T(['a', { folder: 'f', boards: ['x', 'y'] }, 'b'])
-  const hit = (h: Partial<Hit> & Pick<Hit, 'kind' | 'name'>): Hit => ({ parent: null, below: false, topEdge: false, gutter: false, ...h })
+  const H = 28, GAP = 1, TOP = 100, LEFT = 10
+  /** The rows the sidebar would render for a tree: headers, the boards of OPEN folders, all-scenes last. */
+  const layout = (t: TreeItem[], closed: string[] = []): Row[] => {
+    const rows: Row[] = []
+    const push = (kind: Row['kind'], name: string, parent: string | null, open?: boolean) => {
+      const top = TOP + rows.length * (H + GAP)
+      rows.push({ kind, name, parent, open, top, bottom: top + H, left: LEFT })
+    }
+    for (const it of t) {
+      if (it.kind === 'board') { push('board', it.name, null); continue }
+      const open = !closed.includes(it.name)
+      push('folder', it.name, null, open)
+      if (open) for (const b of it.boards) push('board', b, it.name)
+    }
+    push('board', 'all-scenes', null)
+    return rows
+  }
+  const rowY = (rows: Row[], name: string, frac: number) => { const r = rows.find((x) => x.name === name)!; return r.top + (r.bottom - r.top) * frac }
   const board = { kind: 'board' as const, name: 'b' }
   const folder = { kind: 'folder' as const, name: 'f' }
+  const ICON = LEFT + 12, LABEL = LEFT + 40   // where a root row is grabbed: its icon (inside the child indent), its label
 
-  it('a board over root rows: halves give the slot before/after', () => {
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'a' }))).toEqual({ list: null, index: 0 })
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'a', below: true }))).toEqual({ list: null, index: 1 })
+  it('a board over root rows: the nearest gap by midline - upper half = before, lower half = after', () => {
+    const rows = layout(tree())
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'a', 0.2))).toEqual({ list: null, index: 0 })
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'a', 0.8))).toEqual({ list: null, index: 1 })
+    expect(resolveDrop(tree(), board, rows, ICON, rowY(rows, 'a', 0.8))).toEqual({ list: null, index: 1 })   // x never matters at an unambiguous gap
   })
-  it('a board over a folder header: the top edge = before it, the rest = into it', () => {
-    expect(resolveDrop(tree(), board, hit({ kind: 'folder', name: 'f', topEdge: true }))).toEqual({ list: null, index: 1 })
-    expect(resolveDrop(tree(), board, hit({ kind: 'folder', name: 'f', below: true }))).toEqual({ into: 'f' })
+  it('a board over a folder header: top quarter = before it, middle = into it, bottom quarter = first inside', () => {
+    const rows = layout(tree())
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'f', 0.1))).toEqual({ list: null, index: 1 })
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'f', 0.5))).toEqual({ into: 'f' })
+    expect(resolveDrop(tree(), board, rows, ICON, rowY(rows, 'f', 0.9))).toEqual({ list: 'f', index: 0 })
   })
-  it('a board over a folder child: halves give the slot inside; the root gutter = after the folder', () => {
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'x', parent: 'f' }))).toEqual({ list: 'f', index: 0 })
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'y', parent: 'f', below: true }))).toEqual({ list: 'f', index: 2 })
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'y', parent: 'f', gutter: true }))).toEqual({ list: null, index: 2 })
+  it('the field bug: a root board grabbed by its ICON and dragged between two folder boards lands between them', () => {
+    const rows = layout(tree())
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, ICON, rowY(rows, 'x', 0.8))).toEqual({ list: 'f', index: 1 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, ICON, rowY(rows, 'y', 0.2))).toEqual({ list: 'f', index: 1 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, ICON, rowY(rows, 'x', 0.2))).toEqual({ list: 'f', index: 0 })
   })
-  it('over all-scenes = the root end slot; an unknown row = null', () => {
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'all-scenes' }))).toEqual({ list: null, index: 3 })
-    expect(resolveDrop(tree(), board, hit({ kind: 'board', name: 'ghost' }))).toBeNull()
-    expect(resolveDrop(tree(), board, hit({ kind: 'folder', name: 'ghost' }))).toBeNull()
+  it('after a folder’s LAST board the gap is shared: over that board = inside (the gutter = root); over the root row below = root', () => {
+    const rows = layout(tree())
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, LEFT + INDENT, rowY(rows, 'y', 0.8))).toEqual({ list: 'f', index: 2 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, LEFT + INDENT - 1, rowY(rows, 'y', 0.8))).toEqual({ list: null, index: 2 })
+    // the same gap seen from the row below it (b's upper half) is the root, wherever x is
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'b', 0.2))).toEqual({ list: null, index: 2 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, ICON, rowY(rows, 'b', 0.2))).toEqual({ list: null, index: 2 })
+    // a folder's last board dragged onto the root row under it leaves the folder (the second field bug)
+    expect(resolveDrop(tree(), { kind: 'board', name: 'y' }, rows, LABEL, rowY(rows, 'b', 0.2))).toEqual({ list: null, index: 2 })
   })
-  it('a folder lands in root slots only: never into a folder, children mean "after that folder"', () => {
-    expect(resolveDrop(tree(), folder, hit({ kind: 'board', name: 'a' }))).toEqual({ list: null, index: 0 })
-    expect(resolveDrop(tree(), folder, hit({ kind: 'folder', name: 'f', below: true }))).toEqual({ list: null, index: 2 })
-    expect(resolveDrop(tree(), folder, hit({ kind: 'board', name: 'x', parent: 'f' }))).toEqual({ list: null, index: 2 })
-    expect(resolveDrop([...tree(), F('g', [])], folder, hit({ kind: 'folder', name: 'g' }))).toEqual({ list: null, index: 3 })
+  it('a closed folder: its lower band is into it; the gap after it is root (nothing to slot into)', () => {
+    const rows = layout(tree(), ['f'])
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'f', 0.9))).toEqual({ into: 'f' })
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'f', 0.1))).toEqual({ list: null, index: 1 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'b', 0.2))).toEqual({ list: null, index: 2 })
   })
+  it('an open EMPTY folder: its lower band = inside at 0 (the gutter = after it); the root row below = after it', () => {
+    const t = T(['a', { folder: 'e', boards: [] }, 'b'])
+    const rows = layout(t)
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'e', 0.9))).toEqual({ list: 'e', index: 0 })
+    expect(resolveDrop(t, board, rows, ICON, rowY(rows, 'e', 0.9))).toEqual({ list: null, index: 2 })
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'b', 0.2))).toEqual({ list: null, index: 2 })
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'e', 0.5))).toEqual({ into: 'e' })
+  })
+  it('the ends clamp: above the first row = root 0, over or under all-scenes = root end', () => {
+    const rows = layout(tree())
+    expect(resolveDrop(tree(), board, rows, LABEL, TOP - 40)).toEqual({ list: null, index: 0 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'all-scenes', 0.9))).toEqual({ list: null, index: 3 })
+    expect(resolveDrop(tree(), { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'all-scenes', 0.9) + 300)).toEqual({ list: null, index: 3 })
+  })
+  it('a folder lands in root gaps only, each root item one block: never into, never between a folder’s boards', () => {
+    const rows = layout(tree())
+    expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'a', 0.2))).toEqual({ list: null, index: 0 })
+    expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'x', 0.4))).toEqual({ list: null, index: 1 })   // still in its own block's upper half (the block spans header + x + y)
+    expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'y', 0.9))).toEqual({ list: null, index: 2 })
+    expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'all-scenes', 0.9))).toEqual({ list: null, index: 3 })
+    const g = { kind: 'folder' as const, name: 'g' }
+    expect(resolveDrop([...tree(), F('g', [])], g, layout([...tree(), F('g', [])]), LABEL, rowY(rows, 'f', 0.5))).toEqual({ list: null, index: 1 })
+  })
+  it('the terminal folder: over all-scenes (either half) or the tail = the root end, wherever x is; its own last board only from its lower band', () => {
+    const t = T(['a', { folder: 'f', boards: ['x'] }])
+    const rows = layout(t)
+    for (const x of [ICON, LABEL, LEFT + 180]) {
+      expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, x, rowY(rows, 'all-scenes', 0.2))).toEqual({ list: null, index: 2 })
+      expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, x, rowY(rows, 'all-scenes', 0.8))).toEqual({ list: null, index: 2 })
+      expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, x, rowY(rows, 'all-scenes', 0.8) + 500)).toEqual({ list: null, index: 2 })
+    }
+    expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'x', 0.8))).toEqual({ list: 'f', index: 1 })
+    expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, ICON, rowY(rows, 'x', 0.8))).toEqual({ list: null, index: 2 })
+    // the header bands exactly: 25% is into, just under it is before; 75% is the first slot inside, just under it is into
+    expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'f', 0.25))).toEqual({ into: 'f' })
+    expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'f', 0.25) - 1)).toEqual({ list: null, index: 1 })
+    expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'f', 0.75))).toEqual({ list: 'f', index: 0 })
+    expect(resolveDrop(t, { kind: 'board', name: 'a' }, rows, LABEL, rowY(rows, 'f', 0.75) - 1)).toEqual({ into: 'f' })
+  })
+  it('two folders in a row, the first empty: the gap between them belongs to the row under the pointer', () => {
+    const t = T([{ folder: 'e', boards: [] }, { folder: 'g', boards: ['z'] }, 'b'])
+    const rows = layout(t)
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'e', 0.9))).toEqual({ list: 'e', index: 0 })       // e's lower band: inside e
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'g', 0.1))).toEqual({ list: null, index: 1 })      // g's top band: before g, at the root
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'g', 0.9))).toEqual({ list: 'g', index: 0 })
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'z', 0.9))).toEqual({ list: 'g', index: 1 })
+    expect(resolveDrop(t, board, rows, LABEL, rowY(rows, 'b', 0.1))).toEqual({ list: null, index: 2 })
+  })
+  it('rows the tree no longer has (a stale render) resolve to null, never to a guess', () => {
+    const rows = layout(T(['a', { folder: 'f', boards: ['x', 'y'] }, 'ghost', 'b']))
+    expect(resolveDrop(tree(), board, rows, LABEL, rowY(rows, 'ghost', 0.8))).toBeNull()
+  })
+  it('SWEEP: every point inside the list resolves, applies, and moves monotonically down the list as y grows', () => {
+    const t = T(['a', { folder: 'f', boards: ['x', 'y'] }, { folder: 'e', boards: [] }, 'b', { folder: 'c', boards: ['z'] }])
+    for (const closed of [[], ['c'], ['f', 'c']]) {
+      const rows = layout(t, closed)
+      const bottom = rows[rows.length - 1]!.bottom
+      const drags = [{ kind: 'board', name: 'a' }, { kind: 'board', name: 'x' }, { kind: 'board', name: 'y' }, { kind: 'board', name: 'b' }, { kind: 'board', name: 'z' }, { kind: 'folder', name: 'f' }, { kind: 'folder', name: 'c' }] as const
+      for (const d of drags) for (const x of [ICON, LABEL, LEFT + 180]) {
+        let lastPos = -1
+        for (let y = TOP - 20; y <= bottom + 20; y += 2) {
+          const target = resolveDrop(t, d, rows, x, y)
+          expect(target, `${d.kind} ${d.name} at x=${x} y=${y} closed=${closed}`).not.toBeNull()
+          if (target && 'into' in target) { expect(d.kind).toBe('board'); expect(rows.find((r) => r.kind === 'folder' && r.name === target.into && y >= r.top && y < r.bottom)).toBeTruthy(); continue }
+          if (isOwnSlot(t, d, target!)) continue
+          const next = applyDrop(t, d, target!)
+          expect(next, `apply ${d.kind} ${d.name} → ${JSON.stringify(target)}`).not.toBeNull()
+          expect(flatten(next!).sort()).toEqual(flatten(t).sort())
+          // where the item ended up, as a position down the rendered list (folders by their header)
+          const listOf = (tree: TreeItem[]) => tree.flatMap((it) => (it.kind === 'board' ? [it.name] : [`f:${it.name}`, ...it.boards]))
+          const pos = listOf(next!).indexOf(d.kind === 'folder' ? `f:${d.name}` : d.name)
+          expect(pos, `${d.kind} ${d.name} x=${x} y=${y} went up (${lastPos} → ${pos}) closed=${closed}`).toBeGreaterThanOrEqual(lastPos)
+          lastPos = pos
+        }
+      }
+    }
+  })
+})
+
+describe('isOwnSlot + applyDrop - every boundary', () => {
+  // a  |  f: [x, y]  |  b  |  all-scenes   (f expanded)
+  const tree = () => T(['a', { folder: 'f', boards: ['x', 'y'] }, 'b'])
+  const board = { kind: 'board' as const, name: 'b' }
+  const folder = { kind: 'folder' as const, name: 'f' }
   it('own slots: the item’s slot and the one after it; into its own folder only when already last', () => {
     expect(isOwnSlot(tree(), board, { list: null, index: 2 })).toBe(true)
     expect(isOwnSlot(tree(), board, { list: null, index: 3 })).toBe(true)

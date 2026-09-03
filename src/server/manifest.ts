@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { join, relative, sep } from 'node:path'
 import { CONTENT_WIDTH, PKG } from '../client/const.ts'
-import { buildTree, flatten, isBoardName, readDescription } from '../shared/board-tree.ts'
+import { buildTree, flatten, isBoardName, readDescription, readTitle } from '../shared/board-tree.ts'
 import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
 import { hash } from './hash.ts'
 
@@ -36,11 +37,12 @@ export interface FrameEntry {
  *  `description` are for the agent that reads it at the start of a session. */
 export interface Manifest {
   frames: FrameEntry[]
-  scenes: { name: string; frames: number; description?: string; brief?: string }[]
+  /** `title` = what humans see (the brief's front matter); `name` = the directory */
+  scenes: { name: string; frames: number; title?: string; description?: string; brief?: string }[]
   project?: { name?: string; description?: string }
-  folders?: { name: string; description?: string }[]
+  folders?: { name: string; title?: string; description?: string }[]
   /** curated boards in sidebar order (folders flattened); never all-scenes */
-  boards?: { name: string; folder?: string; description?: string }[]
+  boards?: { name: string; folder?: string; title?: string; description?: string }[]
 }
 /** What a project says about itself - from design/config.ts, handed in by whoever loaded it. */
 export interface ProjectInfo { name?: string; description?: string }
@@ -165,22 +167,76 @@ function walk(dir: string, out: string[] = []): string[] {
   return out
 }
 
-/** A scene's description is the first non-blank line of its `_brief.md` (a leading `#`
- *  stripped, a YAML front-matter block skipped) - no new file. */
-export function sceneBrief(root: string, scene: string): { description?: string; brief?: string } {
+/** The YAML front matter at the top of a markdown file, read flat: `key: value` scalars,
+ *  quoted (JSON-style double quotes, or single quotes with '' for one) or bare. `end` is the
+ *  line the body starts at (0 = no block; an unclosed block swallows the file). */
+export function frontMatter(lines: string[]): { fields: Record<string, string>; end: number } {
+  const fields: Record<string, string> = {}
+  if (lines[0]?.trim() !== '---') return { fields, end: 0 }
+  let close = lines.findIndex((l, i) => i > 0 && l.trim() === '---')
+  if (close < 0) close = lines.length
+  for (const l of lines.slice(1, close)) {
+    const m = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(l.trim())
+    if (!m) continue
+    let v = m[2]!.trim()
+    if (v.startsWith('"')) { try { v = String(JSON.parse(v)) } catch { v = v.replace(/^"|"$/g, '') } }
+    else if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) v = v.slice(1, -1).replace(/''/g, "'")
+    fields[m[1]!] = v
+  }
+  return { fields, end: Math.min(close + 1, lines.length) }
+}
+
+/** A scene's title is `title` in its `_brief.md` front matter; its description is the first
+ *  non-blank line after the block (a leading `#` stripped) - no new file. */
+export function sceneBrief(root: string, scene: string): { title?: string; description?: string; brief?: string } {
   if (!scene) return {}
   const rel = `design/scenes/${scene}/_brief.md`
   const abs = join(root, ...rel.split('/'))
   if (!existsSync(abs)) return {}
-  let description: string | undefined
+  let title: string | undefined, description: string | undefined
   try {
-    const lines = readFileSync(abs, 'utf8').split(/\r?\n/).map((l) => l.trim())
-    let i = 0
-    if (lines[0] === '---') { i = lines.indexOf('---', 1) + 1; if (i === 0) i = lines.length }   // front matter: skip the block
-    const line = lines.slice(i).find((l) => l)
+    const lines = readFileSync(abs, 'utf8').split(/\r?\n/)
+    const fm = frontMatter(lines)
+    title = readTitle(fm.fields.title)
+    const line = lines.slice(fm.end).map((l) => l.trim()).find((l) => l)
     description = readDescription(line?.replace(/^#+\s*/, ''))
   } catch { /* unreadable: the path still tells the agent where to look */ }
-  return { brief: rel, ...(description ? { description } : {}) }
+  return { brief: rel, ...(title ? { title } : {}), ...(description ? { description } : {}) }
+}
+
+/** Write a scene's title into its brief's front matter - only that line changes; the body,
+ *  every other field and the file's own line endings are kept. No brief yet = a front-matter-only
+ *  brief. An empty title removes the line, and the file when nothing else is in it. The write
+ *  is atomic (temp + rename); a symlinked scene directory or brief, or a front matter block
+ *  that never closes, is refused untouched - the brief is the agent's document, never rewritten
+ *  from a guess. Returns the error, or null. */
+export function setSceneTitle(root: string, scene: string, title: string): string | null {
+  const dir = join(root, 'design', 'scenes', scene)
+  try { const st = lstatSync(dir); if (st.isSymbolicLink()) return `design/scenes/${scene} is a symlink - refusing to write through it`; if (!st.isDirectory()) return `"${scene}" is not a scene directory` } catch { return `scene "${scene}" does not exist` }
+  const file = join(dir, '_brief.md')
+  let had = false
+  try { const st = lstatSync(file); if (!st.isFile()) return `design/scenes/${scene}/_brief.md is not a regular file - refusing to write it`; had = true } catch { /* no brief yet */ }
+  const raw = had ? readFileSync(file, 'utf8') : ''
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n'
+  const lines = raw.split(/\r?\n/)
+  const fm = frontMatter(lines)
+  if (fm.end === lines.length && lines[0]?.trim() === '---' && !lines.slice(1).some((l) => l.trim() === '---')) return `design/scenes/${scene}/_brief.md: the front matter never closes - fix the file`
+  const line = title ? [`title: ${JSON.stringify(title)}`] : []
+  let out: string[]
+  if (fm.end === 0) {
+    if (!title) return null                                            // nothing to remove
+    out = ['---', ...line, '---', ...(raw.trim() ? ['', ...lines] : [''])]
+  } else {
+    const close = Math.max(1, fm.end - 1)
+    const kept = lines.slice(1, close).filter((l) => !/^title\s*:/.test(l.trim()))
+    const body = lines.slice(fm.end)
+    out = kept.length || title ? ['---', ...line, ...kept, '---', ...body] : body
+  }
+  if (!out.join('').trim()) { if (had) rmSync(file); return null }
+  const tmp = join(dir, `.brief-${randomBytes(6).toString('hex')}.tmp`)
+  writeFileSync(tmp, out.join(eol))
+  renameSync(tmp, file)
+  return null
 }
 
 /** The sidebar as files say it is, for the manifest: folders in root order, boards in
@@ -197,10 +253,10 @@ function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
   const tree = buildTree(rows, reg.folders)
   const folderOf = new Map<string, string>()
   for (const it of tree) if (it.kind === 'folder') for (const b of it.boards) folderOf.set(b, it.name)
-  const folders = tree.filter((it) => it.kind === 'folder').map((it) => ({ name: it.name, ...(it.description ? { description: it.description } : {}) }))
+  const folders = tree.filter((it) => it.kind === 'folder').map((it) => ({ name: it.name, ...(it.title ? { title: it.title } : {}), ...(it.description ? { description: it.description } : {}) }))
   const boards = flatten(tree).map((name) => {
-    const d = rows.find((r) => r.name === name)?.description
-    return { name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(d ? { description: d } : {}) }
+    const r = rows.find((x) => x.name === name)
+    return { name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(r?.title ? { title: r.title } : {}), ...(r?.description ? { description: r.description } : {}) }
   })
   return { ...(folders.length ? { folders } : {}), ...(boards.length ? { boards } : {}) }
 }

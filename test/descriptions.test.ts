@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { extractMeta, scanFrames, sceneBrief } from '../src/server/manifest.ts'
+import { extractMeta, frontMatter, scanFrames, sceneBrief } from '../src/server/manifest.ts'
 import { readDescription } from '../src/shared/board-tree.ts'
 
 // Descriptions: one optional sentence on every object, all surfaced by design/manifest.json -
@@ -51,16 +51,30 @@ describe('the manifest as the orientation file', () => {
     expect(m.scenes.find((s) => s.name === 'plain')).toEqual({ name: 'plain', frames: 1 })
   })
 
+  it('a scene takes its title from the brief’s front matter - quoted or bare - and the description from the line after the block', () => {
+    w('design/scenes/mvp/home.tsx', `export default () => null\n`)
+    w('design/scenes/mvp/_brief.md', `---\ntitle: "MVP 🚀"\nstatus: draft\n---\n\n# The launch scope\n`)
+    expect(sceneBrief(root, 'mvp')).toEqual({ brief: 'design/scenes/mvp/_brief.md', title: 'MVP 🚀', description: 'The launch scope' })
+    w('design/scenes/mvp/_brief.md', `---\ntitle: 'It''s UI'\n---\nbody\n`)
+    expect(sceneBrief(root, 'mvp').title).toBe("It's UI")
+    w('design/scenes/mvp/_brief.md', `---\ntitle: Bare Title\n---\n`)
+    expect(sceneBrief(root, 'mvp')).toEqual({ brief: 'design/scenes/mvp/_brief.md', title: 'Bare Title' })
+    expect(scanFrames(root).scenes.find((s) => s.name === 'mvp')).toMatchObject({ title: 'Bare Title' })
+    // the reader itself: no block, an unclosed block, a non-scalar line
+    expect(frontMatter(['# hi'])).toEqual({ fields: {}, end: 0 })
+    expect(frontMatter(['---', 'title: x', 'nope', '- list'])).toEqual({ fields: { title: 'x' }, end: 4 })
+  })
+
   it('carries the project, folders and boards in sidebar order (all-scenes never), each with its description', () => {
     w('design/scenes/app/home.tsx', `export const meta = { title: 'Home', description: "The founder's Monday read" }\nexport default () => null\n`)   // an apostrophe wants double quotes, like title
     w('design/boards/overview.json', JSON.stringify({ version: 1, nodes: [], order: 0, description: 'The primary flow - what we show first' }))
-    w('design/boards/spec.json', JSON.stringify({ version: 1, nodes: [], order: 0, folder: 'research' }))
+    w('design/boards/spec.json', JSON.stringify({ version: 1, nodes: [], order: 0, folder: 'research', title: 'The Spec' }))
     w('design/boards/all-scenes.json', JSON.stringify({ version: 1, nodes: [] }))
-    w('design/boards/_folders.json', JSON.stringify({ version: 1, folders: [{ name: 'research', order: 1, description: 'The thinking behind the boards' }] }))
+    w('design/boards/_folders.json', JSON.stringify({ version: 1, folders: [{ name: 'research', order: 1, title: 'R&D', description: 'The thinking behind the boards' }] }))
     const m = scanFrames(root, { name: 'pulse', description: 'Analytics for indie SaaS' })
     expect(m.project).toEqual({ name: 'pulse', description: 'Analytics for indie SaaS' })
-    expect(m.folders).toEqual([{ name: 'research', description: 'The thinking behind the boards' }])
-    expect(m.boards).toEqual([{ name: 'overview', description: 'The primary flow - what we show first' }, { name: 'spec', folder: 'research' }])
+    expect(m.folders).toEqual([{ name: 'research', title: 'R&D', description: 'The thinking behind the boards' }])
+    expect(m.boards).toEqual([{ name: 'overview', description: 'The primary flow - what we show first' }, { name: 'spec', folder: 'research', title: 'The Spec' }])
     expect(m.frames[0]).toMatchObject({ id: 'app/home', description: "The founder's Monday read" })
     // the key order reads top-down: what this is, how it is organised, then the frames
     expect(Object.keys(m)).toEqual(['project', 'folders', 'boards', 'scenes', 'frames'])
@@ -88,7 +102,7 @@ describe('the manifest as the orientation file', () => {
       project: { name: 'pulse', description: 'Analytics for indie SaaS' },
       folders: [{ name: 'research', description: 'thinking' }, { name: 'private', description: 'never ships' }],
       boards: [{ name: 'overview', description: 'live' }, { name: 'spec', folder: 'research', description: 'the spec' }, { name: 'secret', folder: 'private', description: 'hidden' }],
-      scenes: [{ name: 'app', frames: 2, description: 'the app', brief: 'design/scenes/app/_brief.md' }, { name: 'hidden', frames: 1, description: 'secret scene' }],
+      scenes: [{ name: 'app', frames: 2, title: 'The App', description: 'the app', brief: 'design/scenes/app/_brief.md' }, { name: 'hidden', frames: 1, title: 'Hidden!', description: 'secret scene' }],
       frames: [{ id: 'app/home', file: 'design/scenes/app/home.tsx', kind: 'tsx' as const, scene: 'app', description: 'home' }, { id: 'hidden/x', file: 'design/scenes/hidden/x.tsx', kind: 'tsx' as const, scene: 'hidden' }],
     }
     const pubFrames = [full.frames[0]!]
@@ -96,8 +110,8 @@ describe('the manifest as the orientation file', () => {
     expect(stripped.project).toEqual(full.project)
     expect(stripped.folders).toEqual([{ name: 'research', description: 'thinking' }])
     expect(stripped.boards).toEqual([{ name: 'overview', description: 'live' }, { name: 'spec', folder: 'research', description: 'the spec' }])
-    expect(stripped.scenes).toEqual([{ name: 'app', frames: 1, description: 'the app' }])   // no brief path: source is stripped
-    expect(JSON.stringify(stripped)).not.toMatch(/private|secret|hidden|never ships|_brief/)
+    expect(stripped.scenes).toEqual([{ name: 'app', frames: 1, title: 'The App', description: 'the app' }])   // no brief path: source is stripped
+    expect(JSON.stringify(stripped)).not.toMatch(/private|secret|hidden|Hidden|never ships|_brief/)
     expect(publishedManifest(full, pubFrames, ['overview', 'spec'], false).scenes[0]).toMatchObject({ brief: 'design/scenes/app/_brief.md' })
   })
 })

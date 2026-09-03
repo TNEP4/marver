@@ -10,10 +10,20 @@ viewport and lays it out:
 
 ```json
 { "version": 1, "name": "checkout-compare", "order": 1, "auto": false,
+  "title": "Checkout A/B",
   "description": "Cart step, direction A vs B side by side - B is the current favourite",
   "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
 ```
 
+- **The file name is the board's identity** - what you, `publish.json`, URLs and
+  comment threads address (`board: checkout-compare`). It is a slug
+  (`^[a-z0-9][a-z0-9-]*$`) and never moves on a rename.
+- `title` - what humans SEE: free text, any casing, punctuation, emoji ("MVP", "UI",
+  "Checkout (v2) 🛒"). Optional: without one the sidebar Title-Cases the slug
+  (`checkout-compare` → "Checkout Compare"), which is fine for most boards. Write a
+  title when the slug would read wrong (`mvp` → "Mvp") or when the human names it.
+  The human's Rename in the sidebar edits the title only; the manifest carries both, so
+  "the Checkout A/B board" resolves to `checkout-compare`.
 - `description` - one sentence on what the board is for and where it stands. It is
   how a later session (or the human's next agent) knows this board without opening
   it; it lands in design/manifest.json. Write it at creation, keep it true.
@@ -28,8 +38,9 @@ viewport and lays it out:
   orienting board (an overview or the primary flow) - never a giant one. Boards
   without an `order` sort after the ranked ones, by name. Set `order` deliberately on
   every curated board; it is the first impression. The human can also drag-reorder boards
-  in the sidebar (which rewrites `order`), rename one from its right-click menu, and file
-  boards into folders (below) - so your ranking is a starting point they may adjust.
+  in the sidebar (which rewrites `order`), retitle one from its right-click menu (which
+  writes `title`), and file boards into folders (below) - so your ranking is a starting
+  point they may adjust.
 - `auto: false` boards show exactly their list. `all-scenes` is auto-managed (it holds
   EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
   never the landing board, and never write its file.
@@ -64,12 +75,14 @@ Files are the truth, and two files carry it:
 
   ```json
   { "version": 1, "folders": [
-    { "name": "research", "order": 1, "description": "The thinking behind the live boards - specs, flows, references" },
+    { "name": "research", "order": 1, "title": "R&D", "description": "The thinking behind the live boards - specs, flows, references" },
     { "name": "archive", "order": 3, "description": "Retired directions and scene versions, oldest first" } ] }
   ```
 
-  A folder's `description` says what belongs in it - the next session files boards
-  right without asking.
+  A folder's `name` is its slug - the identity its boards point at with `folder`; its
+  `title` (optional, free text) is what humans see, exactly as on a board; its
+  `description` says what belongs in it - the next session files boards right without
+  asking.
 
   It exists so an EMPTY folder can exist and so a folder has a rank at the root.
   A folder a board names but the registry lacks is still real (it sorts after the
@@ -91,8 +104,12 @@ The moves, each a file edit, so the files always agree:
   an `order` among the top-level items.
 - **Rank** folders and boards: `order` on the board (among its siblings) and on the
   registry entry (among the top-level items). Renumber the siblings you touch.
-- **Rename** a folder: rewrite `folder` on every member AND the registry entry - a
-  registry rename alone leaves the members in the old (implied) folder.
+- **Retitle** a folder (or a board): set `title` on the registry entry (on the board
+  file). **Rename a slug** - a folder's `name`, a board's file name - only when asked,
+  and as one refactor: a folder slug is on every member's `folder` field (rewrite them
+  all, AND the registry entry - a registry rename alone leaves the members in the old,
+  implied folder); a board file name is in `publish.json`, in its comment threads and in
+  every path anyone copied. A title does what a rename usually wanted.
 - **Delete** a folder: remove `folder` from every member, then its registry entry.
   Folders organise, never own: deleting one never deletes a board.
 - The **landing board** is the first board in sidebar order, folders included -
@@ -105,8 +122,9 @@ last. Propose the grouping in one sentence and do it; keep folder names short an
 plain.
 
 The human does all of this too - from the sidebar: New folder (right-click the Boards
-header, or its `+`), Rename, Delete folder, "Move to …" on a board, and DRAG: boards
-into and out of folders, folders among boards. Each drag rewrites `order` (and
+header, or its `+`), Rename (the title - slugs never move from the sidebar), Delete
+folder, "Move to …" on a board, and DRAG: boards into and out of folders, folders among
+boards. Each drag rewrites `order` (and
 `folder`) on the boards it touches and the registry - the shell owns those fields
 while the canvas is open, exactly as it owns `order`; write membership and new
 folders freely, and never rewrite an arrangement the human just made. The shell

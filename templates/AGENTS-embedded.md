@@ -133,8 +133,15 @@ Report where the request came from: chat requests get chat replies; only comment
 ## Orientation
 - design/manifest.json is the canvas with its purpose: the project (name, description),
   every folder and board in sidebar order, every scene and frame - each with its
-  `description` when one was written. Read it before exploring; `marver dev` keeps it
-  fresh. `npx marver boards` prints the boards part as a tree.
+  `description` when one was written, and its `title` when the human (or you) named it.
+  Read it before exploring; `marver dev` keeps it fresh. `npx marver boards` prints the
+  boards part as a tree.
+- **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
+  IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
+  that never move on a rename. `title` is what humans see - free text (casing,
+  punctuation, emoji) on the board JSON, the `_folders.json` entry, the brief's front
+  matter; frames have `meta.title`. When the human says "the Checkout A/B board", the
+  manifest maps that title to its slug. Rename a slug only when asked, as one refactor.
 - **Descriptions.** Every object takes one optional `description`: one sentence, what it
   is for and its state when that is not obvious (≤ ~160 chars). Project: `description`
   in design/config.ts. Board: `"description"` in its JSON. Folder: on its `_folders.json`

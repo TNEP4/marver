@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { useStore, HAS_ALL_SCENES, PUBLISHED, boardLabel, fetchBoardTree, type TreeBase } from './store.ts'
+import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, type TreeBase } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
 import { ArrowLineUpIcon, CardsIcon, CardsThreeIcon, FolderIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
-  applyDrop, boardsIn, createFolder, deleteFolder, folderOf, foldersIn, isBoardName, isOwnSlot, moveBoard, newFolderSlot, renameFolder, resolveDrop, rootIndex, slugify,
-  type Drag, type Drop, type TreeItem,
+  applyDrop, boardsIn, createFolder, deleteFolder, folderIn, folderOf, foldersIn, humanize, isOwnSlot, labelOf, moveBoard, newFolderSlot, readTitle, resolveDrop, retitleFolder, rootIndex, slugFor,
+  type Drag, type Drop, type Folder, type Row, type TreeItem,
 } from '../../shared/board-tree.ts'
 
 /**
@@ -21,7 +21,6 @@ import {
 
 const CLOSED_KEY = 'mv-folders-closed'   // collapsed folders are a viewer preference, never data
 const readClosed = (): Record<string, true> => { try { return JSON.parse(localStorage.getItem(CLOSED_KEY) ?? '{}') } catch { return {} } }
-const INDENT = 28                        // px a board row indents inside a folder; left of it is the root gutter
 
 /** The inline input: renaming a board or a folder, or naming a NEW folder that does not exist
  *  yet - drawn at root `index`, optionally with `board` already inside it. */
@@ -31,6 +30,8 @@ type Intent = (tree: TreeItem[]) => TreeItem[] | null
 
 export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const board = useStore((s) => s.board)
+  const titles = useStore((s) => s.boardTitles)                       // board slug → title, off the last tree read
+  const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
   const [naming, setNaming] = useState<Naming | null>(null)
   const [closed, setClosed] = useState<Record<string, true>>(readClosed)
@@ -156,66 +157,77 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     }
   }
 
-  // ---- inline naming (rename a board, rename a folder, name a new folder) ----
+  // ---- inline naming (retitle a board, retitle a folder, name a new folder) ----
+  // What the human types is the TITLE - any casing, punctuation, emoji - what the row shows.
+  // The slug (the board's file name, the folder's key on its boards and in the registry) is
+  // the object's identity: agents, publish.json, URLs and comment threads hold it, so a rename
+  // never moves it. A new folder mints its slug from the title once. Typing exactly what the
+  // slug reads as anyway ("Research" for `research`) clears the title - the file stays clean.
+  // An empty entry, or the label unchanged, means never mind.
   const commit = async (raw: string) => {
     const n = namingRef.current
     if (!n || commitBusy.current) return                      // Enter already fired this (or Escape cancelled); ignore the follow-up blur
     commitBusy.current = true
     try {
+      const title = readTitle(raw)
+      if (!title) { setNaming(null); return }
+      // two rows reading alike would be a trap: a name another board (folder) already shows stays editing
+      const taken = (kind: 'board' | 'folder') => useStore.getState().toast(`a ${kind} called "${title}" already exists`)
+      const stored = (slug: string) => (title === humanize(slug) ? '' : title)
       if (n.kind === 'board') {
-        const next = raw.trim()
-        if (!next || next === n.name) { setNaming(null); return }
-        if (!isBoardName(next) || next === 'all-scenes' || boardsIn(tree).includes(next)) {
-          useStore.getState().toast('use a free name - lowercase letters, numbers and dashes'); return   // stay editing
-        }
-        const r = await useStore.getState().renameBoard(n.name, next)
-        if (r.ok) { setNaming(null); refresh() }
-        else useStore.getState().toast(r.error ?? 'rename failed')                                      // stay editing
+        if (title === label(n.name)) { setNaming(null); return }
+        if (boardsIn(tree).some((b) => b !== n.name && label(b) === title) || (HAS_ALL_SCENES && label('all-scenes') === title)) { taken('board'); return }
+        const r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])
+        if (!r.ok) { useStore.getState().toast(r.error ?? 'rename failed'); if (r.stale) refresh(); return }   // stay editing (a stale file re-reads first)
+        setNaming(null)
+        refresh()
         return
       }
-      // folders: what the human types becomes a slug ("Old stuff" -> old-stuff, shown "Old Stuff");
-      // an empty entry means never mind
-      if (!raw.trim() || (n.kind === 'folder' && slugify(raw) === n.name)) { setNaming(null); return }
-      const slug = slugify(raw)
-      if (!slug) { useStore.getState().toast('use letters, numbers and dashes'); return }
-      if (foldersIn(tree).includes(slug)) { useStore.getState().toast(`a folder named "${slug}" already exists`); return }
-      setNaming(null)
+      const folderLabels = tree.filter((it): it is Folder => it.kind === 'folder' && (n.kind !== 'folder' || it.name !== n.name)).map((it) => labelOf(it.name, it.title))
       if (n.kind === 'folder') {
-        const wasClosed = !!closed[n.name]
-        setOpen(n.name, true); setOpen(slug, !wasClosed)                          // the collapsed flag follows the name, and only that
-        mutate((t) => renameFolder(t, n.name, slug))
-      } else if (n.kind === 'new') {
-        setOpen(slug, true)                                                       // a new folder opens, whatever an old namesake left behind
-        if (!mutate((t) => createFolder(t, slug, n.index, n.board))) useStore.getState().toast('that board is gone - nothing changed')
+        const current = folderIn(tree, n.name)
+        if (!current || title === labelOf(n.name, current.title)) { setNaming(null); return }
+        if (folderLabels.includes(title)) { taken('folder'); return }
+        setNaming(null)
+        mutate((t) => retitleFolder(t, n.name, stored(n.name)))
+        return
       }
+      if (n.kind !== 'new') return
+      if (folderLabels.includes(title)) { taken('folder'); return }
+      const { index, board: withBoard } = n
+      const slug = slugFor(title, foldersIn(tree))                                // "Old stuff" → old-stuff (-2 past a namesake); "🚀" alone → folder
+      setNaming(null)
+      setOpen(slug, true)                                                       // a new folder opens, whatever an old namesake left behind
+      if (!mutate((t) => createFolder(t, slug, index, withBoard, stored(slug) || undefined))) useStore.getState().toast('that board is gone - nothing changed')
     } finally { commitBusy.current = false }
   }
 
   // ---- drag and drop: one pointer gesture for board rows and folder rows ----
-  /** The drop target under the pointer for the item being dragged, or null. The DOM hit becomes
-   *  plain facts (which row, which half, the top edge, the root gutter) for the pure resolver. */
-  const dropAt = (x: number, y: number, d: Drag): Drop | null => {
-    const el = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('[data-board-row],[data-folder-row]') as HTMLElement | null
-    if (!el) return null
+  /** The rows as rendered, measured - what the pure resolver reads the pointer against. */
+  const rootRef = useRef<HTMLDivElement>(null)
+  const measure = (): Row[] => Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-board-row],[data-folder-row]') ?? []).map((el) => {
     const r = el.getBoundingClientRect()
-    const hit = {
-      kind: (el.hasAttribute('data-folder-row') ? 'folder' : 'board') as Drag['kind'],
-      name: el.dataset.folderRow ?? el.dataset.board ?? '',
-      parent: el.hasAttribute('data-folder-row') ? null : (el.dataset.folder ?? null),
-      below: y > r.top + r.height / 2,
-      topEdge: y < r.top + r.height * 0.3,
-      gutter: x < r.left + INDENT,
-    }
-    const target = resolveDrop(treeRef.current, d, hit)
+    const folder = el.hasAttribute('data-folder-row')
+    return { kind: folder ? 'folder' : 'board', name: el.dataset.folderRow ?? el.dataset.board ?? '', parent: folder ? null : (el.dataset.folder ?? null), open: el.dataset.open === '1', top: r.top, bottom: r.bottom, left: r.left }
+  })
+  /** The drop target for the pointer at (x, y), or null: outside the panel (a release there
+   *  cancels), or a slot that would change nothing. Inside the panel there is always one - the
+   *  ends clamp - so the seam on screen is exactly where a release lands. */
+  const dropAt = (x: number, y: number, d: Drag): Drop | null => {
+    const panel = rootRef.current?.closest('.sh-panel')?.getBoundingClientRect()
+    if (!panel || x < panel.left || x >= panel.right || y < panel.top || y >= panel.bottom) return null
+    const target = resolveDrop(treeRef.current, d, measure(), x, y)
     return target && !isOwnSlot(treeRef.current, d, target) ? target : null
   }
+  const dropRef = useRef<Drop | null>(null)                          // the target on screen; the release applies THIS, never a recomputation
+  const showDrop = (t: Drop | null) => { dropRef.current = t; setDrop(t) }
   const resetPointer = () => {
     const g = gestureRef.current
     gestureRef.current = null
     if (g) { try { g.el.releasePointerCapture(g.pointerId) } catch { /* already released */ } }
     document.body.classList.remove('sh-board-dragging')
     setDrag(null)
-    setDrop(null)
+    showDrop(null)
   }
   const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>, item: Drag) => {
     if (e.button !== 0) return                                    // left button only; right-click opens the menu
@@ -232,16 +244,21 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       setDrag(g.item)
       document.body.classList.add('sh-board-dragging')            // holds the grabbing cursor for the whole drag
     }
-    setDrop(dropAt(e.clientX, e.clientY, g.item))
+    showDrop(dropAt(e.clientX, e.clientY, g.item))
   }
   const onPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const g = gestureRef.current
     if (!g || g.pointerId !== e.pointerId) return
     // the item is the one the gesture STARTED on - never the row that happens to receive the
-    // up (capture can be lost, a refresh can re-key the dragged row)
+    // up (capture can be lost, a refresh can re-key the dragged row); the target is the seam
+    // the human saw
     const item = g.item
     const dragged = g.dragging
-    const target = dragged ? dropAt(e.clientX, e.clientY, item) : null
+    // a release outside the panel cancels, even after a seam showed (the pointer can leave
+    // between the last move and the up); inside, the seam is the contract
+    const panel = rootRef.current?.closest('.sh-panel')?.getBoundingClientRect()
+    const inside = !!panel && e.clientX >= panel.left && e.clientX < panel.right && e.clientY >= panel.top && e.clientY < panel.bottom
+    const target = dragged && inside ? dropRef.current : null
     resetPointer()
     if (dragged) {
       if (!target) return
@@ -290,7 +307,6 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
   const onMenuRef = useRef(onMenu)
   onMenuRef.current = onMenu
-  const rootRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const panel = rootRef.current?.closest('.sh-panel')
     const scroll = rootRef.current?.closest('.sh-panel-scroll')
@@ -321,7 +337,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
   const boardRow = (n: string, parent: string | null, index: number, last: boolean) => {
     if (naming?.kind === 'board' && naming.name === n) return (
-      <div key={n} className={`it board editing${parent ? ' in-folder' : ''}`}><CardsIcon size={14} />{input(n)}</div>
+      <div key={n} className={`it board editing${parent ? ' in-folder' : ''}`}><CardsIcon size={14} />{input(label(n))}</div>
     )
     const canDrag = !PUBLISHED && n !== 'all-scenes'
     const item: Drag = { kind: 'board', name: n }
@@ -341,22 +357,25 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onPointerCancel={canDrag ? () => resetPointer() : undefined}
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
         {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
-        <span>{boardLabel(n)}</span>
+        <span>{label(n)}</span>
       </button>
     )
   }
-  const folderRow = (f: string, boards: string[], index: number): ReactNode[] => {
+  const folderRow = (it: Folder, boards: string[], index: number): ReactNode[] => {
+    const f = it.name
     const open = !closed[f]
     const rows: ReactNode[] = []
     if (naming?.kind === 'folder' && naming.name === f) {
-      rows.push(<div key={`f:${f}`} className="it folder editing">{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}{input(f)}</div>)
+      rows.push(<div key={`f:${f}`} className="it folder editing">{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}{input(labelOf(f, it.title))}</div>)
     } else {
       const item: Drag = { kind: 'folder', name: f }
       const dragging = drag?.kind === 'folder' && drag.name === f
       const into = !!drag && !!drop && 'into' in drop && drop.into === f
+      // a slot inside an open EMPTY folder has no board row to draw on: the indented seam sits under the header
+      const inSeam = !!drag && !!drop && !('into' in drop) && drop.list === f && open && boards.length === 0
       rows.push(
-        <button key={`f:${f}`} data-folder-row={f} data-reorderable={!PUBLISHED || undefined}
-          className={`it folder${boards.includes(board) ? ' held' : ''}${dragging ? ' dragging' : ''}${into ? ' drop-into' : ''}${dragging ? '' : seam(null, index, false)}`}
+        <button key={`f:${f}`} data-folder-row={f} data-open={open ? '1' : '0'} data-reorderable={!PUBLISHED || undefined}
+          className={`it folder${boards.includes(board) ? ' held' : ''}${dragging ? ' dragging' : ''}${into ? ' drop-into' : ''}${inSeam ? ' drop-in' : ''}${dragging ? '' : seam(null, index, false)}`}
           onClick={(e) => { if (PUBLISHED || e.detail === 0) setOpen(f, !open) }}
           onContextMenu={(e) => onMenu(e, folderMenu(f, boards))}
           onPointerDown={!PUBLISHED ? (e) => onPointerDown(e, item) : undefined}
@@ -365,7 +384,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
           onPointerCancel={!PUBLISHED ? () => resetPointer() : undefined}
           onLostPointerCapture={!PUBLISHED ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
           {open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}
-          <span>{boardLabel(f)}</span>
+          <span>{labelOf(f, it.title)}</span>
           <small>{boards.length}</small>
         </button>,
       )
@@ -380,12 +399,12 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const rows: ReactNode[] = []
   const draftRows = draft ? [
     <div key="f:new" className="it folder editing"><FolderOpenIcon size={14} />{input('', 'Folder name')}</div>,
-    ...(draft.board ? [<div key="new/board" className={`it board in-folder draft${draft.board === board ? ' cur' : ''}`}><CardsIcon size={14} /><span>{boardLabel(draft.board)}</span></div>] : []),
+    ...(draft.board ? [<div key="new/board" className={`it board in-folder draft${draft.board === board ? ' cur' : ''}`}><CardsIcon size={14} /><span>{label(draft.board)}</span></div>] : []),
   ] : []
   tree.forEach((it, i) => {
     if (draft && draft.index === i) rows.push(...draftRows)
     if (it.kind === 'board') { if (draft?.board !== it.name) rows.push(boardRow(it.name, null, i, false)) }
-    else rows.push(...folderRow(it.name, draft?.board ? it.boards.filter((b) => b !== draft.board) : it.boards, i))
+    else rows.push(...folderRow(it, draft?.board ? it.boards.filter((b) => b !== draft.board) : it.boards, i))
   })
   if (draft && draft.index >= tree.length) rows.push(...draftRows)
   if (HAS_ALL_SCENES) rows.push(boardRow('all-scenes', null, -1, false))   // a published bundle without it shows none

@@ -14,6 +14,8 @@ const DATA: {
   manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string
   /** the sidebar's folder tree over the published boards (0.16.0 bundles; older ones have none) */
   tree?: TreeItem[]
+  /** slug → title of the published boards (0.17.0 bundles); folder titles ride on `tree` */
+  titles?: Record<string, string>
   /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
 } | null = shData
@@ -44,7 +46,7 @@ export function hydrateBoardPolicy(boards: Record<string, { type?: string; open?
 }
 
 export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean }
-export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number }[] }
+export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number; title?: string; description?: string }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number
   /** RESOLVED theme (what renders): themeUser ?? frame meta.theme ?? viewTheme. */
@@ -125,7 +127,7 @@ export const modeAllowed = (board: string, mode: 'present' | 'focus' | 'slides')
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
-import { buildTree, flatten, toWire, type TreeItem } from '../../shared/board-tree.ts'
+import { buildTree, flatten, labelOf, toWire, type TreeItem } from '../../shared/board-tree.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
@@ -139,17 +141,21 @@ export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase }
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
   if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null } }
   const [boards, reg] = await Promise.all([
-    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string }[]>,
+    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
-      const j = await r.json() as { folders?: { name: string; order?: number }[]; sha256?: string | null; error?: string }
+      const j = await r.json() as { folders?: { name: string; order?: number; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
       return j
     }),
   ])
-  return {
-    tree: buildTree(boards, reg.folders ?? []),
-    base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null },
-  }
+  const tree = buildTree(boards, reg.folders ?? [])
+  rememberTitles(tree, Object.fromEntries(boards.flatMap((b) => (b.title ? [[b.name, b.title]] : []))))
+  return { tree, base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null } }
+}
+/** Every read of the tree refreshes the board titles the labels use. Folder titles ride on
+ *  the tree's folder items (a board and a folder may share a slug - never one map). */
+function rememberTitles(_tree: TreeItem[], boards: Record<string, string>) {
+  if (JSON.stringify(useStore.getState().boardTitles) !== JSON.stringify(boards)) useStore.setState({ boardTitles: boards })
 }
 
 /** Board names for switchers: the sidebar's reading order (folders flattened depth-first) and
@@ -161,8 +167,11 @@ export async function fetchBoardNames(): Promise<string[]> {
 }
 /** Does the switcher carry the auto `all-scenes` board? Always in dev; published only when it shipped. */
 export const HAS_ALL_SCENES = !DATA || DATA.names.includes('all-scenes')
-/** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
-export const boardLabel = (n: string) => humanize(n)
+/** Display name for a board: its title when one is set (subscribe to `boardTitles` to
+ *  re-render on change), else the Title-Cased slug ('all-scenes' reads "All Scenes"). */
+export const boardLabel = (n: string) => labelOf(n, useStore.getState().boardTitles[n])
+/** Display name for a scene: the title in its brief's front matter, else the Title-Cased directory. */
+export const sceneLabel = (n: string) => labelOf(n, useStore.getState().manifest?.scenes.find((s) => s.name === n)?.title)
 
 /** The double-submit CSRF token the owner gate wants echoed (same read as comments-store). */
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -208,6 +217,7 @@ const initialViewTheme = () => {
   return CONFIG.themes[0] ?? 'light'
 }
 const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change counts, not just added/removed ids
+let scenesRev = 0                                                // bumps per sh:scenes, so a load that straddled one keeps the live labels
 
 /** Latest measured content heights, keyed frameId@width. TRANSIENT by design:
  * auto sizes are never serialized - a reload remeasures. */
@@ -304,7 +314,16 @@ interface State {
   setDeviceView(name: string | null): void
   resizeSelected(name: string | null): void
   switchBoard(name: string): Promise<void>
-  renameBoard(from: string, to: string): Promise<{ ok: boolean; error?: string }>
+  /** what the sidebar labels boards by: slug → title, off the last tree read */
+  boardTitles: Record<string, string>
+  /** retitle a board - what humans see ('' = back to the Title-Cased slug). The file never
+   *  moves: its name is the board's identity (agents, publish.json, URLs, comment threads).
+   *  `baseHash` = the file as last seen; a 409 (`stale`) means someone wrote it since. */
+  renameBoard(name: string, title: string, baseHash?: string): Promise<{ ok: true } | { ok: false; stale?: boolean; error?: string }>
+  /** a scene's title, into its brief's front matter (the directory never moves) */
+  renameScene(scene: string, title: string): Promise<{ ok: boolean; error?: string }>
+  /** `sh:scenes`: the scenes changed (a brief's title or description) with the frames intact */
+  setScenes(scenes: Manifest['scenes']): void
   arrangeBoards(tree: TreeItem[], base: TreeBase): Promise<{ ok: true } | { ok: false; stale: boolean; error?: string }>
   pulsePath(): void
   copyFrameImage(scale: 2 | 4): void
@@ -601,13 +620,13 @@ export const useStore = create<State>((set, get) => {
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false,
+    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
     async boot() {
       const seq = ++loadSeq
       const boardName = get().board
-      const revAtStart = editRev
+      const revAtStart = editRev, scenesAtStart = scenesRev
       const next = await loadBoardState(boardName)
       if (seq !== loadSeq) return false        // a newer load superseded this one
       if (!next) { get().toast(`board "${boardName}" failed to load`); return false }
@@ -617,11 +636,13 @@ export const useStore = create<State>((set, get) => {
       set(next)
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
+      else if (live && scenesRev !== scenesAtStart) set({ manifest: { ...get().manifest!, scenes: live.scenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
       return true
     },
 
     async switchBoard(name) {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
+      const scenesAtStart = scenesRev
       if (name === get().board) return
       // a resize held across a switch: settle THIS board (retidy if it has a recipe)
       // before the flush, so the torn mid-gesture state is never what reaches disk
@@ -649,39 +670,58 @@ export const useStore = create<State>((set, get) => {
       set({ board: name, interact: null, ...next })
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
+      else if (live && scenesRev !== scenesAtStart) set({ manifest: { ...get().manifest!, scenes: live.scenes } })
     },
 
-    renameBoard(from, to) {
+    renameBoard(name, title, baseHash) {
       return structural(async () => {
+        const from = name
         const active = from === get().board
-        // Renaming the ACTIVE board renames its file out from under the autosave. Flush any
-        // pending write FIRST (switchBoard's pattern), so a mustExist PUT never races the move.
+        // Retitling the ACTIVE board rewrites its file under the autosave. Flush any pending
+        // write FIRST (switchBoard's pattern), so a PUT never races the rewrite.
         if (active) {
           let ok = true
           for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
           if (get().dirty) return { ok: false, error: 'unsaved changes - try again' }
-          // hold autosave across the round-trip: an edit landing mid-rename must NOT save to the
-          // old name (a mustExist PUT would 409-gone and clear dirty, losing the edit)
+          // hold autosave across the round-trip: an edit landing mid-write would PUT against a
+          // hash the rewrite is about to move
           holdSaves()
         }
-        // Release the hold and resume autosave. Re-read the LIVE board, not the captured `active`:
-        // a board switch may have completed while we awaited, so only the board that is STILL
-        // `from` gets renamed to `to` in state (a switched-away board keeps its own name/nodes).
         try {
+          // the active board's hash is freshest in the store (an autosave may have landed since
+          // the sidebar looked); every other board's is the sidebar's
+          const base = active && get().boardHash ? get().boardHash : baseHash
           let res: Response
-          try { res = await postOwner('boards/rename', { from, to }) }
+          try { res = await postOwner('boards/rename', { from, title, ...(base ? { baseHash: base } : {}) }) }
           catch { return { ok: false, error: 'could not reach the dev server' } }
-          if (!res.ok) {
-            const e = await res.json().catch(() => ({} as { error?: string }))
-            return { ok: false, error: e?.error ?? `rename failed (${res.status})` }
-          }
-          // Content is byte-identical after a file move, so boardHash still matches for the next
-          // autosave; only the name (and the URL, via the board-change subscription) changes. Set
-          // the new name BEFORE releasing the hold so a resumed save targets `to`.
-          if (active && get().board === from) set({ board: to })
+          const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
+          if (!res.ok) return { ok: false, stale: res.status === 409, error: body?.error ?? `rename failed (${res.status})` }
+          // the write rewrote the file: the active board's CAS token moves to the hash the server
+          // answered (else the next autosave 409s against our own write) - before releasing the hold
+          if (active && get().board === from && body?.sha256) set({ boardHash: body.sha256 })
+          const titles = { ...get().boardTitles }   // the label changes now; the next tree read confirms it from the file
+          if (title) titles[from] = title; else delete titles[from]
+          set({ boardTitles: titles })
           return { ok: true }
         } finally { if (active) releaseSaves() }   // whatever happened, autosave resumes
       })
+    },
+
+    async renameScene(scene, title) {
+      let res: Response
+      try { res = await postOwner('scenes/rename', { scene, title }) }
+      catch { return { ok: false, error: 'could not reach the dev server' } }
+      if (!res.ok) { const e = await res.json().catch(() => ({} as { error?: string })); return { ok: false, error: e?.error ?? `rename failed (${res.status})` } }
+      // the label changes now; the watcher's sh:scenes confirms it from the file
+      const m = get().manifest
+      if (m) set({ manifest: { ...m, scenes: m.scenes.map((s) => (s.name === scene ? { ...s, ...(title ? { title } : {}), ...(title ? {} : { title: undefined }) } : s)) } })
+      return { ok: true }
+    },
+    setScenes(scenes) {
+      const m = get().manifest
+      if (!m || !Array.isArray(scenes)) return
+      scenesRev++
+      set({ manifest: { ...m, scenes } })
     },
 
     // The whole sidebar tree in one write: order, membership, the folders themselves. The

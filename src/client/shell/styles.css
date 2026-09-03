@@ -526,8 +526,12 @@ body.sh-commenting .sh-lean { opacity: 0 }
 .sh-panel .it.folder.drop-into svg { color: #0088ff }
 .sh-panel .it.board.in-folder { padding-left: 28px }
 .sh-panel .it.board.draft { cursor: default; opacity: .6 }
-/* seams inside a folder are indented with its rows, so "inside" and "at the root" never draw alike */
+/* seams inside a folder are indented with its rows, so "inside" and "at the root" never draw alike;
+   an open EMPTY folder draws that indented seam under its own header (drop-in) */
 .sh-panel .it.board.in-folder.drop-before::after, .sh-panel .it.board.in-folder.drop-after::after { left: 28px }
+.sh-panel .it.folder.drop-in { position: relative }
+.sh-panel .it.folder.drop-in::after { content: ''; position: absolute; left: 28px; right: 6px; bottom: -1px; height: 3px; border-radius: 3px;
+  background: #0088ff; pointer-events: none }
 /* the Boards header carries a quiet folder-plus: tertiary, shows on hover of the header row */
 .sh-panel .sh-boards .hd { display: flex; align-items: center; margin-right: 6px }
 .sh-panel .sh-boards .hd span { flex: 1 }

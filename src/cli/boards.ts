@@ -24,11 +24,13 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   }
   if (!tree.length && !hasAll) { console.log('no boards yet - design/boards/ is empty'); return }
   const order = (n: string) => { const o = rows.find((r) => r.name === n)?.order; return o === undefined ? '' : `  order ${o}` }
+  const title = (t?: string) => (t ? `  "${t}"` : '')
   const desc = (d?: string) => (d ? `  - ${d}` : '')
+  const boardLine = (n: string) => { const r = rows.find((x) => x.name === n); return `${n}${title(r?.title)}${order(n)}${desc(r?.description)}` }
   for (const it of tree) {
-    if (it.kind === 'board') { console.log(`${it.name}${order(it.name)}${desc(rows.find((r) => r.name === it.name)?.description)}`); continue }
-    console.log(`${it.name}/  (folder, ${it.boards.length} board${it.boards.length === 1 ? '' : 's'}${reg.folders.some((f) => f.name === it.name) ? '' : ', implied by its boards - not in _folders.json'})${desc(it.description)}`)
-    for (const b of it.boards) console.log(`  ${b}${order(b)}${desc(rows.find((r) => r.name === b)?.description)}`)
+    if (it.kind === 'board') { console.log(boardLine(it.name)); continue }
+    console.log(`${it.name}/${title(it.title)}  (folder, ${it.boards.length} board${it.boards.length === 1 ? '' : 's'}${reg.folders.some((f) => f.name === it.name) ? '' : ', implied by its boards - not in _folders.json'})${desc(it.description)}`)
+    for (const b of it.boards) console.log(`  ${boardLine(b)}`)
     if (!it.boards.length) console.log('  (empty)')
   }
   if (hasAll) console.log('all-scenes  (auto, always last)')

@@ -3,9 +3,9 @@ import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, 
 import { randomBytes } from 'node:crypto'
 import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
-import { hash } from './manifest.ts'
+import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
-import { BOARD_NAME, FOLDERS_FILE, readDescription, validateWire, type WireItem } from '../shared/board-tree.ts'
+import { BOARD_NAME, FOLDERS_FILE, readDescription, readTitle, TITLE_MAX, validateWire, type WireItem } from '../shared/board-tree.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
@@ -170,8 +170,16 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return json(res, 200, { folders: reg.folders, sha256: reg.sha256 })
       }
 
-      // Rename a board file. Owner-gated (a mutation). Placed BEFORE the boards/<name> regex
-      // so 'rename'/'reorder' are never captured as ordinary board names.
+      // Rename a board: its title (what humans see - free text, written into the file) and/or
+      // its file name (`to`; omitted or equal to `from` = title only - the sidebar's path: a
+      // board's file name is its identity for agents, publish.json, URLs and comment threads, so
+      // the sidebar never moves it; an agent may). `baseHash` = the file as the caller last saw
+      // it: a 409 (`sha256` answered) when it changed since, nothing written - a title never
+      // overwrites an agent's concurrent edit. Order: the move first (a refused move changes
+      // nothing), then the title into the file under its final name, every other field kept.
+      // Answers the name and, when the file was rewritten, its new hash. Owner-gated (a
+      // mutation). Placed BEFORE the boards/<name> regex so 'rename'/'reorder' are never
+      // captured as ordinary board names.
       if (path === 'boards/rename' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const raw = await readBody(req)
@@ -179,38 +187,79 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         let parsed: unknown
         try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
-        const { from, to } = parsed as { from?: unknown; to?: unknown }
+        const { from, to: toRaw, title: titleRaw, baseHash } = parsed as { from?: unknown; to?: unknown; title?: unknown; baseHash?: unknown }
+        const to = toRaw === undefined ? from : toRaw
         if (!validName(from) || !validName(to)) return json(res, 400, { error: 'invalid board name' })
-        if (to === 'all-scenes' || from === 'all-scenes' || to === from) return json(res, 400, { error: 'invalid rename' })
+        if (titleRaw !== undefined && (typeof titleRaw !== 'string' || Array.from(titleRaw).length > TITLE_MAX)) return json(res, 400, { error: 'invalid title' })
+        if (baseHash !== undefined && typeof baseHash !== 'string') return json(res, 400, { error: 'invalid baseHash' })
+        if (to === 'all-scenes' || from === 'all-scenes') return json(res, 400, { error: 'invalid rename' })
+        if (to === from && titleRaw === undefined) return json(res, 400, { error: 'invalid rename' })
         { const de = dirError(); if (de) return json(res, 400, { error: de }) }
         const fromPath = boardPath(from), toPath = boardPath(to)
         if (!fromPath || !toPath) return json(res, 400, { error: 'invalid board name' })
         if (!existsSync(fromPath)) return json(res, 404, { error: `board "${from}" does not exist` })
         if (!notSymlink(fromPath)) return json(res, 400, { error: 'refusing to rename a symlinked board file' })
-        // Persisted comments are board-keyed in three places a file move can't follow (the
-        // local JSONL, the client's in-memory union, and the remote-canonical sync). Rename is
-        // only safe on a board with no threads and no live connection.
-        if (isConnected(root)) return json(res, 409, { error: 'disconnect before renaming boards - comment sync is board-keyed' })
-        if (existsSync(join(root, 'design', 'comments', `${from}.jsonl`))) return json(res, 409, { error: 'rename a board before commenting on it - this board has threads' })
-        if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })   // lstat: a dangling symlink counts
-        // Atomic no-clobber: link() refuses (EEXIST) if the destination name exists - closing the
-        // check->rename TOCTOU. Then drop the old name. A crash between leaves both names on one
-        // inode (identical content), never a clobbered board. Filesystems without hardlinks fall
-        // back to the checked rename (the nodeExists guard above already covered the common race).
-        try { linkSync(fromPath, toPath) }
-        catch (err) {
-          const code = (err as NodeJS.ErrnoException).code
-          if (code === 'EEXIST') return json(res, 409, { error: `a board named "${to}" already exists` })
-          // ONLY a filesystem that genuinely lacks hardlinks falls back to a checked rename; any
-          // other error (ENOSPC, EACCES, ...) rethrows to the outer 500 rather than silently
-          // taking the clobber-prone path.
-          if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw err
-          if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })
-          renameSync(fromPath, toPath)
-          return json(res, 200, { name: to })
+        const current = readFileSync(fromPath, 'utf8')
+        if (baseHash !== undefined && baseHash !== hash(current)) return json(res, 409, { error: 'board changed on disk', sha256: hash(current) })
+        let obj: Record<string, unknown> | null = null
+        if (titleRaw !== undefined) {
+          // the title goes into the file it names, everything else untouched (a malformed file
+          // is the human's to fix first - never rewritten from a guess)
+          let parsedBoard: unknown
+          try { parsedBoard = JSON.parse(current) } catch { return json(res, 422, { error: `board "${from}" is not valid JSON - fix the file` }) }
+          if (!parsedBoard || typeof parsedBoard !== 'object' || Array.isArray(parsedBoard)) return json(res, 422, { error: `board "${from}" is not a JSON object - fix the file` })
+          obj = parsedBoard as Record<string, unknown>
         }
-        rmSync(fromPath)
-        return json(res, 200, { name: to })
+        if (to !== from) {
+          // Persisted comments are board-keyed in three places a file move can't follow (the
+          // local JSONL, the client's in-memory union, and the remote-canonical sync). A move is
+          // only safe on a board with no threads and no live connection.
+          if (isConnected(root)) return json(res, 409, { error: 'disconnect before renaming boards - comment sync is board-keyed' })
+          if (existsSync(join(root, 'design', 'comments', `${from}.jsonl`))) return json(res, 409, { error: 'rename a board before commenting on it - this board has threads' })
+          if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })   // lstat: a dangling symlink counts
+          // Atomic no-clobber: link() refuses (EEXIST) if the destination name exists - closing the
+          // check->rename TOCTOU. Then drop the old name. A crash between leaves both names on one
+          // inode (identical content), never a clobbered board. Filesystems without hardlinks fall
+          // back to the checked rename (the nodeExists guard above already covered the common race).
+          try { linkSync(fromPath, toPath); rmSync(fromPath) }
+          catch (err) {
+            const code = (err as NodeJS.ErrnoException).code
+            if (code === 'EEXIST') return json(res, 409, { error: `a board named "${to}" already exists` })
+            // ONLY a filesystem that genuinely lacks hardlinks falls back to a checked rename; any
+            // other error (ENOSPC, EACCES, ...) rethrows to the outer 500 rather than silently
+            // taking the clobber-prone path.
+            if (code !== 'EPERM' && code !== 'ENOSYS' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP') throw err
+            if (nodeExists(toPath)) return json(res, 409, { error: `a board named "${to}" already exists` })
+            renameSync(fromPath, toPath)
+          }
+        }
+        if (!obj) return json(res, 200, { name: to })
+        const title = readTitle(titleRaw)
+        if (title) obj.title = title; else delete obj.title
+        const next = JSON.stringify(obj, null, 2) + '\n'
+        atomicWrite(toPath, next)
+        return json(res, 200, { name: to, sha256: hash(next) })
+      }
+
+      // A scene's title - what humans see in the sidebar. Written into the YAML front matter of
+      // the scene's `_brief.md` (created front-matter-only when there is no brief); the directory
+      // never moves from here - a scene rename changes every frame id, an agent's refactor.
+      if (path === 'scenes/rename' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let parsed: unknown
+        try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
+        const { scene, title } = parsed as { scene?: unknown; title?: unknown }
+        // a scene is what the manifest scan calls one: a directory under design/scenes with
+        // frames in it - no other grammar, and never a path
+        if (typeof scene !== 'string' || !scene || scene.length > 128 || /[\\/]/.test(scene) || scene.startsWith('.') || scene.startsWith('_')) return json(res, 400, { error: 'invalid scene name' })
+        if (typeof title !== 'string' || Array.from(title).length > TITLE_MAX) return json(res, 400, { error: 'invalid title' })
+        if (!scanFrames(root).scenes.some((sc) => sc.name === scene)) return json(res, 400, { error: `scene "${scene}" does not exist (no frames under design/scenes/${scene}/)` })
+        const e = setSceneTitle(root, scene, readTitle(title) ?? '')
+        if (e) return json(res, 400, { error: e })
+        return json(res, 200, { ok: true })
       }
 
       // Arrange the sidebar: the body is the WHOLE tree - root boards as strings, folders as
@@ -261,11 +310,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
           return null
         }
-        const folders: { name: string; order: number; description?: string }[] = []
+        const folders: { name: string; order: number; title?: string; description?: string }[] = []
         for (const [i, it] of (tree as WireItem[]).entries()) {
           if (typeof it === 'string') { const e = consider(it, i, null); if (e) return json(res, 422, { error: e }); continue }
-          const description = readDescription(it.description)
-          folders.push({ name: it.folder, order: i, ...(description ? { description } : {}) })
+          const title = readTitle(it.title), description = readDescription(it.description)
+          folders.push({ name: it.folder, order: i, ...(title ? { title } : {}), ...(description ? { description } : {}) })
           for (const [j, kid] of it.boards.entries()) { const e = consider(kid, j, it.folder); if (e) return json(res, 422, { error: e }) }
         }
         if (stale.length) return json(res, 409, { error: 'boards changed on disk', stale })
@@ -319,15 +368,16 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           }
           mkdirSync(boardsDir, { recursive: true })
           // Preserve author-owned fields the shell does not manage. `order` (the board's rank among
-          // its siblings) and `folder` (the sidebar folder it sits in) live in the file but never
-          // ride the shell's save shape, so a routine autosave would otherwise strip them. Carry
-          // them over from disk when the incoming board omits them.
+          // its siblings), `folder` (the sidebar folder it sits in), `title` and `description` live
+          // in the file but never ride the shell's save shape, so a routine autosave would
+          // otherwise strip them. Carry them over from disk when the incoming board omits them.
           const incoming = body.board as Record<string, unknown> | null
           if (incoming && typeof incoming === 'object' && current) {
             try {
-              const disk = JSON.parse(current) as { order?: unknown; folder?: unknown; description?: unknown }
+              const disk = JSON.parse(current) as { order?: unknown; folder?: unknown; title?: unknown; description?: unknown }
               if (incoming.order === undefined && typeof disk.order === 'number' && Number.isFinite(disk.order)) incoming.order = disk.order
               if (incoming.folder === undefined && validName(disk.folder)) incoming.folder = disk.folder
+              if (incoming.title === undefined && readTitle(disk.title)) incoming.title = disk.title
               if (incoming.description === undefined && readDescription(disk.description)) incoming.description = disk.description
             } catch { /* malformed disk */ }
           }

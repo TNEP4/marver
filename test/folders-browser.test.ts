@@ -105,7 +105,7 @@ const skippable = (name: string, fn: () => Promise<void>, ms = 60_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); reset(); await fn() }, ms)
 
 describe('board folders - real dev server, real browser, real files', () => {
-  skippable('right-click the Boards header → New folder → type "Old stuff" → Enter: a slug in the registry, a Title Case row', async () => {
+  skippable('right-click the Boards header → New folder → type "Old stuff" → Enter: a slug + the title in the registry, the title on the row', async () => {
     const s = await open(browser!)
     const hd = await centre(browser!, s, '.sh-boards .hd')
     await rightClick(browser!, s, hd.x, hd.y)
@@ -115,8 +115,8 @@ describe('board folders - real dev server, real browser, real files', () => {
     await enter(browser!, s)
     await browser!.until(s, `${ROWS}.includes('folder:old-stuff')`)
     await settle()
-    expect(registry()).toEqual({ version: 1, folders: [{ name: 'old-stuff', order: 4 }] })
-    expect(await browser!.eval(s, `document.querySelector('[data-folder-row="old-stuff"] span').textContent`)).toBe('Old Stuff')
+    expect(registry()).toEqual({ version: 1, folders: [{ name: 'old-stuff', order: 4, title: 'Old stuff' }] })
+    expect(await browser!.eval(s, `document.querySelector('[data-folder-row="old-stuff"] span').textContent`)).toBe('Old stuff')
     expect(await rows(browser!, s)).toEqual(['overview', 'flow', 'specs', 'archive', 'folder:old-stuff', 'all-scenes'])
   })
 
@@ -137,7 +137,7 @@ describe('board folders - real dev server, real browser, real files', () => {
     expect(readBoard('specs')).toMatchObject({ folder: 'research', order: 0 })
     expect(readBoard('archive').order).toBe(3)
     expect(readBoard('archive').folder).toBeUndefined()
-    expect(registry()).toEqual({ version: 1, folders: [{ name: 'research', order: 2 }] })
+    expect(registry()).toEqual({ version: 1, folders: [{ name: 'research', order: 2 }] })   // "Research" is what `research` reads as anyway: no title stored
   })
 
   skippable('naming: Escape cancels a new folder (nothing written); a taken name stays editing with a toast; Enter then blur writes ONCE', async () => {
@@ -155,7 +155,7 @@ describe('board folders - real dev server, real browser, real files', () => {
     await settle()
     expect(registry()).toEqual({ version: 1, folders: [{ name: 'research', order: 2 }] })
     expect(await browser!.eval(s, `performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/api/boards/reorder')).length`)).toBe(0)
-    // a collision: "Research" slugs to the existing folder
+    // a collision: "Research" is what the existing folder already shows
     await rightClick(browser!, s, hd.x, hd.y)
     await pickMenu(browser!, s, 'New folder')
     await browser!.until(s, `document.activeElement?.placeholder === 'Folder name'`)
@@ -172,6 +172,164 @@ describe('board folders - real dev server, real browser, real files', () => {
     await settle()
     expect(registry().folders.map((f: any) => f.name)).toEqual(['research', 'ideas'])
     expect(await browser!.eval(s, `performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/api/boards/reorder')).length`)).toBe(1)
+  })
+
+  skippable('the field bug: a root board grabbed by its ICON and dropped between two folder boards lands between them, in one move', async () => {
+    writeBoard('specs', { order: 2, folder: 'research' }); writeBoard('archive', { order: 3, folder: 'research' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 2 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${ROWS}.join() === 'overview,flow,folder:research,  specs,  archive,all-scenes'`)
+    const from = await centre(browser!, s, '[data-board="overview"]')
+    const specs = await centre(browser!, s, '[data-board="specs"]')
+    // grab at the icon (12px in - inside the child indent), drop on the lower half of `specs`: the seam is between specs and archive
+    await mouse(browser!, s, 'mousePressed', from.left + 12, from.y)
+    for (const t of [0.3, 0.6, 1]) await mouse(browser!, s, 'mouseMoved', from.left + 12, from.y + (specs.bottom - 4 - from.y) * t)
+    await browser!.until(s, `document.querySelector('[data-board="specs"]').classList.contains('drop-before') === false && document.querySelector('[data-board="archive"]').classList.contains('drop-before')`)
+    await mouse(browser!, s, 'mouseReleased', from.left + 12, specs.bottom - 4)
+    await browser!.until(s, `${ROWS}.join() === 'flow,folder:research,  specs,  overview,  archive,all-scenes'`)
+    await settle()
+    expect(readBoard('overview')).toMatchObject({ folder: 'research', order: 1 })
+    expect(readBoard('archive')).toMatchObject({ folder: 'research', order: 2 })
+  })
+
+  skippable('the field bug: a folder board dragged to the blank space under the list leaves the folder - the root end, never a no-op', async () => {
+    writeBoard('specs', { order: 2, folder: 'research' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 2 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${ROWS}.includes('  specs')`)
+    const from = await centre(browser!, s, '[data-board="specs"][data-folder="research"]')
+    const scenesHd = await browser!.eval(s, `(() => { const r = Array.from(document.querySelectorAll('.sh-panel .hd')).find((e) => e.textContent === 'Scenes').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+    // the release lands on the Scenes header - not a row at all - and still means "end of the boards"
+    await drag(browser!, s, from, { x: from.x, y: scenesHd.y })
+    await browser!.until(s, `${ROWS}.join() === 'overview,flow,folder:research,archive,specs,all-scenes'`)
+    await settle()
+    expect(readBoard('specs').folder).toBeUndefined()
+    expect(readBoard('specs').order).toBe(4)
+    // the folder is now open and EMPTY: its lower band (by the label) = inside it, the indented seam under its header
+    const flow = await centre(browser!, s, '[data-board="flow"]')
+    const hdr = await centre(browser!, s, '[data-folder-row="research"]')
+    await mouse(browser!, s, 'mousePressed', flow.x, flow.y)
+    for (const t of [0.3, 0.6, 1]) await mouse(browser!, s, 'mouseMoved', flow.x, flow.y + (hdr.bottom - 3 - flow.y) * t)
+    await browser!.until(s, `document.querySelector('[data-folder-row="research"]').classList.contains('drop-in')`)
+    await mouse(browser!, s, 'mouseReleased', flow.x, hdr.bottom - 3)
+    await browser!.until(s, `${ROWS}.join() === 'overview,folder:research,  flow,archive,specs,all-scenes'`)
+    await settle()
+    expect(readBoard('flow')).toMatchObject({ folder: 'research', order: 0 })
+    // the shared gap after the folder's last board, released over the ROOT row under it = out again, right after the folder
+    const flow2 = await centre(browser!, s, '[data-board="flow"][data-folder="research"]')
+    const archive = await centre(browser!, s, '[data-board="archive"]')
+    await drag(browser!, s, flow2, { x: archive.x, y: archive.top + 4 })
+    await browser!.until(s, `${ROWS}.join() === 'overview,folder:research,flow,archive,specs,all-scenes'`)
+    await settle()
+    expect(readBoard('flow').folder).toBeUndefined()
+    expect(readBoard('flow').order).toBe(2)
+  })
+
+  skippable('Rename a board to "MVP 🚀": the title lands in the file, the file keeps its name, the row and the tab show it; the slug typed back clears it', async () => {
+    const s = await open(browser!)
+    const c = await centre(browser!, s, '[data-board="flow"]')
+    await rightClick(browser!, s, c.x, c.y)
+    await pickMenu(browser!, s, 'Rename')
+    await browser!.until(s, `document.activeElement?.tagName === 'INPUT' && document.activeElement.value === 'Flow'`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'MVP 🚀')
+    await enter(browser!, s)
+    await browser!.until(s, `document.querySelector('[data-board="flow"] span')?.textContent === 'MVP 🚀'`)
+    await settle()
+    expect(await browser!.eval(s, `${ROWS}.join()`)).toBe('overview,flow,specs,archive,all-scenes')   // the file is the identity: it never moves
+    expect(readBoard('flow')).toMatchObject({ title: 'MVP 🚀', order: 1 })
+    // retitle the ACTIVE board: the tab title follows, its autosave keeps working (no reload toast)
+    await browser!.eval(s, `window.__mvStore.getState().switchBoard('flow')`)
+    await browser!.until(s, `window.__mvStore.getState().board === 'flow'`)
+    const m = await centre(browser!, s, '[data-board="flow"]')
+    await rightClick(browser!, s, m.x, m.y)
+    await pickMenu(browser!, s, 'Rename')
+    await browser!.until(s, `document.activeElement?.tagName === 'INPUT' && document.activeElement.value === 'MVP 🚀'`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'mvp')
+    await enter(browser!, s)
+    await browser!.until(s, `document.title.startsWith('mvp - ')`)
+    await settle()
+    expect(readBoard('flow').title).toBe('mvp')
+    expect(await browser!.eval(s, `window.__mvStore.getState().toasts.length`)).toBe(0)
+    // typing what the slug reads as anyway clears the title - the file goes back to clean
+    const m2 = await centre(browser!, s, '[data-board="flow"]')
+    await rightClick(browser!, s, m2.x, m2.y)
+    await pickMenu(browser!, s, 'Rename')
+    await browser!.until(s, `document.activeElement?.tagName === 'INPUT'`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'Flow')
+    await enter(browser!, s)
+    await browser!.until(s, `document.querySelector('[data-board="flow"] span')?.textContent === 'Flow'`)
+    await settle()
+    expect(readBoard('flow').title).toBeUndefined()
+    // a name another board shows is refused, still editing
+    await rightClick(browser!, s, m2.x, m2.y)
+    await pickMenu(browser!, s, 'Rename')
+    await browser!.until(s, `document.activeElement?.tagName === 'INPUT'`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'Specs')
+    await enter(browser!, s)
+    await browser!.until(s, `window.__mvStore.getState().toasts.some((t) => /already exists/.test(t.text))`)
+    expect(await browser!.eval(s, `document.activeElement?.tagName`)).toBe('INPUT')
+  })
+
+  skippable('a drag released OUTSIDE the panel cancels, even after a seam showed', async () => {
+    const s = await open(browser!)
+    const from = await centre(browser!, s, '[data-board="archive"]')
+    const first = await centre(browser!, s, '[data-board="overview"]')
+    await mouse(browser!, s, 'mousePressed', from.x, from.y)
+    for (const t of [0.3, 0.6, 1]) await mouse(browser!, s, 'mouseMoved', from.x, from.y + (first.top + 3 - from.y) * t)
+    await browser!.until(s, `document.querySelector('[data-board="overview"]').classList.contains('drop-before')`)
+    await mouse(browser!, s, 'mouseReleased', 1200, first.top + 3)   // over the canvas, far from the panel
+    await settle()
+    expect(await browser!.eval(s, `${ROWS}.join()`)).toBe('overview,flow,specs,archive,all-scenes')
+    expect(await browser!.eval(s, `performance.getEntriesByType('resource').filter((e) => e.name.endsWith('/api/boards/reorder')).length`)).toBe(0)
+    expect(await browser!.eval(s, `document.body.classList.contains('sh-board-dragging')`)).toBe(false)
+  })
+
+  skippable('Rename a folder to "UI 🚀": the title in the registry, the slug on its boards untouched; a name another folder shows is refused', async () => {
+    writeBoard('specs', { order: 2, folder: 'ui' }); writeBoard('archive', { order: 3, folder: 'other' })
+    const s = await open(browser!)
+    await browser!.until(s, `${ROWS}.includes('folder:ui')`)
+    const f = await centre(browser!, s, '[data-folder-row="ui"]')
+    await rightClick(browser!, s, f.x, f.y)
+    await pickMenu(browser!, s, 'Rename')
+    await browser!.until(s, `document.activeElement?.tagName === 'INPUT' && document.activeElement.value === 'Ui'`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'Other')   // what the other folder shows
+    await enter(browser!, s)
+    await browser!.until(s, `window.__mvStore.getState().toasts.some((t) => /already exists/.test(t.text))`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'UI 🚀')
+    await enter(browser!, s)
+    await browser!.until(s, `document.querySelector('[data-folder-row="ui"] span')?.textContent === 'UI 🚀'`)
+    await settle()
+    expect(registry().folders.find((x: any) => x.name === 'ui')).toEqual({ name: 'ui', order: 3, title: 'UI 🚀' })   // implied folders rank after the ranked boards, by name
+    expect(readBoard('specs').folder).toBe('ui')
+  })
+
+  skippable('Rename a scene: the title goes into the brief\'s front matter and the row relabels live', async () => {
+    const s = await open(browser!)
+    const row = await browser!.eval(s, `(() => { const el = Array.from(document.querySelectorAll('.sh-panel .it span')).find((e) => e.textContent === 'App'); const r = el.getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 } })()`)
+    await rightClick(browser!, s, row.x, row.y)
+    await pickMenu(browser!, s, 'Rename')
+    await browser!.until(s, `document.activeElement?.tagName === 'INPUT' && document.activeElement.value === 'App'`)
+    await browser!.eval(s, `document.activeElement.value = ''`)
+    await type(browser!, s, 'The App (v2)')
+    await enter(browser!, s)
+    await browser!.until(s, `Array.from(document.querySelectorAll('.sh-panel .it span')).some((e) => e.textContent === 'The App (v2)')`)
+    await settle()
+    expect(readFileSync(join(root, 'design', 'scenes', 'app', '_brief.md'), 'utf8')).toBe('---\ntitle: "The App (v2)"\n---\n')
+    const manifestTitle = () => JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')).scenes.find((x: any) => x.name === 'app')?.title
+    for (let i = 0; i < 50 && manifestTitle() !== 'The App (v2)'; i++) await new Promise((r) => setTimeout(r, 100))   // the watcher's regen
+    expect(manifestTitle()).toBe('The App (v2)')
+    // an agent editing the brief relabels the row without a reload (sh:scenes), and no iframe is re-keyed
+    const rev = await browser!.eval(s, `document.querySelector('iframe')?.src ?? ''`)
+    writeFileSync(join(root, 'design', 'scenes', 'app', '_brief.md'), '---\ntitle: "Agent named"\n---\n\n# The app\n')
+    await browser!.until(s, `Array.from(document.querySelectorAll('.sh-panel .it span')).some((e) => e.textContent === 'Agent named')`, 10_000)
+    expect(await browser!.eval(s, `document.querySelector('iframe')?.src ?? ''`)).toBe(rev)
+    rmSync(join(root, 'design', 'scenes', 'app', '_brief.md'))
   })
 
   skippable('DRAG a board onto a folder row → it moves inside (file + registry); drag it back out to a root seam → `folder` gone', async () => {
