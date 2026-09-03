@@ -31,7 +31,10 @@ opens the same view on the published site, as long as its board and frame shippe
 
 **What ships**: the boards you list, the frames they reference, and the host `public/`
 directory in full (the `--boards` filter covers frames, not public assets). A flow you
-publish must have all its `data-goto` targets on a published board.
+publish must have all its `data-goto` targets on a published board. Sidebar folders ship
+only around published boards (a folder with nothing published never reaches the bundle),
+and `description`s ship only for published things - the project's, the published boards',
+their folders', scenes' and frames'.
 
 ## Who can open your canvas
 

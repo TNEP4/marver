@@ -98,6 +98,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` · `list` |
 | `npx marver shot <frame> [--scale 1-4]` | Render one frame headless and print the PNG path (needs `dev` running); 2x by default |
+| `npx marver boards [--json]` | The sidebar as the files say it is: folders, boards in reading order with `order` and description, the landing board |
 
 ## Shortcuts
 

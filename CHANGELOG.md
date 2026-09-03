@@ -10,12 +10,12 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   Right-click the Boards header (or its `+`) for a new folder and name it
   inline - what you type becomes a slug ("Old stuff" → `old-stuff`, shown "Old
   Stuff"); right-click a board for **Move to new folder** (the folder takes the
-  board's slot, the input has focus), **Move to <folder>**, **Move to top
-  level**; right-click a folder to **Rename** or **Delete** it (its boards go
-  back to the top level - folders organise, never own). And **drag**: the board
-  drag-and-drop now lands boards inside folders (drop on the folder row), in
-  any slot inside one, back out to the root (or the left gutter of a folder's
-  rows), and drags folders among boards. A click collapses a folder; the
+  board's slot, the input has focus) or **Move to top level**; right-click a
+  folder to **Rename** or **Delete** it (its boards go back to the top level -
+  folders organise, never own). Moving into an existing folder is a **drag**:
+  the board drag-and-drop now lands boards inside folders (drop on the folder
+  row), in any slot inside one, back out to the root (or the left gutter of a
+  folder's rows), and drags folders among boards. A click collapses a folder; the
   choice is remembered per browser. The folder holding the active board keeps
   the ancestor wash so its home stays visible collapsed.
 - **Folders are files, for agents too.** `"folder": "<name>"` on a board file
@@ -37,7 +37,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   (`description` in `design/config.ts`), a board (its JSON - preserved by
   autosave and by sidebar drags like `order`/`folder`), a folder (its
   `_folders.json` entry - it rides along through renames), a scene (the first
-  line of its `_brief.md`, `#` stripped - no new file) and a frame
+  non-blank line of its `_brief.md`, `#` stripped, front matter skipped - no
+  new file) and a frame
   (`meta.description`). `design/manifest.json` becomes the orientation file it
   was meant to be: `project`, `folders`, `boards` (sidebar order, with folder
   and description), `scenes` (with description and brief path) and `frames`
@@ -45,9 +46,14 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   and broadcasts `sh:manifest` only when the frames changed - a description
   edit never re-keys the live iframes. Published bundles ship descriptions of
   published things only (brief paths only with source revealed). `marver
-  boards` prints them. The agent contract teaches: write it at creation, keep
-  it true, fix what your session made false before it ends. Nothing renders in
-  the canvas.
+  boards` prints them. Editing `description` in `design/config.ts` under `dev`
+  refreshes the manifest live (the rest of the config still needs a restart).
+  The agent contract teaches: write it at creation, keep it true, fix what your
+  session made false before it ends (the review walk ends on it). Nothing
+  renders in the canvas.
+- `export const meta` picks a literal even when the prose holds the other
+  quote (`"the buyer's path"`), and refuses a computed value (`"Draft" + phase`)
+  instead of taking its literal half.
 
 ### Changed
 
