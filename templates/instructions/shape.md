@@ -60,7 +60,7 @@ detection is lexical), and declare `intent` on every content frame:
 ```tsx
 import { Doc, Row, Col, Md, Diagram, Img, Chart } from '@marver-design/marver/content'
 
-export const meta = { title: 'Checkout - how it works', intent: 'diagram' }
+export const meta = { title: 'Checkout - how it works', intent: 'diagram', description: 'The agreed flow, five screens - the source for the wireframes' }
 
 export default () => (
   <Doc layout="wide">

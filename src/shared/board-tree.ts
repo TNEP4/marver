@@ -17,11 +17,19 @@ export const FOLDERS_FILE = '_folders.json'
  *  off-grammar name are not - every lister (dev API, build, watcher) shares this rule. */
 export const isBoardFile = (f: string): boolean => f.endsWith('.json') && isBoardName(f.slice(0, -5))
 
-export type Folder = { kind: 'folder'; name: string; boards: string[] }
+export type Folder = { kind: 'folder'; name: string; boards: string[]; description?: string }
 export type TreeItem = { kind: 'board'; name: string } | Folder
 
 export interface BoardRow { name: string; order?: number; folder?: string }
-export interface FolderRow { name: string; order?: number }
+export interface FolderRow { name: string; order?: number; description?: string }
+
+/** A description off a file: one sentence, trimmed, capped - absent when empty or not a string. */
+export const DESCRIPTION_MAX = 300
+export const readDescription = (v: unknown): string | undefined => {
+  if (typeof v !== 'string') return undefined
+  const s = v.trim().replace(/\s+/g, ' ').slice(0, DESCRIPTION_MAX)
+  return s || undefined
+}
 
 const rank = (o: number | undefined) => (typeof o === 'number' && Number.isFinite(o) ? o : Infinity)
 
@@ -41,7 +49,8 @@ export function parseFolders(raw: unknown): FolderRow[] | string {
     if (seen.has(name)) return `folder "${name}" is listed twice`
     seen.add(name)
     const o = (f as { order?: unknown }).order
-    out.push({ name, ...(typeof o === 'number' && Number.isFinite(o) ? { order: o } : {}) })
+    const d = readDescription((f as { description?: unknown }).description)
+    out.push({ name, ...(typeof o === 'number' && Number.isFinite(o) ? { order: o } : {}), ...(d ? { description: d } : {}) })
   }
   return out
 }
@@ -51,7 +60,8 @@ export function parseFolders(raw: unknown): FolderRow[] | string {
  *  Inside a folder: its boards by `order` then name. Unranked sorts after ranked. */
 export function buildTree(boards: BoardRow[], folders: FolderRow[]): TreeItem[] {
   const folderOrder = new Map<string, number | undefined>()
-  for (const f of folders) if (isBoardName(f.name) && !folderOrder.has(f.name)) folderOrder.set(f.name, f.order)
+  const folderDesc = new Map<string, string>()
+  for (const f of folders) if (isBoardName(f.name) && !folderOrder.has(f.name)) { folderOrder.set(f.name, f.order); if (f.description) folderDesc.set(f.name, f.description) }
   const members = new Map<string, BoardRow[]>()
   const rootBoards: BoardRow[] = []
   for (const b of boards) {
@@ -68,7 +78,7 @@ export function buildTree(boards: BoardRow[], folders: FolderRow[]): TreeItem[] 
   const root: Root[] = [
     ...rootBoards.map((b) => ({ item: { kind: 'board', name: b.name } as TreeItem, order: b.order })),
     ...[...folderOrder].map(([name, order]) => ({
-      item: { kind: 'folder', name, boards: (members.get(name) ?? []).sort(byRank).map((b) => b.name) } as TreeItem,
+      item: { kind: 'folder', name, boards: (members.get(name) ?? []).sort(byRank).map((b) => b.name), ...(folderDesc.has(name) ? { description: folderDesc.get(name) } : {}) } as TreeItem,
       order,
     })),
   ]
@@ -85,11 +95,11 @@ export function flatten(tree: TreeItem[]): string[] {
 
 /** The wire shape of a tree write (`POST boards/reorder`): plain strings for root boards,
  *  `{ folder, boards }` for folders - what the sidebar posts and what the server validates. */
-export type WireItem = string | { folder: string; boards: string[] }
+export type WireItem = string | { folder: string; boards: string[]; description?: string }
 export const toWire = (tree: TreeItem[]): WireItem[] =>
-  tree.map((it) => (it.kind === 'board' ? it.name : { folder: it.name, boards: [...it.boards] }))
+  tree.map((it) => (it.kind === 'board' ? it.name : { folder: it.name, boards: [...it.boards], ...(it.description ? { description: it.description } : {}) }))
 export const fromWire = (wire: WireItem[]): TreeItem[] =>
-  wire.map((w) => (typeof w === 'string' ? { kind: 'board', name: w } : { kind: 'folder', name: w.folder, boards: [...w.boards] }))
+  wire.map((w) => (typeof w === 'string' ? { kind: 'board', name: w } : { kind: 'folder', name: w.folder, boards: [...w.boards], ...(w.description ? { description: w.description } : {}) }))
 
 /** Validate a wire tree off the network. Returns the error, or null when it is sound:
  *  every name on-grammar, `all-scenes` nowhere, no board twice, no folder twice, no
@@ -108,8 +118,9 @@ export function validateWire(wire: unknown): string | null {
   for (const w of wire) {
     if (typeof w === 'string') { const e = board(w); if (e) return e; continue }
     if (!w || typeof w !== 'object' || Array.isArray(w)) return 'invalid tree item'
-    const { folder, boards: kids } = w as { folder?: unknown; boards?: unknown }
+    const { folder, boards: kids, description } = w as { folder?: unknown; boards?: unknown; description?: unknown }
     if (!isBoardName(folder)) return 'invalid folder name in tree'
+    if (description !== undefined && (typeof description !== 'string' || description.length > DESCRIPTION_MAX)) return 'invalid folder description'
     if (folders.has(folder)) return `folder "${folder}" appears twice`
     folders.add(folder)
     if (!Array.isArray(kids)) return 'invalid folder in tree'
@@ -128,7 +139,7 @@ export function slugify(raw: string): string {
 
 // ---- tree mutations (pure; the sidebar shows the result at once and persists it) ----
 
-export const cloneTree = (t: TreeItem[]): TreeItem[] => t.map((it) => (it.kind === 'board' ? { ...it } : { ...it, boards: [...it.boards] }))
+export const cloneTree = (t: TreeItem[]): TreeItem[] => t.map((it) => (it.kind === 'board' ? { ...it } : { ...it, boards: [...it.boards] }))   // a folder's description rides along
 export const rootIndex = (t: TreeItem[], kind: TreeItem['kind'], name: string) => t.findIndex((it) => it.kind === kind && it.name === name)
 export const folderIn = (t: TreeItem[], name: string): Folder | undefined => t.find((it): it is Folder => it.kind === 'folder' && it.name === name)
 export const folderOf = (t: TreeItem[], board: string): string | null => t.find((it): it is Folder => it.kind === 'folder' && it.boards.includes(board))?.name ?? null

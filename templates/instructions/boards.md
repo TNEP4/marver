@@ -10,8 +10,13 @@ viewport and lays it out:
 
 ```json
 { "version": 1, "name": "checkout-compare", "order": 1, "auto": false,
+  "description": "Cart step, direction A vs B side by side - B is the current favourite",
   "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
 ```
+
+- `description` - one sentence on what the board is for and where it stands. It is
+  how a later session (or the human's next agent) knows this board without opening
+  it; it lands in design/manifest.json. Write it at creation, keep it true.
 
 - The same frame may appear on many boards, or twice on one (add `"w"`/`"h"` on a
   node to pin a size, `"x"`/`"y"` to place it - e.g. a comparison row: same `y`,
@@ -58,8 +63,13 @@ Files are the truth, and two files carry it:
   infrastructure, never a board:
 
   ```json
-  { "version": 1, "folders": [ { "name": "research", "order": 1 }, { "name": "archive", "order": 3 } ] }
+  { "version": 1, "folders": [
+    { "name": "research", "order": 1, "description": "The thinking behind the live boards - specs, flows, references" },
+    { "name": "archive", "order": 3, "description": "Retired directions and scene versions, oldest first" } ] }
   ```
+
+  A folder's `description` says what belongs in it - the next session files boards
+  right without asking.
 
   It exists so an EMPTY folder can exist and so a folder has a rank at the root.
   A folder a board names but the registry lacks is still real (it sorts after the

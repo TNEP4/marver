@@ -61,7 +61,10 @@ without narrating into the void; your next message is the reveal.
    State your understanding of the product in 2-3 sentences, ask "did I get
    that right?" - then STOP: no further tool calls, end your turn, resume when
    the human replies. (Only exception: they explicitly asked for unattended
-   execution - assume, mark UNCONFIRMED, surface it first.)
+   execution - assume, mark UNCONFIRMED, surface it first.) Once they confirm,
+   write that understanding as one sentence into `description` in
+   design/config.ts - the project's line in design/manifest.json, the first
+   thing every later session reads.
 2. **Confirm the stack aloud - what detection ACTUALLY found.** Read AGENTS.md's
    UI line and design/theme.css and narrate the reality, for example: "Tailwind
    + shadcn/ui; brand tokens in <file>; design/theme.css imports them." No

@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { CONTENT_WIDTH, PKG } from '../client/const.ts'
+import { buildTree, flatten, isBoardName, readDescription } from '../shared/board-tree.ts'
+import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
+import { hash } from './hash.ts'
 
-export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean }
+export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean; description?: string }
 export interface FrameEntry {
   id: string
   file: string
@@ -26,11 +28,22 @@ export interface FrameEntry {
   intent?: string
   /** Content-frame natural width from Doc layout (document 760 / wide 1280). */
   contentWidth?: number
+  /** One sentence of purpose (meta.description, literal): what the frame is for, its state. */
+  description?: string
 }
+/** The orientation file: what is on the canvas AND what each thing is for. `frames` and
+ *  `scenes` are what the shell consumes; `project`, `folders`, `boards` and every
+ *  `description` are for the agent that reads it at the start of a session. */
 export interface Manifest {
   frames: FrameEntry[]
-  scenes: { name: string; frames: number }[]
+  scenes: { name: string; frames: number; description?: string; brief?: string }[]
+  project?: { name?: string; description?: string }
+  folders?: { name: string; description?: string }[]
+  /** curated boards in sidebar order (folders flattened); never all-scenes */
+  boards?: { name: string; folder?: string; description?: string }[]
 }
+/** What a project says about itself - from design/config.ts, handed in by whoever loaded it. */
+export interface ProjectInfo { name?: string; description?: string }
 
 const FRAME_EXT = /\.(tsx|jsx|html)$/
 const RESERVED_SCENES = new Set(['components', 'screens'])
@@ -41,9 +54,10 @@ export function extractMeta(src: string): FrameMeta {
   if (!m) return {}
   const body = m[1]
   const pick = (key: string) => {
-    // boundary required: `covariant:` must not match `variant:` (property suffixes)
-    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(['"\`])([^'"\`]*)\\1`).exec(body)
-    return r ? r[2] : undefined
+    // boundary required: `covariant:` must not match `variant:` (property suffixes). Each
+    // quote style closes on its own kind, so an apostrophe inside "…" is prose, not an end
+    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'([^'\\n]*)'|"([^"\\n]*)"|\`([^\`\\n]*)\`)`).exec(body)
+    return r ? (r[1] ?? r[2] ?? r[3]) : undefined
   }
   // literal booleans, same boundary discipline as the string picker
   const pickBool = (key: string) => {
@@ -58,6 +72,7 @@ export function extractMeta(src: string): FrameMeta {
   const variant = pick('variant'); if (variant) out.variant = variant
   const intent = pick('intent'); if (intent) out.intent = intent
   const slide = pickBool('slide'); if (slide !== undefined) out.slide = slide
+  const description = readDescription(pick('description')); if (description) out.description = description
   return out
 }
 
@@ -149,7 +164,43 @@ function walk(dir: string, out: string[] = []): string[] {
   return out
 }
 
-export function scanFrames(root: string): Manifest {
+/** A scene's description is the FIRST line of its `_brief.md` (`#` stripped) - no new file. */
+export function sceneBrief(root: string, scene: string): { description?: string; brief?: string } {
+  if (!scene) return {}
+  const rel = `design/scenes/${scene}/_brief.md`
+  const abs = join(root, ...rel.split('/'))
+  if (!existsSync(abs)) return {}
+  let description: string | undefined
+  try {
+    const line = readFileSync(abs, 'utf8').split(/\r?\n/).map((l) => l.trim()).find((l) => l && !/^-{3,}$/.test(l))
+    description = readDescription(line?.replace(/^#+\s*/, ''))
+  } catch { /* unreadable: the path still tells the agent where to look */ }
+  return { brief: rel, ...(description ? { description } : {}) }
+}
+
+/** The sidebar as files say it is, for the manifest: folders in root order, boards in
+ *  reading order with their folder and description. A boards dir we may not read (symlink)
+ *  or a malformed registry yields nothing here - the API and the build say why; the
+ *  orientation file must never fail to write. */
+function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
+  const dir = join(root, 'design', 'boards')
+  if (checkBoardsDir(root, dir)) return {}
+  const reg = readRegistry(dir)
+  if (reg.state === 'malformed') return {}
+  const files = listBoardFiles(dir).boards
+  const rows = files.map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName) }))
+  const tree = buildTree(rows, reg.folders)
+  const folderOf = new Map<string, string>()
+  for (const it of tree) if (it.kind === 'folder') for (const b of it.boards) folderOf.set(b, it.name)
+  const folders = tree.filter((it) => it.kind === 'folder').map((it) => ({ name: it.name, ...(it.description ? { description: it.description } : {}) }))
+  const boards = flatten(tree).map((name) => {
+    const d = rows.find((r) => r.name === name)?.description
+    return { name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(d ? { description: d } : {}) }
+  })
+  return { ...(folders.length ? { folders } : {}), ...(boards.length ? { boards } : {}) }
+}
+
+export function scanFrames(root: string, project?: ProjectInfo): Manifest {
   const design = join(root, 'design')
   const frames: FrameEntry[] = []
   for (const base of ['scenes', 'components']) {
@@ -174,6 +225,7 @@ export function scanFrames(root: string): Manifest {
         if (meta.of) entry.variantGroup = meta.of         // declared membership
         if (meta.variant) entry.variant = meta.variant
         if (meta.slide) entry.slide = true
+        if (meta.description) entry.description = meta.description
         const content = contentScan(src)
         // declared meta.intent DECLARES a content frame even when the primitives
         // arrive through a barrel the lexical scan can't see - the taught path
@@ -209,9 +261,10 @@ export function scanFrames(root: string): Manifest {
 
   const sceneCounts = new Map<string, number>()
   for (const f of frames) sceneCounts.set(f.scene, (sceneCounts.get(f.scene) ?? 0) + 1)
-  const scenes = [...sceneCounts.entries()].map(([name, n]) => ({ name, frames: n })).sort((a, b) => a.name.localeCompare(b.name))
+  const scenes = [...sceneCounts.entries()].map(([name, n]) => ({ name, frames: n, ...sceneBrief(root, name) })).sort((a, b) => a.name.localeCompare(b.name))
 
-  return { frames, scenes }
+  const info = project && (project.name || project.description) ? { project: { ...(project.name ? { name: project.name } : {}), ...(project.description ? { description: project.description } : {}) } } : {}
+  return { ...info, ...scanBoards(root), scenes, frames }
 }
 
 /** Variant groups. A group = 2+ frames in one DIRECTORY whose basenames
@@ -283,4 +336,4 @@ export function writeManifest(root: string, manifest: Manifest): boolean {
   return true
 }
 
-export const hash = (s: string) => createHash('sha256').update(s).digest('hex')
+export { hash } from './hash.ts'   // re-exported for the many callers that import it from here

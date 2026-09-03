@@ -661,6 +661,9 @@ const configTemplate = (mode: string, jamAgent?: string) => `// ${NAME} config -
 // relative imports need extensions, tsconfig paths are ignored here.
 export default {
   mode: ${JSON.stringify(mode)},
+  // One sentence on what this product is and for whom. It lands in design/manifest.json
+  // as the project's description - the first thing a new agent session reads.
+  // description: "Analytics for indie SaaS - the founder's Monday-morning read",
   // Device widths for frames and the Devices view. Rename, retune, or uncomment tv.
   viewports: {
     mobile: { width: 390, height: 844 },

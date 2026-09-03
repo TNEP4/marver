@@ -5,7 +5,7 @@ import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
-import { BOARD_NAME, FOLDERS_FILE, validateWire, type WireItem } from '../shared/board-tree.ts'
+import { BOARD_NAME, FOLDERS_FILE, readDescription, validateWire, type WireItem } from '../shared/board-tree.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
@@ -261,10 +261,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
           return null
         }
-        const folders: { name: string; order: number }[] = []
+        const folders: { name: string; order: number; description?: string }[] = []
         for (const [i, it] of (tree as WireItem[]).entries()) {
           if (typeof it === 'string') { const e = consider(it, i, null); if (e) return json(res, 422, { error: e }); continue }
-          folders.push({ name: it.folder, order: i })
+          const description = readDescription(it.description)
+          folders.push({ name: it.folder, order: i, ...(description ? { description } : {}) })
           for (const [j, kid] of it.boards.entries()) { const e = consider(kid, j, it.folder); if (e) return json(res, 422, { error: e }) }
         }
         if (stale.length) return json(res, 409, { error: 'boards changed on disk', stale })
@@ -324,9 +325,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const incoming = body.board as Record<string, unknown> | null
           if (incoming && typeof incoming === 'object' && current) {
             try {
-              const disk = JSON.parse(current) as { order?: unknown; folder?: unknown }
+              const disk = JSON.parse(current) as { order?: unknown; folder?: unknown; description?: unknown }
               if (incoming.order === undefined && typeof disk.order === 'number' && Number.isFinite(disk.order)) incoming.order = disk.order
               if (incoming.folder === undefined && validName(disk.folder)) incoming.folder = disk.folder
+              if (incoming.description === undefined && readDescription(disk.description)) incoming.description = disk.description
             } catch { /* malformed disk */ }
           }
           const next2 = JSON.stringify(body.board, null, 2) + '\n'

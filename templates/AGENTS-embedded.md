@@ -91,7 +91,7 @@ Report where the request came from: chat requests get chat replies; only comment
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
 - It default-exports a React component. No imports from the tool are needed. Optional:
-  export const meta = { title: "...", viewport: "mobile" }   // literal values only
+  export const meta = { title: "...", viewport: "mobile", description: "..." }   // literal values only
   // viewport names come from design/config.ts (default: mobile, tablet, laptop, monitor;
   // tv available commented-out). Pick the one the screen is designed for - the human can
   // flip the whole board to any device (Devices menu; digit keys - 0 restores each
@@ -131,8 +131,17 @@ Report where the request came from: chat requests get chat replies; only comment
   setTimeout(() => r(orders), 800)) and let the frame render its skeleton while awaiting.
 
 ## Orientation
-- design/manifest.json lists every frame (id, file, scene, title) - read it before
-  exploring. `init` writes the first one; `marver dev` keeps it fresh.
+- design/manifest.json is the canvas with its purpose: the project (name, description),
+  every folder and board in sidebar order, every scene and frame - each with its
+  `description` when one was written. Read it before exploring; `marver dev` keeps it
+  fresh. `npx marver boards` prints the boards part as a tree.
+- **Descriptions.** Every object takes one optional `description`: one sentence, what it
+  is for and its state when that is not obvious (≤ ~160 chars). Project: `description`
+  in design/config.ts. Board: `"description"` in its JSON. Folder: on its `_folders.json`
+  entry. Scene: the FIRST line of its `_brief.md`. Frame: `meta.description`. Write it
+  when you create the thing; keep it true when the state changes (retired, winning
+  direction, superseded); before a session ends, re-read the manifest and fix any
+  description your session made false. That is how the next session orients in one read.
 - Component galleries: create design/components/<name>/variants.tsx rendering each variant
   and each state (default / hover-styled / focus / disabled / loading) of one ui component.
 

@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { NAME, ROUTE } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
-import { scanFrames, type Manifest } from './manifest.ts'
+import { scanFrames, type FrameEntry, type Manifest } from './manifest.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { buildTree, flatten, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
 import { checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
@@ -218,6 +218,25 @@ export function publishedTree(published: string[], allBoards: Record<string, any
   return { tree, names: [...flatten(tree), ...(published.includes('all-scenes') ? ['all-scenes'] : [])] }
 }
 
+/** The bundle's manifest: the published frames, and descriptions of published things ONLY -
+ *  the project's, the published scenes' (their brief path only when source is revealed),
+ *  the published boards' and the folders those sit in. No unpublished name or sentence. */
+export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], publishedNames: string[], strip: boolean): Manifest {
+  const pubScenes = new Set(pubFrames.map((f) => f.scene))
+  const pubBoardSet = new Set(publishedNames)
+  const pubBoards = (manifest.boards ?? []).filter((b) => pubBoardSet.has(b.name))
+  const pubFolderSet = new Set(pubBoards.map((b) => b.folder).filter(Boolean))
+  const pubFolders = (manifest.folders ?? []).filter((f) => pubFolderSet.has(f.name))
+  return {
+    ...(manifest.project ? { project: manifest.project } : {}),
+    ...(pubFolders.length ? { folders: pubFolders } : {}),
+    ...(pubBoards.length ? { boards: pubBoards } : {}),
+    scenes: manifest.scenes.filter((s) => pubScenes.has(s.name))
+      .map(({ name, description, brief }) => ({ name, frames: pubFrames.filter((f) => f.scene === name).length, ...(description ? { description } : {}), ...(brief && !strip ? { brief } : {}) })),
+    frames: pubFrames,
+  }
+}
+
 /** The folder registry: absent = no folders (boards still imply theirs); malformed fails the build. */
 function readFolders(root: string): FolderRow[] {
   const reg = readRegistry(join(root, 'design', 'boards'))
@@ -325,7 +344,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const outDir = join(root, 'design', '.dist')
 
   // ---- data: manifest + boards, gated by the publish policy (the privacy boundary) ----
-  const manifest = scanFrames(root)
+  const manifest = scanFrames(root, { name: config.share.name || basename(root), description: config.description })
   const allBoards = readBoards(root)
   const policy = resolvePolicy(root, allBoards, boardsFlag, allBoardsFlag)
   const rights = Object.fromEntries(Object.entries(policy.boards).map(([n, p]) => [n, p.max])) as Record<string, 'read' | 'comment'>
@@ -357,11 +376,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const pubFrames = strip
     ? frames.map((f) => ({ ...f, file: opaquePath(f.id, f.kind === 'html' ? '.html' : '') }))
     : frames
-  const pubManifest: Manifest = {
-    frames: pubFrames,
-    scenes: [...new Set(pubFrames.map((f) => f.scene))].sort()
-      .map((name) => ({ name, frames: pubFrames.filter((f) => f.scene === name).length })),
-  }
+  const pubManifest = publishedManifest(manifest, pubFrames, publishedNames, strip)
   // per-board artifact metadata rides beside rights: the type picks the landing
   // view, open/lock are the owner's explicit calls (04-solution §2.35)
   // a slides board (type OR open) plays only its slide: true frames. Non-slide

@@ -40,12 +40,17 @@ to the SURFACE, not the product.
 
 Create `design/scenes/<scene>/_brief.md`: audience + scene, the one job, mode, the
 flow as a numbered list, content sources, out-of-scope. Ten lines, not a document.
+**Its first line is the scene's one-sentence description** - purpose and state,
+e.g. `# Checkout - the buyer's path from cart to receipt (v2, after the pricing pivot)`.
+That line lands in `design/manifest.json` as the scene's `description`, so a later
+session reads it without opening the brief; keep it true as the scene moves on (a
+scene that only needs a gist - a version snapshot, an archive - gets a one-line brief).
 Show it. Get the nod.
 
 **Unattended?** When the human is away or has said "don't ask", the interview and
 the nod convert to obligations, not blockers: answer the five questions yourself
-from the repo and reasonable product judgment, mark the brief `UNCONFIRMED` at the
-top, proceed - and surface the brief FIRST when the human returns. Never stall on
+from the repo and reasonable product judgment, mark the brief `UNCONFIRMED` in its
+first line (`# Checkout - … (UNCONFIRMED)`), proceed - and surface the brief FIRST when the human returns. Never stall on
 an absent human; never hide that the brief was self-answered.
 
 ## 4. Align on flow with a diagram frame

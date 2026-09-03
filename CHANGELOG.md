@@ -32,6 +32,22 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **Published bundles** carry the folder tree of the published boards only; a
   folder with nothing published never reaches the bundle. The published
   sidebar shows folders read-only.
+- **Descriptions - purpose notes on every object, for agents.** One optional
+  `description` (one sentence: what it is for, its state) on the project
+  (`description` in `design/config.ts`), a board (its JSON - preserved by
+  autosave and by sidebar drags like `order`/`folder`), a folder (its
+  `_folders.json` entry - it rides along through renames), a scene (the first
+  line of its `_brief.md`, `#` stripped - no new file) and a frame
+  (`meta.description`). `design/manifest.json` becomes the orientation file it
+  was meant to be: `project`, `folders`, `boards` (sidebar order, with folder
+  and description), `scenes` (with description and brief path) and `frames`
+  (with description). `marver dev` regenerates it on board and brief edits too,
+  and broadcasts `sh:manifest` only when the frames changed - a description
+  edit never re-keys the live iframes. Published bundles ship descriptions of
+  published things only (brief paths only with source revealed). `marver
+  boards` prints them. The agent contract teaches: write it at creation, keep
+  it true, fix what your session made false before it ends. Nothing renders in
+  the canvas.
 
 ### Changed
 

@@ -325,8 +325,32 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     expect(r.status).toBe(400)
   })
 
+  it('a folder description rides the tree write (and a rename keeps it); a stray one is validated', async () => {
+    writeBoard('one')
+    writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 0, description: 'The thinking' }] }))
+    const f = await drive(root, 'GET', 'folders')
+    expect(f.json.folders).toEqual([{ name: 'research', order: 0, description: 'The thinking' }])
+    // the shell posts what it read - renamed, description along
+    let r = await post([{ folder: 'thinking', boards: ['one'], description: 'The thinking' }], base('one'))
+    expect(r.status).toBe(200)
+    expect(read(REG).folders).toEqual([{ name: 'thinking', order: 0, description: 'The thinking' }])
+    expect((await post([{ folder: 'x', boards: [], description: 'y'.repeat(301) }], base('one'))).status).toBe(400)
+    expect((await post([{ folder: 'x', boards: [], description: 5 }], base('one'))).status).toBe(400)
+    r = await post([{ folder: 'x', boards: ['one'], description: '   ' }], base('one'))   // blank = none
+    expect(r.status).toBe(200)
+    expect(read(REG).folders).toEqual([{ name: 'x', order: 0 }])
+  })
+
+  it('a board description survives a tree write (untouched field) and GET boards exposes it', async () => {
+    writeBoard('one', { version: 1, nodes: [], description: 'The primary flow' })
+    const r = await post([{ folder: 'f', boards: ['one'] }], base('one'))
+    expect(r.status).toBe(200)
+    expect(read('one')).toMatchObject({ folder: 'f', order: 0, description: 'The primary flow' })
+    expect((await drive(root, 'GET', 'boards')).json[0]).toMatchObject({ name: 'one', description: 'The primary flow' })
+  })
+
   it('the autosave PUT carries `folder` (and `order`) over from disk when the shell omits them', async () => {
-    writeBoard('one', { version: 1, nodes: [], order: 2, folder: 'research' })
+    writeBoard('one', { version: 1, nodes: [], order: 2, folder: 'research', description: 'kept too' })
     const sha = hash(readFileSync(file('one'), 'utf8'))
     const put = await new Promise<{ status: number; json: any }>((resolve) => {
       const mw = apiMiddleware(root)
@@ -337,7 +361,7 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
       queueMicrotask(() => { req._cbs.data?.(raw); req._cbs.end?.() })
     })
     expect(put.status).toBe(200)
-    expect(read('one')).toMatchObject({ order: 2, folder: 'research' })
+    expect(read('one')).toMatchObject({ order: 2, folder: 'research', description: 'kept too' })
   })
 })
 
@@ -347,16 +371,16 @@ describe('marver boards - the tree as the files say it is', () => {
     const dir = join(root, 'design', 'boards')
     mkdirSync(dir, { recursive: true })
     const w = (n: string, o: unknown) => writeFileSync(join(dir, `${n}.json`), JSON.stringify(o))
-    w('overview', { version: 1, nodes: [], order: 0 }); w('spec', { version: 1, nodes: [], order: 0, folder: 'research' }); w('old', { version: 1, nodes: [], folder: 'implied' }); w('all-scenes', { version: 1, nodes: [] })
-    writeFileSync(join(dir, '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 1 }, { name: 'empty', order: 2 }] }))
+    w('overview', { version: 1, nodes: [], order: 0, description: 'The first thing we show' }); w('spec', { version: 1, nodes: [], order: 0, folder: 'research' }); w('old', { version: 1, nodes: [], folder: 'implied' }); w('all-scenes', { version: 1, nodes: [] })
+    writeFileSync(join(dir, '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 1, description: 'The thinking' }, { name: 'empty', order: 2 }] }))
     const { boardsCommand } = await import('../src/cli/boards.ts')
     const lines: string[] = []
     const orig = console.log; console.log = (s: string) => { lines.push(String(s)) }
     try {
       boardsCommand(root, {})
       const text = lines.join('\n')
-      expect(text).toMatch(/^overview  order 0/m)
-      expect(text).toMatch(/^research\/  \(folder, 1 board\)\n  spec  order 0/m)
+      expect(text).toMatch(/^overview  order 0  - The first thing we show/m)
+      expect(text).toMatch(/^research\/  \(folder, 1 board\)  - The thinking\n  spec  order 0/m)
       expect(text).toMatch(/^empty\/ .*\n  \(empty\)/m)
       expect(text).toMatch(/^implied\/ .*implied by its boards/m)
       expect(text).toMatch(/all-scenes  \(auto, always last\)/)

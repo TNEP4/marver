@@ -113,11 +113,12 @@ The human picks a direction; then, in one pass:
 1. **The winner takes the clean name.** Drop its letter prefix (or promote it
    over the original file); update goto targets pointing at old ids.
 2. **The losers move to `design/scenes/archive/`** - never deleted, RELABELED:
-   filename `<feature>-<direction>.tsx`, meta.title saying exactly what it was
-   and why it retired, e.g.
-   `{ title: "Routines editor - guided steps (retired: sentence canvas won, sharper mental model)" }`.
+   filename `<feature>-<direction>.tsx`, meta.title saying what it was and
+   meta.description saying why it retired, e.g.
+   `{ title: "Routines editor - guided steps", description: "Retired: the sentence canvas won - sharper mental model" }`.
    A one-line comment at the top of the file carries any longer why. That
-   sentence is the learning - write it while the reason is fresh.
+   sentence is the learning - write it while the reason is fresh; it reaches
+   design/manifest.json, so the next session knows without opening the file.
 3. **The `archive` board stays clean and organized:** a curated board over the
    archive scene, tidied with a layout recipe, grouped by feature. Anyone
    opening it should know what every frame was without asking.

@@ -27,7 +27,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
   // reload gated on interaction leases), not by Vite's default React Fast Refresh which fires
   // immediately regardless of what the user is doing. handleHotUpdate suppresses the default
   // and queues sh:frame-invalidated; the shell decides when to reload each affected frame.
-  let manifest: Manifest = scanFrames(root)
+  const projectInfo = () => ({ name: config.share.name || basename(root), description: config.description })
+  let manifest: Manifest = scanFrames(root, projectInfo())
   let devServer: ViteDevServer | null = null
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
@@ -191,10 +192,16 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
 
       devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
+      // Broadcast only when the FRAMES changed - plain content edits ride HMR alone (spec
+      // §5.6), and a board/folder/description edit (the manifest carries those now) must
+      // never re-key the live iframes. The file itself is rewritten on any change.
+      let framesKey = JSON.stringify(manifest.frames)
       const regen = debounce(() => {
-        manifest = scanFrames(root)   // keep the cached manifest fresh for affectedFrameIds
-        // Broadcast only real changes - plain content edits ride HMR alone (spec §5.6).
-        if (writeManifest(root, manifest)) server.ws.send('sh:manifest', manifest as any)
+        manifest = scanFrames(root, projectInfo())   // keep the cached manifest fresh for affectedFrameIds
+        const changed = writeManifest(root, manifest)
+        const key = JSON.stringify(manifest.frames)
+        if (changed && key !== framesKey) server.ws.send('sh:manifest', manifest as any)
+        framesKey = key
       }, 150)
 
       const watched = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]
@@ -232,9 +239,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       server.watcher.on('add', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
       server.watcher.on('unlink', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
       // change: only meta edits matter; scanFrames re-extracts and writeManifest de-dupes writes.
-      server.watcher.on('change', (f) => inScope(f) && /\.(tsx|jsx)$/.test(f) && regen())
+      server.watcher.on('change', (f) => inScope(f) && (/\.(tsx|jsx)$/.test(f) || f.endsWith('_brief.md')) && regen())   // a brief's first line is its scene's description
 
-      writeManifest(root, scanFrames(root))
+      writeManifest(root, manifest)
 
       // Multi-viewer board sync: Vite's watcher deliberately ignores boards/ (write-loop
       // guard, spec §5.6), so a plain fs.watch broadcasts saves instead. Every viewer
@@ -252,7 +259,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         const watcher = watch(boardsDir, (_event, file) => {
           if (!file || !file.endsWith('.json')) return
           clearTimeout(listTimer)
-          listTimer = setTimeout(() => server.ws.send('sh:boards', {}), 150)
+          listTimer = setTimeout(() => { server.ws.send('sh:boards', {}); regen() }, 150)   // the manifest carries boards and folders too
           clearTimeout(timers.get(file))
           timers.set(file, setTimeout(() => {
             timers.delete(file)

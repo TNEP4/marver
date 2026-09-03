@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { AGENT_BIN, AGENT_NAMES, detectAgent, onPath, type JamAgent } from './jam/agent.ts'
+import { readDescription } from '../shared/board-tree.ts'
 
 export interface Viewport { width: number; height: number }
 /** Live Jam: the dev-server daemon config, already RESOLVED - present means armed.
@@ -14,6 +15,9 @@ export interface JamConfig {
 }
 export interface ShConfig {
   mode: 'studio' | 'embedded'
+  /** One sentence on what this product is and for whom - the project's description in
+   *  design/manifest.json, the first thing a new agent session reads. */
+  description?: string
   theme: string | null
   viewports: Record<string, Viewport>
   themes: string[]
@@ -70,6 +74,7 @@ export async function loadConfig(root: string): Promise<ShConfig> {
       themes: Array.isArray(user.themes) && user.themes.length ? user.themes.map(String) : DEFAULTS.themes,
       port: validPort(user.port) ?? DEFAULTS.port,
       zoomSpeed: validZoom(user.zoomSpeed) ?? DEFAULTS.zoomSpeed,
+      description: readDescription(user.description),
       share: {
         branding: (user.share as { branding?: unknown } | undefined)?.branding !== false,
         name: typeof (user.share as any)?.name === 'string' ? (user.share as any).name : undefined,
