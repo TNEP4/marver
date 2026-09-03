@@ -23,8 +23,8 @@ viewport and lays it out:
   orienting board (an overview or the primary flow) - never a giant one. Boards
   without an `order` sort after the ranked ones, by name. Set `order` deliberately on
   every curated board; it is the first impression. The human can also drag-reorder boards
-  in the sidebar (which rewrites `order`) and rename one from its right-click menu - so
-  your ranking is a starting point they may adjust.
+  in the sidebar (which rewrites `order`), rename one from its right-click menu, and file
+  boards into folders (below) - so your ranking is a starting point they may adjust.
 - `auto: false` boards show exactly their list. `all-scenes` is auto-managed (it holds
   EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
   never the landing board, and never write its file.
@@ -43,6 +43,50 @@ viewport and lays it out:
   … - the whole flow as it stood before each round of feedback), one band per
   version, oldest at the top. Winners live on the feature boards; the archive
   answers "what did we try?" and "what did it look like before?".
+
+## Folders - organising the sidebar
+
+Boards can sit in folders, one level deep (folders hold boards, never folders).
+Files are the truth, and two files carry it:
+
+- **Membership lives on the board**: `"folder": "research"` in the board file, next
+  to `order`. `order` then ranks the board among its folder siblings (root boards and
+  folders share the root sequence). Same grammar as board names
+  (`^[a-z0-9][a-z0-9-]*$`); an invalid value means top level. `all-scenes` never
+  lives in a folder.
+- **Folders live in `design/boards/_folders.json`** - the underscore marks it as
+  infrastructure, never a board:
+
+  ```json
+  { "version": 1, "folders": [ { "name": "research", "order": 1 }, { "name": "archive", "order": 3 } ] }
+  ```
+
+  It exists so an EMPTY folder can exist and so a folder has a rank at the root.
+  A folder a board names but the registry lacks is still real (it sorts after the
+  ranked items, by name) - two boards with `"folder": "research"` make a Research
+  folder on their own. A malformed registry is an error the canvas shows, not an
+  empty one - fix it, never delete it.
+
+The choreography, so the files always agree:
+- **Create** a folder: add its entry to the registry (or just point a board at it).
+- **File** a board: write `folder` on the board. Empty `folder`/absent = top level.
+- **Rename** a folder: rewrite `folder` on every member AND the registry entry - a
+  registry rename alone leaves the members in the old (implied) folder.
+- **Delete** a folder: remove `folder` from every member, then its registry entry.
+  Folders organise, never own: deleting one never deletes a board.
+- The **landing board** is the first board in sidebar order, folders included -
+  rank a folder first and its first board opens the canvas.
+
+The human does all of this too - from the sidebar: New folder (right-click the Boards
+header, or its `+`), Rename, Delete folder, "Move to …" on a board, and DRAG: boards
+into and out of folders, folders among boards. Each drag rewrites `order` (and
+`folder`) on the boards it touches and the registry - the shell owns those fields
+while the canvas is open, exactly as it owns `order`; write membership and new
+folders freely, and never rewrite an arrangement the human just made. The shell
+refuses a write that would overwrite an edit it has not seen (your file write and
+the human's drag can never silently erase each other), so read a board file before
+you rewrite it. Published canvases show the folders of the published boards only; a
+folder with nothing published never reaches the bundle.
 
 ## The default composition: one horizontal band
 

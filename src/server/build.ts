@@ -23,6 +23,8 @@ import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
 import { scanFrames, type Manifest } from './manifest.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
+import { buildTree, flatten, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
+import { listBoardFiles, readRegistry } from './boards.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -185,18 +187,39 @@ export function resolvePublish(
   return Object.fromEntries(Object.entries(policy.boards).map(([n, p]) => [n, p.max]))
 }
 
-/** Read every board file; returns name -> parsed json. Bad JSON fails the build loudly. */
+/** Read every board file; returns name -> parsed json. Bad JSON fails the build loudly, and so
+ *  does a board-named entry that is not a regular file (a symlink could publish JSON from
+ *  outside the project - the build fails closed rather than skipping it quietly). */
 function readBoards(root: string): Record<string, any> {
-  const dir = join(root, 'design', 'boards')
+  const { boards, skipped } = listBoardFiles(join(root, 'design', 'boards'))
+  if (skipped.length) throw new Error(`design/boards/${skipped[0]} is not a regular file (a symlinked board cannot be published)`)
   const out: Record<string, any> = {}
-  if (!existsSync(dir)) return out
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith('.json')) continue
-    const name = f.replace(/\.json$/, '')
-    try { out[name] = JSON.parse(readFileSync(join(dir, f), 'utf8')) }
-    catch { throw new Error(`design/boards/${f} is not valid JSON`) }
+  for (const b of boards) {
+    if (b.json === null) throw new Error(`design/boards/${b.name}.json is not valid JSON`)
+    out[b.name] = b.json
   }
   return out
+}
+
+/** Switcher order = the sidebar's reading order: the folder tree over the PUBLISHED boards only
+ *  (a folder left with no published board drops out - its name never reaches the bundle),
+ *  flattened depth-first; all-scenes always LAST (it is the expensive everything-board, never
+ *  the landing). `names[0]` is where `/` opens. Folder names of published boards are structure,
+ *  like board names: they ship. */
+export function publishedTree(published: string[], allBoards: Record<string, any>, folders: FolderRow[]): { tree: TreeItem[]; names: string[] } {
+  const field = (n: string, k: 'order' | 'folder') => (allBoards[n] as Record<string, unknown> | undefined)?.[k]
+  const tree = buildTree(
+    published.filter((n) => n !== 'all-scenes').map((n) => ({ name: n, order: field(n, 'order') as number | undefined, folder: field(n, 'folder') as string | undefined })),
+    folders,
+  ).filter((it) => it.kind === 'board' || it.boards.length > 0)
+  return { tree, names: [...flatten(tree), ...(published.includes('all-scenes') ? ['all-scenes'] : [])] }
+}
+
+/** The folder registry: absent = no folders (boards still imply theirs); malformed fails the build. */
+function readFolders(root: string): FolderRow[] {
+  const reg = readRegistry(join(root, 'design', 'boards'))
+  if (reg.state === 'malformed') throw new Error(reg.error)
+  return reg.folders
 }
 
 /**
@@ -312,14 +335,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const strip = !policy.reveal.source
   const buildSalt = randomBytes(16).toString('hex')
   const opaquePath = (id: string, ext: string) => `__mv/f/mv${createHash('sha256').update(buildSalt).update(id).digest('hex').slice(0, 12)}${ext}`
-  // switcher order: curated boards ranked by each board's `order` (then name); all-scenes always LAST
-  // (it is the expensive everything-board, never the landing). `default` (where `/` opens) is the first.
-  const boardOrder = (n: string): number => {
-    const o = (allBoards[n] as { order?: unknown } | undefined)?.order
-    return typeof o === 'number' && Number.isFinite(o) ? o : Infinity
-  }
-  const publishedNames = Object.keys(rights).sort((a, b) =>
-    a === 'all-scenes' ? 1 : b === 'all-scenes' ? -1 : (boardOrder(a) - boardOrder(b)) || a.localeCompare(b))
+  const { tree, names: publishedNames } = publishedTree(Object.keys(rights), allBoards, readFolders(root))
   const includeAll = publishedNames.includes('all-scenes')
   const boards: Record<string, any> = {}
   for (const n of publishedNames) if (allBoards[n]) boards[n] = allBoards[n]
@@ -380,7 +396,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // names drives the published board switcher (all-scenes only when actually published);
   // default is where `/` opens - the first published board, never a synthesized aggregate
   const data = {
-    manifest: pubManifest, boards, names: publishedNames,
+    manifest: pubManifest, boards, names: publishedNames, tree,
     default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],
     rights, policy: { boards: boardsMeta, reveal: policy.reveal, ...(lockedShell ? { lockedShell: true } : {}) },
   }

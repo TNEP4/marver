@@ -245,8 +245,14 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       try {
         mkdirSync(boardsDir, { recursive: true })   // watch needs it to exist; the API creates it lazily
         const timers = new Map<string, ReturnType<typeof setTimeout>>()
+        // the LIST changed (a board or the folder registry added, written, or deleted): one
+        // coalesced `sh:boards` per burst, so the sidebar re-reads its tree - deletions too,
+        // which the content broadcast below cannot carry (nothing left to hash)
+        let listTimer: ReturnType<typeof setTimeout> | undefined
         const watcher = watch(boardsDir, (_event, file) => {
           if (!file || !file.endsWith('.json')) return
+          clearTimeout(listTimer)
+          listTimer = setTimeout(() => server.ws.send('sh:boards', {}), 150)
           clearTimeout(timers.get(file))
           timers.set(file, setTimeout(() => {
             timers.delete(file)

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
+import { hash } from '../src/server/manifest.ts'
 
 // A minimal Connect req/res harness: drives apiMiddleware directly so the new
 // boards/rename + boards/reorder routes are tested end to end (gate, validation,
@@ -103,24 +104,6 @@ describe('boards/rename + boards/reorder routes', () => {
     expect(r.status).toBe(404)
   })
 
-  it('reorder writes each board its index as `order`', async () => {
-    writeBoard('one'); writeBoard('two'); writeBoard('three')
-    const r = await drive(root, 'POST', 'boards/reorder', { order: ['three', 'one', 'two'] }, OWNER)
-    expect(r.status).toBe(200)
-    const orderOf = (n: string) => JSON.parse(readFileSync(join(boardsDir(), `${n}.json`), 'utf8')).order
-    expect(orderOf('three')).toBe(0)
-    expect(orderOf('one')).toBe(1)
-    expect(orderOf('two')).toBe(2)
-  })
-
-  it('reorder rejects all-scenes, duplicates, and non-arrays → 400', async () => {
-    writeBoard('one')
-    for (const order of [['all-scenes', 'one'], ['one', 'one'], 'nope' as unknown as string[]]) {
-      const r = await drive(root, 'POST', 'boards/reorder', { order }, OWNER)
-      expect(r.status, JSON.stringify(order)).toBe(400)
-    }
-  })
-
   it('a JSON null / non-object body → 400, never 500', async () => {
     writeBoard('alpha')
     // body is literally `null` (valid JSON, not an object)
@@ -140,16 +123,171 @@ describe('boards/rename + boards/reorder routes', () => {
     expect(existsSync(join(boardsDir(), 'alpha.json'))).toBe(true)
   })
 
-  it('reorder without the owner cookie → 403', async () => {
-    writeBoard('one')
-    const r = await drive(root, 'POST', 'boards/reorder', { order: ['one'] })
-    expect(r.status).toBe(403)
+})
+
+// ---- folders: the tree write (order + membership + registry in one CAS-guarded call) ----
+describe('boards/reorder as a tree + GET boards/folders', () => {
+  let root = ''
+  const boardsDir = () => join(root, 'design', 'boards')
+  const file = (n: string) => join(boardsDir(), `${n}.json`)
+  const read = (n: string) => JSON.parse(readFileSync(file(n), 'utf8'))
+  const writeBoard = (name: string, obj: unknown = { version: 1, nodes: [] }) => writeFileSync(file(name), JSON.stringify(obj))
+  const REG = '_folders'
+  /** The hashes a client would have seen: every board file + the registry (null = absent). */
+  const base = (...names: string[]) => ({
+    boards: Object.fromEntries(names.map((n) => [n, hash(readFileSync(file(n), 'utf8'))])),
+    folders: existsSync(file(REG)) ? hash(readFileSync(file(REG), 'utf8')) : null,
+  })
+  const post = (tree: unknown, b: unknown) => drive(root, 'POST', 'boards/reorder', { tree, base: b }, OWNER)
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'mv-folders-'))
+    mkdirSync(boardsDir(), { recursive: true })
+  })
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
+
+  it('writes order + folder per board and the registry; root boards lose `folder`', async () => {
+    writeBoard('one', { version: 1, nodes: [], folder: 'old' }); writeBoard('two'); writeBoard('three')
+    const r = await post(['three', { folder: 'research', boards: ['one', 'two'] }], base('one', 'two', 'three'))
+    expect(r.status).toBe(200)
+    expect(read('three')).toMatchObject({ order: 0 }); expect(read('three').folder).toBeUndefined()
+    expect(read('one')).toMatchObject({ order: 0, folder: 'research' })
+    expect(read('two')).toMatchObject({ order: 1, folder: 'research' })
+    expect(read(REG)).toEqual({ version: 1, folders: [{ name: 'research', order: 1 }] })
+    // the answer carries the new hash of every file written, so a client can keep its CAS tokens true
+    expect(r.json.sha256.boards.one).toBe(hash(readFileSync(file('one'), 'utf8')))
+    expect(r.json.sha256.folders).toBe(hash(readFileSync(file(REG), 'utf8')))
   })
 
-  it("reorder skips a name with no file, still 200", async () => {
+  it('GET boards exposes `folder` and never lists the registry; GET folders reads it with its hash', async () => {
+    writeBoard('one', { version: 1, nodes: [], order: 3, folder: 'research' }); writeBoard('two', { version: 1, nodes: [], folder: 'Bad Name' })
+    writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 0 }] }))
+    const b = await drive(root, 'GET', 'boards')
+    expect(b.json.map((x: any) => x.name).sort()).toEqual(['one', 'two'])
+    expect(b.json.find((x: any) => x.name === 'one')).toMatchObject({ order: 3, folder: 'research' })
+    expect(b.json.find((x: any) => x.name === 'two').folder).toBeUndefined()   // off-grammar = top level
+    const f = await drive(root, 'GET', 'folders')
+    expect(f.status).toBe(200)
+    expect(f.json).toEqual({ folders: [{ name: 'research', order: 0 }], sha256: hash(readFileSync(file(REG), 'utf8')) })
+  })
+
+  it('GET folders: absent → empty + null hash; malformed → 422 with the file named', async () => {
+    let f = await drive(root, 'GET', 'folders')
+    expect(f.json).toEqual({ folders: [], sha256: null })
+    writeFileSync(file(REG), '{ nope')
+    f = await drive(root, 'GET', 'folders')
+    expect(f.status).toBe(422); expect(f.json.error).toMatch(/_folders\.json/)
+    writeFileSync(file(REG), JSON.stringify({ version: 2, folders: [] }))
+    expect((await drive(root, 'GET', 'folders')).status).toBe(422)
+  })
+
+  it('stale base → 409 naming the boards, and NOTHING is written (preflight before any write)', async () => {
+    writeBoard('one'); writeBoard('two')
+    const b = base('one', 'two')
+    writeBoard('two', { version: 1, nodes: [], folder: 'agent-put-me-here' })   // an agent wrote after the client looked
+    const before = readFileSync(file('one'), 'utf8')
+    const r = await post(['two', { folder: 'x', boards: ['one'] }], b)
+    expect(r.status).toBe(409)
+    expect(r.json.stale).toEqual(['two'])
+    expect(readFileSync(file('one'), 'utf8')).toBe(before)      // `one` would have moved - it did not
+    expect(existsSync(file(REG))).toBe(false)                    // no registry appeared
+    expect(read('two').folder).toBe('agent-put-me-here')         // the agent's edit survived
+  })
+
+  it('a changed registry → 409; a missing board → 409; a malformed named board → 422', async () => {
     writeBoard('one')
-    const r = await drive(root, 'POST', 'boards/reorder', { order: ['one', 'missing'] }, OWNER)
+    const b = base('one')
+    writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'k', order: 0 }] }))
+    expect((await post(['one'], b)).status).toBe(409)
+    expect((await post(['one', 'ghost'], { ...base('one'), boards: { ...base('one').boards, ghost: 'x' } })).status).toBe(409)
+    writeBoard('broken'); writeFileSync(file('broken'), '{')
+    const b2 = { boards: { one: base('one').boards.one, broken: hash('{') }, folders: base().folders }
+    expect((await post(['one', 'broken'], b2)).status).toBe(422)
+  })
+
+  it('without the owner cookie → 403, nothing written', async () => {
+    writeBoard('one')
+    const r = await drive(root, 'POST', 'boards/reorder', { tree: [{ folder: 'f', boards: ['one'] }], base: base('one') })
+    expect(r.status).toBe(403)
+    expect(read('one').folder).toBeUndefined()
+    expect(existsSync(file(REG))).toBe(false)
+  })
+
+  it('a board the tree does not name is untouched; a folder the tree drops leaves the registry', async () => {
+    writeBoard('one', { version: 1, nodes: [], order: 7, folder: 'keep' }); writeBoard('two')
+    writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'gone', order: 0 }, { name: 'keep', order: 1 }] }))
+    const r = await post([{ folder: 'keep', boards: ['two'] }], base('two'))
     expect(r.status).toBe(200)
-    expect(JSON.parse(readFileSync(join(boardsDir(), 'one.json'), 'utf8')).order).toBe(0)
+    expect(read('one')).toMatchObject({ order: 7, folder: 'keep' })
+    expect(read(REG).folders).toEqual([{ name: 'keep', order: 0 }])
+  })
+
+  it('no folders left = the registry file is removed', async () => {
+    writeBoard('one', { version: 1, nodes: [], folder: 'f' })
+    writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'f', order: 0 }] }))
+    const r = await post(['one'], base('one'))
+    expect(r.status).toBe(200)
+    expect(existsSync(file(REG))).toBe(false)
+    expect(read('one').folder).toBeUndefined()
+  })
+
+  it('rejects: the legacy {order} body, all-scenes anywhere, a board twice, a nested folder, bad names, missing base → 400', async () => {
+    writeBoard('one')
+    const cases: [string, unknown][] = [
+      ['legacy body', { order: ['one'] }],
+      ['all-scenes at root', { tree: ['all-scenes'], base: base('one') }],
+      ['all-scenes in a folder', { tree: [{ folder: 'f', boards: ['all-scenes'] }], base: base('one') }],
+      ['board twice', { tree: ['one', { folder: 'f', boards: ['one'] }], base: base('one') }],
+      ['folder twice', { tree: [{ folder: 'f', boards: [] }, { folder: 'f', boards: [] }], base: base('one') }],
+      ['nested', { tree: [{ folder: 'f', boards: [{ folder: 'g', boards: [] }] }], base: base('one') }],
+      ['bad folder name', { tree: [{ folder: 'Bad Name', boards: ['one'] }], base: base('one') }],
+      ['bad board name', { tree: ['../x'], base: base('one') }],
+      ['no base', { tree: ['one'] }],
+      ['base folders not a hash', { tree: ['one'], base: { boards: {}, folders: 5 } }],
+    ]
+    for (const [label, body] of cases) {
+      const r = await drive(root, 'POST', 'boards/reorder', body, OWNER)
+      expect(r.status, label).toBe(400)
+    }
+  })
+
+  it('an unchanged board keeps its bytes (and hash); only files whose fields move are rewritten', async () => {
+    writeBoard('one', { version: 1, nodes: [], order: 0 }); writeBoard('two', { version: 1, nodes: [], order: 1 })
+    const before = readFileSync(file('one'), 'utf8')
+    const r = await post(['one', 'two'], base('one', 'two'))
+    expect(r.status).toBe(200)
+    expect(readFileSync(file('one'), 'utf8')).toBe(before)
+    expect(r.json.sha256.boards).toEqual({})
+  })
+
+  it('symlinks: a symlinked board is not listed and cannot be named; a symlinked registry is refused', async () => {
+    writeFileSync(join(root, 'outside.json'), JSON.stringify({ version: 1, nodes: [], order: 0 }))
+    symlinkSync(join(root, 'outside.json'), file('link'))
+    writeBoard('one')
+    const b = await drive(root, 'GET', 'boards')
+    expect(b.json.map((x: any) => x.name)).toEqual(['one'])
+    const r = await post(['link', 'one'], { boards: { link: hash(readFileSync(join(root, 'outside.json'), 'utf8')), ...base('one').boards }, folders: null })
+    expect(r.status).toBe(409)                                   // named but not a regular file = stale, nothing written
+    expect(JSON.parse(readFileSync(join(root, 'outside.json'), 'utf8')).order).toBe(0)
+    symlinkSync(join(root, 'nowhere.json'), file(REG))            // dangling registry symlink
+    const f = await drive(root, 'GET', 'folders')
+    expect(f.status).toBe(422)
+    const r2 = await post(['one'], { ...base('one'), folders: null })
+    expect(r2.status).toBe(422)
+  })
+
+  it('the autosave PUT carries `folder` (and `order`) over from disk when the shell omits them', async () => {
+    writeBoard('one', { version: 1, nodes: [], order: 2, folder: 'research' })
+    const sha = hash(readFileSync(file('one'), 'utf8'))
+    const put = await new Promise<{ status: number; json: any }>((resolve) => {
+      const mw = apiMiddleware(root)
+      const req: any = { method: 'PUT', url: `${ROUTE}/api/boards/one`, headers: { host: 'localhost:5200' }, _cbs: {}, on(ev: string, cb: any) { this._cbs[ev] = cb; return this }, destroy() {} }
+      const res: any = { statusCode: 0, headers: {}, body: '', setHeader() {}, end(s?: string) { this.body = s ?? ''; resolve({ status: this.statusCode, json: JSON.parse(this.body) }) } }
+      void mw(req, res, () => resolve({ status: 404, json: null }))
+      const raw = Buffer.from(JSON.stringify({ board: { version: 1, name: 'one', nodes: [] }, baseHash: sha, mustExist: true }))
+      queueMicrotask(() => { req._cbs.data?.(raw); req._cbs.end?.() })
+    })
+    expect(put.status).toBe(200)
+    expect(read('one')).toMatchObject({ order: 2, folder: 'research' })
   })
 })

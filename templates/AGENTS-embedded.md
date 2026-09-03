@@ -159,8 +159,11 @@ edges; a variant-group name is one indivisible atom). **The default composition 
 ONE horizontal band**: scenes side by side, frames flowing left to right; a second
 band only when you can say why the eye should move down, and then with generous
 vertical space. Without a recipe the shell stacks every scene as its own row - so
-every curated board carries one. BEFORE creating a board or publishing anything,
-read instructions/boards.md (the layout grammar, file format, publishing rules).
+every curated board carries one. Boards can sit in **folders** (one level): put
+`"folder": "<name>"` on a board file; `design/boards/_folders.json` names empty folders
+and ranks them - the human creates, renames, and drags folders in the sidebar too.
+BEFORE creating a board, organising boards, or publishing anything, read
+instructions/boards.md (the layout grammar, file format, folders, publishing rules).
 
 A round of feedback on a scene the human has already reviewed starts with a
 **version snapshot** (`design/scenes/<scene>-v<N>/` on the `archive` board) BEFORE

@@ -12,6 +12,8 @@ import shData from 'virtual:sh-data'
  *  is where `/` opens - never a synthesized aggregate of a filtered build. */
 const DATA: {
   manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string
+  /** the sidebar's folder tree over the published boards (0.16.0 bundles; older ones have none) */
+  tree?: TreeItem[]
   /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
 } | null = shData
@@ -123,18 +125,39 @@ export const modeAllowed = (board: string, mode: 'present' | 'focus' | 'slides')
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
+import { buildTree, flatten, toWire, type TreeItem } from '../../shared/board-tree.ts'
 
-/** Board names for switchers: the agent's curated boards FIRST (ranked by each board's `order`, then
- *  name), and the auto `all-scenes` everything-board LAST - it is the expensive one, never the landing.
+/** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
+ *  the folder registry (null = there was no file). */
+export interface TreeBase { boards: Record<string, string>; folders: string | null }
+export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase }
+
+/** The sidebar tree: root boards and folders in rank order, each folder's boards inside
+ *  (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
+ *  is pinned last by the callers. Throws on transport failure and on a malformed registry
+ *  (the server's 422 message) - callers keep their last known tree. */
+export async function fetchBoardTree(): Promise<TreeSnapshot> {
+  if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null } }
+  const [boards, reg] = await Promise.all([
+    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string }[]>,
+    fetch(`${ROUTE}/api/folders`).then(async (r) => {
+      const j = await r.json() as { folders?: { name: string; order?: number }[]; sha256?: string | null; error?: string }
+      if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
+      return j
+    }),
+  ])
+  return {
+    tree: buildTree(boards, reg.folders ?? []),
+    base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null },
+  }
+}
+
+/** Board names for switchers: the sidebar's reading order (folders flattened depth-first) and
+ *  the auto `all-scenes` everything-board LAST - it is the expensive one, never the landing.
  *  Throws on transport failure - callers keep their last known list. */
 export async function fetchBoardNames(): Promise<string[]> {
   if (DATA) return DATA.names
-  const list: { name: string; order?: number }[] = await (await fetch(`${ROUTE}/api/boards`)).json()
-  const curated = list
-    .filter((b) => b.name !== 'all-scenes')
-    .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity) || a.name.localeCompare(b.name))
-    .map((b) => b.name)
-  return [...curated, 'all-scenes']
+  return [...flatten((await fetchBoardTree()).tree), 'all-scenes']
 }
 /** Display name for a board: the reserved 'all-scenes' key reads as "All scenes". */
 export const boardLabel = (n: string) => humanize(n)
@@ -280,7 +303,7 @@ interface State {
   resizeSelected(name: string | null): void
   switchBoard(name: string): Promise<void>
   renameBoard(from: string, to: string): Promise<{ ok: boolean; error?: string }>
-  reorderBoards(order: string[]): Promise<boolean>
+  arrangeBoards(tree: TreeItem[], base: TreeBase): Promise<{ ok: true } | { ok: false; stale: boolean; error?: string }>
   pulsePath(): void
   copyFrameImage(scale: 2 | 4): void
   setScale(s: number): void
@@ -649,10 +672,32 @@ export const useStore = create<State>((set, get) => {
       return { ok: true }
     },
 
-    async reorderBoards(order) {
+    // The whole sidebar tree in one write: order, membership, the folders themselves. The
+    // write rewrites the ACTIVE board's file too (its `order`/`folder`), so it runs like a
+    // rename: flush the pending autosave first, hold autosave across the round-trip, then
+    // advance boardHash to the hash the server answered - the autosave's CAS token stays
+    // true and the watcher's echo is filtered as our own. `base` carries the hashes the
+    // sidebar last saw; a 409 (`stale`) means someone else wrote first - refetch and replay.
+    async arrangeBoards(tree, base) {
+      let ok = true
+      for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
+      if (get().dirty) return { ok: false, stale: false, error: 'unsaved changes - try again' }
+      renameLock = true
+      clearTimeout(saveTimer)
+      const release = () => { renameLock = false; if (get().dirty) scheduleSave() }
+      // the active board's hash is freshest in the store (an autosave may have landed since
+      // the sidebar looked); every other board's is the sidebar's
+      const active = get().board
+      const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
       let res: Response
-      try { res = await postOwner('boards/reorder', { order }) } catch { return false }
-      return res.ok
+      try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders } }) }
+      catch { release(); return { ok: false, stale: false, error: 'could not reach the dev server' } }
+      const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
+      if (!res.ok) { release(); return { ok: false, stale: res.status === 409, error: body?.error } }
+      const sha = body?.sha256?.boards?.[get().board]
+      if (sha) set({ boardHash: sha })
+      release()
+      return { ok: true }
     },
 
     applyManifest(m) {

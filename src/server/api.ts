@@ -5,8 +5,8 @@ import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
-
-const BOARD_NAME = /^[a-z0-9][a-z0-9-]*$/
+import { BOARD_NAME, FOLDERS_FILE, validateWire, type WireItem } from '../shared/board-tree.ts'
+import { boardFields, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, underRoot as dirUnderRoot } from './boards.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -86,6 +86,7 @@ function contained(target: string, base: string): boolean {
 
 export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null } = {}): Connect.NextHandleFunction {
   const boardsDir = join(root, 'design', 'boards')
+  const foldersPath = join(boardsDir, FOLDERS_FILE)
 
   const boardPath = (name: string): string | null => {
     if (!BOARD_NAME.test(name)) return null
@@ -98,18 +99,14 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   // length bound caps a pathological rewrite/filename; BOARD_NAME already blocks separators.
   const validName = (n: unknown): n is string => typeof n === 'string' && n.length >= 1 && n.length <= 64 && BOARD_NAME.test(n)
   // realpath(dir) must stay inside realpath(root) - a symlinked design/boards can't escape.
-  const underRoot = (dir: string): boolean => {
-    try {
-      const rr = realpathSync(root); const rd = realpathSync(dir)
-      return rd === rr || rd.startsWith(rr + sep)
-    } catch { return false }
-  }
+  const underRoot = (dir: string): boolean => dirUnderRoot(root, dir)
   // a symlinked board FILE could redirect a follow-through write; contained() only vets the
-  // resolved target's directory, not the link itself, so check the link node directly.
-  const notSymlink = (p: string): boolean => { try { return !existsSync(p) || !lstatSync(p).isSymbolicLink() } catch { return false } }
+  // resolved target's directory, not the link itself, so check the link node directly. lstat,
+  // so a DANGLING symlink is refused too (existsSync would call it absent).
+  const notSymlink = (p: string): boolean => !nodeAt(p) || isRegularFile(p)
   // Does a filesystem NODE exist at p? lstat (not existsSync) so a DANGLING symlink counts as
   // present - else the no-clobber check misses it and renameSync would silently replace it.
-  const nodeExists = (p: string): boolean => { try { lstatSync(p); return true } catch { return false } }
+  const nodeExists = nodeAt
 
   // boot: sweep temp files abandoned by a killed process
   try {
@@ -152,17 +149,21 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       }
       if (path === 'boards' && req.method === 'GET') {
         mkdirSync(boardsDir, { recursive: true })
-        const list = readdirSync(boardsDir)
-          .filter((f) => f.endsWith('.json') && !f.endsWith('.tmp'))
-          .map((f) => {
-            const content = readFileSync(join(boardsDir, f), 'utf8')
-            // `order` (a number in the board file) lets the agent rank boards logically; the switcher
-            // sorts by it, so the FIRST board is the landing board and all-scenes always sinks last.
-            let order: number | undefined
-            try { const o = (JSON.parse(content) as { order?: unknown })?.order; if (typeof o === 'number' && Number.isFinite(o)) order = o } catch { /* malformed board */ }
-            return { name: f.replace(/\.json$/, ''), sha256: hash(content), order }
-          })
+        // regular files on the board grammar only (boards.ts): never `_folders.json`, a temp
+        // file, or a symlink. `order` ranks the board among its siblings; `folder` names the
+        // sidebar folder it sits in - both author-owned, both read leniently. `sha256` is the
+        // CAS token a tree write echoes for every board it touches.
+        const list = listBoardFiles(boardsDir).boards.map((b) => ({ name: b.name, sha256: b.sha256, ...boardFields(b.json, validName) }))
         return json(res, 200, list)
+      }
+
+      // The folder registry: which folders exist and where they rank at the root. A separate
+      // resource (not boards/<name>) so it can never shadow a board named "folders". Malformed
+      // is a 422 the sidebar shows - never a silently empty registry the next drag overwrites.
+      if (path === 'folders' && req.method === 'GET') {
+        const reg = readRegistry(boardsDir)
+        if (reg.state === 'malformed') return json(res, 422, { error: reg.error })
+        return json(res, 200, { folders: reg.folders, sha256: reg.sha256 })
       }
 
       // Rename a board file. Owner-gated (a mutation). Placed BEFORE the boards/<name> regex
@@ -208,8 +209,19 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return json(res, 200, { name: to })
       }
 
-      // Reorder boards: write each named board's `order` field to its position. Advisory sort
-      // key, so per-file writes (not batch-atomic) are non-corrupting. Owner-gated.
+      // Arrange the sidebar: the body is the WHOLE tree - root boards as strings, folders as
+      // `{ folder, boards }` - plus `base`, the sha256 the client last saw for every board it
+      // names and for the registry (null = no file). Every mutation (drag, new/rename/delete
+      // folder, move) is this one write: each named board gets its sibling index as `order`
+      // and its `folder` set or deleted; the registry becomes exactly the folders in the tree
+      // (an absent one is gone). Boards the tree does not name are untouched.
+      // PREFLIGHT before any write: every named board must exist as a regular, well-formed
+      // file whose hash matches `base` - else 409 with the stale names (the client refetches
+      // and replays its intent) and NOTHING is written. So a concurrent agent edit of a board's
+      // `folder` or a second tab's drag is never silently overwritten. The per-file writes that
+      // follow are each atomic; a crash between them leaves a valid (partly moved) tree, never a
+      // corrupt file. Answers the new hash of every file written so the shell's autosave of the
+      // active board keeps its CAS token current. Owner-gated.
       if (path === 'boards/reorder' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const raw = await readBody(req)
@@ -217,21 +229,53 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         let parsed: unknown
         try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
-        const order = (parsed as { order?: unknown }).order
-        if (!Array.isArray(order) || order.length < 1 || order.length > 200) return json(res, 400, { error: 'invalid order' })
-        if (!order.every(validName) || order.some((n) => n === 'all-scenes')) return json(res, 400, { error: 'invalid board name in order' })
-        if (new Set(order as string[]).size !== order.length) return json(res, 400, { error: 'duplicate board in order' })
+        const { tree, base } = parsed as { tree?: unknown; base?: unknown }
+        const bad = validateWire(tree)
+        if (bad) return json(res, 400, { error: bad })
+        const b = base as { boards?: Record<string, unknown>; folders?: unknown } | null
+        if (!b || typeof b !== 'object' || !b.boards || typeof b.boards !== 'object' || (b.folders !== null && typeof b.folders !== 'string')) return json(res, 400, { error: 'expected base hashes' })
         if (!underRoot(boardsDir)) return json(res, 400, { error: 'boards directory escapes the project' })
-        for (let i = 0; i < order.length; i++) {
-          const p = boardPath(order[i] as string)
-          if (!p || !existsSync(p) || !notSymlink(p)) continue
-          let obj: Record<string, unknown>
-          try { obj = JSON.parse(readFileSync(p, 'utf8')) } catch { continue }
-          if (!obj || typeof obj !== 'object') continue
-          obj.order = i
-          atomicWrite(p, JSON.stringify(obj, null, 2) + '\n')
+        // preflight the registry
+        const reg = readRegistry(boardsDir)
+        if (reg.state === 'malformed') return json(res, 422, { error: reg.error })
+        if (reg.sha256 !== b.folders) return json(res, 409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
+        // preflight every named board: present, regular, well-formed, unchanged since the client looked
+        const plan: { name: string; path: string; obj: Record<string, unknown>; order: number; folder: string | null }[] = []
+        const stale: string[] = []
+        const consider = (name: string, order: number, folder: string | null): string | null => {
+          const p = boardPath(name)
+          if (!p || !isRegularFile(p)) { stale.push(name); return null }
+          const content = readFileSync(p, 'utf8')
+          if (b.boards![name] !== hash(content)) { stale.push(name); return null }
+          let obj: unknown
+          try { obj = JSON.parse(content) } catch { return `board "${name}" is not valid JSON - fix the file` }
+          if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return `board "${name}" is not a JSON object - fix the file`
+          plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
+          return null
         }
-        return json(res, 200, { ok: true })
+        const folders: { name: string; order: number }[] = []
+        for (const [i, it] of (tree as WireItem[]).entries()) {
+          if (typeof it === 'string') { const e = consider(it, i, null); if (e) return json(res, 422, { error: e }); continue }
+          folders.push({ name: it.folder, order: i })
+          for (const [j, kid] of it.boards.entries()) { const e = consider(kid, j, it.folder); if (e) return json(res, 422, { error: e }) }
+        }
+        if (stale.length) return json(res, 409, { error: 'boards changed on disk', stale })
+        // write: only the files whose fields actually change (an untouched board keeps its hash)
+        const sha256: Record<string, string> = {}
+        for (const w of plan) {
+          const same = w.obj.order === w.order && (w.folder ? w.obj.folder === w.folder : w.obj.folder === undefined)
+          if (same) continue
+          w.obj.order = w.order
+          if (w.folder) w.obj.folder = w.folder; else delete w.obj.folder
+          const next = JSON.stringify(w.obj, null, 2) + '\n'
+          atomicWrite(w.path, next)
+          sha256[w.name] = hash(next)
+        }
+        mkdirSync(boardsDir, { recursive: true })
+        let foldersSha: string | null = null
+        if (folders.length) { const next = JSON.stringify({ version: 1, folders }, null, 2) + '\n'; atomicWrite(foldersPath, next); foldersSha = hash(next) }
+        else rmSync(foldersPath, { force: true })                 // no folders = no registry file
+        return json(res, 200, { ok: true, sha256: { boards: sha256, folders: foldersSha } })
       }
 
       const boardMatch = /^boards\/([^/]+)$/.exec(path)
@@ -265,12 +309,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return json(res, 409, { error: 'board changed on disk', board: disk, sha256: hash(current) })
           }
           mkdirSync(boardsDir, { recursive: true })
-          // Preserve author-owned fields the shell does not manage. `order` (the board's rank in the
-          // switcher) lives in the file but never rides the shell's save shape, so a routine autosave
-          // would otherwise strip it. Carry it over from disk when the incoming board omits it.
+          // Preserve author-owned fields the shell does not manage. `order` (the board's rank among
+          // its siblings) and `folder` (the sidebar folder it sits in) live in the file but never
+          // ride the shell's save shape, so a routine autosave would otherwise strip them. Carry
+          // them over from disk when the incoming board omits them.
           const incoming = body.board as Record<string, unknown> | null
-          if (incoming && typeof incoming === 'object' && incoming.order === undefined && current) {
-            try { const o = (JSON.parse(current) as { order?: unknown }).order; if (typeof o === 'number' && Number.isFinite(o)) incoming.order = o } catch { /* malformed disk */ }
+          if (incoming && typeof incoming === 'object' && current) {
+            try {
+              const disk = JSON.parse(current) as { order?: unknown; folder?: unknown }
+              if (incoming.order === undefined && typeof disk.order === 'number' && Number.isFinite(disk.order)) incoming.order = disk.order
+              if (incoming.folder === undefined && validName(disk.folder)) incoming.folder = disk.folder
+            } catch { /* malformed disk */ }
           }
           const next2 = JSON.stringify(body.board, null, 2) + '\n'
           atomicWrite(p, next2)
