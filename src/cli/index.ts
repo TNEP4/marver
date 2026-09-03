@@ -152,6 +152,19 @@ cli
   })
 
 cli
+  .command('boards', 'The sidebar as files: every folder and board in reading order, the landing board, the registry')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--json', 'The tree as JSON ({ tree, landing, registry })')
+  .action(async (opts) => {
+    const { boardsCommand } = await import('./boards.ts')
+    try { boardsCommand(resolve(opts.root), opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
   .command('shot <frame>', 'Render one frame headless and print the PNG path (needs `dev` running)')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--theme <name>', 'Theme to render (default: light)')

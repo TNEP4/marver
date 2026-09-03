@@ -289,6 +289,22 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     expect(JSON.parse(readFileSync(join(real, 'one.json'), 'utf8')).order).toBeUndefined()
     const { readBoards } = await import('../src/server/build.ts')
     expect(() => readBoards(root)).toThrow(/symlink/)
+    // the per-board routes too: nothing reads or writes through the link
+    expect((await drive(root, 'GET', 'boards/one')).status).toBe(400)
+    expect((await drive(root, 'POST', 'boards/rename', { from: 'one', to: 'two' }, OWNER)).status).toBe(400)
+    expect(existsSync(join(real, 'one.json'))).toBe(true); expect(existsSync(join(real, 'two.json'))).toBe(false)
+  })
+
+  it('a symlinked design/ with no boards dir yet is refused before any mkdir could follow it', async () => {
+    const outside = join(root, '..', `mv-outside-${Date.now()}`)
+    mkdirSync(outside)
+    try {
+      rmSync(join(root, 'design'), { recursive: true, force: true })
+      symlinkSync(outside, join(root, 'design'))
+      expect((await drive(root, 'GET', 'boards')).status).toBe(422)
+      expect((await drive(root, 'GET', 'boards/one')).status).toBe(400)
+      expect(existsSync(join(outside, 'boards'))).toBe(false)
+    } finally { rmSync(outside, { recursive: true, force: true }) }
   })
 
   it('a board that appeared since the client looked makes the write stale (409) - a deleted folder cannot outlive the delete', async () => {
@@ -322,5 +338,34 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     })
     expect(put.status).toBe(200)
     expect(read('one')).toMatchObject({ order: 2, folder: 'research' })
+  })
+})
+
+describe('marver boards - the tree as the files say it is', () => {
+  it('prints folders (implied or registered, empty ones too), boards with their order, the landing board; --json gives the tree', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-boards-cli-'))
+    const dir = join(root, 'design', 'boards')
+    mkdirSync(dir, { recursive: true })
+    const w = (n: string, o: unknown) => writeFileSync(join(dir, `${n}.json`), JSON.stringify(o))
+    w('overview', { version: 1, nodes: [], order: 0 }); w('spec', { version: 1, nodes: [], order: 0, folder: 'research' }); w('old', { version: 1, nodes: [], folder: 'implied' }); w('all-scenes', { version: 1, nodes: [] })
+    writeFileSync(join(dir, '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 1 }, { name: 'empty', order: 2 }] }))
+    const { boardsCommand } = await import('../src/cli/boards.ts')
+    const lines: string[] = []
+    const orig = console.log; console.log = (s: string) => { lines.push(String(s)) }
+    try {
+      boardsCommand(root, {})
+      const text = lines.join('\n')
+      expect(text).toMatch(/^overview  order 0/m)
+      expect(text).toMatch(/^research\/  \(folder, 1 board\)\n  spec  order 0/m)
+      expect(text).toMatch(/^empty\/ .*\n  \(empty\)/m)
+      expect(text).toMatch(/^implied\/ .*implied by its boards/m)
+      expect(text).toMatch(/all-scenes  \(auto, always last\)/)
+      expect(text).toMatch(/landing board: overview/)
+      lines.length = 0
+      boardsCommand(root, { json: true })
+      const j = JSON.parse(lines.join('\n'))
+      expect(j.landing).toBe('overview')
+      expect(j.tree.map((t: any) => t.name)).toEqual(['overview', 'research', 'empty', 'implied'])
+    } finally { console.log = orig; rmSync(root, { recursive: true, force: true }) }
   })
 })

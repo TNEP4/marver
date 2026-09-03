@@ -67,15 +67,32 @@ Files are the truth, and two files carry it:
   folder on their own. A malformed registry is an error the canvas shows, not an
   empty one - fix it, never delete it.
 
-The choreography, so the files always agree:
-- **Create** a folder: add its entry to the registry (or just point a board at it).
-- **File** a board: write `folder` on the board. Empty `folder`/absent = top level.
+**Look before you organise: `npx marver boards`** prints the sidebar as the files say
+it is - every folder (and whether it is empty or only implied by its boards), every
+board in reading order with its `order`, the landing board, and whether the registry
+exists (`--json` for the tree). Run it before any of the moves below; the human may
+have rearranged things since you last looked, and their arrangement stands.
+
+The moves, each a file edit, so the files always agree:
+- **Create** a folder: add `{ "name": "<slug>", "order": <n> }` to the registry's
+  `folders` (create the file if absent) - or just point a board at it.
+- **Move a board in**: write `"folder": "<slug>"` on the board and give it an `order`
+  among that folder's boards. **Move it out**: delete the `folder` field and give it
+  an `order` among the top-level items.
+- **Rank** folders and boards: `order` on the board (among its siblings) and on the
+  registry entry (among the top-level items). Renumber the siblings you touch.
 - **Rename** a folder: rewrite `folder` on every member AND the registry entry - a
   registry rename alone leaves the members in the old (implied) folder.
 - **Delete** a folder: remove `folder` from every member, then its registry entry.
   Folders organise, never own: deleting one never deletes a board.
 - The **landing board** is the first board in sidebar order, folders included -
   rank a folder first and its first board opens the canvas.
+
+Use folders proactively, the way a tidy studio would: a canvas past six or eight
+boards wants grouping - the live feature boards at the top level, `research` /
+`specs` for the thinking, `decks` for slides, `archive` for history and versions
+last. Propose the grouping in one sentence and do it; keep folder names short and
+plain.
 
 The human does all of this too - from the sidebar: New folder (right-click the Boards
 header, or its `+`), Rename, Delete folder, "Move to …" on a board, and DRAG: boards

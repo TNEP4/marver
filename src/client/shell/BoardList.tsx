@@ -81,7 +81,10 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       return false
     }
   }
-  const refresh = () => { void load() }
+  // an external read (poll, focus, sh:boards) never lands MID-FLUSH: a snapshot taken between
+  // a write's commit and its answer would project the same batch twice; it waits for the drain
+  const pendingRef = useRef(false)
+  const refresh = () => { if (flushing.current) { pendingRef.current = true; return } void load() }
   useEffect(() => {
     refresh()
     const t = setInterval(refresh, 8000)
@@ -126,18 +129,31 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     try {
       while (queueRef.current.length) {
         const batch = [...queueRef.current]
-        const reduce = (t: TreeItem[]) => batch.reduce<TreeItem[]>((acc, i) => i(acc) ?? acc, t)
-        let r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
-        if (!r.ok && r.stale) {
-          if (!(await load())) { useStore.getState().toast('boards changed - try again'); queueRef.current.splice(0, batch.length); show(); break }
-          r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
+        // an intent the fresh tree no longer admits (its board or folder vanished) is dropped
+        // and said out loud, never silently counted as done
+        const reduce = (t: TreeItem[]) => {
+          let dropped = 0
+          const tree = batch.reduce<TreeItem[]>((acc, i) => { const n = i(acc); if (!n) dropped++; return n ?? acc }, t)
+          if (dropped) useStore.getState().toast(dropped === batch.length ? 'that move no longer applies' : 'some moves no longer apply')
+          return tree
         }
-        queueRef.current.splice(0, batch.length)               // written, or given up on - either way no longer pending
-        if (!r.ok) { useStore.getState().toast(r.error ?? 'could not save order'); await load(); break }
-        await load()                                          // the write moved the hashes on; the next batch needs the true base
+        const done = () => { queueRef.current.splice(0, batch.length); show() }   // written, or given up on - off the screen's projection either way
+        try {
+          let r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
+          if (!r.ok && r.stale) {
+            if (!(await load())) { done(); useStore.getState().toast('boards changed - try again'); break }
+            r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
+          }
+          done()
+          if (!r.ok) { useStore.getState().toast(r.error ?? 'could not save order'); await load(); break }
+          await load()                                          // the write moved the hashes on; the next batch needs the true base
+        } catch { done(); useStore.getState().toast('could not save order'); await load(); break }
       }
-    } catch { queueRef.current = []; useStore.getState().toast('could not save order'); await load() }
-    finally { flushing.current = false; if (queueRef.current.length) void flush() }
+    } finally {
+      flushing.current = false
+      if (queueRef.current.length) void flush()
+      else if (pendingRef.current) { pendingRef.current = false; void load() }
+    }
   }
 
   // ---- inline naming (rename a board, rename a folder, name a new folder) ----
@@ -218,11 +234,14 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     }
     setDrop(dropAt(e.clientX, e.clientY, g.item))
   }
-  const onPointerUp = (e: ReactPointerEvent<HTMLButtonElement>, item: Drag) => {
+  const onPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const g = gestureRef.current
     if (!g || g.pointerId !== e.pointerId) return
+    // the item is the one the gesture STARTED on - never the row that happens to receive the
+    // up (capture can be lost, a refresh can re-key the dragged row)
+    const item = g.item
     const dragged = g.dragging
-    const target = dragged ? dropAt(e.clientX, e.clientY, g.item) : null
+    const target = dragged ? dropAt(e.clientX, e.clientY, item) : null
     resetPointer()
     if (dragged) {
       if (!target) return
@@ -318,7 +337,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onContextMenu={(e) => onMenu(e, boardMenu(n, parent))}
         onPointerDown={canDrag ? (e) => onPointerDown(e, item) : undefined}
         onPointerMove={canDrag ? onPointerMove : undefined}
-        onPointerUp={canDrag ? (e) => onPointerUp(e, item) : undefined}
+        onPointerUp={canDrag ? onPointerUp : undefined}
         onPointerCancel={canDrag ? () => resetPointer() : undefined}
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
         {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
@@ -342,7 +361,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
           onContextMenu={(e) => onMenu(e, folderMenu(f, boards))}
           onPointerDown={!PUBLISHED ? (e) => onPointerDown(e, item) : undefined}
           onPointerMove={!PUBLISHED ? onPointerMove : undefined}
-          onPointerUp={!PUBLISHED ? (e) => onPointerUp(e, item) : undefined}
+          onPointerUp={!PUBLISHED ? onPointerUp : undefined}
           onPointerCancel={!PUBLISHED ? () => resetPointer() : undefined}
           onLostPointerCapture={!PUBLISHED ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
           {open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}

@@ -90,6 +90,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
 
   const boardPath = (name: string): string | null => {
     if (!validName(name)) return null                   // the grammar AND the 64 bound - a longer file would hide from every lister
+    if (checkBoardsDir(root, boardsDir)) return null     // a symlinked design/ or boards/ is refused on EVERY path, before the mkdir could follow it
     mkdirSync(boardsDir, { recursive: true })
     const p = resolve(boardsDir, `${name}.json`)
     return contained(p, boardsDir) ? p : null

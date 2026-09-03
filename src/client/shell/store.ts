@@ -667,21 +667,20 @@ export const useStore = create<State>((set, get) => {
         // Release the hold and resume autosave. Re-read the LIVE board, not the captured `active`:
         // a board switch may have completed while we awaited, so only the board that is STILL
         // `from` gets renamed to `to` in state (a switched-away board keeps its own name/nodes).
-        const release = () => { if (active) releaseSaves() }
-        let res: Response
-        try { res = await postOwner('boards/rename', { from, to }) }
-        catch { release(); return { ok: false, error: 'could not reach the dev server' } }
-        if (!res.ok) {
-          release()
-          const e = await res.json().catch(() => ({} as { error?: string }))
-          return { ok: false, error: e?.error ?? `rename failed (${res.status})` }
-        }
-        // Content is byte-identical after a file move, so boardHash still matches for the next
-        // autosave; only the name (and the URL, via the board-change subscription) changes. Set
-        // the new name BEFORE releasing the hold so a resumed save targets `to`.
-        if (active && get().board === from) set({ board: to })
-        release()
-        return { ok: true }
+        try {
+          let res: Response
+          try { res = await postOwner('boards/rename', { from, to }) }
+          catch { return { ok: false, error: 'could not reach the dev server' } }
+          if (!res.ok) {
+            const e = await res.json().catch(() => ({} as { error?: string }))
+            return { ok: false, error: e?.error ?? `rename failed (${res.status})` }
+          }
+          // Content is byte-identical after a file move, so boardHash still matches for the next
+          // autosave; only the name (and the URL, via the board-change subscription) changes. Set
+          // the new name BEFORE releasing the hold so a resumed save targets `to`.
+          if (active && get().board === from) set({ board: to })
+          return { ok: true }
+        } finally { if (active) releaseSaves() }   // whatever happened, autosave resumes
       })
     },
 
@@ -697,19 +696,20 @@ export const useStore = create<State>((set, get) => {
         for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
         if (get().dirty) return { ok: false as const, stale: false, error: 'unsaved changes - try again' }
         holdSaves()
-        // the active board's hash is freshest in the store (an autosave may have landed since
-        // the sidebar looked); every other board's is the sidebar's
-        const active = get().board
-        const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
-        let res: Response
-        try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders } }) }
-        catch { releaseSaves(); return { ok: false as const, stale: false, error: 'could not reach the dev server' } }
-        const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
-        if (!res.ok) { releaseSaves(); return { ok: false as const, stale: res.status === 409, error: body?.error } }
-        const sha = body?.sha256?.boards?.[get().board]
-        if (sha) set({ boardHash: sha })
-        releaseSaves()
-        return { ok: true as const }
+        try {
+          // the active board's hash is freshest in the store (an autosave may have landed since
+          // the sidebar looked); every other board's is the sidebar's
+          const active = get().board
+          const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
+          let res: Response
+          try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders } }) }
+          catch { return { ok: false as const, stale: false, error: 'could not reach the dev server' } }
+          const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
+          if (!res.ok) return { ok: false as const, stale: res.status === 409, error: body?.error }
+          const sha = body?.sha256?.boards?.[get().board]
+          if (sha) set({ boardHash: sha })
+          return { ok: true as const }
+        } finally { releaseSaves() }   // whatever happened, autosave resumes
       })
     },
 

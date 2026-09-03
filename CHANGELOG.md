@@ -22,9 +22,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   puts it in a folder (`order` ranks it among its folder siblings);
   `design/boards/_folders.json` names empty folders and ranks folders at the
   root. A folder two boards name exists without the registry. The landing
-  board is the first board in sidebar order, folders included. Agent contract
-  and `instructions/boards.md` carry the grammar and the rename/delete
-  choreography.
+  board is the first board in sidebar order, folders included. **`npx marver
+  boards`** prints the sidebar as the files say it is (folders, boards in
+  reading order with their `order`, the landing board; `--json` for the tree),
+  so an agent looks before it organises. The agent contract and
+  `instructions/boards.md` carry the grammar, every move (create, file in,
+  move out, rank, rename, delete) as a file edit, and a nudge to group
+  proactively past six or eight boards.
 - **Published bundles** carry the folder tree of the published boards only; a
   folder with nothing published never reaches the bundle. The published
   sidebar shows folders read-only.
