@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { NAME } from './name.ts'
 import { detectHost, readJson, type HostInfo } from '../server/detect.ts'
 import { DEFAULTS } from '../server/config.ts'
@@ -330,7 +330,9 @@ export function init(root: string, opts: InitOpts) {
   if (host.tsconfigSweepsDesign) patchTsconfigExclude(root)
 
   // the first manifest, so AGENTS.md's "read design/manifest.json" is true before dev runs
-  writeManifest(root, scanFrames(root))
+  // the project line carries the name here; `dev` (which every flow starts next) adds the
+  // config's description - init stays synchronous, and config.ts loads only through `dev`
+  writeManifest(root, scanFrames(root, { name: basename(root) }))
 
   console.log(`\n${NAME} initialized (${opts.mode} mode). Created:`)
   for (const f of created) console.log(`  + ${f}`)

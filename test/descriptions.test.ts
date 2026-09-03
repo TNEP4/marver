@@ -24,6 +24,9 @@ describe('meta.description on a frame', () => {
     expect(extractMeta(`export const meta = { title: 'Cart', description: "Empty state before the first import" }`)).toEqual({ title: 'Cart', description: 'Empty state before the first import' })
     expect(extractMeta(`export const meta = { description: someVar }`)).toEqual({})
     expect(extractMeta(`export const meta = { description: '' }`)).toEqual({})
+    expect(extractMeta(`export const meta = { description: "Draft" + phase, title: 'T' }`)).toEqual({ title: 'T' })   // a literal must END the value
+    expect(extractMeta(`export const meta = { title: "Draft" + phase }`)).toEqual({})
+    expect(extractMeta(`export const meta = { title: "It's \`quoted\`", covariant: 'x', variant: 'b' }`)).toEqual({ title: "It's `quoted`", variant: 'b' })
   })
 })
 
@@ -40,6 +43,9 @@ describe('the manifest as the orientation file', () => {
     expect(sceneBrief(root, 'checkout')).toEqual({ brief: 'design/scenes/checkout/_brief.md', description: "Checkout - the buyer's path from cart to receipt (v2)" })
     expect(sceneBrief(root, 'plain')).toEqual({})
     expect(sceneBrief(root, '')).toEqual({})
+    // a front-matter block is skipped; the first line after it is the sentence
+    w('design/scenes/fm/_brief.md', `---\ntitle: x\n---\n\nOrders - the fulfilment desk (UNCONFIRMED)\n`)
+    expect(sceneBrief(root, 'fm')).toMatchObject({ description: 'Orders - the fulfilment desk (UNCONFIRMED)' })
     const m = scanFrames(root)
     expect(m.scenes.find((s) => s.name === 'checkout')).toEqual({ name: 'checkout', frames: 1, brief: 'design/scenes/checkout/_brief.md', description: "Checkout - the buyer's path from cart to receipt (v2)" })
     expect(m.scenes.find((s) => s.name === 'plain')).toEqual({ name: 'plain', frames: 1 })

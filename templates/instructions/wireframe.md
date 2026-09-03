@@ -14,6 +14,9 @@ lands on what is actually being decided.
 
 ## The rules (strict)
 
+0. **Every frame says what it is.** `meta.title` and `meta.description` (one sentence:
+   the screen's job, and "wireframe" while it is one) - the manifest carries them, so
+   a later session knows the lo-fi from the hi-fi without opening files.
 1. **Throwaway code is correct here.** Plain divs, inline layout, one file per frame.
    Do NOT build proper components for wireframes and do NOT touch the app's
    `components/` directory - lo-fi structure hardening into real components is how

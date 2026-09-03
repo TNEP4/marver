@@ -56,7 +56,8 @@ export function extractMeta(src: string): FrameMeta {
   const pick = (key: string) => {
     // boundary required: `covariant:` must not match `variant:` (property suffixes). Each
     // quote style closes on its own kind, so an apostrophe inside "…" is prose, not an end
-    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'([^'\\n]*)'|"([^"\\n]*)"|\`([^\`\\n]*)\`)`).exec(body)
+    // ...and the literal must END the value: `"Draft" + phase` is computed, not a literal
+    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'([^'\\n]*)'|"([^"\\n]*)"|\`([^\`\\n]*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
     return r ? (r[1] ?? r[2] ?? r[3]) : undefined
   }
   // literal booleans, same boundary discipline as the string picker
@@ -164,7 +165,8 @@ function walk(dir: string, out: string[] = []): string[] {
   return out
 }
 
-/** A scene's description is the FIRST line of its `_brief.md` (`#` stripped) - no new file. */
+/** A scene's description is the first non-blank line of its `_brief.md` (a leading `#`
+ *  stripped, a YAML front-matter block skipped) - no new file. */
 export function sceneBrief(root: string, scene: string): { description?: string; brief?: string } {
   if (!scene) return {}
   const rel = `design/scenes/${scene}/_brief.md`
@@ -172,7 +174,10 @@ export function sceneBrief(root: string, scene: string): { description?: string;
   if (!existsSync(abs)) return {}
   let description: string | undefined
   try {
-    const line = readFileSync(abs, 'utf8').split(/\r?\n/).map((l) => l.trim()).find((l) => l && !/^-{3,}$/.test(l))
+    const lines = readFileSync(abs, 'utf8').split(/\r?\n/).map((l) => l.trim())
+    let i = 0
+    if (lines[0] === '---') { i = lines.indexOf('---', 1) + 1; if (i === 0) i = lines.length }   // front matter: skip the block
+    const line = lines.slice(i).find((l) => l)
     description = readDescription(line?.replace(/^#+\s*/, ''))
   } catch { /* unreadable: the path still tells the agent where to look */ }
   return { brief: rel, ...(description ? { description } : {}) }

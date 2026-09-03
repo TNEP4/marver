@@ -26,6 +26,10 @@ however late it surfaced.
 6. **States exist**: for each screen with meaningful states, the empty / error /
    loading siblings are present and reachable.
 7. **Craft floor**: one pass over craft.md's Verify list against the RENDERED frames.
+8. **Descriptions true**: read design/manifest.json once more - every board, folder,
+   scene and frame this session touched carries a `description` that is still true
+   (state words above all: retired, winning, superseded). The next session orients
+   from that file; a stale sentence there costs it more than a missing one.
 
 ## Honesty rules
 

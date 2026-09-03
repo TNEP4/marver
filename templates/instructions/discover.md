@@ -40,7 +40,7 @@ to the SURFACE, not the product.
 
 Create `design/scenes/<scene>/_brief.md`: audience + scene, the one job, mode, the
 flow as a numbered list, content sources, out-of-scope. Ten lines, not a document.
-**Its first line is the scene's one-sentence description** - purpose and state,
+**Its first non-blank line is the scene's one-sentence description** - purpose and state,
 e.g. `# Checkout - the buyer's path from cart to receipt (v2, after the pricing pivot)`.
 That line lands in `design/manifest.json` as the scene's `description`, so a later
 session reads it without opening the brief; keep it true as the scene moves on (a

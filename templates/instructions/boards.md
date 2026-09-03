@@ -84,8 +84,8 @@ exists (`--json` for the tree). Run it before any of the moves below; the human 
 have rearranged things since you last looked, and their arrangement stands.
 
 The moves, each a file edit, so the files always agree:
-- **Create** a folder: add `{ "name": "<slug>", "order": <n> }` to the registry's
-  `folders` (create the file if absent) - or just point a board at it.
+- **Create** a folder: add `{ "name": "<slug>", "order": <n>, "description": "…" }`
+  to the registry's `folders` (create the file if absent) - or just point a board at it.
 - **Move a board in**: write `"folder": "<slug>"` on the board and give it an `order`
   among that folder's boards. **Move it out**: delete the `folder` field and give it
   an `order` among the top-level items.

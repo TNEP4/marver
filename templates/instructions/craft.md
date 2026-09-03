@@ -144,6 +144,10 @@ app, and the human attributes the fault to your frame, not to a library.
 
 ## Frame law
 
+- Every frame carries `meta.description` - one sentence, what the screen is for and
+  its state when that is not obvious ("Filled state of the orders table, current
+  direction"). It reaches design/manifest.json; the next session reads it instead
+  of the file.
 - Frames are made of the app's real components and tokens. Rebuilding a lookalike of
   an existing component inside a frame is a defect.
 - Repeated and semantic values (colors, type sizes, radii, the spacing rhythm)

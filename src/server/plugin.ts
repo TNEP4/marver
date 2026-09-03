@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeF
 import { basename, join } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
-import type { ShConfig } from './config.ts'
+import { loadConfig, type ShConfig } from './config.ts'
 import { scanFrames, writeManifest, affectedFrameIds, type Manifest } from './manifest.ts'
 import { apiMiddleware } from './api.ts'
 import { routesMiddleware } from './routes.ts'
@@ -27,7 +27,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
   // reload gated on interaction leases), not by Vite's default React Fast Refresh which fires
   // immediately regardless of what the user is doing. handleHotUpdate suppresses the default
   // and queues sh:frame-invalidated; the shell decides when to reload each affected frame.
-  const projectInfo = () => ({ name: config.share.name || basename(root), description: config.description })
+  // the project's line in the manifest; re-read from design/config.ts when that file changes
+  // (the rest of the config still needs a restart - only the two orientation fields are live)
+  let project = { name: config.share.name || basename(root), description: config.description }
+  const projectInfo = () => project
   let manifest: Manifest = scanFrames(root, projectInfo())
   let devServer: ViteDevServer | null = null
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
@@ -240,6 +243,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       server.watcher.on('unlink', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
       // change: only meta edits matter; scanFrames re-extracts and writeManifest de-dupes writes.
       server.watcher.on('change', (f) => inScope(f) && (/\.(tsx|jsx)$/.test(f) || f.endsWith('_brief.md')) && regen())   // a brief's first line is its scene's description
+      const configFile = join(root, 'design', 'config.ts')
+      server.watcher.on('change', (f) => {
+        if (f !== configFile) return
+        loadConfig(root).then((c) => { project = { name: c.share.name || basename(root), description: c.description }; regen() }).catch(() => { /* unreadable mid-edit; the next save tries again */ })
+      })
 
       writeManifest(root, manifest)
 
