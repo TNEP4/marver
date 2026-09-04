@@ -89,7 +89,8 @@ resolves a thread; you do that after reviewing.
 
 The missing sense that no-shell used to cost - "does my frame actually RENDER?" - is a
 server capability instead, rendered in the machine's own headless Chrome (no bundled
-browser, CDP over Node's built-in WebSocket) and written as a PNG under
+browser; CDP over Chrome's debugging pipe, so the browser lives exactly as long as the
+shot) and written as a PNG under
 `design/.local/shots/`. Two transports reach it, because the no-shell jail rules out the
 obvious one:
 

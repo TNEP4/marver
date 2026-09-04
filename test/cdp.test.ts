@@ -3,13 +3,39 @@ import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Browser, findChrome } from '../src/server/cdp.ts'
-import { sweepGhosts } from '../src/server/shot.ts'
+import { createServer } from 'node:http'
+import { Browser, findChrome, Frames } from '../src/server/cdp.ts'
+import { captureIn, sweepGhosts, withBrowser } from '../src/server/shot.ts'
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const psRow = (needle: string) => spawnSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' }).stdout.split('\n').find((l) => l.includes(needle))
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
 const posix = process.platform === 'darwin' || process.platform === 'linux'
+
+describe('the pipe framing, with exact chunk boundaries', () => {
+  const nul = Buffer.from([0])
+  it('one message split in three chunks, inside a multibyte character, comes back whole', () => {
+    const f = new Frames()
+    const msg = Buffer.from('{"id":1,"result":{"v":"é🙂"}}', 'utf8')
+    // cut inside the 4-byte emoji
+    const cut = msg.indexOf(Buffer.from('🙂')) + 2
+    expect(f.push(msg.subarray(0, 5))).toEqual([])
+    expect(f.push(msg.subarray(5, cut))).toEqual([])
+    expect(f.push(Buffer.concat([msg.subarray(cut), nul]))).toEqual(['{"id":1,"result":{"v":"é🙂"}}'])
+  })
+  it('two messages in one chunk yield two; a trailing partial waits for its NUL', () => {
+    const f = new Frames()
+    expect(f.push(Buffer.concat([Buffer.from('{"id":1}'), nul, Buffer.from('{"id":2}'), nul, Buffer.from('{"id":')]))).toEqual(['{"id":1}', '{"id":2}'])
+    expect(f.push(Buffer.concat([Buffer.from('3}'), nul]))).toEqual(['{"id":3}'])
+    expect(f.push(nul)).toEqual([''])   // an empty message is still a message (JSON.parse rejects it upstream)
+  })
+  it('a message past the size guard fails BEFORE it is held, not after it is assembled', () => {
+    const f = new Frames(16)
+    expect(f.push(Buffer.from('0123456789'))).toEqual([])
+    expect(() => f.push(Buffer.from('0123456789'))).toThrow(/runaway/)
+    expect(f.push(Buffer.concat([Buffer.from('{}'), nul]))).toEqual(['{}'])   // and it is clean afterwards
+  })
+})
 
 describe('the debugging pipe transport', () => {
   const saved = process.env.MARVER_CHROME
@@ -66,6 +92,28 @@ describe('the debugging pipe transport', () => {
   })
 })
 
+describe.skipIf(!findChrome())('shots sharing one browser', () => {
+  it("a shot's watchdog fails THAT shot alone; its neighbours in the same browser are fine and the browser closes after", async () => {
+    const srv = createServer((req, res) => {
+      res.setHeader('content-type', 'text/html')
+      // `never`: a root that never gets children - readiness never comes; `fine`: content at once
+      res.end(req.url?.includes('never') ? '<div id="root"></div>' : '<div id="root"><h1 style="height:300px">fine</h1></div>')
+    })
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
+    const port = (srv.address() as { port: number }).port
+    const dir = mkdtempSync(join(tmpdir(), 'mv-wd-'))
+    const req = (name: string, timeoutMs: number) => ({ url: `http://127.0.0.1:${port}/${name}`, width: 400, height: 300, out: join(dir, `${name}.png`), timeoutMs, scale: 1 })
+    let pid = 0
+    const results = await withBrowser('shot', (b) => { pid = b.pid!; return Promise.all([captureIn(req('never', 700), b), captureIn(req('fine', 30_000), b), captureIn(req('fine2', 30_000), b)]) })
+    expect(results[0].ok).toBe(false)
+    if (!results[0].ok) expect(results[0].error).toMatch(/never rendered/)
+    expect(results[1].ok && results[2].ok).toBe(true)
+    expect(existsSync(join(dir, 'fine.png')) && existsSync(join(dir, 'fine2.png'))).toBe(true)
+    expect(alive(pid)).toBe(false)
+    srv.close(); rmSync(dir, { recursive: true, force: true })
+  }, 40_000)
+})
+
 describe.skipIf(!posix)('the upgrade sweep', () => {
   const saved = process.env.MARVER_CHROME
   afterEach(() => { if (saved === undefined) delete process.env.MARVER_CHROME; else process.env.MARVER_CHROME = saved })
@@ -104,8 +152,7 @@ describe.skipIf(!posix)('the upgrade sweep', () => {
     expect(alive(ghostPid)).toBe(true)
 
     const lines: string[] = []
-    sweepGhosts((l) => lines.push(l))
-    await wait(300)
+    await sweepGhosts((l) => lines.push(l))
     expect(alive(ghostPid)).toBe(false)
     expect(lines.some((l) => l.includes(`pid ${ghostPid}`))).toBe(true)
     expect(alive(owned.pid!)).toBe(true)

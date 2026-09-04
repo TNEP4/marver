@@ -150,9 +150,10 @@ export const BATCH_MAX = 200
 export function resolveFrames(root: string, sel: Record<string, unknown>): { ok: true; frames: string[] } | { ok: false; status: number; error: string } {
   const keys = ['frames', 'scene', 'all'].filter((k) => sel[k] !== undefined)
   if (keys.length !== 1) return { ok: false, status: 400, error: 'name exactly one of frames (an array of ids), scene (a name) or all (true)' }
-  let manifest: { frames?: { id: string }[] } = {}
+  let manifest: { frames?: { id: string; scene: string }[] } = {}
   try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
-  const listed = (manifest.frames ?? []).map((f) => f.id)   // manifest order: sorted by id, as the sidebar lists them
+  const entries = manifest.frames ?? []   // manifest order: sorted by id, as the sidebar lists them
+  const listed = entries.map((f) => f.id)
   let frames: string[]
   if (keys[0] === 'frames') {
     if (!Array.isArray(sel.frames) || !sel.frames.every((f) => typeof f === 'string' && f)) return { ok: false, status: 400, error: 'frames must be an array of frame ids' }
@@ -160,7 +161,7 @@ export function resolveFrames(root: string, sel: Record<string, unknown>): { ok:
     if (new Set(frames).size !== frames.length) return { ok: false, status: 400, error: 'frames lists the same id twice' }
   } else if (keys[0] === 'scene') {
     if (typeof sel.scene !== 'string' || !sel.scene) return { ok: false, status: 400, error: 'scene must be a scene name' }
-    frames = listed.filter((id) => id.startsWith(`${sel.scene}/`))
+    frames = entries.filter((f) => f.scene === sel.scene).map((f) => f.id)   // the scene the manifest names, not an id prefix
     if (!frames.length) return { ok: false, status: 404, error: `no frames in scene "${sel.scene}" - scenes are in design/manifest.json` }
   } else {
     if (sel.all !== true) return { ok: false, status: 400, error: 'all must be true' }
@@ -200,7 +201,8 @@ export async function shootBatch(opts: {
  *  server has that server as its parent, and ours die with it - so a headless Chrome on one
  *  of our profiles whose parent is 1 can only be a leak. darwin and linux (`ps -o`); anywhere
  *  else this is a no-op. */
-export function sweepGhosts(log: (line: string) => void = () => {}): void {
+const BROWSER_NAMES = new Set(['Google Chrome', 'Chromium', 'Microsoft Edge', 'Brave Browser', 'chrome', 'chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'msedge', 'brave', 'brave-browser'])
+export async function sweepGhosts(log: (line: string) => void = () => {}): Promise<void> {
   if (process.platform !== 'darwin' && process.platform !== 'linux') return
   const tmp = tmpdir()
   const bins = new Set([...CHROMES, ...(process.env.MARVER_CHROME ? [process.env.MARVER_CHROME] : [])])
@@ -210,25 +212,38 @@ export function sweepGhosts(log: (line: string) => void = () => {}): void {
     const dir = m[1]
     return PROFILE_PREFIXES.some((pre) => dir.startsWith(join(tmp, pre))) ? dir : null
   }
-  let rows: { pid: number; ppid: number; cmd: string }[] = []
-  try {
-    rows = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' }).split('\n').map((l) => {
-      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l)
-      return m ? { pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] } : null
-    }).filter((r): r is { pid: number; ppid: number; cmd: string } => !!r)
-  } catch { return }   // a ps without -o (busybox): nothing we can do safely
-  const referenced = new Set<string>()
-  const ghosts: { pid: number; dir: string }[] = []
-  for (const r of rows) {
-    const dir = profileOf(r.cmd)
-    if (!dir) continue
-    referenced.add(dir)
-    const exe = r.cmd.split(' --')[0]
-    if (r.ppid === 1 && r.cmd.includes('--headless') && [...bins].some((b) => exe === b || exe.startsWith(`${b} `))) ghosts.push({ pid: r.pid, dir })
+  // the browser binary as `ps` shows it: a path we know, or (a Linux launcher script having
+  // exec'd the real binary under another path) a known browser name, with a script (`node`,
+  // `sh`) never matching
+  const isBrowser = (cmd: string): boolean => {
+    const exe = cmd.split(' --')[0]
+    if ([...bins].some((b) => exe === b || exe.startsWith(`${b} `))) return true
+    return BROWSER_NAMES.has(exe.slice(exe.lastIndexOf('/') + 1))
   }
-  for (const g of ghosts) {
-    try { process.kill(g.pid, 'SIGKILL'); log(`shot: removed a headless browser left by an earlier version (pid ${g.pid})`) } catch { /* not ours, or gone */ }
-    referenced.delete(g.dir)
+  type Row = { pid: number; ppid: number; cmd: string }
+  const ps = (args: string[]): Row[] | null => {
+    try {
+      return execFileSync('ps', args, { encoding: 'utf8' }).split('\n').map((l) => {
+        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l)
+        return m ? { pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] } : null
+      }).filter((r): r is Row => !!r)
+    } catch { return null }   // a ps without -o (busybox): nothing we can do safely
+  }
+  const rows = ps(['-axo', 'pid=,ppid=,command='])
+  if (!rows) return
+  const isGhost = (r: Row) => r.ppid === 1 && r.cmd.includes('--headless') && !!profileOf(r.cmd) && isBrowser(r.cmd)
+  const referenced = new Set<string>()
+  for (const r of rows) { const dir = profileOf(r.cmd); if (dir) referenced.add(dir) }
+  for (const g of rows.filter(isGhost)) {
+    // the snapshot is stale by now: a pid can be reused - re-read THIS pid and require the same
+    // command line and parent before signalling
+    const now = ps(['-o', 'pid=,ppid=,command=', '-p', String(g.pid)])?.[0]
+    if (!now || now.cmd !== g.cmd || now.ppid !== g.ppid) continue
+    try { process.kill(g.pid, 'SIGKILL') } catch { continue }   // not ours, or gone
+    const by = Date.now() + 2000
+    while (Date.now() < by) { try { process.kill(g.pid, 0); await new Promise((r) => setTimeout(r, 50)) } catch { break } }
+    log(`shot: removed a headless browser left by an earlier version (pid ${g.pid})`)
+    referenced.delete(profileOf(g.cmd)!)
   }
   // profiles nothing references and that have sat for a while - a browser that is starting
   // right now has a fresh directory
@@ -311,7 +326,7 @@ const fits = (w: number, h: number, dsf: number) => w * dsf <= SURFACE && h * ds
 /** The tallest CSS height a full-height capture of `width` can hold at `dsf`. */
 const capFor = (width: number, dsf: number) => Math.max(1, Math.min(Math.floor(SURFACE / dsf), Math.floor(AREA / (width * dsf * dsf))))
 
-async function captureIn({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
+export async function captureIn({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
   // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
   let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
   while (scale > 1 && !fits(width, height, scale)) scale--
@@ -329,11 +344,13 @@ async function captureIn({ url, width, height, out, fullHeight = false, timeoutM
     // Per-call deadline: the outer watchdog only fires at timeoutMs+15s, so a single hung CDP
     // call (a wedged measure, a stuck setDeviceMetricsOverride/captureScreenshot) would hold the
     // SERIALIZED shot queue for that whole window. Bound each call in the full-height settle path.
-    const sendD = (method: string, params: Record<string, unknown>, ms = 1500) =>
-      Promise.race([
+    const sendD = (method: string, params: Record<string, unknown>, ms = 1500) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      return Promise.race([
         send(method, params, sessionId),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${method} timed out`)), ms)),
-      ])
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`${method} timed out`)), ms) }),
+      ]).finally(() => clearTimeout(timer))
+    }
 
     // Overall watchdog: kill Chrome past a hard deadline, which closes the socket and rejects
     // any pending send. Covers the CDP calls that have no timeout of their own (setup, the
@@ -517,7 +534,7 @@ async function captureIn({ url, width, height, out, fullHeight = false, timeoutM
         if (m2 <= cap) capH = m2
         else { capH = cap; truncated = true; note = `frame is ${m2}px tall; captured the top ${cap}px - split it or reduce its height` }
         await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: scale, mobile: false }, 5000)
-        settled = (await settle(600)) || settled
+        settled = await settle(600)   // the capture viewport's own verdict replaces the earlier one
       }
     }
 
@@ -541,7 +558,7 @@ async function captureIn({ url, width, height, out, fullHeight = false, timeoutM
     // Out of settle budget (under a wide batch, a slow image, a heavy chart): the capture still
     // ships, but it SAYS so - an agent reading the JSON must not take a half-drawn frame as final.
     const unsettled = !settled
-    if (unsettled && !note) note = 'captured before the frame settled - images, charts or diagrams may be missing; shoot it alone or lower MARVER_SHOT_CONCURRENCY'
+    if (unsettled) note = `${note ? note + '; ' : ''}captured before the frame settled - images, charts or diagrams may be missing; shoot it alone or lower MARVER_SHOT_CONCURRENCY`
     return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(unsettled ? { unsettled: true } : {}), ...(note ? { note } : {}) }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
@@ -550,7 +567,13 @@ async function captureIn({ url, width, height, out, fullHeight = false, timeoutM
     off()
     // Close THIS shot's tab; the browser belongs to the operation and closes with it. Bounded,
     // best-effort: a wedged target must not hold the batch, and the browser's own close is the
-    // backstop for a Chrome that stopped answering.
-    if (targetId && !b.dead) await Promise.race([b.send('Target.closeTarget', { targetId }).catch(() => {}), new Promise((r) => setTimeout(r, 2000))])
+    // backstop for a Chrome that stopped answering. Then settle whatever this shot still has
+    // in flight (a timed-out call, the close itself) - nothing of it outlives the shot.
+    if (targetId && !b.dead) {
+      let t: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([b.send('Target.closeTarget', { targetId }, undefined, me).catch(() => {}), new Promise((r) => { t = setTimeout(r, 2000) })])
+      clearTimeout(t)
+    }
+    b.abort(me, 'the shot finished')
   }
 }

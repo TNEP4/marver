@@ -60,6 +60,27 @@ describe.skipIf(!findChrome())('poster - containment against a real filesystem',
     expect(existsSync(join(outside, 'inner.webm.poster.png'))).toBe(false)
   })
 
+  it('single-flight: four frames asking for the same missing poster at once render it ONCE', async () => {
+    copyFileSync(join(import.meta.dirname, 'fixtures', 'clip.webm'), join(assets, 'shared.webm'))
+    const four = await Promise.all([1, 2, 3, 4].map(() => ensurePoster(assets, 'shared.webm')))
+    // one render, one result object handed to every caller: all four say "generated"
+    expect(four.every((r) => r.ok && r.generated)).toBe(true)
+    expect(new Set(four).size).toBe(1)
+  }, 30_000)
+
+  it('a poster asked for while the SHOT lane is held completes - its own lane, its own browser, never a deadlock', async () => {
+    copyFileSync(join(import.meta.dirname, 'fixtures', 'clip.webm'), join(assets, 'inflight.webm'))
+    const { withBrowser } = await import('../src/server/shot.ts')
+    // an operation holds the shot lane; inside it, the poster request must not wait on it
+    const r = await withBrowser('shot', async () => {
+      const t0 = Date.now()
+      const p = await ensurePoster(assets, 'inflight.webm')
+      return { p, ms: Date.now() - t0 }
+    })
+    expect(r.p.ok && r.p.generated).toBe(true)
+    expect(r.ms).toBeLessThan(20_000)
+  }, 40_000)
+
   it('never overwrites an authored poster', async () => {
     writeFileSync(join(assets, 'real2.webm'), readFileSync(join(assets, 'real.webm')))
     writeFileSync(join(assets, 'real2.webm.poster.png'), 'authored')

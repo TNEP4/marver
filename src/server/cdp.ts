@@ -44,14 +44,41 @@ const MAX_MESSAGE = 1 << 30   // a screenshot answer is hundreds of MB of base64
 
 type Pending = { owner: object | undefined; resolve: (r: any) => void; reject: (e: Error) => void; method: string }
 
+/** The pipe's framing: NUL-terminated messages, arriving in chunks split anywhere - inside a
+ *  message, inside a multibyte character, or several messages in one chunk. Segments are held
+ *  and concatenated ONCE per delimiter (a screenshot answer is many chunks; re-concatenating
+ *  the remainder per chunk would be quadratic). The size guard runs BEFORE a segment is held. */
+export class Frames {
+  private chunks: Buffer[] = []
+  private held = 0
+  constructor(private readonly max = MAX_MESSAGE) {}
+  /** Feed one chunk; returns the complete messages it finished, or throws on a runaway. */
+  push(d: Buffer): string[] {
+    const out: string[] = []
+    let from = 0
+    for (;;) {
+      const nul = d.indexOf(0, from)
+      if (nul < 0) break
+      this.hold(d.subarray(from, nul))
+      out.push(Buffer.concat(this.chunks).toString('utf8'))
+      this.chunks = []; this.held = 0
+      from = nul + 1
+    }
+    if (from < d.length) this.hold(d.subarray(from))
+    return out
+  }
+  private hold(seg: Buffer) {
+    if (this.held + seg.length > this.max) { this.chunks = []; this.held = 0; throw new Error('the browser sent a runaway message') }
+    this.chunks.push(seg); this.held += seg.length
+  }
+}
+
 export class Browser {
   private proc!: ChildProcess
   private out!: NodeJS.WritableStream
   private seq = 0
   private pending = new Map<number, Pending>()
   private listeners = new Set<(m: any) => void>()
-  private chunks: Buffer[] = []
-  private held = 0
   private profile!: string
   /** Set once the browser is gone or unusable; every send after that rejects at once. */
   dead: string | null = null
@@ -79,31 +106,24 @@ export class Browser {
     b.out.on('error', () => b.fail('devtools pipe error'))
     b.proc.on('error', (e) => b.fail(`could not start the browser - ${e.message}`))
     b.proc.on('exit', (code, sig) => b.fail(`the browser exited (${sig ?? code})`))
-    b.proc.once('exit', () => b.rmProfile())
+    b.proc.once('exit', () => { void b.rmProfile() })
     const handshake = setTimeout(() => b.fail('the browser did not answer in time'), HANDSHAKE_MS)
     try { await b.send('Browser.getVersion') } catch (e) { await b.close(); throw e } finally { clearTimeout(handshake) }
     return b
   }
 
+  private frames = new Frames()
   private feed(d: Buffer) {
-    // Hold chunks, concatenate ONCE per delimiter: a screenshot answer arrives in many chunks
-    // and re-concatenating the remainder per chunk would be quadratic.
-    let from = 0
-    for (;;) {
-      const nul = d.indexOf(0, from)
-      if (nul < 0) break
-      this.chunks.push(d.subarray(from, nul)); this.held += nul - from
-      const msg = Buffer.concat(this.chunks); this.chunks = []; this.held = 0
-      from = nul + 1
+    let msgs: string[]
+    try { msgs = this.frames.push(d) } catch (e) { return this.fail((e as Error).message) }
+    for (const text of msgs) {
       let m: any
-      try { m = JSON.parse(msg.toString('utf8')) } catch { continue }   // CDP is always JSON; ignore anything else
+      try { m = JSON.parse(text) } catch { continue }   // CDP is always JSON; ignore anything else
       if (m.id != null && this.pending.has(m.id)) {
         const p = this.pending.get(m.id)!; this.pending.delete(m.id)
         m.error ? p.reject(new Error(`${p.method}: ${m.error.message}`)) : p.resolve(m.result)
       } else for (const l of this.listeners) l(m)
     }
-    if (from < d.length) { this.chunks.push(d.subarray(from)); this.held += d.length - from }
-    if (this.held > MAX_MESSAGE) this.fail('the browser sent a runaway message')
   }
 
   private fail(why: string) {
@@ -118,16 +138,22 @@ export class Browser {
   send(method: string, params: Record<string, unknown> = {}, sessionId?: string, owner?: object): Promise<any> {
     return new Promise<any>((resolve, reject) => {
       if (this.dead) return reject(new Error(`${method}: ${this.dead}`))
+      const gone = owner && this.aborted.get(owner)
+      if (gone) return reject(new Error(`${method}: ${gone}`))
       const id = ++this.seq
       this.pending.set(id, { owner, resolve, reject, method })
       try { this.out.write(JSON.stringify({ id, method, params, sessionId }) + '\0') } catch (e) { this.pending.delete(id); reject(e as Error) }
     })
   }
 
-  /** Reject every pending call tagged `owner` (a shot's watchdog); the browser lives on. */
+  private aborted = new WeakMap<object, string>()
+  /** Reject every pending call tagged `owner` AND every later one (a shot's watchdog fired:
+   *  nothing of that shot may run past its deadline); the browser lives on. */
   abort(owner: object, why: string) {
+    this.aborted.set(owner, why)
     for (const [id, p] of this.pending) if (p.owner === owner) { this.pending.delete(id); p.reject(new Error(`${p.method}: ${why}`)) }
   }
+
 
   /** Subscribe to CDP events (anything without an `id`); returns the unsubscribe. */
   on(l: (m: any) => void): () => void { this.listeners.add(l); return () => this.listeners.delete(l) }
@@ -143,14 +169,15 @@ export class Browser {
     await this.rmProfile()
   }
 
-  private rmDone = false
-  private async rmProfile() {
-    if (this.rmDone) return
-    this.rmDone = true
-    // Chrome may still be flushing `Default/` when `exit` fires (seen as ENOTEMPTY); one retry
-    for (let i = 0; i < 2; i++) {
-      try { rmSync(this.profile, { recursive: true, force: true }); return } catch { await new Promise((r) => setTimeout(r, 200)) }
-    }
-    try { rmSync(this.profile, { recursive: true, force: true }) } catch { /* temp cleanup only */ }
+  private rm: Promise<void> | undefined
+  private rmProfile(): Promise<void> {
+    // one cleanup, awaited by whoever asks (the exit listener and close() both do)
+    return this.rm ??= (async () => {
+      // Chrome may still be flushing `Default/` when `exit` fires (seen as ENOTEMPTY); retry
+      for (let i = 0; i < 3; i++) {
+        try { rmSync(this.profile, { recursive: true, force: true }); return } catch { await new Promise((r) => setTimeout(r, 200)) }
+      }
+      try { rmSync(this.profile, { recursive: true, force: true }) } catch { /* temp cleanup only */ }
+    })()
   }
 }

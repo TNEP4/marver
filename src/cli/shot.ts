@@ -39,8 +39,11 @@ export async function shotCommand(root: string, frames: string[], opts: { scene?
   const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string; results?: Entry[] } & Record<string, unknown>
   if (!res.ok) throw new Error(data.error ?? `shot failed (${res.status})`)
   // one shape for both doors: the single answer becomes a one-entry batch
+  const one = data as { path?: string; width?: number; height?: number; scale?: number; truncated?: boolean; unsettled?: boolean; note?: string; error?: string }
   const results: Entry[] = single
-    ? [data.path ? { frame: frames[0], ...(data as unknown as Omit<Extract<Entry, { ok: true }>, 'frame'>), ok: true } : { frame: frames[0], ok: false, error: data.error ?? 'shot failed' }]
+    ? [one.path
+      ? { frame: frames[0], ok: true, path: one.path, width: one.width!, height: one.height!, scale: one.scale!, ...(one.truncated ? { truncated: true } : {}), ...(one.unsettled ? { unsettled: true } : {}), ...(one.note ? { note: one.note } : {}) }
+      : { frame: frames[0], ok: false, error: one.error ?? 'shot failed' }]
     : data.results ?? []
   if (opts.json) { console.log(JSON.stringify({ results }, null, 2)); if (results.some((r) => !r.ok)) process.exitCode = 1; return }
   let failed = false

@@ -81,7 +81,10 @@ planning. The human should see the request land on the canvas within the first m
    lit frame, never before one.
 3. Build. Independent frames can go in parallel - one subagent per frame, each marking
    its own; frames that depend on one another go in order.
-4. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
+4. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,
+   `--all`) renders the frames headless in one go - one PNG path per line - and you READ
+   the PNGs. No shell? instructions/jam.md has the file-drop way (`{"scene":"..."}`).
+5. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
    and never lean on expiry instead of `done`.
 

@@ -419,7 +419,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { shootFrame } = await import('./shot.ts')
         const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId, theme, origin, scale, size })
         if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : r.error.startsWith('invalid ') ? 400 : 503, { error: r.error })
-        const summary = { path: r.path, frame: frameId, theme, width: r.width, height: r.height, scale: r.scale, ...(r.truncated ? { truncated: true } : {}), ...(r.note ? { note: r.note } : {}) }
+        const summary = { path: r.path, frame: frameId, theme, width: r.width, height: r.height, scale: r.scale, ...(r.truncated ? { truncated: true } : {}), ...(r.unsettled ? { unsettled: true } : {}), ...(r.note ? { note: r.note } : {}) }
         if (!asPng) return json(res, 200, summary)
         const png = readFileSync(join(root, r.path))
         // base64url: a header must be ASCII, a frame id or note need not be

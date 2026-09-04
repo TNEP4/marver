@@ -303,43 +303,51 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
           if (!existsSync(reqPath)) return
           inFlight.add(file)
           setTimeout(async () => {   // let the write settle before reading
+            const base = file.replace(/\.request\.json$/, '')
+            const resultPath = join(inbox, `${base}.result.json`)
+            // CLAIM the request by an atomic rename before reading it: whatever the agent writes
+            // to the canonical name from now on is a new request, picked up by the next tick, and
+            // can never be deleted with this one's result. (An overwrite in the 60ms above simply
+            // becomes the claimed content.)
+            const claimed = join(inbox, `.${base}.${process.pid}.${Date.now().toString(36)}.claimed`)
+            try { renameSync(reqPath, claimed) } catch { inFlight.delete(file); return }   // gone, or someone else's
             try {
-              // Read the bytes ONCE and remember them: a batch takes a while, and an agent may
-              // overwrite the request meanwhile - that newer request must not be deleted with the
-              // old one's result. Delete only what was processed; a changed file runs again.
-              let raw: string
-              let spec: Record<string, unknown>
-              try { raw = readFileSync(reqPath, 'utf8'); spec = JSON.parse(raw) } catch { return }   // partial/gone
-              if (!spec || typeof spec !== 'object') return
-              const base = file.replace(/\.request\.json$/, '')
-              const resultPath = join(inbox, `${base}.result.json`)
-              const theme = typeof spec.theme === 'string' ? spec.theme : 'light'
-              const scale = Number.isInteger(spec.scale) && (spec.scale as number) >= 1 && (spec.scale as number) <= 4 ? spec.scale as number : undefined
-              const o = origin()
               // atomic: an agent polling the result never reads it half-written
               const write = (r: unknown) => {
                 const tmp = join(inbox, `.${base}.${process.pid}.tmp`)
                 try { writeFileSync(tmp, JSON.stringify(r, null, 2)); renameSync(tmp, resultPath) } catch { try { rmSync(tmp, { force: true }) } catch { /* ignore */ } }
               }
-              const done = () => { try { if (readFileSync(reqPath, 'utf8') === raw) rmSync(reqPath, { force: true }) } catch { /* gone, or leave the newer one for the next tick */ } }
+              let spec: Record<string, unknown>
+              try {
+                spec = JSON.parse(readFileSync(claimed, 'utf8'))
+                if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('expected an object')
+              } catch (err) { write({ ok: false, error: `malformed request - ${(err as Error).message}` }); return }
+              // one validator, the same rules as the API: theme, scale, and ONE way of naming frames
+              const theme = spec.theme === undefined ? 'light' : spec.theme
+              if (typeof theme !== 'string' || !/^[a-z0-9-]+$/i.test(theme)) { write({ ok: false, error: 'invalid theme' }); return }
+              const scale = spec.scale === undefined ? undefined : spec.scale
+              if (scale !== undefined && !(Number.isInteger(scale) && (scale as number) >= 1 && (scale as number) <= 4)) { write({ ok: false, error: 'invalid scale' }); return }
+              const ways = ['frame', 'frames', 'scene', 'all'].filter((k) => spec[k] !== undefined)
+              if (ways.length !== 1) { write({ ok: false, error: 'name the frames one way: frame (an id), frames (an array of ids), scene (a name) or all (true)' }); return }
+              const o = origin()
               if (!o) { write({ ok: false, error: 'dev server has no address yet - retry' }); return }
               const { shootFrame, shootBatch, resolveFrames } = await import('./shot.ts')
-              if (typeof spec.frame === 'string' || (spec.frames === undefined && spec.scene === undefined && spec.all === undefined)) {
-                const frameId = typeof spec.frame === 'string' ? spec.frame : ''
-                write(await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: o, scale }))
-                done()
+              if (ways[0] === 'frame') {
+                if (typeof spec.frame !== 'string') { write({ ok: false, error: 'frame must be a frame id' }); return }
+                write(await shootFrame({ root, viewports: config.viewports, frameId: spec.frame, theme, origin: o, scale: scale as number | undefined }))
                 return
               }
               // a batch: {frames:[...]} | {scene:"name"} | {all:true} - one browser, several at a time
-              if (!/^[a-z0-9-]+$/i.test(theme)) { write({ ok: false, error: 'invalid theme' }); done(); return }
               const sel = resolveFrames(root, spec)
-              if (!sel.ok) { write({ ok: false, error: sel.error }); done(); return }
+              if (!sel.ok) { write({ ok: false, error: sel.error }); return }
               try {
-                const results = await shootBatch({ root, viewports: config.viewports, frames: sel.frames, theme, origin: o, scale })
+                const results = await shootBatch({ root, viewports: config.viewports, frames: sel.frames, theme, origin: o, scale: scale as number | undefined })
                 write({ ok: true, results })
               } catch (err) { write({ ok: false, error: (err as Error).message }) }
-              done()
-            } finally { inFlight.delete(file) }
+            } finally {
+              try { rmSync(claimed, { force: true }) } catch { /* ignore */ }
+              inFlight.delete(file)
+            }
           }, 60)
         }
         // fs.watch is the fast path; a slow sweep is the backstop, because fs.watch misses

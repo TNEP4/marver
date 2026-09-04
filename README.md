@@ -84,7 +84,7 @@ The trust boundary is hard: only comments written on the owner's machine trigger
 
 ## Working state
 
-The same glow, driven from the terminal. When your agent takes a request, it creates the frame files first, pins them on a board, and runs `npx marver work start <scene/frame ...>` - you see the work land on the canvas in seconds, watch it shimmer while subagents build in parallel, and see it settle on `work done`. Marks self-expire, so a crashed agent never leaves a frame glowing. And `npx marver shot <scene/frame> [--scale 4]` renders one frame headless to a PNG, so the agent can look at what it built before it says it is done - the same picture you get from the canvas's copy-as-image.
+The same glow, driven from the terminal. When your agent takes a request, it creates the frame files first, pins them on a board, and runs `npx marver work start <scene/frame ...>` - you see the work land on the canvas in seconds, watch it shimmer while subagents build in parallel, and see it settle on `work done`. Marks self-expire, so a crashed agent never leaves a frame glowing. And `npx marver shot --scene <scene>` (or `<scene/frame ...>`, `--all`; `[--scale 4]`) renders frames headless to PNGs - a whole scene in one browser, several frames at a time - so the agent can look at what it built before it says it is done - the same picture you get from the canvas's copy-as-image.
 
 ## Commands
 

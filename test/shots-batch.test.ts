@@ -118,6 +118,14 @@ describe.skipIf(!hasChrome)('a batch of shots is one operation', () => {
     for (const p of seen) expect(existsSync(p)).toBe(false)
   }, 60_000)
 
+  it('a single shot is an operation too: nothing runs once it has answered', async () => {
+    const res = await fetch(`${ORIGIN}/__mv/api/shot?frame=app/a`, { headers: { 'x-mv-work': token } })
+    expect(res.status).toBe(200)
+    const t0 = Date.now()
+    while (Date.now() - t0 < 2000 && ours().length) await wait(50)
+    expect(ours()).toEqual([])
+  }, 30_000)
+
   it('a failing frame fails alone: unknown id and a throwing frame, the good one ships', async () => {
     const res = await api({ frames: ['app/a', 'nope/nothing', 'app/throws'] })
     expect(res.status).toBe(200)
@@ -133,6 +141,7 @@ describe.skipIf(!hasChrome)('a batch of shots is one operation', () => {
     expect((await api({ frames: ['app/a'], scale: 9 })).status).toBe(400)
     expect((await api({ frames: ['app/a'], theme: 'bad theme' })).status).toBe(400)
     expect((await api({ scene: 'nowhere' })).status).toBe(404)
+    expect((await api({ scene: 'ap' })).status).toBe(404)   // a prefix of a scene is not a scene
     expect((await api({ frames: ['app/a'], scene: 'app' })).status).toBe(400)
     expect((await api({ frames: Array.from({ length: 201 }, (_, i) => `x/${i}`) })).status).toBe(400)
     expect((await api({})).status).toBe(400)
@@ -197,6 +206,16 @@ describe.skipIf(!hasChrome)('a batch of shots is one operation', () => {
     }
     expect(last?.path).toBe('design/.local/shots/app--b--light.png')
     expect(existsSync(join(inbox, 'over.request.json'))).toBe(false)
+    // a request that is not JSON, or names frames two ways, gets a result and is consumed - never retried for ever
+    writeFileSync(join(inbox, 'bad.request.json'), '{not json')
+    writeFileSync(join(inbox, 'two.request.json'), JSON.stringify({ frame: 'app/a', scene: 'app' }))
+    const t2 = Date.now()
+    while (Date.now() - t2 < 10_000 && !(existsSync(join(inbox, 'bad.result.json')) && existsSync(join(inbox, 'two.result.json')))) await wait(100)
+    expect(JSON.parse(readFileSync(join(inbox, 'bad.result.json'), 'utf8'))).toMatchObject({ ok: false, error: expect.stringMatching(/malformed request/) })
+    expect(JSON.parse(readFileSync(join(inbox, 'two.result.json'), 'utf8'))).toMatchObject({ ok: false, error: expect.stringMatching(/one way/) })
+    await wait(300)
+    expect(existsSync(join(inbox, 'bad.request.json')) || existsSync(join(inbox, 'two.request.json'))).toBe(false)
+    expect(readdirSync(inbox).filter((f) => f.endsWith('.claimed'))).toEqual([])
   }, 90_000)
 
   it('THE property: kill -9 the server mid-shot and its browser is gone within two seconds', async () => {
