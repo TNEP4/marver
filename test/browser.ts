@@ -1,61 +1,25 @@
 /**
  * A minimal CDP driver for suites that need a real browser - the same shape
- * gate-browser.test.ts uses, extracted so new suites do not re-grow it.
+ * gate-browser.test.ts uses, extracted so new suites do not re-grow it. Rides on the
+ * server's own transport (src/server/cdp.ts): Chrome's debugging PIPE, so a browser a killed
+ * vitest worker leaves behind dies with the worker instead of haunting the machine.
  * Chrome is optional on CI: `Browser.launch()` returns null when absent and
  * suites skip, exactly like the shot integration tests.
  */
-import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { findChrome } from '../src/server/shot.ts'
+import { Browser as Cdp, findChrome } from '../src/server/cdp.ts'
 
 export class Browser {
-  private ws!: WebSocket
-  private proc!: ChildProcess
-  private seq = 0
-  private pending = new Map<number, (m: any) => void>()
+  private cdp!: Cdp
 
   static async launch(): Promise<Browser | null> {
-    const bin = findChrome()
-    if (!bin) return null
+    if (!findChrome()) return null
     const b = new Browser()
-    const profile = mkdtempSync(join(tmpdir(), 'mv-browser-'))
-    b.proc = spawn(bin, [
-      '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-      '--disable-extensions', `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank',
-    ], { stdio: ['ignore', 'ignore', 'pipe'] })
-    const wsUrl = await new Promise<string>((resolve, reject) => {
-      let buf = ''
-      const to = setTimeout(() => reject(new Error('no devtools in time')), 20_000)
-      b.proc.stderr?.on('data', (d: Buffer) => {
-        buf += d
-        const m = /DevTools listening on (ws:\/\/\S+)/.exec(buf)
-        if (m) { clearTimeout(to); resolve(m[1]!) }
-      })
-      b.proc.on('exit', () => { clearTimeout(to); reject(new Error('browser exited')) })
-    })
-    b.ws = new WebSocket(wsUrl)
-    await new Promise<void>((res, rej) => {
-      b.ws.onopen = () => res()
-      b.ws.onerror = () => rej(new Error('devtools socket failed'))
-    })
-    b.ws.onmessage = (e) => {
-      const m = JSON.parse(String(e.data))
-      if (m.id != null) {
-        const cb = b.pending.get(m.id)
-        if (cb) { b.pending.delete(m.id); cb(m) }
-      }
-    }
+    b.cdp = await Cdp.launch('mv-browser-')
     return b
   }
 
   send(method: string, params: any = {}, sessionId?: string): Promise<any> {
-    const id = ++this.seq
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, (m) => (m.error ? reject(new Error(m.error.message)) : resolve(m.result)))
-      this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-    })
+    return this.cdp.send(method, params, sessionId)
   }
 
   private contexts = new Map<string, string>()   // sessionId -> browserContextId
@@ -117,5 +81,6 @@ export class Browser {
     throw new Error(`timed out waiting for: ${expression} (last: ${JSON.stringify(last)})`)
   }
 
-  close() { try { this.proc.kill() } catch { /* already gone */ } }
+  /** Ends the pipe (Chrome exits on EOF) and removes the profile once it has; callers need not await. */
+  close() { void this.cdp.close() }
 }

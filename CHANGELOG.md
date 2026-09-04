@@ -2,6 +2,31 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.17.0 - 2026-09-04
+
+### Added
+
+- **Shots in batch.** `npx marver shot a b c`, `--scene <name>` or `--all` render many
+  frames as ONE operation: one headless browser, several frames at a time inside it
+  (`MARVER_SHOT_CONCURRENCY`, default up to 6 sized to the machine). `POST /api/shots`
+  and the jam inbox (`{"scene":...}`, `{"frames":[...]}`, `{"all":true}`) take the same
+  ask; every frame answers for itself (`results[]`, in the order asked). Measured on a
+  31-frame canvas: 65 s of one-at-a-time calls becomes 8 s; a 5-frame scene, 10 s
+  becomes 2 s; a single shot, 2.1 s becomes 1.05 s.
+- A capture that ran out of settle budget says so: `unsettled: true` and a note, instead
+  of a silently half-drawn PNG.
+
+### Fixed
+
+- **A shot's Chrome could outlive the server** - Ctrl-C, a closed terminal or `kill -9`
+  mid-shot left a headless copy of the user's own Chrome running for ever, and on macOS
+  such a ghost can swallow every link the machine opens. The browser is now driven over
+  Chrome's debugging pipe, so it dies with the server however the server dies, and none
+  exists between shots. The first `marver dev` after upgrading kills the ghosts and
+  removes the profiles earlier versions left in the temp dir.
+- Chrome starts and opens tabs several times faster: a stale `--disable-gpu` flag was
+  costing ~0.5 s per start and per tab.
+
 ## 0.16.1 - 2026-09-03
 
 ### Added

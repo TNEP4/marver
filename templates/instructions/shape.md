@@ -183,7 +183,8 @@ of described imagery every time (the full asset rules: instructions/craft.md,
   never set a frame height - the frame auto-heights to fit everything the canvas
   measures. Marver renders images crisp and zooms fast, so fine detail is one zoom away.
 - Judge on the RENDER, not the props: after composing, look at the actual frame
-  (screenshot it if you can) and adjust the per-row count until it reads well. "The code
+  (`npx marver shot --scene <scene>` shoots the whole scene in one go; instructions/jam.md
+  has the shell-less way) and adjust the per-row count until it reads well. "The code
   says they're the same width" proves nothing.
 
 ## When Shape ends

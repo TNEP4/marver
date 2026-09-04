@@ -1,38 +1,30 @@
 /**
- * Frame screenshots without a dependency - the system's own Chrome, driven over CDP
- * (Node 22 ships a WebSocket client, so this is ~zero cost).
+ * Frame screenshots without a dependency - the system's own Chrome, driven over CDP through
+ * its debugging pipe (cdp.ts has the transport and the lifetime story).
  *
  * This exists for Live Jam's verify loop: a jam agent has no shell (deliberately - the job
  * packet carries untrusted text), so "look at what you built" must be a capability the dev
- * server provides, not a command the agent runs. The /api/shot endpoint calls this; the
- * `marver shot` CLI and a plain WebFetch both reach that endpoint.
+ * server provides, not a command the agent runs. The /api/shot and /api/shots endpoints call
+ * this; the `marver shot` CLI and the file-drop inbox both reach those.
  *
  * Readiness is DETERMINISTIC, not a sleep: poll until #root (or body, for html frames) has
  * children, then wait for fonts. A frame that never mounts fails with the page's own
  * exception text - which is exactly what the agent needs to fix it.
+ *
+ * One browser per OPERATION (a shot, a batch, a poster), N frames at a time inside a batch,
+ * and the browser closed in the operation's finally - never idle, never shared, never
+ * outliving the server.
  */
 import { slideSize } from '../client/const.ts'
-import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
+import { Browser, CHROMES, findChrome, PROFILE_PREFIXES } from './cdp.ts'
 
-const CHROMES = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-  '/usr/bin/google-chrome-stable', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-]
-
-/** The browser binary to drive, or null. MARVER_CHROME overrides; otherwise first known install. */
-export function findChrome(): string | null {
-  const env = process.env.MARVER_CHROME
-  if (env) return existsSync(env) ? env : null
-  return CHROMES.find((p) => existsSync(p)) ?? null
-}
+export { findChrome }
 
 /** `scale` = device pixels per CSS px (1-4; default 2). The full-height path may step it
  *  DOWN (never up) to fit Chrome's capture surface - the result reports what was used. */
@@ -43,7 +35,7 @@ export interface ShotRequest {
   clip?: string
 }
 export type ShotResult =
-  | { ok: true; width: number; height: number; scale: number; truncated?: boolean; note?: string }
+  | { ok: true; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string }
   | { ok: false; error: string }
 
 const slug = (frameId: string) => frameId.replace(/\//g, '--')
@@ -91,8 +83,9 @@ export async function shootFrame(opts: {
   origin: string
   scale?: number          // 1-4, default 2; anything else is refused
   size?: SizeOverride     // the canvas node's size, when the caller wants "what the node shows"
-}): Promise<{ ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; note?: string } | { ok: false; error: string }> {
-  const { root, viewports, frameId, theme, origin, scale = 2, size } = opts
+  browser?: Browser       // a batch's browser: the frame renders in it instead of starting its own
+}): Promise<FrameShot> {
+  const { root, viewports, frameId, theme, origin, scale = 2, size, browser } = opts
   if (!/^[a-z0-9-]+$/i.test(theme)) return { ok: false, error: 'invalid theme' }
   if (!Number.isInteger(scale) || scale < 1 || scale > 4) return { ok: false, error: 'invalid scale' }
   let manifest: { frames?: { id: string; file: string; kind: string; viewport?: string; contentWidth?: number; slide?: boolean }[] } = {}
@@ -127,7 +120,8 @@ export async function shootFrame(opts: {
   const target = frame.kind === 'html'
     ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
     : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frameId)}&theme=${encodeURIComponent(theme)}`
-  const result = await capture({ url: target, width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale })
+  const req: ShotRequest = { url: target, width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }
+  const result = browser ? await captureIn(req, browser) : await capture(req)
   if (!result.ok) { rmSync(tmp, { force: true }); return result }
   const rel = relFor(result.scale)
   // rename, with the Windows replace fallback the boards writer uses; the temp never outlives this call
@@ -139,7 +133,113 @@ export async function shootFrame(opts: {
     }
   } catch (err) { return { ok: false, error: `could not write the shot - ${(err as Error).message}` } }
   finally { rmSync(tmp, { force: true }) }
-  return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.note ? { note: result.note } : {}) }
+  return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.unsettled ? { unsettled: true } : {}), ...(result.note ? { note: result.note } : {}) }
+}
+
+export type FrameShot =
+  | { ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string }
+  | { ok: false; error: string }
+
+/** What a batch asks for: explicit ids, one scene, or everything the manifest lists. */
+export type FrameSelector = { frames: unknown } | { scene: unknown } | { all: unknown }
+export const BATCH_MAX = 200
+
+/** Turn a selector into the ordered list of frame ids to shoot, or an error with the HTTP
+ *  status it deserves. Ids the manifest does not know are kept (each fails its own entry);
+ *  duplicates, an empty or oversize list, and a scene nobody belongs to are refused whole. */
+export function resolveFrames(root: string, sel: Record<string, unknown>): { ok: true; frames: string[] } | { ok: false; status: number; error: string } {
+  const keys = ['frames', 'scene', 'all'].filter((k) => sel[k] !== undefined)
+  if (keys.length !== 1) return { ok: false, status: 400, error: 'name exactly one of frames (an array of ids), scene (a name) or all (true)' }
+  let manifest: { frames?: { id: string }[] } = {}
+  try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
+  const listed = (manifest.frames ?? []).map((f) => f.id)   // manifest order: sorted by id, as the sidebar lists them
+  let frames: string[]
+  if (keys[0] === 'frames') {
+    if (!Array.isArray(sel.frames) || !sel.frames.every((f) => typeof f === 'string' && f)) return { ok: false, status: 400, error: 'frames must be an array of frame ids' }
+    frames = sel.frames as string[]
+    if (new Set(frames).size !== frames.length) return { ok: false, status: 400, error: 'frames lists the same id twice' }
+  } else if (keys[0] === 'scene') {
+    if (typeof sel.scene !== 'string' || !sel.scene) return { ok: false, status: 400, error: 'scene must be a scene name' }
+    frames = listed.filter((id) => id.startsWith(`${sel.scene}/`))
+    if (!frames.length) return { ok: false, status: 404, error: `no frames in scene "${sel.scene}" - scenes are in design/manifest.json` }
+  } else {
+    if (sel.all !== true) return { ok: false, status: 400, error: 'all must be true' }
+    frames = listed
+  }
+  if (!frames.length) return { ok: false, status: 400, error: 'nothing to shoot' }
+  if (frames.length > BATCH_MAX) return { ok: false, status: 400, error: `${frames.length} frames - a batch takes ${BATCH_MAX} at most` }
+  return { ok: true, frames }
+}
+
+export type BatchEntry = { frame: string } & FrameShot
+
+/** Shoot many frames as ONE operation: one browser, `shotConcurrency()` frames at a time
+ *  inside it, results in the order asked. Every entry answers for itself - an unknown id or a
+ *  frame that throws fails alone; only a browser that could not start fails the whole batch
+ *  (the thrown error, for the caller to turn into a 503). Once work has begun a browser that
+ *  dies fails the remaining entries individually. */
+export async function shootBatch(opts: {
+  root: string
+  viewports: Record<string, { width: number; height: number }>
+  frames: string[]
+  theme: string
+  origin: string
+  scale?: number
+}): Promise<BatchEntry[]> {
+  const { root, viewports, frames, theme, origin, scale } = opts
+  return withBrowser('shot', (b) => pool(shotConcurrency(), frames, async (frameId) => {
+    const r = await shootFrame({ root, viewports, frameId, theme, origin, scale, browser: b }).catch((e) => ({ ok: false as const, error: (e as Error).message }))
+    return { frame: frameId, ...r }
+  }))
+}
+
+/** Kill the headless browsers earlier versions left behind (they outlived their server, and
+ *  on macOS such a ghost of the user's own Chrome can swallow every link the machine opens),
+ *  then remove the profile directories nothing references. Runs once at `dev()` start,
+ *  best-effort, never throws. Orphaned is the rule: a live browser of ANY running marver
+ *  server has that server as its parent, and ours die with it - so a headless Chrome on one
+ *  of our profiles whose parent is 1 can only be a leak. darwin and linux (`ps -o`); anywhere
+ *  else this is a no-op. */
+export function sweepGhosts(log: (line: string) => void = () => {}): void {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return
+  const tmp = tmpdir()
+  const bins = new Set([...CHROMES, ...(process.env.MARVER_CHROME ? [process.env.MARVER_CHROME] : [])])
+  const profileOf = (cmd: string): string | null => {
+    const m = /(?:^|\s)--user-data-dir=(\S+)/.exec(cmd)
+    if (!m) return null
+    const dir = m[1]
+    return PROFILE_PREFIXES.some((pre) => dir.startsWith(join(tmp, pre))) ? dir : null
+  }
+  let rows: { pid: number; ppid: number; cmd: string }[] = []
+  try {
+    rows = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' }).split('\n').map((l) => {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l)
+      return m ? { pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] } : null
+    }).filter((r): r is { pid: number; ppid: number; cmd: string } => !!r)
+  } catch { return }   // a ps without -o (busybox): nothing we can do safely
+  const referenced = new Set<string>()
+  const ghosts: { pid: number; dir: string }[] = []
+  for (const r of rows) {
+    const dir = profileOf(r.cmd)
+    if (!dir) continue
+    referenced.add(dir)
+    const exe = r.cmd.split(' --')[0]
+    if (r.ppid === 1 && r.cmd.includes('--headless') && [...bins].some((b) => exe === b || exe.startsWith(`${b} `))) ghosts.push({ pid: r.pid, dir })
+  }
+  for (const g of ghosts) {
+    try { process.kill(g.pid, 'SIGKILL'); log(`shot: removed a headless browser left by an earlier version (pid ${g.pid})`) } catch { /* not ours, or gone */ }
+    referenced.delete(g.dir)
+  }
+  // profiles nothing references and that have sat for a while - a browser that is starting
+  // right now has a fresh directory
+  let names: string[] = []
+  try { names = readdirSync(tmp).filter((n) => PROFILE_PREFIXES.some((pre) => n.startsWith(pre))) } catch { return }
+  for (const n of names) {
+    const dir = join(tmp, n)
+    if (referenced.has(dir)) continue
+    try { if (Date.now() - statSync(dir).mtimeMs < 10 * 60_000) continue } catch { continue }
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* someone else's, on a shared /tmp */ }
+  }
 }
 
 /** A crashed process can leave a `.tmp.png` behind; sweep them (older than a minute, so an in-
@@ -157,17 +257,48 @@ function sweepTemps(dir: string) {
   } catch { /* dir vanished */ }
 }
 
-/** One capture at a time PER LANE: shots are seconds apart at most, and a Chrome per
- *  concurrent request would stampede the machine mid-jam. Posters have their own lane - a
- *  frame being shot may ask for its poster mid-render, and on the shot's lane that request
- *  would wait for the very shot that is waiting for it. */
+/** One OPERATION at a time PER LANE, and one browser per operation. An operation is a shot,
+ *  a batch or a poster: it starts its browser, runs its frames through it (a batch runs N at
+ *  once inside), and closes it in the finally - no browser is ever shared between operations
+ *  or left idle. Operations on a lane queue as shots always did, so two operations never
+ *  write the same output at the same time. Posters have their own lane - a frame being shot
+ *  may ask for its poster mid-render, and on the shot's lane that request would wait for the
+ *  very shot that is waiting for it. */
 const chains = new Map<string, Promise<unknown>>()
 
-export function capture(req: ShotRequest, lane = 'shot'): Promise<ShotResult> {
+export function withBrowser<T>(lane: 'shot' | 'poster', fn: (b: Browser) => Promise<T>): Promise<T> {
+  const run = async () => {
+    const b = await Browser.launch()
+    try { return await fn(b) } finally { await b.close() }
+  }
   const prev = chains.get(lane) ?? Promise.resolve()
-  const run = prev.then(() => captureNow(req), () => captureNow(req))
-  chains.set(lane, run)
-  return run
+  const next = prev.then(run, run)
+  chains.set(lane, next)
+  return next
+}
+
+/** One frame as its own operation (a poster, the shell's copy-as-image, a single `shot`). */
+export function capture(req: ShotRequest, lane: 'shot' | 'poster' = 'shot'): Promise<ShotResult> {
+  return withBrowser(lane, (b) => captureIn(req, b)).catch((e) => ({ ok: false as const, error: (e as Error).message }))
+}
+
+/** How many frames a batch renders at once inside its browser. Six at most by default, fewer
+ *  on a small machine: the settle and grow passes are wall-clock budgets, and past a few
+ *  concurrent renderers a frame starts spending its budget waiting for CPU instead of for its
+ *  own content (measured 2026-09-04: 31 frames, no unsettled capture up to 8 on 18 cores). */
+export function shotConcurrency(): number {
+  const n = Number(process.env.MARVER_SHOT_CONCURRENCY)
+  if (Number.isInteger(n) && n >= 1 && n <= 16) return n
+  return Math.max(2, Math.min(6, availableParallelism() - 2))
+}
+
+/** Run `fn` over `items` with at most `n` in flight; results in input order. */
+export async function pool<T, R>(n: number, items: T[], fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const worker = async () => { for (;;) { const i = next++; if (i >= items.length) return; results[i] = await fn(items[i], i) } }
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker))
+  return results
 }
 
 /** The capture budget. Chrome's surface tops out near 16384 device px per SIDE, and a bitmap is
@@ -180,61 +311,21 @@ const fits = (w: number, h: number, dsf: number) => w * dsf <= SURFACE && h * ds
 /** The tallest CSS height a full-height capture of `width` can hold at `dsf`. */
 const capFor = (width: number, dsf: number) => Math.max(1, Math.min(Math.floor(SURFACE / dsf), Math.floor(AREA / (width * dsf * dsf))))
 
-async function captureNow({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest): Promise<ShotResult> {
+async function captureIn({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
   // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
   let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
   while (scale > 1 && !fits(width, height, scale)) scale--
-  const bin = findChrome()
-  if (!bin) return { ok: false, error: 'no Chrome/Chromium found - install one or set MARVER_CHROME to a browser binary' }
 
-  const profile = mkdtempSync(join(tmpdir(), 'mv-shot-'))
-  const chrome = spawn(bin, [
-    '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', `--user-data-dir=${profile}`, '--remote-debugging-port=0', 'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] })
-
-  let ws: WebSocket | null = null
+  // This shot's identity inside a browser it may share with other frames of a batch: its
+  // sends carry it, so the watchdog can settle THIS shot's calls and nothing else's.
+  const me = {}
   let watchdog: ReturnType<typeof setTimeout> | undefined
+  let targetId: string | undefined
+  let sessionId: string | undefined
+  let off = () => {}
   try {
-    const wsUrl = await new Promise<string>((resolve, reject) => {
-      let buf = ''
-      const to = setTimeout(() => reject(new Error('the browser did not expose devtools in time')), 15_000)
-      chrome.stderr?.on('data', (d: Buffer) => {
-        buf += d
-        const m = /DevTools listening on (ws:\/\/\S+)/.exec(buf)
-        if (m) { clearTimeout(to); resolve(m[1]) }
-      })
-      chrome.on('error', (e) => { clearTimeout(to); reject(e) })
-      chrome.on('exit', () => { clearTimeout(to); reject(new Error('the browser exited before exposing devtools')) })
-    })
-
-    ws = new WebSocket(wsUrl)
-    await new Promise<void>((res, rej) => { ws!.onopen = () => res(); ws!.onerror = () => rej(new Error('devtools socket failed')) })
-
-    let seq = 0
-    const pending = new Map<number, (m: any) => void>()
     let lastException = ''
-    // If the socket dies (Chrome crashed, or the watchdog killed it), settle every in-flight
-    // send so no `await send(...)` hangs forever - a hung capture would otherwise wedge the
-    // whole serialized queue (every later shot waits behind it for the rest of the session).
-    const failPending = (why: string) => { for (const [id, cb] of pending) { pending.delete(id); cb({ error: { message: why } }) } }
-    ws.onclose = () => failPending('devtools socket closed')
-    ws.onerror = () => failPending('devtools socket error')
-    ws.onmessage = (e) => {
-      let m: any
-      try { m = JSON.parse(String(e.data)) } catch { return }   // CDP is always JSON; ignore anything else
-      if (m.id && pending.has(m.id)) { pending.get(m.id)!(m); pending.delete(m.id) }
-      if (m.method === 'Runtime.exceptionThrown') {
-        const d = m.params?.exceptionDetails
-        lastException = String(d?.exception?.description ?? d?.text ?? '').split('\n')[0]
-      }
-    }
-    const send = (method: string, params: Record<string, unknown> = {}, sessionId?: string) =>
-      new Promise<any>((res, rej) => {
-        const id = ++seq
-        pending.set(id, (m) => m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result))
-        try { ws!.send(JSON.stringify({ id, method, params, sessionId })) } catch (e) { pending.delete(id); rej(e as Error) }
-      })
+    const send = (method: string, params: Record<string, unknown> = {}, sid?: string) => b.send(method, params, sid, me)
     // Per-call deadline: the outer watchdog only fires at timeoutMs+15s, so a single hung CDP
     // call (a wedged measure, a stuck setDeviceMetricsOverride/captureScreenshot) would hold the
     // SERIALIZED shot queue for that whole window. Bound each call in the full-height settle path.
@@ -248,15 +339,23 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     // any pending send. Covers the CDP calls that have no timeout of their own (setup, the
     // final captureScreenshot) - the readiness loop below bounds itself, these do not.
     const hardBy = Date.now() + timeoutMs + 15_000
-    watchdog = setTimeout(() => { try { chrome.kill('SIGKILL') } catch { /* already gone */ } }, timeoutMs + 15_000)
+    watchdog = setTimeout(() => b.abort(me, 'the shot timed out'), timeoutMs + 15_000)
     // Everything discretionary (settles, grow passes) is budgeted against the watchdog with this
     // reserve kept back for the REQUIRED final resize (<=5s) and capture (<=15s), so a frame that
     // took most of `timeoutMs` to mount can never push the capture into the kill.
     const RESERVE = 21_000
     const discretionary = () => hardBy - RESERVE - Date.now()
 
-    const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
-    const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
+    targetId = (await send('Target.createTarget', { url: 'about:blank' })).targetId as string
+    sessionId = (await send('Target.attachToTarget', { targetId, flatten: true })).sessionId as string
+    // A throw in THIS frame, keyed by its session - a batch shares the browser, so an
+    // unkeyed listener would report frame A's exception on frame B.
+    off = b.on((m) => {
+      if (m.sessionId === sessionId && m.method === 'Runtime.exceptionThrown') {
+        const d = m.params?.exceptionDetails
+        lastException = String(d?.exception?.description ?? d?.text ?? '').split('\n')[0]
+      }
+    })
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false }, sessionId)
     await send('Page.enable', {}, sessionId)
     await send('Runtime.enable', {}, sessionId)
@@ -323,7 +422,9 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       if (Date.now() < by) await wait(Math.min(ok ? 150 : 250, left()))   // decode margin (images paint after `complete`)
       return ok
     }
-    await settle(3000)
+    // For a fixed frame this IS the final settle; a content frame settles again in its
+    // capture viewport below and that verdict replaces this one.
+    let settled = await settle(3000)
 
     // A frame that THREW renders the frame-host's error card - which has DOM, so readiness
     // above passed. The host stamps the crash on window.__mvFrameError; surface it so an agent
@@ -408,7 +509,7 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
       // plus a floor, so a late load never ships half-drawn. img-lod DEBOUNCES 220ms before
       // enqueuing a sharpen, so the floor covers that too.
       await wait(Math.min(300, Math.max(0, discretionary())))
-      await settle(Math.max(1200, settleDeadline - Date.now()))
+      settled = await settle(Math.max(1200, settleDeadline - Date.now()))
       // a late load in the final viewport (a below-fold image without reserved size) can still
       // grow the document: remeasure once and, within the cap, take the taller box
       const m2 = await measureH()
@@ -416,7 +517,7 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
         if (m2 <= cap) capH = m2
         else { capH = cap; truncated = true; note = `frame is ${m2}px tall; captured the top ${cap}px - split it or reduce its height` }
         await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: scale, mobile: false }, 5000)
-        await settle(600)
+        settled = (await settle(600)) || settled
       }
     }
 
@@ -437,14 +538,19 @@ async function captureNow({ url, width, height, out, fullHeight = false, timeout
     // is legitimately a few seconds) so a hung capture can't wedge the queue either.
     const shot = await sendD('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: capX, y: capY, width: capW, height: capH, scale: 1 } }, 15000)
     writeFileSync(out, Buffer.from(String(shot.data), 'base64'))
-    return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(note ? { note } : {}) }
+    // Out of settle budget (under a wide batch, a slow image, a heavy chart): the capture still
+    // ships, but it SAYS so - an agent reading the JSON must not take a half-drawn frame as final.
+    const unsettled = !settled
+    if (unsettled && !note) note = 'captured before the frame settled - images, charts or diagrams may be missing; shoot it alone or lower MARVER_SHOT_CONCURRENCY'
+    return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(unsettled ? { unsettled: true } : {}), ...(note ? { note } : {}) }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   } finally {
     if (watchdog) clearTimeout(watchdog)
-    try { ws?.close() } catch { /* already gone */ }
-    chrome.kill('SIGKILL')
-    // rm after the process actually exits - Chrome flushes its profile on the way down
-    chrome.once('exit', () => { try { rmSync(profile, { recursive: true, force: true }) } catch { /* temp cleanup only */ } })
+    off()
+    // Close THIS shot's tab; the browser belongs to the operation and closes with it. Bounded,
+    // best-effort: a wedged target must not hold the batch, and the browser's own close is the
+    // backstop for a Chrome that stopped answering.
+    if (targetId && !b.dead) await Promise.race([b.send('Target.closeTarget', { targetId }).catch(() => {}), new Promise((r) => setTimeout(r, 2000))])
   }
 }

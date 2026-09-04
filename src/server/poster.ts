@@ -56,10 +56,21 @@ html,body{margin:0;background:#000}#root video{display:block}
 
 /** Render `<clip>.poster.png` for a clip under design/assets/. Idempotent: an existing
  *  poster (authored or generated) is left alone. */
-export async function ensurePoster(assetsDir: string, src: string): Promise<{ ok: true; path: string; width: number; height: number; generated: boolean } | { ok: false; error: string }> {
+export type PosterResult = { ok: true; path: string; width: number; height: number; generated: boolean } | { ok: false; error: string }
+/** Single-flight by output path: N frames of one batch referencing the same clip ask at the
+ *  same moment, and each would otherwise pass the "exists" check and render the same poster. */
+const rendering = new Map<string, Promise<PosterResult>>()
+export function ensurePoster(assetsDir: string, src: string): Promise<PosterResult> {
+  const out = join(assetsDir, posterNameFor(src))
+  const live = rendering.get(out)
+  if (live) return live
+  const run = ensurePosterNow(assetsDir, src, out).finally(() => rendering.delete(out))
+  rendering.set(out, run)
+  return run
+}
+async function ensurePosterNow(assetsDir: string, src: string, out: string): Promise<PosterResult> {
   if (!isLocalClip(src)) return { ok: false, error: `not a local clip: ${src}` }
   const clip = join(assetsDir, src)
-  const out = join(assetsDir, posterNameFor(src))
   if (existsSync(out)) return { ok: true, path: out, width: 0, height: 0, generated: false }
   if (!existsSync(clip)) return { ok: false, error: `design/assets/${src} does not exist` }
   // Containment by REAL path, both ways: the clip Chrome will read (a symlink under

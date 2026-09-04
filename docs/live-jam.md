@@ -95,13 +95,24 @@ obvious one:
 
 - **The file-drop inbox** (works for every agent, including Claude Code, which has no shell
   and whose WebFetch refuses localhost). The agent writes
-  `design/.local/shots/<slug>.request.json` with `{"frame":"<id>","theme":"<t>"}`; the dev
-  server renders and writes `<slug>.result.json` with the PNG path or an error, which the
-  agent Reads.
-- **`npx marver shot <frame> [--scale 1-4]`** / `GET /api/shot?frame=<id>&theme=<t>&scale=<n>`
-  for humans and shell-ful agents - the same renderer, one line. Default 2x; `--scale 4` for a
-  print-quality still (a slide comes back 5120×2880). A frame too tall for the asked scale steps
-  down and says so in `note`; the file name carries the scale actually used (`…@4x.png`).
+  `design/.local/shots/<slug>.request.json` with `{"frame":"<id>","theme":"<t>"}` - or
+  `{"scene":"<name>"}`, `{"frames":[...]}`, `{"all":true}` for a batch; the dev server renders
+  and writes `<slug>.result.json` with the PNG path or an error (a batch: `results`, one entry
+  per frame), which the agent Reads.
+- **`npx marver shot <frame ...> | --scene <name> | --all [--scale 1-4] [--json]`** /
+  `GET /api/shot?frame=<id>&theme=<t>&scale=<n>` / `POST /api/shots {frames|scene|all, theme,
+  scale}` for humans and shell-ful agents - the same renderer, one line. A batch is ONE
+  operation: one headless browser, `MARVER_SHOT_CONCURRENCY` frames at a time inside it
+  (default up to 6, sized to the machine), so a scene costs about what a frame does. Default
+  2x; `--scale 4` for a print-quality still (a slide comes back 5120×2880). A frame too tall
+  for the asked scale steps down and says so in `note`; the file name carries the scale
+  actually used (`…@4x.png`). A frame that ran out of settle budget still ships, marked
+  `unsettled` with a note.
+- **The browser's life.** The headless Chrome exists only while an operation runs - it is
+  driven over Chrome's own debugging pipe, so it dies with the dev server however the server
+  dies (Ctrl-C, a closed terminal, `kill -9`), and none is kept between shots. `MARVER_CHROME`
+  picks the binary; pointing it at a Chrome for Testing or Chromium build makes the shot
+  browser a different app from your own, which some people prefer on macOS.
   The canvas's **copy as image** (`i` / `⇧i`, the images-square toolbar button) is this same
   renderer with `format=png`, so what a designer pastes and what an agent shoots is one picture.
 

@@ -98,6 +98,15 @@ file - the dev server renders it and writes the PNG back:
 3. **Read the PNG** at that `path` and check it with your own eyes: content present, both
    themes if you touched theming, nothing clipped. Fix and re-shoot; files overwrite in place.
 
+**Several frames? Ask for them in ONE request** - a whole scene renders in one browser,
+several frames at a time, for about the cost of one shot. Write any `<name>.request.json`
+with `{"scene":"checkout"}`, or `{"frames":["checkout/cart","checkout/summary"]}`, or
+`{"all":true}` (plus `"theme"`, `"scale"` as you like). The result is
+`{"ok":true,"results":[{"frame":"checkout/cart","ok":true,"path":"..."},...]}`, one entry
+per frame in the order asked; a frame that failed carries its own `"ok":false,"error"` and
+the others still ship. A frame that ran out of time to settle (a slow image, a heavy chart)
+comes back with `"unsettled":true` and a `note` - shoot that one alone before you judge it.
+
 The `result.json` is the universal signal - it works even when you cannot see images.
 `"ok":false` means the frame did not render: the `error` carries the reason (a runtime
 throw shows the frame's own exception, "the frame rendered an error - ..."; an unreachable
@@ -108,9 +117,12 @@ shot at its natural width and its FULL height, so a wide layout or a long spec r
 full, not cropped. A frame tall enough to hit the capture cap comes back with
 `"truncated":true` and a `note` - split it or shorten it and re-shoot.
 
-(If you DO have a shell - `npx marver shot <scene/frame> [--theme dark] [--scale 4]` is the
-same thing in one line, printing the PNG path. `--scale 4` is for a print-quality still - the
-human's "copy as image" on the canvas uses this same renderer, so you both see one picture.)
+(If you DO have a shell - `npx marver shot <scene/frame ...>`, `npx marver shot --scene
+<name>` or `--all` (`[--theme dark] [--scale 4] [--json]`) is the same thing in one line,
+printing one PNG path per line; a failed frame goes to stderr and the exit code is 1. After
+writing a scene, shoot the scene, not the frames. `--scale 4` is for a print-quality still -
+the human's "copy as image" on the canvas uses this same renderer, so you both see one
+picture.)
 
 Verification is best-effort, not a gate. If your model cannot read images, or the result
 reports no Chrome on the machine, still act on `ok`/`error` - and say plainly in your reply

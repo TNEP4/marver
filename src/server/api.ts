@@ -427,6 +427,36 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return res.end(png)
       }
 
+      // ---- shots: many frames as ONE operation - one browser, several frames at a time inside
+      // it, one entry per frame in the order asked. The verify loop's "show me the scene". Same
+      // gate as `shot`. 400 for a malformed ask, 404 for an empty scene, 503 when no browser could
+      // start; once work has begun the answer is 200 and every entry speaks for itself.
+      if (path === 'shots' && req.method === 'POST') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let parsed: unknown
+        try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return json(res, 400, { error: 'expected an object' })
+        const body = parsed as Record<string, unknown>
+        const theme = body.theme === undefined ? 'light' : body.theme
+        if (typeof theme !== 'string' || !/^[a-z0-9-]+$/i.test(theme)) return json(res, 400, { error: 'invalid theme' })
+        const scale = body.scale === undefined ? undefined : body.scale
+        if (scale !== undefined && !(Number.isInteger(scale) && (scale as number) >= 1 && (scale as number) <= 4)) return json(res, 400, { error: 'invalid scale' })
+        const { resolveFrames, shootBatch } = await import('./shot.ts')
+        const sel = resolveFrames(root, body)
+        if (!sel.ok) return json(res, sel.status, { error: sel.error })
+        const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
+        try {
+          const results = await shootBatch({ root, viewports: opts.viewports ?? {}, frames: sel.frames, theme, origin, scale: scale as number | undefined })
+          return json(res, 200, { results })
+        } catch (err) {
+          return json(res, 503, { error: (err as Error).message })
+        }
+      }
+
       // ---- poster: render `<clip>.poster.png` for a local video that has none (the Video
       // primitive asks when its conventional poster 404s). Owner-gated like shot: it spawns a
       // browser and writes into design/assets/. Idempotent - an existing file is never redone.

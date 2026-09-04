@@ -1,5 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
@@ -304,19 +304,41 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
           inFlight.add(file)
           setTimeout(async () => {   // let the write settle before reading
             try {
-              let spec: { frame?: unknown; theme?: unknown }
-              try { spec = JSON.parse(readFileSync(reqPath, 'utf8')) } catch { return }   // partial/gone
+              // Read the bytes ONCE and remember them: a batch takes a while, and an agent may
+              // overwrite the request meanwhile - that newer request must not be deleted with the
+              // old one's result. Delete only what was processed; a changed file runs again.
+              let raw: string
+              let spec: Record<string, unknown>
+              try { raw = readFileSync(reqPath, 'utf8'); spec = JSON.parse(raw) } catch { return }   // partial/gone
+              if (!spec || typeof spec !== 'object') return
               const base = file.replace(/\.request\.json$/, '')
               const resultPath = join(inbox, `${base}.result.json`)
-              const frameId = typeof spec.frame === 'string' ? spec.frame : ''
               const theme = typeof spec.theme === 'string' ? spec.theme : 'light'
+              const scale = Number.isInteger(spec.scale) && (spec.scale as number) >= 1 && (spec.scale as number) <= 4 ? spec.scale as number : undefined
               const o = origin()
-              const write = (r: unknown) => { try { writeFileSync(resultPath, JSON.stringify(r, null, 2)) } catch { /* ignore */ } }
+              // atomic: an agent polling the result never reads it half-written
+              const write = (r: unknown) => {
+                const tmp = join(inbox, `.${base}.${process.pid}.tmp`)
+                try { writeFileSync(tmp, JSON.stringify(r, null, 2)); renameSync(tmp, resultPath) } catch { try { rmSync(tmp, { force: true }) } catch { /* ignore */ } }
+              }
+              const done = () => { try { if (readFileSync(reqPath, 'utf8') === raw) rmSync(reqPath, { force: true }) } catch { /* gone, or leave the newer one for the next tick */ } }
               if (!o) { write({ ok: false, error: 'dev server has no address yet - retry' }); return }
-              const { shootFrame } = await import('./shot.ts')
-              const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: o })
-              write(r)
-              try { rmSync(reqPath, { force: true }) } catch { /* leave it; next write overwrites result */ }
+              const { shootFrame, shootBatch, resolveFrames } = await import('./shot.ts')
+              if (typeof spec.frame === 'string' || (spec.frames === undefined && spec.scene === undefined && spec.all === undefined)) {
+                const frameId = typeof spec.frame === 'string' ? spec.frame : ''
+                write(await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: o, scale }))
+                done()
+                return
+              }
+              // a batch: {frames:[...]} | {scene:"name"} | {all:true} - one browser, several at a time
+              if (!/^[a-z0-9-]+$/i.test(theme)) { write({ ok: false, error: 'invalid theme' }); done(); return }
+              const sel = resolveFrames(root, spec)
+              if (!sel.ok) { write({ ok: false, error: sel.error }); done(); return }
+              try {
+                const results = await shootBatch({ root, viewports: config.viewports, frames: sel.frames, theme, origin: o, scale })
+                write({ ok: true, results })
+              } catch (err) { write({ ok: false, error: (err as Error).message }) }
+              done()
             } finally { inFlight.delete(file) }
           }, 60)
         }

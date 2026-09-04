@@ -246,6 +246,9 @@ export async function dev(root: string, portFlag?: number) {
   // concurrent projects can never be confused (a tab bookmarked to one silently serving the other).
   if (picked.fellBack) console.log(`\n  port ${desiredPort} is in use - serving "${projectName}" on ${port} instead`)
   console.log(`\n  ${NAME} · ${projectName} → http://localhost:${port}/\n`)
+  // headless browsers and profiles an earlier version left behind (they outlived their
+  // server; on macOS such a ghost can swallow the machine's link opens) - once, off the path
+  setTimeout(async () => { try { (await import('./shot.ts')).sweepGhosts((m) => console.log(`  ${m}`)) } catch { /* best-effort */ } }, 0)
 
   // Staleness signal: the new code is running, but the managed instructions on disk may
   // predate it (e.g. this workspace was scaffolded before jam.md shipped). Distinct from the
