@@ -14,6 +14,7 @@ import { Component, createElement, useEffect, useRef, useState, type ComponentTy
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { frameFile, frames, layoutChain, layouts, providers } from '../frame-host/registry.ts'
+import { SLIDE_DOC_CSS } from '../const.ts'
 import { createInspect } from '../frame-host/inspect.js'
 
 const params = new URLSearchParams(location.search)
@@ -60,6 +61,14 @@ if (slidesMode) {
   el.setAttribute('data-mv-deck', '')
   el.textContent = DECK_CSS
   document.head.appendChild(el)
+}
+// the slide document baseline, keyed on data-mv-slide (set per mounted frame): any mode can
+// show a slide, and its geometry must not depend on what the stage showed before
+{
+  const base = document.createElement('style')
+  base.setAttribute('data-mv-slide-doc', '')
+  base.textContent = SLIDE_DOC_CSS
+  document.head.appendChild(base)
 }
 const reducedMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
 document.documentElement.dataset.theme = bootTheme

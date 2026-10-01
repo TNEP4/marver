@@ -292,6 +292,18 @@ describe('slides in a real published browser', () => {
     expect(await browser!.eval(tab, `[${ifr}.clientWidth, ${ifr}.clientHeight, Math.round(${ifr}.getBoundingClientRect().height)]`)).toEqual([1280, 800, 1000])
   })
 
+  skippable('a slide met outside the deck is still its stage: focus with a phone device fits the fixed stage', async () => {
+    const tab = await browser!.tab({ width: 1200, height: 900 })
+    await browser!.go(tab, `${base}/#/f/deck/01-open?device=mobile`)
+    const ifr = `document.querySelector('.sh-play .dev iframe')`
+    await browser!.until(tab, `!!${ifr}?.contentDocument?.querySelector('h1')`, 30_000)
+    // never the 390×844 device: the plain opening slide's 1280×800 stage, scaled into the window
+    expect(await browser!.eval(tab, `[${ifr}.clientWidth, ${ifr}.clientHeight]`)).toEqual([1280, 800])
+    expect(await browser!.eval(tab, `Math.round(${ifr}.getBoundingClientRect().width)`)).toBe(1104)   // (1200 - 96) / 1280
+    // and the slide document's baseline holds with no wrapper and no theme reset
+    expect(await browser!.eval(tab, `${ifr}.contentWindow.getComputedStyle(${ifr}.contentDocument.body).marginTop`)).toBe('0px')
+  })
+
   skippable('chrome: "minimal" trims to the strip + comments; the default board is its control', async () => {
     const tab = await browser!.tab({ width: 1600, height: 1000 })
     await browser!.go(tab, `${base}/#/b/trim`)

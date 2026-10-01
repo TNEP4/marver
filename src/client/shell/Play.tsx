@@ -561,19 +561,20 @@ function PlayInner() {
   // doc preset: reading width, natural document scrolling - the iframe takes the
   // window's height at min(width, 860) CSS pixels, unscaled, and scrolls itself
   const frameEntry = useStore.getState().manifest?.frames.find((f) => f.id === play.at)
-  // slides: the iframe is always the current slide's own stage (its declared viewport, else
-  // 1280×720), scaled to the window - UP as well as down, so a projector shows the deck at
-  // full size and the frame never scales itself. 'fill' fits it edge to edge, the slide
-  // device leaves room for the chrome. A slide never reflows.
-  const stage = (frameEntry && slideSize(frameEntry, CONFIG.viewports)) ?? SLIDE_INTRINSIC
-  const vp = docPreset ? { width: Math.min(win.w, 860), height: win.h }
-    : slides ? { width: stage.width, height: stage.height }
+  // a slide - in slides mode, or a slide frame met in present or focus - is a fixed stage:
+  // the iframe is always its own stage (its declared viewport, else 1280×720), scaled to the
+  // window UP as well as down, so a projector shows it at full size and the frame never scales
+  // itself. 'fill' fits it edge to edge; otherwise it leaves room for the chrome. A slide never
+  // reflows - a device preset has nothing to change on a fixed stage.
+  const stage = (frameEntry && slideSize(frameEntry, CONFIG.viewports)) ?? (slides ? SLIDE_INTRINSIC : null)
+  const vp = stage ? { width: stage.width, height: stage.height }
+    : docPreset ? { width: Math.min(win.w, 860), height: win.h }
     : fill ? { width: win.w, height: win.h }
     : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
-  const scale = docPreset ? 1
-    : slides ? Math.max(0.05, fill ? Math.min(win.w / vp.width, win.h / vp.height)
-      : Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height))
-    : fill ? 1
+  const scale = stage ? Math.max(0.05, fill ? Math.min(win.w / vp.width, win.h / vp.height)
+      : slides ? Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
+      : Math.min((win.w - 96) / vp.width, (win.h - 128) / vp.height))
+    : docPreset || fill ? 1
     : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   const names = Object.keys(CONFIG.viewports)
   const list = focus ? [play.at] : slides ? currentDeck() : playList()
@@ -585,7 +586,7 @@ function PlayInner() {
   // fractional sizes left subpixel seams glowing at the corners on dark frames
   const dw = Math.round(vp.width * scale)
   const dh = Math.round(vp.height * scale)
-  const deviceHint = slides ? `${vp.width} × ${vp.height} stage · ${fill ? 'edge to edge' : 'fit to the window'}`
+  const deviceHint = stage ? `${vp.width} × ${vp.height} stage · ${fill ? 'edge to edge' : 'fit to the window'}`
     : fill ? 'Fill window' : `${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
 
   return (

@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client'
 
 import './bridge.js'
 import { frameFile, frames, layoutChain, layouts, providers } from './registry.ts'
+import { SLIDE_DOC_CSS } from '../const.ts'
 
 const params = new URLSearchParams(location.search)
 const id = params.get('id') ?? ''
@@ -77,8 +78,15 @@ async function boot() {
     // No typeof gate: memo()/forwardRef() components are objects, not functions.
     // React + the ErrorBoundary validate the element type better than we can.
     if (Frame == null) return fail(`${fileKey} has no default export`)
-    // a slide frame says so on its document - content primitives size for a stage by it
-    if (frameMod.meta?.slide === true) document.documentElement.setAttribute('data-mv-slide', '')
+    // a slide frame says so on its document - content primitives size for a stage by it, and
+    // the slide baseline (SLIDE_DOC_CSS) applies, the same one the stage installs
+    if (frameMod.meta?.slide === true) {
+      document.documentElement.setAttribute('data-mv-slide', '')
+      const base = document.createElement('style')
+      base.setAttribute('data-mv-slide-doc', '')
+      base.textContent = SLIDE_DOC_CSS
+      document.head.appendChild(base)
+    }
 
     const wrappers: any[] = []
     const providerKey = Object.keys(providers)[0]

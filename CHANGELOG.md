@@ -18,7 +18,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   slide at its stage and scales the whole stage to the window, up as well as down - a projector
   shows the deck at full size without the presenter picking Fill (the Slide device never went
   past 100% before); Fill window now fits the same stage edge to edge, and slides mode offers no
-  viewport presets. A canvas node resized away from the stage shows it scaled and centred, like
+  viewport presets. A slide frame met in present or focus plays the same way - a device preset
+  never reflows it. A canvas node resized away from the stage shows it scaled and centred, like
   a thumbnail, with comment pins mapped through the same fit; published sleep textures are
   baked at the stage.
 - **A deck chooses its stage.** A slide's stage is the `viewport` it declares, when the project
@@ -41,8 +42,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **Motion hooks for any slide.** While a deck plays, the stage marks `data-sl-play` on
   `<html>`, `data-sl-entered` once each slide has arrived, and `data-mv-slide` while the
   mounted frame is a slide, so a slide's own CSS or JS animation runs when it arrives and the
-  canvas, `marver shot` and thumbnails show the finished slide. The `data-animate` entrance
-  shortcuts and the `--marver-slide-tempo` duration now work on any slide, wrapper or not.
+  canvas, `marver shot` and thumbnails show the finished slide. `useSlidePlay()` is exported from
+  `/content` for React. The `data-animate` entrance shortcuts and the `--marver-slide-tempo`
+  duration now work on any slide, wrapper or not, and every slide document shares one baseline
+  (no body margin) in every host, so its geometry never depends on what played before it.
 - **`Chart` and `Img` know a slide frame without the wrapper.** Labels take the stage scale and
   images skip the canvas's decoded-to-size path, so a slide scaled up on a projector stays sharp.
   `Chart` also reads `--marver-slide-accent`.

@@ -22,7 +22,7 @@ export function Diagram(props: Parameters<typeof DiagramRoot>[0]) { ensureStyles
 import { Slide as SlideRoot } from './slide.tsx'
 import { Chart as ChartRoot } from './chart.tsx'
 import { Video as VideoRoot } from './video.tsx'
-export { SLIDE_W, SLIDE_H } from './slide.tsx'
+export { SLIDE_W, SLIDE_H, useSlidePlay } from './slide.tsx'
 // the shared stylesheet used to ride in with Doc alone; a slide composes Img,
 // Chart, and Video straight inside <Slide> with no Doc, so every public
 // primitive installs it - once per document, idempotent

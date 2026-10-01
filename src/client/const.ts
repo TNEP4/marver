@@ -28,6 +28,11 @@ export function slideSize(
   return vp ? { width: vp.width, height: vp.height } : SLIDE_INTRINSIC
 }
 
+/** The baseline every slide document shares, in the frame host and the stage alike: the
+ *  document IS the stage, so the browser's body margin never frames it - whatever the theme
+ *  or the content primitives a previous slide injected. */
+export const SLIDE_DOC_CSS = 'html[data-mv-slide] body { margin: 0 }'
+
 /** How a slide's stage sits in a box of any other size: scaled uniformly to fit and centred.
  *  A slide never reflows - the canvas node, the player and a shot all show the same stage. */
 export function stageFit(stage: { width: number; height: number }, box: { w: number; h: number }): { k: number; ox: number; oy: number } {
