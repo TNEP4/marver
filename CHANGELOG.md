@@ -2,6 +2,48 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Changed
+
+- **A slide is any frame with `slide: true` - nothing else.** The slide type keeps everything
+  a deck needs around the frame: the badge, the board's reading order as the deck order, slides
+  mode, publishing as a deck, comments and laser in play. What goes inside is the author's own
+  code: any layout, typeface, drawing or animation. `<Slide>` is now an optional wrapper that
+  fills the frame. **Breaking for decks built on it:** it no longer pads the stage, centres the
+  content, sets the `sl-*` type sizes, freezes animation at rest or outlines an overflow, and
+  the `sl-*` classes carry no styles - such a deck still plays, and needs its own styles to look
+  as it did.
+- **The player scales the stage, not the slide.** Slides mode renders each slide at its stage
+  and scales the whole stage to the window, up as well as down - a projector shows the deck at
+  full size without the presenter picking Fill (the Slide device never went past 100% before).
+  Fill window still hands the slide the raw window, for a slide built to reflow.
+- **A deck chooses its stage.** A slide's stage is the `viewport` it declares, when the project
+  defines it - `viewport: 'laptop'` makes a 16:10 deck at 1280×800 - else 1280×720. The canvas,
+  `marver shot`, copy as image and slides mode all use it.
+- **The slides guidance teaches instead of ruling.** `instructions/slides.md` drops the fixed
+  type roles, margins, bands, spacing scale, pacing quotas, recipe budgets and the defect
+  gate. In their place: how a slide plays and animates, the deck kit a strong deck is built on
+  (a master shell, whole-slide tones, the brand's type, hairlines and labels, a drawing
+  helper), ten craft habits distilled from the best decks built on marver, the method (the
+  answer first, a slide list that tells the argument, a `_brief.md`, an Aim / Say / Visual /
+  Source note per slide) and a review that squints at the contact sheet.
+  `reference/deck-layouts.md` becomes an idea bank, with the compositions of a strong
+  consulting deck described one by one. A new project's `design/slides.md` opens with a deck
+  look shaped the same way. Existing projects keep their `design/slides.md`; `marver init`
+  updates unedited shipped instructions and stages edited ones in `design/.local/latest/`.
+
+### Added
+
+- **Motion hooks for any slide.** While a deck plays, the stage marks `data-sl-play` on
+  `<html>`, `data-sl-entered` once each slide has arrived, and `data-mv-slide` while the
+  mounted frame is a slide, so a slide's own CSS or JS animation runs when it arrives and the
+  canvas, `marver shot` and thumbnails show the finished slide. The `data-animate` entrance
+  shortcuts and the `--marver-slide-tempo` duration now work on any slide, wrapper or not.
+- **`Chart` and `Img` know a slide frame without the wrapper.** Labels take the stage scale and
+  images skip the canvas's decoded-to-size path, so a slide scaled up on a projector stays sharp.
+  `Chart` also reads `--marver-slide-accent`.
+
 ## 0.19.2 - 2026-09-09
 
 ### Fixed

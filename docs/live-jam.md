@@ -105,7 +105,7 @@ obvious one:
   scale}` for humans and shell-ful agents - the same renderer, one line. A batch is ONE
   operation: one headless browser, `MARVER_SHOT_CONCURRENCY` frames at a time inside it
   (default up to 6, sized to the machine), so a scene costs about what a frame does. Default
-  2x; `--scale 4` for a print-quality still (a slide comes back 5120×2880). A frame too tall
+  2x; `--scale 4` for a print-quality still (a 1280×720 slide comes back 5120×2880). A frame too tall
   for the asked scale steps down and says so in `note`; the file name carries the scale
   actually used (`…@4x.png`). A frame that ran out of settle budget still ships, marked
   `unsettled` with a note.

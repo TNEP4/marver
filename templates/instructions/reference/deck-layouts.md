@@ -1,186 +1,143 @@
-# Deck layouts - the atlas, the grid, the budgets
+# Deck layouts - an idea bank
 
-Required reading at step 4 of every deck. The doctrine's recipe list is the core;
-this is the full atlas grouped by the JOB a slide does, the shared stage and the
-optional banded grid recipes draw from, and the content budgets that keep type at design size. The atlas
-is a vocabulary, not a fence: when nothing fits the concept you wrote for the
-slide, compose it from divs.
+Compositions to borrow when a slide needs a shape and none comes. Nothing
+here is required and nothing has a size: the stage, the brand and the
+message decide. When no idea fits what the slide has to say, compose your
+own - that is what code is for.
 
-Words used below: **kicker** = the small-caps `sl-caption` label above a title;
-**hero** = a card's one-line headline in `sl-support`; **ghost numeral** = a large,
-low-contrast number behind or beside a card that carries order; **display** =
-`sl-display`, the one oversize role; **stat** = `sl-stat`, the row-of-figures size.
+## Seeing a deck as silhouettes
 
-## The stage and the banded grid (content box 1104×632px)
+A silhouette is the largest geometry the eye sees when the words blur. It is
+the quickest way to check a deck has range:
 
-Stage margins are asymmetric: 88px at the sides, 44px top and bottom, in px
-at every viewport. Every silhouette shares those margins and nothing else.
-The BANDED grid below is the shell for grid and split recipes that carry a
-title band; statements, heroes, fields, and bookends build their own
-geometry inside the same margins. (The doctrine's 85% rule and spacing scale
-govern every silhouette.)
+- **statement** - one sentence owns the stage.
+- **hero** - one number, quote, image or object owns most of it; the
+  headline frames it.
+- **split** - two unequal fields: one argues, one proves.
+- **grid** - a few true peers side by side.
+- **stream** - a path across the stage: time, sequence, cause, hand-off.
+- **field** - one chart, table, diagram or document fills the slide.
+- **bookend** - cover, section turn, closing: a door, not a page.
 
-- **Title band** - the top ~113px: kicker (18px, one line) over the assertion
-  (56px, one line), a hairline under. Within a visual group it sits in the
-  same place on each slide, so a travelling title lands where it left.
-- **Body band** - full width, ~438px, starting 48px below the title block.
-  Content fills at most ~372px of it. This band is the slide.
-- **Foot** - the source line (25px), 48px under the body. A takeaway bar sits
-  between them: 56px tall, 40px clear above it.
-- **Split** - text left at 43% of the width, visual right at 48%, a 9% gutter.
-  Argument reads first, proof confirms it. A `sl-assertion` in a 43% column
-  holds ~20 characters a line - write to it.
-- **Columns** - three equal at a 32px gap (~347px each); five narrow (~192px)
-  for spectrums; a 2×2 when the four cells are peers. Card padding 32px.
-- **Dominance before containers.** Decide what is biggest on the slide before
-  choosing what holds the rest. Whitespace that makes the dominant object read
-  as dominant needs no defence; a companion panel added to "fill the other
-  half" does - if it is not evidence, leave the half empty.
+A deck that reads as one silhouette with different words underneath looks
+templated. Vary by what each message needs, not by a quota.
 
-The banded skeleton, in the project's own Tailwind - for the grid and split
-slides that carry a title band, and only those:
+## Patterns from a strong consulting deck
 
-```tsx
-<Slide>
-  {/* one child at flex:1 claims the box, so the bands land in the same
-      place across a visual group; gap 48 is the title-to-body / body-to-foot step */}
-  <div className="flex-1 min-h-0 flex flex-col gap-12">
-    <header className="shrink-0">
-      <p className="sl-caption uppercase tracking-[.14em]">Retention</p>
-      <h1 className="sl-assertion mt-2">Churn halved after onboarding v2</h1>
-      <hr className="mt-5 border-0 h-px bg-black/10" />
-    </header>
-    <div className="flex-1 min-h-0 grid grid-cols-[43fr_9fr_48fr] items-center gap-8">
-      <div className="sl-body space-y-6">…argument…</div>
-      <div />
-      <Chart option={…} />
-    </div>
-    <footer className="sl-caption shrink-0">Source: product analytics, Aug 2026</footer>
-  </div>
-</Slide>
-```
+Thirteen slides for a finance pitch: a regular-weight sans at large sizes,
+paper / ink / one blue as whole-slide tones, the client's own photography,
+and a line-drawing system on a dotted grid. A shared master (the firm's
+mark, "prepared for … · confidential · date") sits on every content slide.
+The compositions, generically:
 
-## The atlas (when · skeleton · budget · anchor)
+1. **Paired cover** - ink ground, no master. Left half: the firm's mark ×
+   the client's mark, centred. Right half: one black-and-white photograph to
+   the edges.
+2. **Statement on ink** - the master, then one sentence at display size,
+   left-aligned, low on the stage. Nothing else. The opening answer.
+3. **Problem split** - left: a three-line headline, one muted paragraph, and
+   a wide line drawing under it. Right: three numbered failure modes, each a
+   hairline, a small number, a short title and one muted line.
+4. **Process with its loop** - four numbered stages along a ruled line with
+   small arrowheads; under them an SVG route drawn back from a later stage to
+   an earlier one, in the deck's one "problem" colour, captioned in the loop.
+5. **Half-bleed opportunity** - copy on the left (headline, a line, two
+   ruled benefits); a photograph bleeding off the right edge behind the
+   master, under a uniform dark scrim.
+6. **Illustrated mechanism** - headline and intro, then three columns: a
+   drawing on the shared grid, a hairline, a numbered step title, one line.
+   The accent appears in only one drawing - the step that matters most.
+7. **Principles on ink** - headline on the left; four ruled rows on the
+   right, each a small square drawing, a title and one line.
+8. **Two lanes** - a small badge naming the case, the headline, then a
+   "context" row and a "solution" row, each copy on the left and a three-step
+   drawn flow on the right.
+9. **Evidence on the accent ground** - the headline states the result; three
+   figures at display size with a short title and a line each; the source's
+   limits in small type at the foot.
+10. **Stage columns** - three numbered columns (analyse / build / operate),
+    each a title, a question and its measures, separated by hairlines.
+11. **Invitation** - a large headline and one drawing on the left; a muted
+    kicker and three ruled sections (who to invite, what to share, what you
+    get) on the right.
+12. **Photo end card** - a full-bleed photograph under a scrim, the mark
+    top left, the contact bottom left. No ask - that was the slide before.
 
-A recipe without a named anchor does not morph - hard cut. Anchors are named
-only inside a declared visual group or build; never a deck-wide fallback.
-Budgets are heuristics: the rendered 1280×720 frame and the Slide's overflow
-outline are the authority - when they disagree with a number here, the frame
-wins. And a slide that merely FITS is not done: the 85% rule is the bar.
+What makes them work together: one master, one type voice, hairlines
+instead of boxes, an accent that appears once per slide, imagery that could
+only belong to this client - and each composition chosen for its message.
+
+## The atlas, by job
+
+A wider vocabulary. Each is a starting point - change it until it fits.
 
 **Parallel points**
-- **cards** - 2-6 equal cards (kicker · hero · body), ghost numerals for order,
-  at most ONE accented card for the emphasised option. Budget: 2-3 cards carry a
-  body (≤120 chars, 3 lines); 4-6 cards are kicker + hero only. Anchor: the row.
-- **spectrum** - 3-7 narrow cards for a progression or maturity model, low to
-  high left to right. Budget: kicker ≤8 chars, hero ≤15, body ≤40 (≤5 cards) or
-  none (6-7).
-- **columns** - N headers + descriptions + an optional metric strip beneath:
-  product lines, tracks, team areas. Budget: ≤4 columns with bodies, ≤6 without.
-- **stacked list** - 4-6 items in the right field, argument on the left; the
-  numbered variant carries ghost numerals for ordered reasons. Budget: item ≤2
-  lines at 24px. Anchor: the list.
-- **split** - argument left (1-3 short paragraphs, optional `sl-support`
-  sub-head), ONE visual right (metric, card, image, chart). The workhorse of
-  analytical slides. Anchor: the visual.
-- **insight + evidence** - one large insight left (≤30 words, `sl-support`),
-  3-4 evidence items right (one-line title + one line). Anchor: the insight.
+- **cards** - a few equal items (label · title · line); one may be accented
+  as the recommended option.
+- **spectrum** - narrow items low to high, left to right: maturity, a scale.
+- **columns** - parallel headers with descriptions, an optional strip of
+  figures beneath.
+- **stacked list** - the argument on the left, an ordered list on the right,
+  large ghost numerals for order.
+- **insight + evidence** - one large insight on the left, three or four
+  short proofs on the right.
 
 **Proof**
-- **metric** - one hero number (`sl-display`) with label + sub-line, enclosed
-  only when the boundary means something;
-  pair with a split or a stat row. Budget: value ≤8 chars, label ≤20, sub ≤30.
-- **stat row** - 3-4 figures across in `sl-stat` with a label under each.
-  Budget: value ≤7 chars at 3 across, ≤5 at 4; label ≤4 words. Anchor: the row.
-- **trajectory** - stacked from → to pairs with a label ("$100k → $480k MRR").
-  Budget: 3-4 pairs. Anchor: the arrows.
-- **table** - header row with a rule under it, zebra rows, numbers right-aligned,
-  units in the header. Budget at 24px: ≤5 columns × ≤6 rows, header ≤15 chars,
-  cell ≤14; more than that is two slides or a chart.
-- **mini grid** - N×M small value + label cells with hairline dividers, for a
-  dashboard glance. Budget: ≤12 cells (4×3).
-- **takeaway bar** (modifier) - a full-width dark bar at the foot with the
-  so-what, centred, no trailing full stop, ≤12 words. Never a paraphrase of the
-  assertion - a different angle or nothing.
+- **metric** - one figure at display size, a label, a line of context.
+- **stat row** - three or four figures across, a label under each.
+- **trajectory** - from → to pairs ("$100k → $480k MRR").
+- **table** - a header rule, quiet rows, numbers right-aligned, units in the
+  header. Past a handful of rows it wants to be a chart or two slides.
+- **takeaway bar** - a full-width band at the foot carrying the so-what -
+  a different angle from the headline, never a paraphrase.
 
 **Contrast**
-- **before / after** - the doctrine's two-up, the "after" side accented.
-- **scenarios** - bear / base / bull columns over a metric list, the recommended
-  column highlighted. Budget: 3 scenarios × ≤5 metrics.
+- **before / after** - two sides, the "after" accented.
+- **scenarios** - bear / base / bull columns over the same metrics, the
+  recommended one highlighted.
 
-**Process** (the subject, never the provenance)
-- **flow** - step cards with forward arrows; ≤5 steps keep bodies, 6+ drop to
-  labels only. Budget: label ≤15 chars, body ≤40.
-- **cycle** - 3-6 auto-numbered nodes around a centre; four nodes sit square at
-  the corners, others on a circle. Budget: label ≤15, body ≤40. Anchor: the ring.
-- **chain** - primary chevrons for the value chain with support bars beneath (the
-  enabling activities). Budget: ≤6 chevrons, ≤3 bars.
-- **swim lanes** - lanes (rows) × stages (columns) with mini-cards at the
-  intersections: hand-offs, RACI, cross-functional flow. Budget: ≤4 lanes × ≤5
-  columns, card ≤8 words.
-- **funnel** - 3-8 narrowing tiers, the drop-off stated. Budget: label + one
-  line ≤5 tiers; labels only at 6-8.
+**Process** (the subject of the slide, never how the deck was made)
+- **flow** - steps with forward arrows.
+- **cycle** - nodes around a centre.
+- **loop** - a flow with the failure path drawn back across it.
+- **chain** - primary chevrons with the enabling activities as bars beneath.
+- **swim lanes** - lanes × stages, small cards at the intersections.
+- **funnel** - narrowing tiers with the drop-off stated.
 
 **Time**
-- **schedule** - sections × time columns, task bars, milestone diamonds. Budget:
-  ≤7 rows, ≤8 columns. Anchor: the time header.
-- **timeline**, **roadmap phases** - the doctrine's; alternate event labels
-  above and below the spine when they crowd.
+- **timeline** - a horizontal spine with dated beats above and below.
+- **roadmap phases** - phases with their contents.
+- **schedule** - sections × time, task bars, milestone diamonds.
 
 **Structure and position**
-- **layers** - full-width stacked layers with tag pills; the foundation layer
-  dark. Budget: ≤5 layers, ≤4 tags each.
-- **org** - boxes + connectors, two levels max; deeper goes to an appendix.
-- **venn** - 2-3 circles with 2-3 items each and a named overlap.
-- **concentric** - TAM / SAM / SOM rings, labels inside the rings, legend right.
-- **pyramid** - 3-6 trapezoid tiers, widest at the top, each tier a label + 1-3
-  items. For priority, never for volume (that is the funnel).
-- **number line** - ticks with labels, one highlighted range: pricing tiers, a
-  valuation range, benchmarks. Budget: ≤6 ticks.
-- **capability matrix** - competitors × capabilities with empty / half / full
-  circles (CSS), us in the first column. Budget: ≤6 × ≤7.
+- **layers** - stacked horizontal layers, the foundation darkest.
+- **org** - boxes and connectors, two levels.
+- **venn** - two or three circles with a named overlap.
+- **concentric** - TAM / SAM / SOM rings.
+- **pyramid** - tiers for priority (volume is a funnel).
+- **matrix** - a 2×2 positioning with plotted items.
+- **number line** - ticks with one highlighted range.
+- **capability matrix** - competitors × capabilities, empty / half / full marks.
 
 **Status**
-- **scorecard** - rows with a red / amber / green dot + a one-line note. ≤7 rows.
-- **heat map** - rows × columns of RAG cells, a legend, no numbers inside cells.
-  Budget: ≤6 × ≤6.
-- **tracker** - initiative · owner · phase · next milestone; or decision · owner ·
-  date · status. Budget: ≤6 rows, owners as initials badges.
+- **scorecard** - rows with a red / amber / green mark and a one-line note.
+- **heat map** - rows × columns of status cells, with a legend.
+- **tracker** - initiative · owner · phase · next milestone.
 
 **People and voice**
-- **testimonials** - 1-6 quote cards with an initials avatar, name, company -
-  attributed voices (the doctrine's quote-wall is unattributed fragments, ≤15
-  words). Budget: ≤25 words a quote at ≤4 cards, ≤15 at 5-6. Anchor: the avatars.
-- **team** - 1-8 people: initials, name (≤15 chars), role (≤22). Budget: ≤4
-  people carry a bio (≤30 words); 5-8 are name + role.
-- **manifesto** - a single large claim in `sl-support` or `sl-display`, one
-  accent-coloured phrase, an attribution line. Budget: ≤20 words. Anchor: the
-  accent phrase.
+- **quote** - the words and the person, nothing else.
+- **testimonials** - a few attributed quotes with initials and company.
+- **team** - people with name, role, a short bio when there are few.
+- **manifesto** - one large claim with one accented phrase.
+- **wall** - logos or faces in a grid, no captions.
 
 **Images**
-- **framed source** - a screenshot, a chart from a PDF, a product shot: the real
-  image on the right, framing text on the left saying what it shows. The bitmap
-  is at least 2× the CSS box it renders in. Never redraw a source chart as a
-  fake: rebuild it as a `Chart` when the underlying data is available, embed the
-  render when it is not.
-
-## Budgets that keep type at design size
-
-| Element | Cap |
-|---|---|
-| card kicker · hero · body | 20 · 30 · 120 chars (bodies only at ≤3 cards) |
-| narrow (spectrum) card | 8 · 15 · 40 chars |
-| metric value · label · sub | 8 · 20 · 30 chars |
-| table header · cell | 15 · 14 chars, ≤5 × ≤6 |
-| flow / cycle label · body | 15 · 40 chars |
-| timeline date · title · body | 8 · 20 · 20 chars |
-| quote | 30 words; testimonial 25 (≤4) / 15 (5-6); quote-wall 15 |
-| bio | 30 words at ≤4 people; name 15 chars, role 22 |
-| takeaway bar | 12 words, one line |
-| body paragraphs | 3-5 short paragraphs, ~600 chars total |
-
-A breach is a different recipe or a split. Type never shrinks to fit - the review
-gate reads shrunk type as the tell it is.
+- **full-bleed** - the image to every edge, a scrim, a short headline.
+- **half-bleed** - copy on one side, the image bleeding off the other.
+- **framed source** - a real screenshot, report page or product shot on one
+  side, the text saying what it shows on the other. Never redraw a source
+  chart as a fake: rebuild it as a `Chart` from its data, or show the real
+  render.
 
 ## Rebuilding an existing deck
 
@@ -188,43 +145,40 @@ When the human hands you a finished deck to rebuild on the canvas, ask which
 mode - and default to faithful:
 
 - **Faithful** - their order, their words, exactly. You may normalise
-  punctuation (em dashes → commas or periods) and number formats; you may not
-  change a word. Label titles stay labels. Suggested rewrites go in a comment on
-  the frame, never on the slide.
-- **Editorial** (opt-in) - order kept, copy passed through the doctrine's words
-  rules: jargon, hedges, filler out; numbers, names, dates verbatim; titles
-  turned into assertions where the source supports the claim.
+  punctuation and number formats; you may not change a word. Suggested
+  rewrites go in a comment on the frame, never on the slide.
+- **Editorial** (opt-in) - order kept, copy passed through the slides
+  guide's words: jargon, hedges and filler out; numbers, names and dates
+  verbatim; titles turned into claims where the source supports them.
 
-Then map shapes - a companion visual ONLY where the source supplies it; a
-paragraph with no metric, image, or chart behind it is a text-led composition,
-and that whitespace is honest:
+Then map shapes - a companion visual only where the source supplies one; a
+paragraph with no metric, image or chart behind it is a text-led
+composition, and that whitespace is honest:
 
-| Source shape | Layout |
+| Source shape | Composition |
 |---|---|
 | a paragraph | split when the source has a companion (metric, image, chart); else text-led |
-| 3 bullets | cards |
+| 3 bullets | cards or columns |
 | 4-6 bullets | stacked list (numbered if ordered) |
-| up to 4 numbers | metric grid or stat row |
+| up to 4 numbers | stat row or metric grid |
 | a quote | quote |
-| a table | table (or two slides past the budget) |
+| a table | table, or two slides when it is long |
 | a chart with its data | `Chart` from the data |
-| an image, chart, schedule, diagram you cannot rebuild losslessly | framed source |
+| an image, chart, schedule or diagram you cannot rebuild losslessly | framed source |
 
 ## Charts and diagrams - the extra mile
 
-- **Decision flows**: boil choices to yes / no, quantify the branches (%, volumes)
-  so the eye follows the path that matters, hang customer quotes on the node
-  they support.
-- **Waterfalls** beat tables for build-ups and breakdowns: left to right in the
-  logical order, the one or two bars that matter highlighted, a few callouts that
-  pre-empt the room's questions.
-- **When a slide must be complex**: large visual cues (boxes, highlights) on the
-  point, grouping and colour that steer interpretation, and the voiceover ON the
-  page - the slide must make sense with no presenter.
-- **Aggregate.** The chart is not the model. Single series is fine. Overlay
-  detail (lines, shading) on the base chart instead of adding a second chart.
-- **Formatting**: label bars directly and drop the value axis when the chart is
-  simple (keep the axis for dense or grouped series); growth rates visible; one
-  label size across the deck; series in logical order (base first, growth
-  next); same hue = same thing on every slide; charts aligned to the grid and to
-  each other across slides.
+- **Decision flows**: boil choices to yes / no, quantify the branches (%,
+  volumes) so the eye follows the path that matters, hang customer quotes on
+  the node they support.
+- **Waterfalls** beat tables for build-ups and breakdowns: left to right in
+  the logical order, the one or two bars that matter highlighted, a few
+  callouts that pre-empt the room's questions.
+- **When a slide must be complex**: large visual cues on the point, grouping
+  and colour that steer the reading, and the voiceover ON the page - the
+  slide must make sense with no presenter.
+- **Aggregate.** The chart is not the model. A single series is fine.
+  Overlay detail on the base chart instead of adding a second chart.
+- **Formatting**: label bars directly and drop the value axis when the chart
+  is simple; growth rates visible; one label size across the deck; series in
+  logical order; the same hue means the same thing on every slide.

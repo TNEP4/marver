@@ -1,342 +1,274 @@
-# Slides - decks that argue, on frames that move
+# Slides - decks in code
 
 Run this when the work is a DECK: the human asks for slides, a presentation,
 a pitch, a review - or a scene of `slide: true` frames exists. Read
-`design/slides.md` too, ALWAYS: it is the project's own layout list and house
-rules, and where it disagrees with this file, **the project file wins**.
+`design/slides.md` too, always: it holds this project's deck look and house
+habits, and where it disagrees with this file, **the project file wins**.
 
-A slide is an ordinary frame with `slide: true` in its meta - 1280×720, the
-slide badge, and slides mode when published. Everything you know holds:
-real components, the project theme, comments, variants, promotion. What
-changes is the CRAFT BAR - a deck is an argument wearing the product's
-clothes, and every rule below is binding.
-
-**The stage fits every screen.** You author at exactly 1280×720 and the
-Slide root scales and centers itself to any viewport - fill window, a
-laptop, a viewer's phone. One coordinate system: your px, Tailwind classes,
-and charts scale together, so what you compose is what plays. This is a
-guarantee to LEAN ON, not to fight:
-- lay out with flex/grid and the stage's own proportions (percentages,
-  `--sl-margin`, the type roles) - never against the window;
-- no viewport units (`vw/vh`) and no media queries inside a slide - the
-  stage is the world, and it is always 1280×720 to your code;
-- images and video posters at 2x the box they sit in, so an upscaled fill
-  stage stays sharp.
-
-```tsx
-import { Slide } from '@marver-design/marver/content'
-export const meta = { title: 'Cover', slide: true }
-export default () => (
-  <Slide>
-    <h1 className="sl-assertion">Churn halved after onboarding v2</h1>
-  </Slide>
-)
-```
-
-This file is the floor. Depth lives in instructions/reference/:
+A slide is an ordinary frame with `slide: true` in its meta. That is the
+whole contract. What goes inside is your code - any layout, any typeface,
+any image, any drawing, any animation the browser can render. This file is
+not a rulebook. It is the craft of decks that look made rather than typed,
+the method that gets the argument right before the pixels, and the few
+mechanics of how a slide plays. Take what serves the deck in front of you.
 
 | File | When |
 |---|---|
-| reference/deck-layouts.md | REQUIRED at step 4 of every deck - the full atlas, the grid, the budgets, charts; and BEFORE step 1 when rebuilding an existing deck (its mode decision comes first) |
-| reference/deck-story.md | when intake is thin or rich, the room is senior, the slide list reads like a table of contents, or the words need work |
+| reference/deck-story.md | intake is thin or rich, the room is senior, the slide list reads like a table of contents, or the words need work |
+| reference/deck-layouts.md | a slide needs a composition and none comes - an idea bank, plus rebuilding an existing deck and chart craft |
+| craft.md + its references | a slide's type, colour, layout or motion feels off - reference/typography.md, color.md, motion.md and slop.md hold for slides as for screens |
 
-## The pipeline (in order, no skipping)
+## What a slide is
 
-**1. The answer.** Before any frame: write the deck's one-paragraph answer -
-what the audience should believe or do when the last slide lands. If the
-human's material is too thin for a substantive deck, SAY SO and ask - never
-pad. Then the slide list: one line per slide, each line the slide's single
-message as a full-sentence assertion. Walk that list once more asking
-"could I draft this slide without inventing a single fact?" - the gaps
-become specific questions to the human, or a smaller deck (the evidence
-check, reference/deck-story.md). The scaffold (step 2) may carry gaps as
-visible placeholders; the build (step 5) may not - a factual gap blocks its
-slide until answered or cut, while editorial copy (framing, captions) you
-draft and label as proposed.
+```tsx
+export const meta = { title: 'Onboarding time halved in one quarter', slide: true }
 
-**2. Show the deck.** Scaffold every listed slide immediately as a
-placeholder frame - `<Slide>` + its assertion in `sl-assertion` - in one
-scene (one scene = one deck), numbered files (`01-cover.tsx`,
-`02-problem.tsx`), pinned on the board, marked working
-(`npx marver work start ...`). The outline now lives ON the canvas,
-reorderable and vetoable while every slide is still one sentence. THEN
-research, gather evidence, design.
+export default function Frame() {
+  return (
+    <main className="dk-page dk-ink dk-statement">
+      <h1>Onboarding time<br />halved in one quarter.</h1>
+    </main>
+  )
+}
+```
 
-**3. The sequence test.** Read only the assertions, in file order. They must
-tell the complete argument - specifically enough that a stranger could guess
-whose deck this is. Generic titles mean the thinking is not done; fix the
-titles before touching layout.
+- **The stage.** A slide renders at its stage size: 1280×720 by default.
+  Declare a `viewport` (any name in `design/config.ts`, e.g. `'laptop'` for
+  1280×800) for another shape, and keep one stage per deck. Compose in px
+  at that size: let your root fill the stage (`min-height: 100vh`) and place
+  things where you want them.
+- **The player scales, not you.** Slides mode renders the stage and scales
+  the whole of it to the screen - up on a projector, down on a laptop or a
+  phone - so a slide needs no breakpoints. (Fill window hands the slide the
+  raw window instead; add media queries only if a slide should reflow there.)
+- **On the canvas** a slide is a frame like any other: comments, laser,
+  variants, Live Jam, plus the slide badge. The board's reading order (top to
+  bottom, left to right) is the play order - drag slides to reorder the deck.
+- **Notes.** `<slide>.note.md` beside the frame is its sticky note - the
+  presenter's script and the next agent's memory (the method, below).
+- `<Slide>` from `@marver-design/marver/content` is an optional wrapper that
+  fills the frame; earlier decks use it. Nothing requires it.
 
-**4. Storyboard the silhouettes.** Before any markup, one line per slide:
+## Motion
 
-`message | dominant object | silhouette | density | recipe`
+Code means the motion is yours: CSS keyframes and transitions, SVG
+animation, a JS library the project already uses. Three habits make it play
+well:
 
-The dominant object first - what the eye lands on (a number, a quote, a
-chart, the claim itself; for a grid the peer set as one shape, for a stream
-the path) - then the silhouette that serves it (the seven, below), density (airy / balanced / dense), and only
-then the recipe from the list below + the atlas in
-reference/deck-layouts.md + `design/slides.md`, picked against the content's
-real volume. Read the finished list as THUMBNAILS, not as recipe names.
-Pacing, for any deck of eight or more content slides:
-- no silhouette on more than 40% of the deck;
-- no silhouette twice running, except inside a declared visual group
-  (three pillars, four pipeline stages - those share ONE layout, variety
-  comes between groups) or a build sequence;
-- never three dense slides in a row;
-- an airy statement, hero, or bookend at the opening answer, at every
-  major turn of the argument, and at the close.
-Do not alternate mechanically - pace follows the argument. A recipe's
-budget breached = a different recipe or a split, decided here.
+- **At rest, the finished slide.** On the canvas, in `marver shot`, in a
+  thumbnail, the slide shows its final composition. Animate while the deck
+  plays: the stage puts `data-sl-play` on `<html>` for the whole show and adds
+  `data-sl-entered` once each slide has arrived. Key motion off them:
 
-**5. Build.** Real markup inside `<Slide>`, the project's own classes and
-components, the type roles, the theme's tokens. Name morph anchors as you
-go (choreography, below). The assertion is always the `h1`, but it need not
-sit at the top or be the largest thing: when the slide is about a number,
-a quote, a chart, or a source, THAT dominates and the assertion frames it.
-Never write one wrapper that fixes the title geometry for every slide -
-share tokens, the source treatment, and primitives; give each silhouette
-its own shell. HTML stays honest: images carry `alt`, a chart or diagram
-gets a one-line text summary in a caption, every colour pair reads in both
-themes.
+  ```css
+  :root[data-sl-entered] .dk-loop path { animation: dk-draw 900ms ease-out both }
+  @keyframes dk-draw { from { stroke-dashoffset: 600 } to { stroke-dashoffset: 0 } }
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-sl-entered] .dk-loop path { animation: none }
+  }
+  ```
 
-**6. The review gate.** Run it before presenting, every time (bottom of this
-file).
+  In React, `useSlidePlay()` from `/content` is the same flag.
+- **Between slides, morphs.** Give an element the same
+  `view-transition-name` on two adjacent slides and it travels or resizes
+  between them; the rest crossfades. A persistent element (the mark, a
+  diagram that grows) reads as continuity; a hard cut (no shared names)
+  reads as a new chapter. One duration for the deck: `--marver-slide-tempo`
+  in the theme (default 350ms).
+- **Builds.** Progressive disclosure is sibling frames (`04a-`, `04b-`)
+  sharing morph names, so every step stays visible and commentable.
 
-## The words
+Shortcuts, if they help: `data-animate="fade-up | fade | scale-in"` plus
+`data-animate-delay="1 | 2 | 3"` run once after a slide arrives (never on an
+element that also morphs - one owner per transform).
 
-- **Assertions, not labels.** "Q3 revenue beat plan by 12%" - never "Q3
-  revenue". One line, it commits to a position. (The one exception: a
-  FAITHFUL rebuild of an existing deck keeps its titles as written -
-  reference/deck-layouts.md.)
-- **Overflow is a second slide.** Never fix a full slide by shrinking type.
-- Numbers over adjectives - every FACTUAL claim carries a figure, a name, or
-  a date; a conceptual assertion earns its place by being specific to this
-  company, not generic.
-- Active voice. Write like you talk, then cut every word that isn't earning.
-- Kill on sight: "leverage", "robust", "world-class", "streamline",
-  "going forward", "potentially", "we believe", "it is important to note".
-- Negatives in brackets: (123). Units once, in the header or axis; within a
-  metric family one unit and one time-basis ($M everywhere revenue appears,
-  FY or CY - never both).
-- Sources are a short `sl-caption` slug at the foot of the slide - "OpenAI
-  technical report, §IV.B" - never a bibliographic sentence; that band
-  repeated seventeen times is a report template. Full citations go in the
-  frame's comment.
-- The closing slide is a specific, time-bound ask. "Questions?" is not a
-  closing slide.
+## The deck kit - build it once per deck
 
-## The type and the space
+A strong deck is not twenty bespoke pages; it is one small system applied
+with variety. Before the slides, write the kit into the scene - `_parts.tsx`
+and `_style.css`, the leading underscore keeps them off the canvas:
 
-The `<Slide>` root provides the roles - use them, never font-size by hand.
-The values are fixed (one coordinate system with the stage):
+- **The master** - a shell every content slide wears: the mark, a context
+  line (who it is prepared for, the date, "confidential"), the body area.
+  Covers and closings step outside it.
+- **Tones** - two to four whole-slide colour sets as CSS variables (paper,
+  ink, one accent ground), swapped by a class. A tone change is a pacing tool.
+- **Type** - the brand's family, weights and tracking, and a handful of
+  sizes: a display, a heading, a body, a small label. Hierarchy through size
+  and a muted colour, rarely through weight.
+- **Rules and labels** - the hairline, the numbered label, the spacing rhythm.
+- **The drawing helper** - one component that renders the deck's
+  illustrations by name, with their alt text.
 
-| Role class | Size | Job |
-|---|---|---|
-| `sl-display` | 160px | the oversize: a hero number, a section numeral, the manifesto line - never running text; at most once per argument group, never on adjacent slides |
-| `sl-stat` | 88px | a ROW of figures (3-4 across), where `sl-display` would not fit |
-| `sl-assertion` | 56px, heavy | the one-line claim (~40 characters full-width, ~20 inside a split - two lines is the ceiling, verify the render) |
-| `sl-support` | 30px | the second voice |
-| `sl-body` | 24px | evidence text - the floor for anything read |
-| `sl-caption` | 18px | sources, footnotes, kickers |
+```tsx
+// design/scenes/<deck>/_parts.tsx
+import type { ReactNode } from 'react'
+import './_style.css'
 
-Nothing smaller than 18px, ever. One family (`--marver-slide-font`, the
-theme's); the roles carry their weights - add none of your own. One
-reading intent per slide - a single object, a peer set, or a path, never two
-competing. Within a visual group, shared elements keep the SAME
-position unless the movement is the message.
+export function Page({ tone = 'paper', className = '', children }: {
+  tone?: 'paper' | 'ink' | 'accent'; className?: string; children: ReactNode
+}) {
+  return (
+    <main className={`dk-page dk-${tone} ${className}`}>
+      <header className="dk-header"><Mark /><span>Prepared for Acme · Confidential · May 2026</span></header>
+      <div className="dk-body">{children}</div>
+    </main>
+  )
+}
+```
 
-## Silhouette - the deck at thumbnail size
+```css
+/* _style.css - tones are variable swaps, so every rule reads the same names */
+.dk-page  { --ground: #f1f0ea; --ink: #151616; --muted: #63645f; --line: #cacac2;
+            min-height: 100vh; padding: 0 48px; background: var(--ground); color: var(--ink);
+            font: 400 20px/1.4 var(--brand-font); letter-spacing: -.015em }
+.dk-ink   { --ground: #151616; --ink: #f1f0ea; --muted: #b5b7ad; --line: #474a44 }
+.dk-page h1 { font-weight: 400; font-size: 64px; line-height: 1.05; letter-spacing: -.045em; margin: 0 }
+```
 
-A silhouette is the largest geometry the eye sees when the words are
-blurred. Swapping a card row for a stat row under the same standing header
-changes nothing at thumbnail size, and the review gate looks at thumbnails.
-Choose the silhouette before the recipe. Seven:
+Derive every value from `design/DESIGN.md` and `theme.css`, and use the
+project's real mark component. If the brand is not written down yet, that
+comes first (instructions/brand.md): a deck look invented on slide one has
+drifted by slide five.
 
-- **statement** - one claim owns the canvas. No kicker, no header, at most
-  one short support line. The opening answer, a turn, a synthesis.
-- **hero** - one number, quote, image, or source object owns 60-80% of the
-  canvas; the assertion frames it, smaller, and does not compete.
-- **split** - two UNEQUAL fields, 40/60 or 60/40: one argues, one proves.
-- **grid** - 2-6 true peers in one field. Equal weight only when the ideas
-  are equal - a 2×2 of causes makes them look like feature cards.
-- **stream** - a path across the canvas: time, sequence, causality,
-  escalation, hand-off. The path IS the geometry, not a ruled list.
-- **field** - one chart, table, diagram, or document fragment fills the
-  slide; the assertion sits at an edge or inside the field.
-- **bookend** - cover, section turn, closing: a statement or hero that
-  ALSO carries the mark and drops the source line, so it reads as a door,
-  not a page. Count it as its own silhouette only when that geometry is
-  visibly different from the statements around it.
+## The craft - what makes a deck look made
 
-The kicker + assertion + hairline over a body is ONE way to build a grid or
-split - it is not the default shell for content slides, and shared margins
-never require shared title geometry. Whitespace needs no defence when it
-establishes dominance; an added companion panel does. Alignment before
-enclosure: if spacing and a hairline establish the group, remove the box -
-cards, panels, and badges are interface furniture, and a deck of them reads
-as a dashboard.
+The habits that carry the most, distilled from the best decks built on
+marver:
 
-## The space IS the design
+1. **The brand, not a deck style.** The identity's own typeface, weights,
+   colours and imagery. Large type at regular weight with tight tracking
+   looks designed; bold everywhere looks generated.
+2. **One idea per slide.** The headline is the message, written as a
+   sentence. Under it, at most a short line and a few supporting items. The
+   nuance, the caveats and the talk track go in the note.
+3. **Structure with space and hairlines, not boxes.** Group by alignment and
+   gaps, separate with 1px rules, order with small numbered labels in the
+   muted colour. A card, a shadow or a badge is for the rare element that is
+   genuinely a separate object.
+4. **Real images, used big.** The client's or the product's own photography,
+   full-bleed or bleeding off one edge, under a uniform scrim where text sits
+   on it. Never a small picture floating in space; never stock that could
+   belong to anyone.
+5. **A drawing system of your own.** When an idea needs a picture, draw it as
+   native SVG in one style: consistent line weights, a shared grid, mostly
+   ink, ONE accent per slide marking the point (the approval, the bottleneck,
+   the result). Light and dark versions where tones change. Colour that means
+   something (red for the rework loop, green for the outcome) is introduced
+   on purpose and kept consistent.
+6. **Diagrams built for the argument.** A process with its failure loop drawn
+   back across it, a context and a solution in two illustrated lanes, three
+   numbers in a row - composed in HTML and SVG for this message, not picked
+   from a menu.
+7. **Pace the deck.** A sparse statement after the cover; working slides on
+   the light ground; a dark slide at a turn of the argument; the accent ground
+   once, for the proof. Dense slides alternate with quiet ones.
+8. **Bookends are doors.** The cover pairs the marks (yours and the
+   audience's) with one strong image and no header. The closing is a quiet
+   card - the mark, a contact, a photograph - with the ask on the slide before.
+9. **Honest numbers.** Evidence is big and specific; its limits sit on the
+   slide in small type when they matter ("results from a reference project,
+   not a forecast").
+10. **Finish the details.** Control the line breaks in headlines, balance the
+    gaps, align each drawing with the text beside it, check every tone. The
+    distance between good and very good is twenty small passes - and a frozen
+    copy of the deck before each big change, so nothing approved is lost.
 
-This is what separates a deck that looks made from one that looks typed.
-The stage is 1280×720 with ASYMMETRIC margins - 88px at the sides, 44px top
-and bottom - so the title sits high, the footnote sits low, and the middle
-is the tallest band on the slide. Content box: **1104×632px**, at every
-viewport. (Override `--marver-slide-pad-x` / `--marver-slide-pad-y` in px,
-never a percentage: a percentage resolves against the viewport, not the
-stage.)
+Variety comes from the message: choose each slide's composition for what it
+has to show, and let the kit hold the deck together.
+reference/deck-layouts.md is a bank of compositions to borrow from when you
+are stuck.
 
-When a slide carries a title band (grids and splits usually do; statements,
-heroes, and fields usually do not), the three bands are:
+## The method
 
-| Band | Height | Holds |
-|---|---|---|
-| Title | ~113px | kicker (18px) over the assertion (56px), a hairline under |
-| Body | **~438px** | the recipe - and it is the star, so give it the room |
-| Foot | ~25px | the source slug, or the takeaway bar above it |
+1. **The answer.** Before any frame: one paragraph - what the audience should
+   believe or do when the last slide lands. If the material is too thin for a
+   substantive deck, say so and ask; never pad.
+2. **The slide list.** One line per slide, each its message as a sentence.
+   Read the lines alone: they should tell the whole argument, specifically
+   enough that a stranger could guess whose deck it is. Could you draft each
+   slide without inventing a fact? The gaps become questions for the human.
+3. **The brief.** Write `_brief.md` in the scene: the answer, the sequence as
+   a storyboard (`message | what the eye lands on | composition | density`),
+   the visual system (kit, tones, imagery, drawings) and the sources. It keeps
+   a long iteration coherent.
+4. **Scaffold, then build.** Put every slide on the board early - a frame
+   holding just its sentence, in one scene, numbered files (`01-cover.tsx`) -
+   so the outline is reorderable and vetoable on the canvas. Mark the work
+   (`npx marver work start ...`). Then build the kit, then the slides.
+5. **Notes as you go.** Each slide's `.note.md`, in four short parts:
 
-**The 85% rule.** Content fills at most ~85% of whatever band it lives in
-(≈372 of a 438px body). The remaining sliver is not waste - it is the void
-that makes a slide read as a slide. If your content fills the band, you
-have a document: cut a sentence, drop a card, or split the slide. Never
-close the gap by shrinking type.
+   ```md
+   ## Aim
+   What this slide must do in the argument.
 
-**One spacing scale**, in px, every value from it and nothing between:
+   ## Say
+   The talk track, in the presenter's voice.
 
-| Step | Use |
-|---|---|
-| 8 | label to its value, icon to its text |
-| 16 | rows inside one list, line to hairline |
-| 24 | siblings inside a card or a group |
-| 32 | padding inside a card; between columns |
-| 40 | between distinct groups in the body |
-| 48 | title block to body, body to the foot |
+   ## Visual
+   Why it looks the way it does - what the image or drawing carries.
 
-Rhythm comes from CONTRAST between those steps - tight inside a group, wide
-between groups. One value repeated everywhere is the flattest thing you can
-do to a slide. Gaps go on the parent (`gap`), never as per-child margins.
+   ## Source context
+   Where the facts come from, and their limits.
+   ```
 
-## The evidence
+   Notes ship with a published canvas: keep anything the audience must not
+   read out of them.
+6. **Review**, below - then iterate.
 
-- **One anchor visual per slide, at most** - a peer set or a path counts as
-  one.
-- **Charts** (`Chart`): pick the FORM from the Apache ECharts docs
-  (https://echarts.apache.org/en/option.html), inside the supported surface
-  - series bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap, sunburst, sankey, boxplot; components grid, polar, radar, tooltip, legend, title, dataset (+ transform), markLine, markPoint, markArea, visualMap, dataZoom; anything else is dropped without an
-  error. marver supplies the house theme (colors, type, tooltip); styling
-  you pass overrides it, so pass DATA and STRUCTURE, never styling. One message per chart; the takeaway is the
-  slide's assertion; direct labels over legends; bar baselines at zero
-  (lines may zoom - annotate when they do); hue = category, shade = variant,
-  fixed across the whole deck.
-- **Diagrams** (`Diagram`) for structure, plain shapes + arrows for
-  concepts - a 2×2 or a flow in divs beats imported artwork.
-- **Images** (`Img`): full-bleed with a scrim and a short assertion, or
-  generously matted. Never a small image floating in space.
-- **Video** (`Video src poster`): the poster IS the slide at rest - choose
-  it like a photograph. Omit `poster` and marver renders one from the clip
-  (`<clip>.poster.png` beside it, committed like any asset); author one when
-  the clip's opening is not the picture you want. In slides mode the
-  player mounts on its own; everywhere else a frame is live, the poster is
-  the play button (the same primitive serves screens and specs).
-- **Backgrounds are code**: theme-derived gradients, an oversized numeral, a
-  clipped photo, one geometric accent. ONE effect per slide, and decoration
-  never touches the evidence's contrast.
+## Words
 
-## The recipes
+- Headlines that say something: "Every new market adds a week of manual
+  reconciliation", not "Reporting challenges". A label suits a door (a
+  section, an agenda, "How we work with your team") - not an argument.
+- Numbers, names and dates over adjectives; units once.
+- Active voice. Cut every word that is not earning its place. Kill on sight:
+  "leverage", "robust", "world-class", "streamline", "seamless", "unlock",
+  "going forward", "we believe", "it is important to note".
+- Sources as a short line on the slide; the full citation in the note.
+- When a slide is full, split it or move the detail to the note - shrinking
+  the type to fit is the slide telling you it holds two ideas.
 
-Scan all of them (plus `design/slides.md`) for every slide. Each entry:
-silhouette · skeleton · budget (breach = split, never shrink) · anchor (the
-element that morphs INSIDE a group or build; "none" = a hard cut).
+## Evidence
 
-1. **cover** (bookend) - deck title + one line + the mark. Budget: title ≤6
-   words. Anchor: the mark.
-2. **section** (bookend) - an oversized numeral/word divider in
-   `sl-display`. Budget: ≤3 words. Anchor: none.
-3. **assertion-evidence** (split or field) - the workhorse: `sl-assertion`
-   + ONE visual. Budget: assertion 1 line, caption 1 line. Anchor: the
-   visual.
-4. **big-number** (hero) - one `sl-display` stat + a context line. Budget:
-   1 stat. Anchor: the number.
-5. **stat-row** (grid) - 3-4 quick proofs in a row. Budget: each ≤4 words +
-   value. Anchor: the row.
-6. **metric-grid** (grid) - a 2×2 of labeled values. Budget: 4 cells
-   exactly. Anchor: the grid.
-7. **quote** (hero) - the words, the person, nothing else. Budget: ≤30
-   words. Anchor: none.
-8. **quote-wall** (grid) - 3-6 short quotes. Budget: each ≤15 words.
-   Anchor: the wall.
-9. **two-up** (split) - comparison / before-after. Budget: ≤4 rows per
-   side. Anchor: the divider.
-10. **two-stage** (stream) - diagnosis → prescription with a connector.
-    Budget: one sentence per stage. Anchor: the connector.
-11. **numbered-reasons** (grid) - 3-5 ordered points. Budget: each ≤12
-    words. Anchor: the numerals.
-12. **bento** (grid) - 3-5 cells for a system view. Budget: cell = title +
-    1 line. Anchor: the largest cell.
-13. **timeline** (stream) - a horizontal spine, 3-6 beats. Budget: beat ≤5
-    words. Anchor: the spine.
-14. **roadmap-phases** (stream) - 2-4 phases with contents. Budget: ≤3
-    items/phase. Anchor: the phase heads.
-15. **matrix** (field) - a 2×2 positioning. Budget: ≤6 plotted items.
-    Anchor: the axes.
-16. **full-bleed** (hero) - image + scrim + assertion. Budget: assertion
-    only. Anchor: the image.
-17. **chart-focus** (field) - one `Chart`, near full-slide. Anchor: the
-    chart.
-18. **wall** (grid) - logos/team grid. Budget: 6-12 cells, no captions.
-    Anchor: the grid.
-19. **closing** (bookend) - the ask, one CTA, contact. Budget: ask ≤2
-    lines. Anchor: none.
+- **Chart** (`/content`): an Apache ECharts option on a fixed surface -
+  series bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap,
+  sunburst, sankey, boxplot; components grid, polar, radar, tooltip, legend,
+  title, dataset (+ transform), markLine, markPoint, markArea, visualMap,
+  dataZoom (anything else is dropped without an error). It inherits the
+  slide's ink and typeface and reads `--marver-slide-accent`; pass data and
+  structure, and style only what the deck needs. One message per chart,
+  direct labels, bars from zero. When the form is simple and the brand
+  matters more, draw the chart yourself in SVG.
+- **Images**: `Img` for a framed asset from `design/assets/`, or a plain
+  `<img>` / CSS background when the slide needs full control (`object-fit`,
+  `object-position`, a scrim). Use files at least 2x the size they show -
+  the player scales slides up.
+- **Video** (`Video src poster`): the poster is the slide at rest; in slides
+  mode the player mounts on its own. Omit `poster` and marver renders one
+  from the clip.
+- **Diagram** (Mermaid) for quick structure; hand-built SVG and HTML when the
+  diagram IS the slide.
 
-These are the core. The atlas in reference/deck-layouts.md carries the rest
-- split, cards, spectrum, insight + evidence, trajectory, table, scenarios,
-flow, cycle, chain, swim lanes, funnel, schedule, layers, concentric,
-pyramid, number line, capability matrix, scorecard, heat map, tracker,
-testimonials, team, manifesto, framed source - each with its budget, plus
-the shared stage, margins, and the optional banded grid they draw from. Scan it for every slide.
+## Review - before you present
 
-## Choreography - the diff IS the animation
-
-You never animate. You name elements consistently, and slides mode
-interpolates the difference between adjacent stills. The board is the
-timeline: design motion by designing the diff.
-
-**Five verbs** via `view-transition-name` (style prop or class):
-
-| Verb | How | Reads as |
-|---|---|---|
-| persist | same name, same box | continuity - the anchor |
-| travel | same name, new position | "follow this" |
-| grow | same name, new size | "this is now the point" |
-| swap | unmatched content | the default crossfade |
-| reveal | new element + `data-animate` | "and then" |
-
-**Binding rules:**
-- Adjacent slides inside a visual group or a build share AT LEAST one stable
-  named element - the anchor (each recipe names its default above). Across
-  a turn of the argument, or into and out of a statement, hero, or bookend,
-  a HARD CUT (zero shared names) is the right punctuation - use it. Never
-  name the assertion `headline` on every slide as a deck-wide fallback: a
-  title that morphs into the next title on seventeen slides is the
-  strongest possible signal that every slide has the same shape.
-- AT MOST one element changes position or size per transition. Persist
-  freely, travel once.
-- Build steps are sibling frames (`03a-`, `03b-`) sharing morph names -
-  progressive disclosure that stays visible and commentable. Variants are
-  for exploration, siblings for builds - never both on one slide.
-- Entrances: `data-animate="fade-up | fade | scale-in"` +
-  `data-animate-delay="0|1|2|3"`. Never on an element that carries a morph
-  name. Runs once, after the transition settles - trust it, don't stack it.
-- Morphs tween bounds and crossfade pixels - a chart "morph" is the picture
-  growing, not bars re-plotting. Design for that honestly.
-- One tempo per deck (the root's token). Motion never varies per slide.
-- NOTHING loops, scrolls, or free-runs. A resting slide is still - that is
-  what keeps a 40-slide canvas fast, and the review gate checks it.
+- **The contact sheet.** `npx marver shot --scene <deck>`, then look at every
+  slide small, side by side. Does it read as one deck with range, or one
+  shape repeated with different words? Squint: where does the eye land on each?
+- **Play it.** Slides mode, start to end, in a big window and a small one:
+  nothing clipped or spilling past the stage, every tone legible, motion
+  finished at rest.
+- **The cold read.** The headlines alone, in order: do they deliver the
+  answer? Each slide alone, without a presenter: does it land its one
+  message? A miss is a narrative question for the human, not a polish job.
+- **The generated tells.** Heavy weights everywhere, five type sizes on one
+  slide, a card around everything, a tiny uppercase kicker over every
+  headline, filler numbers, the same composition three slides running with no
+  reason. Delete before you add.
 
 ## Publishing a deck
 
-The board is the deck: reading order (top-left to bottom-right) is play
-order - rearrange the board to reorder the deck. Publish with:
+The board is the deck. Publish with:
 
 ```json
 { "boards": { "pitch": { "max": "comment", "type": "slides",
@@ -345,58 +277,14 @@ order - rearrange the board to reorder the deck. Publish with:
 
 `transition`: `fade` (default) or `none`. `chrome`: `full` (default - the
 standard prototype toolbar and walker), `minimal` (a progress strip +
-comments only), or `none`. Add `"lock": true` for a share that is ONLY the
-deck.
+comments) or `none`. Add `"lock": true` for a share that is ONLY the deck.
 
-## The living list - `design/slides.md`
+## design/slides.md - this project's deck look
 
-The project's own recipes and rules; it OVERRIDES this file. Its first
-section, **the deck look**, is a fill-in template (tokens, type, the mark,
-colour meaning, imagery, tempo, numbers, voice, terminology, end card): on
-the FIRST deck in a project, draft it from `design/DESIGN.md` and
-`theme.css` as a reviewed edit, tell the human, and build on with the
-theme's tokens meanwhile - fields you cannot settle stay `TBD`, never
-invented. No DESIGN.md yet means the brand doc comes first
-(instructions/brand.md). When the human
-asks you to study `design/slides-inspiration/` (PPTX, PDFs, screenshots),
-propose additions to `design/slides.md` as a normal reviewed edit - each
-with a gap justification (what no existing recipe serves) and a stress pass
-(minimal / typical / worst-case content, both themes) before it earns its
-entry.
-
-## The review gate (run it, every deck, before presenting)
-
-Twelve tells, each a defect: label titles · bullet walls · lines past ~15
-words · data without a "so what" · provenance slides (how the work was
-done - a process that IS the subject, an operating model or a rollout plan,
-is content) · hedge language ·
-audience-mismatched jargon · filler words · passive voice · claims missing
-numbers · formatting drift between slides · a weak closing.
-
-Then: the sequence test (titles alone tell the argument) · BOTH themes ·
-the slide view AND fill window (the fit scales your composition - check
-nothing relied on the window) and one 390px glance · every slide still at
-rest (no loops, no autoplay) · the silhouette pacing from step 4, checked
-against the storyboard, not the recipe names · anchors inside groups, hard
-cuts at the turns.
-
-Then the two reads that catch what polish hides:
-- **Landing, per slide.** Read each slide cold - no presenter, no
-  neighbours. Does it deliver the one message you planned for it? Landed ·
-  partial (present but buried or hedged) · missed. A missed message on a
-  polished slide is still a must-fix.
-- **The cold read, whole deck.** Read every assertion and every takeaway
-  bar in sequence, nothing else. Do they alone deliver the one thing the
-  human said the audience must leave with? If not, no surface edit fixes it
-  - take the gap to the human as a narrative question, do not polish
-  around it.
-
-Finally the contact sheet: all frames small on the canvas, then squint. If
-the deck blurs into one repeated shape with different fillings, it failed -
-whatever the recipe names say. One silhouette on more than 40% of the
-content slides (decks of eight or more), the same top and bottom horizon on
-every slide, dense slides clumped
-together, accent fills bunched on neighbours, a card row where one card is
-8 words and the others 40 - each a defect. Iterate until the gate passes; after three passes that
-still surface defects, the remaining list goes to the human and the deck
-ships at their call.
+The project's own file: the deck look (master, tones, type, mark, imagery,
+drawing style, colour meaning, motion, numbers, voice, end card) and any
+compositions and habits the team wants repeated. On the first deck in a
+project, draft its deck look from `design/DESIGN.md` and `theme.css` as a
+reviewed edit and tell the human; it then outlives every deck. When the
+human asks you to study `design/slides-inspiration/` (PPTX, PDFs,
+screenshots), propose additions to it the same way.

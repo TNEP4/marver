@@ -1,7 +1,7 @@
 # Deck story - the argument before the slides
 
-The slides doctrine (instructions/slides.md) gives the pipeline. This file is the
-depth behind steps 1-3: how to find the answer, shape the argument, calibrate it to
+The slides guide (instructions/slides.md) gives the method. This file is the
+depth behind its first steps: how to find the answer, shape the argument, calibrate it to
 the room, and write words that carry it. Pull it when the material is thin or
 rich, the audience is senior, or the first slide list reads like a table of
 contents.
@@ -91,9 +91,9 @@ proposed in the frame's comment - that is writing, not invention.
   ("Decide fast", "See everything"), and use it identically everywhere it applies.
 - **Mine the material for specifics** and keep them verbatim: "19 of 25 operators"
   beats "most operators"; "$100k to $480k MRR" (from X to Y) beats "grew strongly".
-- **Assertions fit their box.** ~40 characters full-width, ~20 inside a split,
-  two lines the ceiling - compress the phrasing, keep the claim, never shrink
-  the type, and check the render.
+- **Headlines fit their composition.** A headline that runs to three or four
+  lines usually holds two ideas - compress the phrasing, keep the claim, and
+  check the render: where the line breaks is part of the design.
 - **Paragraphs over bullets for narrative.** 15-30 words, one to three per block.
   Bullets are for parallel lists and action items; a bullet with "and" is two.
 - **Tone follows the energy.** Urgent: "Double down now or miss the target."
@@ -102,7 +102,7 @@ proposed in the frame's comment - that is writing, not invention.
 - **Voice follows the deck type.** Strategy commits to positions. A pitch is warm
   and aspirational. A case study attributes results to named actions. A status
   update is crisp - state, delta, next.
-- **Kill list, extended.** Beyond the doctrine's: "utilize", "unlock", "harness",
+- **Kill list, extended.** Beyond the guide's: "utilize", "unlock", "harness",
   "empower", "seamless", "delve", "unleash", "synergize", "operationalize",
   "cutting-edge", "best-in-class", "at the end of the day", "in terms of".
 - **The ask closes.** Decision, owner, date: "Approve $200k for Q3 retention by
