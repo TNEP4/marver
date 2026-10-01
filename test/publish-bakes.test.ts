@@ -26,6 +26,11 @@ describe('publishedAsks', () => {
     const asks = publishedAsks({ b: { nodes: [{ frame: 'a', w: ASK_MAX.side + 0.4, h: 100.6 }, { frame: 'a', w: ASK_MAX.side + 0.6, h: 100 }, { frame: 'nope', w: 500, h: 500 }, { frame: 'a', w: 100, h: 100 }] } }, ['light'], frames, VP)
     expect(asks.map(indexKey)).toEqual([`a|light|${ASK_MAX.side}|101`])
   })
+  it('a slide rests at its stage whatever its node\'s size - the node only scales the document', () => {
+    const slides = [{ id: 's', kind: 'tsx' as const, file: 's.tsx', slide: true }, { id: 'sl', kind: 'tsx' as const, file: 'sl.tsx', slide: true, viewport: 'desktop' }]
+    const asks = publishedAsks({ b: { nodes: [{ frame: 's', w: 640, h: 360 }, { frame: 's' }, { frame: 'sl', w: 900, h: 300 }] } }, ['light'], slides, VP)
+    expect(asks.map(indexKey).sort()).toEqual(['sl|light|1280|800', 's|light|1280|720'])
+  })
   it('a published all-scenes board asks for every frame at its default size', () => {
     const asks = publishedAsks({}, ['light'], frames, VP, true)
     expect(asks.map(indexKey).sort()).toEqual(['a|light|1280|800', 'h|light|390|844'])

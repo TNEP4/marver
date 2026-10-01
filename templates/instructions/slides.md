@@ -37,10 +37,11 @@ export default function Frame() {
   1280×800) for another shape, and keep one stage per deck. Compose in px
   at that size: let your root fill the stage (`min-height: 100vh`) and place
   things where you want them.
-- **The player scales, not you.** Slides mode renders the stage and scales
-  the whole of it to the screen - up on a projector, down on a laptop or a
-  phone - so a slide needs no breakpoints. (Fill window hands the slide the
-  raw window instead; add media queries only if a slide should reflow there.)
+- **The host scales, not you.** A slide never reflows: slides mode renders
+  the stage and scales the whole of it to the screen - up on a projector,
+  down on a laptop or a phone - and a resized canvas node shows it the same
+  way, smaller. The document IS the stage, so no breakpoints are needed and
+  viewport units are stage units (`100vh` is the stage's height).
 - **On the canvas** a slide is a frame like any other: comments, laser,
   variants, Live Jam, plus the slide badge. The board's reading order (top to
   bottom, left to right) is the play order - drag slides to reorder the deck.
@@ -68,7 +69,10 @@ well:
   }
   ```
 
-  In React, `useSlidePlay()` from `/content` is the same flag.
+  In React, `useSlidePlay()` from `/content` says the deck is playing (it
+  stays true for the whole show); to start something when THIS slide
+  arrives, watch `data-sl-entered` on `<html>` - the stage removes it at
+  each swap and sets it again once the new slide has settled.
 - **Between slides, morphs.** Give an element the same
   `view-transition-name` on two adjacent slides and it travels or resizes
   between them; the rest crossfades. A persistent element (the mark, a

@@ -19,6 +19,7 @@ import { ASK_MAX, bakeBatch, type BakeAnswer, type BakeAsk } from './bake.ts'
 import { findChrome } from './cdp.ts'
 import { MIME } from './serve.ts'
 import { planShot } from './shot.ts'
+import { slideSize } from '../client/const.ts'
 
 export interface PublishedIndex { gen: number; answers: Record<string, { ok: true; targets: NonNullable<Extract<BakeAnswer, { ok: true }>['targets']> }> }
 
@@ -44,6 +45,9 @@ export function publishedAsks(boards: Record<string, { nodes?: Node[] }>, themes
   // frame takes its height from a measurement the canvas makes, so without a stored height it
   // rests live (never a texture for a height that is a guess)
   const size = (f: PublishedFrame, n?: Node): { w: number; h: number } | null => {
+    // a slide's document is its stage whatever its node's size - the node only scales it
+    const sl = slideSize(f, viewports)
+    if (sl) return { w: sl.width, h: sl.height }
     const nw = n && typeof n.w === 'number' && n.w > 0 ? n.w : undefined, nh = n && typeof n.h === 'number' && n.h > 0 ? n.h : undefined
     const p = planShot(f, viewports, {})
     if (p.fullHeight && !nh) return null   // the canvas measures this frame's height

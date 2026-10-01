@@ -23,11 +23,11 @@ around it: a stage, a player, and a place on the board.
 - **The deck.** One scene is one deck; numbered files (`01-cover.tsx`) are
   the authoring order, and **the board's reading order is the played
   order** - drag slides around the canvas to reorder the deck.
-- **The player scales, not the slide.** Slides mode renders each slide at
-  its stage and scales the whole stage to the screen - up on a projector,
-  down on a laptop or a phone - so the composition you approved is the one
-  everyone sees, without breakpoints. Fill window hands the slide the raw
-  window instead, for a slide that is built to reflow.
+- **The host scales, not the slide.** A slide never reflows. Slides mode
+  renders each slide at its stage and scales the whole stage to the screen -
+  up on a projector, down on a laptop or a phone - and a canvas node resized
+  smaller shows the same stage, scaled, like a thumbnail. The composition you
+  approved is the one everyone sees, without breakpoints.
 - **Notes.** `<slide>.note.md` beside the frame is its
   [sticky note](sticky-notes.md): the aim, the talk track, the visual
   intent, the sources. Notes ship with a published canvas, so keep anything
@@ -58,8 +58,8 @@ which marver never overwrites.
 Press `p` on a board whose publish row says slides and you get slides mode:
 the stage scaled to the window, the standard prototype toolbars (with
 `chrome: full`, the default), arrows / Space / click to advance, `d` cycles
-the theme, devices including the Slide preset (the stage, fit to the window)
-and fill window. Publish it with:
+the theme, and two views of the stage: Slide (fit to the window, room for
+the chrome) and Fill window (edge to edge). Publish it with:
 
 ```json
 { "boards": { "pitch": { "max": "comment", "type": "slides",
@@ -82,8 +82,9 @@ Viewers land straight in the deck; the URL survives refresh and back.
 ## Motion
 
 Motion is yours to write. While a deck plays, the stage puts
-`data-sl-play` on `<html>`, and `data-sl-entered` once each slide has
-arrived; `useSlidePlay()` from `/content` is the same flag in React. Key
+`data-sl-play` on `<html>` for the whole show, and `data-sl-entered` once
+each slide has arrived (removed at each swap, set again when the new slide
+settles); `useSlidePlay()` from `/content` is the playing flag in React. Key
 your animations off them, so the canvas, `marver shot` and thumbnails show
 the finished slide:
 

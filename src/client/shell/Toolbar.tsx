@@ -153,18 +153,20 @@ export function HideUIButton() {
 /** Controlled device dropdown. `value` is the active device name ('fill' allowed when
  *  includeFill), null = default/mixed. The trigger + menu chrome is shared; the adapter
  *  owns what select does. */
-export function DevicePicker({ value, onSelect, includeDefault, includeFill, includeSlide, hint, dark }: {
+export function DevicePicker({ value, onSelect, includeDefault, includeFill, includeSlide, stageOnly, hint, dark }: {
   value: string | null
   onSelect: (name: string | null) => void
   includeDefault?: boolean
   includeFill?: boolean
   /** slides mode: the slide's own stage, fit to the window, as a first-class device */
   includeSlide?: boolean
+  /** slides mode: a slide is a fixed stage - only the stage views (slide, fill), no viewports */
+  stageOnly?: boolean
   hint?: ReactNode
   dark?: boolean
 }) {
   const pop = usePopover()
-  const entries = Object.entries(CONFIG.viewports)
+  const entries = stageOnly ? [] : Object.entries(CONFIG.viewports)
   const pick = (name: string | null) => { onSelect(name); pop.setOpen(false) }
   const triggerIcon = value === 'fill' ? <FrameCornersIcon size={16} /> : value === 'slide' ? <SlideFrameIcon size={16} /> : deviceIcon(value, 16)
   return (
@@ -197,7 +199,7 @@ export function DevicePicker({ value, onSelect, includeDefault, includeFill, inc
           </button>
         ))}
         {includeFill && <button onClick={() => pick('fill')}>
-          <FrameCornersIcon size={15} /><span>Fill window</span><kbd>{entries.length + 1}</kbd>
+          <FrameCornersIcon size={15} /><span>Fill window</span><kbd>{Object.keys(CONFIG.viewports).length + 1}</kbd>
           {value === 'fill' && <CheckIcon size={13} className="chk" />}
         </button>}
       </Popover>

@@ -70,9 +70,9 @@ export function enterSlides(over?: { at?: string; device?: string; theme?: strin
   const at = over?.at && deck.includes(over.at) ? over.at : deck[0]
   const frame = s.manifest?.frames.find((f) => f.id === at)
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined) ?? frame?.theme ?? s.viewTheme
-  // the deck's own stage is the default device; a restored link may carry a
-  // picked viewport or fill - the standard prototype picker works in slides
-  const device = over?.device && (CONFIG.viewports[over.device] || over.device === 'fill' || over.device === 'slide') ? over.device : 'slide'
+  // a slide is a fixed stage: the deck shows it fit to the window ('slide') or edge to edge
+  // ('fill'); a viewport a restored link carries is not a slide view, so it lands on the stage
+  const device = over?.device === 'fill' ? 'fill' : 'slide'
   s.setPlay({ at, device, theme, slides: true })
 }
 
@@ -358,7 +358,11 @@ function PlayInner() {
 
   const setDevice = (name: string) => {
     const p = useStore.getState().play
-    if (p && (CONFIG.viewports[name] || name === 'fill' || (name === 'slide' && p.slides))) useStore.getState().setPlay({ ...p, device: name })
+    if (!p) return
+    // slides: the stage fit to the window or edge to edge - a viewport preset has no meaning
+    // for a fixed stage, so it lands on the slide view
+    if (p.slides) { useStore.getState().setPlay({ ...p, device: name === 'fill' ? 'fill' : 'slide' }); return }
+    if (CONFIG.viewports[name] || name === 'fill') useStore.getState().setPlay({ ...p, device: name })
   }
   const setTheme = (t: string) => {
     const p = useStore.getState().play
@@ -557,17 +561,19 @@ function PlayInner() {
   // doc preset: reading width, natural document scrolling - the iframe takes the
   // window's height at min(width, 860) CSS pixels, unscaled, and scrolls itself
   const frameEntry = useStore.getState().manifest?.frames.find((f) => f.id === play.at)
-  // the slide device is the current slide's own stage (its declared viewport, else
-  // 1280×720), scaled to the window - UP as well as down, so a projector shows the deck
-  // at full size and the frame never has to scale itself
-  const slideDev = slides && play.device === 'slide'
+  // slides: the iframe is always the current slide's own stage (its declared viewport, else
+  // 1280×720), scaled to the window - UP as well as down, so a projector shows the deck at
+  // full size and the frame never scales itself. 'fill' fits it edge to edge, the slide
+  // device leaves room for the chrome. A slide never reflows.
   const stage = (frameEntry && slideSize(frameEntry, CONFIG.viewports)) ?? SLIDE_INTRINSIC
   const vp = docPreset ? { width: Math.min(win.w, 860), height: win.h }
+    : slides ? { width: stage.width, height: stage.height }
     : fill ? { width: win.w, height: win.h }
-    : slideDev ? { width: stage.width, height: stage.height }
-    : CONFIG.viewports[play.device] ?? (slides ? { width: stage.width, height: stage.height } : Object.values(CONFIG.viewports)[0])
-  const scale = fill || docPreset ? 1
-    : slideDev ? Math.max(0.05, Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height))
+    : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
+  const scale = docPreset ? 1
+    : slides ? Math.max(0.05, fill ? Math.min(win.w / vp.width, win.h / vp.height)
+      : Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height))
+    : fill ? 1
     : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   const names = Object.keys(CONFIG.viewports)
   const list = focus ? [play.at] : slides ? currentDeck() : playList()
@@ -579,7 +585,8 @@ function PlayInner() {
   // fractional sizes left subpixel seams glowing at the corners on dark frames
   const dw = Math.round(vp.width * scale)
   const dh = Math.round(vp.height * scale)
-  const deviceHint = fill ? 'Fill window' : `${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
+  const deviceHint = slides ? `${vp.width} × ${vp.height} stage · ${fill ? 'edge to edge' : 'fit to the window'}`
+    : fill ? 'Fill window' : `${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
 
   return (
     <div className={`sh-play${fill || docPreset ? ' fill' : ''}${docPreset ? ` doc t-${play.theme}` : ''}`}>
@@ -654,7 +661,7 @@ function PlayInner() {
         {!trimmed && <>
           <LaserButton />
           <i className="sep" />
-          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill includeSlide={slides} hint={deviceHint} dark />}
+          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill includeSlide={slides} stageOnly={slides} hint={deviceHint} dark />}
           <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
         </>}
         {playUpdateRevision && <>

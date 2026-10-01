@@ -27,3 +27,10 @@ export function slideSize(
   const vp = frame.viewport ? viewports[frame.viewport] : undefined
   return vp ? { width: vp.width, height: vp.height } : SLIDE_INTRINSIC
 }
+
+/** How a slide's stage sits in a box of any other size: scaled uniformly to fit and centred.
+ *  A slide never reflows - the canvas node, the player and a shot all show the same stage. */
+export function stageFit(stage: { width: number; height: number }, box: { w: number; h: number }): { k: number; ox: number; oy: number } {
+  const k = Math.max(0.01, Math.min(box.w / stage.width, box.h / stage.height))
+  return { k, ox: (box.w - stage.width * k) / 2, oy: (box.h - stage.height * k) / 2 }
+}

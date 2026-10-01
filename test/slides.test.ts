@@ -114,6 +114,16 @@ describe('slideSize - one rule, shared by canvas and shot', async () => {
   })
 })
 
+describe('stageFit - a slide never reflows: any box shows the stage, scaled and centred', async () => {
+  const { stageFit } = await import('../src/client/const.ts')
+  it('fits uniformly, centres the slack, and is the identity at the stage size', () => {
+    expect(stageFit({ width: 1280, height: 720 }, { w: 1280, h: 720 })).toEqual({ k: 1, ox: 0, oy: 0 })
+    expect(stageFit({ width: 1280, height: 720 }, { w: 640, h: 360 })).toEqual({ k: 0.5, ox: 0, oy: 0 })
+    expect(stageFit({ width: 1280, height: 800 }, { w: 640, h: 360 })).toEqual({ k: 0.45, ox: 32, oy: 0 })   // 16:10 in a 16:9 box: pillarboxed
+    expect(stageFit({ width: 1280, height: 720 }, { w: 1920, h: 1200 })).toEqual({ k: 1.5, ox: 0, oy: 60 })  // up, letterboxed
+  })
+})
+
 describe('chartTheme - the house look outside a slide', () => {
   it('slide scale is 18px labels, document/UI scale is 12px; ink and font are the frame\'s', async () => {
     const { chartTheme } = await import('../src/client/content/chart.tsx')

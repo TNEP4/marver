@@ -14,10 +14,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   content, sets the `sl-*` type sizes, freezes animation at rest or outlines an overflow, and
   the `sl-*` classes carry no styles - such a deck still plays, and needs its own styles to look
   as it did.
-- **The player scales the stage, not the slide.** Slides mode renders each slide at its stage
-  and scales the whole stage to the window, up as well as down - a projector shows the deck at
-  full size without the presenter picking Fill (the Slide device never went past 100% before).
-  Fill window still hands the slide the raw window, for a slide built to reflow.
+- **The host scales the stage, not the slide.** A slide never reflows. Slides mode renders each
+  slide at its stage and scales the whole stage to the window, up as well as down - a projector
+  shows the deck at full size without the presenter picking Fill (the Slide device never went
+  past 100% before); Fill window now fits the same stage edge to edge, and slides mode offers no
+  viewport presets. A canvas node resized away from the stage shows it scaled and centred, like
+  a thumbnail, with comment pins mapped through the same fit; published sleep textures are
+  baked at the stage.
 - **A deck chooses its stage.** A slide's stage is the `viewport` it declares, when the project
   defines it - `viewport: 'laptop'` makes a 16:10 deck at 1280×800 - else 1280×720. The canvas,
   `marver shot`, copy as image and slides mode all use it.

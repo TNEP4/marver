@@ -11,9 +11,20 @@ import { sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
 import { noteId, sceneNoteHost } from '../notes.ts'
+import { slideSize, stageFit } from '../../const.ts'
 
 export const HEADER = 28
 const SNAP = 12
+
+/** The iframe's box in its node: a frame fills the node; a slide renders at its stage and is
+ *  scaled uniformly into the node and centred - resizing a slide node never reflows it. The
+ *  identity case carries no transform (no layer, no containing block). */
+function iframeBox(stage: { width: number; height: number } | null, node: { w: number; h: number }) {
+  if (!stage) return { width: node.w, height: node.h }
+  const { k, ox, oy } = stageFit(stage, node)
+  const identity = Math.abs(k - 1) < 1e-6 && Math.abs(ox) < 0.5 && Math.abs(oy) < 0.5
+  return { width: stage.width, height: stage.height, ...(identity ? {} : { transform: `translate(${ox}px, ${oy}px) scale(${k})`, transformOrigin: '0 0' }) }
+}
 
 /** Live Jam working shimmer: a slim 2x6 strip of tiny marver marks on the frame's left
  *  flank, top-aligned - each mark twinkles on its own scattered beat, phased per frame by
@@ -172,7 +183,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const resizing = useRef(false)
   const [resizeTick, setResizeTick] = useState(0)
   useEffect(() => { dirty.current = false }, [node.nav])   // a fresh document is pristine again
-  const w = Math.round(node.w), h = Math.round(node.h)
+  // a slide's document is its stage, whatever the node's size (the node only scales it): the
+  // sleep key - the size the compiler renders to certify textures - is the document's size
+  const stage = frame ? slideSize(frame, CONFIG.viewports) : null
+  const w = Math.round(stage?.width ?? node.w), h = Math.round(stage?.height ?? node.h)
   // a layout effect: the wake lands BEFORE the first paint of the new state (a stretched texture
   // must never be painted at a new size)
   useLayoutEffect(() => {
@@ -418,7 +432,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           src={src}
           title={frame.id}
           onLoad={registerWin}
-          style={{ width: node.w, height: node.h, display: node.missing || node.status === 'error' ? 'none' : 'block' }}
+          style={{ ...iframeBox(stage, node), display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside

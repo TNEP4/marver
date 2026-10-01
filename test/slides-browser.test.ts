@@ -191,6 +191,10 @@ describe('slides in a real published browser', () => {
     // every slide document says it is one - wrapper or not - so Chart and Img size for a stage
     const marked = await browser!.eval(tab, `[...document.querySelectorAll('iframe.sh-live')].map((f) => f.contentDocument.documentElement.hasAttribute('data-mv-slide'))`)
     expect(marked).toEqual([true, true, true])
+    // a slide never reflows: each document is its STAGE, scaled into the 640×360 node - the
+    // 16:9 slides fill it, the 16:10 opening slide (1280×800) fits at .45 and is pillarboxed
+    const docs = await browser!.eval(tab, `[...document.querySelectorAll('.sh-node')].map((n) => { const f = n.querySelector('iframe.sh-live'); return { doc: [f.contentDocument.documentElement.clientWidth, f.contentDocument.documentElement.clientHeight], share: Math.round(f.getBoundingClientRect().width / n.querySelector('.sh-node-body').getBoundingClientRect().width * 100) / 100 } })`)
+    expect(docs).toEqual([{ doc: [1280, 800], share: 0.9 }, { doc: [1280, 720], share: 1 }, { doc: [1280, 720], share: 1 }])
   })
 
   skippable('a slides board lands in slides mode, steps the frozen (y,x) order, and the stage wears the play contract', async () => {
@@ -284,9 +288,8 @@ describe('slides in a real published browser', () => {
     await browser!.until(tab, `location.hash.includes('device=fill')`)
     const w = await browser!.eval(tab, `document.querySelector('.sh-play .dev iframe')?.getBoundingClientRect().width`)
     expect(w).toBe(1600)
-    // fill hands the slide the whole window, unscaled - a responsive slide reflows there
-    const doc = `document.querySelector('.sh-play iframe').contentDocument`
-    await browser!.until(tab, `${doc}.documentElement.clientWidth === 1600`)
+    // fill fits the same stage edge to edge - no chrome margin, never a reflow
+    expect(await browser!.eval(tab, `[${ifr}.clientWidth, ${ifr}.clientHeight, Math.round(${ifr}.getBoundingClientRect().height)]`)).toEqual([1280, 800, 1000])
   })
 
   skippable('chrome: "minimal" trims to the strip + comments; the default board is its control', async () => {

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
-import { useStore, type Node } from './store.ts'
+import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
 import { canvasCtl } from './canvas/ctl.ts'
@@ -15,7 +15,7 @@ import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
-import { ROUTE } from '../const.ts'
+import { ROUTE, slideSize, stageFit } from '../const.ts'
 import type { AgentMeta, Thread } from '../../shared/events.ts'
 
 /** Tint the pin / composer / thread card EDGES (border, outline, focus ring) in the anchored
@@ -132,6 +132,13 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   const selected = useStore((s) => s.selection.includes(node.key))
   const { setActive } = useComments.getState()
   const [rects, setRects] = useState<Record<string, { x: number; y: number; w: number; h: number } | null>>({})
+  // a slide renders at its stage and the node scales it (FrameNode): rects the frame reports are
+  // in stage px, so they map through the same fit into the node's coordinates
+  const frameEntry = useStore((s) => s.frameFor(node))
+  const stage = frameEntry ? slideSize(frameEntry, CONFIG.viewports) : null
+  const fit = stage ? stageFit(stage, { w: node.w, h: node.h }) : null
+  const inNode = <R extends { x: number; y: number; w: number; h: number }>(r: R): R =>
+    fit ? { ...r, x: fit.ox + r.x * fit.k, y: fit.oy + r.y * fit.k, w: r.w * fit.k, h: r.h * fit.k } : r
 
   const open = threads.filter((t) => !t.resolved)
   const anchored = open.filter((t) => (t.anchor as any)?.el)
@@ -249,7 +256,8 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
   const pinPos = (t: Thread) => {
     const a = t.anchor as any
-    const r = isNoteAnchor(a) ? noteRects[t.id] : rects[t.id]
+    const fr = rects[t.id]
+    const r = isNoteAnchor(a) ? noteRects[t.id] : fr && inNode(fr)
     if (a?.el && r) return { x: r.x + (a.pos?.fx ?? 0.5) * r.w, y: r.y + (a.pos?.fy ?? 0.5) * r.h, orphan: false }
     if (a?.el && r === null) return { x: node.w - 16, y: 16, orphan: true }         // orphan parks top-right
     const p = a?.pos                                                                // frame-level: stored fraction of the frame
@@ -310,7 +318,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
       )}
       {draft?.nodeKey === node.key && (() => {
         const a = draft.anchor as any
-        const r = (draftOnNote && noteRects.draft) || a?.rect
+        const r = (draftOnNote && noteRects.draft) || (a?.rect && inNode(a.rect))
         return <DraftComposer at={{ x: (r?.x ?? 0) + (a?.pos?.fx ?? 0.5) * (r?.w ?? 0), y: (r?.y ?? 0) + (a?.pos?.fy ?? 0.5) * (r?.h ?? 0) }} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />
       })()}
     </>
