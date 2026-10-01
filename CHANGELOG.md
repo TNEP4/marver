@@ -36,6 +36,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   consulting deck described one by one. A new project's `design/slides.md` opens with a deck
   look shaped the same way. Existing projects keep their `design/slides.md`; `marver init`
   updates unedited shipped instructions and stages edited ones in `design/.local/latest/`.
+- **Docs.** [docs/slides.md](docs/slides.md) and the README's Slides section describe the new
+  model (a slide is code; the host scales the stage; motion hooks; the deck kit), with a section
+  for decks built before 0.20. [docs/sticky-notes.md](docs/sticky-notes.md) shows a note beside a
+  slide as the presenter's script - Aim / Say / Visual / Source context - and that published notes
+  are readable by viewers.
 
 ### Added
 
@@ -49,6 +54,17 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **`Chart` and `Img` know a slide frame without the wrapper.** Labels take the stage scale and
   images skip the canvas's decoded-to-size path, so a slide scaled up on a projector stays sharp.
   `Chart` also reads `--marver-slide-accent`.
+
+### Upgrading
+
+- Run `npx marver init` to take the new slides guidance (unedited instruction files update in
+  place; edited ones are staged in `design/.local/latest/` for your agent to merge).
+- A deck built on `<Slide>` and the `sl-*` classes keeps playing but loses its padding, centring
+  and type sizes. Ask your agent to give it a deck kit (instructions/slides.md describes one), or
+  stay on 0.19 until you do.
+- A deck of ordinary frames becomes a slide deck by adding `slide: true` to each frame's meta -
+  keep its `viewport` if it was designed at one (a 1280×800 deck stays 16:10) - and setting its
+  publish row to `"type": "slides"`.
 
 ## 0.19.2 - 2026-09-09
 

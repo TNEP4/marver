@@ -44,6 +44,15 @@ own theme.
 - Comments: in comment mode (`C`) click any element of a note; the pin sits on the note, follows a
   fold onto the tab, and the thread card opens beside the column.
 
+## On a slide
+
+Beside a slide (`slide: true`), the note is the presenter's script and the next agent's memory,
+and the [slides guide](slides.md) teaches agents to write it in four short parts - **Aim** (what the
+slide must do in the argument), **Say** (the talk track), **Visual** (what the image or drawing
+carries) and **Source context** (where the facts come from, and their limits) - so the slide itself
+can stay sparse. A note ships with a published canvas like any other: keep anything the audience
+must not read out of it.
+
 ## What it is not
 
 A note is an aside, a screen's worth of reading at most. Specs, flows and mood boards stay content
