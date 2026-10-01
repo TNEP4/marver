@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { extractMeta } from '../src/server/manifest.ts'
 import { planShot } from '../src/server/shot.ts'
 
-/** v1.5 slides - slice 1: the frame type. Literal-boolean meta, and the
- *  sizing precedence chain (slide intrinsic → authored viewport → content
- *  sizing → default) at the shot planner, which mirrors the canvas. */
+/** Slides - the frame type. Literal-boolean meta, and the sizing precedence
+ *  chain (slide stage → authored viewport → content sizing → default) at the
+ *  shot planner, which mirrors the canvas. */
 
 const VPS = { mobile: { width: 390, height: 844 }, laptop: { width: 1280, height: 832 } }
 
@@ -19,12 +19,17 @@ describe('extractMeta - literal booleans (slide)', () => {
 })
 
 describe('planShot - the slide precedence chain', () => {
-  it('the slide intrinsic wins over content sizing AND authored viewport - the Slide root is fixed', () => {
+  it('a slide is a fixed frame at its stage: the declared viewport, else 1280×720 - never content sizing', () => {
     expect(planShot({ slide: true }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
     expect(planShot({ slide: true, contentWidth: 760 }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
-    expect(planShot({ slide: true, viewport: 'mobile' }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
+    expect(planShot({ slide: true, viewport: 'laptop' }, VPS)).toEqual({ width: 1280, initialHeight: 832, fullHeight: false })
+    expect(planShot({ slide: true, viewport: 'nope' }, VPS)).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
     expect(planShot({ contentWidth: 760 }, VPS).fullHeight).toBe(true)
     expect(planShot({}, VPS)).toEqual({ width: 390, initialHeight: 844, fullHeight: false })
+  })
+  it('a canvas node size never changes the artwork - the slide is shot at its stage', () => {
+    expect(planShot({ slide: true }, VPS, { w: 640, h: 360 })).toEqual({ width: 1280, initialHeight: 720, fullHeight: false })
+    expect(planShot({ slide: true, viewport: 'laptop' }, VPS, { w: 900 })).toEqual({ width: 1280, initialHeight: 832, fullHeight: false })
   })
 })
 
@@ -99,9 +104,12 @@ describe('deckOrder - the board is the sorter (pure)', async () => {
 
 describe('slideSize - one rule, shared by canvas and shot', async () => {
   const { slideSize, SLIDE_INTRINSIC } = await import('../src/client/const.ts')
-  it('slide: true IS the size - the fixed Slide root would only be clipped by a viewport', () => {
+  it('the stage is the declared viewport when the project defines it, else 1280×720', () => {
     expect(slideSize({ slide: true })).toEqual(SLIDE_INTRINSIC)
-    expect(slideSize({ slide: true, viewport: 'mobile' } as never)).toEqual(SLIDE_INTRINSIC)
+    expect(slideSize({ slide: true, viewport: 'laptop' }, VPS)).toEqual({ width: 1280, height: 832 })
+    expect(slideSize({ slide: true, viewport: 'laptop' })).toEqual(SLIDE_INTRINSIC)        // no viewports known
+    expect(slideSize({ slide: true, viewport: 'projector' }, VPS)).toEqual(SLIDE_INTRINSIC) // unknown name
+    expect(slideSize({ viewport: 'laptop' }, VPS)).toBeNull()
     expect(slideSize({})).toBeNull()
   })
 })

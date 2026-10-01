@@ -1,11 +1,9 @@
 /**
  * Chart (v1.5) - Apache ECharts, the Diagram way: the author picks the FORM
  * (the ECharts option surface, pointed at from instructions/slides.md);
- * marver injects the house theme and strips author styling drift where it
- * breaks the deck (animation at rest, above all).
+ * marver injects the house theme and keeps the chart still at rest.
  *
- * SVG renderer ONLY - a canvas-rendered chart would pin its frame live on
- * the board (the lean-DOM serializer keeps <canvas> frames degraded). At
+ * SVG renderer ONLY - crisp at any canvas zoom and any stage scale. At
  * rest the chart renders its final state (animation force-disabled); in
  * slides mode (useSlidePlay) it plays its entrance once on mount.
  *
@@ -66,19 +64,21 @@ export function chartTheme(t: { ink: string; font: string; accent: string; groun
 
 /** The house theme, read from the frame the chart sits in, at render time. Ink and font are
  *  the element's own COMPUTED color and font-family - so a chart inherits a UI screen's
- *  Tailwind text colour and typeface, a Doc's tokens, or a Slide's, with no per-context
- *  wiring. Accent and ground come from slide tokens, then Doc tokens, then the mode palette. */
+ *  Tailwind text colour and typeface, a Doc's tokens, or a slide's own type, with no
+ *  per-context wiring. Accent and ground come from slide tokens, then Doc tokens, then the
+ *  mode palette. A slide frame (meta `slide: true`, stamped on <html> as data-mv-slide) or a
+ *  <Slide> wrapper takes the stage label scale. */
 function houseTheme(el: HTMLElement, dark: boolean) {
   const css = getComputedStyle(el)
   const v = (...names: string[]) => { for (const n of names) { const x = css.getPropertyValue(n).trim(); if (x) return x } return '' }
   return chartTheme({
     ink: css.color || (dark ? '#F2F2F7' : '#1C1C1E'),
     font: v('--sl-font') || css.fontFamily || FONT_STACK,
-    accent: v('--sl-accent', '--mv-accent') || (dark ? '#0091FF' : '#0088FF'),
+    accent: v('--sl-accent', '--marver-slide-accent', '--mv-accent') || (dark ? '#0091FF' : '#0088FF'),
     ground: v('--sl-ground', '--mv-surface', '--mv-bg') || (dark ? '#1C1C1E' : '#FFFFFF'),
     grid: v('--sl-grid') || (dark ? 'rgba(242,242,247,.12)' : 'rgba(28,28,30,.1)'),
     dark,
-    inSlide: !!el.closest('.sl-root'),
+    inSlide: !!el.closest('.sl-root') || document.documentElement.hasAttribute('data-mv-slide'),
   })
 }
 

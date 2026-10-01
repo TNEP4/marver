@@ -21,13 +21,46 @@ const params = new URLSearchParams(location.search)
 // token systems, .dark for class-keyed ones (Tailwind/shadcn). Missing the class made
 // play render class-keyed apps light while the canvas showed them dark.
 const bootTheme = params.get('theme') ?? 'light'
-// slides mode (v1.5): the shell says so in the URL; the stage stamps the ONE
-// attribute the content primitives observe (data-sl-play lifts the rest-state
-// motion reset; data-sl-entered arms the entrance presets after each swap
-// settles). `tr=none` and prefers-reduced-motion both skip view transitions.
+// slides mode: the shell says so in the URL; the stage stamps the attributes every slide
+// can key its own motion off - data-sl-play (the deck is playing) on <html> for the whole
+// show, data-sl-entered once each swap settles, data-mv-slide while the mounted frame is a
+// `slide: true` frame. `tr=none` and prefers-reduced-motion both skip view transitions.
 const slidesMode = params.get('slides') === '1'
 const deckTransition = params.get('tr') ?? 'fade'
 if (slidesMode) document.documentElement.setAttribute('data-sl-play', '')
+
+/** The deck's playback CSS - player behaviour, so it lives with the player and serves every
+ *  slide, whatever its markup: one tempo (--marver-slide-tempo) for the morphs between slides
+ *  and the optional entrance presets (data-animate + data-animate-delay), which stay inert
+ *  until the slide has arrived. Anything beyond these is the author's own CSS or JS. */
+const DECK_CSS = `
+::view-transition-group(*), ::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: var(--marver-slide-tempo, 350ms);
+}
+[data-sl-play] [data-animate] { opacity: 0 }
+[data-sl-play][data-sl-entered] [data-animate] {
+  opacity: 1; animation-duration: var(--marver-slide-tempo, 350ms); animation-timing-function: cubic-bezier(.2, .7, .2, 1);
+  animation-fill-mode: both;
+}
+[data-sl-play][data-sl-entered] [data-animate="fade-up"] { animation-name: sl-fade-up }
+[data-sl-play][data-sl-entered] [data-animate="fade"] { animation-name: sl-fade }
+[data-sl-play][data-sl-entered] [data-animate="scale-in"] { animation-name: sl-scale-in }
+[data-sl-play][data-sl-entered] [data-animate-delay="1"] { animation-delay: 80ms }
+[data-sl-play][data-sl-entered] [data-animate-delay="2"] { animation-delay: 160ms }
+[data-sl-play][data-sl-entered] [data-animate-delay="3"] { animation-delay: 240ms }
+@keyframes sl-fade-up { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+@keyframes sl-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sl-scale-in { from { opacity: 0; transform: scale(.94) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) {
+  [data-sl-play] [data-animate] { opacity: 1; animation: none !important }
+}
+`
+if (slidesMode) {
+  const el = document.createElement('style')
+  el.setAttribute('data-mv-deck', '')
+  el.textContent = DECK_CSS
+  document.head.appendChild(el)
+}
 const reducedMotion = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
 document.documentElement.dataset.theme = bootTheme
 document.documentElement.classList.toggle('dark', bootTheme === 'dark')
@@ -45,7 +78,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault())
 // B0.2: a nested scroll container hitting its boundary must not chain into the shell page
 document.documentElement.style.overscrollBehavior = 'contain'
 
-interface Mounted { id: string; Frame: ComponentType; wrappers: ComponentType[] }
+interface Mounted { id: string; Frame: ComponentType; wrappers: ComponentType[]; slide: boolean }
 
 /** Resolve a frame id to its component + wrapper chain. Modules are import()-cached by
  *  Vite, so re-resolving a chain yields the SAME component references - React keeps
@@ -59,7 +92,7 @@ async function resolve(id: string): Promise<Mounted> {
   const providerKey = Object.keys(providers)[0]
   if (providerKey) wrappers.push((await providers[providerKey]() as any).default)
   for (const lk of layoutChain(fileKey)) wrappers.push((await layouts[lk]() as any).default)
-  return { id, Frame: mod.default, wrappers: wrappers.filter((w) => w != null) }
+  return { id, Frame: mod.default, wrappers: wrappers.filter((w) => w != null), slide: mod.meta?.slide === true }
 }
 
 class Boundary extends Component<{ resetKey: string; children?: ReactNode }, { err: Error | null }> {
@@ -119,7 +152,14 @@ function Stage() {
         for (const el of document.querySelectorAll('[data-animate]'))
           if (getComputedStyle(el).viewTransitionName !== 'none') el.removeAttribute('data-animate')
       }
-      const apply = () => { if (seq === swapSeq.current) { flushSync(() => { setErr(null); setMounted(next) }); current.current = id; disarm() } }
+      const apply = () => {
+        if (seq !== swapSeq.current) return
+        // the slide mark first: content primitives read it while they render
+        document.documentElement.toggleAttribute('data-mv-slide', next.slide)
+        flushSync(() => { setErr(null); setMounted(next) })
+        current.current = id
+        disarm()
+      }
       const entered = () => {
         if (!slidesMode || seq !== swapSeq.current) return
         document.documentElement.setAttribute('data-sl-entered', '')

@@ -257,10 +257,10 @@ let liveScenes: Manifest['scenes'] | null = null                 // the last sh:
 const measuredHeights = new Map<string, number>()
 
 function defaultSize(frame: FrameEntry) {
-  // the precedence chain (spec 09 slice 1): slide intrinsic → authored
+  // the precedence chain (spec 09 slice 1): slide stage → authored
   // viewport → content sizing → default (one helper, shared with shot) -
-  // the Slide root renders fixed 1280×720, so nothing may size it smaller
-  const sl = slideSize(frame)
+  // a slide's stage is its declared viewport, else 1280×720
+  const sl = slideSize(frame, CONFIG.viewports)
   if (sl) return { w: sl.width, h: sl.height }
   // content frames: own width from Doc layout; height from the latest
   // measurement at that width, or a placeholder until sh:measure lands.

@@ -46,9 +46,9 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
  *  overrides only the WIDTH. Non-content frames use their viewport (or mobile), fixed height. */
 export interface FrameSizing { width: number; initialHeight: number; fullHeight: boolean }
 /** Optional canvas-node size - the copy-as-image contract: the frame at the NODE'S WIDTH.
- *  Slides ignore it (the artwork is 1280×720; the canvas fit only scales it), content frames
- *  take the width only (the whole document is captured, never the node's scroll window),
- *  fixed frames take both (clamped to the canvas node range 120..3840 × 80..2160). */
+ *  Slides ignore it (the artwork is the slide at its stage), content frames take the width
+ *  only (the whole document is captured, never the node's scroll window), fixed frames take
+ *  both (clamped to the canvas node range 120..3840 × 80..2160). */
 export interface SizeOverride { w?: number; h?: number }
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
 export function planShot(
@@ -59,10 +59,11 @@ export function planShot(
   const cw = num(frame.contentWidth)
   const vpObj = frame.viewport ? viewports[frame.viewport] : undefined      // undefined if the name is unknown
   const ow = num(override.w), oh = num(override.h)
-  // the slide intrinsic beats everything - the Slide root IS 1280×720
-  const sl = slideSize(frame)
-  if (sl) return { width: sl.width, initialHeight: sl.height, fullHeight: false }
   const fallback = viewports.mobile ?? { width: 390, height: 844 }
+  // a slide is shot at its stage (the declared viewport, else 1280×720) whatever its canvas
+  // node's size - the slide as it plays is the artwork, ready to paste anywhere
+  const sl = slideSize(frame, viewports)
+  if (sl) return { width: sl.width, initialHeight: sl.height, fullHeight: false }
   if (cw) {
     const width = clamp(ow ?? vpObj?.width ?? cw, 320, 1600)                 // node > vpw > contentWidth
     return { width, initialHeight: Math.round(width * 0.75), fullHeight: true }

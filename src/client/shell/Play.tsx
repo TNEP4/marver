@@ -15,7 +15,7 @@ import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, b
 import { deckOrder } from './play-order.ts'
 import { useComments } from './comments-store.ts'
 import { isNoteAnchor } from './notes.ts'
-import { ROUTE } from '../const.ts'
+import { ROUTE, slideSize } from '../const.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { Tip } from './Tip.tsx'
@@ -556,19 +556,23 @@ function PlayInner() {
 
   // doc preset: reading width, natural document scrolling - the iframe takes the
   // window's height at min(width, 860) CSS pixels, unscaled, and scrolls itself
+  const frameEntry = useStore.getState().manifest?.frames.find((f) => f.id === play.at)
+  // the slide device is the current slide's own stage (its declared viewport, else
+  // 1280×720), scaled to the window - UP as well as down, so a projector shows the deck
+  // at full size and the frame never has to scale itself
   const slideDev = slides && play.device === 'slide'
+  const stage = (frameEntry && slideSize(frameEntry, CONFIG.viewports)) ?? SLIDE_INTRINSIC
   const vp = docPreset ? { width: Math.min(win.w, 860), height: win.h }
     : fill ? { width: win.w, height: win.h }
-    : slideDev ? { width: SLIDE_INTRINSIC.width, height: SLIDE_INTRINSIC.height }
-    : CONFIG.viewports[play.device] ?? (slides ? { width: SLIDE_INTRINSIC.width, height: SLIDE_INTRINSIC.height } : Object.values(CONFIG.viewports)[0])
+    : slideDev ? { width: stage.width, height: stage.height }
+    : CONFIG.viewports[play.device] ?? (slides ? { width: stage.width, height: stage.height } : Object.values(CONFIG.viewports)[0])
   const scale = fill || docPreset ? 1
-    : slideDev ? Math.min(1, (win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
+    : slideDev ? Math.max(0.05, Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height))
     : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
   const names = Object.keys(CONFIG.viewports)
   const list = focus ? [play.at] : slides ? currentDeck() : playList()
   const pos = list.indexOf(play.at)
   const variants = variantList()
-  const frameEntry = useStore.getState().manifest?.frames.find((f) => f.id === play.at)
   const title = focus ? (frameEntry?.title ?? (play.at.split('/').pop() ?? play.at).replace(/-/g, ' ')) : boardLabel(board)
 
   // whole-pixel wrapper + per-axis scale so the iframe lands exactly on its edges -

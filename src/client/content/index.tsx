@@ -98,9 +98,10 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
   const url = assetUrl(src)
   const [err, setErr] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  // inside a <Slide>, the LOD canvas is OFF: a resting slide must serialize to
-  // the lean-DOM path, and a <canvas> element pins its frame live (v1.5 §7)
-  const inSlide = useInSlide()
+  // on a slide the LOD canvas is OFF: slides mode scales the whole stage up to the screen,
+  // and a bitmap decoded for the frame's own box would blur there - the plain <img> keeps
+  // its full resolution. A slide frame is marked on <html> (data-mv-slide) before it renders.
+  const inSlide = useInSlide() || (typeof document !== 'undefined' && document.documentElement.hasAttribute('data-mv-slide'))
   // LOD: paint the image on a <canvas> decoded to its on-screen size (never the full 17MB bitmap), and
   // re-pick resolution only when the canvas settles after a zoom. See img-lod.ts. Falls back to a plain
   // <img> where createImageBitmap/bitmaprenderer isn't available (correctness over the optimization).

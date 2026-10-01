@@ -158,7 +158,7 @@ export function DevicePicker({ value, onSelect, includeDefault, includeFill, inc
   onSelect: (name: string | null) => void
   includeDefault?: boolean
   includeFill?: boolean
-  /** slides mode: the deck's own 1280×720 stage as a first-class device */
+  /** slides mode: the slide's own stage, fit to the window, as a first-class device */
   includeSlide?: boolean
   hint?: ReactNode
   dark?: boolean
@@ -177,7 +177,7 @@ export function DevicePicker({ value, onSelect, includeDefault, includeFill, inc
       </Tip>
       <Popover pop={pop} dark={dark}>
         {includeSlide && <>
-          <button onClick={() => pick('slide')} title="1280 × 720">
+          <button onClick={() => pick('slide')} title="the slide's own size, fit to the window">
             <SlideFrameIcon size={15} /><span>Slide</span>
             {value === 'slide' && <CheckIcon size={13} className="chk" />}
           </button>

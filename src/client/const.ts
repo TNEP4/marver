@@ -9,15 +9,21 @@ export const ROUTE = '/__mv'
  *  manifest scan (defaultSize for content frames) - one source, no drift. */
 export const CONTENT_WIDTH: Record<string, number> = { document: 760, wide: 1280 }
 
-/** The slide stage (v1.5): a runtime-reserved intrinsic, deliberately NOT a
- *  config viewport - no migration for existing projects, no deck device in
- *  sweeps. Dependency-neutral so server (shot) and shell (store) share it. */
+/** The default slide stage: 16:9 at 1280×720, deliberately NOT a config viewport - no
+ *  migration for existing projects, no deck device in sweeps. Dependency-neutral so
+ *  server (shot) and shell (store, play) share it. */
 export const SLIDE_INTRINSIC = { width: 1280, height: 720 }
 
-/** The one DEFAULT sizing rule for slide frames, shared by canvas and shot:
- *  `slide: true` sets the intrinsic 1280×720 stage, over any authored viewport.
- *  Board nodes stay resizable (the Slide root scales into whatever box it is
- *  given); this governs defaults, shots, and stage coordinates. */
-export function slideSize(frame: { slide?: boolean }): { width: number; height: number } | null {
-  return frame.slide ? SLIDE_INTRINSIC : null
+/** The one sizing rule for slide frames, shared by canvas, shot and slides mode: a
+ *  `slide: true` frame's stage is its declared viewport when the project defines one
+ *  (a 16:10 deck authored at `laptop` stays 1280×800), else the 1280×720 default. A
+ *  slide is an ordinary frame at that size - slides mode scales the whole stage to the
+ *  screen, so the frame never has to. */
+export function slideSize(
+  frame: { slide?: boolean; viewport?: string },
+  viewports: Record<string, { width: number; height: number }> = {},
+): { width: number; height: number } | null {
+  if (!frame.slide) return null
+  const vp = frame.viewport ? viewports[frame.viewport] : undefined
+  return vp ? { width: vp.width, height: vp.height } : SLIDE_INTRINSIC
 }

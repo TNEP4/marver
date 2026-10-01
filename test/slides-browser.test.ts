@@ -16,6 +16,9 @@ import { Browser } from './browser.ts'
  * (3) Slides mode survives a refresh via the hash (`slides=1`).
  * (4) The stage stamps the play contract (`data-sl-play`/`data-sl-entered`)
  *     so entrance presets and player mounts have their signal.
+ * (5) A slide is any frame with `slide: true` - no wrapper needed: the opening slide is
+ *     plain markup at a declared 16:10 stage, and the player (not the frame) scales the
+ *     stage to the window, up as well as down. The others keep the optional <Slide>.
  */
 
 const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
@@ -26,15 +29,15 @@ let root = ''
 let server: ChildProcess | null = null
 let browser: Browser | null = null
 
-const slide = (title: string, body: string) => `
-import { Slide } from '@marver-design/marver/content'
-export const meta = { title: ${JSON.stringify(title)}, slide: true }
+// the opening slide is ordinary markup - no <Slide>, no marver classes - at the laptop stage
+const plainSlide = `
+export const meta = { title: 'The opening', slide: true, viewport: 'laptop' }
 export default function F() {
   return (
-    <Slide>
-      <h1 className="sl-assertion" style={{ viewTransitionName: 'headline' }} data-animate="fade-up">${title}</h1>
-      ${body}
-    </Slide>
+    <main style={{ height: '100vh', margin: 0, display: 'grid', placeContent: 'center', background: '#101820', color: '#f4efe6' }}>
+      <h1 style={{ viewTransitionName: 'headline', fontWeight: 400 }} data-animate="fade-up">The opening</h1>
+      <p data-animate="fade" data-animate-delay="1">still at rest</p>
+    </main>
   )
 }
 `
@@ -45,7 +48,7 @@ export const meta = { title: 'Numbers', slide: true }
 export default function F() {
   return (
     <Slide>
-      <h1 className="sl-assertion">Numbers</h1>
+      <h1>Numbers</h1>
       <Chart h={360} option={{
         xAxis: { type: 'category', data: ['a', 'b', 'c'] },
         yAxis: { type: 'value' },
@@ -62,7 +65,7 @@ export const meta = { title: 'Motion', slide: true }
 export default function F() {
   return (
     <Slide>
-      <h1 className="sl-assertion" style={{ viewTransitionName: 'headline' }} data-animate="fade-up">Motion</h1>
+      <h1 style={{ viewTransitionName: 'headline' }} data-animate="fade-up">Motion</h1>
       <Video src="clip.mp4" poster="clip.png" />
     </Slide>
   )
@@ -92,7 +95,7 @@ beforeAll(async () => {
   symlinkSync(repoRoot, join(nm, '@marver-design', 'marver'))
   const deck = join(root, 'design', 'scenes', 'deck')
   mkdirSync(deck, { recursive: true })
-  writeFileSync(join(deck, '01-open.tsx'), slide('The opening', '<p className="sl-support" data-animate="fade" data-animate-delay="1">still at rest</p>'))
+  writeFileSync(join(deck, '01-open.tsx'), plainSlide)
   writeFileSync(join(deck, '02-chart.tsx'), chartSlide)
   writeFileSync(join(deck, '03-video.tsx'), videoSlide)
   const assets = join(root, 'design', 'assets')
@@ -182,12 +185,12 @@ describe('slides in a real published browser', () => {
     // the chart really rendered (as SVG) rather than silently not mounting
     expect(audit.some((a: { svgs: number }) => a.svgs > 0)).toBe(true)
     // the board JSON stores 640×360 on these nodes: the canvas honors it like
-    // any frame (devices and resizing work on slides) and THE FIT scales the
-    // 1280×720 stage into the box
+    // any frame (devices and resizing work on slides)
     const widths = await browser!.eval(tab, `[...document.querySelectorAll('.sh-node')].map((n) => n.offsetWidth)`)
     expect(widths).toEqual([640, 640, 640])
-    const fitted = await browser!.eval(tab, `[...document.querySelectorAll('iframe.sh-live')].map((f) => f.contentDocument.querySelector('.sl-root').getBoundingClientRect().width - f.clientWidth)`)
-    for (const d of fitted) { expect(d).toBeLessThanOrEqual(0); expect(d).toBeGreaterThan(-6) }   // fills the node's viewport (16:9 rounding aside), never overflows it
+    // every slide document says it is one - wrapper or not - so Chart and Img size for a stage
+    const marked = await browser!.eval(tab, `[...document.querySelectorAll('iframe.sh-live')].map((f) => f.contentDocument.documentElement.hasAttribute('data-mv-slide'))`)
+    expect(marked).toEqual([true, true, true])
   })
 
   skippable('a slides board lands in slides mode, steps the frozen (y,x) order, and the stage wears the play contract', async () => {
@@ -260,6 +263,19 @@ describe('slides in a real published browser', () => {
     await browser!.go(share, `${base}/#/b/share`)
     await browser!.until(share, `!!document.querySelector('.sh-play-nav')`)
     expect(await browser!.eval(share, `!!document.querySelector('.sh-play-brand')`)).toBe(true)
+    // THE FIT, in the player: the slide device is the slide's OWN stage (the opening slide
+    // declares laptop, 1280×800), scaled UP to the 1600×1000 window - the frame never scales
+    const ifr = `document.querySelector('.sh-play .dev iframe')`
+    await browser!.until(tab, `!!${ifr}`)
+    expect(await browser!.eval(tab, `[${ifr}.clientWidth, ${ifr}.clientHeight]`)).toEqual([1280, 800])
+    const scaledUp = await browser!.eval(tab, `${ifr}.getBoundingClientRect().height`)
+    expect(scaledUp).toBeGreaterThan(900)            // (1000 - 88) / 800 = 1.14 → 912px tall
+    expect(scaledUp).toBeLessThanOrEqual(912)
+    // the next slide carries no viewport: the 1280×720 default stage
+    await key('ArrowRight')(tab)
+    await browser!.until(tab, `${ifr}.clientHeight === 720`)
+    expect(await browser!.eval(tab, `${ifr}.getBoundingClientRect().width`)).toBeGreaterThan(1500)   // (1600 - 48) / 1280 = 1.21
+    await key('ArrowLeft')(tab)
     // D flips the theme live (the hash follows), digit 5 = fill window
     await key('d')(tab)
     await browser!.until(tab, `location.hash.includes('theme=dark')`)
@@ -268,13 +284,9 @@ describe('slides in a real published browser', () => {
     await browser!.until(tab, `location.hash.includes('device=fill')`)
     const w = await browser!.eval(tab, `document.querySelector('.sh-play .dev iframe')?.getBoundingClientRect().width`)
     expect(w).toBe(1600)
-    // THE FIT: in fill, the 1280×720 stage scales up and centers - the slide
-    // root's rendered box must span the window's width (1600 = 1280 × 1.25)
+    // fill hands the slide the whole window, unscaled - a responsive slide reflows there
     const doc = `document.querySelector('.sh-play iframe').contentDocument`
-    await browser!.until(tab, `Math.round(${doc}.querySelector('.sl-root')?.getBoundingClientRect().width ?? 0) === 1600`)
-    const box = await browser!.eval(tab, `(() => { const r = ${doc}.querySelector('.sl-root').getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top) } })()`)
-    expect(box.l).toBe(0)                                     // width-limited: flush horizontally...
-    expect(box.t).toBeGreaterThan(0)                          // ...and centered vertically
+    await browser!.until(tab, `${doc}.documentElement.clientWidth === 1600`)
   })
 
   skippable('chrome: "minimal" trims to the strip + comments; the default board is its control', async () => {

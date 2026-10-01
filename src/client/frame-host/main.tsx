@@ -77,6 +77,8 @@ async function boot() {
     // No typeof gate: memo()/forwardRef() components are objects, not functions.
     // React + the ErrorBoundary validate the element type better than we can.
     if (Frame == null) return fail(`${fileKey} has no default export`)
+    // a slide frame says so on its document - content primitives size for a stage by it
+    if (frameMod.meta?.slide === true) document.documentElement.setAttribute('data-mv-slide', '')
 
     const wrappers: any[] = []
     const providerKey = Object.keys(providers)[0]

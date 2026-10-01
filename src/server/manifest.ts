@@ -15,9 +15,9 @@ export interface FrameEntry {
   title?: string
   viewport?: string
   theme?: string
-  /** A deck slide (v1.5): 1280×720 intrinsic (over any authored viewport;
-   *  board nodes stay resizable), the slideshow badge, and the slides-mode
-   *  motion affordances. Literal-only. */
+  /** A deck slide: an ordinary frame at its stage size (the declared viewport,
+   *  else 1280×720), the slideshow badge, and a place in the board's deck -
+   *  slides mode plays it scaled to the screen. Literal-only. */
   slide?: boolean
   /** Variant group id: inferred from 2+ letter-prefixed siblings in one
    *  directory, or declared via meta.of. Present only on grouped frames. */
