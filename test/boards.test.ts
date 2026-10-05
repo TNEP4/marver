@@ -283,6 +283,18 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     expect(read('p')).toMatchObject({ folder: 'shipper' })
   })
 
+  it('two levels: a sub-folder keeps its title and agent-facing description through every tree write', async () => {
+    writeBoard('p'); writeBoard('q')
+    const r = await post([{ folder: 'features', items: [{ folder: 'shipper', title: 'Shipper', description: 'The shipper desk: posting loads', items: ['p'] }, 'q'] }], base('p', 'q'))
+    expect(r.status).toBe(200)
+    expect(read(REG).folders).toContainEqual({ name: 'shipper', parent: 'features', order: 0, title: 'Shipper', description: 'The shipper desk: posting loads' })
+    // a drag that only reorders (the shell sends back what it read) keeps it
+    const r2 = await post([{ folder: 'features', items: ['q', { folder: 'shipper', title: 'Shipper', description: 'The shipper desk: posting loads', items: ['p'] }] }], base('p', 'q'))
+    expect(r2.status).toBe(200)
+    expect(read(REG).folders).toContainEqual({ name: 'shipper', parent: 'features', order: 1, title: 'Shipper', description: 'The shipper desk: posting loads' })
+    expect((await drive(root, 'GET', 'folders')).json.folders).toContainEqual({ name: 'shipper', parent: 'features', order: 1, title: 'Shipper', description: 'The shipper desk: posting loads' })
+  })
+
   it('two levels: three levels are refused (400) and nothing is written; a version-2 file an older shell posted over stays stale-protected', async () => {
     writeBoard('a')
     const before = readFileSync(file('a'), 'utf8')
