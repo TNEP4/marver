@@ -5,7 +5,7 @@ import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
-import { BOARD_NAME, FOLDERS_FILE, readDescription, readTitle, TITLE_MAX, validateWire, type WireItem } from '../shared/board-tree.ts'
+import { BOARD_NAME, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
@@ -268,12 +268,14 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return json(res, 200, { ok: true })
       }
 
-      // Arrange the sidebar: the body is the WHOLE tree - root boards as strings, folders as
-      // `{ folder, boards }` - plus `base`, the sha256 the client last saw for every board it
+      // Arrange the sidebar: the body is the WHOLE tree - boards as strings, folders as
+      // `{ folder, items }` (a top-level folder's items may hold folders: its sub-folders) - plus `base`, the sha256 the client last saw for every board it
       // names and for the registry (null = no file). Every mutation (drag, new/rename/delete
       // folder, move) is this one write: each named board gets its sibling index as `order`
-      // and its `folder` set or deleted; the registry becomes exactly the folders in the tree
-      // (an absent one is gone). Boards the tree does not name are untouched.
+      // and its `folder` set or deleted (the folder it sits in directly, at either level); the
+      // registry becomes exactly the folders in the tree, a sub-folder carrying its `parent`
+      // (an absent one is gone) - version 2 only when one does, so a flat registry stays
+      // readable by an older Marver. Boards the tree does not name are untouched.
       // PREFLIGHT before any write: every named board must exist as a regular, well-formed
       // file whose hash matches `base` - else 409 with the stale names (the client refetches
       // and replays its intent) and NOTHING is written. So a concurrent agent edit of a board's
@@ -299,6 +301,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // sees it and moves it with the rest)
         const reg = readRegistry(boardsDir)
         if (reg.state === 'malformed') return json(res, 422, { error: reg.error })
+        // a shell that predates nesting reads a nested registry flat and would post it back flat,
+        // with a current hash: refuse it, and say what to do (never a 409 - it would only replay)
+        if (reg.state === 'ok' && reg.folders.some((f) => f.parent) && (parsed as { protocol?: unknown }).protocol !== TREE_PROTOCOL) {
+          return json(res, 422, { error: 'this tab predates folders in folders - reload the canvas, then try again' })
+        }
         if (reg.sha256 !== b.folders) return json(res, 409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
         const unseen = listBoardFiles(boardsDir).boards.map((x) => x.name).filter((n) => !(n in b.boards!))
         if (unseen.length) return json(res, 409, { error: 'boards changed on disk', stale: unseen })
@@ -316,13 +323,18 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
           return null
         }
-        const folders: { name: string; order: number; title?: string; description?: string }[] = []
-        for (const [i, it] of (tree as WireItem[]).entries()) {
-          if (typeof it === 'string') { const e = consider(it, i, null); if (e) return json(res, 422, { error: e }); continue }
-          const title = readTitle(it.title), description = readDescription(it.description)
-          folders.push({ name: it.folder, order: i, ...(title ? { title } : {}), ...(description ? { description } : {}) })
-          for (const [j, kid] of it.boards.entries()) { const e = consider(kid, j, it.folder); if (e) return json(res, 422, { error: e }) }
+        const folders: { name: string; order: number; parent?: string; title?: string; description?: string }[] = []
+        const walk = (list: WireItem[], parent: string | null): string | null => {
+          for (const [i, it] of list.entries()) {
+            if (typeof it === 'string') { const e = consider(it, i, parent); if (e) return e; continue }
+            const title = readTitle(it.title), description = readDescription(it.description)
+            folders.push({ name: it.folder, order: i, ...(parent ? { parent } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}) })
+            const e = walk(wireKids(it) as WireItem[], it.folder)
+            if (e) return e
+          }
+          return null
         }
+        { const e = walk(tree as WireItem[], null); if (e) return json(res, 422, { error: e }) }
         if (stale.length) return json(res, 409, { error: 'boards changed on disk', stale })
         // write: only the files whose fields actually change (an untouched board keeps its hash)
         const sha256: Record<string, string> = {}
@@ -337,7 +349,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         }
         mkdirSync(boardsDir, { recursive: true })
         let foldersSha: string | null = null
-        if (folders.length) { const next = JSON.stringify({ version: 1, folders }, null, 2) + '\n'; atomicWrite(foldersPath, next); foldersSha = hash(next) }
+        if (folders.length) {
+          const version = folders.some((f) => f.parent) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
+          const next = JSON.stringify({ version, folders }, null, 2) + '\n'
+          atomicWrite(foldersPath, next)
+          foldersSha = hash(next)
+        }
         else rmSync(foldersPath, { force: true })                 // no folders = no registry file
         return json(res, 200, { ok: true, sha256: { boards: sha256, folders: foldersSha } })
       }

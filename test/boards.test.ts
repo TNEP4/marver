@@ -244,7 +244,8 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     boards: Object.fromEntries(names.map((n) => [n, hash(readFileSync(file(n), 'utf8'))])),
     folders: existsSync(file(REG)) ? hash(readFileSync(file(REG), 'utf8')) : null,
   })
-  const post = (tree: unknown, b: unknown) => drive(root, 'POST', 'boards/reorder', { tree, base: b }, OWNER)
+  /** A tree write as the shell sends it; `protocol: null` = what a shell that predates nesting sends (no marker). */
+  const post = (tree: unknown, b: unknown, protocol: number | null = 2) => drive(root, 'POST', 'boards/reorder', { tree, base: b, ...(protocol === null ? {} : { protocol }) }, OWNER)
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'mv-folders-'))
@@ -265,6 +266,45 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     expect(r.json.sha256.folders).toBe(hash(readFileSync(file(REG), 'utf8')))
   })
 
+  it('two levels: a sub-folder lands in the registry with `parent` and version 2; its boards name it; flat stays version 1', async () => {
+    writeBoard('a'); writeBoard('x'); writeBoard('p'); writeBoard('q')
+    const r = await post(['a', { folder: 'features', items: ['x', { folder: 'shipper', items: ['p', 'q'] }] }], base('a', 'x', 'p', 'q'))
+    expect(r.status).toBe(200)
+    expect(read(REG)).toEqual({ version: 2, folders: [{ name: 'features', order: 1 }, { name: 'shipper', parent: 'features', order: 1 }] })
+    expect(read('x')).toMatchObject({ order: 0, folder: 'features' })
+    expect(read('p')).toMatchObject({ order: 0, folder: 'shipper' })
+    expect(read('q')).toMatchObject({ order: 1, folder: 'shipper' })
+    const f = await drive(root, 'GET', 'folders')
+    expect(f.json.folders).toEqual([{ name: 'features', order: 1 }, { name: 'shipper', parent: 'features', order: 1 }])
+    // the sub-folder moves out to the root: no parent left, so the registry goes back to version 1
+    const r2 = await post(['a', { folder: 'features', items: ['x'] }, { folder: 'shipper', items: ['p', 'q'] }], base('a', 'x', 'p', 'q'))
+    expect(r2.status).toBe(200)
+    expect(read(REG)).toEqual({ version: 1, folders: [{ name: 'features', order: 1 }, { name: 'shipper', order: 2 }] })
+    expect(read('p')).toMatchObject({ folder: 'shipper' })
+  })
+
+  it('two levels: three levels are refused (400) and nothing is written; a version-2 file an older shell posted over stays stale-protected', async () => {
+    writeBoard('a')
+    const before = readFileSync(file('a'), 'utf8')
+    const r = await post([{ folder: 'f', items: [{ folder: 'g', items: [{ folder: 'h', items: ['a'] }] }] }], base('a'))
+    expect(r.status).toBe(400); expect(r.json.error).toMatch(/one level/)
+    expect(readFileSync(file('a'), 'utf8')).toBe(before); expect(existsSync(file(REG))).toBe(false)
+    // an older shell's one-level body still writes over a FLAT registry (its `boards` shape is read)
+    const old = await post([{ folder: 'f', boards: ['a'] }], base('a'), null)
+    expect(old.status).toBe(200); expect(read('a')).toMatchObject({ folder: 'f' })
+  })
+
+  it('two levels: a tab that predates nesting cannot flatten a nested registry, even with a current hash', async () => {
+    writeBoard('p')
+    const nested = await post([{ folder: 'features', items: [{ folder: 'shipper', items: ['p'] }] }], base('p'))
+    expect(nested.status).toBe(200)
+    const before = readFileSync(file(REG), 'utf8')
+    // what a 0.20 shell would post: the registry read flat (parent ignored), the right hashes, no protocol
+    const flat = await post([{ folder: 'features', boards: [] }, { folder: 'shipper', boards: ['p'] }], base('p'), null)
+    expect(flat.status).toBe(422); expect(flat.json.error).toMatch(/reload the canvas/)
+    expect(readFileSync(file(REG), 'utf8')).toBe(before)
+  })
+
   it('GET boards exposes `folder` and never lists the registry; GET folders reads it with its hash', async () => {
     writeBoard('one', { version: 1, nodes: [], order: 3, folder: 'research' }); writeBoard('two', { version: 1, nodes: [], folder: 'Bad Name' })
     writeFileSync(file(REG), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 0 }] }))
@@ -283,7 +323,7 @@ describe('boards/reorder as a tree + GET boards/folders', () => {
     writeFileSync(file(REG), '{ nope')
     f = await drive(root, 'GET', 'folders')
     expect(f.status).toBe(422); expect(f.json.error).toMatch(/_folders\.json/)
-    writeFileSync(file(REG), JSON.stringify({ version: 2, folders: [] }))
+    writeFileSync(file(REG), JSON.stringify({ version: 3, folders: [] }))
     expect((await drive(root, 'GET', 'folders')).status).toBe(422)
   })
 
@@ -516,6 +556,23 @@ describe('marver boards - the tree as the files say it is', () => {
       const j = JSON.parse(lines.join('\n'))
       expect(j.landing).toBe('overview')
       expect(j.tree.map((t: any) => t.name)).toEqual(['overview', 'research', 'empty', 'implied'])
+    } finally { console.log = orig; rmSync(root, { recursive: true, force: true }) }
+  })
+  it('prints a sub-folder indented under its parent, its boards under it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-boards-cli2-'))
+    const dir = join(root, 'design', 'boards')
+    mkdirSync(dir, { recursive: true })
+    const w = (n: string, o: unknown) => writeFileSync(join(dir, `${n}.json`), JSON.stringify(o))
+    w('x', { version: 1, nodes: [], order: 0, folder: 'features' }); w('p', { version: 1, nodes: [], order: 0, folder: 'shipper' })
+    writeFileSync(join(dir, '_folders.json'), JSON.stringify({ version: 2, folders: [{ name: 'features', order: 0 }, { name: 'shipper', parent: 'features', order: 1 }, { name: 'phone', parent: 'features', order: 2 }] }))
+    const { boardsCommand } = await import('../src/cli/boards.ts')
+    const lines: string[] = []
+    const orig = console.log; console.log = (s: string) => { lines.push(String(s)) }
+    try {
+      boardsCommand(root, {})
+      const text = lines.join('\n')
+      expect(text).toMatch(/^features\/  \(folder, 1 board, 2 folders\)\n  x  order 0\n  shipper\/  \(sub-folder of features, 1 board\)\n    p  order 0\n  phone\/  \(sub-folder of features, 0 boards\)\n    \(empty\)/m)
+      expect(text).toMatch(/landing board: x/)
     } finally { console.log = orig; rmSync(root, { recursive: true, force: true }) }
   })
 })

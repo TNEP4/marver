@@ -1,17 +1,18 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, rememberTitles, type TreeBase } from './store.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
 import { ArrowLineUpIcon, CardsIcon, CardsThreeIcon, FolderIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
-  applyDrop, boardsIn, createFolder, deleteFolder, folderIn, folderOf, foldersIn, humanize, isOwnSlot, labelOf, moveBoard, newFolderSlot, readTitle, resolveDrop, retitleFolder, rootIndex, slugFor,
+  applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
+  resolveDrop, retitleFolder, rootIndex, slugFor,
   type Drag, type Drop, type Folder, type Row, type TreeItem,
 } from '../../shared/board-tree.ts'
 
 /**
- * Boards live at the top of the sidebar - always visible, one click to switch - in ONE level
- * of folders. The tree (shared/board-tree.ts) comes from the board files' `order`/`folder`
+ * Boards live at the top of the sidebar - always visible, one click to switch - in up to TWO
+ * levels of folders (a folder holds boards and folders; a sub-folder holds boards). The tree (shared/board-tree.ts) comes from the board files' `order`/`folder`
  * fields plus the `_folders.json` registry; every mutation here (drag, new/rename/delete
  * folder, move) is one optimistic tree write through `arrangeBoards`, replayed once on a
  * 409 (someone else wrote first). The list refreshes on mount, window focus, a slow poll and
@@ -23,8 +24,9 @@ const CLOSED_KEY = 'mv-folders-closed'   // collapsed folders are a viewer prefe
 const readClosed = (): Record<string, true> => { try { return JSON.parse(localStorage.getItem(CLOSED_KEY) ?? '{}') } catch { return {} } }
 
 /** The inline input: renaming a board or a folder, or naming a NEW folder that does not exist
- *  yet - drawn at root `index`, optionally with `board` already inside it. */
-type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string }
+ *  yet - drawn at `index` in `parent`'s items (null = the root), optionally with `board`
+ *  already inside it. */
+type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string; parent: string | null }
 /** A mutation as intent: applied to whichever tree is current, so a 409 can replay it. */
 type Intent = (tree: TreeItem[]) => TreeItem[] | null
 
@@ -185,7 +187,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         refresh()
         return
       }
-      const folderLabels = tree.filter((it): it is Folder => it.kind === 'folder' && (n.kind !== 'folder' || it.name !== n.name)).map((it) => labelOf(it.name, it.title))
+      const folderLabels = folderEntries(tree).map((e) => e.folder).filter((f) => n.kind !== 'folder' || f.name !== n.name).map((f) => labelOf(f.name, f.title))
       if (n.kind === 'folder') {
         const current = folderIn(tree, n.name)
         if (!current || title === labelOf(n.name, current.title)) { setNaming(null); return }
@@ -196,11 +198,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       }
       if (n.kind !== 'new') return
       if (folderLabels.includes(title)) { taken('folder'); return }
-      const { index, board: withBoard } = n
+      const { index, board: withBoard, parent } = n
       const slug = slugFor(title, foldersIn(tree))                                // "Old stuff" → old-stuff (-2 past a namesake); "🚀" alone → folder
       setNaming(null)
       setOpen(slug, true)                                                       // a new folder opens, whatever an old namesake left behind
-      if (!mutate((t) => createFolder(t, slug, index, withBoard, stored(slug) || undefined))) useStore.getState().toast('that board is gone - nothing changed')
+      if (!mutate((t) => createFolder(t, slug, index, withBoard, stored(slug) || undefined, parent))) useStore.getState().toast(withBoard ? 'that board is gone - nothing changed' : 'that folder is gone - nothing changed')
     } finally { commitBusy.current = false }
   }
 
@@ -210,7 +212,10 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const measure = (): Row[] => Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[data-board-row],[data-folder-row]') ?? []).map((el) => {
     const r = el.getBoundingClientRect()
     const folder = el.hasAttribute('data-folder-row')
-    return { kind: folder ? 'folder' : 'board', name: el.dataset.folderRow ?? el.dataset.board ?? '', parent: folder ? null : (el.dataset.folder ?? null), open: el.dataset.open === '1', top: r.top, bottom: r.bottom, left: r.left }
+    return {
+      kind: folder ? 'folder' : 'board', name: el.dataset.folderRow ?? el.dataset.board ?? '', parent: (folder ? el.dataset.parent : el.dataset.folder) ?? null,
+      depth: Number(el.dataset.depth ?? 0), open: el.dataset.open === '1', top: r.top, bottom: r.bottom, left: r.left,
+    }
   })
   /** The drop target for the pointer at (x, y), or null: outside the panel (a release there
    *  cancels), or a slot that would change nothing. Inside the panel there is always one - the
@@ -289,22 +294,36 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }, [])
 
   // ---- menus (flat lists, no submenus) ----
-  const newFolderAt = (index: number, withBoard?: string) => setNaming({ kind: 'new', index, board: withBoard })
+  const newFolderAt = (index: number, withBoard?: string, parent: string | null = null) => {
+    if (parent) setOpen(parent, true)                                // the new folder is drawn inside its parent: show it
+    setNaming({ kind: 'new', index, board: withBoard, parent })
+  }
   const boardMenu = (n: string, parent: string | null): MenuItem[] => {
     const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') }]
     if (PUBLISHED || n === 'all-scenes') return items
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'board', name: n }) })
-    // the new folder takes the board's own slot (or the slot after its current folder)
-    items.push({ label: 'Move to new folder', icon: <FolderPlusIcon size={15} />, onClick: () => newFolderAt(newFolderSlot(treeRef.current, n), n) })
+    // the new folder takes the board's own slot at its own level (a sub-folder inside a top-level
+    // folder; right after its sub-folder when it sits in one - that level holds no folders)
+    items.push({ label: 'Move to new folder', icon: <FolderPlusIcon size={15} />, onClick: () => { const at = newFolderSlot(treeRef.current, n); newFolderAt(at.index, n, at.parent) } })
     // moving into an EXISTING folder is a drag, not a menu - the list stays short
-    if (parent) items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => { const p = folderOf(t, n); return moveBoard(t, n, null, p ? rootIndex(t, 'folder', p) + 1 : undefined) }) })
+    if (parent) items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => {
+      const p = folderOf(t, n)
+      const top = p ? parentOf(t, p) ?? p : null                     // lands right after the top-level folder it was in
+      return moveBoard(t, n, null, top ? rootIndex(t, 'folder', top) + 1 : undefined)
+    }) })
     return items
   }
-  const folderMenu = (f: string, boards: string[]): MenuItem[] => {
-    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`folder: ${f}  (boards: ${boards.join(', ') || 'none'})`, 'path copied') }]
+  const folderMenu = (f: string, boards: string[], parent: string | null): MenuItem[] => {
+    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`folder: ${f}${parent ? ` (in ${parent})` : ''}  (boards: ${boards.join(', ') || 'none'})`, 'path copied') }]
     if (PUBLISHED) return items
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) })
-    // folders organise, never own: deleting one puts its boards back at the top level, in order
+    // two levels: a top-level folder can hold folders; a sub-folder can leave its parent
+    if (!parent) items.push({ label: 'New folder inside', icon: <FolderPlusIcon size={15} />, onClick: () => newFolderAt(listIn(treeRef.current, f)?.length ?? 0, undefined, f) })
+    else items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => {
+      const p = parentOf(t, f)
+      return moveFolderToRoot(t, f, p ? rootIndex(t, 'folder', p) + 1 : undefined)
+    }) })
+    // folders organise, never own: deleting one moves what it holds up one level, into its place, in order
     items.push({ label: 'Delete folder', icon: <FolderMinusIcon size={15} />, onClick: () => { setOpen(f, true); mutate((t) => deleteFolder(t, f)) } })
     return items
   }
@@ -337,26 +356,48 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       }}
       onBlur={(e) => { if (namingRef.current) void commit(e.currentTarget.value) }} />
   )
-  // ONE seam per gap, from the insertion index: drop-before the row AT that index, or drop-after
-  // the last row of a folder's list. Overlay (::after), so no layout shift. Never on the row
-  // being dragged. The root end slot draws before the pinned all-scenes row, never after a
-  // folder header (that seam would read as "inside").
-  const seam = (list: string | null, index: number, last: boolean): string => {
-    if (!drag || !drop || 'into' in drop || drop.list !== list) return ''
-    return drop.index === index ? ' drop-before' : last && drop.index === index + 1 ? ' drop-after' : ''
+  // a new folder being named is drawn at its future slot, its board (if any) already inside;
+  // that board leaves its usual row for the duration
+  const draft = naming?.kind === 'new' ? (naming.board && !boardsIn(tree).includes(naming.board) ? { ...naming, board: undefined } : naming) : null   // a board deleted mid-naming leaves the draft
+  const visible = (items: TreeItem[]) => (draft?.board ? items.filter((k) => !(k.kind === 'board' && k.name === draft.board)) : items)
+  const key = (it: TreeItem) => `${it.kind === 'board' ? 'b' : 'f'}:${it.name}`
+  /** The last row an item draws: a board's own, a closed or empty folder's header, else its last child's last row. */
+  const lastRow = (it: TreeItem): string => {
+    if (it.kind === 'board') return key(it)
+    const kids = visible(it.items)
+    return !closed[it.name] && kids.length ? lastRow(kids[kids.length - 1]!) : key(it)
   }
-  const boardRow = (n: string, parent: string | null, index: number, last: boolean) => {
+  // ONE seam per gap, overlaid (::after, no layout shift) on the row the gap touches: before the
+  // first row of the item AT the index, or after the last row of a list's last item at its end.
+  // Its left edge follows the indent of the list it lands in, so "inside" and "outside" never
+  // draw alike. The root end draws before the pinned all-scenes row. An open EMPTY folder has no
+  // row to draw on: its header draws the indented seam under itself (drop-in).
+  const seam = ((): { row: string; where: 'before' | 'after'; depth: number } | null => {
+    if (!drag || !drop || 'into' in drop) return null
+    const items = listIn(tree, drop.list)
+    if (!items) return null
+    const depth = depthOf(tree, drop.list)
+    if (drop.index < items.length) return { row: key(items[drop.index]!), where: 'before', depth }
+    if (drop.list === null && HAS_ALL_SCENES) return { row: 'b:all-scenes', where: 'before', depth: 0 }
+    return items.length ? { row: lastRow(items[items.length - 1]!), where: 'after', depth } : null
+  })()
+  const seamLeft = (depth: number): CSSProperties => ({ ['--seam-left' as string]: `${depth ? depth * INDENT : 6}px` })
+  const seamOf = (row: string): { cls: string; style?: CSSProperties } =>
+    seam && seam.row === row ? { cls: ` drop-${seam.where}`, style: seamLeft(seam.depth) } : { cls: '' }
+  const indent = (depth: number) => (depth >= 2 ? ' in-folder in-sub' : depth === 1 ? ' in-folder' : '')
+
+  const boardRow = (n: string, parent: string | null, depth: number) => {
     const dragging = drag?.kind === 'board' && drag.name === n
-    const dropCls = dragging ? '' : n === 'all-scenes' ? (drop && !('into' in drop) && drop.list === null && drop.index === tree.length ? ' drop-before' : '') : seam(parent, index, last)
+    const s = dragging ? { cls: '' } : seamOf(`b:${n}`)
     // the row being renamed is still a row: measured by a drag (its slot exists) and it draws its seam
     if (naming?.kind === 'board' && naming.name === n) return (
-      <div key={n} data-board-row data-board={n} data-folder={parent ?? undefined} className={`it board editing${parent ? ' in-folder' : ''}${dropCls}`}><CardsIcon size={14} />{input(label(n))}</div>
+      <div key={`b:${n}`} data-board-row data-board={n} data-folder={parent ?? undefined} data-depth={depth} className={`it board editing${indent(depth)}${s.cls}`} style={s.style}><CardsIcon size={14} />{input(label(n))}</div>
     )
     const canDrag = !PUBLISHED && n !== 'all-scenes'
     const item: Drag = { kind: 'board', name: n }
     return (
-      <button key={`${parent ?? ''}/${n}`} data-board-row data-board={n} data-folder={parent ?? undefined} data-reorderable={canDrag || undefined}
-        className={`it board${parent ? ' in-folder' : ''}${n === board ? ' cur' : ''}${dragging ? ' dragging' : ''}${dropCls}`}
+      <button key={`b:${n}`} data-board-row data-board={n} data-folder={parent ?? undefined} data-depth={depth} data-reorderable={canDrag || undefined}
+        className={`it board${indent(depth)}${n === board ? ' cur' : ''}${dragging ? ' dragging' : ''}${s.cls}`} style={s.style}
         // draggable rows switch on the pointer tap (onPointerUp), so their trailing mouse
         // click (detail >= 1) must be ignored to avoid a double switch; keyboard clicks
         // (detail === 0) and non-draggable rows (all-scenes, published) switch here as normal
@@ -372,23 +413,42 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       </button>
     )
   }
-  const folderRow = (it: Folder, boards: string[], index: number): ReactNode[] => {
+  const draftRows = (depth: number): ReactNode[] => !draft ? [] : [
+    <div key="f:new" className={`it folder editing${indent(depth)}`}><FolderOpenIcon size={14} />{input('', 'Folder name')}</div>,
+    ...(draft.board ? [<div key="new/board" className={`it board draft${indent(depth + 1)}${draft.board === board ? ' cur' : ''}`}><CardsIcon size={14} /><span>{label(draft.board)}</span></div>] : []),
+  ]
+  /** A list's rows - the root's, a folder's, a sub-folder's - with a draft new folder at its slot. */
+  const listRows = (items: TreeItem[], parent: string | null, depth: number): ReactNode[] => {
+    const out: ReactNode[] = []
+    const here = draft && draft.parent === parent ? draft : null
+    items.forEach((it, i) => {
+      if (here && here.index === i) out.push(...draftRows(depth))
+      if (it.kind === 'board') { if (draft?.board !== it.name) out.push(boardRow(it.name, parent, depth)) }
+      else out.push(...folderRows(it, parent, depth))
+    })
+    if (here && here.index >= items.length) out.push(...draftRows(depth))
+    return out
+  }
+  const folderRows = (it: Folder, parent: string | null, depth: number): ReactNode[] => {
     const f = it.name
     const open = !closed[f]
+    const kids = visible(it.items)
+    const boards = boardsIn(kids)
+    const s = seamOf(`f:${f}`)
     const rows: ReactNode[] = []
     if (naming?.kind === 'folder' && naming.name === f) {
-      rows.push(<div key={`f:${f}`} data-folder-row={f} data-open={open ? '1' : '0'} className={`it folder editing${seam(null, index, false)}`}>{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}{input(labelOf(f, it.title))}</div>)
+      rows.push(<div key={`f:${f}`} data-folder-row={f} data-parent={parent ?? undefined} data-depth={depth} data-open={open ? '1' : '0'} className={`it folder editing${indent(depth)}${s.cls}`} style={s.style}>{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}{input(labelOf(f, it.title))}</div>)
     } else {
       const item: Drag = { kind: 'folder', name: f }
       const dragging = drag?.kind === 'folder' && drag.name === f
       const into = !!drag && !!drop && 'into' in drop && drop.into === f
-      // a slot inside an open EMPTY folder has no board row to draw on: the indented seam sits under the header
-      const inSeam = !!drag && !!drop && !('into' in drop) && drop.list === f && open && boards.length === 0
+      const inSeam = !!drag && !!drop && !('into' in drop) && drop.list === f && open && kids.length === 0
+      const sc = dragging ? { cls: '' } : inSeam ? { cls: ' drop-in', style: seamLeft(depth + 1) } : s
       rows.push(
-        <button key={`f:${f}`} data-folder-row={f} data-open={open ? '1' : '0'} data-reorderable={!PUBLISHED || undefined}
-          className={`it folder${boards.includes(board) ? ' held' : ''}${dragging ? ' dragging' : ''}${into ? ' drop-into' : ''}${inSeam ? ' drop-in' : ''}${dragging ? '' : seam(null, index, false)}`}
+        <button key={`f:${f}`} data-folder-row={f} data-parent={parent ?? undefined} data-depth={depth} data-open={open ? '1' : '0'} data-reorderable={!PUBLISHED || undefined}
+          className={`it folder${indent(depth)}${boards.includes(board) ? ' held' : ''}${dragging ? ' dragging' : ''}${into ? ' drop-into' : ''}${sc.cls}`} style={sc.style}
           onClick={(e) => { if (PUBLISHED || e.detail === 0) setOpen(f, !open) }}
-          onContextMenu={(e) => onMenu(e, folderMenu(f, boards))}
+          onContextMenu={(e) => onMenu(e, folderMenu(f, boards, parent))}
           onPointerDown={!PUBLISHED ? (e) => onPointerDown(e, item) : undefined}
           onPointerMove={!PUBLISHED ? onPointerMove : undefined}
           onPointerUp={!PUBLISHED ? onPointerUp : undefined}
@@ -400,25 +460,12 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         </button>,
       )
     }
-    if (open) boards.forEach((b, i) => rows.push(boardRow(b, f, i, i === boards.length - 1)))
+    if (open) rows.push(...listRows(it.items, f, depth + 1))
     return rows
   }
 
-  // a new folder being named is drawn at its future slot, its board (if any) already inside;
-  // that board leaves its usual row for the duration
-  const draft = naming?.kind === 'new' ? (naming.board && !boardsIn(tree).includes(naming.board) ? { ...naming, board: undefined } : naming) : null   // a board deleted mid-naming leaves the draft
-  const rows: ReactNode[] = []
-  const draftRows = draft ? [
-    <div key="f:new" className="it folder editing"><FolderOpenIcon size={14} />{input('', 'Folder name')}</div>,
-    ...(draft.board ? [<div key="new/board" className={`it board in-folder draft${draft.board === board ? ' cur' : ''}`}><CardsIcon size={14} /><span>{label(draft.board)}</span></div>] : []),
-  ] : []
-  tree.forEach((it, i) => {
-    if (draft && draft.index === i) rows.push(...draftRows)
-    if (it.kind === 'board') { if (draft?.board !== it.name) rows.push(boardRow(it.name, null, i, false)) }
-    else rows.push(...folderRow(it, draft?.board ? it.boards.filter((b) => b !== draft.board) : it.boards, i))
-  })
-  if (draft && draft.index >= tree.length) rows.push(...draftRows)
-  if (HAS_ALL_SCENES) rows.push(boardRow('all-scenes', null, -1, false))   // a published bundle without it shows none
+  const rows: ReactNode[] = listRows(tree, null, 0)
+  if (HAS_ALL_SCENES) rows.push(boardRow('all-scenes', null, 0))   // a published bundle without it shows none
   return (
     <div className="sh-boards" ref={rootRef} onContextMenu={(e: ReactMouseEvent) => blankMenu(e)}>
       <div className="hd">

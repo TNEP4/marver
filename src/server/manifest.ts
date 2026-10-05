@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { randomBytes } from 'node:crypto'
 import { join, relative, sep } from 'node:path'
 import { CONTENT_WIDTH, PKG } from '../client/const.ts'
-import { buildTree, flatten, isBoardName, readDescription, readTitle } from '../shared/board-tree.ts'
+import { buildTree, flatten, folderEntries, isBoardName, readDescription, readTitle } from '../shared/board-tree.ts'
 import { boardFields, checkBoardsDir, checkRealDirs, listBoardFiles, readRegistry } from './boards.ts'
 import { hash } from './hash.ts'
 
@@ -43,7 +43,7 @@ export interface Manifest {
   /** `title` = what humans see (the brief's front matter); `name` = the directory */
   scenes: { name: string; frames: number; title?: string; description?: string; brief?: string; note?: string }[]
   project?: { name?: string; description?: string }
-  folders?: { name: string; title?: string; description?: string }[]
+  folders?: { name: string; parent?: string; title?: string; description?: string }[]
   /** curated boards in sidebar order (folders flattened); never all-scenes */
   boards?: { name: string; folder?: string; title?: string; description?: string }[]
 }
@@ -269,8 +269,9 @@ export function setSceneTitle(root: string, scene: string, title: string): strin
   return null
 }
 
-/** The sidebar as files say it is, for the manifest: folders in root order, boards in
- *  reading order with their folder and description. A boards dir we may not read (symlink)
+/** The sidebar as files say it is, for the manifest: folders in reading order (a sub-folder
+ *  after its parent, with `parent`), boards in reading order with the folder they sit in
+ *  directly and their description. A boards dir we may not read (symlink)
  *  or a malformed registry yields nothing here - the API and the build say why; the
  *  orientation file must never fail to write. */
 function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
@@ -281,9 +282,10 @@ function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
   const files = listBoardFiles(dir).boards
   const rows = files.map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName) }))
   const tree = buildTree(rows, reg.folders)
+  const entries = folderEntries(tree)
   const folderOf = new Map<string, string>()
-  for (const it of tree) if (it.kind === 'folder') for (const b of it.boards) folderOf.set(b, it.name)
-  const folders = tree.filter((it) => it.kind === 'folder').map((it) => ({ name: it.name, ...(it.title ? { title: it.title } : {}), ...(it.description ? { description: it.description } : {}) }))
+  for (const { folder } of entries) for (const k of folder.items) if (k.kind === 'board') folderOf.set(k.name, folder.name)
+  const folders = entries.map(({ folder: it, parent }) => ({ name: it.name, ...(parent ? { parent } : {}), ...(it.title ? { title: it.title } : {}), ...(it.description ? { description: it.description } : {}) }))
   const boards = flatten(tree).map((name) => {
     const r = rows.find((x) => x.name === name)
     return { name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(r?.title ? { title: r.title } : {}), ...(r?.description ? { description: r.description } : {}) }

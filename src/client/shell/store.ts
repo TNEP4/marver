@@ -138,15 +138,15 @@ export const modeAllowed = (board: string, mode: 'present' | 'focus' | 'slides')
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
-import { buildTree, flatten, labelOf, toWire, type TreeItem } from '../../shared/board-tree.ts'
+import { buildTree, flatten, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
 export interface TreeBase { boards: Record<string, string>; folders: string | null }
 export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase; titles: Record<string, string> }
 
-/** The sidebar tree: root boards and folders in rank order, each folder's boards inside
- *  (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
+/** The sidebar tree: root boards and folders in rank order, each folder's boards and
+ *  sub-folders inside (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
  *  is pinned last by the callers. Throws on transport failure and on a malformed registry
  *  (the server's 422 message) - callers keep their last known tree. */
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
@@ -154,7 +154,7 @@ export async function fetchBoardTree(): Promise<TreeSnapshot> {
   const [boards, reg] = await Promise.all([
     fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
-      const j = await r.json() as { folders?: { name: string; order?: number; title?: string }[]; sha256?: string | null; error?: string }
+      const j = await r.json() as { folders?: { name: string; order?: number; parent?: string; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
       return j
     }),
@@ -795,7 +795,7 @@ export const useStore = create<State>((set, get) => {
           const active = get().board
           const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
           let res: Response
-          try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders } }) }
+          try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders }, protocol: TREE_PROTOCOL }) }
           catch { return { ok: false as const, stale: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
           if (!res.ok) return { ok: false as const, stale: res.status === 409, error: body?.error }

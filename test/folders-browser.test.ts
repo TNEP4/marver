@@ -104,6 +104,9 @@ const settle = () => new Promise((r) => setTimeout(r, 400))   // the optimistic 
 const skippable = (name: string, fn: () => Promise<void>, ms = 60_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); reset(); await fn() }, ms)
 
+/** The sidebar at two levels: each row indented two spaces per level (`data-depth`), folders as `folder:name`. */
+const TREE_ROWS = `Array.from(document.querySelectorAll('.sh-boards [data-board-row], .sh-boards [data-folder-row]')).map((el) => '  '.repeat(Number(el.dataset.depth || 0)) + (el.hasAttribute('data-folder-row') ? 'folder:' + el.dataset.folderRow : el.dataset.board))`
+
 describe('board folders - real dev server, real browser, real files', () => {
   skippable('right-click the Boards header → New folder → type "Old stuff" → Enter: a slug + the title in the registry, the title on the row', async () => {
     const s = await open(browser!)
@@ -504,5 +507,54 @@ describe('board folders - real dev server, real browser, real files', () => {
     expect(readBoard('archive').order).toBe(0)
     expect(readBoard('flow').order).toBe(3)
     expect(readBoard('specs').folder).toBe('research')
+  })
+  skippable('two levels: New folder inside → drag a board onto it → Move to top level → the files agree at every step', async () => {
+    writeBoard('specs', { order: 2, folder: 'research' }); writeBoard('archive', { order: 3, folder: 'research' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 2 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,folder:research,  specs,  archive,all-scenes'`)
+    // a top-level folder's menu: New folder inside → a sub-folder at its end
+    const r = await centre(browser!, s, '[data-folder-row="research"]')
+    await rightClick(browser!, s, r.x, r.y)
+    await pickMenu(browser!, s, 'New folder inside')
+    await browser!.until(s, `document.activeElement?.placeholder === 'Folder name'`)
+    await type(browser!, s, 'Deep dives')
+    await enter(browser!, s)
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,folder:research,  specs,  archive,  folder:deep-dives,all-scenes'`)
+    await settle()
+    expect(registry()).toEqual({ version: 2, folders: [{ name: 'research', order: 2 }, { name: 'deep-dives', parent: 'research', order: 2, title: 'Deep dives' }] })
+    // a root board dragged onto the sub-folder's header lands inside it
+    const from = await centre(browser!, s, '[data-board="overview"]')
+    const to = await centre(browser!, s, '[data-folder-row="deep-dives"]')
+    await drag(browser!, s, { x: from.x, y: from.y }, { x: to.x, y: to.y })
+    await browser!.until(s, `${TREE_ROWS}.join() === 'flow,folder:research,  specs,  archive,  folder:deep-dives,    overview,all-scenes'`)
+    await settle()
+    expect(readBoard('overview')).toMatchObject({ folder: 'deep-dives', order: 0 })
+    // the sub-folder's menu: Move to top level - right after its parent, no parent left, version 1 again
+    const d = await centre(browser!, s, '[data-folder-row="deep-dives"]')
+    await rightClick(browser!, s, d.x, d.y)
+    await pickMenu(browser!, s, 'Move to top level')
+    await browser!.until(s, `${TREE_ROWS}.join() === 'flow,folder:research,  specs,  archive,folder:deep-dives,  overview,all-scenes'`)
+    await settle()
+    expect(registry()).toEqual({ version: 1, folders: [{ name: 'research', order: 1 }, { name: 'deep-dives', order: 2, title: 'Deep dives' }] })
+    expect(readBoard('overview')).toMatchObject({ folder: 'deep-dives' })
+    // a reload reads the same tree back from the files
+    const s2 = await open(browser!)
+    await browser!.until(s2, `${TREE_ROWS}.join() === 'flow,folder:research,  specs,  archive,folder:deep-dives,  overview,all-scenes'`)
+  })
+
+  skippable('two levels: deleting a folder that holds a sub-folder moves both up one level, into its place - no board lost', async () => {
+    writeBoard('specs', { order: 0, folder: 'research' }); writeBoard('archive', { order: 0, folder: 'deep' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 2, folders: [{ name: 'research', order: 2 }, { name: 'deep', parent: 'research', order: 1 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,folder:research,  specs,  folder:deep,    archive,all-scenes'`)
+    const r = await centre(browser!, s, '[data-folder-row="research"]')
+    await rightClick(browser!, s, r.x, r.y)
+    await pickMenu(browser!, s, 'Delete folder')
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,specs,folder:deep,  archive,all-scenes'`)
+    await settle()
+    expect(registry()).toEqual({ version: 1, folders: [{ name: 'deep', order: 3 }] })
+    expect(readBoard('specs').folder).toBeUndefined()
+    expect(readBoard('archive')).toMatchObject({ folder: 'deep' })
   })
 })

@@ -231,15 +231,21 @@ export function readBoards(root: string): Record<string, any> {
 }
 
 /** Switcher order = the sidebar's reading order: the folder tree over the PUBLISHED boards only
- *  (a folder left with no published board drops out - its name never reaches the bundle),
+ *  (a folder left with no published board at any depth drops out - its name never reaches the bundle),
  *  flattened depth-first; all-scenes always LAST (it is the expensive everything-board, never
  *  the landing). `names[0]` is where `/` opens. Folder names of published boards are structure,
  *  like board names: they ship. */
 export function publishedTree(published: string[], allBoards: Record<string, any>, folders: FolderRow[]): { tree: TreeItem[]; names: string[] } {
-  const tree = buildTree(
+  const built = buildTree(
     published.filter((n) => n !== 'all-scenes').map((n) => ({ name: n, ...boardFields(allBoards[n], isBoardName) })),
     folders,
-  ).filter((it) => it.kind === 'board' || it.boards.length > 0)
+  )
+  const prune = (items: TreeItem[]): TreeItem[] => items.flatMap((it): TreeItem[] => {
+    if (it.kind === 'board') return [it]
+    const kids = prune(it.items)
+    return kids.length ? [{ ...it, items: kids }] : []
+  })
+  const tree = prune(built)
   return { tree, names: [...flatten(tree), ...(published.includes('all-scenes') ? ['all-scenes'] : [])] }
 }
 
@@ -250,7 +256,9 @@ export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], p
   const pubScenes = new Set(pubFrames.map((f) => f.scene))
   const pubBoardSet = new Set(publishedNames)
   const pubBoards = (manifest.boards ?? []).filter((b) => pubBoardSet.has(b.name))
+  // the folders published boards sit in, and the parents of those - structure, like board names
   const pubFolderSet = new Set(pubBoards.map((b) => b.folder).filter(Boolean))
+  for (const f of manifest.folders ?? []) if (f.parent && pubFolderSet.has(f.name)) pubFolderSet.add(f.parent)
   const pubFolders = (manifest.folders ?? []).filter((f) => pubFolderSet.has(f.name))
   return {
     ...(manifest.project ? { project: manifest.project } : {}),

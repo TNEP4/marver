@@ -62,22 +62,32 @@ viewport and lays it out:
 
 ## Folders - organising the sidebar
 
-Boards can sit in folders, one level deep (folders hold boards, never folders).
-Files are the truth, and two files carry it:
+Boards can sit in folders, two levels deep: a folder holds boards and folders, a folder
+inside a folder (a **sub-folder**) holds boards only. A board can sit at the root, in a
+folder, or in a sub-folder. Files are the truth, and two files carry it:
 
 - **Membership lives on the board**: `"folder": "research"` in the board file, next
-  to `order`. `order` then ranks the board among its folder siblings (root boards and
-  folders share the root sequence). Same grammar as board names
+  to `order` - always the ONE folder it sits in directly, at either level (a board in a
+  sub-folder names the sub-folder, never a path). `order` then ranks it among its
+  siblings: at every level, the boards and folders there share one sequence (the root's
+  boards and top-level folders; a folder's boards and sub-folders; a sub-folder's boards). Same grammar as board names
   (`^[a-z0-9][a-z0-9-]*$`); an invalid value means top level. `all-scenes` never
   lives in a folder.
 - **Folders live in `design/boards/_folders.json`** - the underscore marks it as
   infrastructure, never a board:
 
   ```json
-  { "version": 1, "folders": [
+  { "version": 2, "folders": [
     { "name": "research", "order": 1, "title": "R&D", "description": "The thinking behind the live boards - specs, flows, references" },
+    { "name": "flows", "parent": "research", "order": 2, "description": "One board per user flow" },
     { "name": "archive", "order": 3, "description": "Retired directions and scene versions, oldest first" } ] }
   ```
+
+  **Nesting lives here only**: a sub-folder's entry carries `"parent": "<folder>"`, and the
+  file says `"version": 2` while any entry has a parent (`"version": 1` when none does - an
+  older Marver can read that, and refuses a version-2 file rather than lose its nesting).
+  A parent must itself be a registered top-level folder; a sub-folder never holds a
+  folder. Folder names are unique across both levels.
 
   A folder's `name` is its slug - the identity its boards point at with `folder`; its
   `title` (optional, free text) is what humans see, exactly as on a board; its
@@ -87,7 +97,8 @@ Files are the truth, and two files carry it:
   It exists so an EMPTY folder can exist and so a folder has a rank at the root.
   A folder a board names but the registry lacks is still real (it sorts after the
   ranked items, by name) - two boards with `"folder": "research"` make a Research
-  folder on their own. A malformed registry is an error the canvas shows, not an
+  folder on their own. Such an implied folder is always top-level: to nest it, register
+  it with its `parent`. A malformed registry is an error the canvas shows, not an
   empty one - fix it, never delete it.
 
 **Look before you organise: `npx marver boards`** prints the sidebar as the files say
@@ -99,39 +110,53 @@ have rearranged things since you last looked, and their arrangement stands.
 The moves, each a file edit, so the files always agree:
 - **Create** a folder: add `{ "name": "<slug>", "order": <n>, "description": "…" }`
   to the registry's `folders` (create the file if absent) - or just point a board at it.
-- **Move a board in**: write `"folder": "<slug>"` on the board and give it an `order`
-  among that folder's boards. **Move it out**: delete the `folder` field and give it
-  an `order` among the top-level items.
+  **Create a sub-folder**: the same entry with `"parent": "<top-level folder>"`, its
+  `order` among that folder's boards and sub-folders, and `"version": 2` on the file.
+- **Move a folder in or out**: set its `parent` (only a folder with no sub-folders of its
+  own can move into another - never three levels) or delete it; re-rank the siblings you
+  touch, and set `"version"` to 2 while any parent remains, 1 when none does.
+- **Move a board in**: write `"folder": "<slug>"` on the board - any folder, at either
+  level - and give it an `order` among that folder's boards and sub-folders. **Move it
+  out**: delete the `folder` field and give it an `order` among the top-level items.
 - **Rank** folders and boards: `order` on the board (among its siblings) and on the
   registry entry (among the top-level items). Renumber the siblings you touch.
 - **Retitle** a folder (or a board): set `title` on the registry entry (on the board
   file). **Rename a slug** - a folder's `name`, a board's file name - only when asked,
-  and as one refactor: a folder slug is on every member's `folder` field (rewrite them
-  all, AND the registry entry - a registry rename alone leaves the members in the old,
-  implied folder); a board file name is in `publish.json`, in its comment threads and in
+  and as one refactor: a folder slug is on every member's `folder` field and on
+  every sub-folder's `parent` (rewrite them all, AND the registry entry - a registry rename
+  alone leaves the members in the old, implied folder and the sub-folders pointing at a
+  parent that no longer exists); a board file name is in `publish.json`, in its comment threads and in
   every path anyone copied. A title does what a rename usually wanted.
-- **Delete** a folder: remove `folder` from every member, then its registry entry.
-  Folders organise, never own: deleting one never deletes a board.
-- The **landing board** is the first board in sidebar order, folders included -
-  rank a folder first and its first board opens the canvas.
+- **Delete** a folder: what it holds moves up one level, into its place - a top-level
+  folder's boards lose `folder` and its sub-folders lose `parent` (they become top-level
+  folders, keeping their boards); a sub-folder's boards take its parent as their `folder`.
+  Then remove its registry entry and re-rank the level it emptied into. Folders organise,
+  never own: deleting one never deletes a board.
+- The **landing board** is the first board in sidebar order, reading down through
+  folders and sub-folders - rank a folder first and its first board opens the canvas.
 
 Use folders proactively, the way a tidy studio would: a canvas past six or eight
 boards wants grouping - the live feature boards at the top level, `research` /
 `specs` for the thinking, `decks` for slides, `archive` for history and versions
-last. Propose the grouping in one sentence and do it; keep folder names short and
+last. Reach for a sub-folder when a folder itself grows past six or eight boards and
+splits naturally (features by surface, archive by year) - not before; one level reads
+faster than two. Propose the grouping in one sentence and do it; keep folder names short and
 plain.
 
 The human does all of this too - from the sidebar: New folder (right-click the Boards
-header, or its `+`), Rename (the title - slugs never move from the sidebar), Delete
-folder, "Move to …" on a board, and DRAG: boards into and out of folders, folders among
-boards. Each drag rewrites `order` (and
+header, or its `+`), New folder inside (a top-level folder's menu), Rename (the title -
+slugs never move from the sidebar), Delete folder, Move to top level (a board in a folder,
+a sub-folder), Move to new folder (a board), and DRAG: boards into and out of folders at
+either level, folders among boards and - when they hold no sub-folders - into a top-level
+folder. Each drag rewrites `order` (and
 `folder`) on the boards it touches and the registry - the shell owns those fields
 while the canvas is open, exactly as it owns `order`; write membership and new
 folders freely, and never rewrite an arrangement the human just made. The shell
 refuses a write that would overwrite an edit it has not seen (your file write and
 the human's drag can never silently erase each other), so read a board file before
-you rewrite it. Published canvases show the folders of the published boards only; a
-folder with nothing published never reaches the bundle.
+you rewrite it. Published canvases show the folders of the published boards only - a
+sub-folder's parent included; a folder with nothing published at any depth never reaches
+the bundle.
 
 ## The default composition: one horizontal band
 
