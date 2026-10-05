@@ -302,23 +302,21 @@ function landingDepth(t: TreeItem[], d: Drag): number {
 export function resolveDrop(t: TreeItem[], d: Drag, rows: Row[], x: number, y: number): Drop | null {
   const mid = (r: { top: number; bottom: number }) => (r.top + r.bottom) / 2
   const deepest = landingDepth(t, d)
-  // a dragged folder's own header and its contents are never a place to land
-  const rs = d.kind === 'folder' ? rows.filter((r) => !(r.kind === 'folder' && r.name === d.name) && r.parent !== d.name && !(r.parent && parentOf(t, r.parent) === d.name)) : rows
   if (deepest === 0) {
     const blocks: { top: number; bottom: number }[] = []
-    for (const r of rs) {
+    for (const r of rows) {
       if (r.depth > 0 && blocks.length) { blocks[blocks.length - 1]!.bottom = r.bottom; continue }
       blocks.push({ top: r.top, bottom: r.bottom })
     }
     let g = 0
     for (const b of blocks) if (y >= mid(b)) g++
-    // the blocks skip the dragged folder: an index past it counts it back in
-    const from = rootIndex(t, 'folder', d.name)
-    const index = from >= 0 && g >= from ? g + 1 : g
-    return { list: null, index: Math.min(index, t.length) }
+    return { list: null, index: Math.min(g, t.length) }
   }
+  // what a dragged folder holds is never a place to land; its own header stays in the
+  // geometry, so a wobble over it resolves to its own slot - a no-op, never an eviction
+  const rs = d.kind === 'folder' ? rows.filter((r) => r.parent !== d.name && !(r.parent && parentOf(t, r.parent) === d.name)) : rows
   for (const r of rs) {
-    if (r.kind !== 'folder' || y < r.top || y >= r.bottom || r.depth + 1 > deepest) continue
+    if (r.kind !== 'folder' || (d.kind === 'folder' && r.name === d.name) || y < r.top || y >= r.bottom || r.depth + 1 > deepest) continue
     const f = (y - r.top) / (r.bottom - r.top)
     if (f >= 0.25 && (f < 0.75 || !r.open)) return { into: r.name }
   }
@@ -330,7 +328,7 @@ export function resolveDrop(t: TreeItem[], d: Drag, rows: Row[], x: number, y: n
   type Slot = { list: string | null; index: number; depth: number }
   // the deepest slot the gap can mean: inside an open folder, under its header - or right after the row above, in its own list
   let first: Slot
-  if (above.kind === 'folder' && above.open) first = { list: above.name, index: 0, depth: above.depth + 1 }
+  if (above.kind === 'folder' && above.open && !(d.kind === 'folder' && above.name === d.name)) first = { list: above.name, index: 0, depth: above.depth + 1 }
   else {
     const i = indexIn(t, above.parent, above.kind, above.name)
     if (i < 0) return null
@@ -404,17 +402,22 @@ export function moveFolderToRoot(tree: TreeItem[], name: string, atRoot?: number
   const next = cloneTree(tree)
   const src = takeItem(next, 'folder', name)
   if (!src) return null
-  const at = atRoot ?? next.length
-  next.splice(Math.min(src.list === null && at > src.index ? at - 1 : at, next.length), 0, src.item)
+  // an explicit slot was measured before the folder left the root; the default end was not
+  const at = atRoot === undefined ? next.length : src.list === null && atRoot > src.index ? atRoot - 1 : atRoot
+  next.splice(Math.min(at, next.length), 0, src.item)
   return next
 }
+
+/** Can this list hold a folder? The root and a top-level folder can; a sub-folder, or a
+ *  folder that is not there, cannot. */
+export const holdsFolders = (t: TreeItem[], parent: string | null): boolean => parent === null || (!!folderIn(t, parent) && parentOf(t, parent) === null)
 
 /** A new folder at `index` in `parent`'s items (null = the root), holding `board` (pulled
  *  from wherever it sat) when given. Only the root and top-level folders hold folders. */
 export function createFolder(tree: TreeItem[], name: string, index: number, board?: string, title?: string, parent: string | null = null): TreeItem[] | null {
   if (foldersIn(tree).includes(name)) return null
   const next = cloneTree(tree)
-  if (parent !== null && (!folderIn(next, parent) || parentOf(next, parent) !== null)) return null
+  if (!holdsFolders(next, parent)) return null
   const items: TreeItem[] = []
   if (board) {
     const src = takeItem(next, 'board', board)

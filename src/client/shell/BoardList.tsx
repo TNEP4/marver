@@ -5,7 +5,7 @@ import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
 import { ArrowLineUpIcon, CardsIcon, CardsThreeIcon, FolderIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
-  applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
+  applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
   resolveDrop, retitleFolder, rootIndex, slugFor,
   type Drag, type Drop, type Folder, type Row, type TreeItem,
 } from '../../shared/board-tree.ts'
@@ -346,6 +346,15 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // a draft new folder whose parent vanished or got nested mid-naming is cancelled, said once
+  const orphanDraft = naming?.kind === 'new' && !holdsFolders(tree, naming.parent)
+  useEffect(() => {
+    if (!orphanDraft) return
+    setNaming(null)
+    useStore.getState().toast('that folder changed - the new folder was not made')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orphanDraft])
+
   // ---- rows ----
   const input = (defaultValue: string, placeholder?: string) => (
     <input autoFocus defaultValue={defaultValue} placeholder={placeholder} spellCheck={false}
@@ -357,8 +366,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       onBlur={(e) => { if (namingRef.current) void commit(e.currentTarget.value) }} />
   )
   // a new folder being named is drawn at its future slot, its board (if any) already inside;
-  // that board leaves its usual row for the duration
-  const draft = naming?.kind === 'new' ? (naming.board && !boardsIn(tree).includes(naming.board) ? { ...naming, board: undefined } : naming) : null   // a board deleted mid-naming leaves the draft
+  // that board leaves its usual row for the duration. A draft whose parent vanished or can no
+  // longer hold folders (an agent deleted or nested it mid-naming) draws nothing and hides
+  // nothing - the effect below cancels it, so the board it held shows where it now is
+  const draftLive = naming?.kind === 'new' && holdsFolders(tree, naming.parent)
+  const draft = naming?.kind === 'new' && draftLive ? (naming.board && !boardsIn(tree).includes(naming.board) ? { ...naming, board: undefined } : naming) : null   // a board deleted mid-naming leaves the draft
   const visible = (items: TreeItem[]) => (draft?.board ? items.filter((k) => !(k.kind === 'board' && k.name === draft.board)) : items)
   const key = (it: TreeItem) => `${it.kind === 'board' ? 'b' : 'f'}:${it.name}`
   /** The last row an item draws: a board's own, a closed or empty folder's header, else its last child's last row. */

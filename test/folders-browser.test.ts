@@ -543,6 +543,24 @@ describe('board folders - real dev server, real browser, real files', () => {
     await browser!.until(s2, `${TREE_ROWS}.join() === 'flow,folder:research,  specs,  archive,folder:deep-dives,  overview,all-scenes'`)
   })
 
+  skippable('regression: an agent deletes the folder a draft "Move to new folder" was drawn in - the draft is cancelled and the board shows', async () => {
+    writeBoard('specs', { order: 0, folder: 'research' }); writeBoard('archive', { order: 1, folder: 'research' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 2 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,folder:research,  specs,  archive,all-scenes'`)
+    const c = await centre(browser!, s, '[data-board="specs"]')
+    await rightClick(browser!, s, c.x, c.y)
+    await pickMenu(browser!, s, 'Move to new folder')
+    await browser!.until(s, `document.activeElement?.placeholder === 'Folder name'`)
+    expect(await browser!.eval(s, `document.querySelectorAll('[data-board="specs"]').length`)).toBe(0)   // held inside the draft
+    // the agent deletes research by the book: its boards lose `folder`, then the registry entry goes
+    writeBoard('specs', { order: 2 }); writeBoard('archive', { order: 3 })
+    rmSync(join(boardsDir(), '_folders.json'))
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,specs,archive,all-scenes'`, 15_000)
+    expect(await browser!.eval(s, `!!document.querySelector('.sh-boards input')`)).toBe(false)
+    await browser!.until(s, `window.__mvStore.getState().toasts.some((t) => /was not made/.test(t.text))`)
+  })
+
   skippable('two levels: deleting a folder that holds a sub-folder moves both up one level, into its place - no board lost', async () => {
     writeBoard('specs', { order: 0, folder: 'research' }); writeBoard('archive', { order: 0, folder: 'deep' })
     writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 2, folders: [{ name: 'research', order: 2 }, { name: 'deep', parent: 'research', order: 1 }] }))

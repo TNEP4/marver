@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  applyDrop, buildTree, createFolder, deleteFolder, flatten, fromWire, INDENT, isOwnSlot, moveBoard, moveFolderToRoot, newFolderSlot, parseFolders, readTitle, resolveDrop, retitleFolder, slugFor, slugify, toWire, validateWire,
+  applyDrop, buildTree, createFolder, deleteFolder, flatten, fromWire, holdsFolders, INDENT, isOwnSlot, moveBoard, moveFolderToRoot, newFolderSlot, parseFolders, readTitle, resolveDrop, retitleFolder, slugFor, slugify, toWire, validateWire,
   type Row, type TreeItem,
 } from '../src/shared/board-tree.ts'
 
@@ -230,9 +230,8 @@ describe('resolveDrop - the gap model over the rendered rows', () => {
   it('a folder never lands inside itself: over its own rows it finds its own slot', () => {
     const rows = layout(tree())
     expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'a', 0.2))).toEqual({ list: null, index: 0 })
-    expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'x', 0.4))).toEqual({ list: null, index: 1 })
-    expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'y', 0.9))).toEqual({ list: null, index: 1 })
-    expect(isOwnSlot(tree(), folder, { list: null, index: 1 })).toBe(true)
+    // over its own header or what it holds: always its own slot - nothing moves
+    for (const at of [['f', 0.5], ['x', 0.4], ['y', 0.9]] as const) expect(isOwnSlot(tree(), folder, resolveDrop(tree(), folder, rows, LABEL, rowY(rows, at[0], at[1]))!)).toBe(true)
     expect(resolveDrop(tree(), folder, rows, LABEL, rowY(rows, 'all-scenes', 0.9))).toEqual({ list: null, index: 3 })
   })
   it('a folder without sub-folders can go INTO a top-level folder; one holding sub-folders moves between root blocks only', () => {
@@ -399,6 +398,30 @@ describe('two levels - folders in folders', () => {
     expect(toWire(moveFolderToRoot(tree(), 's', 2)!)).toEqual(['a', { folder: 'f', items: ['x', 'y'] }, { folder: 's', items: ['p', 'q'] }, 'b'])
     expect(toWire(moveBoard(tree(), 'p', null, 2)!)).toEqual(['a', { folder: 'f', items: ['x', { folder: 's', items: ['q'] }, 'y'] }, 'p', 'b'])
     expect(toWire(moveBoard(tree(), 'a', 's')!)).toEqual([{ folder: 'f', items: ['x', { folder: 's', items: ['p', 'q', 'a'] }, 'y'] }, 'b'])
+  })
+  it('regression: a sub-folder wobbled over its OWN header stays put - never ejected to the root', () => {
+    // f: [x, s: [p]] then b - s is f's last item
+    const t = T(['a', { folder: 'f', items: ['x', { folder: 's', items: ['p'] }] }, 'b'])
+    const rows = layout(t)
+    const s = { kind: 'folder' as const, name: 's' }
+    // wherever it was grabbed - at or right of its own indent - a wobble over its header is a no-op
+    for (const frac of [0.1, 0.3, 0.5, 0.7, 0.9]) for (const x of [LEFT + INDENT + 6, LEFT + 2 * INDENT + 6, LEFT + 180]) {
+      const target = resolveDrop(t, s, rows, x, rowY(rows, 's', frac))!
+      expect(isOwnSlot(t, s, target), `s at frac=${frac} x=${x} → ${JSON.stringify(target)}`).toBe(true)
+    }
+    // pulled LEFT into the root gutter at the bottom of its folder: the existing gutter rule - out to the root
+    expect(resolveDrop(t, s, rows, LEFT + 12, rowY(rows, 's', 0.9))).toEqual({ list: null, index: 2 })
+  })
+  it('regression: Move to top level with no slot appends at the end - the removal is not counted twice', () => {
+    expect(toWire(moveFolderToRoot(T([{ folder: 'f', items: [] }, 'a', 'b']), 'f')!)).toEqual(['a', 'b', { folder: 'f', items: [] }])
+    expect(toWire(moveFolderToRoot(T([{ folder: 'f', items: [] }, 'a', 'b']), 'f', 2)!)).toEqual(['a', { folder: 'f', items: [] }, 'b'])   // a slot measured before the removal does shift
+    expect(toWire(moveFolderToRoot(tree(), 's')!)).toEqual(['a', { folder: 'f', items: ['x', 'y'] }, 'b', { folder: 's', items: ['p', 'q'] }])
+  })
+  it('holdsFolders: the root and a top-level folder hold folders; a sub-folder or a vanished folder does not', () => {
+    expect(holdsFolders(tree(), null)).toBe(true)
+    expect(holdsFolders(tree(), 'f')).toBe(true)
+    expect(holdsFolders(tree(), 's')).toBe(false)
+    expect(holdsFolders(tree(), 'gone')).toBe(false)
   })
   it('newFolderSlot: a board in a sub-folder gets the new folder right after that sub-folder', () => {
     expect(newFolderSlot(tree(), 'p')).toEqual({ parent: 'f', index: 2 })
