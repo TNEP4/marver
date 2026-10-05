@@ -1,4 +1,4 @@
-<!-- marver:managed 2677b304b1323f1f9c993d6511e1f7df0c5b5b2ea2e24faa9eb32606a1df5208 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 32ee65217b96244cd329dcdc6896e9ff0e4ea224d627cafdba23ba4013bea8bf - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Wireframe - nail structure and words while changes are cheap
 
 Lo-fi is for NEW work: a new site, feature, flow, or page where the question is
@@ -15,6 +15,9 @@ lands on what is actually being decided.
 
 ## The rules (strict)
 
+0. **Every frame says what it is.** `meta.title` and `meta.description` (one sentence:
+   the screen's job, and "wireframe" while it is one) - the manifest carries them, so
+   a later session knows the lo-fi from the hi-fi without opening files.
 1. **Throwaway code is correct here.** Plain divs, inline layout, one file per frame.
    Do NOT build proper components for wireframes and do NOT touch the app's
    `components/` directory - lo-fi structure hardening into real components is how

@@ -1,4 +1,4 @@
-<!-- marver:managed de25d2ca74785fd301e012c5777d4da7a2a9dc22e29278a364c75535dd0734bf - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 5fe3739f30c463ec46aef72fed5e7c1dc12de9ccde5f06bb2503a945335b1e66 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Review - the self-review pass before presenting anything
 
 Run this before telling the human a design is ready. The budget is fixed: one full
@@ -27,6 +27,10 @@ however late it surfaced.
 6. **States exist**: for each screen with meaningful states, the empty / error /
    loading siblings are present and reachable.
 7. **Craft floor**: one pass over craft.md's Verify list against the RENDERED frames.
+8. **Descriptions true**: read design/manifest.json once more - every board, folder,
+   scene and frame this session touched carries a `description` that is still true
+   (state words above all: retired, winning, superseded). The next session orients
+   from that file; a stale sentence there costs it more than a missing one.
 
 ## Honesty rules
 

@@ -1,4 +1,4 @@
-<!-- marver:managed 7d14760bde93937ed5ff9bd6b832d0285d9d72a20464edcd776d2f5ba7cafe90 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 7a1a079a05a37af940d9a0afce38bef9a38a2840663286562579af4ca2d0f398 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Craft - the quality floor for high-fidelity frames
 
 Binding rules for every hi-fi frame. Read them before Build, then apply them silently -
@@ -97,6 +97,23 @@ thing - changes everything. This section is binding, not aspiration:
 - **Imagery is real imagery.** When the design calls for photos or screenshots,
   fetch and commit them locally with names that say what they are - never
   hotlink (published canvases make zero external requests, and remote URLs rot).
+- **Charts are real charts.** A dashboard, a report, an analytics screen gets
+  `Chart` from `@marver-design/marver/content` - Apache ECharts behind a house
+  theme that inherits the SCREEN's ink, typeface and accent (light and dark),
+  renders SVG, sits still at rest and follows the layout on resize. Importing it
+  does not make the screen a content frame: it keeps its device, its height and
+  its place in the flow. Write the ECharts `option` with fixture data; never
+  set colors, fonts or animation in it. Never a static chart image, never
+  hand-drawn bars from divs when the real thing is one import away.
+- **Video is a real video.** A hero loop, an onboarding clip, a story in a
+  phone screen: `Video` from `@marver-design/marver/content` - poster-first
+  (still on the canvas, no media fetched at rest), click-to-play wherever the
+  frame is live, `ratio="9 / 16"` for vertical, `autoplay` for a muted ambient
+  loop (an explicit choice: that frame stays live on the canvas). The poster
+  is rendered from the clip when you omit it (`<clip>.poster.png` beside it in
+  `design/assets/`); author one when the opening frame is not the picture.
+  Never a gray "video" box, never
+  a static screenshot standing in for motion the design depends on.
 - **Licensing sanity, briefly:** brand marks from official sources shown to
   identify the brand are fine; photos come from sources that permit the use.
   Unsure about one? Use it, and flag it to the human in the same message.
@@ -128,6 +145,10 @@ app, and the human attributes the fault to your frame, not to a library.
 
 ## Frame law
 
+- Every frame carries `meta.description` - one sentence, what the screen is for and
+  its state when that is not obvious ("Filled state of the orders table, current
+  direction"). It reaches design/manifest.json; the next session reads it instead
+  of the file.
 - Frames are made of the app's real components and tokens. Rebuilding a lookalike of
   an existing component inside a frame is a defect.
 - Repeated and semantic values (colors, type sizes, radii, the spacing rhythm)

@@ -1,4 +1,4 @@
-<!-- marver:managed a4a508b6373d24063e295d2723fb65364fbef6ff83e0fb1cd17a9ae17cabf340 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed b4e65909e51d44027b848e46079b0e69a143d30cc202a8609c976165288a95d5 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Discover - understand before you draw
 
 Run this phase for any NEW surface, feature, or project. Skip it only when a brief
@@ -41,12 +41,29 @@ to the SURFACE, not the product.
 
 Create `design/scenes/<scene>/_brief.md`: audience + scene, the one job, mode, the
 flow as a numbered list, content sources, out-of-scope. Ten lines, not a document.
-Show it. Get the nod.
+**Its first non-blank line is the scene's one-sentence description** - purpose and state,
+e.g. `# Checkout - the buyer's path from cart to receipt (v2, after the pricing pivot)`.
+That line lands in `design/manifest.json` as the scene's `description`, so a later
+session reads it without opening the brief; keep it true as the scene moves on (a
+scene that only needs a gist - a version snapshot, an archive - gets a one-line brief).
+A scene's directory is its identity (every frame id starts with it); what humans SEE
+for it is `title` in the brief's YAML front matter - optional, free text - the sidebar
+Title-Cases the directory otherwise (`checkout` → "Checkout", but `mvp` → "Mvp"):
+
+```md
+---
+title: "Checkout (v2)"
+---
+# Checkout - the buyer's path from cart to receipt (v2, after the pricing pivot)
+```
+
+The human's Rename on a scene writes exactly that line; leave the block alone and
+never rename the directory for a title. Show the brief. Get the nod.
 
 **Unattended?** When the human is away or has said "don't ask", the interview and
 the nod convert to obligations, not blockers: answer the five questions yourself
-from the repo and reasonable product judgment, mark the brief `UNCONFIRMED` at the
-top, proceed - and surface the brief FIRST when the human returns. Never stall on
+from the repo and reasonable product judgment, mark the brief `UNCONFIRMED` in its
+first line (`# Checkout - … (UNCONFIRMED)`), proceed - and surface the brief FIRST when the human returns. Never stall on
 an absent human; never hide that the brief was self-answered.
 
 ## 4. Align on flow with a diagram frame

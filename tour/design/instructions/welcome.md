@@ -1,4 +1,4 @@
-<!-- marver:managed 9b7f9cb2165cf66ad226821ce29297993b17ee58c2926710a1adf89dc97d9156 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 1e2e1fe8fc428afcce2bce8cbaf5180c54b5f5688b141c5f685290cf85a2a067 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Welcome - the human's first session
 
 Run this the FIRST time you work with the human in a repo, or whenever they ask
@@ -62,7 +62,10 @@ without narrating into the void; your next message is the reveal.
    State your understanding of the product in 2-3 sentences, ask "did I get
    that right?" - then STOP: no further tool calls, end your turn, resume when
    the human replies. (Only exception: they explicitly asked for unattended
-   execution - assume, mark UNCONFIRMED, surface it first.)
+   execution - assume, mark UNCONFIRMED, surface it first.) Once they confirm,
+   write that understanding as one sentence into `description` in
+   design/config.ts - the project's line in design/manifest.json, the first
+   thing every later session reads.
 2. **Confirm the stack aloud - what detection ACTUALLY found.** Read AGENTS.md's
    UI line and design/theme.css and narrate the reality, for example: "Tailwind
    + shadcn/ui; brand tokens in <file>; design/theme.css imports them." No
@@ -130,9 +133,15 @@ features:
   glance. The cheap way to diverge on a direction before committing.
 - **Compose.** `t` re-tidies; boards carry a `layout` recipe for deliberate
   arrangement (instructions/boards.md).
+- **Point at it and ask.** Comment on any element, and tag `@marver` in the
+  comment. I pick the job up, edit that frame's real source while it wears a
+  live working glow, and reply in the thread when it is done. That is the
+  loop - point at the thing, say what you want, watch it change. (This is on;
+  say so plainly, it is the feature they will use most.)
 - **Share it.** `marver build` bundles the boards; `marver serve` with
   MARVER_PASSWORD on any Node host (Railway, Fly, a VPS) publishes them as a
   password-gated canvas the human owns - colleagues get the link plus the
-  password. Comments on the board are coming soon.
+  password. Give the serve a data volume and they get accounts and comment
+  right on it, and those threads sync back into the repo (instructions/publish.md).
 
 Close by asking what they want to design first.

@@ -1,4 +1,4 @@
-<!-- marver:managed 8e38bb48f92b3ca23207656ba8b6b3cc2537bcc09198fd8796762c9a790fee3f - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 6225d94713a024de9f628141633dfa2930fa15a1e53521ad525f3fb8b9d58b8a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Shape - an idea needs thinking before it needs screens
 
 Run this when the human wants to think a feature through on the canvas - specs,
@@ -59,9 +59,9 @@ primitives. Import them directly in the frame file (not through a barrel -
 detection is lexical), and declare `intent` on every content frame:
 
 ```tsx
-import { Doc, Row, Col, Md, Diagram, Img } from '@marver-design/marver/content'
+import { Doc, Row, Col, Md, Diagram, Img, Chart } from '@marver-design/marver/content'
 
-export const meta = { title: 'Checkout - how it works', intent: 'diagram' }
+export const meta = { title: 'Checkout - how it works', intent: 'diagram', description: 'The agreed flow, five screens - the source for the wireframes' }
 
 export default () => (
   <Doc layout="wide">
@@ -97,6 +97,20 @@ export default () => (
   natural aspect ratio - never cropped, never letterboxed. Size it by how many images
   share its `Row` (fewer = bigger), not by a fixed height. Blocks carry their own
   padding, border, and surface - never hand-manage spacing around them.
+- `Chart` is Apache ECharts, the Diagram way: you write the ECharts `option`
+  (any series - bar, line, pie, scatter, radar, gauge, heatmap, funnel, treemap,
+  sunburst, sankey, boxplot), marver injects the house look - the frame's own ink
+  and typeface, the accent, light and dark - and renders SVG, still at rest.
+  `<Chart h={360} option={{ xAxis: {...}, yAxis: {...}, series: [...] }} />`.
+  Never set colors, fonts or `animation` in the option: the theme owns them.
+  Label inside the plot on narrow blocks (an outside pie label past the edge is
+  dropped). Data comes from a fixture, never invented in the option.
+- `Video` (`src`, `poster`) embeds a clip the same way: a design-asset file
+  or an https direct URL. The poster is the frame at rest; omit it and marver
+  renders one from the clip (`<clip>.poster.png` beside it). Still at
+  rest; click the poster to play wherever the frame is live. `ratio="9 / 16"`
+  for a vertical clip. A walkthrough recording or a competitor's motion belongs
+  in a spec as a `Video`, never as a link the reader has to leave for.
 - `intent` (`diagram` | `spec` | `moodboard` | `notes`) is the frame's PURPOSE,
   not its content mix - a frame with two diagrams and a paragraph is still the
   "diagram frame" if diagrams are why it exists. It drives the icon the human
@@ -170,8 +184,80 @@ of described imagery every time (the full asset rules: instructions/craft.md,
   never set a frame height - the frame auto-heights to fit everything the canvas
   measures. Marver renders images crisp and zooms fast, so fine detail is one zoom away.
 - Judge on the RENDER, not the props: after composing, look at the actual frame
-  (screenshot it if you can) and adjust the per-row count until it reads well. "The code
+  (`npx marver shot --scene <scene>` shoots the whole scene in one go; instructions/jam.md
+  has the shell-less way) and adjust the per-row count until it reads well. "The code
   says they're the same width" proves nothing.
+
+## Sticky notes - the aside beside a frame
+
+A sticky note is one markdown file beside the thing it explains. It renders as a yellow note
+left of the frame on the canvas, in dev and in every published or shared canvas. Nothing to
+declare, no board node, no imports, no iframe:
+
+| For | Write | Shows |
+|---|---|---|
+| a frame `checkout/cart` (`cart.tsx`, `cart.jsx` or `cart.html`) | `design/scenes/checkout/cart.note.md` | left of that frame, 260 wide |
+| a scene `checkout` | `design/scenes/checkout/_note.md` | left of the scene's first frame on the board, 380 wide |
+| a component frame | `design/components/<name>.note.md` | as a frame note |
+
+Write one when a reader needs something the screen cannot say: what the frame is for, what
+differs between two variations, how a mechanism works, an open question. Markdown, the Md
+block's rules: `[text](goto:scene/frame)` links jump to a frame on the canvas, `http(s)`
+links open a new tab, images are `design/assets/` paths, raw HTML is inert, and a
+` ```mermaid ` fence renders hand-drawn, in the note's own yellow. Readers can comment on any
+element of a note exactly as on a frame element.
+
+Placement is not your job: the canvas keeps the room. Every layout the shell composes - a
+board's `layout` recipe, the auto board, tidy, device views - reserves the note's width and
+gutter in front of its frame, and its height below it: a note longer than its frame runs on
+under the card and the next row starts under the note. When a note lands on a board that is
+already composed (open or not), or grows, the recipe re-applies and the frames make way. Never
+move frames, pad a lane or measure a gap for a note, sideways or down: write the file and the
+board takes care of it. Only a board the human dragged by hand keeps its positions as they
+are; their `t` makes the room there.
+
+````md
+## Why the jobs list leads
+
+Drivers ask "where am I going first" - the list beats the map here.
+Compare with the [empty day](goto:app-home/today-empty): same header, one call to action.
+
+| Reason | Effect |
+|---|---|
+| Too far | lane weight down |
+
+```mermaid
+flowchart LR
+  Login --> Today --> Jobs
+```
+````
+
+### Diagrams in a note
+
+A ```mermaid fence in a note renders hand-sketched on the yellow paper: rough boxes, hatched
+fills, handwriting labels, one ink. You write plain mermaid and nothing else - no `%%{init}%%`,
+no theme, no colours, no `style` lines (the note has one look and applies it to every family),
+no URLs or images in the source (refused). Every family works: flowchart, sequence, state,
+class, ER, pie, mindmap, timeline, gantt, journey, quadrant, git graph, block.
+
+Fit the note: flowchart (`TD` for a tall note, `LR` for three or four steps), sequence, state,
+class, ER, pie and mindmap read well at 260 or 380 wide. Gantt, journey, timeline, quadrant and
+git graphs are drawn at the note's width too but are wide by nature - keep them to a handful of
+items, or give them a content frame. Five to eight nodes is the sweet spot; short labels
+(two or three words); one diagram per note, above or below the prose it explains.
+
+```mermaid
+sequenceDiagram
+  participant D as Driver
+  participant G as Gate
+  D->>G: scan gate code
+  G-->>D: bay + lot map
+```
+
+Keep it an aside: a screen's worth of reading at most. The spec, the flow, the mood board stay
+content frames - a note explains, it does not document. Every viewer can fold a note to its
+corner tab (the choice is theirs, never saved to the board) and hide all of them with `N`.
+Edits to a note file land on the canvas as you save, without reloading the frame.
 
 ## When Shape ends
 

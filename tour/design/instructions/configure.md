@@ -1,4 +1,4 @@
-<!-- marver:managed 515aa7febe3ea55c3dcf64b0adb1feddfa85bc578eb4f9096532dedf0b338fb6 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed dc82a54d44479d4f470a5efcc05914dd3491db6992a76181e44ccbcec105d3db - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Configure - reach the idle state, once per repo
 
 The idle state is marver fully wired into THIS repo: frames render with the app's
@@ -16,8 +16,13 @@ frames render suspiciously unstyled - then never think about it again.
    app's tokens (see brand.md Path A). Without it, every hi-fi session re-derives
    the brand and drifts.
 4. **Manifest honest**: `design/manifest.json` lists what is really on disk.
+5. **Live Jam names you**: `jam.agent` in `design/config.ts` is the tool YOU are
+   (`"claude"` for Claude Code, `"codex"` for Codex). Jam is on by default and init
+   guessed from env markers and PATH - on a machine with both CLIs installed that guess
+   can be wrong, and then every `@marver` comment is answered by the other tool. Fix the
+   line and tell the human. Details, including the off switch: instructions/jam.md.
 
-All four true → idle state. Go design.
+All five true → idle state. Go design.
 
 ## By repo maturity
 
@@ -67,6 +72,10 @@ If collaboration is deployed, each engineer runs `marver comments connect
 <url>` ONCE with their own account (the owner invites them) to get the live
 cloud sync on top of git. Git carries the committed comments; `connect` adds
 the real-time stream from published viewers.
+
+On a canvas gated by Marver Sign In there are no per-engineer CLI accounts:
+identity accounts have no password to connect with. The repo connects once with
+the canvas's `MARVER_CLI_TOKEN`, acting as the owner - see instructions/publish.md.
 
 ## Dev identity (who comments render as)
 

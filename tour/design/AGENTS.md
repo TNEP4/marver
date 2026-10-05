@@ -1,4 +1,4 @@
-<!-- marver:managed c59448a729cf849d3a0f0fc20ef9eec12c16139f82b3f3a1350bf850ff2eabca - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 3a88cfa98b4db2b6642254b2a5c29e37003295d9eccce855b6033ea9831da903 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -20,11 +20,12 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
 | Brand | before the first hi-fi work: extract or create the world | instructions/brand.md |
 | Build | hi-fi frames from real components | instructions/craft.md + components.md |
-| Iterate | changing a frame the human has seen, or retiring explorations | instructions/iterate.md |
+| Iterate | changing a frame the human has seen, a round of feedback on a scene, or retiring explorations | instructions/iterate.md |
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
+| Slides | a deck is asked for, or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
-| Live Jam | responding to an `@marver` comment (a spawned job), or setting up so work shows live | instructions/jam.md |
+| Live Jam | responding to an `@marver` comment (a spawned job); on by default - confirm it names YOUR tool | instructions/jam.md |
 
 Refining an existing screen: Configure must hold, then Build + Review. New work runs
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a
@@ -43,13 +44,27 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
 ## When the human points at a specific element
 
 Two channels carry element-precise feedback - honor both:
-- **A pasted address** like `design/scenes/hero/a.tsx · #root > div > h1 (a.tsx:12)` is
-  a LASER-COPIED pointer: the human pressed L (laser mode), hovered to see the element,
-  clicked it, and its exact address landed on their clipboard. Open that frame file and
-  go straight to that element - the css path (and source location, when present) are exact.
+- **A pasted address** - the human copied it off the canvas to point you at something.
+  Two shapes:
+  - A LASER-COPIED element pointer like `[shipper-flow ▸ flow-00-scope]  design/scenes/flow-00-scope/01-orientation.tsx · #root > div > h1 (01-orientation.tsx:5:3)`.
+    They pressed L (laser mode), hovered, and clicked. Read it left to right: `[board ▸ scene]`
+    is WHERE it sits on the canvas, then the frame file, then the exact css path to the element
+    inside it, then the source location when present. Open that file and go straight to that element.
+  - A SIDEBAR copy (right-click a board, scene, or frame in the panel) names a SCOPE, not one
+    element, and leads with the board the human was viewing: `board: shipper-flow` (a whole board),
+    `board: shipper-flow · scene: flow-00-scope  (design/scenes/flow-00-scope/)` (a scene folder),
+    or `board: shipper-flow · frame: flow-00-scope/01-orientation  (design/scenes/flow-00-scope/01-orientation.tsx)`
+    (one frame file). Work within the scope it names.
 - **A pinned comment** on an element: run `npx marver comments list --open --json` - each
   thread carries the anchored element (tag, quoted text, css path, frame). Work that queue
   per instructions/iterate.md; the comment names the div, so read the anchor before the words.
+
+Either way, **a pointer names where the human noticed it, not the only place it is.** Before
+you answer, look sideways: every other LIVE frame on that board that shares the component,
+the pattern, the copy or the state (never `archive/` or a `<scene>-v<N>` version - history is
+not a sibling). Same defect there? Fix it in the same pass and say which frames you touched.
+A judgment call? Do the pinned one, then ask in the thread or the reply whether to roll it
+across the others - never silently fix one and leave its siblings wrong.
 
 ## Show the work (working state)
 
@@ -67,7 +82,10 @@ planning. The human should see the request land on the canvas within the first m
    lit frame, never before one.
 3. Build. Independent frames can go in parallel - one subagent per frame, each marking
    its own; frames that depend on one another go in order.
-4. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
+4. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,
+   `--all`) renders the frames headless in one go - one PNG path per line - and you READ
+   the PNGs. No shell? instructions/jam.md has the file-drop way (`{"scene":"..."}`).
+5. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
    and never lean on expiry instead of `done`.
 
@@ -77,7 +95,7 @@ Report where the request came from: chat requests get chat replies; only comment
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
 - It default-exports a React component. No imports from the tool are needed. Optional:
-  export const meta = { title: "...", viewport: "mobile" }   // literal values only
+  export const meta = { title: "...", viewport: "mobile", description: "..." }   // literal values only
   // viewport names come from design/config.ts (default: mobile, tablet, laptop, monitor;
   // tv available commented-out). Pick the one the screen is designed for - the human can
   // flip the whole board to any device (Devices menu; digit keys - 0 restores each
@@ -100,6 +118,25 @@ Report where the request came from: chat requests get chat replies; only comment
 - CONTENT frames (specs, mermaid diagrams, mood boards) are ordinary tsx frames built
   from the block primitives in '@marver-design/marver/content' - import them directly
   in the frame file and declare meta.intent. Full guide: instructions/shape.md.
+- STICKY NOTES: the aside beside a frame. One markdown file, nothing to declare:
+  `design/scenes/<scene>/<frame>.note.md` beside the frame file (tsx, jsx or html),
+  `design/scenes/<scene>/_note.md` for the scene (it shows beside the scene's first frame),
+  `design/components/<name>.note.md` for a component. It renders as a yellow note left of the
+  frame on every canvas, dev and published. Write one when a reader needs what the screen
+  cannot say: what the frame is for, how two variations differ, how a mechanism works, an
+  open question. Markdown (headings, lists, tables, emphasis, code), `[text](goto:scene/frame)`
+  links that jump to a frame, images from design/assets/, and ```mermaid fences drawn
+  hand-sketched in the note's own yellow - plain mermaid, any family, no init/theme/style
+  lines, no URLs (flowchart, sequence, state, class, ER, pie, mindmap read well at note
+  width; gantt, journey and timeline are wide by nature - few items, or a content frame) -
+  raw HTML is inert. Readers comment on a note's text like on a frame element,
+  fold it to its corner, hide all with N. An edit lands live without reloading the frame.
+  Placement is not your job: every composed layout (recipe, auto board, tidy, device views)
+  reserves the note's room in front of its frame and below it (a long note pushes the next
+  row down) and re-applies when a note lands or grows - never move frames or pad a lane for
+  a note, sideways or down, just write the file.
+  Keep it an aside, a screen's worth at most: specs, flows and mood boards stay content frames.
+  Full guide: instructions/shape.md.
 
 ## Structure ladder
 1. First pass: write the whole page inline in the frame file. Diverge fast.
@@ -115,8 +152,24 @@ Report where the request came from: chat requests get chat replies; only comment
   setTimeout(() => r(orders), 800)) and let the frame render its skeleton while awaiting.
 
 ## Orientation
-- design/manifest.json lists every frame (id, file, scene, title) - read it before
-  exploring. `init` writes the first one; `marver dev` keeps it fresh.
+- design/manifest.json is the canvas with its purpose: the project (name, description),
+  every folder and board in sidebar order, every scene and frame - each with its
+  `description` when one was written, and its `title` when the human (or you) named it.
+  Read it before exploring; `marver dev` keeps it fresh. `npx marver boards` prints the
+  boards part as a tree.
+- **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
+  IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
+  that never move on a rename. `title` is what humans see - free text (casing,
+  punctuation, emoji) on the board JSON, the `_folders.json` entry, the brief's front
+  matter; frames have `meta.title`. When the human says "the Checkout A/B board", the
+  manifest maps that title to its slug. Rename a slug only when asked, as one refactor.
+- **Descriptions.** Every object takes one optional `description`: one sentence, what it
+  is for and its state when that is not obvious (≤ ~160 chars). Project: `description`
+  in design/config.ts. Board: `"description"` in its JSON. Folder: on its `_folders.json`
+  entry. Scene: the FIRST line of its `_brief.md`. Frame: `meta.description`. Write it
+  when you create the thing; keep it true when the state changes (retired, winning
+  direction, superseded); before a session ends, re-read the manifest and fix any
+  description your session made false. That is how the next session orients in one read.
 - Component galleries: create design/components/<name>/variants.tsx rendering each variant
   and each state (default / hover-styled / focus / disabled / loading) of one ui component.
 
@@ -140,9 +193,21 @@ A board is a saved canvas: `design/boards/<name>.json` - you create and manage t
 by writing files; `all-scenes` is auto-managed, never write it. Compose a board
 deliberately with `"layout"`: rows/columns lanes of scenes plus `{ "space": n }`
 whitespace tokens, and the same grammar per scene for frames (columns align left
-edges; a variant-group name is one indivisible atom). BEFORE creating a board or
-publishing anything, read instructions/boards.md (the layout grammar, file format,
-publishing rules).
+edges; a variant-group name is one indivisible atom). **The default composition is
+ONE horizontal band**: scenes side by side, frames flowing left to right; a second
+band only when you can say why the eye should move down, and then with generous
+vertical space. Without a recipe the shell stacks every scene as its own row - so
+every curated board carries one. Boards can sit in **folders**, two levels deep: put
+`"folder": "<name>"` on a board file (the folder it sits in directly); `design/boards/_folders.json`
+names empty folders, ranks them, and nests a sub-folder with `"parent"` - the human creates, renames, and drags folders in the sidebar too, so
+run `npx marver boards` (the tree as the files say it is) before you organise. BEFORE
+creating a board, organising boards, or publishing anything, read instructions/boards.md
+(the layout grammar, file format, folders and their moves, publishing rules).
+
+A round of feedback on a scene the human has already reviewed starts with a
+**version snapshot** (`design/scenes/<scene>-v<N>/` on the `archive` board) BEFORE
+the first edit - the human iterates fast knowing every version is one board away.
+instructions/iterate.md has the mechanics.
 
 ## Upstream feedback (when marver itself misbehaves)
 

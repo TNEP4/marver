@@ -1,4 +1,61 @@
 {
+  "project": {
+    "name": "tour"
+  },
+  "boards": [
+    {
+      "name": "welcome"
+    },
+    {
+      "name": "canvas"
+    },
+    {
+      "name": "prototype"
+    },
+    {
+      "name": "collaborate"
+    },
+    {
+      "name": "jam"
+    },
+    {
+      "name": "thanks"
+    }
+  ],
+  "scenes": [
+    {
+      "name": "canvas",
+      "frames": 5
+    },
+    {
+      "name": "collaborate",
+      "frames": 4
+    },
+    {
+      "name": "jam",
+      "frames": 3
+    },
+    {
+      "name": "prototype",
+      "frames": 2
+    },
+    {
+      "name": "recipe",
+      "frames": 4
+    },
+    {
+      "name": "ride",
+      "frames": 5
+    },
+    {
+      "name": "thanks",
+      "frames": 2
+    },
+    {
+      "name": "welcome",
+      "frames": 6
+    }
+  ],
   "frames": [
     {
       "id": "canvas/boards-and-tidy",
@@ -254,40 +311,6 @@
       "scene": "welcome",
       "title": "Why code-native",
       "viewport": "laptop"
-    }
-  ],
-  "scenes": [
-    {
-      "name": "canvas",
-      "frames": 5
-    },
-    {
-      "name": "collaborate",
-      "frames": 4
-    },
-    {
-      "name": "jam",
-      "frames": 3
-    },
-    {
-      "name": "prototype",
-      "frames": 2
-    },
-    {
-      "name": "recipe",
-      "frames": 4
-    },
-    {
-      "name": "ride",
-      "frames": 5
-    },
-    {
-      "name": "thanks",
-      "frames": 2
-    },
-    {
-      "name": "welcome",
-      "frames": 6
     }
   ]
 }

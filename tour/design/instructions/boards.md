@@ -1,4 +1,4 @@
-<!-- marver:managed 302c33dcb87d9eba001a2fadfe54fceb4d3f874c6a268eab8ceca09b1c32f15b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed c6de6c507d9066904516b1fe075ea6c21dcc97223eaba1c662a9001761150ed6 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Boards - curated canvases and publishing
 
 A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
@@ -11,8 +11,23 @@ viewport and lays it out:
 
 ```json
 { "version": 1, "name": "checkout-compare", "order": 1, "auto": false,
+  "title": "Checkout A/B",
+  "description": "Cart step, direction A vs B side by side - B is the current favourite",
   "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
 ```
+
+- **The file name is the board's identity** - what you, `publish.json`, URLs and
+  comment threads address (`board: checkout-compare`). It is a slug
+  (`^[a-z0-9][a-z0-9-]*$`) and never moves on a rename.
+- `title` - what humans SEE: free text, any casing, punctuation, emoji ("MVP", "UI",
+  "Checkout (v2) 🛒"). Optional: without one the sidebar Title-Cases the slug
+  (`checkout-compare` → "Checkout Compare"), which is fine for most boards. Write a
+  title when the slug would read wrong (`mvp` → "Mvp") or when the human names it.
+  The human's Rename in the sidebar edits the title only; the manifest carries both, so
+  "the Checkout A/B board" resolves to `checkout-compare`.
+- `description` - one sentence on what the board is for and where it stands. It is
+  how a later session (or the human's next agent) knows this board without opening
+  it; it lands in design/manifest.json. Write it at creation, keep it true.
 
 - The same frame may appear on many boards, or twice on one (add `"w"`/`"h"` on a
   node to pin a size, `"x"`/`"y"` to place it - e.g. a comparison row: same `y`,
@@ -23,21 +38,164 @@ viewport and lays it out:
   the LANDING board the canvas opens on.** Rank them so the first is a tight, fast,
   orienting board (an overview or the primary flow) - never a giant one. Boards
   without an `order` sort after the ranked ones, by name. Set `order` deliberately on
-  every curated board; it is the first impression.
+  every curated board; it is the first impression. The human can also drag-reorder boards
+  in the sidebar (which rewrites `order`), retitle one from its right-click menu (which
+  writes `title`), and file boards into folders (below) - so your ranking is a starting
+  point they may adjust.
 - `auto: false` boards show exactly their list. `all-scenes` is auto-managed (it holds
   EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
   never the landing board, and never write its file.
 - Do not edit board files while the canvas is open unless asked; the shell owns
-  their layout fields.
+  their layout fields (`x`/`y`/`w`/`h`, node keys). What is always yours, canvas
+  open or not: creating a board, appending nodes, and writing the `layout` recipe
+  of a board you curate (the `archive` board above all).
 - Use boards for comparisons: version A vs B vs C of a flow, side by side. Variant
   groups (letter-prefixed siblings) stay contiguous through every relayout
   automatically.
 - Content frames (specs, diagrams, mood boards - instructions/shape.md) are ordinary
   atoms in every layout scope: a feature-story board mixes them freely with UI frames.
-- The `archive` board (instructions/iterate.md) is the one board of retired
-  explorations: curated over design/scenes/archive/, tidied with a recipe,
-  every frame relabeled with what it was and why it retired. Winners live on
-  the feature boards; the archive answers "what did we try?".
+- The `archive` board (instructions/iterate.md) is the one board of history:
+  retired explorations (design/scenes/archive/, every frame relabeled with what
+  it was and why it retired) and **scene versions** (`<scene>-v1`, `<scene>-v2`
+  … - the whole flow as it stood before each round of feedback), one band per
+  version, oldest at the top. Winners live on the feature boards; the archive
+  answers "what did we try?" and "what did it look like before?".
+
+## Folders - organising the sidebar
+
+Boards can sit in folders, two levels deep: a folder holds boards and folders, a folder
+inside a folder (a **sub-folder**) holds boards only. A board can sit at the root, in a
+folder, or in a sub-folder. Files are the truth, and two files carry it:
+
+- **Membership lives on the board**: `"folder": "research"` in the board file, next
+  to `order` - always the ONE folder it sits in directly, at either level (a board in a
+  sub-folder names the sub-folder, never a path). `order` then ranks it among its
+  siblings: at every level, the boards and folders there share one sequence (the root's
+  boards and top-level folders; a folder's boards and sub-folders; a sub-folder's boards). Same grammar as board names
+  (`^[a-z0-9][a-z0-9-]*$`); an invalid value means top level. `all-scenes` never
+  lives in a folder.
+- **Folders live in `design/boards/_folders.json`** - the underscore marks it as
+  infrastructure, never a board:
+
+  ```json
+  { "version": 2, "folders": [
+    { "name": "research", "order": 1, "title": "R&D", "description": "The thinking behind the live boards - specs, flows, references" },
+    { "name": "flows", "parent": "research", "order": 2, "description": "One board per user flow" },
+    { "name": "archive", "order": 3, "description": "Retired directions and scene versions, oldest first" } ] }
+  ```
+
+  **Nesting lives here only**: a sub-folder's entry carries `"parent": "<folder>"`, and the
+  file says `"version": 2` while any entry has a parent (`"version": 1` when none does - an
+  older Marver can read that, and refuses a version-2 file rather than lose its nesting).
+  A parent must itself be a registered top-level folder; a sub-folder never holds a
+  folder. Folder names are unique across both levels.
+
+  A folder's `name` is its slug - the identity its boards point at with `folder`; its
+  `title` (optional, free text) is what humans see, exactly as on a board; its
+  `description` says what belongs in it - the next session files boards right without
+  asking.
+
+  It exists so an EMPTY folder can exist and so a folder has a rank at the root.
+  A folder a board names but the registry lacks is still real (it sorts after the
+  ranked items, by name) - two boards with `"folder": "research"` make a Research
+  folder on their own. Such an implied folder is always top-level: to nest it, register
+  it with its `parent`. A malformed registry is an error the canvas shows, not an
+  empty one - fix it, never delete it.
+
+**Look before you organise: `npx marver boards`** prints the sidebar as the files say
+it is - every folder (and whether it is empty or only implied by its boards), every
+board in reading order with its `order`, the landing board, and whether the registry
+exists (`--json` for the tree). Run it before any of the moves below; the human may
+have rearranged things since you last looked, and their arrangement stands.
+
+The moves, each a file edit, so the files always agree:
+- **Create** a folder: add `{ "name": "<slug>", "order": <n>, "description": "…" }`
+  to the registry's `folders` (create the file if absent) - or just point a board at it.
+  **Create a sub-folder**: the same entry with `"parent": "<top-level folder>"`, its
+  `order` among that folder's boards and sub-folders, and `"version": 2` on the file.
+- **Move a folder in or out**: set its `parent` (only a folder with no sub-folders of its
+  own can move into another - never three levels) or delete it; re-rank the siblings you
+  touch, and set `"version"` to 2 while any parent remains, 1 when none does.
+- **Move a board in**: write `"folder": "<slug>"` on the board - any folder, at either
+  level - and give it an `order` among that folder's boards and sub-folders. **Move it
+  out**: delete the `folder` field and give it an `order` among the top-level items.
+- **Rank** folders and boards: `order` on the board (among its siblings) and on the
+  registry entry (among the top-level items). Renumber the siblings you touch.
+- **Retitle** a folder (or a board): set `title` on the registry entry (on the board
+  file). **Rename a slug** - a folder's `name`, a board's file name - only when asked,
+  and as one refactor: a folder slug is on every member's `folder` field and on
+  every sub-folder's `parent` (rewrite them all, AND the registry entry - a registry rename
+  alone leaves the members in the old, implied folder and the sub-folders pointing at a
+  parent that no longer exists); a board file name is in `publish.json`, in its comment threads and in
+  every path anyone copied. A title does what a rename usually wanted.
+- **Delete** a folder: what it holds moves up one level, into its place - a top-level
+  folder's boards lose `folder` and its sub-folders lose `parent` (they become top-level
+  folders, keeping their boards); a sub-folder's boards take its parent as their `folder`.
+  Then remove its registry entry and re-rank the level it emptied into. Folders organise,
+  never own: deleting one never deletes a board.
+- The **landing board** is the first board in sidebar order, reading down through
+  folders and sub-folders - rank a folder first and its first board opens the canvas.
+
+Use folders proactively, the way a tidy studio would: a canvas past six or eight
+boards wants grouping - the live feature boards at the top level, `research` /
+`specs` for the thinking, `decks` for slides, `archive` for history and versions
+last. Reach for a sub-folder when a folder itself grows past six or eight boards and
+splits naturally (features by surface, archive by year) - not before; one level reads
+faster than two. Propose the grouping in one sentence and do it; keep folder names short and
+plain.
+
+The human does all of this too - from the sidebar: New folder (right-click the Boards
+header, or its `+`), New folder inside (a top-level folder's menu), Rename (the title -
+slugs never move from the sidebar), Delete folder, Move to top level (a board in a folder,
+a sub-folder), Move to new folder (a board), and DRAG: boards into and out of folders at
+either level, folders among boards and - when they hold no sub-folders - into a top-level
+folder. Each drag rewrites `order` (and
+`folder`) on the boards it touches and the registry - the shell owns those fields
+while the canvas is open, exactly as it owns `order`; write membership and new
+folders freely, and never rewrite an arrangement the human just made. The shell
+refuses a write that would overwrite an edit it has not seen (your file write and
+the human's drag can never silently erase each other), so read a board file before
+you rewrite it. Published canvases show the folders of the published boards only - a
+sub-folder's parent included; a folder with nothing published at any depth never reaches
+the bundle.
+
+## The default composition: one horizontal band
+
+A board reads like a page: left to right first, down only for a reason. The
+default for every curated board is **one `rows` lane holding the scenes side by
+side, in reading order, each scene's frames flowing left to right** - the whole
+story on one horizontal band the human pans along. Without a recipe the shell
+stacks every scene as its own row (a vertical pile of unrelated bands), so a board
+without a `layout` is a board you have not composed yet.
+
+```json
+"layout": { "rows": [["onboarding", "checkout", "account"]] }
+```
+
+A **second band** is a decision, not a reflex. Open one when you can say in a
+sentence why the eye should move down - a different chapter of the story (the
+specs that argue for the flow above), a different audience (admin vs customer),
+an archive or a version history, a scene so wide that beside the others it would
+not be read. Then make the break unmistakable: the gap between bands must read as
+"below", never as "next". Units are adaptive (proportional to the touching
+frames), so judge the RENDERED gap: between rows of phone or laptop frames that
+is `{ "space": 4 }`; after a band of tall spec frames `{ "space": 2 }`-`3` already
+reads as a chapter break. Inside a band, `{ "space": 2 }`-`{ "space": 3 }`
+separates clusters (a variant run, a scene that ends one thought and starts
+another); plain adjacency joins.
+
+Two boards are multi-band BY DESIGN and set their own gaps: the feature-story
+board (instructions/shape.md - thinking, structure, answer, three bands) and the
+`archive` board (instructions/iterate.md - one band per version). Everything else
+starts as one band.
+
+```json
+"layout": { "rows": [["onboarding", "checkout", "account"], { "space": 4 }, ["checkout-specs"]] }
+```
+
+`columns` are for the rarer case where things must share a left edge (versions of
+one flow stacked as a timeline, a parked archive under a hero) - never as a way to
+fit more on screen.
 
 ## Composing the canvas: `layout`
 
