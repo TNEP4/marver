@@ -7,24 +7,38 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 ### Added
 
 - **Folders in folders.** A folder can now hold folders, one level down, so the sidebar has two
-  levels: a board sits at the root, in a folder, or in a sub-folder. Every folder move works at
-  both levels, from the sidebar and from the files: **New folder inside** on a top-level folder's
-  menu, **Move to top level** for a sub-folder, boards dragged into a sub-folder or between its
-  boards, a folder without sub-folders dragged into a top-level folder. Deleting a folder moves
-  what it held up one level, into its place - never a board lost. **Move to new folder** now
-  makes the folder at the board's own level: a sub-folder when the board sits in a folder.
-- The files carry it with one new field: a sub-folder's entry in `design/boards/_folders.json`
-  names its `"parent"`. A board's `folder` stays the one folder it sits in directly. `npx marver
-  boards` prints the nested tree, the manifest lists each folder's `parent`, and a published
-  canvas keeps the nesting of its published boards (a folder with nothing published at any depth
-  stays out of the bundle). `instructions/boards.md` teaches agents the moves.
+  levels: a board sits at the root, in a folder, or in a sub-folder. Every folder move works at both
+  levels, from the sidebar and from the files - **New folder inside** on a top-level folder's menu,
+  **Move to top level** on a sub-folder, a board dragged onto a sub-folder or between its boards, a
+  folder with no sub-folders dragged into a top-level folder. At the bottom of a folder, where one
+  gap belongs to several levels, the seam is indented with the level a release lands in and the
+  pointer's indent picks it. Deleting a folder moves what it held up one level, into its place -
+  never a board lost.
+- **One new field carries it.** A sub-folder's entry in `design/boards/_folders.json` names its
+  `"parent"`; a board's `folder` stays the one folder it sits in directly, and a sub-folder keeps its
+  title and agent-facing description like any folder. `npx marver boards` prints the nested tree, the
+  manifest lists each folder's `parent`, and a published canvas keeps the nesting of its published
+  boards - a folder with nothing published at any depth stays out of the bundle.
+
+### Changed
+
+- **Move to new folder** makes the folder at the board's own level: a sub-folder in the board's slot
+  when the board sits in a folder, right after its sub-folder when it sits in one. At the root it
+  behaves as before.
+
+### Docs
+
+- A new guide, [docs/boards-and-folders.md](docs/boards-and-folders.md): the sidebar moves, the two
+  files, descriptions, what publishing shows, mixed-version teams. The README links it and describes
+  two levels. `instructions/boards.md` and the AGENTS contract teach agents the two-level moves,
+  including renaming a folder slug (its sub-folders' `parent` moves with it) and deleting one.
 
 ### Upgrading
 
-- **The registry says `"version": 2` while any folder nests, and 1 when none does.** Marver 0.20
-  and earlier refuse a version-2 registry with an error instead of rewriting it flat, so a
-  teammate on an older version sees a clear message - upgrade the whole team before nesting.
-  A canvas tab opened before the upgrade is refused the same way once folders nest: reload it.
+- **The registry says `"version": 2` while any folder nests, and `1` when none does.** Marver 0.20
+  and earlier refuse a version-2 registry with an error instead of rewriting it flat, so upgrade the
+  whole team before nesting a folder. A browser tab opened before the upgrade is refused the same way
+  once folders nest - reload it.
 - Run `npx marver init` to take the new folders guidance (unedited instruction files update in
   place; edited ones are staged in `design/.local/latest/`).
 
