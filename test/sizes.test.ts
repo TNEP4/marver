@@ -6,7 +6,7 @@ import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, rendersDoc, serializeSizes, validEntry } from '../src/server/sizes.ts'
 import { anchorNode, anchoredCamera } from '../src/client/shell/canvas/anchor.ts'
-import { contentWidthOf } from '../src/server/manifest.ts'
+import { contentWidthOf, scanFrames } from '../src/server/manifest.ts'
 
 /**
  * Calm loading: content-frame heights committed in design/boards/_sizes.json (sizes.ts) so a board
@@ -71,6 +71,20 @@ describe('the size cache (sizes.ts)', () => {
       // a bare Md inside a _layout that renders the Doc measures - at any level of the chain
       writeFileSync(join(root, 'design/scenes/_layout.tsx'), `import { Doc } from '@marver-design/marver/content'\nexport default ({ children }) => <Doc>{children}</Doc>\n`)
       expect(measuringFrames(root, FRAMES).has('docs/bare')).toBe(true)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('a frame measuring inside a _layout\'s wide Doc is that wide in the manifest (manifest.ts)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-sizes-layout-'))
+    try {
+      mkdirSync(join(root, 'design', 'scenes', 'specs'), { recursive: true })
+      writeFileSync(join(root, 'design', 'scenes', 'specs', '_layout.tsx'), `import { Doc } from '@marver-design/marver/content'\nexport default ({ children }) => <Doc layout="wide">{children}</Doc>\n`)
+      writeFileSync(join(root, 'design', 'scenes', 'specs', 'one.tsx'), BARE)
+      writeFileSync(join(root, 'design', 'scenes', 'specs', 'own.tsx'), DOC)                 // its own Doc wins
+      const m = scanFrames(root)
+      expect(m.frames.find((f) => f.id === 'specs/one')?.contentWidth).toBe(1280)
+      expect(m.frames.find((f) => f.id === 'specs/own')?.contentWidth).toBe(760)
+      expect([...measuringFrames(root, m.frames)].sort()).toEqual(['specs/one', 'specs/own'])
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 

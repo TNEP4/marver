@@ -354,6 +354,18 @@ async function flushHeights() {
 
 const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`))
 
+/** The Doc heights a layout was computed around - every auto content node whose height is known,
+ *  as key:w:h, hashed (FNV-1a). A composed board saves it with its positions; a load whose known
+ *  heights hash differently knows its rows were laid out around other heights - grown OR shrunk -
+ *  while a drag, which changes no height, leaves it equal. */
+function sizeFingerprint(nodes: readonly Node[]): string {
+  const parts = nodes.filter((n) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)))
+    .map((n) => `${n.key}:${Math.round(n.w)}:${Math.round(n.h)}`).sort().join('|')
+  let h = 0x811c9dc5
+  for (let i = 0; i < parts.length; i++) { h ^= parts.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return (h >>> 0).toString(36)
+}
+
 function defaultSize(frame: FrameEntry) {
   // the precedence chain (spec 09 slice 1): slide stage → authored
   // viewport → content sizing → default (one helper, shared with shot) -
@@ -406,6 +418,7 @@ interface State {
   layout: BoardLayout | null          // lane-flow recipe, parsed; wins over sceneRows when both exist
   layoutRaw: unknown                  // the author's layout VERBATIM - save round-trips this, never the parse
   baseLayout: Record<string, { x: number; y: number; w?: number; h?: number }> | null   // snapshot taken on entering a device view; Default restores it exactly (auto content entries carry positions only - their sizes are measured)
+  laidOut: string | null             // a composed board's record of the Doc heights its positions were laid out around (sizeFingerprint)
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -555,13 +568,16 @@ export const useStore = create<State>((set, get) => {
    *  sh:scenes, either merged late by boot/switch): a composed board re-applies its layout. */
   const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow(cramped) }
   /** A composed board's saved positions were laid out around the heights of the session that saved
-   *  them. A committed height that grew since (the doc changed while another board was open) opens
-   *  at its new size over the row below - and no measurement will re-flow it, it already equals the
-   *  committed one. So once the board is up, the recipe re-runs if a Doc sized from what is known now
-   *  OVERLAPS another frame - the one thing a size change does that a hand never meant. A frame the
-   *  human dragged elsewhere, at heights that did not change, stays where they put it. */
+   *  them. A committed height that changed since (the doc grew or shrank while another board was
+   *  open) opens at its new size over - or far above - the row below, and no measurement will re-flow
+   *  it: it already equals the committed one. So once the board is up, the recipe re-runs if the
+   *  known heights differ from the ones its positions were laid out around (`laidOut`). A frame the
+   *  human dragged, at heights that did not change, stays where they put it. */
   const layoutStale = () => {
-    const { nodes } = get()
+    const { nodes, laidOut } = get()
+    if (laidOut) return sizeFingerprint(nodes) !== laidOut
+    // a board that never recorded them (an agent wrote it, an older Marver saved it): an overlap is
+    // the one thing a size change does that a hand never meant
     const box = (n: Node) => ({ l: n.x, t: n.y, r: n.x + n.w, b: n.y + n.h + HEADER })
     return nodes.some((a) => {
       if (a.sizeMode !== 'auto' || !hasKnownHeight(a.frame, Math.round(a.w))) return false
@@ -645,6 +661,7 @@ export const useStore = create<State>((set, get) => {
       let layout: BoardLayout | null = null
       let layoutRaw: unknown = undefined
       let baseLayout: State['baseLayout'] = null
+      let laidOut: string | null = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
       let loaded: { board: any; sha256: string } | 'fresh' | null
@@ -727,6 +744,7 @@ export const useStore = create<State>((set, get) => {
         layout = parseLayout(board?.layout, layoutWarn)
         if (layout && sceneRows) layoutWarn('board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
+        if (typeof board?.laidOut === 'string') laidOut = board.laidOut
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
       // AND sheds deleted ones. Tombstone cards are a curated-board concept.
@@ -793,6 +811,7 @@ export const useStore = create<State>((set, get) => {
       if ((!boardHash || needTidy || cramped) && nodes.length) {
         const placedAll = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn)
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
+        laidOut = sizeFingerprint(nodes)
       }
       // dirty matches disk by construction - except when load-time pruning changed the
       // node set (or a cramped note re-ran the recipe); callers see dirty:true and
@@ -802,13 +821,13 @@ export const useStore = create<State>((set, get) => {
       if (layout && boardHash && !needTidy && !cramped && nodes.length) {
         tidy(tidyInput(nodes, manifest), layout, layoutWarn)
       }
-      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, selection: [], dirty: prunedAtLoad || cramped }
+      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, selection: [], dirty: prunedAtLoad || cramped }
     } catch { return null }
   }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
@@ -1447,6 +1466,7 @@ export const useStore = create<State>((set, get) => {
           const p = placed.find((x) => x.key === n.key)
           return p ? { ...n, x: p.x, y: p.y } : n
         }),
+        laidOut: sizeFingerprint(nodes),
         dirty: true,
       }))
       scheduleSave()
@@ -1521,6 +1541,7 @@ export const useStore = create<State>((set, get) => {
           ...(deviceView ? { deviceView } : {}),
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
           ...(get().layoutRaw !== undefined ? { layout: get().layoutRaw } : {}),
+          ...(get().laidOut && composed(get()) ? { laidOut: get().laidOut } : {}),
           // baseLayout entries for auto content nodes keep POSITIONS only - their
           // measured dimensions are transient and never reach the file
           ...(baseLayout ? {

@@ -97,6 +97,10 @@ frames). `marver dev` writes it when a frame settles at a new height; commit it 
 `design/`, and never edit it. A stale height is only a first guess: the frame measures, and the file
 follows. A merge conflict in it is safe to resolve either way.
 
+A board with a layout recipe also notes, as `laidOut`, which heights its rows were laid out around.
+When a doc on it changed while the board was closed, the board re-runs its recipe as it opens; a
+frame you dragged, at heights that did not change, stays where you put it.
+
 When content does change the layout - an agent makes a doc taller, and the rows below move down -
 the canvas holds the frame you are looking at in place: the selected one when it is on screen, else
 the one in the middle of the view.

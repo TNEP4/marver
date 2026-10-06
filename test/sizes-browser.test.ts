@@ -206,6 +206,24 @@ describe('calm loading', () => {
     await browser.until(s, `!window.__mvStore.getState().dirty`, 10_000)   // ... and the re-laid rows are saved
   }, 90_000)
 
+  it('... and one whose Doc SHRANK closes the gap: its rows were laid out around other heights', async () => {
+    if (!browser) return
+    await closeAll()
+    const s0 = await open('#/b/docs')
+    await wait(2000)
+    const cBefore = (await node(s0, 'k-c')).y
+    await browser.go(s0, 'about:blank')
+    const s1 = await open('#/b/other')
+    const before = heights()['docs/a@760']
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'a.tsx'), doc(6))
+    await until(() => heights()['docs/a@760'] < before - 300)
+    await browser.go(s1, 'about:blank')
+    const s = await open('#/b/docs')
+    await browser.until(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-c').y < ${cBefore - 300}`, 10_000)
+    const a = await node(s, 'k-a'), c = await node(s, 'k-c')
+    expect(c.y).toBeGreaterThan(a.y + a.h + 28)
+  }, 90_000)
+
   it('a frame the human dragged on a recipe board stays where they put it when its heights did not change', async () => {
     if (!browser) return
     await closeAll()

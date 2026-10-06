@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { codeOnly, docTags, tagPattern } from './manifest.ts'
+import { layoutDocSource, rendersDoc } from './manifest.ts'
 
 export const SIZES_FILE = '_sizes.json'
 /** `scene/frame@width` - the frame id grammar the focus route accepts, then the width it was measured at. */
@@ -103,37 +103,20 @@ export function autoWidthOf(frames: { id: string; contentWidth?: number; viewpor
   }
 }
 
-/** Does this source render a `<Doc>` - the one primitive that measures (content/index.tsx)?
- *  Lexical on the code (comments and strings blanked), like the content scan, and it follows the
- *  import: `Doc as Page` renders `<Page>`, `* as C` renders `<C.Doc>` (manifest.ts docTags). */
-export function rendersDoc(src: string): boolean {
-  const code = codeOnly(src)
-  return docTags(code).some((t) => new RegExp(`<${tagPattern(t)}[\\s>/]`).test(code))
-}
+export { rendersDoc }
 
 /** The content frames that measure: the frame renders a Doc, or a `_layout` it renders inside does
- *  (the frame host wraps a frame in every `_layout.tsx|jsx` from its directory up to `scenes/` or
- *  `components/`). A source that cannot be read, or reads empty (an editor mid-write), gets the
- *  benefit of the doubt - this only decides what a load is handed, never what the file keeps. */
+ *  (manifest.ts layoutDocSource - the same rule the manifest's width follows). A source that cannot
+ *  be read, or reads empty (an editor mid-write), gets the benefit of the doubt - this only decides
+ *  what a load is handed, never what the file keeps. */
 export function measuringFrames(root: string, frames: { id: string; file?: string; kind?: string; contentWidth?: number }[]): Set<string> {
   const out = new Set<string>()
-  const layoutDoc = new Map<string, boolean>()   // directory -> a _layout there renders a Doc
-  const read = (rel: string): string | null => { try { return readFileSync(join(root, rel), 'utf8') } catch { return null } }
-  const dirHasDoc = (dir: string): boolean => {
-    let d = layoutDoc.get(dir)
-    if (d === undefined) {
-      d = ['tsx', 'jsx'].some((ext) => { const src = existsSync(join(root, dir, `_layout.${ext}`)) ? read(`${dir}/_layout.${ext}`) : null; return !!src && rendersDoc(src) })
-      layoutDoc.set(dir, d)
-    }
-    return d
-  }
+  const memo = new Map<string, string | null>()
   for (const f of frames) {
     if (!f.contentWidth || f.kind === 'html' || !f.file || f.file.split('/').includes('..')) continue
-    const src = read(f.file) ?? ''
-    if (!src.trim() || rendersDoc(src)) { out.add(f.id); continue }
-    // the layout chain: design/scenes/a/b/frame.tsx -> design/scenes/a/b, design/scenes/a, design/scenes
-    const parts = f.file.split('/').slice(0, -1)
-    for (let i = parts.length; i >= 2; i--) if (dirHasDoc(parts.slice(0, i).join('/'))) { out.add(f.id); break }
+    let src = ''
+    try { src = readFileSync(join(root, f.file), 'utf8') } catch { /* unreadable: benefit of the doubt */ }
+    if (!src.trim() || rendersDoc(src) || layoutDocSource(root, f.file, memo) !== null) out.add(f.id)
   }
   return out
 }
