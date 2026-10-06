@@ -80,8 +80,16 @@ function atomicWrite(file: string, content: string) {
 function stageWrite(file: string, content: string): string {
   const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
   const fd = openSync(tmp, 'wx')                       // ours from here: a failure below removes it
-  try { writeFileSync(fd, content) } catch (err) { try { closeSync(fd) } catch { /* closing a failed write */ } discard(tmp); throw err }
-  closeSync(fd)
+  let open = true
+  try {
+    writeFileSync(fd, content)
+    open = false
+    closeSync(fd)                                      // a close can fail too - the temp is still ours to remove
+  } catch (err) {
+    if (open) { try { closeSync(fd) } catch { /* closing a failed write */ } }
+    discard(tmp)
+    throw err
+  }
   return tmp
 }
 const discard = (tmp: string) => { try { rmSync(tmp, { force: true }) } catch { /* a stray temp file */ } }
