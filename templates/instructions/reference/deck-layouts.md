@@ -146,7 +146,8 @@ mode - and default to faithful:
 
 - **Faithful** - their order, their words, exactly. You may normalise
   punctuation and number formats; you may not change a word. Suggested
-  rewrites go in a comment on the frame, never on the slide.
+  rewrites go in a note on the frame (`npx marver comments new <scene/frame>
+  --on "<their words>" --body "Suggest: ..."`), never on the slide.
 - **Editorial** (opt-in) - order kept, copy passed through the slides
   guide's words: jargon, hedges and filler out; numbers, names and dates
   verbatim; titles turned into claims where the source supports them.

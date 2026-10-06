@@ -146,6 +146,18 @@ teaches each one - creating a sub-folder, moving a folder in or out, renaming a 
 refuses a write that would overwrite an edit it has not seen, so an agent's file write and a
 person's drag never silently erase each other.
 
+## Links to frames
+
+`npx marver link <scene/frame | scene ...>` prints the canvas link that lands on those frames: the
+board they sit on, in canvas mode, with them selected and the camera fitted to them - not the
+full-screen focus view. The board is the first in sidebar order that shows them all, else
+`all-scenes`; `--board` picks one. The link reads `#/b/<board>?f=<scene/frame>,...` (or
+`?s=<scene>` for a whole scene), and a link naming a frame its board does not show follows the
+frame to where it lives. `npx marver work done` prints the same link for the frames it clears, so an
+agent's reply ends with it. A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
+back to the canvas (the grid button, or Esc); on a published canvas a focus link stays a page of
+its own.
+
 ## Publishing
 
 A published canvas shows the folders of the published boards only - a sub-folder's parent included,

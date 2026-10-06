@@ -152,6 +152,17 @@ model when the agent names one. Claude Code, Cursor, droid, grok, and pi report 
 in the stream; `codex exec` and `opencode run` report none, so their replies carry the
 harness without a model rather than a guessed one.
 
+## Notes from your chat agent
+
+Live Jam answers comments; the same voice works the other way. An agent you are chatting with leaves
+a note where it needs you - `npx marver comments new <scene/frame> --body "..." [--on "<words on
+screen>"]` pins it on the frame, or on the element showing those words - and answers your threads
+with `npx marver comments reply`. Both post as Marver, with the same provenance, land on your canvas
+at once, and raise the bottom-right pill with a ping. Reply in a note and it is a jam job like any
+reply to Marver - no tag needed; while the chat agent still has that frame lit (`marver work
+start`), the job waits for it. Notes stay on your machine for now, like jam replies; a reply to a
+collaborator's thread keeps your voice, the one that reaches them on the published canvas.
+
 ## Parallelism
 
 Two knobs stack, and they are not the same thing. `jam.concurrency` is how many jobs the

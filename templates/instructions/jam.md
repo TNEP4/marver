@@ -184,8 +184,15 @@ tells you which mode you are in - when it says to work on a single agent, do tha
 `jam.subagents` is off, or your CLI has no subagents to spawn).
 
 ## Reading comments without the daemon
-`npx marver comments list [<board>]` prints the threads on demand - use it to catch up or answer
-a one-off question without the live jam loop.
+`npx marver comments list [--board <board>]` prints the threads on demand - use it to catch up or
+answer a one-off question without the live jam loop.
+
+## Notes Marver pinned from chat
+A chat agent leaves notes on frames it changed (`marver comments new`, design/AGENTS.md "Hand it
+back on the canvas"). The owner's reply in one of those threads is a job like any other - no tag
+needed, the same as a reply to Marver - and the note is the context: it says what was changed
+and what the agent wanted from them. While a chat agent has that frame lit (`marver work start`)
+the job waits, so two agents never edit one file at once.
 
 ## When jam misbehaves - diagnose, fix, report upstream
 

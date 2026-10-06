@@ -82,7 +82,8 @@ one-sentence slides on the canvas) a missing fact is a visible `[PLACEHOLDER:
 what belongs here]`. In the build, a factual placeholder BLOCKS its slide -
 answered, or the slide is cut - never filled with plausible prose. Editorial
 gaps (a tagline, a caption, a transition line) you DO draft, labelled as
-proposed in the frame's comment - that is writing, not invention.
+proposed in a note on the frame (`npx marver comments new <scene/frame>`) - that
+is writing, not invention.
 
 ## Writing that carries
 

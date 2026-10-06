@@ -96,7 +96,7 @@ The trust boundary is hard: only comments written on the owner's machine trigger
 
 ## Working state
 
-The same glow, driven from the terminal. When your agent takes a request, it creates the frame files first, pins them on a board, and runs `npx marver work start <scene/frame ...>` - you see the work land on the canvas in seconds, watch it shimmer while subagents build in parallel, and see it settle on `work done`. Marks self-expire, so a crashed agent never leaves a frame glowing. And `npx marver shot --scene <scene>` (or `<scene/frame ...>`, `--all`; `[--scale 4]`) renders frames headless to PNGs - a whole scene in one browser, several frames at a time - so the agent can look at what it built before it says it is done - the same picture you get from the canvas's copy-as-image.
+The same glow, driven from the terminal. When your agent takes a request, it creates the frame files first, pins them on a board, and runs `npx marver work start <scene/frame ...>` - you see the work land on the canvas in seconds, watch it shimmer while subagents build in parallel, and see it settle on `work done`. Marks self-expire, so a crashed agent never leaves a frame glowing. Its reply ends with the canvas link `work done` prints - the board, opened on the frames it changed - and where it needs your eyes it pins a note on the frame as Marver (`npx marver comments new`), so you are pinged on the thing itself. And `npx marver shot --scene <scene>` (or `<scene/frame ...>`, `--all`; `[--scale 4]`) renders frames headless to PNGs - a whole scene in one browser, several frames at a time - so the agent can look at what it built before it says it is done - the same picture you get from the canvas's copy-as-image.
 
 ## Commands
 
@@ -107,8 +107,9 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver build` | Static export → `design/.dist`; what ships comes from `design/publish.json` (default-closed) |
 | `npx marver serve` | Serve the export; `MARVER_ID_ISSUER` or `MARVER_PASSWORD` gates it, `MARVER_DATA_DIR` persists comments + accounts |
 | `npx marver share …` | The roster (owner): `add <who> [--role]` · `remove` · `block` / `unblock` · `general <mode>` · `list` · `requests` · `explain <who>` · `who` |
-| `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
-| `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` · `list` |
+| `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `new <scene/frame>` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
+| `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` (prints the canvas link) · `list` |
+| `npx marver link <scene/frame \| scene ...>` | The canvas link that lands on those frames - their board, selected and in view (needs `dev` running) |
 | `npx marver shot <frame ...> \| --scene <name> \| --all [--scale 1-4] [--json]` | Render frames headless and print the PNG paths (needs `dev` running); a scene is one browser, several frames at a time; 2x by default |
 | `npx marver boards [--json]` | The sidebar as the files say it is: folders and sub-folders, boards in reading order with their title, type, status, `order` and description, the landing board |
 | `npx marver boards new <name> [--folder f] [--type t]` | A board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board rendering `context/` |

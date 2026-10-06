@@ -110,6 +110,42 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
+  it('a note Marver pinned from chat engages its thread: the owner\'s untagged reply is a job', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, okAdapter)
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: 'n1', ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'Kept the card first - right call?', agent: true },
+    ])
+    const fu: CommentEvent = { id: 'fu-note', ts: Date.now(), type: 'reply', commentId: 'fuc-note', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'no, wallet first' }
+    appendEvents(dir, 'home', [fu])
+    record(root, 'home', 'fu-note')
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
+    done()
+  })
+
+  it('a job on a frame a chat agent has lit waits, unclaimed, and runs once the frame is free', async () => {
+    const { root, dir, done } = setup()
+    let lit = true
+    const logs: string[] = []
+    const jam = createJam(root, CFG, okAdapter, (m) => logs.push(m), { held: (f) => lit && f === 'demo/hero' })
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: 'n2', ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'note', agent: true },
+      { id: 'fu-held', ts: Date.now(), type: 'reply', commentId: 'fuc-held', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'swap them' },
+    ])
+    record(root, 'home', 'fu-held')
+    await jam.tick()
+    await jam.tick()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
+    expect(logs.filter((l) => l.includes('waiting')).length).toBe(1)   // said once, not every rescan
+    lit = false
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
+    done()
+  })
+
   it('non-engaged thread: an owner reply without @marver never triggers', async () => {
     const { root, dir, done } = setup()
     const jam = createJam(root, CFG, okAdapter)

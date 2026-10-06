@@ -79,9 +79,11 @@ to step 4.
    element, reply and close that thread FIRST, then make the change (resolve
    first, restructure second). Reply per thread with one line: what changed,
    and that `v<N>` is on the archive board. Who closes the thread depends on
-   how the work arrived: from the CLI queue (`comments list --open`), you
-   resolve with `--addressed-in <scene>/<frame>`; from a comment-born jam job,
-   you never resolve - the owner does (instructions/jam.md).
+   who started it: a thread the owner started (`comments reply` printed
+   "as Marver") stays OPEN - the owner reviews your change on the canvas, in the
+   thread, and resolves it; a collaborator's thread (the reply printed "in your
+   voice") you resolve with `--addressed-in <scene>/<frame>`; from a
+   comment-born jam job you never resolve - the owner does (instructions/jam.md).
 
 Never wait for the human to ask for this. They should be able to say "make the
 cards denser", "drop the sidebar", "try a warmer palette" three times in a row
@@ -140,6 +142,7 @@ the open list as a queue:
 npx marver comments list --open --json     # what needs you (anchors included)
 npx marver comments reply <thread> --body "…"
 npx marver comments resolve <thread> --addressed-in <scene/frame>
+npx marver comments new <scene/frame> --body "…" [--on "<words on screen>"]   # a note where you need them
 ```
 
 The discipline:
@@ -164,10 +167,14 @@ The discipline:
    iterate the live frames in place. A single frame going in a new direction:
    fork a variant (the letter convention) and iterate there - the commented
    frame stays as the before, your variant is the after.
-4. **Resolve with the receipt.** `--addressed-in <the-new-variant>` records
-   WHICH frame answered the feedback - the thread becomes an auditable link
-   from complaint to fix. Reply first when the change deserves a sentence of
-   explanation; resolve silently only for trivial mechanical fixes.
+4. **Reply where they look, resolve with the receipt.** Reply in the thread -
+   one line, what changed. The owner's own threads stay open after your reply:
+   they review the change on the canvas and close it (a resolved thread leaves
+   the canvas, and your reply with it). A collaborator's thread, you resolve:
+   `--addressed-in <the-new-variant>` records WHICH frame answered the feedback -
+   the thread becomes an auditable link from complaint to fix. `comments reply`
+   says which it was: "as Marver" (the owner's) or "in your voice" (a
+   collaborator's - the voice that reaches them on the published canvas).
 5. **Never resolve what you didn't address.** Disagree? Reply with your
    reasoning and leave the thread open - the human closes debates, you close
    completed work.

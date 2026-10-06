@@ -98,10 +98,29 @@ planning. The human should see the request land on the canvas within the first m
    the PNGs. No shell? instructions/jam.md has the file-drop way (`{"scene":"..."}`).
 5. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
-   and never lean on expiry instead of `done`.
+   and never lean on expiry instead of `done`. `done` prints the canvas link to the
+   frames it cleared (`on the canvas: ...`).
 
-Report where the request came from: chat requests get chat replies; only comment-born
-(`@marver`) work replies in its thread.
+## Hand it back on the canvas
+
+The human reviews on the canvas, not in the chat - so the reply puts them there:
+
+- **Every reply in which you created or changed frames ends with their canvas link**, on its
+  own line: the `on the canvas:` line `work done` printed, or `npx marver link <scene/frame |
+  scene ...>` for any set. It opens the board they sit on with them selected and in view -
+  the human finds the work at once on a board of fifty frames. Never a full-screen focus link
+  (`#/f/...`) unless they ask for full screen. No `marver dev` running? End with
+  `npx marver dev` instead - the link carries its port.
+- **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
+  <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
+  the human started it posts as Marver and pings them on the frame.
+- **Pin a note only where you need the human**: `npx marver comments new <scene/frame>
+  --body "..." [--on "<words on screen>"]` - a decision to make, a judgment call you took, a
+  change they would not spot, a question. At most one per frame per turn, never a changelog:
+  the chat carries the summary. Never resolve your own notes - the human resolves them as they
+  review, and a reply they write in one comes back to you (Live Jam).
+- A comment-born (`@marver`) job hands back through its reply block alone
+  (instructions/jam.md): no link, no CLI reply to its own thread.
 
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.

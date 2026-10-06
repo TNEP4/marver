@@ -2,6 +2,45 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **A link that lands on the work.** `npx marver link <scene/frame | scene ...>` prints the canvas
+  link for those frames: the board they sit on, in canvas mode, with them selected and in view - not
+  the full-screen focus view. `npx marver work done` prints it for the frames it clears, and the
+  AGENTS contract has every reply that created or changed frames end with it, so on a board of fifty
+  frames you click once and you are looking at the change. Agents used to know only the bare board
+  link, or improvise a focus link that had no way back to the canvas. Links read
+  `#/b/<board>?f=<scene/frame>` or `?s=<scene>` ([Boards and folders](docs/boards-and-folders.md#links-to-frames)).
+- **Your agent leaves notes where it needs you.** `npx marver comments new <scene/frame> --body "..."`
+  pins a note on a frame, or on the element showing the words given with `--on`. The contract keeps
+  it for what needs you - a decision, a judgment call it took, a change you would not spot - never a
+  changelog. Notes post as Marver and raise the bottom-right pill with a ping; reply in one and it is
+  a Live Jam job, no tag needed ([Live Jam](docs/live-jam.md#notes-from-your-chat-agent)). Notes stay
+  on your machine for now, like Live Jam's replies.
+
+### Changed
+
+- **An agent's reply to your comment comes from Marver.** `comments reply` on a thread you started
+  now posts as Marver; it posted in your own name, so it read as if you had written it, and raised
+  nothing. The thread stays open: you review the change on the canvas and resolve it - a resolved
+  thread leaves the canvas, and the reply with it. A collaborator's thread keeps your voice, the one
+  that reaches them on the published canvas, and is resolved with `--addressed-in` as before.
+- **Comments written outside the canvas appear at once** - an agent's note or reply, a sync from
+  the published canvas, a merge - instead of on the next 30-second poll.
+- Marver's replies ping, as a person's do. Live Jam's opening "On it" line stays silent.
+- A Live Jam job on a frame a chat agent has lit (`marver work start`) waits for it, so two agents
+  never edit one file at once.
+- A focus link (`#/f/<frame>`) opened on your dev canvas keeps its way back to the canvas (the grid
+  button, or Esc). On a published canvas it is still a page of its own.
+
+### Fixed
+
+- `instructions/jam.md` named `comments list [<board>]`; the flag is `--board <board>`.
+
+Upgrading: `npx marver init` refreshes the instructions your agent reads.
+
 ## 0.22.1 - 2026-10-06
 
 ### Changed
