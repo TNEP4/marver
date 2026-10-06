@@ -419,6 +419,7 @@ interface State {
   layoutRaw: unknown                  // the author's layout VERBATIM - save round-trips this, never the parse
   baseLayout: Record<string, { x: number; y: number; w?: number; h?: number }> | null   // snapshot taken on entering a device view; Default restores it exactly (auto content entries carry positions only - their sizes are measured)
   laidOut: string | null             // a composed board's record of the Doc heights its positions were laid out around (sizeFingerprint)
+  baseLaidOut: string | null         // the free-form layout's laidOut, kept with baseLayout while a device view is up; Default restores both
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -543,6 +544,9 @@ export const useStore = create<State>((set, get) => {
   // two conditions pending are EITHER one (a later ask never drops an earlier one).
   let reflowTimer: ReturnType<typeof setTimeout> | undefined
   let reflowCheck: (() => boolean) | null = null
+  /** A board load (boot, switch) starts its own reflow story: whatever was pending - an
+   *  unconditional reflow from the board that was up - must never carry over and tidy this one. */
+  const cancelReflow = () => { clearTimeout(reflowTimer); reflowTimer = undefined; reflowCheck = null }
   const scheduleReflow = (onlyIf?: () => boolean) => {
     const boardAt = get().board
     const prev = reflowTimer !== undefined ? reflowCheck : undefined   // undefined: nothing pending
@@ -662,6 +666,7 @@ export const useStore = create<State>((set, get) => {
       let layoutRaw: unknown = undefined
       let baseLayout: State['baseLayout'] = null
       let laidOut: string | null = null
+      let baseLaidOut: string | null = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
       let loaded: { board: any; sha256: string } | 'fresh' | null
@@ -745,6 +750,7 @@ export const useStore = create<State>((set, get) => {
         if (layout && sceneRows) layoutWarn('board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
         if (typeof board?.laidOut === 'string') laidOut = board.laidOut
+        if (typeof board?.baseLaidOut === 'string') baseLaidOut = board.baseLaidOut
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
       // AND sheds deleted ones. Tombstone cards are a curated-board concept.
@@ -821,13 +827,13 @@ export const useStore = create<State>((set, get) => {
       if (layout && boardHash && !needTidy && !cramped && nodes.length) {
         tidy(tidyInput(nodes, manifest), layout, layoutWarn)
       }
-      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, selection: [], dirty: prunedAtLoad || cramped }
+      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }
     } catch { return null }
   }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
@@ -842,6 +848,7 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
+      cancelReflow()
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
@@ -878,6 +885,7 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
+      cancelReflow()
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })
@@ -1249,7 +1257,12 @@ export const useStore = create<State>((set, get) => {
           const d = defaultSize(f)                   // frames added mid-device-view get their default
           return { ...n, w: d.w, h: d.h }
         })
-        return { deviceView: name, dirty: true, baseLayout, nodes }
+        // the snapshot's positions were laid out around the free-form heights: its laidOut goes and
+        // comes back with it (null = not known - the next load falls back to the overlap check)
+        const laid = name
+          ? { baseLaidOut: s.deviceView === null ? s.laidOut : s.baseLaidOut }
+          : { laidOut: s.baseLaidOut, baseLaidOut: null }
+        return { deviceView: name, dirty: true, baseLayout, nodes, ...laid }
       })
       if (name) get().runTidy()                      // restore must NOT tidy - it would destroy positions
       else { scheduleSave(); roomForNotes() }         // ...unless a note grew meanwhile and the restored rows stand under it
@@ -1549,6 +1562,7 @@ export const useStore = create<State>((set, get) => {
               const n = nodes.find((x) => x.key === k)
               return n?.sizeMode === 'auto' ? [k, { x: b.x, y: b.y }] : [k, b]
             })),
+            ...(get().baseLaidOut ? { baseLaidOut: get().baseLaidOut } : {}),
           } : {}),
           // only PINNED themes persist - inherited values follow viewTheme at load time.
           // Content frames in AUTO save no dimensions: measured sizes are

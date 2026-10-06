@@ -237,6 +237,36 @@ describe('calm loading', () => {
     expect(await node(s, 'k-b')).toMatchObject({ x: 4000, y: 300 })
   }, 90_000)
 
+  it('a device view and back to Default keeps the dragged frame where it was, through a reload', async () => {
+    if (!browser) return
+    await closeAll()
+    const s1 = await open('#/b/docs')
+    await wait(2500)
+    expect(await node(s1, 'k-b')).toMatchObject({ x: 4000, y: 300 })        // the drag from the test above
+    await browser.eval(s1, `window.__mvStore.getState().setDeviceView('laptop')`)
+    await wait(300)
+    await browser.eval(s1, `window.__mvStore.getState().setDeviceView(null)`)
+    await browser.until(s1, `!window.__mvStore.getState().dirty`, 10_000)
+    expect(await node(s1, 'k-b')).toMatchObject({ x: 4000, y: 300 })
+    await browser.go(s1, 'about:blank')
+    const s = await open('#/b/docs')
+    await wait(2500)
+    expect(await node(s, 'k-b')).toMatchObject({ x: 4000, y: 300 })
+  }, 90_000)
+
+  it('a reflow pending on the board being left never tidies the board being opened', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/far')
+    await wait(2500)
+    const h = (await node(s, 'k-near')).h
+    // a provisional growth on `far` arms an unconditional reflow there; the switch lands before it fires
+    await browser.eval(s, `(() => { const st = window.__mvStore.getState(); st.measureNode('k-near', 'lazy/near', 760, 760, ${h + 50}, false); void st.switchBoard('docs') })()`)
+    await browser.until(s, `window.__mvStore.getState().board === 'docs'`, 10_000)
+    await wait(1500)
+    expect(await node(s, 'k-b')).toMatchObject({ x: 4000, y: 300 })
+  }, 90_000)
+
   it('a write whose answer was lost leaves nothing deduplicated against it - the next height still lands', async () => {
     if (!browser) return
     await closeAll()
