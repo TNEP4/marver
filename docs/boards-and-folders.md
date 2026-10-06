@@ -113,6 +113,12 @@ In progress (filling by phase), Done, Done reported, Unknown - or decided on the
 `"status": "archived"`, `"paused"`, or `"blocked"` with a `"reason"`. **Done is never set by hand.**
 The tooltip says what decided it. [Context](context.md) has the rules.
 
+**Set it from the sidebar:** right-click a feature or project board, **Change status…**. The picker
+shows what the evidence says and offers only what a person decides - Blocked (it asks why), Paused,
+Archived, and **Back to the evidence** to undo a decision; without `context/`, Backlog, To do and In
+progress as well. Type to filter, or press a number. It writes `status` and `reason` into the board
+file and nothing else.
+
 One rule draws them: a status still open is an outline in its colour - grey, yellow filling by phase,
 red for blocked - and a settled one is filled: Done a green disc, Archived a solid brown box. Done,
 reported is the green outline - a written claim, not yet confirmed.

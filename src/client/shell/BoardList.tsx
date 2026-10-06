@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useStore, HAS_ALL_SCENES, PUBLISHED, STATUS_AS_OF, fetchBoardTree, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
 import { StatusIcon, TypeIcon } from './board-icons.tsx'
+import { StatusPicker } from './StatusPicker.tsx'
+import type { StatusWord } from '../../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
@@ -310,9 +312,23 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (parent) setOpen(parent, true)                                // the new folder is drawn inside its parent: show it
     setNaming({ kind: 'new', index, board: withBoard, parent })
   }
+  /** A person's status decision (the picker): written into the board file, its hash checked - a
+   *  write that lost a race re-reads and tries once more, like a rename. */
+  const setStatus = async (n: string, status: StatusWord | null, reason?: string) => {
+    let r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
+    if (!r.ok && r.stale && await load()) r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
+    if (!r.ok) { useStore.getState().toast(r.error ?? 'status not saved'); return }
+    refresh()                                                        // a clear: what the evidence says now
+  }
   const boardMenu = (n: string, parent: string | null): MenuItem[] => {
     const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') }]
     if (PUBLISHED || n === 'all-scenes') return items
+    // a feature or project board: its status first, as Linear puts it - the picker opens in place
+    const m = useStore.getState().boardMeta[n]
+    if (m?.status && m.settable?.length) items.unshift({
+      label: 'Change status…', icon: <StatusIcon status={m.status.status} fill={m.status.fill} />,
+      panel: (close) => <StatusPicker meta={m} onPick={(s, reason) => { close(); void setStatus(n, s, reason) }} />,
+    })
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'board', name: n }) })
     // the new folder takes the board's own slot at its own level (a sub-folder inside a top-level
     // folder; right after its sub-folder when it sits in one - that level holds no folders)

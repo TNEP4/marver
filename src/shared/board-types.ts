@@ -63,6 +63,11 @@ export const STATUS_WORDS = [...DECISIONS, ...BY_HAND, 'done'] as const
 export type StatusWord = (typeof STATUS_WORDS)[number]
 export const readStatusWord = (v: unknown): StatusWord | undefined =>
   (STATUS_WORDS as readonly string[]).includes(v as string) ? (v as StatusWord) : undefined
+/** The statuses a person may set on a feature or project board, in the order a picker lists them:
+ *  the three decisions always; Backlog, To do and In progress only where there is no `context/`
+ *  (with it they are read from the evidence). Never Done - that is the shipped record's alone. */
+export const settableStatuses = (contextPresent: boolean): StatusWord[] =>
+  contextPresent ? ['blocked', 'paused', 'archived'] : ['backlog', 'todo', 'in-progress', 'blocked', 'paused', 'archived']
 
 /** A capability slug - the same grammar as a board name, so a feature board and its contract
  *  share it. */

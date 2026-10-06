@@ -174,11 +174,14 @@ describe('status: the nine rows (spec 20)', () => {
   it('status glyphs follow one rule: open is an outline, settled is filled - done green, archived a solid brown box', () => {
     const svg = (status: Parameters<typeof StatusIcon>[0]['status']) => renderToStaticMarkup(createElement(StatusIcon, { status }))
     // the first shape is the silhouette: an open status draws it as a ring, a settled one fills it
-    const silhouette = (s: string) => /<(circle|rect|path)\b[^>]*>/.exec(s)![0]
+    const silhouette = (s: string) => /<(circle|rect|path)\b[^>]*>/.exec(s.replace(/<mask[\s\S]*?<\/mask>/g, ''))![0]
     for (const s of ['backlog', 'todo', 'in-progress', 'blocked', 'unknown', 'paused', 'done-reported'] as const)
       expect(silhouette(svg(s))).toMatch(/<circle[^>]*fill="none"/)
     expect(silhouette(svg('done'))).toMatch(/<circle[^>]*fill="var\(--status-done, #34c759\)"/)
     expect(svg('done-reported')).toMatch(/stroke="var\(--status-done/)          // the same green, outlined: not yet confirmed
+    // Done's check is cut out of the disc - the row behind shows through it, in either theme
+    expect(svg('done')).toMatch(/<mask id="(mv-st-[\w-]+)">[\s\S]*stroke="#000"[\s\S]*<\/mask><circle[^>]*mask="url\(#\1\)"/)
+    expect(svg('done')).not.toMatch(/stroke="#fff"/)
     const archived = svg('archived')
     expect(archived).not.toMatch(/<circle|fill="none"/)                       // no ring: out of the flow, and solid
     expect(archived.match(/fill="var\(--status-archived, #956d51\)"/g)).toHaveLength(2)   // the lid and the body, in brown
@@ -280,6 +283,56 @@ describe('the dev API (spec 20)', () => {
     expect(r.status).toBe(200)
     expect(JSON.parse(read('design/boards/_folders.json')).folders).toEqual([{ name: 'features', order: 0, type: 'feature' }])
     expect(JSON.parse(read('design/boards/pay.json')).folder).toBe('features')
+  })
+
+  it('settable: the three decisions with context/, the by-hand words as well without it - only on boards that carry a status', async () => {
+    put('design/boards/pay.json', { version: 1, type: 'feature', nodes: [] })
+    put('design/boards/pitch.json', { version: 1, type: 'deck', nodes: [] })
+    const of = async (n: string) => (await drive('GET', 'boards')).json.find((b: any) => b.name === n)
+    expect((await of('pay')).settable).toEqual(['backlog', 'todo', 'in-progress', 'blocked', 'paused', 'archived'])
+    expect((await of('pitch')).settable).toBeUndefined()
+    put('context/INDEX.md', '# The index\n')
+    expect((await of('pay')).settable).toEqual(['blocked', 'paused', 'archived'])
+  })
+
+  it('POST boards/status: a decision into the file, every other field kept; blocked says why; null clears both', async () => {
+    put('context/INDEX.md', '# The index\n')
+    put('design/boards/pay.json', { version: 1, type: 'feature', title: 'Payments', capability: 'payments', nodes: [{ frame: 'a/b' }] })
+    const sha = () => hash(read('design/boards/pay.json'))
+    let r = await drive('POST', 'boards/status', { name: 'pay', status: 'paused', baseHash: sha() })
+    expect(r.status).toBe(200)
+    expect(r.json.sha256).toBe(sha())
+    expect(JSON.parse(read('design/boards/pay.json'))).toEqual({ version: 1, type: 'feature', title: 'Payments', capability: 'payments', nodes: [{ frame: 'a/b' }], status: 'paused' })
+    expect((await drive('POST', 'boards/status', { name: 'pay', status: 'blocked' })).status).toBe(400)          // no reason
+    r = await drive('POST', 'boards/status', { name: 'pay', status: 'blocked', reason: '  waiting on   the bank ', baseHash: sha() })
+    expect(r.status).toBe(200)
+    expect(JSON.parse(read('design/boards/pay.json'))).toMatchObject({ status: 'blocked', reason: 'waiting on the bank' })
+    r = await drive('POST', 'boards/status', { name: 'pay', status: 'archived' })
+    expect(JSON.parse(read('design/boards/pay.json')).reason).toBeUndefined()                                    // a reason is a blocked board's alone
+    r = await drive('POST', 'boards/status', { name: 'pay', status: null, baseHash: sha() })
+    expect(r.status).toBe(200)
+    const after = JSON.parse(read('design/boards/pay.json'))
+    expect(after.status).toBeUndefined()
+    expect(after).toMatchObject({ title: 'Payments', capability: 'payments' })
+  })
+
+  it('POST boards/status refuses Done, the evidence\'s words where context/ decides them, a board with no status, a stale hash', async () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'features', type: 'feature' }, { name: 'decks', type: 'deck' }] })
+    put('design/boards/pay.json', { version: 1, folder: 'features', nodes: [] })                                // a feature by its folder
+    put('design/boards/pitch.json', { version: 1, folder: 'decks', nodes: [] })
+    expect((await drive('POST', 'boards/status', { name: 'pay', status: 'todo' })).status).toBe(200)          // no context/: by hand
+    put('context/INDEX.md', '# The index\n')
+    for (const status of ['todo', 'backlog', 'in-progress', 'done']) {
+      const r = await drive('POST', 'boards/status', { name: 'pay', status })
+      expect(r.status).toBe(422)
+      expect(r.json.error).toMatch(status === 'done' ? /never set by hand/ : /read from the evidence/)
+    }
+    expect((await drive('POST', 'boards/status', { name: 'pay', status: 'done-reported' })).status).toBe(400)
+    expect((await drive('POST', 'boards/status', { name: 'pitch', status: 'paused' })).json.error).toMatch(/deck board carries no status/)
+    expect((await drive('POST', 'boards/status', { name: 'nope', status: 'paused' })).status).toBe(404)
+    const r = await drive('POST', 'boards/status', { name: 'pay', status: 'paused', baseHash: 'stale' })
+    expect(r.status).toBe(409)
+    expect(JSON.parse(read('design/boards/pay.json')).status).toBe('todo')                                     // nothing written
   })
 })
 

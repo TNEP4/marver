@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 import type { BoardType } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 
@@ -50,13 +50,19 @@ const pie = (f: number, r = 3.4) => {
  *  step in it). Done, reported stays an outline: a written claim is not settled until confirmed. */
 export function StatusIcon({ status, fill, size = 14 }: { status: Status; fill?: Phase; size?: number }) {
   const ring = (c: string, dash?: string) => <circle cx="7" cy="7" r="5.8" fill="none" stroke={c} strokeWidth="1.5" strokeDasharray={dash} />
+  // Done's check is cut OUT of its disc, not painted on it: the row behind shows through - the
+  // panel, a hover, the current row's wash - in either theme (a painted white check glared in dark)
+  const cut = `mv-st-${useId().replace(/[^\w-]/g, '')}`
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" aria-hidden data-status-icon={status}>
       {status === 'backlog' && ring(GRAY, '1.3 1.75')}
       {status === 'todo' && ring(GRAY)}
       {status === 'in-progress' && (<>{ring(YELLOW)}{fill && <path d={pie(fill / 4)} fill={YELLOW} />}</>)}
       {status === 'blocked' && (<>{ring(RED)}<circle cx="7" cy="7" r="3.2" fill={RED} /></>)}
-      {status === 'done' && (<><circle cx="7" cy="7" r="6.5" fill={GREEN} /><path d="M4.3 7.2 L6.2 9.1 L9.8 5.2" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></>)}
+      {status === 'done' && (<>
+        <mask id={cut}><rect width="14" height="14" fill="#fff" /><path d="M4.3 7.2 L6.2 9.1 L9.8 5.2" fill="none" stroke="#000" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></mask>
+        <circle cx="7" cy="7" r="6.5" fill={GREEN} mask={`url(#${cut})`} />
+      </>)}
       {status === 'done-reported' && (<>{ring(GREEN)}<path d="M4.4 7.2 L6.2 9 L9.7 5.3" fill="none" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></>)}
       {status === 'unknown' && (<>{ring(GRAY)}<path d="M5.4 5.6 A1.7 1.7 0 1 1 7.6 7.2 C7.1 7.4 7 7.7 7 8.2" fill="none" stroke={GRAY} strokeWidth="1.3" strokeLinecap="round" /><circle cx="7" cy="10" r=".8" fill={GRAY} /></>)}
       {status === 'paused' && (<>{ring(GRAY)}<rect x="4.9" y="4.4" width="1.4" height="5.2" rx=".5" fill={GRAY} /><rect x="7.7" y="4.4" width="1.4" height="5.2" rx=".5" fill={GRAY} /></>)}

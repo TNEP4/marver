@@ -176,6 +176,8 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   the board: `"status": "archived"`, `"paused"`, or `"blocked"` with `"reason": "<one sentence>"`.
   **Never write `"status": "done"`** - Done comes from `context/shipped.md`, and the check fails it.
   Without `context/` a board may also say `"todo"`, `"backlog"` or `"in-progress"` by hand.
+  A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
+  and `reason`, so re-read a board before you edit it.
 - In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's
   `_brief.md` front matter - never by where a row sits.
 - `npx marver boards` prints every board's type and status with what decided it.

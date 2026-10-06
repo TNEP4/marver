@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, SOURCE_REVEALED } from './store.ts'
 
@@ -16,7 +16,9 @@ export function copyToClipboard(text: string, okMsg: string) {
 export const framePath = (board: string, f: { id: string; file: string }) =>
   SOURCE_REVEALED ? `board: ${board} · frame: ${f.id}  (${f.file})` : `board: ${board} · frame: ${f.id}`
 
-export type MenuItem = { label: string; icon: ReactNode; onClick: () => void }
+/** A menu row. `panel` makes it open a panel IN PLACE of the menu (a picker - the board's status),
+ *  drawn by the caller and handed `close`; `onClick` then is not called. */
+export type MenuItem = { label: string; icon: ReactNode; onClick?: () => void; panel?: (close: () => void) => ReactNode }
 export type MenuState = { x: number; y: number; items: MenuItem[] }
 export type MenuOpener = (e: { preventDefault(): void; clientX: number; clientY: number }, items: MenuItem[]) => void
 
@@ -38,6 +40,15 @@ export function useContextMenu() {
 
 export function ContextMenu({ menu, close }: { menu: MenuState | null; close: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
+  const [panel, setPanel] = useState<MenuItem['panel'] | null>(null)
+  const [top, setTop] = useState<number | null>(null)
+  useEffect(() => { setPanel(null); setTop(null) }, [menu])            // a new menu starts as a menu
+  // a panel is taller than the menu it replaces: keep it inside the window
+  useLayoutEffect(() => {
+    if (!menu || !ref.current) return
+    const h = ref.current.getBoundingClientRect().height
+    setTop(Math.max(8, Math.min(menu.y, window.innerHeight - h - 8)))
+  }, [menu, panel])
   useEffect(() => {
     if (!menu) return
     const onDown = (e: PointerEvent) => { if (!ref.current?.contains(e.target as globalThis.Node)) close() }
@@ -49,9 +60,9 @@ export function ContextMenu({ menu, close }: { menu: MenuState | null; close: ()
   const app = document.querySelector('.sh-app')
   if (!menu || !app) return null
   return createPortal(
-    <div className="sh-menu sh-ctxmenu" ref={ref} style={{ left: menu.x, top: menu.y }}>
-      {menu.items.map((it) => (
-        <button key={it.label} onClick={() => { it.onClick(); close() }}>{it.icon}<span>{it.label}</span></button>
+    <div className={`sh-menu sh-ctxmenu${panel ? ' sh-ctxpanel' : ''}`} ref={ref} style={{ left: menu.x, top: top ?? menu.y }}>
+      {panel ? panel(close) : menu.items.map((it) => (
+        <button key={it.label} onClick={() => { if (it.panel) { setPanel(() => it.panel!); return } it.onClick?.(); close() }}>{it.icon}<span>{it.label}</span></button>
       ))}
     </div>,
     app,

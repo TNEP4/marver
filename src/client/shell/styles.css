@@ -599,6 +599,26 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-menu .chk { color: var(--glass-accent) }
 .sh-menu kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0 }
 .sh-menu .div { height: 1px; background: var(--glass-brd); margin: 4px 6px }
+/* the board status picker (StatusPicker.tsx): opens in place of the right-click menu - a filter,
+   what the evidence says now, the statuses a person may set, numbered, and a line on the rest */
+.sh-ctxpanel { width: 248px; max-width: 248px }
+.sh-status-picker { display: flex; flex-direction: column }
+.sh-status-picker .sp-input { height: 32px; margin: 0 0 4px; padding: 0 10px; border: 0; border-bottom: 1px solid var(--glass-brd);
+  border-radius: 0; background: none; color: var(--glass-ink); font: 500 12.5px -apple-system, system-ui, sans-serif; outline: 0 }
+.sh-status-picker .sp-input::placeholder { color: var(--glass-ink-3) }
+.sh-status-picker .sp-now { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; margin-bottom: 2px;
+  font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.sh-status-picker .sp-now small { margin-left: auto; color: var(--glass-ink-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px }
+.sh-status-picker .sp-list { display: flex; flex-direction: column }
+.sh-status-picker .sp-list button { width: 100% }
+.sh-status-picker .sp-list button.hi { background: var(--glass-hover) }
+.sh-status-picker .sp-list button span { text-transform: none }
+.sh-status-picker .sp-chk { color: var(--glass-ink); flex: none }
+.sh-status-picker .sp-head { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; font: 600 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.sh-status-picker .sp-empty { padding: 8px 10px; color: var(--glass-ink-3); font: 500 12px -apple-system, system-ui, sans-serif }
+.sh-status-picker .sp-foot { border-top: 1px solid var(--glass-brd); margin-top: 4px; padding: 7px 10px 3px; color: var(--glass-ink-3);
+  font: 500 11px/1.35 -apple-system, system-ui, sans-serif }
+.sh-status-picker[data-status-picker="reason"] .sp-input { border: 1px solid var(--glass-brd); border-radius: 9px; margin: 2px 6px 0; height: 30px }
 
 /* shadcn-style tooltip: contrast-flipped solid, zoom-fade in */
 .sh-tip { position: absolute; z-index: 400; pointer-events: none; padding: 5px 10px; border-radius: 8px;   /* topmost ephemeral chrome - above modals (300) or in-dialog tips vanish */

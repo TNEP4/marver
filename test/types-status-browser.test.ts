@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -128,6 +128,66 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await browser!.until(s, `document.querySelector('[data-board="scratch"] [data-type-icon]')?.getAttribute('data-type-icon') === 'feature'`, 15_000)
     expect(await browser!.eval(s, `document.querySelector('[data-board="scratch"] [data-status-icon]')?.getAttribute('data-status-icon')`)).toBe('backlog')
     board('scratch', { order: 3 })
+  })
+
+  skippable('a person sets a status from the board\'s menu: the picker writes the file, the icon follows; Done is never offered', async () => {
+    const s = await open(browser!)
+    const readBoard = (n: string) => JSON.parse(readFileSync(join(root, 'design', 'boards', `${n}.json`), 'utf8'))
+    const icon = (n: string) => browser!.eval(s, `document.querySelector('[data-board="${n}"] [data-status-icon]')?.getAttribute('data-status-icon')`)
+    const rightClick = async (n: string) => {
+      const c = await browser!.eval(s, `(() => { const el = document.querySelector('.sh-boards [data-board-row][data-board="${n}"]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'right', buttons: 2, clickCount: 1 }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'right', buttons: 0, clickCount: 1 }, s)
+      await browser!.until(s, `!!document.querySelector('.sh-ctxmenu')`)
+    }
+    const menu = () => browser!.eval(s, `Array.from(document.querySelectorAll('.sh-ctxmenu button')).map((b) => b.textContent).join('|')`)
+    const openPicker = async (n: string) => {
+      await rightClick(n)
+      await browser!.eval(s, `Array.from(document.querySelectorAll('.sh-ctxmenu button')).find((b) => b.textContent === 'Change status…').click()`)
+      await browser!.until(s, `!!document.querySelector('[data-status-picker="list"]')`)
+    }
+    const options = () => browser!.eval(s, `Array.from(document.querySelectorAll('[data-status-option]')).map((b) => b.dataset.statusOption).join()`)
+    const key = async (k: string, text?: string) => {
+      const code = k === 'Enter' ? 13 : k === 'Escape' ? 27 : k.charCodeAt(0)
+      await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, ...(text ? { text } : {}), windowsVirtualKeyCode: code }, s)
+      await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, windowsVirtualKeyCode: code }, s)
+    }
+
+    // checkout's Done, reported is the evidence's: the picker shows it read-only, offers the decisions only
+    await openPicker('checkout')
+    expect(await options()).toBe('blocked,paused,archived')
+    expect(await browser!.eval(s, `document.querySelector('.sp-now')?.textContent`)).toMatch(/^Done, reportedshipped\.md:3$/)
+    await key('2', '2')                                                                         // 2 = Paused
+    await browser!.until(s, `document.querySelector('[data-board="checkout"] [data-status-icon]')?.getAttribute('data-status-icon') === 'paused'`, 15_000)
+    expect(readBoard('checkout')).toMatchObject({ status: 'paused', folder: 'features', order: 0, nodes: [{ frame: 'app/home' }] })
+
+    // Blocked asks why before it writes; the reason reaches the tooltip
+    await openPicker('checkout')
+    expect(await options()).toBe('blocked,paused,archived,clear')                              // a decision can be undone
+    await key('1', '1')
+    await browser!.until(s, `!!document.querySelector('[data-status-picker="reason"]')`)
+    await browser!.send('Input.insertText', { text: 'waiting on legal' }, s)
+    await key('Enter')
+    await browser!.until(s, `document.querySelector('[data-board="checkout"] [data-status-icon]')?.getAttribute('data-status-icon') === 'blocked'`, 15_000)
+    expect(readBoard('checkout')).toMatchObject({ status: 'blocked', reason: 'waiting on legal' })
+    await browser!.until(s, `/waiting on legal/.test(document.querySelector('[data-board="checkout"] .st')?.getAttribute('title') ?? '')`, 15_000)
+
+    // Back to the evidence: the decision leaves the file, the record decides again
+    await openPicker('checkout')
+    await browser!.eval(s, `document.querySelector('[data-status-option="clear"]').click()`)
+    await browser!.until(s, `document.querySelector('[data-board="checkout"] [data-status-icon]')?.getAttribute('data-status-icon') === 'done-reported'`, 15_000)
+    expect(readBoard('checkout').status).toBeUndefined()
+    expect(readBoard('checkout').reason).toBeUndefined()
+    expect(await icon('checkout')).toBe('done-reported')
+
+    // a board without a status - a deck, an untyped board - offers no picker
+    for (const n of ['pitch', 'scratch']) {
+      await rightClick(n)
+      expect(await menu()).not.toMatch(/Change status/)
+      await key('Escape')
+      await browser!.until(s, `!document.querySelector('.sh-ctxmenu')`)
+    }
+    board('checkout', { folder: 'features', order: 0 })
   })
 
   skippable('an edit to a context file a frame renders updates the frame - the canvas never reloads', async () => {

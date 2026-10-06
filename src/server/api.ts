@@ -7,8 +7,8 @@ import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
 import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
-import { readType } from '../shared/board-types.ts'
-import { annotateBoards } from './board-status.ts'
+import { HAS_STATUS, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
+import { annotateBoards, readContextFacts } from './board-status.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -168,9 +168,62 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const regFolders = reg.state === 'ok' ? reg.folders : []
         const tree = buildTree(rows, regFolders)
         const fm = folderMap(tree)
-        const notes = annotateBoards(root, files, regFolders, (n) => fm.get(n) ?? null)
-        const list = files.map((b, i) => ({ ...rows[i], sha256: b.sha256, ...(notes.get(b.name) ?? {}) }))
+        const facts = readContextFacts(root)
+        const notes = annotateBoards(root, files, regFolders, (n) => fm.get(n) ?? null, facts)
+        // what the sidebar's status picker may offer (dev only - nothing a build reads carries it)
+        const settable = settableStatuses(facts.present)
+        const list = files.map((b, i) => { const n = notes.get(b.name); return { ...rows[i], sha256: b.sha256, ...(n ?? {}), ...(n?.status ? { settable } : {}) } })
         return json(res, 200, list)
+      }
+
+      // A board's status, decided by a person (the sidebar's picker): `status` one of the statuses
+      // this board may be set to (settableStatuses - never Done, and never what context/ decides),
+      // or null to clear the decision; a blocked board says why (`reason`). Only the board's
+      // `status` and `reason` change - every other field is kept, and `baseHash` (the file as the
+      // caller last saw it) turns a concurrent edit into a 409, nothing written. Owner-gated.
+      if (path === 'boards/status' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let parsed: unknown
+        try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
+        const { name, status: statusRaw, reason: reasonRaw, baseHash } = parsed as { name?: unknown; status?: unknown; reason?: unknown; baseHash?: unknown }
+        if (!validName(name) || name === 'all-scenes') return json(res, 400, { error: 'invalid board name' })
+        if (baseHash !== undefined && typeof baseHash !== 'string') return json(res, 400, { error: 'invalid baseHash' })
+        const status = statusRaw === null ? null : readStatusWord(statusRaw)
+        if (status === undefined) return json(res, 400, { error: 'invalid status' })
+        const reason = readReason(reasonRaw)
+        if (status === 'blocked' && !reason) return json(res, 400, { error: 'a blocked board says why - give a reason' })
+        { const de = dirError(); if (de) return json(res, 400, { error: de }) }
+        const file = boardPath(name)
+        if (!file) return json(res, 400, { error: 'invalid board name' })
+        if (!existsSync(file)) return json(res, 404, { error: `board "${name}" does not exist` })
+        if (!notSymlink(file)) return json(res, 400, { error: 'refusing to write a symlinked board file' })
+        const current = readFileSync(file, 'utf8')
+        if (baseHash !== undefined && baseHash !== hash(current)) return json(res, 409, { error: 'board changed on disk', sha256: hash(current) })
+        let obj: Record<string, unknown>
+        try { obj = JSON.parse(current) } catch { return json(res, 422, { error: `board "${name}" is not valid JSON - fix the file` }) }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return json(res, 422, { error: `board "${name}" is not a JSON object - fix the file` })
+        // the board's type as the sidebar resolves it: its own, else its folder's, else that folder's parent's
+        const reg = readRegistry(boardsDir)
+        const regFolders = reg.state === 'ok' ? reg.folders : []
+        const all = listBoardFiles(boardsDir).boards
+        const fm = folderMap(buildTree(all.map((b) => ({ name: b.name, ...boardFields(b.json, validName) })), regFolders))
+        const folder = regFolders.find((f) => f.name === fm.get(name))
+        const parent = folder?.parent ? regFolders.find((f) => f.name === folder.parent) : undefined
+        const type = resolveType(obj.type, folder?.type, parent?.type)
+        if (!HAS_STATUS.includes(type)) return json(res, 422, { error: `a ${type} board carries no status - only feature and project boards do` })
+        if (status !== null && !settableStatuses(readContextFacts(root).present).includes(status)) {
+          return json(res, 422, { error: status === 'done'
+            ? 'Done is never set by hand - it comes from context/shipped.md'
+            : `with context/, ${status} is read from the evidence - a plan, a contract, the shipped record` })
+        }
+        if (status === null) delete obj.status; else obj.status = status
+        if (status === 'blocked') obj.reason = reason; else delete obj.reason
+        const next = JSON.stringify(obj, null, 2) + '\n'
+        if (next !== current) atomicWrite(file, next)
+        return json(res, 200, { name, sha256: hash(next) })
       }
 
       // The folder registry: which folders exist and where they rank at the root. A separate

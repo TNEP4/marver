@@ -145,7 +145,7 @@ export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
 import { buildTree, flatten, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
-import type { BoardType } from '../../shared/board-types.ts'
+import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
@@ -155,7 +155,13 @@ export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase; titles: Record
 /** What spec 20 adds to a board's row: its resolved type, and - for feature and project boards -
  *  its status read from context/. Dev carries the evidence for the tooltip; a published bundle
  *  carries only what its publish row opted into. */
-export interface BoardMeta { type?: BoardType; status?: { status: Status; fill?: Phase; reason?: string; evidence?: string[] } }
+export interface BoardMeta {
+  type?: BoardType
+  /** `row` is the table row that decided it (1-3: a decision on the board) */
+  status?: { status: Status; row?: number; fill?: Phase; reason?: string; evidence?: string[] }
+  /** what a person may set it to from the sidebar (dev only) - shared/board-types settableStatuses */
+  settable?: StatusWord[]
+}
 
 /** The sidebar tree: root boards and folders in rank order, each folder's boards and
  *  sub-folders inside (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
@@ -164,7 +170,7 @@ export interface BoardMeta { type?: BoardType; status?: { status: Status; fill?:
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
   if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
   const [boards, reg] = await Promise.all([
-    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null }[]>,
+    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[] }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
       const j = await r.json() as { folders?: { name: string; order?: number; parent?: string; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
@@ -175,7 +181,7 @@ export async function fetchBoardTree(): Promise<TreeSnapshot> {
     tree: buildTree(boards, reg.folders ?? []),
     base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null },
     titles: Object.fromEntries(boards.flatMap((b) => (b.title ? [[b.name, b.title]] : []))),
-    meta: Object.fromEntries(boards.map((b) => [b.name, { ...(b.type && b.type !== 'plain' ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}) }])),
+    meta: Object.fromEntries(boards.map((b) => [b.name, { ...(b.type && b.type !== 'plain' ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}), ...(b.settable?.length ? { settable: b.settable } : {}) }])),
   }
 }
 /** A tree read's types and statuses, kept under the same latest-wins rule as its titles. */
@@ -377,6 +383,10 @@ interface State {
    *  moves: its name is the board's identity (agents, publish.json, URLs, comment threads).
    *  `baseHash` = the file as last seen; a 409 (`stale`) means someone wrote it since. */
   renameBoard(name: string, title: string, baseHash?: string): Promise<{ ok: true } | { ok: false; stale?: boolean; error?: string }>
+  /** a board's status, decided by a person (the sidebar's picker): one of its `settable` statuses,
+   *  or null to clear the decision (back to the evidence); blocked carries its reason. Only
+   *  `status` and `reason` change in the file; a 409 (`stale`) means someone wrote it since. */
+  setBoardStatus(name: string, status: StatusWord | null, reason?: string, baseHash?: string): Promise<{ ok: true } | { ok: false; stale?: boolean; error?: string }>
   /** a scene's title, into its brief's front matter (the directory never moves) */
   renameScene(scene: string, title: string): Promise<{ ok: boolean; error?: string }>
   /** `sh:scenes`: the scenes changed (a brief's title or description) with the frames intact */
@@ -775,6 +785,37 @@ export const useStore = create<State>((set, get) => {
           set({ boardTitles: titles })
           return { ok: true }
         } finally { if (active) releaseSaves() }   // whatever happened, autosave resumes
+      })
+    },
+
+    setBoardStatus(name, status, reason, baseHash) {
+      return structural(async () => {
+        const active = name === get().board
+        // the active board's file is rewritten under the autosave: flush first, hold across (renameBoard's pattern)
+        if (active) {
+          let ok = true
+          for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
+          if (get().dirty) return { ok: false, error: 'unsaved changes - try again' }
+          holdSaves()
+        }
+        try {
+          const base = active && get().boardHash ? get().boardHash : baseHash
+          let res: Response
+          try { res = await postOwner('boards/status', { name, status, ...(reason ? { reason } : {}), ...(base ? { baseHash: base } : {}) }) }
+          catch { return { ok: false, error: 'could not reach the dev server' } }
+          const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
+          if (!res.ok) return { ok: false, stale: res.status === 409, error: body?.error ?? `status failed (${res.status})` }
+          if (active && get().board === name && body?.sha256) set({ boardHash: body.sha256 })
+          // a decision shows at once; what the evidence says after a clear comes with the next tree read
+          if (status) {
+            const meta = { ...get().boardMeta }
+            const cur = meta[name] ?? {}
+            const row = ({ archived: 1, paused: 2, blocked: 3, 'in-progress': 5, done: 6, todo: 8, backlog: 9 } as const)[status]
+            meta[name] = { ...cur, status: { status, row, ...(status === 'blocked' && reason ? { reason } : {}), evidence: [`design/boards/${name}.json: "status": "${status}"`] } }
+            set({ boardMeta: meta })
+          }
+          return { ok: true }
+        } finally { if (active) releaseSaves() }
       })
     },
 
