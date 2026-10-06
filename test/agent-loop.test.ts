@@ -211,3 +211,26 @@ describe('engagement starts when Marver engaged', () => {
     expect(m.has('t-human')).toBe(false)
   })
 })
+
+describe('the live signal: which boards show the working frames', () => {
+  it('pins, auto boards and all-scenes - read once, until a board changes', async () => {
+    const { boardsShowing, boardsChanged, onBoardsChanged } = await import('../src/server/work.ts')
+    const r = mkdtempSync(join(tmpdir(), 'mv-live-'))
+    const b = (name: string, json: object) => { mkdirSync(join(r, 'design', 'boards'), { recursive: true }); writeFileSync(join(r, 'design', 'boards', `${name}.json`), JSON.stringify({ version: 1, name, ...json })) }
+    b('flow', { nodes: [{ frame: 'shop/cart' }, { frame: 'shop/pay' }] })
+    b('other', { nodes: [{ frame: 'x/y' }] })
+    b('everything', { auto: true, nodes: [] })
+    expect(boardsShowing(r, [])).toEqual([])
+    expect(boardsShowing(r, ['shop/pay'])).toEqual(['all-scenes', 'everything', 'flow'])
+    // the index is kept: a board edit is not seen until the watcher says boards changed
+    b('other', { nodes: [{ frame: 'shop/pay' }] })
+    expect(boardsShowing(r, ['shop/pay'])).toEqual(['all-scenes', 'everything', 'flow'])
+    const heard: string[] = []
+    const off = onBoardsChanged((root) => heard.push(root))
+    boardsChanged(r)
+    off()
+    expect(heard).toEqual([r])
+    expect(boardsShowing(r, ['shop/pay'])).toEqual(['all-scenes', 'everything', 'flow', 'other'])
+    rmSync(r, { recursive: true, force: true })
+  })
+})

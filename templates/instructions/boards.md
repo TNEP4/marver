@@ -180,7 +180,9 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   - every feature board reads Backlog until there is one. Only when the human declines may a board
   say `"todo"`, `"backlog"`, `"in-progress"` or `"building"` by hand.
   A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
-  and `reason`, so re-read a board before you edit it.
+  and `reason`; with `context/`, its In progress and Building rewrite the `stage:` line of every open
+  plan naming the capability instead (and clear the board's decision). So re-read a board, and its
+  plan, before you edit them.
 - In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's
   `_brief.md` front matter - never by where a row sits. **Building** (blue) follows it: the design
   agreed, the code underway - `stage: build` in the open plan (instructions/context.md). While you

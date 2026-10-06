@@ -415,6 +415,10 @@ interface State {
    *  frames never pulse in sync. */
   workingSince: Record<string, number>
   setWorking(frames: string[], boards?: string[]): void
+  /** setWorking from a wire payload (`{ frames, boards }`), strings only. */
+  setWorkingFrom(m: unknown): void
+  /** Fetch what is lit now (dev only) - the snapshot behind the broadcasts. */
+  syncWorking(): Promise<void>
   /** Boards showing a working frame - their sidebar icon shimmers while an agent works. */
   workingBoards: string[]
   spawn(frameId: string): Node | null
@@ -1356,6 +1360,23 @@ export const useStore = create<State>((set, get) => {
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
+    setWorkingFrom(m) {
+      const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : [])
+      const o = (m && typeof m === 'object' ? m : {}) as { frames?: unknown; boards?: unknown }
+      get().setWorking(strings(o.frames), strings(o.boards))
+    },
+    async syncWorking() {
+      if (PUBLISHED) return
+      try {
+        // a fresh page may ask before its double-submit cookie exists: the refusal primes it (api.ts),
+        // so one more try carries it
+        for (let i = 0; i < 2; i++) {
+          const r = await fetch(`${ROUTE}/api/work`, { headers: { 'x-mv-c': csrf() } })
+          if (r.ok) return get().setWorkingFrom(await r.json())
+          if (r.status !== 403) return
+        }
+      } catch { /* the next broadcast heals it */ }
+    },
     setWorking(frames, boards = []) {
       // preserve each frame's original start time; stamp now() only for newly-working frames -
       // the start phases the working animations so parallel frames never pulse in sync

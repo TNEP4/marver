@@ -35,8 +35,9 @@ const RED = '#e5484d'
 // done is the content palette's green (Apple's systemGreen, per theme - styles.css), the green Marver
 // keeps for done alone; archived is Apple's brown - a cardboard box - per theme as well
 const GREEN = 'var(--status-done, #34c759)'
-// Building is the accent: yellow is being shaped, blue is being built, green is shipped
-const BLUE = 'var(--accent, #0088ff)'
+// Building is Marver's blue: yellow is being shaped, blue is being built, green is shipped. Its own
+// token, not the accent - interact mode re-tints the accent, and a status does not change with a mode
+const BLUE = 'var(--status-building, #0088ff)'
 const ARCHIVED = 'var(--status-archived, #956d51)'
 
 /** A pie wedge of the ring's interior, `f` of the way round from twelve o'clock. */

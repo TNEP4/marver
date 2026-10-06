@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
@@ -190,7 +190,7 @@ describe('status: the nine rows (spec 20)', () => {
     const silhouette = (s: string) => /<(circle|rect|path)\b[^>]*>/.exec(s.replace(/<mask[\s\S]*?<\/mask>/g, ''))![0]
     for (const s of ['backlog', 'todo', 'in-progress', 'building', 'blocked', 'unknown', 'paused', 'done-reported'] as const)
       expect(silhouette(svg(s))).toMatch(/<circle[^>]*fill="none"/)
-    expect(svg('building')).toMatch(/stroke="var\(--accent, #0088ff\)"[\s\S]*M5.6 4.9 L3.8 7 L5.6 9.1/)   // the code, in accent blue
+    expect(svg('building')).toMatch(/stroke="var\(--status-building, #0088ff\)"[\s\S]*M5.6 4.9 L3.8 7 L5.6 9.1/)   // the code, in Marver's blue
     expect(silhouette(svg('done'))).toMatch(/<circle[^>]*fill="var\(--status-done, #34c759\)"/)
     expect(svg('done-reported')).toMatch(/stroke="var\(--status-done/)          // the same green, outlined: not yet confirmed
     // Done's check is cut out of the disc - the row behind shows through it, in either theme
@@ -224,13 +224,45 @@ describe('reading context/ off disk', () => {
     expect(g.plans.get('h')?.[0].stage).toBeUndefined()
   })
 
-  it('planWithStage moves only the stage line - inserted, replaced, removed - and refuses a plan with no front matter', () => {
-    expect(planWithStage('---\nstate: proposed\n---\nbody\n', 'build')).toBe('---\nstate: proposed\nstage: build\n---\nbody\n')
-    expect(planWithStage('---\nstage: design\nstate: proposed\n---\n', 'build')).toBe('---\nstage: build\nstate: proposed\n---\n')
-    expect(planWithStage('---\nstate: proposed\nstage: build\n---\nstage: build in the body stays\n', null)).toBe('---\nstate: proposed\n---\nstage: build in the body stays\n')
-    expect(planWithStage('---\nstate: proposed\n---\n', null)).toBe('---\nstate: proposed\n---\n')
-    expect(planWithStage('# no front matter\n', 'build')).toBeNull()
-    expect(planWithStage('---\nstate: proposed\n', 'build')).toBeNull()
+  it('planWithStage moves only the stage line - inserted, replaced, removed - every other byte kept; refuses what it cannot edit as one line', () => {
+    const ok = (raw: string, st: 'build' | null) => { const r = planWithStage(raw, st); if ('error' in r) throw new Error(r.error); return r.text }
+    expect(ok('---\nstate: proposed\n---\nbody\n', 'build')).toBe('---\nstate: proposed\nstage: build\n---\nbody\n')
+    expect(ok('---\nstage: design\nstate: proposed\n---\n', 'build')).toBe('---\nstage: build\nstate: proposed\n---\n')
+    expect(ok('---\nstate: proposed\nstage: build\n---\nstage: build in the body stays\n', null)).toBe('---\nstate: proposed\n---\nstage: build in the body stays\n')
+    expect(ok('---\nstate: proposed\n---\n', null)).toBe('---\nstate: proposed\n---\n')
+    // CRLF front matter over an LF body: only the inserted line is new - the body keeps its endings
+    expect(ok('<!-- marver:managed v1 -->\r\n---\r\nstate: proposed\r\n---\r\n# Body\nline\n', 'build')).toBe('<!-- marver:managed v1 -->\r\n---\r\nstate: proposed\r\nstage: build\r\n---\r\n# Body\nline\n')
+    for (const [raw, why] of [
+      ['# no front matter\n', /no front matter/],
+      ['---\nstate: proposed\n', /never closes/],
+      ['---\ncapability: pay\nstage:\n  - build\n---\n', /not one word/],     // removing the header would hand its list to `capability`
+      ['---\nstage: [build]\n---\n', /not one word/],
+      ['---\nstage: build\nstage: design\n---\n', /twice/],
+    ] as const) expect((planWithStage(raw, null) as { error: string }).error).toMatch(why)
+  })
+
+  it('POST boards/status writes the plans and the board together: an odd stage writes nothing, a failed write puts the plans back', async () => {
+    put('context/INDEX.md', '# The index\n')
+    put('design/boards/pay.json', { version: 1, type: 'feature', status: 'paused', nodes: [] })
+    put('context/plans/a.md', '---\nstate: proposed\ncapability: pay\n---\n')
+    put('context/plans/b.md', '---\nstate: proposed\ncapability: pay\nstage:\n  - build\n---\n')
+    let r = await drive('POST', 'boards/status', { name: 'pay', status: 'building' })
+    expect(r.status).toBe(422)
+    expect(r.json.error).toMatch(/context\/plans\/b.md has a `stage` that is not one word/)
+    expect(read('context/plans/a.md')).not.toMatch(/stage/)                               // nothing written
+    expect(JSON.parse(read('design/boards/pay.json')).status).toBe('paused')
+    put('context/plans/b.md', '---\nstate: proposed\ncapability: pay\n---\n')
+    // the board cannot be written: the plans written before it go back
+    const dir = join(root, 'design', 'boards')
+    chmodSync(dir, 0o555)
+    try {
+      r = await drive('POST', 'boards/status', { name: 'pay', status: 'building' })
+    } finally { chmodSync(dir, 0o755) }
+    expect(r.status).toBe(500)
+    expect(r.json.error).toMatch(/nothing changed/)
+    expect(read('context/plans/a.md')).not.toMatch(/stage/)
+    expect(read('context/plans/b.md')).not.toMatch(/stage/)
+    expect(JSON.parse(read('design/boards/pay.json')).status).toBe('paused')
   })
 
   it('a board inherits its folder type; a phase counts once its scene holds a frame', () => {

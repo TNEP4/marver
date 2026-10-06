@@ -225,27 +225,43 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
               ? `${status === 'building' ? 'Building' : 'In progress'} needs an open plan naming ${capability} - context/plans/`
               : `with context/, ${status} is read from the evidence - a plan, a contract, the shipped record` })
         }
+        // every file this request changes: the open plans (with context/, In progress and Building are
+        // their `stage`) and the board. Built first, committed together, rolled back together.
+        const writes: { file: string; raw: string; next: string; plan?: string }[] = []
         if (facts.present && (status === 'building' || status === 'in-progress')) {
-          // with context/ the evidence is the plan: Building writes its `stage: build`, In progress takes
-          // it away - every open plan naming the capability, so they never disagree. The board's own
-          // decision gives way (a board picked Building is no longer paused), as with any status picked.
-          const writes: { file: string; next: string; raw: string }[] = []
+          // the evidence is the plan: Building writes its `stage: build`, In progress takes it away - on
+          // every open plan naming the capability, so they never disagree. The board's own decision gives
+          // way (a board picked Building is no longer paused), as with any status picked.
           for (const p of plans) {
             const file = join(root, p.where)
             if (!notSymlink(file)) return json(res, 400, { error: `refusing to write a symlinked plan (${p.where})` })
             const raw = readFileSync(file, 'utf8')
-            const next = planWithStage(raw, status === 'building' ? 'build' : null)
-            if (next === null) return json(res, 422, { error: `${p.where} has no front matter to write its stage into - fix the file` })
-            writes.push({ file, next, raw })
+            const r = planWithStage(raw, status === 'building' ? 'build' : null)
+            if ('error' in r) return json(res, 422, { error: `${p.where} ${r.error} - fix the file` })
+            writes.push({ file, raw, next: r.text, plan: p.where })
           }
-          for (const w of writes) if (w.next !== w.raw) atomicWrite(w.file, w.next)
           delete obj.status; delete obj.reason
         } else {
           if (status === null) delete obj.status; else obj.status = status
           if (status === 'blocked') obj.reason = reason; else delete obj.reason
         }
         const next = JSON.stringify(obj, null, 2) + '\n'
-        if (next !== current) atomicWrite(file, next)
+        writes.push({ file, raw: current, next })
+        // commit: each file re-read at the last moment - one that changed since this request read it (an
+        // agent's edit, a plan closed meanwhile) is a 409 with nothing written, never an overwrite - then
+        // written; a failure part way puts back what was written, so a status is never half-applied
+        for (const w of writes) {
+          let now: string
+          try { now = readFileSync(w.file, 'utf8') } catch { now = '' }
+          if (now !== w.raw) return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan ? {} : { sha256: hash(now) }) })
+        }
+        const done: typeof writes = []
+        try {
+          for (const w of writes) { if (w.next !== w.raw) { atomicWrite(w.file, w.next); done.push(w) } }
+        } catch (err) {
+          for (const w of done.reverse()) { try { atomicWrite(w.file, w.raw) } catch { /* best effort - the error below names the failure */ } }
+          return json(res, 500, { error: `could not write the status: ${(err as Error).message} - nothing changed` })
+        }
         return json(res, 200, { name, sha256: hash(next) })
       }
 
@@ -680,7 +696,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         }
         if (req.method === 'GET') {
           if (!ownerGated(req) && !tokenOk()) return json(res, 403, { error: 'forbidden' })
-          return json(res, 200, { frames: workActivity.active() })
+          // the snapshot a page asks for as it starts listening (it may have missed the last broadcast):
+          // the frames, and the boards showing them
+          const { boardsShowing } = await import('./work.ts')
+          const frames = workActivity.active()
+          return json(res, 200, { frames, boards: boardsShowing(root, frames) })
         }
         if (req.method === 'POST') {
           if (!ownerGated(req) && !tokenOk()) return json(res, 403, { error: 'forbidden' })

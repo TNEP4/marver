@@ -1,4 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
+import { boardsChanged } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
 import { basename, join, sep } from 'node:path'
 import { hash } from './manifest.ts'
@@ -294,7 +295,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         const watcher = watch(boardsDir, (_event, file) => {
           if (!file || !file.endsWith('.json')) return
           clearTimeout(listTimer)
-          listTimer = setTimeout(() => { server.ws.send('sh:boards', {}); regen() }, 150)   // the manifest carries boards and folders too
+          listTimer = setTimeout(() => { server.ws.send('sh:boards', {}); regen(); boardsChanged(root) }, 150)   // the manifest carries boards and folders too; boardsChanged re-lights the sidebar's live boards
           clearTimeout(timers.get(file))
           timers.set(file, setTimeout(() => {
             timers.delete(file)

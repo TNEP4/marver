@@ -299,18 +299,26 @@ export async function dev(root: string, portFlag?: number) {
   // the `marver work` CLI write; the glow rides the existing HMR rail (sh:jam-activity), so
   // the canvas lights up within the first second - no extra poll. design/.local/dev.json is
   // the CLI's discovery + credential handshake, written per boot, removed on close.
-  const { workActivity, writeDevInfo, removeDevInfo, boardsShowing } = await import('./work.ts')
-  // the frames glow, and the boards showing them light their sidebar icon
-  const activity = (frames: string[]) => ({ frames, boards: boardsShowing(root, frames) })
-  const unsubscribe = workActivity.onChange((frames) => server.ws.send('sh:jam-activity', activity(frames) as any))
-  // a page that opens mid-job learns what is lit at once, not at the next change
-  server.ws.on('connection', () => { const f = workActivity.active(); if (f.length) server.ws.send('sh:jam-activity', activity(f) as any) })
+  const { workActivity, writeDevInfo, removeDevInfo, boardsShowing, onBoardsChanged } = await import('./work.ts')
+  // the frames glow, and the boards showing them light their sidebar icon. Sent when either changes -
+  // a jam job's heartbeat re-marks its frames every 2s, and an unchanged answer is not news
+  let sent = ''
+  const broadcast = (frames: string[]) => {
+    const payload = { frames: [...frames].sort(), boards: boardsShowing(root, frames) }
+    const key = JSON.stringify(payload)
+    if (key === sent) return
+    sent = key
+    server.ws.send('sh:jam-activity', payload as any)
+  }
+  const unsubscribe = workActivity.onChange(broadcast)
+  // a pin moved to another board while the work runs: the lit boards move with it
+  const offBoards = onBoardsChanged((r) => { if (r === root) broadcast(workActivity.active()) })
   const sweep = setInterval(() => workActivity.sweep(), 15_000)
   sweep.unref?.()
   writeDevInfo(root, port)
   {
     const close = server.close.bind(server)
-    server.close = (async () => { unsubscribe(); clearInterval(sweep); removeDevInfo(root); return close() }) as typeof server.close
+    server.close = (async () => { unsubscribe(); offBoards(); clearInterval(sweep); removeDevInfo(root); return close() }) as typeof server.close
   }
 
   // Comments written OUTSIDE the shell - an agent's `comments new` / `reply` / `resolve`, a sync

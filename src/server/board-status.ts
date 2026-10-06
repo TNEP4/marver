@@ -182,19 +182,31 @@ export function annotateBoards(
 /**
  * A plan with its `stage` set - `build` (Building), or none (back to In progress) - the one context/
  * edit the sidebar makes, for the picker's Building and In progress. Only the `stage:` line of the
- * front matter moves; every other line, and the body, is kept byte for byte (line endings included).
- * null when the plan has no front matter to write it into.
+ * front matter moves: every other byte - lines, their endings, the body - is kept as it was. An
+ * error (and nothing written) when there is no front matter to write into, or a `stage` this cannot
+ * edit as one line: written twice, or as a list or a map.
  */
-export function planWithStage(raw: string, stage: 'build' | null): string | null {
-  const nl = raw.includes('\r\n') ? '\r\n' : '\n'
-  const lines = raw.split(/\r?\n/)
-  const start = /^(\uFEFF)?<!-- marver:managed [^\n]*-->$/.test(lines[0] ?? '') ? 1 : 0
-  if (lines[start]?.replace(/^\uFEFF/, '') !== '---') return null
-  const end = lines.findIndex((l, i) => i > start && /^---[ \t]*$/.test(l))
-  if (end === -1) return null
-  const at = lines.findIndex((l, i) => i > start && i < end && /^stage:/.test(l))
-  if (stage === null) { if (at !== -1) lines.splice(at, 1) }
-  else if (at === -1) lines.splice(end, 0, `stage: ${stage}`)
-  else lines[at] = `stage: ${stage}`
-  return lines.join(nl)
+export function planWithStage(raw: string, stage: 'build' | null): { text: string } | { error: string } {
+  const head = /^(\uFEFF?<!-- marver:managed [^\n]*-->\r?\n)?\uFEFF?---\r?\n/.exec(raw)
+  if (!head) return { error: 'has no front matter' }
+  const from = head[0].length
+  const close = /(^|\n)---[ \t]*(\r?\n|$)/g
+  close.lastIndex = from - 1
+  let end = -1
+  for (let m = close.exec(raw); m; m = close.exec(raw)) { if (m.index + m[1].length >= from) { end = m.index + m[1].length; break } }
+  if (end === -1) return { error: 'has front matter that never closes' }
+  const block = raw.slice(from, end)                               // every front-matter line, each with its own ending
+  const lines = [...block.matchAll(/[^\n]*\n|[^\n]+$/g)].map((m) => ({ at: from + m.index!, text: m[0] }))
+  const stages = lines.filter((l) => /^stage\s*:/.test(l.text))
+  if (stages.length > 1) return { error: 'says `stage` twice - keep one' }
+  const line = stages[0]
+  if (line) {
+    const value = line.text.replace(/^stage\s*:/, '').trim()
+    const next = lines[lines.indexOf(line) + 1]
+    if (!value || /^[[{]/.test(value) || (next && /^\s+-\s/.test(next.text))) return { error: 'has a `stage` that is not one word - write it as `stage: build`' }
+  }
+  const eol = (line?.text.match(/\r?\n$/) ?? lines[lines.length - 1]?.text.match(/\r?\n$/) ?? head[0].match(/\r?\n$/))![0]
+  if (stage === null) return { text: line ? raw.slice(0, line.at) + raw.slice(line.at + line.text.length) : raw }
+  if (line) return { text: raw.slice(0, line.at) + `stage: ${stage}` + (line.text.match(/\r?\n$/)?.[0] ?? '') + raw.slice(line.at + line.text.length) }
+  return { text: raw.slice(0, end) + `stage: ${stage}${eol}` + raw.slice(end) }
 }

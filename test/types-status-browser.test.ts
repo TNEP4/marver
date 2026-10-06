@@ -245,10 +245,8 @@ describe('board types and status in the sidebar (spec 20)', () => {
     expect(await live()).toBe('all-scenes,checkout,home,pitch,pricing,refunds,scratch')
     const glint = await browser!.eval(s, `(() => { const g = document.querySelector('[data-board="checkout"] [data-live-icon] .glint'); const cs = getComputedStyle(g); return { anim: cs.animationName, svg: getComputedStyle(g.querySelector('svg')).color, base: getComputedStyle(document.querySelector('[data-board="checkout"] [data-live-icon] > svg')).color } })()`)
     expect(glint.anim).toBe('sh-live-glint')
-    // the sidebar's accent - the blue the current row wears
-    const accent = await browser!.eval(s, `(() => { const p = document.createElement('i'); p.style.color = 'var(--glass-accent)'; document.querySelector('.sh-boards').append(p); const c = getComputedStyle(p).color; p.remove(); return c })()`)
-    expect(glint.base).toBe(accent)
-    expect(glint.svg).not.toBe(accent)                              // the highlight is lighter
+    expect(glint.base).toBe('rgb(0, 136, 255)')                     // Marver's blue - its own token, whatever the mode
+    expect(glint.svg).not.toBe(glint.base)                          // the highlight is lighter
     // close the decks folder: it carries pitch's signal
     const c = await browser!.eval(s, `(() => { const el = document.querySelector('[data-folder-row="decks"]'); const r = el.getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 } })()`)
     await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', buttons: 1, clickCount: 1 }, s)
@@ -256,6 +254,15 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await browser!.until(s, `document.querySelector('[data-folder-row="decks"]')?.dataset.open === '0'`)
     await browser!.until(s, `!!document.querySelector('[data-folder-row="decks"] [data-live-icon]')`)
     expect(await browser!.eval(s, `!!document.querySelector('[data-folder-row="features"] [data-live-icon]')`)).toBe(false)   // open: its boards show it
+    // a page opened mid-job is lit from the start - it asks, it does not wait for the next change
+    const s2 = await open(browser!)
+    await browser!.until(s2, `!!document.querySelector('[data-board="checkout"] [data-live-icon]')`, 10_000)
+    // the frame's pin leaves scratch while the work runs: scratch goes dark, nothing else moves
+    board('scratch', { order: 3, nodes: [{ frame: 'front/index' }] })
+    await browser!.until(s, `!document.querySelector('[data-board="scratch"] [data-live-icon]')`, 15_000)
+    expect(await live()).toBe('all-scenes,checkout,home,pricing,refunds')     // pitch is in the closed decks folder...
+    expect(await browser!.eval(s, `!!document.querySelector('[data-folder-row="decks"] [data-live-icon]')`)).toBe(true)   // ...which carries it
+    board('scratch', { order: 3 })
     cli('work', 'done', '--all')
     await browser!.until(s, `!document.querySelector('[data-live-icon]')`, 15_000)
   })

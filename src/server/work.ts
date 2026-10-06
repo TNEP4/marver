@@ -44,19 +44,49 @@ export function readDevInfo(root: string): { port: number; token: string } | nul
   } catch { return null }
 }
 
-/** The boards that show any of these frames - what the sidebar lights while an agent works (the
- *  board's type icon shimmers): every board pinning one, every auto board, and all-scenes, which
- *  holds every frame. Read from the files at each change of the working set - rare, and cheap. */
-export function boardsShowing(root: string, frames: string[]): string[] {
-  if (!frames.length) return []
-  const lit = new Set(frames)
-  const out = new Set<string>(['all-scenes'])
+/** Which boards show which frames, per root - read once from design/boards/ and kept until a board
+ *  file changes (`boardsChanged`), so the working set can change every heartbeat at no cost. */
+interface BoardsIndex { byFrame: Map<string, Set<string>>; auto: string[] }
+const indexes = new Map<string, BoardsIndex>()
+const boardListeners = new Set<(root: string) => void>()
+function indexOf(root: string): BoardsIndex {
+  let ix = indexes.get(root)
+  if (ix) return ix
+  ix = { byFrame: new Map(), auto: [] }
   try {
     for (const b of listBoardFiles(join(root, 'design', 'boards')).boards) {
       const j = b.json as { auto?: unknown; nodes?: unknown } | null
-      const pins = Array.isArray(j?.nodes) && j.nodes.some((n) => !!n && typeof n === 'object' && lit.has((n as { frame?: unknown }).frame as string))
-      if (j?.auto === true || pins) out.add(b.name)
+      if (j?.auto === true) ix.auto.push(b.name)
+      if (!Array.isArray(j?.nodes)) continue
+      for (const n of j.nodes) {
+        const f = n && typeof n === 'object' ? (n as { frame?: unknown }).frame : undefined
+        if (typeof f !== 'string') continue
+        let set = ix.byFrame.get(f)
+        if (!set) ix.byFrame.set(f, (set = new Set()))
+        set.add(b.name)
+      }
     }
   } catch { /* a missing or unreadable boards dir lights all-scenes alone */ }
-  return [...out]
+  indexes.set(root, ix)
+  return ix
+}
+/** A board file changed (the dev server's boards watcher): forget the index, tell who is listening. */
+export function boardsChanged(root: string): void {
+  indexes.delete(root)
+  for (const l of boardListeners) l(root)
+}
+export function onBoardsChanged(fn: (root: string) => void): () => void {
+  boardListeners.add(fn)
+  return () => { boardListeners.delete(fn) }
+}
+
+/** The boards that show any of these frames - what the sidebar lights while an agent works (the
+ *  board's type icon shimmers): every board pinning one, every auto board, and all-scenes, which
+ *  holds every frame. Sorted, so an unchanged answer compares equal. */
+export function boardsShowing(root: string, frames: string[]): string[] {
+  if (!frames.length) return []
+  const ix = indexOf(root)
+  const out = new Set<string>(['all-scenes', ...ix.auto])
+  for (const f of frames) for (const b of ix.byFrame.get(f) ?? []) out.add(b)
+  return [...out].sort()
 }

@@ -512,10 +512,11 @@ export function App() {
     import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
     // Live Jam presence: the daemon broadcasts the set of frames Marver is editing.
     // Camera-safe by construction - this only toggles a glow class, never moves the view.
-    import.meta.hot.on('sh:jam-activity', (m: any) => {
-      const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : [])
-      useStore.getState().setWorking(strings(m?.frames), strings(m?.boards))
-    })
+    import.meta.hot.on('sh:jam-activity', (m: any) => useStore.getState().setWorkingFrom(m))
+    // then ask for what is lit now - a broadcast sent before this listener existed is gone - and again
+    // after the dev server reconnects
+    void useStore.getState().syncWorking()
+    import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncWorking())
     // Live Jam reply delivery: the daemon just wrote to a board's log - fetch it NOW instead of
     // waiting out the 30s comment poll, so the reply + notification land within a second.
     import.meta.hot.on('sh:jam-comment', (m: any) => { if (typeof m?.board === 'string') useComments.getState().poke(m.board) })
