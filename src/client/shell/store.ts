@@ -1201,6 +1201,9 @@ export const useStore = create<State>((set, get) => {
       const f = s.manifest?.frames.find((x) => x.id === node.frame)
       if (!f?.contentWidth) return                        // not a content frame - spoof-proofing
       if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return
+      // a Doc that reports IS one, whatever the last load's scan said (it arrived since): its heights
+      // count until the next load re-reads the sources
+      measuring?.add(f.id)
       // Generous cap: a reference doc with many screenshots is legitimately very tall and must fit in
       // FULL (this was 2.5x a viewport ~= 2700px, which clipped image-heavy docs). Still bounded so a
       // broken measurement can't mint an infinite frame.

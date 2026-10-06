@@ -412,6 +412,18 @@ describe('calm loading', () => {
     await browser.until(s, `(() => { const ns = window.__mvStore.getState().nodes; const a = ns.find((n) => n.key === 'k-a'), c = ns.find((n) => n.key === 'k-c'); return c.y > a.y + a.h + 28 })()`, 10_000)
   }, 90_000)
 
+  it('a Doc added while the board is open keeps its measured height through Default', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/all-scenes')
+    await wait(2000)
+    writeFileSync(join(root, 'design', 'scenes', 'lazy', 'late.tsx'), doc(12))   // an agent adds a Doc: it joins live
+    const h = await browser.until(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.frame === 'lazy/late'); return n && n.h > 900 && n.h })()`, 30_000)
+    await browser.eval(s, `window.__mvStore.getState().setDeviceView(null)`)
+    await wait(300)
+    expect((await browser.eval(s, `window.__mvStore.getState().nodes.find((n) => n.frame === 'lazy/late').h`))).toBe(h)
+  }, 90_000)
+
   it('the published bundle carries the committed heights of its own frames only', async () => {
     if (!browser) return
     const s = await open('#/b/private')
