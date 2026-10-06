@@ -428,7 +428,7 @@ export function App() {
         await s.switchBoard(h.board)
         s = useStore.getState()
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
-      } else if (h.board) void s.switchBoard(h.board)   // same board: cancels a switch still loading (a reveal's)
+      }
       if (h.focus) {
         enterFocus(h.focus.at, { ...h.focus, deep: true })
       } else if (h.play) {

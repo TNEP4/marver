@@ -12,7 +12,7 @@ export function goTo(target: string, carry = false): void {
   const s = useStore.getState()
   const existing = s.nodes.find((n) => n.frame === target && !n.missing)
   if (existing) {
-    gotoSeq++                                  // a local goto supersedes any cross-board one in flight
+    navigated()                                // a local goto supersedes any cross-board one in flight
     s.select(existing.key)
     if (carry) s.setInteract(existing.key)
     setTimeout(() => canvasCtl.fitNode(existing.key), 50)
@@ -32,7 +32,7 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
   // an id the manifest doesn't know resolves NOWHERE - a tombstone pin on some board
   // must not send us on a trip that ends in a silent timeout
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`unknown goto target "${target}"`)
-  const seq = ++gotoSeq
+  const seq = navigated()
   let home: string | null = null
   try {
     const names = (await fetchBoardNames()).filter((n) => n !== s.board && n !== 'all-scenes')
@@ -58,9 +58,15 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
   await landOn(home, target, carry, seq, from)
 }
 
-/** Any other navigation (a pasted link, back/forward) supersedes a goto or reveal still resolving
- *  its board - so a slow lookup can never yank the view away from where the human has gone since. */
-export function navigated(): void { gotoSeq++ }
+/** Navigation supersedes any goto or reveal still on its way - its board lookup (gotoSeq) AND a board
+ *  switch it already started (a switch to the board on screen cancels any pending one: store.ts) - so
+ *  a slow lookup can never yank the view away from where the human has gone since. Every entry point
+ *  calls it: a pasted link, back/forward, a goto, a reveal. */
+export function navigated(): number {
+  const s = useStore.getState()
+  if (s.board) void s.switchBoard(s.board)
+  return ++gotoSeq
+}
 
 /** Switch to `home` and select + fit `target` there once the board commits - unless the human has
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
@@ -91,13 +97,13 @@ export async function revealFrame(target: string): Promise<void> {
   const s = useStore.getState()
   const here = s.nodes.find((n) => n.frame === target && !n.missing)
   if (here) {
-    gotoSeq++
+    navigated()
     s.select(here.key)
     setTimeout(() => canvasCtl.fitNode(here.key), 50)
     return
   }
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
-  const seq = ++gotoSeq
+  const seq = navigated()
   const from = s.board
   let home: string | null = null
   try {

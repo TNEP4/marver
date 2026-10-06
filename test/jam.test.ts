@@ -194,6 +194,32 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
+  it('...nor through a collaborator\'s @marver synced into the thread - only the owner\'s mention starts a conversation', async () => {
+    const { root, dir, done } = setup()
+    const counting: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').appendFileSync('runs.log','x');process.stdout.write(JSON.stringify({result:'Done.'}))`] } },
+      parse: claudeAdapter.parse,
+    }
+    const jam = createJam(root, CFG, counting)
+    const runs = () => (existsSync(join(root, 'runs.log')) ? readFileSync(join(root, 'runs.log'), 'utf8').length : 0)
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'tighter rows' },
+      { id: 'sam-m', ts: 2, type: 'reply', commentId: 'sam-mc', parentId: tid, author: { email: 'sam@x.com', name: 'Sam' }, body: '@marver bigger' },   // synced, never ledgered
+      { id: 'old-fu3', ts: 3, type: 'reply', commentId: 'old-fuc3', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'and the header' },
+      { id: randomUUID(), ts: 4, type: 'reply', commentId: randomUUID(), parentId: tid, author: { email: 'nic@local' }, body: 'Done both.', agent: true },
+      { id: 'next-fu3', ts: 5, type: 'reply', commentId: 'next-fuc3', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now darker' },
+    ])
+    record(root, 'home', 'old-fu3')
+    record(root, 'home', 'next-fu3')
+    await jam.tick()
+    expect(runs()).toBe(1)         // the follow-up after Marver engaged
+    await jam.tick(); jam.stop()
+    expect(runs()).toBe(1)         // Sam's mention did not move engagement back to before the old reply
+    done()
+  })
+
   it('a job already queued when its frame is lit waits at dispatch, and runs once the frame is free', async () => {
     const { root, dir, done } = setup()
     const slow: JamAdapter = {

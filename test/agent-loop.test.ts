@@ -200,7 +200,10 @@ describe('engagement starts when Marver engaged', () => {
       { id: 'jam-ghi', ts: 80, type: 'reply', parentId: 't-cli', agent: true },           // no mention: the CLI moment stands
       { id: 'u-2', ts: 90, type: 'create', commentId: 't-note', agent: true },
       { id: 'h-1', ts: 95, type: 'reply', parentId: 't-human' },
-    ] as any[])
+      { id: 'c-1', ts: 20, type: 'create', commentId: 't-collab', body: '@marver fix this' },   // synced: not the owner's
+      { id: 'jam-xyz', ts: 30, type: 'reply', parentId: 't-collab', agent: true },
+    ] as any[], (id) => id !== 'c-1')
+    expect(m.has('t-collab')).toBe(false)                                     // a collaborator's mention starts nothing
     expect(m.get('t-jam')).toBe(40)
     expect(m.has('t-unmentioned')).toBe(false)
     expect(m.get('t-cli')).toBe(70)

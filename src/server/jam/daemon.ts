@@ -32,6 +32,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, extractReanchors, extractReplyBlock, goalText, threadId } from './packet.ts'
 import { scanPending, triggers, engagedThreads, allEventIds } from './watch.ts'
+import { has } from './ledger.ts'
 import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
 
 const LEASE_MS = 12 * 60_000
@@ -224,7 +225,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  and `triggers` re-confirms ledger/agent/type/mention - the job can never drift to other content. */
   const resolveMember = (board: string, id: string): Pending | null => {
     const events = readLog(commentsDir, board)
-    const engaged = engagedThreads(events)
+    const engaged = engagedThreads(events, (id) => has(root, board, id))
     for (const ev of events) if (ev.id === id) return triggers(root, board, ev, engaged) ? { board, event: ev } : null
     return null
   }
