@@ -16,7 +16,9 @@ import { Browser } from './browser.ts'
 
 const PORT = 6500 + Math.floor(Math.random() * 400)
 const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
-const ORIGIN = `http://localhost:${PORT}`
+// the port asked for - `marver dev` moves to the next free one when it is taken (another suite's
+// server, in a parallel run), so the origin is the one the server PRINTS
+let ORIGIN = `http://localhost:${PORT}`
 
 let root = ''
 let server: ChildProcess | null = null
@@ -108,9 +110,10 @@ beforeAll(async () => {
     { key: 'k-near', frame: 'lazy/near', x: 0, y: 0 }, { key: 'k-far', frame: 'lazy/far', x: 0, y: 30_000 }] }, null, 2) + '\n')
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { docs: 'comment' } }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
-  server.stdout?.on('data', (d) => { log += d })
+  server.stdout?.on('data', (d) => { log += d; const m = log.match(/→ (http:\/\/localhost:\d+)\//); if (m) ORIGIN = m[1] })
   server.stderr?.on('data', (d) => { log += d })
   const t0 = Date.now()
+  while (Date.now() - t0 < 60_000 && !/→ http:\/\/localhost:\d+\//.test(log)) await wait(100)
   while (Date.now() - t0 < 60_000) {
     const ok = await fetch(`${ORIGIN}/`).then((r) => r.ok, () => false)
     if (ok) break
