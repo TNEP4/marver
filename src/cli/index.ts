@@ -109,7 +109,7 @@ cli
   })
 
 cli
-  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · reply <thread> · resolve <thread> · invite <email> · revoke <email>')
+  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · new <scene/frame> · reply <thread> · resolve <thread> · invite <email> · revoke <email>')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--token <token>', 'connect: the canvas\'s MARVER_CLI_TOKEN (default $MARVER_CLI_TOKEN) - the identity-mode path')
   .option('--invite <token>', 'connect: claim this invite instead of signing in')
@@ -119,8 +119,9 @@ cli
   .option('--name <name>', 'connect --invite: display name for the new account')
   .option('--open', 'list: only unresolved threads')
   .option('--json', 'list: machine-readable output')
-  .option('--board <board>', 'scope to one board')
-  .option('--body <text>', 'reply: the reply text')
+  .option('--board <board>', 'list: scope to one board · new: the board to pin on (default: the one its link opens)')
+  .option('--body <text>', 'new / reply: the text')
+  .option('--on <text>', 'new: pin on the element showing this text (default: the frame, top right)')
   .option('--addressed-in <frame>', 'resolve: the variant frame that answered the feedback')
   .action(async (action: string, value: string | undefined, opts) => {
     const { commentsCommand } = await import('./comments.ts')
@@ -156,6 +157,19 @@ cli
   .action(async (action: string, frames: string[], opts) => {
     const { workCommand } = await import('./work.ts')
     try { await workCommand(resolve(opts.root), action, frames ?? [], opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
+  .command('link [...targets]', 'The canvas link that lands on frames: link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--board <board>', 'The board to open (default: the first board that shows them all, else all-scenes)')
+  .action(async (targets: string[], opts) => {
+    const { linkCommand } = await import('./link.ts')
+    try { await linkCommand(resolve(opts.root), targets ?? [], opts) }
     catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)

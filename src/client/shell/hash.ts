@@ -7,6 +7,9 @@
  *   #/                     default board, fit all
  *   #/b/<board>            board, fit all
  *   #/b/<board>?n=k1,k2    board with nodes selected, camera fit to selection
+ *   #/b/<board>?f=<scene/frame>,...   the same, by FRAME id - the link an agent can write
+ *                                   (node keys are the shell's; `marver link` prints these)
+ *   #/b/<board>?s=<scene>,...         the same for every frame of a scene
  *   #/b/<board>?c=<id>     board with a comment thread open
  *   #/i/<token>            invite link - opens the claim dialog with the token
  *   #/p/<board>?at=<frame-id>&device=<viewport>&theme=<theme>   play mode
@@ -18,6 +21,10 @@
 export interface HashState {
   board?: string
   n?: string[]
+  /** Frame ids to select + fit - resolved to node keys once the board is loaded. */
+  f?: string[]
+  /** Scenes whose frames to select + fit. */
+  s?: string[]
   c?: string
   invite?: string
   play?: { at?: string; device?: string; theme?: string; slides?: boolean }
@@ -26,6 +33,17 @@ export interface HashState {
 }
 
 const BOARD_RE = /^[a-z0-9][a-z0-9-]*$/
+const isFrameId = (at: string) => /^[\w./-]{1,200}$/.test(at) && !at.includes('..')
+
+/** The node keys a link names on the loaded board: its keys (`n`), the nodes showing its frames
+ *  (`f`) and every node of its scenes (`s`) - in board order, each once. A name the board does not
+ *  show resolves to nothing (the caller decides what an empty answer means). */
+export function linkTargets(h: Pick<HashState, 'n' | 'f' | 's'>, nodes: readonly { key: string; frame: string; missing?: boolean }[]): string[] {
+  const keys = new Set(h.n ?? [])
+  const frames = new Set(h.f ?? [])
+  const scenes = h.s ?? []
+  return nodes.filter((n) => keys.has(n.key) || (!n.missing && (frames.has(n.frame) || scenes.some((sc) => n.frame.startsWith(`${sc}/`))))).map((n) => n.key)
+}
 
 export function parseHash(hash: string = location.hash): HashState {
   try {
@@ -40,7 +58,7 @@ export function parseHash(hash: string = location.hash): HashState {
     const mf = path.match(/^\/f\/(.+)$/)
     if (mf) {
       const at = decodeURIComponent(mf[1])
-      if (!/^[\w./-]{1,200}$/.test(at) || at.includes('..')) return {}
+      if (!isFrameId(at)) return {}
       return { focus: { at, device: params.get('device') ?? undefined, theme: params.get('theme') ?? undefined } }
     }
     const m = path.match(/^\/(b|p)\/([^/?]+)$/)
@@ -48,9 +66,12 @@ export function parseHash(hash: string = location.hash): HashState {
     const board = decodeURIComponent(m[2])
     if (!BOARD_RE.test(board)) return {}
     if (m[1] === 'b') {
-      const n = (params.get('n') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+      const list = (k: string) => (params.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+      const n = list('n')
+      const f = list('f').filter(isFrameId)
+      const sc = list('s').filter((x) => /^[\w.-]{1,120}$/.test(x) && !x.includes('..'))
       const c = params.get('c') ?? undefined
-      return { board, ...(n.length ? { n } : {}), ...(c && /^[\w-]+$/.test(c) ? { c } : {}) }
+      return { board, ...(n.length ? { n } : {}), ...(f.length ? { f } : {}), ...(sc.length ? { s: sc } : {}), ...(c && /^[\w-]+$/.test(c) ? { c } : {}) }
     }
     return {
       board,

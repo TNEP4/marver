@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch'
 import { CONFIG, useStore } from '../store.ts'
-import { bootHash } from '../hash.ts'
+import { bootHash, linkTargets } from '../hash.ts'
+import { revealFrame } from '../goto.ts'
 import { startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
@@ -202,19 +203,24 @@ export function Canvas() {
   }, [])
 
   // first load opens on the whole board (same as ⇧1) - the default 100% transform is an
-  // arbitrary top-left crop. A deep link with a selection (#/b/x?n=...) restores it and
-  // fits the camera to it instead. Runs once, on the first frame batch; board switches
+  // arbitrary top-left crop. A deep link with a selection (#/b/x?n=..., or by frame id
+  // ?f=scene/frame, or a whole scene ?s=scene) restores it and fits the camera to it instead. Runs once, on the first frame batch; board switches
   // refit through their own path.
   const booted = useRef(false)
   useEffect(() => {
     if (booted.current || nodes.length === 0) return
+    let revealed = false
     booted.current = true
     const fit = () => {
-      const keys = (bootHash.n ?? []).filter((k) => useStore.getState().nodes.some((n) => n.key === k))
+      const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
         useStore.setState({ selection: keys })
         canvasCtl.fitNodes(keys)
-      } else canvasCtl.fitAll()
+      } else {
+        canvasCtl.fitAll()
+        // a link naming a frame this board does not show follows the frame where it lives
+        if (bootHash.f?.length && !revealed) { revealed = true; void revealFrame(bootHash.f[0]) }
+      }
     }
     requestAnimationFrame(() => {
       fit()

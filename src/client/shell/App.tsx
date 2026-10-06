@@ -7,13 +7,13 @@ import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
-import { bootHash, parseHash, writeHash } from './hash.ts'
+import { bootHash, linkTargets, parseHash, writeHash } from './hash.ts'
 import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
 import { humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, useComments } from './comments-store.ts'
-import { goTo } from './goto.ts'
+import { goTo, revealFrame } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
@@ -435,9 +435,10 @@ export function App() {
         else enterPlay(h.play)
       } else {
         if (s.play) s.setPlay(null)
-        const keys = (h.n ?? []).filter((k) => s.nodes.some((n) => n.key === k))
+        const keys = linkTargets(h, s.nodes)
         useStore.setState({ selection: keys })
-        setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
+        if (!keys.length && h.f?.length) void revealFrame(h.f[0])   // not on this board - where it lives
+        else setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
       }
     }
     // hashchange too: pasting a link into the same tab or editing the URL bar changes

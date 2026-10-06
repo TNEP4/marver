@@ -18,6 +18,7 @@ import { isNoteAnchor } from './notes.ts'
 import { ROUTE, slideSize } from '../const.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
+import { revealFrame } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DraftComposer, hueVars, MarkerFace, ThreadCard } from './Comments.tsx'
@@ -322,7 +323,9 @@ function PlayInner() {
   const trimmed = slides && deckChrome !== 'full'   // minimal|none: strip the present tools
   const docPreset = focus && BOARD_POLICY[board]?.type === 'doc'
   const locked = boardLocked(board)
-  const noDoor = locked || !!play?.deep
+  // a frame deep link is presentation, not access (01-sharing §3.5) - on a PUBLISHED canvas. In dev
+  // the visitor is the owner, who followed an agent's link: the way back to the canvas stays.
+  const noDoor = locked || (!!play?.deep && PUBLISHED)
 
   // the stage is same-origin (/__mv/stage/); a fixed target origin keeps anchor bundles
   // from leaking if a link ever navigates the iframe cross-origin
@@ -354,6 +357,7 @@ function PlayInner() {
     // land back on the canvas at the frame you ended on
     const n = useStore.getState().nodes.find((x) => x.frame === at && !x.missing)
     if (n) { useStore.getState().select(n.key); setTimeout(() => canvasCtl.fitNode(n.key), 30) }
+    else if (at) void revealFrame(at)          // a deep link's frame need not be on the board that booted
   }
 
   const setDevice = (name: string) => {

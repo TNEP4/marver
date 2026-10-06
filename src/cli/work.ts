@@ -2,7 +2,7 @@
  * `marver work` - the coding agent's hand on the canvas working state.
  *
  *   work start <scene/frame ...> [--ttl <minutes>]   mark frames actively working
- *   work done  <scene/frame ...> | --all             clear the glow
+ *   work done  <scene/frame ...> | --all             clear the glow; print the canvas link to them
  *   work list                                        what is glowing right now
  *
  * The intended choreography (taught in design/AGENTS.md): on accepting a request,
@@ -56,6 +56,11 @@ export async function workCommand(root: string, action: string, frames: string[]
       if (!frames.length && !opts.all) throw new Error('name the frames (or --all): work done <scene/frame ...>')
       const { frames: active } = await call('POST', opts.all ? { on: false, all: true } : { frames, on: false })
       console.log(active.length ? `still working: ${active.join(', ')}` : 'nothing working - all clear')
+      // the hand-back: the link that opens the canvas ON what was just finished - the agent's
+      // reply ends with it (design/AGENTS.md, "Show the work")
+      const done = frames.filter((f) => !active.includes(f))
+      const link = done.length ? await (await import('./link.ts')).linkLine(root, done) : null
+      if (link) console.log(`on the canvas: ${link}`)
       return
     }
     case 'list': {

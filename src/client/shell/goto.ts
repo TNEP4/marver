@@ -54,7 +54,12 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
     setTimeout(() => canvasCtl.fitNode(node.key), 50)
     return
   }
-  await s.switchBoard(home)
+  await landOn(home, target, carry, seq)
+}
+
+/** Switch to `home` and select + fit `target` there once the board commits. */
+async function landOn(home: string, target: string, carry: boolean, seq: number) {
+  await useStore.getState().switchBoard(home)
   for (let i = 0; i < 12; i++) {                     // the board commits async - retry like viewNote
     if (seq !== gotoSeq) return
     const st = useStore.getState()
@@ -69,4 +74,34 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
     }
     await new Promise((r) => setTimeout(r, 250))
   }
+}
+
+/** Show a frame where it lives, for a LINK (a pasted canvas link naming a frame the board does
+ *  not show, the way back from a focus link): this board, else the first curated board that pins
+ *  it, else the auto board that holds every frame. Unlike a goto it never spawns - opening a link
+ *  must not edit a board. */
+export async function revealFrame(target: string): Promise<void> {
+  const s = useStore.getState()
+  const here = s.nodes.find((n) => n.frame === target && !n.missing)
+  if (here) {
+    gotoSeq++
+    s.select(here.key)
+    setTimeout(() => canvasCtl.fitNode(here.key), 50)
+    return
+  }
+  if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
+  const seq = ++gotoSeq
+  let home: string | null = null
+  try {
+    const all = await fetchBoardNames()
+    for (const name of all.filter((n) => n !== s.board && n !== 'all-scenes')) {
+      if ((await boardFrames(name)).includes(target)) { home = name; break }
+    }
+    if (!home && all.includes('all-scenes')) home = 'all-scenes'
+  } catch {
+    return useStore.getState().toast(`could not read the boards - try again`)
+  }
+  if (seq !== gotoSeq) return
+  if (!home) return useStore.getState().toast(`"${target}" is not on any board`)
+  await landOn(home, target, false, seq)
 }
