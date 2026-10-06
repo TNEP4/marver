@@ -421,6 +421,8 @@ interface State {
   syncWorking(): Promise<void>
   /** Boards showing a working frame - their sidebar icon shimmers while an agent works. */
   workingBoards: string[]
+  /** The place in the server's order of the activity last applied - an older answer is dropped. */
+  workingSeq: number
   spawn(frameId: string): Node | null
   save(): Promise<boolean>
 }
@@ -712,7 +714,7 @@ export const useStore = create<State>((set, get) => {
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
+    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
     async boot(mayCommit) {
@@ -1362,7 +1364,11 @@ export const useStore = create<State>((set, get) => {
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
     setWorkingFrom(m) {
       const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : [])
-      const o = (m && typeof m === 'object' ? m : {}) as { frames?: unknown; boards?: unknown }
+      const o = (m && typeof m === 'object' ? m : {}) as { frames?: unknown; boards?: unknown; seq?: unknown }
+      // a snapshot that left before a newer broadcast arrived is the past: it never undoes it
+      const seq = typeof o.seq === 'number' && Number.isFinite(o.seq) ? o.seq : undefined
+      if (seq !== undefined && seq < get().workingSeq) return
+      if (seq !== undefined) set({ workingSeq: seq })
       get().setWorking(strings(o.frames), strings(o.boards))
     },
     async syncWorking() {

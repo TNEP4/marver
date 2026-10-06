@@ -19,6 +19,12 @@ import { listBoardFiles } from './boards.ts'
 /** One per process - the dev server, the jam daemon, and the API all share it. */
 export const workActivity: Activity = createActivity()
 
+/** The order of what the shell is told about activity: each broadcast takes the next number, and the
+ *  snapshot a page asks for carries the latest - so a slow snapshot never undoes a newer broadcast.
+ *  Time-based, so a restarted server never counts backwards past a page that outlived it. */
+export const activityClock = { seq: 0 }
+export const nextActivitySeq = (): number => (activityClock.seq = Math.max(activityClock.seq + 1, Date.now()))
+
 /** The longest a CLI mark may glow unrefreshed - a forgotten `done` self-heals. */
 export const WORK_TTL_MAX = 30 * 60_000
 export const WORK_TTL_DEFAULT = 10 * 60_000

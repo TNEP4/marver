@@ -299,16 +299,17 @@ export async function dev(root: string, portFlag?: number) {
   // the `marver work` CLI write; the glow rides the existing HMR rail (sh:jam-activity), so
   // the canvas lights up within the first second - no extra poll. design/.local/dev.json is
   // the CLI's discovery + credential handshake, written per boot, removed on close.
-  const { workActivity, writeDevInfo, removeDevInfo, boardsShowing, onBoardsChanged } = await import('./work.ts')
+  const { workActivity, writeDevInfo, removeDevInfo, boardsShowing, onBoardsChanged, nextActivitySeq } = await import('./work.ts')
   // the frames glow, and the boards showing them light their sidebar icon. Sent when either changes -
-  // a jam job's heartbeat re-marks its frames every 2s, and an unchanged answer is not news
+  // a jam job's heartbeat re-marks its frames every 2s, and an unchanged answer is not news - each
+  // with its place in the order (the page's snapshot of the same state carries it too)
   let sent = ''
   const broadcast = (frames: string[]) => {
-    const payload = { frames: [...frames].sort(), boards: boardsShowing(root, frames) }
-    const key = JSON.stringify(payload)
+    const state = { frames: [...frames].sort(), boards: boardsShowing(root, frames) }
+    const key = JSON.stringify(state)
     if (key === sent) return
     sent = key
-    server.ws.send('sh:jam-activity', payload as any)
+    server.ws.send('sh:jam-activity', { ...state, seq: nextActivitySeq() } as any)
   }
   const unsubscribe = workActivity.onChange(broadcast)
   // a pin moved to another board while the work runs: the lit boards move with it

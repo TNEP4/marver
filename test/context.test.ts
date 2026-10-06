@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
 import { hash, scanFrames } from '../src/server/manifest.ts'
-import { annotateBoards, planWithStage, readContextFacts } from '../src/server/board-status.ts'
+import { annotateBoards, planNames, planWithStage, readContextFacts } from '../src/server/board-status.ts'
 import { addFolders } from '../src/server/boards.ts'
 import { assertProjected, publishedManifest, resolvePolicy, withoutEvidence } from '../src/server/build.ts'
 import { availableLevels, capabilityTable, frontMatter, globRe, parseMap, shippedRows, tables, type Audience, type Level } from '../src/shared/context.ts'
@@ -238,7 +238,17 @@ describe('reading context/ off disk', () => {
       ['---\ncapability: pay\nstage:\n  - build\n---\n', /not one word/],     // removing the header would hand its list to `capability`
       ['---\nstage: [build]\n---\n', /not one word/],
       ['---\nstage: build\nstage: design\n---\n', /twice/],
+      // a list behind a comment: the reader would hand `- build` to capability once the header goes
+      ['---\ncapability: pay\nstage: # list follows\n# a comment\n  - build\n---\n', /cannot edit as one line/],
     ] as const) expect((planWithStage(raw, null) as { error: string }).error).toMatch(why)
+  })
+
+  it('planNames: the plan a write reads must still be open and still name the capability', () => {
+    expect(planNames('---\nstate: proposed\ncapability: pay\n---\n', 'pay')).toBe(true)
+    expect(planNames('---\nstate: proposed\ncapabilities: [a, pay]\n---\n', 'pay')).toBe(true)
+    expect(planNames('---\nstate: historical\ncapability: pay\n---\n', 'pay')).toBe(false)   // closed meanwhile
+    expect(planNames('---\nstate: proposed\ncapability: refunds\n---\n', 'pay')).toBe(false)  // moved to another
+    expect(planNames('# no front matter\n', 'pay')).toBe(false)
   })
 
   it('POST boards/status writes the plans and the board together: an odd stage writes nothing, a failed write puts the plans back', async () => {

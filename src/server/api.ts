@@ -8,7 +8,7 @@ import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
 import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
-import { annotateBoards, planWithStage, readContextFacts } from './board-status.ts'
+import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -236,6 +236,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             const file = join(root, p.where)
             if (!notSymlink(file)) return json(res, 400, { error: `refusing to write a symlinked plan (${p.where})` })
             const raw = readFileSync(file, 'utf8')
+            // the plan as read now must still be the one the evidence chose: open, naming the capability
+            if (!planNames(raw, capability)) return json(res, 409, { error: `${p.where} changed on disk - try again` })
             const r = planWithStage(raw, status === 'building' ? 'build' : null)
             if ('error' in r) return json(res, 422, { error: `${p.where} ${r.error} - fix the file` })
             writes.push({ file, raw, next: r.text, plan: p.where })
@@ -247,20 +249,35 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         }
         const next = JSON.stringify(obj, null, 2) + '\n'
         writes.push({ file, raw: current, next })
-        // commit: each file re-read at the last moment - one that changed since this request read it (an
-        // agent's edit, a plan closed meanwhile) is a 409 with nothing written, never an overwrite - then
-        // written; a failure part way puts back what was written, so a status is never half-applied
-        for (const w of writes) {
-          let now: string
-          try { now = readFileSync(w.file, 'utf8') } catch { now = '' }
-          if (now !== w.raw) return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan ? {} : { sha256: hash(now) }) })
-        }
+        // commit, file by file: each re-read the instant before it is replaced - one that changed since
+        // this request read it (an agent's edit, a plan closed meanwhile) stops the commit, never an
+        // overwrite - and a stop or a failure part way puts back what was written, but only where the
+        // file still holds this request's version (an edit made since is never undone). What could not be
+        // put back is named, never reported as unchanged.
+        const current_ = (f: string) => { try { return readFileSync(f, 'utf8') } catch { return null } }
         const done: typeof writes = []
-        try {
-          for (const w of writes) { if (w.next !== w.raw) { atomicWrite(w.file, w.next); done.push(w) } }
-        } catch (err) {
-          for (const w of done.reverse()) { try { atomicWrite(w.file, w.raw) } catch { /* best effort - the error below names the failure */ } }
-          return json(res, 500, { error: `could not write the status: ${(err as Error).message} - nothing changed` })
+        const undo = (): string[] => {
+          const stuck: string[] = []
+          for (const w of done.reverse()) {
+            if (current_(w.file) !== w.next) continue
+            try { atomicWrite(w.file, w.raw) } catch { stuck.push(w.plan ?? `design/boards/${name}.json`) }
+          }
+          return stuck
+        }
+        for (const w of writes) {
+          if (w.next === w.raw) continue
+          const now = current_(w.file)
+          if (now !== w.raw) {
+            const stuck = undo()
+            if (stuck.length) return json(res, 500, { error: `${w.plan ?? `board "${name}"`} changed on disk mid-write, and ${stuck.join(', ')} could not be put back - check ${stuck.length === 1 ? 'it' : 'them'} by hand` })
+            return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
+          }
+          try { atomicWrite(w.file, w.next); done.push(w) } catch (err) {
+            const stuck = undo()
+            return json(res, 500, { error: stuck.length
+              ? `could not write the status (${(err as Error).message}), and ${stuck.join(', ')} could not be put back - check ${stuck.length === 1 ? 'it' : 'them'} by hand`
+              : `could not write the status (${(err as Error).message}) - nothing changed` })
+          }
         }
         return json(res, 200, { name, sha256: hash(next) })
       }
@@ -698,9 +715,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (!ownerGated(req) && !tokenOk()) return json(res, 403, { error: 'forbidden' })
           // the snapshot a page asks for as it starts listening (it may have missed the last broadcast):
           // the frames, and the boards showing them
-          const { boardsShowing } = await import('./work.ts')
+          const { boardsShowing, activityClock } = await import('./work.ts')
           const frames = workActivity.active()
-          return json(res, 200, { frames, boards: boardsShowing(root, frames) })
+          return json(res, 200, { frames, boards: boardsShowing(root, frames), seq: activityClock.seq })
         }
         if (req.method === 'POST') {
           if (!ownerGated(req) && !tokenOk()) return json(res, 403, { error: 'forbidden' })

@@ -206,7 +206,25 @@ export function planWithStage(raw: string, stage: 'build' | null): { text: strin
     if (!value || /^[[{]/.test(value) || (next && /^\s+-\s/.test(next.text))) return { error: 'has a `stage` that is not one word - write it as `stage: build`' }
   }
   const eol = (line?.text.match(/\r?\n$/) ?? lines[lines.length - 1]?.text.match(/\r?\n$/) ?? head[0].match(/\r?\n$/))![0]
-  if (stage === null) return { text: line ? raw.slice(0, line.at) + raw.slice(line.at + line.text.length) : raw }
-  if (line) return { text: raw.slice(0, line.at) + `stage: ${stage}` + (line.text.match(/\r?\n$/)?.[0] ?? '') + raw.slice(line.at + line.text.length) }
-  return { text: raw.slice(0, end) + `stage: ${stage}${eol}` + raw.slice(end) }
+  const text = stage === null
+    ? (line ? raw.slice(0, line.at) + raw.slice(line.at + line.text.length) : raw)
+    : line
+      ? raw.slice(0, line.at) + `stage: ${stage}` + (line.text.match(/\r?\n$/)?.[0] ?? '') + raw.slice(line.at + line.text.length)
+      : raw.slice(0, end) + `stage: ${stage}${eol}` + raw.slice(end)
+  // proof by the reader: the edited plan must parse to the same fields, the stage alone changed - a
+  // stage written as a list across comments, say, would hand its items to the field before it
+  const before = frontMatter(raw).data ?? {}, after = frontMatter(text).data ?? {}
+  const rest = (d: Record<string, unknown>) => JSON.stringify(Object.entries(d).filter(([k]) => k !== 'stage').sort(([a], [b]) => a.localeCompare(b)))
+  if (rest(before) !== rest(after) || (stage ? after.stage !== stage : 'stage' in after)) return { error: 'has a `stage` this cannot edit as one line - write it as `stage: build`' }
+  return { text }
+}
+
+/** Is this plan text open, and naming the capability? The check a write repeats on what it reads -
+ *  a plan closed, or moved to another capability, since the evidence was gathered is not written. */
+export function planNames(raw: string, capability: string): boolean {
+  const fm = frontMatter(raw)
+  if (fm.error || !fm.data) return false
+  if (typeof fm.data.state === 'string' && CLOSED_PLAN.has(fm.data.state)) return false
+  const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined ? [] : [v])
+  return [...list(fm.data.capability), ...list(fm.data.capabilities)].map(readCapability).includes(capability)
 }
