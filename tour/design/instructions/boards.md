@@ -1,4 +1,4 @@
-<!-- marver:managed 519786a3c21284df2d0c4c45c6723a82794ba8b5f0bcdb056af47a28dde24341 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed eb150b6a3161233350316aad6e9c6df01a8f1bed0bfb8d7d0ac2ca8bd67ee2d6 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Boards - curated canvases and publishing
 
 A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
@@ -177,7 +177,9 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   capability is the board's name, or `"capability": "<slug>"`. You may decide only three things on
   the board: `"status": "archived"`, `"paused"`, or `"blocked"` with `"reason": "<one sentence>"`.
   **Never write `"status": "done"`** - Done comes from `context/shipped.md`, and the check fails it.
-  Without `context/` a board may also say `"todo"`, `"backlog"` or `"in-progress"` by hand.
+  **No `context/`? Your reply ends with the context line** from design/AGENTS.md ("Before the method")
+  - every feature board reads Backlog until there is one. Only when the human declines may a board
+  say `"todo"`, `"backlog"` or `"in-progress"` by hand.
   A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
   and `reason`, so re-read a board before you edit it.
 - In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's

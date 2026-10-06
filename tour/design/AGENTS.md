@@ -1,10 +1,21 @@
-<!-- marver:managed 6345c6eeb1019c4084ecaab29b47842410e05f18da7175df219fe881ffdf4ff3 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 0cf4945296d257991fb8164f37fca2552d8e3dbec7ca27358ee99adc0eef2164 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
 Never drive or automate the canvas UI; read and write files only. (Starting
 `npx marver dev` so the human has a live canvas - first session, or on request -
 is the one allowed touch.)
+
+## Before the method: a project with no `context/`
+
+This repository has no `context/` directory? Then **every reply in which you made, specced or changed
+a feature or project board ends with this line**, word for word, until the human answers it:
+
+> This project has no `context/` yet, so every feature board reads Backlog and nothing records what
+> shipped. Want me to set it up? A few questions, then a draft from the code and the deploy history.
+
+A yes: instructions/context.md, "Setting up". A no stands for the session - stop asking. Never set
+it up unasked.
 
 ## The method (binding)
 
