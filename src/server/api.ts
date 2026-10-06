@@ -67,11 +67,19 @@ function atomicWrite(file: string, content: string) {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'EEXIST' && code !== 'EPERM') { rmSync(tmp, { force: true }); throw err }
-    // the one path that touches the destination before it is whole: a copy that fails may leave it
-    // truncated - the error says so, so a caller repairs only what this write damaged
-    try { copyFileSync(tmp, file) } catch (e) { try { rmSync(tmp, { force: true }) } catch { /* named by the throw */ } ; (e as { touched?: boolean }).touched = true; throw e }
+    copyFileSync(tmp, file)
     try { rmSync(tmp, { force: true }) } catch { /* the file is written - a stray temp file is not a failed write */ }
   }
+}
+
+/** A replacement that is whole or not at all: a temp file renamed over the destination, never the copy
+ *  fallback - a copy can fail part way, or not at all, and nothing tells which. For the status write,
+ *  which writes several files and must be able to say exactly what it changed. A rename that fails
+ *  leaves the destination as it was and throws. */
+function renameWrite(file: string, content: string) {
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  writeFileSync(tmp, content, { flag: 'wx' })
+  try { renameSync(tmp, file) } catch (err) { try { rmSync(tmp, { force: true }) } catch { /* stray temp */ } throw err }
 }
 
 /** Containment beyond string prefixes: the realpath of the parent dir must stay inside base. */
@@ -269,7 +277,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           for (const w of done.reverse()) {
             const label = w.plan ?? `design/boards/${name}.json`
             if (current_(w.file) !== w.next) { stuck.push(`${label} (edited since - kept)`); continue }
-            try { atomicWrite(w.file, w.raw) } catch { stuck.push(label) }
+            try { renameWrite(w.file, w.raw) } catch { stuck.push(label) }
           }
           return stuck
         }
@@ -281,12 +289,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             if (stuck.length) return json(res, 500, { error: `${w.plan ?? `board "${name}"`} changed on disk mid-write, and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand` })
             return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
           }
-          try { atomicWrite(w.file, w.next); done.push(w) } catch (err) {
-            const after = current_(w.file)
-            if (after === w.next) done.push(w)                     // it landed before the throw: undo it like the rest
-            // a copy that failed part way left our damage: put back the original. Any other version is
-            // someone else's write - never overwritten, named below
-            else if (after !== w.raw && (err as { touched?: boolean }).touched) { try { atomicWrite(w.file, w.raw) } catch { /* named below */ } }
+          try { renameWrite(w.file, w.next); done.push(w) } catch (err) {
+            // a failed rename leaves the destination as it was - any other version there is someone
+            // else's write, never overwritten, named below
+            if (current_(w.file) === w.next) done.push(w)
             const stuck = undo()
             // "nothing changed" only when every file is seen to hold what it held before
             const off = writes.filter((x) => x.next !== x.raw && current_(x.file) !== x.raw).map((x) => x.plan ?? `design/boards/${name}.json`)
