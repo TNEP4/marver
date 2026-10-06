@@ -28,7 +28,9 @@ npx marver context init
 Creates `INDEX.md`, `shipped.md`, `map.json` and the two playbooks Marver maintains -
 `reorganize-context` and `publish-canvas` - and adds one line to your root `AGENTS.md` routing every
 agent to the index. It never overwrites; re-running it updates the playbooks you have not edited and
-stages a new version beside any you have.
+stages a new version beside any you have. `--kind knowledge` keeps a delivered record instead -
+Project and Delivered columns - and a repository without a canvas gets the conventions themselves as
+`context/README.md`.
 
 Then ask your agent: *"Read design/instructions/context.md and set up our context."* It interviews
 you first - who is involved, where each relationship happens, what is private - then drafts from
@@ -95,7 +97,7 @@ Feature and project boards wear a status, read from these files - the first that
 | 1-3 | the board says `"status": "archived"`, `"paused"`, or `"blocked"` with a `"reason"` | Archived · Paused · Blocked |
 | 4 | the evidence cannot be read | Unknown |
 | 5 | an open plan in `context/plans/` names the capability | In progress, filling by phase |
-| 6 | `shipped.md` shows it available, `confirmed` | Done |
+| 6 | `shipped.md` shows it available, `confirmed` - in a clause that names no staging or preview, and opens with no "nowhere" or "rolled back" | Done |
 | 7 | ... `reported` only | Done, reported |
 | 8 | its contract is `state: current` | To do |
 | 9 | anything else | Backlog |
@@ -111,4 +113,4 @@ frame. The tooltip says what decided it. Change a file and the sidebar follows; 
 `restricted` - never tracked by git (a gitignored `context/private/`). A frame that renders a `team`
 file onto a published board fails the check, and a published build never carries a board's status,
 reason or capability unless its publish row opts in with `"showStatus": true` - and then only rows
-5 to 9.
+5 to 9, and only a status whose every source says `audience: publishable`.

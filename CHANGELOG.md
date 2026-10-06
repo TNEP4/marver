@@ -32,14 +32,18 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board
   rendering `context/INDEX.md` and `context/shipped.md`, a deck on its title slide.
 - **`"showStatus": true`** on a `publish.json` row shows a board's status on the published canvas -
-  only Backlog to Done, never a blocked reason or the evidence.
+  only Backlog to Done, only when the evidence behind it is marked `audience: publishable`, never a
+  blocked reason or the evidence itself, with the date it was read.
+- **Knowledge work.** `npx marver context init --kind knowledge` keeps a delivered record - Project
+  and Delivered columns - and project boards read Done from it. A repository without a canvas gets
+  the conventions as `context/README.md`.
 
 ### Changed
 
 - **A published board never carries its `status`, `reason` or `capability`,** and the build fails if
-  one would. A publish row with no `type` takes the one the board's type proposes - a deck publishes
-  as `slides` (or `mix`, with a note, when it has no slide frames yet), a context board as `refs`, a
-  project as `doc`.
+  one would - or if a published status or meta carries anything beyond what is allowed. A board's type
+  suggests how it publishes (a deck as `slides`, a context board as `refs`, a project as `doc`) as a
+  note in the build; a publish row keeps presenting the way it always has until it names a `type`.
 - **A fresh `npx marver init` creates typed folders** - product ones when an app is detected,
   knowledge ones otherwise, said out loud. On a canvas that already has boards or folders, init adds
   them only with `--kind`, and never renames or moves one.

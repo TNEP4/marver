@@ -7,10 +7,23 @@
 /** The evidence levels a shipped-record cell carries. */
 export type Level = 'confirmed' | 'reported' | 'unknown'
 export const LEVEL = /`(confirmed|reported|unknown)`/g
-/** What counts as a citation beside a level: a `path:line`, a run id, or a cited file. */
-export const CITATION = /`[^`\s]+:\d+(-\d+)?`|\bruns? \d{6,}(, \d{6,})*|`[^`\s]+\.(md|json|ts|tsx|js|mjs|yml|yaml|sql)`/
+/** What counts as a citation beside a level: a `path:line`, a run id, a cited file, or a link to a
+ *  system of record (a deploy run's page). A cited file must also resolve - the check sees to it. */
+export const CITATION = /`[^`\s]+:\d+(-\d+)?`|\bruns? \d{6,}(, \d{6,})*|`[^`\s]+\.(md|json|ts|tsx|js|mjs|yml|yaml|sql)`|\]\(https?:\/\/[^)\s]+\)/
+/** A cited repository file inside a cell, with or without a line: `path/to/x.ts`, `CHANGELOG.md:12`. */
+export const CITED_FILE = /`((?:\.{0,2}[\w@.-]+\/)*[\w@.$-]+\.(?:md|json|ts|tsx|js|jsx|mjs|yml|yaml|sql|txt))(?::(\d+)(?:-(\d+))?)?`/g
+
+/** The audiences a context file declares (spec 19, Audiences): `team` when it says nothing. */
+export type Audience = 'publishable' | 'team' | 'restricted'
+export const readAudience = (v: unknown): Audience => (v === 'publishable' || v === 'restricted' ? v : 'team')
+const AUDIENCE_RANK: Record<Audience, number> = { publishable: 0, team: 1, restricted: 2 }
+/** The strictest of several audiences - what a conclusion drawn from them may be shown to. */
+export const strictest = (...a: Audience[]): Audience => a.reduce((x, y) => (AUDIENCE_RANK[y] > AUDIENCE_RANK[x] ? y : x), 'publishable' as Audience)
+
+/** Line endings normalized: every reader parses LF, so a CRLF file means the same thing. */
+export const lf = (text: string): string => text.replace(/\r\n?/g, '\n')
 /** The headers whose cells carry evidence in a shipped table. */
-export const EVIDENCE_COLUMN = /^(evidence|verified|available)$/i
+export const EVIDENCE_COLUMN = /^(evidence|verified|available|delivered)$/i
 
 /** The context files' own front matter: a YAML subset - scalars, flow maps `{ a: b }`, flow
  *  lists `[a, b]`, block lists. `error` names a block that opens and never closes; a file
@@ -18,7 +31,8 @@ export const EVIDENCE_COLUMN = /^(evidence|verified|available)$/i
 export interface FrontMatter { data: Record<string, unknown> | null; body: string; offset: number; error?: string }
 /** A Marver-managed file's first line (the playbooks Marver maintains) - front matter follows it. */
 const MANAGED_LINE = /^<!-- marver:managed [^\n]*-->\n/
-export function frontMatter(text: string): FrontMatter {
+export function frontMatter(raw: string): FrontMatter {
+  const text = lf(raw)
   const managed = MANAGED_LINE.exec(text)
   if (managed) {
     const r = frontMatter(text.slice(managed[0].length))
@@ -80,7 +94,7 @@ function value(s: string): unknown {
 export function proseLines(text: string, offset = 0): [number, string][] {
   const out: [number, string][] = []
   let fenced = false
-  text.split('\n').forEach((line, i) => {
+  lf(text).split('\n').forEach((line, i) => {
     if (/^\s*```/.test(line)) { fenced = !fenced; return }
     if (!fenced) out.push([i + 1 + offset, line])
   })
@@ -117,26 +131,59 @@ function splitRow(line: string): string[] {
 
 export const levelsIn = (cell: string): Level[] => [...cell.matchAll(LEVEL)].map((m) => m[1] as Level)
 
-/** The shipped record's capability rows: every table whose first column is "Capability" and that
- *  has an "Available" column. The capability is the first backticked slug in the row's first cell. */
+/** A table whose header row has no outer pipes - Markdown renders it, the readers here do not. The
+ *  check rejects it rather than read past it. Returns the separator rows' line numbers. */
+export function looseTables(text: string): number[] {
+  return proseLines(text).filter(([, l]) => !/^\s*\|/.test(l) && /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(l)).map(([n]) => n)
+}
+
+/** The levels an Available cell grants, clause by clause (`;` separates them). A clause counts only
+ *  when it claims availability where it matters: never one that opens with a negation ("nowhere",
+ *  "not", "rolled back"), never one scoped to a non-production place (staging, preview, dev) that
+ *  does not also name production. So "staging only - `confirmed`" grants nothing toward Done. */
+export function availableLevels(cell: string): Level[] {
+  const out: Level[] = []
+  for (const clause of cell.split(';')) {
+    const c = clause.replace(/\*\*/g, '').trim()
+    if (/^(nowhere|not\b|none\b|never\b|no longer|withdrawn|rolled back|removed|retired)/i.test(c)) continue
+    if (/\b(staging|preview|dev|development|test|testing|sandbox|local)\b/i.test(c) && !/\b(production|prod|live|delivered)\b/i.test(c)) continue
+    out.push(...levelsIn(c))
+  }
+  return out
+}
+
+/** The shipped record's capability rows: every table whose first column is "Capability" (a
+ *  product) or "Project" / "Deliverable" (knowledge work) and that has an "Available" or
+ *  "Delivered" column. The capability is the first backticked slug in the row's first cell;
+ *  `levels` are the ones its availability clauses grant (availableLevels). */
 export interface ShippedRow { capability: string; line: number; available: string; levels: Level[] }
+export const RECORD_KEY = /^(capability|project|deliverable)$/i
+export const RECORD_AVAILABLE = /^(available|delivered)$/i
+export const isRecordTable = (t: Table): boolean => RECORD_KEY.test(t.header[0] ?? '') && t.header.some((h) => RECORD_AVAILABLE.test(h))
 export function shippedRows(text: string): ShippedRow[] {
   const out: ShippedRow[] = []
   for (const t of tables(text)) {
-    if (!/^capability$/i.test(t.header[0] ?? '')) continue
-    const a = t.header.findIndex((h) => /^available$/i.test(h))
-    if (a < 0) continue
+    if (!isRecordTable(t)) continue
+    const a = t.header.findIndex((h) => RECORD_AVAILABLE.test(h))
     for (const r of t.rows) {
       const slug = /`([a-z0-9][a-z0-9-]*)`/.exec(r.cells[0] ?? '')?.[1]
       if (!slug) continue
       const available = r.cells[a] ?? ''
-      out.push({ capability: slug, line: r.line, available, levels: levelsIn(available) })
+      out.push({ capability: slug, line: r.line, available, levels: availableLevels(available) })
     }
   }
   return out
 }
 
-/** A glob with **, *, ? and {a,b} as a RegExp over repo-relative paths. */
+/** Is this a glob the matcher reads? Balanced, unnested braces; no character classes. */
+export const validGlob = (g: string): boolean => {
+  if (typeof g !== 'string' || !g || /[[\]]/.test(g)) return false
+  let depth = 0
+  for (const c of g) { if (c === '{') { if (++depth > 1) return false } else if (c === '}') { if (--depth < 0) return false } }
+  return depth === 0
+}
+export const hasGlob = (g: string): boolean => /[*?{]/.test(g)
+/** A glob with **, *, ? and {a,b} as a RegExp over repo-relative paths (validGlob first). */
 export function globRe(glob: string): RegExp {
   let re = '', brace = 0
   for (let i = 0; i < glob.length; i++) {
@@ -163,15 +210,36 @@ export interface CapabilityMap {
   /** the globs whose files must be mapped or excluded - the check reports any that is neither */
   source?: string[]
 }
-/** Read a map's text: the map, or what is wrong with it. */
+/** Read a map's text: the map, or what is wrong with it - every field checked, every glob valid. */
 export function parseMap(text: string): CapabilityMap | string {
   let raw: unknown
   try { raw = JSON.parse(text) } catch { return 'context/map.json is not valid JSON' }
   const m = raw as Partial<CapabilityMap> | null
-  if (!m || typeof m !== 'object' || !m.capabilities || typeof m.capabilities !== 'object') return 'context/map.json needs a "capabilities" object'
-  for (const [k, c] of Object.entries(m.capabilities)) {
-    if (!c || !Array.isArray((c as { paths?: unknown }).paths)) return `context/map.json: "${k}" needs a "paths" list`
+  if (!m || typeof m !== 'object' || !m.capabilities || typeof m.capabilities !== 'object' || Array.isArray(m.capabilities)) return 'context/map.json needs a "capabilities" object'
+  const globs = (where: string, v: unknown, required: boolean): string | null => {
+    if (v === undefined && !required) return null
+    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return `context/map.json: ${where} must be a list of paths`
+    const bad = (v as string[]).find((g) => !validGlob(g))
+    return bad ? `context/map.json: ${where} has an invalid glob "${bad}" (balanced, unnested {a,b}; no [...])` : null
   }
+  for (const [k, c] of Object.entries(m.capabilities)) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(k)) return `context/map.json: "${k}" is not a capability slug`
+    const cc = c as Record<string, unknown> | null
+    if (!cc || typeof cc !== 'object') return `context/map.json: "${k}" must be an object`
+    const e = globs(`"${k}".paths`, cc.paths, true) ?? globs(`"${k}".tests`, cc.tests, false)
+    if (e) return e
+    if (cc.contract !== undefined && typeof cc.contract !== 'string') return `context/map.json: "${k}".contract must be a path`
+    if (cc.summary !== undefined && typeof cc.summary !== 'string') return `context/map.json: "${k}".summary must be text`
+  }
+  if (m.excluded !== undefined) {
+    if (!Array.isArray(m.excluded)) return 'context/map.json: "excluded" must be a list'
+    for (const x of m.excluded as unknown[]) {
+      const e = x as { path?: unknown; reason?: unknown } | null
+      if (!e || typeof e.path !== 'string' || !validGlob(e.path)) return 'context/map.json: every "excluded" entry needs a valid "path" glob'
+      if (typeof e.reason !== 'string' || !e.reason.trim()) return `context/map.json: excluded "${e.path}" needs a "reason"`
+    }
+  }
+  { const e = globs('"source"', (m as { source?: unknown }).source, false); if (e) return e }
   const source = Array.isArray(m.source) ? m.source.filter((x): x is string => typeof x === 'string') : undefined
   return { capabilities: m.capabilities as CapabilityMap['capabilities'], excluded: Array.isArray(m.excluded) ? m.excluded : [], ...(source ? { source } : {}) }
 }

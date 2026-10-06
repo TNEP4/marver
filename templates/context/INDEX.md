@@ -15,7 +15,7 @@ Routing only. Read this, then at most two more files per question. It stays unde
 
 | Question | Read |
 |---|---|
-| Is it available, where, for whom, since when? | [`shipped.md`](shipped.md) |
+| {{RECORD_QUESTION}} | [`shipped.md`](shipped.md) |
 | How does it work today? | its contract below; without one, [`map.json`](map.json) names the code and tests |
 | Why was it decided? | the decision log - say where this project keeps it |
 | What is next, and what counts as done? | the roadmap - say where |

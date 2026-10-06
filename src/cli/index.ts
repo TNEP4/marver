@@ -208,18 +208,22 @@ cli
   .option('--head <ref>', 'check: the pull request\'s head (default HEAD)')
   .option('--body-file <file>', 'check: the pull request\'s body, for `no-contract-change: <capability> - <why>`')
   .option('--json', 'check: the findings as JSON ({ exit, failures, unsure, notes })')
+  .option('--kind <kind>', 'init: product (a shipped record) or knowledge (a delivered record)', { default: 'product' })
   .action(async (action: string, opts) => {
     const ctx = await import('./context.ts')
     const root = resolve(opts.root)
     try {
       if (action === 'init') {
-        const created = ctx.contextInit(root)
+        if (opts.kind !== 'product' && opts.kind !== 'knowledge') throw new Error(`--kind ${opts.kind}: use product or knowledge`)
+        const created = ctx.contextInit(root, opts.kind)
         for (const c of created) console.log(`  + ${c}`)
         if (!created.length) console.log('  context/ is already set up - nothing to add')
-        console.log(`\n  next: tell your agent "Read design/instructions/context.md and set up our context" - the setup interview, then a first draft from evidence.\n  in ci: npx ${NAME} context check  (with full history: fetch-depth: 0)\n`)
+        console.log(`\n  next: tell your agent "Read ${ctx.conventionsPath(root)} and set up our context" - the setup interview, then a first draft from evidence.\n  in ci: npx ${NAME} context check  (with full history: fetch-depth: 0)\n`)
       } else if (action === 'check') {
         const { readFileSync } = await import('node:fs')
-        const pr = ctx.pullRequestFromEnv()
+        // explicit arguments win; in ci on a pull request the event supplies them
+        const explicit = opts.base !== undefined
+        const pr = explicit ? null : ctx.pullRequestFromEnv()
         const r = ctx.contextCheck(root, pr ?? { base: opts.base, head: opts.head, body: opts.bodyFile ? readFileSync(opts.bodyFile, 'utf8') : '' })
         if (opts.json) console.log(JSON.stringify(r, null, 2)); else ctx.printCheck(r)
         process.exit(r.exit)

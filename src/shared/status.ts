@@ -15,7 +15,7 @@
  * set by hand: `"status": "done"` is ignored here and reported by `marver context check`.
  */
 import { DECISIONS, HAS_STATUS, type BoardType, type StatusWord } from './board-types.ts'
-import type { Level } from './context.ts'
+import { strictest, type Audience, type Level } from './context.ts'
 
 export type Status = 'archived' | 'paused' | 'blocked' | 'unknown' | 'in-progress' | 'done' | 'done-reported' | 'todo' | 'backlog'
 export const STATUS_LABEL: Record<Status, string> = {
@@ -33,12 +33,12 @@ export interface ContextFacts {
   present: boolean
   /** evidence that could not be read: `'*'` for the whole record (shipped.md unreadable), else per capability */
   unreadable: Map<string, string>
-  /** capability -> the levels in its shipped row's Available cell, and where */
-  shipped: Map<string, { levels: Level[]; where: string }>
-  /** capability -> its contract's state, and where */
-  contracts: Map<string, { state: string; where: string }>
-  /** capability -> its open plans */
-  plans: Map<string, string[]>
+  /** capability -> the levels its shipped row's availability grants, where, and the record's audience */
+  shipped: Map<string, { levels: Level[]; where: string; audience: Audience }>
+  /** capability -> its contract's state, where, and its audience */
+  contracts: Map<string, { state: string; where: string; audience: Audience }>
+  /** capability -> its open plans, each with its audience */
+  plans: Map<string, { where: string; audience: Audience }[]>
 }
 export const NO_CONTEXT: ContextFacts = { present: false, unreadable: new Map(), shipped: new Map(), contracts: new Map(), plans: new Map() }
 
@@ -64,6 +64,9 @@ export interface StatusResult {
   capability: string
   /** one line per piece of evidence, for the tooltip */
   evidence: string[]
+  /** the strictest audience of the evidence the status was drawn from - a published canvas shows a
+   *  status only when this is `publishable` (spec 20, Publishing status) */
+  audience: Audience
 }
 
 const PHASE_WORDS: Record<string, Phase> = { spec: 1, specs: 1, lofi: 2, 'lo-fi': 2, hifi: 3, 'hi-fi': 3 }
@@ -86,40 +89,47 @@ export function phaseOf(capability: string, scenes: BoardInput['scenes']): Phase
 export function resolveStatus(b: BoardInput, ctx: ContextFacts): StatusResult | null {
   if (!HAS_STATUS.includes(b.type)) return null
   const capability = b.capability ?? b.name
-  const out = (status: Status, row: number, evidence: string[], extra: Partial<StatusResult> = {}): StatusResult => ({ status, row, capability, evidence, ...extra })
+  const out = (status: Status, row: number, evidence: string[], audience: Audience, extra: Partial<StatusResult> = {}): StatusResult => ({ status, row, capability, evidence, audience, ...extra })
 
   // 1-3: a decision on the board
   if (b.status && (DECISIONS as readonly string[]).includes(b.status)) {
     const by = `design/boards/${b.name}.json: "status": "${b.status}"`
-    return out(b.status as Status, DECISIONS.indexOf(b.status as (typeof DECISIONS)[number]) + 1, [by], b.status === 'blocked' && b.reason ? { reason: b.reason } : {})
+    return out(b.status as Status, DECISIONS.indexOf(b.status as (typeof DECISIONS)[number]) + 1, [by], 'team', b.status === 'blocked' && b.reason ? { reason: b.reason } : {})
   }
 
   if (!ctx.present) {
     // without context/ a project sets To do, Backlog and In progress by hand; Done needs a record
-    if (b.status === 'in-progress') return out('in-progress', 5, [`design/boards/${b.name}.json: by hand`], fillOf(capability, b.scenes))
-    if (b.status === 'todo') return out('todo', 8, [`design/boards/${b.name}.json: by hand`])
-    return out('backlog', 9, [b.status === 'backlog' ? `design/boards/${b.name}.json: by hand` : 'no context/ - nothing records it'])
+    // the board's own word, and a board ships as written - publishable
+    if (b.status === 'in-progress') return out('in-progress', 5, [`design/boards/${b.name}.json: by hand`], 'publishable', fillOf(capability, b.scenes))
+    if (b.status === 'todo') return out('todo', 8, [`design/boards/${b.name}.json: by hand`], 'publishable')
+    return out('backlog', 9, [b.status === 'backlog' ? `design/boards/${b.name}.json: by hand` : 'no context/ - nothing records it'], 'publishable')
   }
 
   // 4: evidence that cannot be read is Unknown - never the last value seen
   const bad = ctx.unreadable.get('*') ?? ctx.unreadable.get(capability)
-  if (bad) return out('unknown', 4, [bad])
+  if (bad) return out('unknown', 4, [bad], 'team')
 
-  // 5: an open plan
+  const row = ctx.shipped.get(capability)
+  const live = row?.levels.includes('confirmed') ? 'confirmed' : row?.levels.includes('reported') ? 'reported' : null
+
+  // 5: an open plan - work on a shipped capability is version two being built, and says so
   const plans = ctx.plans.get(capability)
-  if (plans?.length) return out('in-progress', 5, plans.map((p) => `${p}: an open plan`), fillOf(capability, b.scenes))
+  if (plans?.length) {
+    const ev = plans.map((p) => `${p.where}: an open plan`)
+    if (live && row) ev.push(`${row.where}: available, \`${live}\` - this is the next version`)
+    return out('in-progress', 5, ev, strictest(...plans.map((p) => p.audience), ...(live && row ? [row.audience] : [])), fillOf(capability, b.scenes))
+  }
 
   // 6-7: the shipped record
-  const row = ctx.shipped.get(capability)
-  if (row?.levels.includes('confirmed')) return out('done', 6, [`${row.where}: available, \`confirmed\``])
-  if (row?.levels.includes('reported')) return out('done-reported', 7, [`${row.where}: available, \`reported\` only`])
+  if (live === 'confirmed') return out('done', 6, [`${row!.where}: available, \`confirmed\``], row!.audience)
+  if (live === 'reported') return out('done-reported', 7, [`${row!.where}: available, \`reported\` only`], row!.audience)
 
   // 8: an accepted contract
   const c = ctx.contracts.get(capability)
-  if (c?.state === 'current') return out('todo', 8, [`${c.where}: state current, nothing available yet`])
+  if (c?.state === 'current') return out('todo', 8, [`${c.where}: state current, nothing available yet`], strictest(c.audience, ...(row ? [row.audience] : [])))
 
-  // 9
-  return out('backlog', 9, [c ? `${c.where}: state ${c.state}` : `no contract for ${capability}`])
+  // 9: nothing records it - which says nothing private
+  return out('backlog', 9, [c ? `${c.where}: state ${c.state}` : `no contract for ${capability}`], c ? c.audience : 'publishable')
 }
 
 const fillOf = (capability: string, scenes: BoardInput['scenes']): Partial<StatusResult> => {
@@ -127,9 +137,11 @@ const fillOf = (capability: string, scenes: BoardInput['scenes']): Partial<Statu
   return p ? { fill: p } : {}
 }
 
-/** What a published canvas may show of a status (spec 20, Publishing status): rows 5-9 only, and
- *  never a reason, a record path or other evidence. */
-export function publishableStatus(r: StatusResult | null): { status: Status; fill?: Phase } | null {
-  if (!r || r.row < 5) return null
+/** What a published canvas may show of a status (spec 20, Publishing status): rows 5-9 only, drawn
+ *  from `publishable` evidence only, and never a reason, a record path or other evidence. */
+export function publishableStatus(r: { status: Status; row?: number; fill?: Phase; audience?: Audience } | null | undefined): { status: Status; fill?: Phase } | null {
+  if (!r || !PUBLISHABLE.has(r.status) || r.audience !== 'publishable') return null
   return { status: r.status, ...(r.fill ? { fill: r.fill } : {}) }
 }
+/** The statuses rows 5-9 produce - the only ones a published canvas may show. */
+export const PUBLISHABLE: ReadonlySet<Status> = new Set(['in-progress', 'done', 'done-reported', 'todo', 'backlog'])

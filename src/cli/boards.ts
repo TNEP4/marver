@@ -7,9 +7,9 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
-import { addFolders, checkBoardsDir, boardFields, listBoardFiles, readRegistry } from '../server/boards.ts'
+import { addFolders, checkBoardsDir, checkRealDirs, boardFields, listBoardFiles, readRegistry } from '../server/boards.ts'
 import { annotateBoards } from '../server/board-status.ts'
-import { buildTree, flatten, folderOf, humanize, isBoardName, type Folder, type TreeItem } from '../shared/board-tree.ts'
+import { buildTree, flatten, folderMap, humanize, isBoardName, type Folder, type TreeItem } from '../shared/board-tree.ts'
 import { BOARD_TYPES, FOLDER_MODULES, knownType, readCapability, resolveType, type BoardType } from '../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../shared/status.ts'
 
@@ -24,7 +24,8 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   const tree = buildTree(rows, reg.folders)
   const hasAll = boards.some((b) => b.name === 'all-scenes')
   // spec 20: each board's resolved type, and its status with the evidence that decided it
-  const notes = annotateBoards(root, boards.filter((b) => b.name !== 'all-scenes'), reg.folders, (n) => folderOf(tree, n))
+  const fm = folderMap(tree)
+  const notes = annotateBoards(root, boards.filter((b) => b.name !== 'all-scenes'), reg.folders, (n) => fm.get(n) ?? null)
   if (opts.json) {
     const out = rows.filter((r) => r.name !== 'all-scenes').map((r) => ({ ...r, ...(notes.get(r.name) ?? {}) }))
     console.log(JSON.stringify({ tree, boards: out, landing: flatten(tree)[0] ?? (hasAll ? 'all-scenes' : null), registry: reg.state === 'ok' ? 'design/boards/_folders.json' : null }, null, 2))
@@ -84,12 +85,16 @@ export function boardsNew(root: string, name: string, opts: { type?: string; fol
   const type: BoardType = resolveType(opts.type, folder?.type, parent?.type)
   const label = opts.title ?? humanize(name)
   const created: string[] = []
+  // every write lands inside the project, through real directories, and only where nothing is:
+  // exclusive creation, so a file another author wrote a moment ago is never truncated
   const put = (rel: string, body: string) => {
     const f = join(root, rel)
-    if (existsSync(f)) return
+    const scene = rel.split('/')[2]
+    const bad = checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', 'scenes'), 'design/scenes'], [join(root, 'design', 'scenes', scene), `design/scenes/${scene}`]])
+    if (bad) throw new Error(bad)
     mkdirSync(join(f, '..'), { recursive: true })
-    writeFileSync(f, body)
-    created.push(rel)
+    try { writeFileSync(f, body, { flag: 'wx' }); created.push(rel) }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e }
   }
   const brief = (scene: string, title: string, body: string, phase?: string) =>
     put(`design/scenes/${scene}/_brief.md`, `---\ntitle: ${title}\n${phase ? `phase: ${phase}\n` : ''}---\n${body}\n`)
@@ -129,7 +134,8 @@ export function boardsNew(root: string, name: string, opts: { type?: string; fol
     ...(layout ? { layout } : {}),
   }
   mkdirSync(dir, { recursive: true })
-  writeFileSync(file, JSON.stringify(board, null, 2) + '\n')
+  try { writeFileSync(file, JSON.stringify(board, null, 2) + '\n', { flag: 'wx' }) }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`design/boards/${name}.json exists - a board is never overwritten`); throw e }
   created.unshift(`design/boards/${name}.json (${type}${opts.type ? '' : type === 'plain' ? '' : `, from ${opts.folder}`})`)
   return created
 }

@@ -27,6 +27,7 @@ import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { cssFixPlugin } from './css-fix.ts'
 import { buildTree, flatten, isBoardName, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
+import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
@@ -123,9 +124,6 @@ export const DECK_TRANSITIONS = ['fade', 'none'] as const
 export const DECK_CHROME = ['full', 'minimal', 'none'] as const   // full (default) = the standard prototype chrome
 export interface BoardPolicy {
   max: 'read' | 'comment'; type: ArtifactType; open?: ViewMode; lock?: boolean
-  /** the type came from the board's own type (spec 20), not from the row - a proposal, so a deck
-   *  with no slide frames falls back to `mix` instead of failing the build */
-  proposed?: boolean
   /** spec 20: show this board's status on the published canvas - rows 5-9 only, never a reason */
   showStatus?: boolean
   /** Slides mode (v1.5): the deck's one transition and its chrome level. */
@@ -141,16 +139,10 @@ export interface PublishPolicy {
  *  Boards absent from the result do not ship. */
 export function resolvePolicy(
   root: string, allBoards: Record<string, any>, boardsFlag?: string, allBoardsFlag?: boolean,
-  /** each board's resolved type (spec 20): a row that names no publish type takes the one it proposes */
-  typeOf: (board: string) => BoardType = () => 'plain',
 ): PublishPolicy {
   const known = (n: string) => n === 'all-scenes' || !!allBoards[n]
   const reveal = { structure: true, source: false }
-  const proposal = (n: string): Pick<BoardPolicy, 'type' | 'proposed'> => {
-    const t = PROPOSED_PUBLISH[typeOf(n)]
-    return t ? { type: t, proposed: true } : { type: 'mix' }
-  }
-  const row = (max: 'read' | 'comment', n: string): BoardPolicy => ({ max, ...proposal(n) })
+  const row = (max: 'read' | 'comment', _n: string): BoardPolicy => ({ max, type: 'mix' })
   if (boardsFlag !== undefined) {
     const names = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
     // an empty filter fails CLOSED - `--boards "$UNSET_VAR"` must never publish everything
@@ -186,8 +178,7 @@ export function resolvePolicy(
     const p = level as Record<string, unknown>
     if (p.max !== 'read' && p.max !== 'comment')
       throw new Error(`design/publish.json: board "${n}" needs "max": "read" | "comment"`)
-    const proposed = p.type === undefined ? proposal(n) : null
-    const type = p.type ?? proposed!.type
+    const type = p.type ?? 'mix'
     if (p.showStatus !== undefined && typeof p.showStatus !== 'boolean')
       throw new Error(`design/publish.json: board "${n}" has showStatus "${p.showStatus}" - use true or false`)
     if (!ARTIFACT_TYPES.includes(type as ArtifactType))
@@ -207,7 +198,7 @@ export function resolvePolicy(
     if (p.lock && p.open === undefined)
       throw new Error(`design/publish.json: board "${n}" sets "lock" without "open" - name the mode the lock freezes`)
     out[n] = {
-      max: p.max, type: type as ArtifactType, ...(proposed?.proposed ? { proposed: true } : {}),
+      max: p.max, type: type as ArtifactType,
       ...(p.showStatus === true ? { showStatus: true } : {}),
       ...(p.open ? { open: p.open as ViewMode } : {}), ...(p.lock ? { lock: true } : {}),
       ...(p.transition ? { transition: p.transition as any } : {}), ...(p.chrome ? { chrome: p.chrome as any } : {}),
@@ -274,7 +265,7 @@ export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], p
   // spec 20's publication projection: a board's status ships only where its publish row opts in,
   // only the statuses that say nothing private (rows 5-9), and never its reason
   const pubBoards = (manifest.boards ?? []).filter((b) => pubBoardSet.has(b.name)).map(({ status, ...b }) => {
-    const shown = status && showStatus.has(b.name) && PUBLISHABLE_STATUS.has(status.status) ? { status: status.status, ...(status.fill ? { fill: status.fill } : {}) } : null
+    const shown = showStatus.has(b.name) ? publishableStatus(status) : null
     return shown ? { ...b, status: shown } : b
   })
   // the folders published boards sit in, and the parents of those - structure, like board names
@@ -292,9 +283,9 @@ export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], p
   }
 }
 
-/** The statuses a published canvas may show (spec 20, rows 5-9): none of them carries a reason,
- *  a tenant list or a record path. */
-const PUBLISHABLE_STATUS: ReadonlySet<string> = new Set(['in-progress', 'done', 'done-reported', 'todo', 'backlog'])
+/** What a published status may carry, and a published board's meta - nothing else (spec 20). */
+const STATUS_KEYS: ReadonlySet<string> = new Set(['status', 'fill'])
+const META_KEYS: ReadonlySet<string> = new Set(['type', 'status'])
 /** The fields of a board file that point into context/ - stripped from every published board. */
 export const EVIDENCE_FIELDS = ['status', 'reason', 'capability'] as const
 export function withoutEvidence(board: any): any {
@@ -305,17 +296,22 @@ export function withoutEvidence(board: any): any {
 }
 /** The build's own check of the projection: if a stripped field survives into the bundle, the
  *  build fails - a later edit to the assembly must never quietly ship the evidence trail. */
-export function assertProjected(data: { boards: Record<string, any>; manifest: Manifest; meta?: Record<string, { status?: { status: string } }> }, showStatus: ReadonlySet<string>) {
+export function assertProjected(data: { boards: Record<string, any>; manifest: Manifest; meta?: Record<string, Record<string, unknown>> }, showStatus: ReadonlySet<string>) {
+  const statusOk = (n: string, st: unknown): boolean => {
+    if (!st || typeof st !== 'object' || Array.isArray(st)) return false
+    const o = st as Record<string, unknown>
+    return showStatus.has(n) && PUBLISHABLE.has(o.status as never) && Object.keys(o).every((k) => STATUS_KEYS.has(k))
+  }
   for (const [n, b] of Object.entries(data.boards)) for (const k of EVIDENCE_FIELDS)
     if (b && typeof b === 'object' && k in b) throw new Error(`build: board "${n}" would ship its "${k}" - the publication projection failed`)
   for (const b of data.manifest.boards ?? []) {
-    const st = (b as { status?: { status: string; reason?: string; evidence?: unknown } }).status
-    if (!st) continue
-    if (!showStatus.has(b.name) || !PUBLISHABLE_STATUS.has(st.status) || 'reason' in st || 'evidence' in st)
-      throw new Error(`build: board "${b.name}" would ship a status its publish row did not allow`)
+    const st = (b as { status?: unknown }).status
+    if (st !== undefined && !statusOk(b.name, st)) throw new Error(`build: board "${b.name}" would ship a status its publish row did not allow`)
   }
-  for (const [n, m] of Object.entries(data.meta ?? {}))
-    if (m.status && (!showStatus.has(n) || !PUBLISHABLE_STATUS.has(m.status.status))) throw new Error(`build: board "${n}" would ship a status its publish row did not allow`)
+  for (const [n, m] of Object.entries(data.meta ?? {})) {
+    if (Object.keys(m).some((k) => !META_KEYS.has(k))) throw new Error(`build: board "${n}" would ship meta beyond its type and status`)
+    if (m.status !== undefined && !statusOk(n, m.status)) throw new Error(`build: board "${n}" would ship a status its publish row did not allow`)
+  }
 }
 
 /** The folder registry: absent = no folders (boards still imply theirs); malformed fails the build. */
@@ -427,8 +423,18 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // ---- data: manifest + boards, gated by the publish policy (the privacy boundary) ----
   const manifest = scanFrames(root, { name: config.share.name || basename(root), description: config.description })
   const allBoards = readBoards(root)
-  const typeOf = (n: string): BoardType => (manifest.boards?.find((b) => b.name === n)?.type as BoardType | undefined) ?? 'plain'
-  const policy = resolvePolicy(root, allBoards, boardsFlag, allBoardsFlag, typeOf)
+  const policy = resolvePolicy(root, allBoards, boardsFlag, allBoardsFlag)
+  // spec 20: a board's type suggests how it presents when its row names no type - said once per
+  // build, never applied: an existing row keeps presenting the way it always has
+  let named: Record<string, unknown> = {}
+  try { named = JSON.parse(readFileSync(join(root, 'design', 'publish.json'), 'utf8')).boards ?? {} } catch { /* --boards / --all-boards */ }
+  for (const [n, pb] of Object.entries(policy.boards)) {
+    const row = named[n]
+    if (row && typeof row === 'object' && (row as { type?: unknown }).type !== undefined) continue
+    const bt = manifest.boards?.find((b) => b.name === n)?.type as BoardType | undefined
+    const suggested = bt ? PROPOSED_PUBLISH[bt] : undefined
+    if (suggested && suggested !== pb.type) console.log(`  note: board "${n}" is a ${bt} board - its publish row could say "type": "${suggested}" (it publishes as "${pb.type}" until it does)`)
+  }
   const rights = Object.fromEntries(Object.entries(policy.boards).map(([n, p]) => [n, p.max])) as Record<string, 'read' | 'comment'>
   // the source strip (01-sharing §6.2): with reveal.source off - the published
   // default - no repo path reaches the bundle. Manifest `file` fields, registry
@@ -475,12 +481,6 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     const ids = new Set((boards[n]?.nodes ?? []).map((x: { frame: string }) => x.frame))
     const on = pubManifest.frames.filter((f) => ids.has(f.id))
     const off = on.filter((f) => !(f.kind === 'tsx' && f.slide))
-    if (off.length === on.length && pb.proposed) {
-      // a deck board's proposal, not the owner's word: present it as a mix rather than fail the build
-      console.warn(`  note: board "${n}" is a deck but none of its frames carry \`slide: true\` - publishing it as "mix"; set "type" in design/publish.json to choose`)
-      pb.type = 'mix'
-      continue
-    }
     if (off.length === on.length)     // zero slides - including an EMPTY board, which is a deck of nothing
       throw new Error(`design/publish.json: board "${n}" plays as slides but none of its ${on.length} frame(s) carry \`slide: true\` - add it to the frames' meta, or set "type"/"open" to "present" (0.13.0 let slides alias present; 0.14.0 plays only slide frames)`)
     if (off.length)
@@ -514,6 +514,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const data = {
     bakes: bakeGen,
     manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}), ...(Object.keys(meta).length ? { meta } : {}),
+    // a published status is a snapshot: the tooltip says when it was read
+    ...(Object.values(meta).some((m) => (m as { status?: unknown }).status) ? { statusAsOf: new Date().toISOString() } : {}),
     default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],
     rights, policy: { boards: boardsMeta, reveal: policy.reveal, ...(lockedShell ? { lockedShell: true } : {}) },
   }

@@ -14,7 +14,7 @@ explains. If there is no `context/`, see "Setting up" below before you invent an
 | Path | What it holds |
 |---|---|
 | `INDEX.md` | routing only, under 800 words; its capability table is generated from `map.json` |
-| `shipped.md` | **the only place availability is written** - services by environment, capabilities by who has them |
+| `shipped.md` | **the only place availability is written** - services by environment, capabilities by who has them; for knowledge work, what was delivered to whom |
 | `product/<capability>.md` | one current contract per capability |
 | `map.json` | which code each capability lives in - the pull-request rule reads it |
 | `playbooks/<name>/PLAYBOOK.md` | how we do things - steps with checks, traps, a run log |
@@ -75,8 +75,9 @@ proposed; and `## Availability` pointing at its row in `shipped.md`.
 Feature and project boards wear a status read from these files (the first that matches wins):
 the board's own `"status"` - `archived`, `paused`, or `blocked` with a `"reason"`; Unknown when the
 evidence cannot be read; In progress when an open plan in `plans/` names the capability (filling by
-phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed`; Done,
-reported when only `reported`; To do when its contract is `state: current`; else Backlog.
+phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed` in an
+availability clause (one per `;`) that names no staging or preview and opens with no "nowhere" or
+"rolled back"; Done, reported when only `reported`; To do when its contract is `state: current`; else Backlog.
 **Done is never set by hand** - `"status": "done"` fails the check. A board finds its capability by
 its own name, or `"capability": "<slug>"` in its JSON.
 

@@ -21,9 +21,8 @@ export function writeManaged(o: { base: string; rel: string; body: string; shown
   const latest = join(stageDir, rel)
   if (!existsSync(file)) {
     mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, next)
-    created.push(shown)
-    return
+    try { writeFileSync(file, next, { flag: 'wx' }); created.push(shown); return }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e }   // written meanwhile: judge it below
   }
   const current = readFileSync(file, 'utf8')
   if (current === next) { rmSync(latest, { force: true }); return }

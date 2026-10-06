@@ -238,6 +238,12 @@ export function folderEntries(t: TreeItem[]): { folder: Folder; parent: string |
 export const folderIn = (t: TreeItem[], name: string): Folder | undefined => folderEntries(t).find((e) => e.folder.name === name)?.folder
 /** The folder a folder sits in - null for a top-level folder (or one that is not there). */
 export const parentOf = (t: TreeItem[], name: string): string | null => folderEntries(t).find((e) => e.folder.name === name)?.parent ?? null
+/** Every board's folder, in one pass - for callers that ask for many boards (folderOf walks the tree). */
+export function folderMap(t: TreeItem[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const { folder } of folderEntries(t)) for (const k of folder.items) if (k.kind === 'board') out.set(k.name, folder.name)
+  return out
+}
 /** The folder a board sits in directly, at either level - null at the root. */
 export function folderOf(t: TreeItem[], board: string): string | null {
   for (const { folder } of folderEntries(t)) if (folder.items.some((k) => k.kind === 'board' && k.name === board)) return folder.name

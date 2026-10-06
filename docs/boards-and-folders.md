@@ -103,8 +103,8 @@ Every board wears an icon for what it is for, the same on every canvas:
 A board states `"type"` in its JSON, or wears the type of the folder it sits in - `"type"` on the
 folder's entry in `_folders.json` - or of that folder's parent; else it is plain. Moving a board
 changes an inherited type, never one the board states. The type never decides how a board publishes,
-but it proposes it: a deck publishes as `slides`, a context board as `refs`, a project as `doc`,
-features and surfaces as `mix` - unless the publish row says otherwise.
+but `marver build` suggests a publish type from it - `slides` for a deck, `refs` for a context board,
+`doc` for a project - and the publish row decides.
 
 ## Status
 
@@ -142,7 +142,7 @@ A published canvas shows the folders of the published boards only - a sub-folder
 since the tree needs it. A folder with nothing published at any depth never reaches the bundle, so
 its name and description stay private. Board types ship; statuses do not - a published board loses its
 `status`, `reason` and `capability`, and shows a status only where its publish row says
-`"showStatus": true`, never a blocked reason.
+`"showStatus": true` and the evidence behind it is `publishable` - never a blocked reason.
 
 ## Mixed versions
 

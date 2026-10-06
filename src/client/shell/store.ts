@@ -19,6 +19,8 @@ const DATA: {
   titles?: Record<string, string>
   /** slug → resolved type, and the status a publish row opted into (0.22 bundles; spec 20) */
   meta?: Record<string, BoardMeta>
+  /** when the build read the statuses it ships - a published status is a snapshot */
+  statusAsOf?: string
   /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
   /** the generation of the glass textures this build shipped (publish-bakes.ts); absent = none */
@@ -27,6 +29,8 @@ const DATA: {
 
 /** The published textures' generation, or 0: the static index this build shipped is at /__mv/bakes/<gen>/index.json. */
 export const BAKES = DATA?.bakes ?? 0
+/** When a published bundle's statuses were read (spec 20) - absent in dev, where they are live. */
+export const STATUS_AS_OF = DATA?.statusAsOf ?? null
 
 /** Every published board is locked to a stage mode - the canvas shell is never
  *  offered on this bundle (01-sharing §5.1's all-boards rule). */

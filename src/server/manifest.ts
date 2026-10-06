@@ -6,6 +6,7 @@ import { buildTree, flatten, folderEntries, isBoardName, readDescription, readTi
 import { boardFields, checkBoardsDir, checkRealDirs, listBoardFiles, readRegistry } from './boards.ts'
 import { annotateBoards } from './board-status.ts'
 import type { Phase, Status } from '../shared/status.ts'
+import type { Audience } from '../shared/context.ts'
 import { hash } from './hash.ts'
 
 export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean; description?: string }
@@ -50,7 +51,7 @@ export interface Manifest {
    *  (spec 20: its own, else its folder's); `status` is read from context/ for feature and
    *  project boards - the evidence lines stay out of this committed file (`marver boards` and
    *  the sidebar's tooltip carry them) */
-  boards?: { name: string; folder?: string; title?: string; description?: string; type?: string; status?: { status: Status; fill?: Phase; reason?: string } }[]
+  boards?: { name: string; folder?: string; title?: string; description?: string; type?: string; status?: { status: Status; fill?: Phase; reason?: string; audience?: Audience } }[]
 }
 /** What a project says about itself - from design/config.ts, handed in by whoever loaded it. */
 export interface ProjectInfo { name?: string; description?: string }
@@ -299,7 +300,7 @@ function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
     return {
       name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(r?.title ? { title: r.title } : {}), ...(r?.description ? { description: r.description } : {}),
       ...(n && n.type !== 'plain' ? { type: n.type } : {}),
-      ...(st ? { status: { status: st.status, ...(st.fill ? { fill: st.fill } : {}), ...(st.reason ? { reason: st.reason } : {}) } } : {}),
+      ...(st ? { status: { status: st.status, ...(st.fill ? { fill: st.fill } : {}), ...(st.reason ? { reason: st.reason } : {}), audience: st.audience } } : {}),
     }
   })
   return { ...(folders.length ? { folders } : {}), ...(boards.length ? { boards } : {}) }

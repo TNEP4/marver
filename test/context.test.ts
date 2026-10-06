@@ -9,7 +9,7 @@ import { hash, scanFrames } from '../src/server/manifest.ts'
 import { annotateBoards, readContextFacts } from '../src/server/board-status.ts'
 import { addFolders } from '../src/server/boards.ts'
 import { assertProjected, publishedManifest, resolvePolicy, withoutEvidence } from '../src/server/build.ts'
-import { capabilityTable, frontMatter, globRe, parseMap, shippedRows, tables } from '../src/shared/context.ts'
+import { availableLevels, capabilityTable, frontMatter, globRe, parseMap, shippedRows, tables, type Audience, type Level } from '../src/shared/context.ts'
 import { resolveType, readType } from '../src/shared/board-types.ts'
 import { NO_CONTEXT, phaseOf, publishableStatus, resolveStatus, type ContextFacts } from '../src/shared/status.ts'
 import { parseFolders, toWire, fromWire, validateWire, buildTree } from '../src/shared/board-tree.ts'
@@ -70,7 +70,7 @@ describe('shared/context: the parsers', () => {
     const m = parseMap(JSON.stringify({ capabilities: { a: { contract: 'context/product/a.md', paths: ['src/a/**'] }, b: { paths: [] } } }))
     expect(typeof m).toBe('object')
     expect(capabilityTable(m as Exclude<typeof m, string>)).toBe('| Capability | Contract |\n|---|---|\n| `a` | [`product/a.md`](product/a.md) |\n| `b` | none yet - see the map |')
-    expect(parseMap('{"capabilities": {"a": {}}}')).toMatch(/needs a "paths" list/)
+    expect(parseMap('{"capabilities": {"a": {}}}')).toMatch(/paths must be a list of paths/)
     const withSummary = parseMap(JSON.stringify({ capabilities: { pay: { summary: 'taking money | refunds', contract: 'context/product/pay.md', paths: [] } } }))
     expect(capabilityTable(withSummary as Exclude<typeof withSummary, string>)).toMatch(/^\| `pay` - taking money \/ refunds \| \[`product\/pay.md`\]\(product\/pay.md\) \|$/m)
   })
@@ -101,6 +101,10 @@ describe('board types (spec 20)', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
+const lv = (levels: Level[], audience: Audience = 'team') => ({ levels, where: 'context/shipped.md:9', audience })
+const ct = (state: string, audience: Audience = 'team') => ({ state, where: 'context/product/c.md', audience })
+const pl = (where: string, audience: Audience = 'team') => [{ where, audience }]
+
 describe('status: the nine rows (spec 20)', () => {
   const ctx = (over: Partial<ContextFacts> = {}): ContextFacts => ({ present: true, unreadable: new Map(), shipped: new Map(), contracts: new Map(), plans: new Map(), ...over })
   const board = (over = {}) => ({ name: 'checkout', type: 'feature' as const, scenes: [], ...over })
@@ -115,27 +119,27 @@ describe('status: the nine rows (spec 20)', () => {
     expect(resolveStatus(board({ status: 'blocked', reason: 'the provider' }), ctx())).toMatchObject({ status: 'blocked', row: 3, reason: 'the provider' })
   })
   it('row 4: unreadable evidence is Unknown - never a stale Done', () => {
-    const shipped = new Map([['checkout', { levels: ['confirmed' as const], where: 'x' }]])
+    const shipped = new Map([['checkout', lv(['confirmed'])]])
     expect(resolveStatus(board(), ctx({ shipped, unreadable: new Map([['*', 'context/shipped.md: broken']]) }))).toMatchObject({ status: 'unknown', row: 4 })
     expect(resolveStatus(board(), ctx({ unreadable: new Map([['checkout', 'bad contract']]) }))?.status).toBe('unknown')
     expect(resolveStatus(board({ name: 'other' }), ctx({ unreadable: new Map([['checkout', 'bad']]) }))?.status).toBe('backlog')
   })
   it('row 5 wins over a shipped record: version two is being built', () => {
     const r = resolveStatus(board({ scenes: [{ name: 'checkout-specs' }, { name: 'checkout-lofi' }] }), ctx({
-      plans: new Map([['checkout', ['context/plans/v2.md']]]),
-      shipped: new Map([['checkout', { levels: ['confirmed' as const], where: 'x' }]]),
+      plans: new Map([['checkout', pl('context/plans/v2.md')]]),
+      shipped: new Map([['checkout', lv(['confirmed'])]]),
     }))
     expect(r).toMatchObject({ status: 'in-progress', row: 5, fill: 2 })
   })
   it('rows 6-9: confirmed, reported, an accepted contract, else Backlog', () => {
-    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', { levels: ['reported', 'confirmed'], where: 'x' }]]) }))?.status).toBe('done')
-    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', { levels: ['reported'], where: 'x' }]]) }))?.status).toBe('done-reported')
-    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', { levels: ['unknown'], where: 'x' }]]) }))?.status).toBe('backlog')
-    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', { state: 'current', where: 'c' }]]) }))?.status).toBe('todo')
-    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', { state: 'proposed', where: 'c' }]]) }))?.status).toBe('backlog')
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', lv(['reported', 'confirmed'])]]) }))?.status).toBe('done')
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', lv(['reported'])]]) }))?.status).toBe('done-reported')
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', lv(['unknown'])]]) }))?.status).toBe('backlog')
+    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', ct('current')]]) }))?.status).toBe('todo')
+    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', ct('proposed')]]) }))?.status).toBe('backlog')
   })
   it('a board names its capability, or is it', () => {
-    const shipped = new Map([['pay', { levels: ['confirmed' as const], where: 'x' }]])
+    const shipped = new Map([['pay', lv(['confirmed'])]])
     expect(resolveStatus(board({ capability: 'pay' }), ctx({ shipped }))?.status).toBe('done')
   })
   it('without context/: by hand for To do, Backlog and In progress - never Done', () => {
@@ -150,9 +154,19 @@ describe('status: the nine rows (spec 20)', () => {
     expect(phaseOf('c', [{ name: 'anything', phase: 'lofi' }])).toBe(2)
     expect(phaseOf('c', [{ name: 'other' }])).toBeUndefined()
   })
-  it('what a published canvas may show: rows 5-9, no reason', () => {
-    expect(publishableStatus({ status: 'blocked', row: 3, capability: 'c', evidence: [], reason: 'x' })).toBeNull()
-    expect(publishableStatus({ status: 'in-progress', row: 5, fill: 2, capability: 'c', evidence: ['secret'] })).toEqual({ status: 'in-progress', fill: 2 })
+  it('what a published canvas may show: rows 5-9, from publishable evidence only, no reason', () => {
+    expect(publishableStatus({ status: 'blocked', row: 3, audience: 'publishable' })).toBeNull()
+    expect(publishableStatus({ status: 'in-progress', row: 5, fill: 2, audience: 'team' })).toBeNull()
+    expect(publishableStatus({ status: 'in-progress', row: 5, fill: 2, audience: 'publishable' })).toEqual({ status: 'in-progress', fill: 2 })
+  })
+  it('a status takes the strictest audience of its evidence', () => {
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', lv(['confirmed'], 'publishable')]]) }))?.audience).toBe('publishable')
+    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', ct('current', 'restricted')]]) }))?.audience).toBe('restricted')
+    expect(resolveStatus(board(), ctx())?.audience).toBe('publishable')
+  })
+  it('work on a shipped capability says it is the next version', () => {
+    const r = resolveStatus(board(), ctx({ plans: new Map([['checkout', pl('context/plans/v2.md')]]), shipped: new Map([['checkout', lv(['confirmed'])]]) }))
+    expect(r?.evidence[1]).toMatch(/this is the next version/)
   })
 })
 
@@ -255,14 +269,12 @@ describe('the dev API (spec 20)', () => {
 
 // ---------------------------------------------------------------------------------------------
 describe('publishing (spec 20): the projection', () => {
-  it('a row with no type takes the one the board type proposes; a stated type wins', () => {
+  it('an existing row keeps presenting as it always has - a board type only suggests, never changes it', () => {
     put('design/publish.json', { boards: { deck: 'read', pay: { max: 'comment' }, own: { max: 'read', type: 'design' } } })
-    const types: Record<string, string> = { deck: 'deck', pay: 'feature', own: 'deck' }
-    const p = resolvePolicy(root, { deck: {}, pay: {}, own: {} }, undefined, undefined, (n) => types[n] as never)
-    expect(p.boards.deck).toMatchObject({ type: 'slides', proposed: true })
-    expect(p.boards.pay).toMatchObject({ type: 'mix', proposed: true })
-    expect(p.boards.own).toMatchObject({ type: 'design' })
-    expect(p.boards.own.proposed).toBeUndefined()
+    const p = resolvePolicy(root, { deck: {}, pay: {}, own: {} })
+    expect(p.boards.deck).toEqual({ max: 'read', type: 'mix' })
+    expect(p.boards.pay).toEqual({ max: 'comment', type: 'mix' })
+    expect(p.boards.own).toEqual({ max: 'read', type: 'design' })
   })
 
   it('showStatus is a boolean', () => {
@@ -277,11 +289,20 @@ describe('publishing (spec 20): the projection', () => {
       boards: [
         { name: 'a', type: 'feature', status: { status: 'done' as const } },
         { name: 'b', type: 'feature', status: { status: 'blocked' as const, reason: 'secret' } },
-        { name: 'c', type: 'feature', status: { status: 'in-progress' as const, fill: 2 as const } },
+        { name: 'c', type: 'feature', status: { status: 'in-progress' as const, fill: 2 as const, audience: 'publishable' as const } },
       ],
     }
     const pub = publishedManifest(manifest, [], ['a', 'b', 'c'], true, new Set(['b', 'c']))
     expect(pub.boards).toEqual([{ name: 'a', type: 'feature' }, { name: 'b', type: 'feature' }, { name: 'c', type: 'feature', status: { status: 'in-progress', fill: 2 } }])
+  })
+
+  it('a status ships only from publishable evidence', () => {
+    const manifest = { frames: [], scenes: [], boards: [
+      { name: 'a', status: { status: 'todo' as const, audience: 'restricted' as const } },
+      { name: 'b', status: { status: 'done' as const, audience: 'publishable' as const } },
+    ] }
+    const pub = publishedManifest(manifest, [], ['a', 'b'], true, new Set(['a', 'b']))
+    expect(pub.boards).toEqual([{ name: 'a' }, { name: 'b', status: { status: 'done' } }])
   })
 
   it('the build fails when a stripped field survives', () => {
@@ -290,6 +311,9 @@ describe('publishing (spec 20): the projection', () => {
     expect(() => assertProjected({ ...base, boards: { a: { status: 'blocked' } } } as never, new Set())).toThrow(/would ship its "status"/)
     expect(() => assertProjected({ ...base, manifest: { frames: [], scenes: [], boards: [{ name: 'a', status: { status: 'done' } }] } } as never, new Set())).toThrow(/did not allow/)
     expect(() => assertProjected({ ...base, manifest: { frames: [], scenes: [], boards: [{ name: 'a', status: { status: 'blocked' } }] } } as never, new Set(['a']))).toThrow(/did not allow/)
+    expect(() => assertProjected({ ...base, meta: { a: { status: { status: 'done', reason: 'x' } } } } as never, new Set(['a']))).toThrow(/did not allow/)
+    expect(() => assertProjected({ ...base, meta: { a: { type: 'feature', capability: 'x' } } } as never, new Set(['a']))).toThrow(/beyond its type and status/)
+    expect(() => assertProjected({ ...base, meta: { a: { type: 'feature', status: { status: 'done', fill: 2 } } } } as never, new Set(['a']))).not.toThrow()
   })
 })
 
@@ -447,5 +471,129 @@ describe('marver context: init, index, check', () => {
     contextIndex(root)
     git('add', '-A')
     expect(pass().notes.find((n) => n.rule === 'map')?.what).toMatch(/1 source files neither mapped nor excluded, e.g. src\/b.ts/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('the review of 0.22: evidence, writes, the check', () => {
+  it('availability is a clause that claims it - not staging, not a negation', () => {
+    expect(availableLevels('staging only - `confirmed` by run 1234567')).toEqual([])
+    expect(availableLevels('nowhere - `confirmed` rolled back')).toEqual([])
+    expect(availableLevels('rolled back - `confirmed`; production - `reported`, `CHANGELOG.md:1`')).toEqual(['reported'])
+    expect(availableLevels('production - `confirmed` by run 1234567; staging - `confirmed`')).toEqual(['confirmed'])
+    expect(availableLevels('in the pipeline deploys - `confirmed` by runs 1234567, 2345678')).toEqual(['confirmed'])
+  })
+
+  it('knowledge work reads Done from a delivered record', () => {
+    expect(shippedRows('| Project | Delivered | Evidence |\n|---|---|---|\n| `memo` | to the board - `confirmed` - `x.md` | `confirmed` |\n').map((r) => [r.capability, r.levels])).toEqual([['memo', ['confirmed']]])
+  })
+
+  it('malformed evidence is Unknown, never a stale Done', () => {
+    put('context/shipped.md', '# A record with no capability table\n')
+    expect(readContextFacts(root).unreadable.get('*')).toMatch(/no Capability table/)
+    put('context/shipped.md', '| Capability | Available |\n|---|---|\n| `a` | production - `confirmed` - `x.md` |\n')
+    put('context/product/a.md', '---\ncapability: a\n---\n')
+    put('context/plans/b.md', '---\nstate: proposed\n')
+    const f = readContextFacts(root)
+    expect(f.unreadable.get('a')).toMatch(/state "" is not current/)
+    expect(f.unreadable.get('b')).toMatch(/never closes/)
+  })
+
+  it('CRLF files read the same', () => {
+    expect(frontMatter('---\r\nstate: current\r\n---\r\nbody\r\n').data).toEqual({ state: 'current' })
+    expect(tables('| A | B |\r\n|---|---|\r\n| 1 | 2 |\r\n')[0].rows[0].cells).toEqual(['1', '2'])
+  })
+
+  it('a tree write from a shell that predates types keeps the folder type, and fields it does not manage', async () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'features', order: 0, type: 'feature', color: 'teal' }] })
+    put('design/boards/pay.json', { version: 1, nodes: [] })
+    const b = await drive('GET', 'boards'), f = await drive('GET', 'folders')
+    const r = await drive('POST', 'boards/reorder', { protocol: 2, tree: [{ folder: 'features', items: ['pay'] }], base: { boards: { pay: b.json[0].sha256 }, folders: f.json.sha256 } })
+    expect(r.status).toBe(200)
+    expect(JSON.parse(read('design/boards/_folders.json')).folders).toEqual([{ color: 'teal', name: 'features', order: 0, type: 'feature' }])
+  })
+
+  it('folders add keeps every field of the entries it appends after', () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'mine', order: 0, color: 'teal', note: 'x' }] })
+    foldersAdd(root, ['decks'])
+    expect(JSON.parse(read('design/boards/_folders.json')).folders).toEqual([{ name: 'mine', order: 0, color: 'teal', note: 'x' }, { name: 'decks', order: 1, type: 'deck' }])
+  })
+})
+
+describe('the review of 0.22: the check', () => {
+  const pass = () => contextCheck(root)
+  const rules = (r = pass()) => r.failures.map((f) => f.rule)
+  beforeEach(() => { git('init', '-q'); contextInit(root) })
+
+  it('the audience check follows layouts and data files a build would carry, not whole scenes', () => {
+    put('design/scenes/app/home.tsx', 'export default () => null\n')
+    put('design/scenes/app/draft.tsx', "import x from '../../../context/private/x.md?raw'\nexport default () => x\n")
+    put('context/private/x.md', '---\naudience: restricted\n---\n')
+    put('design/boards/b.json', { version: 1, nodes: [{ frame: 'app/home' }] })
+    put('design/publish.json', { boards: { b: 'read' } })
+    expect(rules()).not.toContain('audience')                       // an unpublished sibling frame is not shipped
+    put('design/scenes/_layout.tsx', "import data from '../../context/data.json'\nexport default ({ children }) => children\n")
+    put('context/data.json', '{}')
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'audience', where: 'context/data.json' }))
+  })
+
+  it('a shipped record the canvas cannot read fails; so does a table without outer pipes', () => {
+    put('context/shipped.md', '# nothing\n\nCapability | Available\n---|---\n`a` | `unknown` - none\n')
+    expect(rules()).toEqual(expect.arrayContaining(['shipped-shape', 'table-format']))
+  })
+
+  it('a cited file must exist, with or without a line', () => {
+    put('context/shipped.md', read('context/shipped.md') + '| `a` | x | `unknown` - none | production - `confirmed` - `does-not-exist.md` | - |\n')
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'dead-citation', what: 'does-not-exist.md does not exist' }))
+  })
+
+  it('feedback closes on its resolution, not on a word in the quote', () => {
+    put('context/feedback/f.md', '| Item | What was raised | State | Resolved by |\n|---|---|---|---|\n| F1 | "it is `confirmed` broken" | shipped | nothing |\n')
+    expect(rules()).toContain('feedback-closed')
+    put('context/feedback/f.md', '| Item | What was raised | State | Resolved by |\n|---|---|---|---|\n| F1 | x | shipped | production - `confirmed` by run 1234567 |\n')
+    expect(rules()).not.toContain('feedback-closed')
+  })
+
+  it('the map: an invalid glob is a failure, not a crash; tests may be globs', () => {
+    put('context/map.json', { capabilities: { a: { paths: ['src/{a'] } }, excluded: [] })
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'map', what: expect.stringMatching(/invalid glob/) }))
+    put('test/a.test.ts', '1')
+    git('add', '-A')
+    put('context/map.json', { capabilities: { a: { paths: ['src/**'], tests: ['test/*.test.ts'] } }, excluded: [] })
+    contextIndex(root)
+    expect(rules()).not.toContain('map')
+  })
+
+  it('a pull request whose event cannot be read is cannot-determine, never a pass', () => {
+    expect(contextCheck(root, { prError: 'the event could not be read' }).exit).toBe(2)
+  })
+
+  it('a playbook with a dependency outside git is never current', () => {
+    put('deploy.yml', 'a\n')
+    commitAll('base')
+    const rev = git('rev-parse', 'HEAD').trim()
+    put('context/playbooks/release/PLAYBOOK.md', `---\nname: release\nlast_success: { revision: ${rev} }\ndepends_on:\n  - deploy.yml\n  - "service: the app on Railway"\n---\n`)
+    expect(pass().notes.find((n) => n.what.includes('release'))?.what).toMatch(/unknown - its files are unchanged since .*, 1 dependency outside git/)
+  })
+
+  it('a CRLF contract is read: its availability claim fails', () => {
+    put('context/product/pay.md', '---\r\nstate: current\r\n---\r\n\r\nIt went live on 3 May.\r\n')
+    expect(rules()).toContain('availability')
+  })
+
+  it('init --kind knowledge keeps a delivered record; without a canvas the conventions go to context/README.md', () => {
+    rmSync(join(root, 'context'), { recursive: true })
+    contextInit(root, 'knowledge')
+    expect(read('context/shipped.md')).toMatch(/\| Project \| Delivered \| Evidence \| Contract \|/)
+    expect(read('context/INDEX.md')).toMatch(/Was it delivered, to whom, and when\?/)
+    expect(read('context/README.md')).toMatch(/^<!-- marver:managed [0-9a-f]{64} [\s\S]*# Context - what the product is/)
+    expect(pass().exit).toBe(0)
+  })
+
+  it('init never truncates a file written meanwhile', () => {
+    rmSync(join(root, 'context'), { recursive: true })
+    put('context/INDEX.md', 'mine\n')
+    contextInit(root)
+    expect(read('context/INDEX.md')).toBe('mine\n')
   })
 })

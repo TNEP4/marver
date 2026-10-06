@@ -7,17 +7,18 @@
  * check read the files one way.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, normalize } from 'node:path'
 import { NAME } from './name.ts'
 import { pkgDir } from '../server/managed.ts'
 import { writeManaged } from './managed-write.ts'
-import { boardScenes } from '../server/board-status.ts'
+import { checkRealDirs } from '../server/boards.ts'
 import { readStatusWord } from '../shared/board-types.ts'
 import {
-  CITATION, EVIDENCE_COLUMN, GENERATED, LEVEL, capabilityTable, frontMatter, globRe, levelsIn, parseMap,
-  proseLines, tables, wordCount, type CapabilityMap,
+  CITATION, CITED_FILE, EVIDENCE_COLUMN, GENERATED, LEVEL, capabilityTable, frontMatter, globRe, hasGlob, isRecordTable, levelsIn,
+  looseTables, parseMap, proseLines, tables, wordCount, type CapabilityMap,
 } from '../shared/context.ts'
+import { publishGraph } from '../server/publish-graph.ts'
 
 export const INDEX_BUDGET = 800
 const CONTEXT = 'context'
@@ -27,19 +28,25 @@ const CONTEXT = 'context'
 
 /** Create context/ - never overwriting. The playbooks are managed: pristine ones take Marver's
  *  updates on a re-run, edited ones are kept and the new version staged for a merge. */
-export function contextInit(root: string): string[] {
+export function contextInit(root: string, kind: 'product' | 'knowledge' = 'product'): string[] {
   const created: string[] = []
   const templates = join(pkgDir(), 'templates')
   const name = projectName(root)
+  // context/ and its playbooks must be real directories inside the project - a symlink could send a
+  // write anywhere - and a file is created only where nothing is (exclusive: never truncating one
+  // another author wrote a moment ago)
+  const bad = checkRealDirs(root, [[join(root, CONTEXT), `${CONTEXT}/`], [join(root, CONTEXT, 'playbooks'), `${CONTEXT}/playbooks/`]])
+  if (bad) throw new Error(bad)
   const plain = (rel: string, body: string) => {
     const file = join(root, CONTEXT, rel)
-    if (existsSync(file)) return
     mkdirFor(file)
-    writeFileSync(file, body)
-    created.push(`${CONTEXT}/${rel}`)
+    try { writeFileSync(file, body, { flag: 'wx' }); created.push(`${CONTEXT}/${rel}`) }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e }
   }
-  plain('INDEX.md', readFileSync(join(templates, 'context', 'INDEX.md'), 'utf8').replaceAll('{{NAME}}', name))
-  plain('shipped.md', readFileSync(join(templates, 'context', 'shipped.md'), 'utf8'))
+  plain('INDEX.md', readFileSync(join(templates, 'context', 'INDEX.md'), 'utf8').replaceAll('{{NAME}}', name)
+    .replace('{{RECORD_QUESTION}}', kind === 'knowledge' ? 'Was it delivered, to whom, and when?' : 'Is it available, where, for whom, since when?'))
+  // knowledge work keeps a delivered record (spec 20: it reads Done from it) - same file, same rules
+  plain('shipped.md', readFileSync(join(templates, 'context', kind === 'knowledge' ? 'shipped-knowledge.md' : 'shipped.md'), 'utf8'))
   plain('map.json', readFileSync(join(templates, 'context', 'map.json'), 'utf8'))
   const pbRoot = join(templates, 'playbooks')
   for (const pb of readdirSync(pbRoot)) {
@@ -51,12 +58,32 @@ export function contextInit(root: string): string[] {
       })
     }
   }
-  // the shared entry point routes here: one line in the root AGENTS.md, appended once
+  // the conventions themselves: a canvas project has them at design/instructions/context.md (init
+  // installs them); a repository without one gets the same managed file as context/README.md
+  if (!existsSync(join(root, 'design', 'instructions', 'context.md'))) {
+    writeManaged({
+      base: join(root, CONTEXT), rel: 'README.md', body: readFileSync(join(templates, 'instructions', 'context.md'), 'utf8'), shown: `${CONTEXT}/README.md`,
+      stageDir: join(root, 'design', '.local', 'latest', CONTEXT), created, rerun: `\`npx ${NAME} context init\``,
+    })
+  }
+  // the shared entry point routes here: one line in the root AGENTS.md, appended once - atomically,
+  // and only onto the file as it was read (a concurrent edit is never written over)
   const agents = join(root, 'AGENTS.md')
   const route = 'Any question about the product - what is available, how it works, why, what is next: start at context/INDEX.md.'
-  const cur = existsSync(agents) ? readFileSync(agents, 'utf8') : null
-  if (cur === null) { writeFileSync(agents, `# ${name}\n\n${route}\n`); created.push('AGENTS.md') }
-  else if (!cur.includes('context/INDEX.md')) { writeFileSync(agents, cur.replace(/\n*$/, '') + `\n\n${route}\n`); created.push('AGENTS.md (updated)') }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const cur = existsSync(agents) ? readFileSync(agents, 'utf8') : null
+    if (cur !== null && cur.includes('context/INDEX.md')) break
+    if (cur === null) {
+      try { writeFileSync(agents, `# ${name}\n\n${route}\n`, { flag: 'wx' }); created.push('AGENTS.md'); break }
+      catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') continue; throw e }
+    }
+    const tmp = `${agents}.${process.pid}.${attempt}.tmp`
+    writeFileSync(tmp, cur.replace(/\n*$/, '') + `\n\n${route}\n`, { flag: 'wx' })
+    if (readFileSync(agents, 'utf8') !== cur) { rmSync(tmp, { force: true }); continue }
+    renameSync(tmp, agents)
+    created.push('AGENTS.md (updated)')
+    break
+  }
   return created
 }
 
@@ -94,7 +121,7 @@ export function contextIndex(root: string): { words: number; changed: boolean } 
 
 export interface Finding { rule: string; where: string; what: string }
 export interface CheckResult { exit: 0 | 1 | 2; failures: Finding[]; unsure: Finding[]; notes: Finding[] }
-export interface CheckOpts { base?: string; head?: string; body?: string }
+export interface CheckOpts { base?: string; head?: string; body?: string; /** a pull request's event that could not be read */ prError?: string }
 
 /** The supersession smells a current document never carries. */
 const SUPERSEDED = /wins where it differs|wins over sections?|overrides (section|§)|section \d+ wins|supersedes section|amended by section/i
@@ -115,7 +142,8 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   const note = (rule: string, what: string) => notes.push({ rule, where: '', what })
   const exists = (p: string) => existsSync(join(root, p))
   const read = (p: string) => readFileSync(join(root, p), 'utf8')
-  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  // a large monorepo's file list runs to megabytes: a deliberate ceiling, and NUL-separated paths
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 512 * 1024 * 1024 })
 
   if (!exists(CONTEXT)) {
     fail('context', `${CONTEXT}/`, `missing - run \`npx ${NAME} context init\``)
@@ -157,11 +185,22 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
     }
   }
 
+  let tracked: Set<string> | null = null
+  try { tracked = new Set(git('ls-files', '-z').split('\0').filter(Boolean)) } catch { cannot('git', 'git ls-files failed - not a repository?') }
+  /** A cited file: a path from the root, or a bare name some tracked file carries (`run.test.ts`). */
+  const citedExists = (f: string): boolean => {
+    if (exists(f)) return statSync(join(root, f)).isFile()
+    return !f.includes('/') && !!tracked && [...tracked].some((t) => t.endsWith(`/${f}`))
+  }
+
   // 3. the shipped record: a level in every evidence cell, a citation beside confirmed and reported
   const shippedPath = `${CONTEXT}/shipped.md`
   if (!exists(shippedPath)) fail('shipped', shippedPath, 'missing')
   else {
-    for (const t of tables(read(shippedPath))) {
+    const text = read(shippedPath)
+    if (!tables(text).some(isRecordTable)) fail('shipped-shape', shippedPath, 'no Capability (or Project) table with an Available (or Delivered) column - the canvas cannot read a status from it')
+    for (const n of looseTables(text)) fail('table-format', `${shippedPath}:${n}`, 'a table without outer pipes - start and end every row with |')
+    for (const t of tables(text)) {
       for (const r of t.rows) {
         const where = `${shippedPath}:${r.line}`
         if (!r.cells.some((c) => levelsIn(c).length)) fail('shipped-level', where, 'a row with no evidence level')
@@ -170,6 +209,11 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
             fail('shipped-level', where, `the ${t.header[i]} cell has no evidence level`)
           for (const m of c.matchAll(LEVEL))
             if (m[1] !== 'unknown' && !CITATION.test(c)) fail('shipped-citation', where, `\`${m[1]}\` with no citation in its cell`)
+          // a cited file must exist, with or without a line (lines are checked below)
+          if (levelsIn(c).length) for (const m of c.matchAll(CITED_FILE)) {
+            const f = m[1].replace(/^\.\//, '')
+            if (!m[2] && !citedExists(f)) fail('dead-citation', where, `${f} does not exist`)
+          }
         })
       }
     }
@@ -222,34 +266,44 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   }
 
   // 6. audiences: restricted never tracked; nothing but publishable reachable from a published board
-  let tracked: Set<string> | null = null
-  try { tracked = new Set(git('ls-files', '-z').split('\0').filter(Boolean)) } catch { cannot('audience', 'git ls-files failed - not a repository?') }
   if (tracked) for (const d of docs) if (d.data?.audience === 'restricted' && tracked.has(d.path)) fail('audience', d.path, 'restricted, yet tracked by git')
-  const reached = reachableFromPublish(root)
+  // what a build would carry - the build's own selection, layouts, providers and aliases included
+  const graph = publishGraph(root)
   let inContext = 0
-  for (const p of reached) {
-    if (!/\.mdx?$/.test(p)) continue
-    const fm = frontMatter(read(p)).data
-    const audience = (typeof fm?.audience === 'string' ? fm.audience : null) ?? (p.startsWith(`${CONTEXT}/`) ? 'team' : null)
-    if (p.startsWith(`${CONTEXT}/`)) inContext++
-    if (audience && audience !== 'publishable') fail('audience', p, `${audience} material reachable from design/publish.json`)
+  for (const p of graph.files) {
+    const md = /\.mdx?$/.test(p)
+    const declared = md ? frontMatter(read(p)).data?.audience : undefined
+    if (p.startsWith(`${CONTEXT}/`)) {
+      inContext++
+      // under context/ everything is team unless a markdown file says publishable - data files included
+      const audience = typeof declared === 'string' ? declared : 'team'
+      if (audience !== 'publishable') fail('audience', p, `${audience} material reachable from design/publish.json`)
+    } else if (typeof declared === 'string' && declared !== 'publishable') fail('audience', p, `${declared} material reachable from design/publish.json`)
   }
-  note('audience', `${reached.size} files reachable from design/publish.json; ${inContext} under ${CONTEXT}/`)
+  for (const u of graph.unresolved) {
+    if (/context\//.test(u.spec)) cannot('audience', `${u.from} imports ${u.spec}, which does not resolve - cannot tell what it would publish`)
+  }
+  note('audience', `${graph.files.size} files reachable from design/publish.json; ${inContext} under ${CONTEXT}/`)
 
   // 7. each kind's own states
   for (const d of docs) {
     if (d.path.startsWith(`${CONTEXT}/product/`) && d.data && !CONTRACT_STATES.includes(String(d.data.state)))
       fail('state', d.path, `state "${String(d.data.state)}" is not a contract state (${CONTRACT_STATES.join(', ')})`)
     if (!d.path.startsWith(`${CONTEXT}/feedback/`)) continue
+    for (const n of looseTables(d.text)) fail('table-format', `${d.path}:${n}`, 'a table without outer pipes - start and end every row with |')
     for (const t of tables(d.text)) {
       const si = t.header.findIndex((h) => /^state$/i.test(h))
       if (si < 0) continue
+      // what closed it: the "Resolved by" column when there is one, else the last - never a quote
+      let ri = t.header.findIndex((h) => /resolv/i.test(h))
+      if (ri < 0) ri = t.header.length - 1
       for (const r of t.rows) {
         const state = (r.cells[si] ?? '').replace(/`/g, '').trim()
         const where = `${d.path}:${r.line}`
         if (!FEEDBACK_STATES.includes(state)) fail('state', where, `"${state}" is not a feedback state (${FEEDBACK_STATES.join(', ')})`)
-        if (state === 'shipped' && !r.cells.some((c) => levelsIn(c).includes('confirmed')))
-          fail('feedback-closed', where, 'shipped without a `confirmed` availability where it was raised')
+        const resolution = r.cells[ri] ?? ''
+        if (state === 'shipped' && (ri === si || !levelsIn(resolution).includes('confirmed') || !CITATION.test(resolution)))
+          fail('feedback-closed', where, 'shipped without a cited `confirmed` availability in its resolution')
       }
     }
   }
@@ -258,7 +312,10 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   if (map) {
     for (const [cap, c] of Object.entries(map.capabilities)) {
       if (c.contract && !exists(c.contract)) fail('map', mapPath, `${cap}: contract ${c.contract} does not exist`)
-      for (const t of c.tests ?? []) if (!exists(t)) fail('map', mapPath, `${cap}: test ${t} does not exist`)
+      for (const t of c.tests ?? []) {
+        const found = hasGlob(t) ? (tracked ? [...tracked].some((f) => globRe(t).test(f)) : true) : exists(t)
+        if (!found) fail('map', mapPath, `${cap}: test ${t} ${hasGlob(t) ? 'matches no tracked file' : 'does not exist'}`)
+      }
     }
     if (tracked && map.source?.length) {
       const inSource = map.source.map(globRe)
@@ -283,19 +340,23 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   for (const d of docs.filter((x) => /\/playbooks\/[^/]+\/PLAYBOOK\.md$/.test(x.path))) {
     const ls = d.data?.last_success as { revision?: unknown } | undefined
     const rev = typeof ls === 'object' && ls ? ls.revision : undefined
-    const deps = ([] as unknown[]).concat(d.data?.depends_on ?? []).filter((x): x is string => typeof x === 'string' && !/^(service|account):/.test(x))
+    const all = ([] as unknown[]).concat(d.data?.depends_on ?? []).filter((x): x is string => typeof x === 'string')
+    const deps = all.filter((x) => !/^(service|account)\s*:/.test(x))
+    const outside = all.length - deps.length
     if (typeof rev !== 'string') { note('playbook', `${d.path}: unknown - no last_success.revision`); continue }
     try {
       git('cat-file', '-e', `${rev}^{commit}`)
       const changed = deps.length ? git('diff', '--name-only', rev, '--', ...deps).trim() : ''
-      note('playbook', `${d.path}: ${changed ? `stale - ${changed.split('\n').length} dependencies changed since ${rev}` : `current since ${rev} (working tree included)`}`)
+      // a service or an account cannot be read from git: the playbook is current only as far as its files say
+      note('playbook', `${d.path}: ${changed ? `stale - ${changed.split('\n').length} dependencies changed since ${rev}` : outside ? `unknown - its files are unchanged since ${rev}, ${outside} dependenc${outside === 1 ? 'y' : 'ies'} outside git (a service, an account) cannot be checked` : `current since ${rev} (working tree included)`}`)
     } catch { note('playbook', `${d.path}: unknown - ${rev} is not in this clone's history`) }
   }
 
   // 11. a pull request: a change to a contracted capability's code changes its contract, or says why not
+  if (opts.prError) cannot('pr', opts.prError)
   if (opts.base && map) {
     let changed: string[] | null = null
-    try { changed = git('diff', '--name-only', `${opts.base}...${opts.head ?? 'HEAD'}`).split('\n').filter(Boolean) }
+    try { changed = git('diff', '--name-only', '-z', `${opts.base}...${opts.head ?? 'HEAD'}`).split('\0').filter(Boolean) }
     catch { cannot('pr', `no merge base between ${opts.base} and ${opts.head ?? 'HEAD'} - fetch full history (fetch-depth: 0)`) }
     if (changed) {
       for (const [cap, c] of Object.entries(map.capabilities)) {
@@ -313,58 +374,18 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   return { exit: failures.length ? 1 : unsure.length ? 2 : 0, failures, unsure, notes }
 }
 
-/** Everything a canvas build carries, as repository paths: the published boards' scenes, the frames
- *  in them, and every relative import those pull in (markdown, `?raw`, images, data). */
-export function reachableFromPublish(root: string): Set<string> {
-  const exists = (p: string) => existsSync(join(root, p))
-  const seen = new Set<string>()
-  if (!exists('design/publish.json')) return seen
-  let names: string[] = []
-  try { names = Object.keys(JSON.parse(readFileSync(join(root, 'design', 'publish.json'), 'utf8')).boards ?? {}) } catch { return seen }
-  const scenes = new Set<string>()
-  for (const b of names) {
-    if (b === 'all-scenes') { for (const s of safeDirs(join(root, 'design', 'scenes'))) scenes.add(s); continue }
-    try { for (const s of boardScenes(JSON.parse(readFileSync(join(root, 'design', 'boards', `${b}.json`), 'utf8')))) scenes.add(s) } catch { /* absent */ }
-  }
-  const queue: string[] = []
-  const files = (dir: string): string[] => safeDirs(join(root, dir), true).map((f) => `${dir}/${f}`)
-  for (const s of scenes) if (/^[a-z0-9][a-z0-9-]*$/.test(s)) queue.push(...files(`design/scenes/${s}`))
-  while (queue.length) {
-    const p = queue.pop()!
-    if (seen.has(p) || !exists(p)) continue
-    seen.add(p)
-    if (!/\.(tsx?|jsx?|mjs|mdx?)$/.test(p)) continue
-    let text = ''
-    try { text = readFileSync(join(root, p), 'utf8') } catch { continue }
-    for (const m of text.matchAll(IMPORT)) {
-      const spec = (m[1] || m[2] || m[3] || '').replace(/\?raw$/, '')
-      if (!spec.startsWith('.')) continue
-      const base = normalize(join(dirname(p), spec))
-      for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) {
-        try { if (statSync(join(root, cand)).isFile()) { queue.push(cand); break } } catch { /* next */ }
-      }
-    }
-  }
-  return seen
-}
-
-/** A directory's entries - sub-directories, or with `filesOnly` its files - never through a symlink. */
-function safeDirs(dir: string, filesOnly = false): string[] {
-  try {
-    return readdirSync(dir).filter((n) => {
-      const st = lstatSync(join(dir, n))
-      return !st.isSymbolicLink() && (filesOnly ? st.isFile() : st.isDirectory())
-    })
-  } catch { return [] }
-}
-
 /** The pull request this ci run checks, from GitHub's event payload: base, head and body. */
 export function pullRequestFromEnv(env = process.env): CheckOpts | null {
-  if (env.GITHUB_EVENT_NAME !== 'pull_request' || !env.GITHUB_EVENT_PATH) return null
+  if (!/^pull_request(_target)?$/.test(env.GITHUB_EVENT_NAME ?? '')) return null
   try {
-    const ev = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))
-    return { base: ev.pull_request.base.sha, head: ev.pull_request.head.sha, body: ev.pull_request.body ?? '' }
-  } catch { return null }
+    const ev = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH ?? '', 'utf8'))
+    const pr = ev.pull_request
+    if (typeof pr?.base?.sha !== 'string' || typeof pr?.head?.sha !== 'string') throw new Error('no base and head in the event')
+    return { base: pr.base.sha, head: pr.head.sha, body: typeof pr.body === 'string' ? pr.body : '' }
+  } catch (e) {
+    // a pull request we cannot read is never a pass without the rule
+    return { prError: `the pull request event (GITHUB_EVENT_PATH) could not be read: ${(e as Error).message}` }
+  }
 }
 
 /** The human report. */
@@ -374,3 +395,7 @@ export function printCheck(r: CheckResult) {
   for (const f of r.failures) console.log(`✗ ${f.rule}  ${f.where}  ${f.what}`)
   console.log(`\ncontext check: ${r.exit === 0 ? 'pass' : r.exit === 1 ? `${r.failures.length} failing` : 'cannot determine'}`)
 }
+
+/** Where this repository's context conventions live - the canvas's instruction, else context/README.md. */
+export const conventionsPath = (root: string): string =>
+  existsSync(join(root, 'design', 'instructions', 'context.md')) ? 'design/instructions/context.md' : `${CONTEXT}/README.md`

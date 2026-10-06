@@ -271,10 +271,10 @@ be ON a published board - unlisted frames are excluded from the bundle at build
 time. Deploying the built canvas - gate password, the collaboration volume,
 accounts and invites - is its own phase: **instructions/publish.md**.
 
-A board's type proposes how it publishes when its `publish.json` row names no type (a deck as
-`slides`, a context board as `refs`, a project as `doc`, features and surfaces as `mix`). Its
-status, reason and capability never ship - unless the row says `"showStatus": true`, and then only
-the statuses that say nothing private (never Blocked, never a reason).
+When you add a board to `publish.json`, write the `type` its board type suggests - `slides` for a
+deck, `refs` for a context board, `doc` for a project (`marver build` notes any row that names none).
+A board's status, reason and capability never ship - unless the row says `"showStatus": true`, and
+then only a status drawn from `audience: publishable` evidence, never Blocked, never a reason.
 
 The published gate page shows the app's identity: `design/logo.svg` + the host
 package name (overridable via config `share`). If the app has no logo asset yet,

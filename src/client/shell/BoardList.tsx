@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
+import { useStore, HAS_ALL_SCENES, PUBLISHED, STATUS_AS_OF, fetchBoardTree, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
 import { StatusIcon, TypeIcon } from './board-icons.tsx'
 import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
@@ -32,7 +32,8 @@ const readClosed = (): Record<string, true> => { try { return JSON.parse(localSt
 function statusTip(m: BoardMeta): string {
   const st = m.status!
   const head = STATUS_LABEL[st.status] + (st.fill ? ` - ${PHASE_LABEL[st.fill]}` : '')
-  return [head, st.reason, ...(st.evidence ?? [])].filter(Boolean).join('\n')
+  const asOf = STATUS_AS_OF ? `as of ${new Date(STATUS_AS_OF).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` : null
+  return [head, st.reason, ...(st.evidence ?? []), asOf].filter(Boolean).join('\n')
 }
 
 type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string; parent: string | null }

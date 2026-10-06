@@ -5,7 +5,7 @@
  * the build can fail closed). The folder registry is read the same way: absent = no folders,
  * malformed = an error the human must fix, never a silently empty registry.
  */
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { hash } from './hash.ts'   // not manifest.ts: manifest imports this module
 import { FOLDERS_FILE, isBoardFile, parseFolders, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, type FolderRow } from '../shared/board-tree.ts'
@@ -108,35 +108,48 @@ export function readRegistry(boardsDir: string): Registry {
 }
 
 /** Append typed folders to the registry (spec 20: `init --kind`, `folders add`). Never renames,
- *  moves or retypes a folder that exists - a name already registered is skipped and reported.
- *  New folders rank after everything already at the root (ranked boards and folders alike).
- *  Atomic (temp + rename); a malformed registry is an error, never overwritten. */
+ *  moves or retypes a folder that exists - a name already registered is skipped and reported - and
+ *  never drops a field of an existing entry it does not manage. New folders rank after everything
+ *  already at the root. The write is compare-and-swap: the registry is re-read just before the
+ *  atomic rename, and a change since the first read (the shell's drag, another agent) starts the
+ *  append over from the new file. A malformed registry is an error, never overwritten. */
 export function addFolders(root: string, folders: { name: string; title?: string; type?: string }[]): { added: string[]; existing: string[] } {
   const dir = join(root, 'design', 'boards')
   const de = checkBoardsDir(root, dir)
   if (de) throw new Error(de)
-  const reg = readRegistry(dir)
-  if (reg.state === 'malformed') throw new Error(reg.error)
-  const rows: FolderRow[] = reg.state === 'ok' ? [...reg.folders] : []
-  const have = new Set(rows.map((f) => f.name))
-  const rootRanks = [
-    ...rows.filter((f) => !f.parent).map((f) => f.order),
-    ...listBoardFiles(dir).boards.map((b) => boardFields(b.json, (n): n is string => typeof n === 'string').folder ? undefined : (b.json as { order?: unknown } | null)?.order),
-  ].filter((o): o is number => typeof o === 'number' && Number.isFinite(o))
-  let next = rootRanks.length ? Math.max(...rootRanks) + 1 : 0
-  const added: string[] = [], existing: string[] = []
-  for (const f of folders) {
-    if (have.has(f.name)) { existing.push(f.name); continue }
-    rows.push({ name: f.name, order: next++, ...(f.title ? { title: f.title } : {}), ...(f.type ? { type: f.type } : {}) })
-    have.add(f.name)
-    added.push(f.name)
-  }
-  if (!added.length) return { added, existing }
   mkdirSync(dir, { recursive: true })
-  const version = rows.some((f) => f.parent) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
   const file = join(dir, FOLDERS_FILE)
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
-  writeFileSync(tmp, JSON.stringify({ version, folders: rows }, null, 2) + '\n', { flag: 'wx' })
-  renameSync(tmp, file)
-  return { added, existing }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const before = nodeExists(file) ? readFileSync(file, 'utf8') : null
+    const reg = readRegistry(dir)
+    if (reg.state === 'malformed') throw new Error(reg.error)
+    let raw: Record<string, unknown>[] = []
+    if (before !== null) {
+      const j = JSON.parse(before) as { folders?: unknown }
+      raw = Array.isArray(j.folders) ? (j.folders as Record<string, unknown>[]) : []
+    }
+    const have = new Set(raw.map((f) => f.name))
+    const rootRanks = [
+      ...raw.filter((f) => f.parent === undefined).map((f) => f.order),
+      ...listBoardFiles(dir).boards.map((b) => { const o = b.json as { folder?: unknown; order?: unknown } | null; return o?.folder ? undefined : o?.order }),
+    ].filter((o): o is number => typeof o === 'number' && Number.isFinite(o))
+    let next = rootRanks.length ? Math.max(...rootRanks) + 1 : 0
+    const added: string[] = [], existing: string[] = []
+    const rows = [...raw]
+    for (const f of folders) {
+      if (have.has(f.name)) { existing.push(f.name); continue }
+      rows.push({ name: f.name, order: next++, ...(f.title ? { title: f.title } : {}), ...(f.type ? { type: f.type } : {}) })
+      have.add(f.name)
+      added.push(f.name)
+    }
+    if (!added.length) return { added, existing }
+    const version = rows.some((f) => f.parent !== undefined) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
+    const tmp = `${file}.${process.pid}.${Date.now()}.${attempt}.tmp`
+    writeFileSync(tmp, JSON.stringify({ version, folders: rows }, null, 2) + '\n', { flag: 'wx' })
+    const now = nodeExists(file) ? readFileSync(file, 'utf8') : null
+    if (now !== before) { rmSync(tmp, { force: true }); continue }   // someone wrote it meanwhile: start over from theirs
+    renameSync(tmp, file)
+    return { added, existing }
+  }
+  throw new Error(`design/boards/${FOLDERS_FILE} kept changing while folders were added - try again`)
 }

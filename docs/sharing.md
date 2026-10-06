@@ -117,7 +117,7 @@ the read-privacy work also called "v2" further down.)
 
     "brand": {                               // v2 row: an object
       "max": "read",                         //   required - the ceiling ("read" | "comment")
-      "type": "design",                      //   optional - the artifact type (default: the board type's proposal, else "mix")
+      "type": "design",                      //   optional - the artifact type (default "mix")
       "open": "focus",                       //   optional - the landing view
       "lock": true,                          //   optional - freeze the landing view (needs "open")
       "showStatus": true                     //   optional - show a feature board's status (0.22)
@@ -129,16 +129,17 @@ the read-privacy work also called "v2" further down.)
 
 - **`max`** (`"read"` | `"comment"`) is the ceiling. This is the only field that
   affects *access*; everything else is presentation.
-- **`type`** is one of `doc`, `slides`, `design`, `sketch`, `refs`, `mix`. It
-  picks the board's default landing view and its card icon; nothing infers a type
-  from content. Absent, the board's own type proposes one (0.22: a `deck` board
-  publishes as `slides` - or `mix`, with a note, when it has no slide frames - a
-  `context` board as `refs`, a `project` as `doc`, `feature` and `surface` as
-  `mix`), else `mix`.
+- **`type`** is one of `doc`, `slides`, `design`, `sketch`, `refs`, `mix`
+  (default `mix`). It picks the board's default landing view and its card icon;
+  nothing infers a type from content. Since 0.22 a board's own type suggests one
+  - a `deck` board `slides`, a `context` board `refs`, a `project` `doc` - as a
+  note in `marver build`; the row decides.
 - **`showStatus`** (0.22) shows a feature or project board's status on the
   published canvas - only Backlog, To do, In progress, Done and Done reported,
-  never a blocked reason or the evidence behind it. Without it no status ships,
-  and a published board never carries its `status`, `reason` or `capability`.
+  only when every file it was read from says `audience: publishable`, never a
+  blocked reason or the evidence itself, and with the date the build read it.
+  Without it no status ships, and a published board never carries its
+  `status`, `reason` or `capability`.
 - **`open`** names the landing view: `canvas`, `board`, `present`, `focus`,
   or `slides`. `canvas` and `board` both land on the canvas; `present`,
   `focus`, and `slides` are their own modes. Absent means the type decides

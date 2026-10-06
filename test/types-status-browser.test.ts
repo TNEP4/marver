@@ -56,6 +56,10 @@ beforeAll(async () => {
   board('scratch', { order: 3 })
   put('context/shipped.md', SHIPPED('reported'))
   put('context/plans/pricing.md', '---\nstate: proposed\ncapability: pricing\n---\n# Pricing v1\n')
+  // a start board's frame renders context/INDEX.md - the file any edit to context/ may touch
+  put('context/INDEX.md', '---\naudience: team\n---\n\n# The index\n\nFirst version.\n')
+  put('design/scenes/front/index.tsx', `import text from '../../../context/INDEX.md?raw'\nexport const meta = { title: 'Index' }\nexport default () => <main><pre id="idx">{text}</pre></main>\n`)
+  board('front', { order: 4, nodes: [{ frame: 'front/index' }] })
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d })
   server.stderr?.on('data', (d) => { log += d })
@@ -124,5 +128,16 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await browser!.until(s, `document.querySelector('[data-board="scratch"] [data-type-icon]')?.getAttribute('data-type-icon') === 'feature'`, 15_000)
     expect(await browser!.eval(s, `document.querySelector('[data-board="scratch"] [data-status-icon]')?.getAttribute('data-status-icon')`)).toBe('backlog')
     board('scratch', { order: 3 })
+  })
+
+  skippable('an edit to a context file a frame renders updates the frame - the canvas never reloads', async () => {
+    const s = await browser!.tab({ width: 1400, height: 900 })
+    await browser!.go(s, `${ORIGIN}/#/b/front`)
+    const FRAME_TEXT = `Array.from(document.querySelectorAll('iframe')).map((f) => { try { return f.contentDocument?.getElementById('idx')?.textContent ?? '' } catch { return '' } }).join('|')`
+    await browser!.until(s, `${FRAME_TEXT}.includes('First version.')`, 30_000)
+    await browser!.eval(s, `window.__noReload = true`)
+    put('context/INDEX.md', '---\naudience: team\n---\n\n# The index\n\nSecond version.\n')
+    await browser!.until(s, `${FRAME_TEXT}.includes('Second version.')`, 20_000)
+    expect(await browser!.eval(s, `window.__noReload === true`)).toBe(true)
   })
 })
