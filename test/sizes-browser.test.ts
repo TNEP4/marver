@@ -267,6 +267,34 @@ describe('calm loading', () => {
     expect(await node(s, 'k-b')).toMatchObject({ x: 4000, y: 300 })
   }, 90_000)
 
+  it('Default with no device view to leave keeps the board\'s record of its heights', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    const laid = () => JSON.parse(readFileSync(join(root, 'design', 'boards', 'docs.json'), 'utf8')).laidOut
+    expect(Object.keys(laid() ?? {}).length).toBeGreaterThan(0)
+    await browser.eval(s, `window.__mvStore.getState().setDeviceView(null)`)   // 0, already in Default
+    await browser.until(s, `!window.__mvStore.getState().dirty`, 10_000)
+    await wait(300)
+    expect(Object.keys(laid() ?? {}).length).toBeGreaterThan(0)
+  }, 90_000)
+
+  it('removing a Doc from a recipe board is no height change: the dragged frame stays', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    await browser.eval(s, `window.__mvStore.getState().removeNode('k-c')`)
+    await browser.until(s, `!window.__mvStore.getState().dirty`, 10_000)
+    await browser.eval(s, `window.__mvStore.getState().switchBoard('other')`)
+    await browser.until(s, `window.__mvStore.getState().board === 'other'`, 10_000)
+    await browser.eval(s, `window.__mvStore.getState().switchBoard('docs')`)
+    await browser.until(s, `window.__mvStore.getState().board === 'docs'`, 10_000)
+    await wait(1500)
+    expect(await node(s, 'k-b')).toMatchObject({ x: 4000, y: 300 })
+  }, 90_000)
+
   it('a write whose answer was lost leaves nothing deduplicated against it - the next height still lands', async () => {
     if (!browser) return
     await closeAll()

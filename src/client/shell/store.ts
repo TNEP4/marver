@@ -354,16 +354,21 @@ async function flushHeights() {
 
 const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`))
 
-/** The Doc heights a layout was computed around - every auto content node whose height is known,
- *  as key:w:h, hashed (FNV-1a). A composed board saves it with its positions; a load whose known
- *  heights hash differently knows its rows were laid out around other heights - grown OR shrunk -
- *  while a drag, which changes no height, leaves it equal. */
-function sizeFingerprint(nodes: readonly Node[]): string {
-  const parts = nodes.filter((n) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)))
-    .map((n) => `${n.key}:${Math.round(n.w)}:${Math.round(n.h)}`).sort().join('|')
-  let h = 0x811c9dc5
-  for (let i = 0; i < parts.length; i++) { h ^= parts.charCodeAt(i); h = Math.imul(h, 0x01000193) }
-  return (h >>> 0).toString(36)
+/** The Doc heights a layout was computed around: each auto content node whose height is known, by
+ *  key. A composed board saves it with its positions (`laidOut`); a load where a node it names now
+ *  has another height knows its rows were laid out around other heights - grown OR shrunk. A drag
+ *  changes no height, and a node added or removed is no height change of the others. */
+export type LaidOut = Record<string, number>
+function sizeRecord(nodes: readonly Node[]): LaidOut {
+  const out: LaidOut = {}
+  for (const n of nodes) if (n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))) out[n.key] = Math.round(n.h)
+  return out
+}
+const readLaidOut = (v: unknown): LaidOut | null => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const out: LaidOut = {}
+  for (const [k, h] of Object.entries(v)) if (typeof h === 'number' && Number.isFinite(h)) out[k] = Math.round(h)
+  return out
 }
 
 function defaultSize(frame: FrameEntry) {
@@ -418,8 +423,8 @@ interface State {
   layout: BoardLayout | null          // lane-flow recipe, parsed; wins over sceneRows when both exist
   layoutRaw: unknown                  // the author's layout VERBATIM - save round-trips this, never the parse
   baseLayout: Record<string, { x: number; y: number; w?: number; h?: number }> | null   // snapshot taken on entering a device view; Default restores it exactly (auto content entries carry positions only - their sizes are measured)
-  laidOut: string | null             // a composed board's record of the Doc heights its positions were laid out around (sizeFingerprint)
-  baseLaidOut: string | null         // the free-form layout's laidOut, kept with baseLayout while a device view is up; Default restores both
+  laidOut: LaidOut | null            // a composed board's record of the Doc heights its positions were laid out around (sizeRecord)
+  baseLaidOut: LaidOut | null        // the free-form layout's laidOut, kept with baseLayout while a device view is up; Default restores both
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -579,7 +584,7 @@ export const useStore = create<State>((set, get) => {
    *  human dragged, at heights that did not change, stays where they put it. */
   const layoutStale = () => {
     const { nodes, laidOut } = get()
-    if (laidOut) return sizeFingerprint(nodes) !== laidOut
+    if (laidOut && Object.keys(laidOut).length) return nodes.some((n) => Object.prototype.hasOwnProperty.call(laidOut, n.key) && n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)) && Math.round(n.h) !== laidOut[n.key])
     // a board that never recorded them (an agent wrote it, an older Marver saved it): an overlap is
     // the one thing a size change does that a hand never meant
     const box = (n: Node) => ({ l: n.x, t: n.y, r: n.x + n.w, b: n.y + n.h + HEADER })
@@ -665,8 +670,8 @@ export const useStore = create<State>((set, get) => {
       let layout: BoardLayout | null = null
       let layoutRaw: unknown = undefined
       let baseLayout: State['baseLayout'] = null
-      let laidOut: string | null = null
-      let baseLaidOut: string | null = null
+      let laidOut: LaidOut | null = null
+      let baseLaidOut: LaidOut | null = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
       let loaded: { board: any; sha256: string } | 'fresh' | null
@@ -749,8 +754,8 @@ export const useStore = create<State>((set, get) => {
         layout = parseLayout(board?.layout, layoutWarn)
         if (layout && sceneRows) layoutWarn('board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
-        if (typeof board?.laidOut === 'string') laidOut = board.laidOut
-        if (typeof board?.baseLaidOut === 'string') baseLaidOut = board.baseLaidOut
+        laidOut = readLaidOut(board?.laidOut)
+        baseLaidOut = readLaidOut(board?.baseLaidOut)
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
       // AND sheds deleted ones. Tombstone cards are a curated-board concept.
@@ -817,7 +822,7 @@ export const useStore = create<State>((set, get) => {
       if ((!boardHash || needTidy || cramped) && nodes.length) {
         const placedAll = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn)
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
-        laidOut = sizeFingerprint(nodes)
+        laidOut = sizeRecord(nodes)
       }
       // dirty matches disk by construction - except when load-time pruning changed the
       // node set (or a cramped note re-ran the recipe); callers see dirty:true and
@@ -1261,7 +1266,7 @@ export const useStore = create<State>((set, get) => {
         // comes back with it (null = not known - the next load falls back to the overlap check)
         const laid = name
           ? { baseLaidOut: s.deviceView === null ? s.laidOut : s.baseLaidOut }
-          : { laidOut: s.baseLaidOut, baseLaidOut: null }
+          : s.baseLayout ? { laidOut: s.baseLaidOut, baseLaidOut: null } : { baseLaidOut: null }
         return { deviceView: name, dirty: true, baseLayout, nodes, ...laid }
       })
       if (name) get().runTidy()                      // restore must NOT tidy - it would destroy positions
@@ -1479,7 +1484,7 @@ export const useStore = create<State>((set, get) => {
           const p = placed.find((x) => x.key === n.key)
           return p ? { ...n, x: p.x, y: p.y } : n
         }),
-        laidOut: sizeFingerprint(nodes),
+        laidOut: sizeRecord(nodes),
         dirty: true,
       }))
       scheduleSave()
@@ -1554,7 +1559,7 @@ export const useStore = create<State>((set, get) => {
           ...(deviceView ? { deviceView } : {}),
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
           ...(get().layoutRaw !== undefined ? { layout: get().layoutRaw } : {}),
-          ...(get().laidOut && composed(get()) ? { laidOut: get().laidOut } : {}),
+          ...(get().laidOut && Object.keys(get().laidOut!).length && composed(get()) ? { laidOut: get().laidOut } : {}),
           // baseLayout entries for auto content nodes keep POSITIONS only - their
           // measured dimensions are transient and never reach the file
           ...(baseLayout ? {
