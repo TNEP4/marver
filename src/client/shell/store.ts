@@ -771,9 +771,13 @@ export const useStore = create<State>((set, get) => {
         try {
           // the active board's hash is freshest in the store (an autosave may have landed since
           // the sidebar looked); every other board's is the sidebar's
-          const base = active && get().boardHash ? get().boardHash : baseHash
+          const send = (base: string | null | undefined) => postOwner('boards/rename', { from, title, ...(base ? { baseHash: base } : {}) })
           let res: Response
-          try { res = await postOwner('boards/rename', { from, title, ...(base ? { baseHash: base } : {}) }) }
+          try {
+            res = await send(active && get().boardHash ? get().boardHash : baseHash)
+            // the open board changed on disk: reload it, then once more (setBoardStatus's reasoning)
+            if (res.status === 409 && active && await get().boot()) res = await send(get().boardHash)
+          }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
           if (!res.ok) return { ok: false, stale: res.status === 409, error: body?.error ?? `rename failed (${res.status})` }
@@ -799,9 +803,15 @@ export const useStore = create<State>((set, get) => {
           holdSaves()
         }
         try {
-          const base = active && get().boardHash ? get().boardHash : baseHash
+          const send = (base: string | null | undefined) => postOwner('boards/status', { name, status, ...(reason ? { reason } : {}), ...(base ? { baseHash: base } : {}) })
           let res: Response
-          try { res = await postOwner('boards/status', { name, status, ...(reason ? { reason } : {}), ...(base ? { baseHash: base } : {}) }) }
+          try {
+            res = await send(active && get().boardHash ? get().boardHash : baseHash)
+            // the open board changed on disk (an agent wrote it): its hash in the store is behind, and a
+            // retry with it would 409 again - reload the board (layout and hash together, nothing unsaved
+            // after the flush above), then try once more against what is on disk now
+            if (res.status === 409 && active && await get().boot()) res = await send(get().boardHash)
+          }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
           if (!res.ok) return { ok: false, stale: res.status === 409, error: body?.error ?? `status failed (${res.status})` }

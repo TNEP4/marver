@@ -190,6 +190,22 @@ describe('board types and status in the sidebar (spec 20)', () => {
     board('checkout', { folder: 'features', order: 0 })
   })
 
+  skippable('the open board changed on disk under it: a status and a rename still land, and keep the agent\'s edit', async () => {
+    const s = await browser!.tab({ width: 1400, height: 900 })
+    await browser!.go(s, `${ORIGIN}/#/b/pricing`)
+    await browser!.until(s, `window.__mvStore?.getState().board === 'pricing' && !!window.__mvStore.getState().boardHash`, 30_000)
+    // an agent rewrites the open board; the canvas has not reloaded it, so its hash is behind
+    board('pricing', { folder: 'features', order: 2, description: 'written by an agent' })
+    const r = await browser!.eval(s, `window.__mvStore.getState().setBoardStatus('pricing', 'paused')`)
+    expect(r).toEqual({ ok: true })
+    const after = JSON.parse(readFileSync(join(root, 'design', 'boards', 'pricing.json'), 'utf8'))
+    expect(after).toMatchObject({ status: 'paused', description: 'written by an agent' })
+    board('pricing', { folder: 'features', order: 2, description: 'and again' })
+    expect(await browser!.eval(s, `window.__mvStore.getState().renameBoard('pricing', 'Pricing v1')`)).toEqual({ ok: true })
+    expect(JSON.parse(readFileSync(join(root, 'design', 'boards', 'pricing.json'), 'utf8'))).toMatchObject({ title: 'Pricing v1', description: 'and again' })
+    board('pricing', { folder: 'features', order: 2 })
+  })
+
   skippable('an edit to a context file a frame renders updates the frame - the canvas never reloads', async () => {
     const s = await browser!.tab({ width: 1400, height: 900 })
     await browser!.go(s, `${ORIGIN}/#/b/front`)
