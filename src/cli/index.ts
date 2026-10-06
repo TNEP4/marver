@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { cac } from 'cac'
-import { readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
@@ -180,6 +180,8 @@ cli
         const made = boardsNew(resolve(opts.root), name, opts)
         for (const c of made) console.log(`  + ${c}`)
         // a feature's phase scenes start empty: a frame made in one shows once the board lists it
+        if (/\((feature|project)\b/.test(made[0] ?? '') && !existsSync(join(resolve(opts.root), 'context')))
+          console.log(`\n  note: no context/ yet - this board's status reads Backlog until there is one. To start it, tell your agent: "Set up our context."`)
         if (made.some((c) => c.endsWith('/_brief.md')) && !made.some((c) => /\.(tsx|jsx|html)$/.test(c)))
           console.log(`\n  next: a frame you make in these scenes shows on the board once it is pinned - a node in\n  design/boards/${name}.json (an agent does this as it works: design/AGENTS.md)`)
       } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates`)

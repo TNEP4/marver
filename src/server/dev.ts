@@ -1,7 +1,7 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createServer as netServer } from 'node:net'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
@@ -268,6 +268,14 @@ export async function dev(root: string, portFlag?: number) {
       console.log(`  instructions predate ${v ? NAME + ' ' + v : 'the installed version'} (${shown}) - run: npx ${NAME} init\n`)
     }
   } catch { /* a boot must never fail on an advisory check */ }
+
+  // feature and project boards with no context/ to read: every status says Backlog - say why, once, at boot
+  try {
+    if (!existsSync(join(root, 'context'))) {
+      const n = (await import('./manifest.ts')).statusBoards(root).length
+      if (n) console.log(`  ${n} feature/project board${n === 1 ? '' : 's'}, no context/ - every status reads Backlog. To start it, tell your agent: "Set up our context."\n`)
+    }
+  } catch { /* advisory */ }
 
   // comment sync loop: ~30s exchanges with the publish target. The
   // ticker ALWAYS runs and re-reads credentials each pass, so `comments connect`

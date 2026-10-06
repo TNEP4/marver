@@ -337,6 +337,10 @@ export function init(root: string, opts: InitOpts) {
   // letting the first session discover the gap.
   if (!noApp(host) && !existsSync(join(design, 'DESIGN.md')))
     console.log(`\n  note: design/DESIGN.md (the brand doc) does not exist yet - have your agent create it from the app's tokens (instructions/brand.md, Path A) to reach the idle state.`)
+  // context/ is the one piece of 0.22 nothing creates on its own - it starts with the human's answers.
+  // The run that upgrades a canvas is when to say so, in the words that start it.
+  if (!existsSync(join(root, 'context')))
+    console.log(`\n  note: no context/ yet - feature and project boards read Backlog until there is one, and nothing records what shipped. To start it, tell your agent: "Set up our context." (design/instructions/context.md)`)
   // Jam is only claimed ON when init actually WROTE the config: on a re-run the file that was
   // already there decides, and it may say `jam: false` or name an agent this machine lacks -
   // announcing detection would be announcing something that is not going to happen. `marver dev`
@@ -344,7 +348,8 @@ export function init(root: string, opts: InitOpts) {
   if (!jamAgent) console.log(`\n  note: Live Jam found no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and it arms itself on the next \`${NAME} dev\`.`)
   else if (created.includes('design/config.ts')) console.log(`\n  Live Jam is on (${jamAgent}): tag @${NAME} in a canvas comment and your agent does the work, then replies in the thread.`)
   console.log(`\n  next: npx ${NAME} dev   (or: npx ${NAME} canvas - same thing; canvas on http://localhost:${DEFAULTS.port} by default)\n`)
-  if (!noApp(host)) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)
+  // the first-session hand-off belongs to a canvas this run created - an upgrade is not a first session
+  if (!noApp(host) && created.includes('design/config.ts')) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)
 }
 
 /** The host's path aliases, re-rooted one level down for design/tsconfig.json.

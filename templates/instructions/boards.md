@@ -176,7 +176,9 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   capability is the board's name, or `"capability": "<slug>"`. You may decide only three things on
   the board: `"status": "archived"`, `"paused"`, or `"blocked"` with `"reason": "<one sentence>"`.
   **Never write `"status": "done"`** - Done comes from `context/shipped.md`, and the check fails it.
-  Without `context/` a board may also say `"todo"`, `"backlog"` or `"in-progress"` by hand.
+  **No `context/`? Offer the setup first** (instructions/context.md) - every feature board reads Backlog
+  until there is one. Only when the human declines may a board say `"todo"`, `"backlog"` or
+  `"in-progress"` by hand.
   A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
   and `reason`, so re-read a board before you edit it.
 - In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's

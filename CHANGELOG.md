@@ -4,6 +4,18 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## Unreleased
 
+### Changed
+
+- **A project without `context/` hears about it.** The AGENTS contract opens with it: before any
+  Discover, Shape or Wireframe work on a feature, an agent in a repository with no `context/` says
+  every feature board reads Backlog and offers the setup - once; the human's no stands for the session.
+  `instructions/boards.md` puts that offer before hand-written statuses. `npx marver boards`,
+  `npx marver init`, `npx marver boards new` for a feature or project, and `marver dev` at boot say it
+  too, with the words to use: "Set up our context." In 0.22.0 a routing row pointed at the
+  instruction, and an agent busy speccing a feature matched the row's other triggers and moved on.
+- `npx marver init` on an existing canvas no longer ends with the first-session hand-off - an
+  upgrade is not a first session.
+
 ### Docs
 
 - **"Set up our context" is the whole ask.** `instructions/context.md`'s setup is now the full recipe,

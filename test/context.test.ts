@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -399,6 +399,19 @@ describe('init --kind, folders add, boards new', () => {
     init(root, { mode: 'studio', demo: false, kind: 'knowledge' })
     expect(reg().map((f: { name: string }) => f.name)).toEqual(['context', 'mine', 'start-here', 'projects', 'feedback', 'archive'])
     expect(reg()[0]).toEqual({ name: 'context', order: 0, type: 'context' })
+  })
+
+  it('init says how to start context/ while there is none - in the words to give the agent - and stops once it exists', () => {
+    const said = () => { const log = vi.spyOn(console, 'log').mockImplementation(() => {}); try { init(root, { mode: 'studio', demo: false }); return log.mock.calls.flat().join('\n') } finally { log.mockRestore() } }
+    expect(said()).toMatch(/no context\/ yet - feature and project boards read Backlog[\s\S]*"Set up our context\."/)
+    contextInit(root)
+    expect(said()).not.toMatch(/no context\/ yet/)
+  })
+
+  it('the contract and boards.md put the context offer before feature work in a project without one', () => {
+    init(root, { mode: 'studio', demo: false })
+    expect(read('design/AGENTS.md')).toMatch(/## Before the method: a project with no `context\/`[\s\S]*Offer the setup[\s\S]*## The method/)
+    expect(read('design/instructions/boards.md')).toMatch(/No `context\/`\? Offer the setup first/)
   })
 
   it('folders add appends a module once, after everything at the root', () => {

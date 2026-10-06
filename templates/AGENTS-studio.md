@@ -5,6 +5,14 @@ Never drive or automate the canvas UI; read and write files only. (Starting
 `npx marver dev` so the human has a live canvas - first session, or on request -
 is the one allowed touch.)
 
+## Before the method: a project with no `context/`
+
+If this repository has no `context/` directory, then before any Discover, Shape or Wireframe work on
+a feature - and before answering what is live - say so in one sentence: every feature board's status
+reads Backlog, and nothing records what shipped. Offer the setup (instructions/context.md, "Setting
+up" - a few questions, then a draft from evidence). Offer once; the human's no stands for the
+session. Never set it up unasked.
+
 ## The method (binding)
 
 Design work moves through phases. BEFORE working in a phase, read its instruction

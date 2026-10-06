@@ -306,6 +306,11 @@ function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
   return { ...(folders.length ? { folders } : {}), ...(boards.length ? { boards } : {}) }
 }
 
+/** The boards that wear a status (feature and project, by their resolved type) - for the dev
+ *  server's word at boot when there is no context/ to read it from. */
+export const statusBoards = (root: string): string[] =>
+  (scanBoards(root).boards ?? []).filter((b) => b.type === 'feature' || b.type === 'project').map((b) => b.name)
+
 export function scanFrames(root: string, project?: ProjectInfo): Manifest {
   const design = join(root, 'design')
   const frames: FrameEntry[] = []

@@ -62,6 +62,10 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   if (landing) console.log(`\nlanding board: ${landing}`)
   console.log(`registry: ${reg.state === 'ok' ? 'design/boards/_folders.json' : 'none (no empty or ranked folders yet)'}`)
   if (skipped.length) console.log(`skipped (not regular files): ${skipped.join(', ')}`)
+  // the listing is where an agent looks: a feature board reading Backlog says why, and what to offer
+  const withStatus = [...notes.values()].filter((n) => n.status).length
+  if (withStatus && !existsSync(join(root, 'context')))
+    console.log(`\nno context/ yet - every feature and project board reads Backlog. Offer the human the setup (design/instructions/context.md) before the next feature board: "Set up our context."`)
 }
 
 /** `marver boards new <name>` - a board in its type's starting layout (spec 20): a feature's three
