@@ -6,6 +6,7 @@ import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, rendersDoc, serializeSizes, validEntry } from '../src/server/sizes.ts'
 import { anchorNode, anchoredCamera } from '../src/client/shell/canvas/anchor.ts'
+import { contentWidthOf } from '../src/server/manifest.ts'
 
 /**
  * Calm loading: content-frame heights committed in design/boards/_sizes.json (sizes.ts) so a board
@@ -67,7 +68,17 @@ describe('the size cache (sizes.ts)', () => {
       // a source caught mid-write (empty) gets the benefit of the doubt
       writeFileSync(join(root, 'design/scenes/docs/spec.tsx'), '')
       expect(measuringFrames(root, FRAMES).has('docs/spec')).toBe(true)
+      // a bare Md inside a _layout that renders the Doc measures - at any level of the chain
+      writeFileSync(join(root, 'design/scenes/_layout.tsx'), `import { Doc } from '@marver-design/marver/content'\nexport default ({ children }) => <Doc>{children}</Doc>\n`)
+      expect(measuringFrames(root, FRAMES).has('docs/bare')).toBe(true)
     } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('the width a Doc measures at follows an aliased import too (manifest.ts)', () => {
+    expect(contentWidthOf(`import { Doc as Page } from '@marver-design/marver/content'\nexport default () => <Page layout="wide" />\n`)).toBe(1280)
+    expect(contentWidthOf(`import * as C from '@marver-design/marver/content'\nexport default () => <C.Doc layout="wide" />\n`)).toBe(1280)
+    expect(contentWidthOf(`import { Doc } from '@marver-design/marver/content'\nexport default () => <Doc layout="wide" />\n`)).toBe(1280)
+    expect(contentWidthOf(`import { Doc } from '@marver-design/marver/content'\nexport default () => <Doc />\n`)).toBe(760)
   })
 
   it('writes one sorted entry per line, so a changed height is a one-line diff', () => {

@@ -113,8 +113,18 @@ export function extractMeta(src: string): FrameMeta {
  *  <Chart> is still a screen (device height, no document measuring), never a spec. Returns
  *  the inferred intent + natural width, or null for UI frames. */
 const CONTENT_IMPORT = new RegExp(`from\\s+['"]${PKG}/content['"]`)
-const WIDE_DOC = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/
-export const contentWidthOf = (src: string): number => (WIDE_DOC.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document)
+/** The JSX names a Doc renders under in this source: `Doc`, an alias (`import { Doc as Page }`),
+ *  a namespace's member (`import * as C` -> `C.Doc`). Read from the code only (codeOnly). */
+export function docTags(code: string): string[] {
+  const tags = ['Doc']
+  for (const m of code.matchAll(/\bDoc\s+as\s+([A-Za-z_$][\w$]*)/g)) tags.push(m[1])
+  for (const m of code.matchAll(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from/g)) tags.push(`${m[1]}.Doc`)
+  return tags
+}
+export const tagPattern = (tag: string): string => tag.replace(/[.$]/g, '\\$&')
+export const contentWidthOf = (src: string): number =>
+  docTags(codeOnly(src)).some((t) => new RegExp(`<${tagPattern(t)}\\b[^>]*\\blayout\\s*=\\s*["']wide["']`).test(src))
+    ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document
 /** The source with comments, template literals and CODE-shaped strings blanked (a JSX
  *  expression string `{'<Diagram>'}`, an attribute value), so a tag name quoted in an example
  *  or a comment never counts as a rendered element. Prose is left alone: JSX text has

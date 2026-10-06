@@ -43,7 +43,7 @@ async function until<T>(fn: () => T | undefined | false, ms = 30_000): Promise<T
 
 // installed in the shell BEFORE it loads: every sh:measure the frames post, and every distinct layout
 const RECORDER = `(() => {
-  if (window.parent !== window) return
+  if (window.parent !== window) { window.__lod = 0; document.addEventListener('mv-lod-settled', () => { window.__lod++ }, true); return }
   window.__measures = []; window.__layout = []
   addEventListener('message', (e) => { const d = e.data; if (d && d.type === 'sh:measure') window.__measures.push({ frame: d.frame, h: d.height, settled: d.settled }) }, true)
   let last = ''
@@ -146,6 +146,7 @@ describe('calm loading', () => {
     // the image is IN the first report: a square at the column's width, not the 2:1 blank canvas
     const img = await browser.eval(s, `(() => { const f = document.querySelector('[data-node="k-c"] iframe'); const c = f.contentDocument.querySelector('canvas.mv-img-el'); return { w: c.getBoundingClientRect().width, h: c.getBoundingClientRect().height, aspect: c.style.aspectRatio } })()`)
     expect(img.aspect).toBe('256 / 256')
+    expect(await browser.eval(s, `document.querySelector('[data-node="k-c"] iframe').contentWindow.__lod`), 'a canvas image says when its first decode is done').toBe(1)
     expect(Math.abs(img.w - img.h)).toBeLessThan(2)
     expect(got['docs/c@760']).toBeGreaterThan(got['docs/b@760'] + img.h - 2)
   }, 90_000)

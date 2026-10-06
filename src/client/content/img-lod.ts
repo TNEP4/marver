@@ -51,6 +51,12 @@ function pick(devicePx: number): number {
   return 0           // native decode - only past the top bucket
 }
 
+/** The event a canvas image fires when its FIRST decode is done, landed or failed. A canvas fed by
+ *  fetch + createImageBitmap fires no DOM load/error of its own; the Doc listens for this one to
+ *  know its height is final (content/index.tsx) - after its poll has stopped, too. */
+export const LOD_SETTLED = 'mv-lod-settled'
+const firstDone = (canvas: HTMLCanvasElement) => queueMicrotask(() => canvas.dispatchEvent(new Event(LOD_SETTLED, { bubbles: true })))
+
 async function decode(it: Item, bucket: number): Promise<void> {
   const token = ++it.token
   let bmp: ImageBitmap
@@ -61,7 +67,7 @@ async function decode(it: Item, bucket: number): Promise<void> {
       : await createImageBitmap(blob)
   } catch {                                                // network / decode failure: keep the last frame
     // a first decode that failed will not pin an aspect: the Doc must not wait on it to settle
-    if (!it.canvas.style.aspectRatio) it.canvas.dataset.mvLod = 'failed'
+    if (!it.canvas.style.aspectRatio) { it.canvas.dataset.mvLod = 'failed'; firstDone(it.canvas) }
     return
   }
   if (it.token !== token || !it.canvas.isConnected) { bmp.close(); return }   // superseded or unmounted
@@ -72,7 +78,7 @@ async function decode(it: Item, bucket: number): Promise<void> {
   // the layout box would shift a hair on every resolution switch - the doc reflows, the content frame
   // auto-resizes, and the frame "jiggles" as you zoom (and the reflow storm helped starve frames to a
   // ready-timeout). A fixed aspect-ratio makes the box identical across buckets: only pixels sharpen.
-  if (!it.canvas.style.aspectRatio) it.canvas.style.aspectRatio = `${bmp.width} / ${bmp.height}`
+  if (!it.canvas.style.aspectRatio) { it.canvas.style.aspectRatio = `${bmp.width} / ${bmp.height}`; firstDone(it.canvas) }
   it.canvas.width = bmp.width; it.canvas.height = bmp.height
   ctx.transferFromImageBitmap(bmp)                         // zero-copy; consumes + closes the bitmap
   it.bucket = bucket

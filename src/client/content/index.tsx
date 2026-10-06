@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useInSlide } from './slide.tsx'
 import { CONTENT_WIDTH } from '../const.ts'
 import { assetUrl, renderMarkdown, sanitizeMarkdownHtml, FAMILIES } from './md.ts'
-import { lodSupported, registerLodImage } from './img-lod.ts'
+import { LOD_SETTLED, lodSupported, registerLodImage } from './img-lod.ts'
 
 // D3: family color classes for inline Md (`:blue[...]`), theme-aware (frames carry .dark + [data-theme])
 const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
@@ -115,11 +115,13 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     const onAsset = () => { if (reported && !lastSettled && poll === undefined) poll = setTimeout(check, 50) }
     el.addEventListener('load', onAsset, true)
     el.addEventListener('error', onAsset, true)
+    el.addEventListener(LOD_SETTLED, onAsset)    // a canvas image's first decode, landed or failed (img-lod.ts)
     document.fonts?.addEventListener?.('loadingdone', onAsset)
     check()
     return () => {
       ro.disconnect(); clearTimeout(t); clearTimeout(poll)
       el.removeEventListener('load', onAsset, true); el.removeEventListener('error', onAsset, true)
+      el.removeEventListener(LOD_SETTLED, onAsset)
       document.fonts?.removeEventListener?.('loadingdone', onAsset)
     }
   }, [layout])
