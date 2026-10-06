@@ -346,7 +346,9 @@ interface State {
   imagePulse: number                                       // bumps on each successful image copy - same flash, the images-square icon
   imageBusy: boolean                                       // a copy-as-image render is in flight (one at a time)
 
-  boot(): Promise<boolean>
+  /** (re)load the open board from disk. `mayCommit`, when given, is asked again at the moment the
+   *  reload would land - a caller's own conditions (a status write's: nothing moved since its flush) */
+  boot(mayCommit?: () => boolean): Promise<boolean>
   applyManifest(m: Manifest): void
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
@@ -702,7 +704,7 @@ export const useStore = create<State>((set, get) => {
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
-    async boot() {
+    async boot(mayCommit) {
       const seq = ++loadSeq
       const boardName = get().board
       const revAtStart = editRev, scenesAtStart = scenesRev
@@ -710,7 +712,7 @@ export const useStore = create<State>((set, get) => {
       if (seq !== loadSeq) return false        // a newer load superseded this one
       if (!next) { get().toast(`board "${boardName}" failed to load`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
-      if (get().board !== boardName || editRev !== revAtStart || get().gesture) return false   // ...or one is mid-drag
+      if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
@@ -778,7 +780,7 @@ export const useStore = create<State>((set, get) => {
           try {
             res = await send(active && get().boardHash ? get().boardHash : baseHash)
             // the open board changed on disk: reload it, then once more (setBoardStatus's reasoning)
-            if (res.status === 409 && mayReload() && await get().boot()) res = await send(get().boardHash)
+            if (res.status === 409 && mayReload() && await get().boot(mayReload)) res = await send(get().boardHash)
           }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
@@ -816,7 +818,7 @@ export const useStore = create<State>((set, get) => {
             // the open board changed on disk (an agent wrote it): its hash in the store is behind, and a
             // retry with it would 409 again - reload the board (layout and hash together) when nothing
             // has changed here since the flush, then try once more against what is on disk now
-            if (res.status === 409 && mayReload() && await get().boot()) res = await send(get().boardHash)
+            if (res.status === 409 && mayReload() && await get().boot(mayReload)) res = await send(get().boardHash)
           }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))

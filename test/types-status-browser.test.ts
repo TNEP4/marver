@@ -245,6 +245,19 @@ describe('board types and status in the sidebar (spec 20)', () => {
     board('pricing', { folder: 'features', order: 2 })
   })
 
+  skippable('the autosave\'s own conflict path is unchanged: a 409 mid-drag still reloads, nothing stays dirty', async () => {
+    const s = await browser!.tab({ width: 1400, height: 900 })
+    await browser!.go(s, `${ORIGIN}/#/b/pricing`)
+    await browser!.until(s, `window.__mvStore?.getState().board === 'pricing' && !!window.__mvStore.getState().boardHash && !window.__mvStore.getState().dirty`, 30_000)
+    board('pricing', { folder: 'features', order: 2, description: 'the agent, mid-drag' })               // the store's hash is now behind
+    // an edit schedules the autosave; a drag starts before it fires; the save meets the 409
+    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); const n = st.nodes[0]; st.moveSelectedBy(40, 0, { [n.key]: { x: n.x, y: n.y } }); window.__mvStore.getState().setGesture(true) })()`)
+    await browser!.until(s, `!window.__mvStore.getState().dirty`, 15_000)                              // reloaded - disk wins, as it always has
+    await browser!.eval(s, `window.__mvStore.getState().setGesture(false)`)
+    expect(JSON.parse(readFileSync(join(root, 'design', 'boards', 'pricing.json'), 'utf8')).description).toBe('the agent, mid-drag')
+    board('pricing', { folder: 'features', order: 2 })
+  })
+
   skippable('an edit to a context file a frame renders updates the frame - the canvas never reloads', async () => {
     const s = await browser!.tab({ width: 1400, height: 900 })
     await browser!.go(s, `${ORIGIN}/#/b/front`)
