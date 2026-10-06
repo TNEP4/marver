@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createActivity, type Activity } from './jam/activity.ts'
+import { listBoardFiles } from './boards.ts'
 
 /** One per process - the dev server, the jam daemon, and the API all share it. */
 export const workActivity: Activity = createActivity()
@@ -41,4 +42,21 @@ export function readDevInfo(root: string): { port: number; token: string } | nul
     const v = JSON.parse(readFileSync(infoPath(root), 'utf8'))
     return typeof v?.port === 'number' && typeof v?.token === 'string' ? { port: v.port, token: v.token } : null
   } catch { return null }
+}
+
+/** The boards that show any of these frames - what the sidebar lights while an agent works (the
+ *  board's type icon shimmers): every board pinning one, every auto board, and all-scenes, which
+ *  holds every frame. Read from the files at each change of the working set - rare, and cheap. */
+export function boardsShowing(root: string, frames: string[]): string[] {
+  if (!frames.length) return []
+  const lit = new Set(frames)
+  const out = new Set<string>(['all-scenes'])
+  try {
+    for (const b of listBoardFiles(join(root, 'design', 'boards')).boards) {
+      const j = b.json as { auto?: unknown; nodes?: unknown } | null
+      const pins = Array.isArray(j?.nodes) && j.nodes.some((n) => !!n && typeof n === 'object' && lit.has((n as { frame?: unknown }).frame as string))
+      if (j?.auto === true || pins) out.add(b.name)
+    }
+  } catch { /* a missing or unreadable boards dir lights all-scenes alone */ }
+  return [...out]
 }

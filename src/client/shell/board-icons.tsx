@@ -35,6 +35,8 @@ const RED = '#e5484d'
 // done is the content palette's green (Apple's systemGreen, per theme - styles.css), the green Marver
 // keeps for done alone; archived is Apple's brown - a cardboard box - per theme as well
 const GREEN = 'var(--status-done, #34c759)'
+// Building is the accent: yellow is being shaped, blue is being built, green is shipped
+const BLUE = 'var(--accent, #0088ff)'
 const ARCHIVED = 'var(--status-archived, #956d51)'
 
 /** A pie wedge of the ring's interior, `f` of the way round from twelve o'clock. */
@@ -45,7 +47,8 @@ const pie = (f: number, r = 3.4) => {
 }
 
 /** A status glyph, on one rule: a status still open is an outline in its colour (a ring - In progress
- *  fills it by phase: a quarter at spec, half at lo-fi, three quarters at hi-fi); a settled one is
+ *  fills it by phase: a quarter at spec, half at lo-fi, three quarters at hi-fi; Building is the code
+ *  inside a blue ring, the design agreed and the code underway); a settled one is
  *  filled - Done a green disc, Archived a solid archive box (no ring: it is out of the flow, not a
  *  step in it). Done, reported stays an outline: a written claim is not settled until confirmed. */
 export function StatusIcon({ status, fill, size = 14 }: { status: Status; fill?: Phase; size?: number }) {
@@ -58,6 +61,7 @@ export function StatusIcon({ status, fill, size = 14 }: { status: Status; fill?:
       {status === 'backlog' && ring(GRAY, '1.3 1.75')}
       {status === 'todo' && ring(GRAY)}
       {status === 'in-progress' && (<>{ring(YELLOW)}{fill && <path d={pie(fill / 4)} fill={YELLOW} />}</>)}
+      {status === 'building' && (<>{ring(BLUE)}<path d="M5.6 4.9 L3.8 7 L5.6 9.1 M8.4 4.9 L10.2 7 L8.4 9.1" fill="none" stroke={BLUE} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></>)}
       {status === 'blocked' && (<>{ring(RED)}<circle cx="7" cy="7" r="3.2" fill={RED} /></>)}
       {status === 'done' && (<>
         <mask id={cut}><rect width="14" height="14" fill="#fff" /><path d="M4.3 7.2 L6.2 9.1 L9.8 5.2" fill="none" stroke="#000" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></mask>
@@ -72,4 +76,13 @@ export function StatusIcon({ status, fill, size = 14 }: { status: Status; fill?:
       </>)}
     </svg>
   )
+}
+
+/** A sidebar icon while an agent works on what it holds (spec 20, the live signal): accent blue, with
+ *  a highlight sweeping across it - the canvas's working shimmer in miniature, so the sidebar and the
+ *  frames read as one signal. The highlight is the same icon again, masked to a moving band; it stops
+ *  for reduced motion, leaving the blue. Automatic only - it lasts exactly as long as the work. */
+export function LiveIcon({ live, children }: { live: boolean; children: ReactNode }) {
+  if (!live) return <>{children}</>
+  return <span className="sh-live-ic" data-live-icon>{children}<span className="glint" aria-hidden>{children}</span></span>
 }

@@ -475,8 +475,18 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* the settled statuses' fills, one value per theme: done is the content palette's green (Apple's
    systemGreen); archived is Apple's brown - its increased-contrast value on light, its default on
    dark, where the increased-contrast one turns peach - so it reads as the same brown box in both */
-.sh-app { --status-done: #34c759; --status-archived: #956d51 }
-.sh-app.dark { --status-done: #30d158; --status-archived: #b78a66 }
+.sh-app { --status-done: #34c759; --status-archived: #956d51; --live-glint: #b3dbff }
+.sh-app.dark { --status-done: #30d158; --status-archived: #b78a66; --live-glint: #d6ecff }
+/* the live signal (spec 20): an agent working on what a sidebar row holds - its icon accent blue, a
+   highlight sweeping across it. The glint is the icon again, masked to a band that travels left to right */
+.sh-panel .it .sh-live-ic { position: relative; display: inline-flex; flex: none }
+.sh-panel .it .sh-live-ic[data-live-icon] svg { color: var(--glass-accent) }
+.sh-panel .it .sh-live-ic .glint { position: absolute; inset: 0; display: inline-flex; pointer-events: none;
+  -webkit-mask-image: linear-gradient(100deg, transparent 38%, #000 50%, transparent 62%); mask-image: linear-gradient(100deg, transparent 38%, #000 50%, transparent 62%);
+  -webkit-mask-size: 300% 100%; mask-size: 300% 100%; animation: sh-live-glint 1.8s ease-in-out infinite }
+.sh-panel .it .sh-live-ic[data-live-icon] .glint svg { color: var(--live-glint) }
+@keyframes sh-live-glint { from { -webkit-mask-position: 100% 0; mask-position: 100% 0 } to { -webkit-mask-position: 0 0; mask-position: 0 0 } }
+@media (prefers-reduced-motion: reduce) { .sh-panel .it .sh-live-ic .glint { display: none } }
 .sh-panel .it.board .st svg, .sh-panel .it.board.cur .st svg { color: inherit; margin: 0 }
 /* drag-to-reorder: a grab cursor, the lifted row dims, and a 2px accent rule marks the
    drop seam above or below the hovered row */

@@ -11,14 +11,28 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   the full-screen focus view. `npx marver work done` prints it for the frames it clears, and the
   AGENTS contract has every reply that created or changed frames end with it, so on a board of fifty
   frames you click once and you are looking at the change. Agents used to know only the bare board
-  link, or improvise a focus link that had no way back to the canvas. Links read
+  link, or improvise a focus link that had no way back to the canvas; asked to change a form, Claude
+  Code and Codex now both end with the link to the frames they touched. Links read
   `#/b/<board>?f=<scene/frame>` or `?s=<scene>` ([Boards and folders](docs/boards-and-folders.md#links-to-frames)).
 - **Your agent leaves notes where it needs you.** `npx marver comments new <scene/frame> --body "..."`
   pins a note on a frame, or on the element showing the words given with `--on`. The contract keeps
-  it for what needs you - a decision, a judgment call it took, a change you would not spot - never a
-  changelog. Notes post as Marver and raise the bottom-right pill with a ping; reply in one and it is
+  it for what needs you - a question or a decision about that frame, a judgment call it took, a change
+  you would not spot - never a changelog: asked to restyle a form, Claude Code left its one open
+  question as a note on the wireframe it had not touched. Notes post as Marver and raise the bottom-right pill with a ping; reply in one and it is
   a Live Jam job, no tag needed ([Live Jam](docs/live-jam.md#notes-from-your-chat-agent)). Notes stay
   on your machine for now, like Live Jam's replies.
+- **Building - the stretch between design and shipped.** Feature and project boards gain a status
+  between In progress and Done: the design is agreed, the code is underway - the code glyph in
+  accent blue (yellow is being shaped, blue is being built, green is shipped). In progress could not
+  tell drawing the hi-fi from writing the code, the longest stretch of all. With `context/` it is
+  read from the open plan, `stage: build`: the agent writes it as it starts implementing, and the
+  sidebar's Change status picker writes it too (In progress takes it back off; no plan, and the
+  picker says Building needs one). Without `context/` it is set on the board like In progress. Done
+  still comes only from the shipped record ([Boards and folders](docs/boards-and-folders.md#status)).
+- **The sidebar shows an agent at work.** While an agent works on a board's frames (`marver work
+  start`, or a Live Jam job), the board's icon turns accent blue with a highlight sweeping across
+  it - the frames' working shimmer in miniature - and so does a closed folder holding it. Nobody sets
+  it: it lasts exactly as long as the work.
 
 ### Changed
 
@@ -37,6 +51,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Fixed
 
+- Live Jam no longer turns an untagged reply you wrote before a thread reached Marver into a job once
+  Marver answers it - a follow-up is one written after Marver joined the conversation.
 - `instructions/jam.md` named `comments list [<board>]`; the flag is `--board <board>`.
 
 Upgrading: `npx marver init` refreshes the instructions your agent reads.

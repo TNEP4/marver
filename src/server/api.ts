@@ -7,8 +7,8 @@ import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
 import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
-import { HAS_STATUS, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
-import { annotateBoards, readContextFacts } from './board-status.ts'
+import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
+import { annotateBoards, planWithStage, readContextFacts } from './board-status.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -171,8 +171,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const facts = readContextFacts(root)
         const notes = annotateBoards(root, files, regFolders, (n) => fm.get(n) ?? null, facts)
         // what the sidebar's status picker may offer (dev only - nothing a build reads carries it)
-        const settable = settableStatuses(facts.present)
-        const list = files.map((b, i) => { const n = notes.get(b.name); return { ...rows[i], sha256: b.sha256, ...(n ?? {}), ...(n?.status ? { settable } : {}) } })
+        // per board: with context/, In progress and Building are offered where an open plan names its capability
+        const settableFor = (cap: string) => settableStatuses(facts.present, !!facts.plans.get(cap)?.length)
+        const list = files.map((b, i) => { const n = notes.get(b.name); return { ...rows[i], sha256: b.sha256, ...(n ?? {}), ...(n?.status ? { settable: settableFor(n.status.capability) } : {}) } })
         return json(res, 200, list)
       }
 
@@ -214,13 +215,35 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const parent = folder?.parent ? regFolders.find((f) => f.name === folder.parent) : undefined
         const type = resolveType(obj.type, folder?.type, parent?.type)
         if (!HAS_STATUS.includes(type)) return json(res, 422, { error: `a ${type} board carries no status - only feature and project boards do` })
-        if (status !== null && !settableStatuses(readContextFacts(root).present).includes(status)) {
+        const facts = readContextFacts(root)
+        const capability = readCapability(obj.capability) ?? name
+        const plans = facts.present ? (facts.plans.get(capability) ?? []) : []
+        if (status !== null && !settableStatuses(facts.present, plans.length > 0).includes(status)) {
           return json(res, 422, { error: status === 'done'
             ? 'Done is never set by hand - it comes from context/shipped.md'
-            : `with context/, ${status} is read from the evidence - a plan, a contract, the shipped record` })
+            : status === 'building' || status === 'in-progress'
+              ? `${status === 'building' ? 'Building' : 'In progress'} needs an open plan naming ${capability} - context/plans/`
+              : `with context/, ${status} is read from the evidence - a plan, a contract, the shipped record` })
         }
-        if (status === null) delete obj.status; else obj.status = status
-        if (status === 'blocked') obj.reason = reason; else delete obj.reason
+        if (facts.present && (status === 'building' || status === 'in-progress')) {
+          // with context/ the evidence is the plan: Building writes its `stage: build`, In progress takes
+          // it away - every open plan naming the capability, so they never disagree. The board's own
+          // decision gives way (a board picked Building is no longer paused), as with any status picked.
+          const writes: { file: string; next: string; raw: string }[] = []
+          for (const p of plans) {
+            const file = join(root, p.where)
+            if (!notSymlink(file)) return json(res, 400, { error: `refusing to write a symlinked plan (${p.where})` })
+            const raw = readFileSync(file, 'utf8')
+            const next = planWithStage(raw, status === 'building' ? 'build' : null)
+            if (next === null) return json(res, 422, { error: `${p.where} has no front matter to write its stage into - fix the file` })
+            writes.push({ file, next, raw })
+          }
+          for (const w of writes) if (w.next !== w.raw) atomicWrite(w.file, w.next)
+          delete obj.status; delete obj.reason
+        } else {
+          if (status === null) delete obj.status; else obj.status = status
+          if (status === 'blocked') obj.reason = reason; else delete obj.reason
+        }
         const next = JSON.stringify(obj, null, 2) + '\n'
         if (next !== current) atomicWrite(file, next)
         return json(res, 200, { name, sha256: hash(next) })

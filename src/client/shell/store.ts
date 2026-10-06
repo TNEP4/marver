@@ -409,7 +409,9 @@ interface State {
   /** When each working frame's job started (ms epoch) - phases the animations so parallel
    *  frames never pulse in sync. */
   workingSince: Record<string, number>
-  setWorking(frames: string[]): void
+  setWorking(frames: string[], boards?: string[]): void
+  /** Boards showing a working frame - their sidebar icon shimmers while an agent works. */
+  workingBoards: string[]
   spawn(frameId: string): Node | null
   save(): Promise<boolean>
 }
@@ -701,7 +703,7 @@ export const useStore = create<State>((set, get) => {
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
+    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
     async boot(mayCommit) {
@@ -828,8 +830,11 @@ export const useStore = create<State>((set, get) => {
           if (status) {
             const meta = { ...get().boardMeta }
             const cur = meta[name] ?? {}
-            const row = ({ archived: 1, paused: 2, blocked: 3, 'in-progress': 5, done: 6, todo: 8, backlog: 9 } as const)[status]
-            meta[name] = { ...cur, status: { status, row, ...(status === 'blocked' && reason ? { reason } : {}), evidence: [`design/boards/${name}.json: "status": "${status}"`] } }
+            const row = ({ archived: 1, paused: 2, blocked: 3, 'in-progress': 5, building: 5, done: 6, todo: 8, backlog: 9 } as const)[status]
+            // with context/, In progress and Building were written into the open plan, not the board
+            const inPlan = (status === 'building' || status === 'in-progress') && !(cur.settable ?? []).includes('todo')
+            const evidence = inPlan ? ['context/plans/: stage written from the sidebar'] : [`design/boards/${name}.json: "status": "${status}"`]
+            meta[name] = { ...cur, status: { status, row, ...(status === 'blocked' && reason ? { reason } : {}), evidence } }
             set({ boardMeta: meta })
           }
           return { ok: true }
@@ -1346,13 +1351,13 @@ export const useStore = create<State>((set, get) => {
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
-    setWorking(frames) {
+    setWorking(frames, boards = []) {
       // preserve each frame's original start time; stamp now() only for newly-working frames -
       // the start phases the working animations so parallel frames never pulse in sync
       const prev = get().workingSince
       const workingSince: Record<string, number> = {}
       for (const f of frames) workingSince[f] = prev[f] ?? Date.now()
-      set({ working: frames, workingSince })
+      set({ working: frames, workingSince, workingBoards: frames.length ? boards : [] })
     },
     spawn(frameId) {
       const { manifest, nodes, deviceView, baseLayout } = get()

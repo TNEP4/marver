@@ -219,6 +219,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 - Move the screen from design/screens/ into the app (src/features/...), replace fixture
   props with live data/handlers, replace data-goto with the router's navigation.
 - Leave the frame in place, importing from its new home, so the canvas stays true.
+- **The feature board turns Building** (blue) when its code starts: write `stage: build` in the
+  front matter of the open plan in `context/plans/` that names the capability - write the plan if
+  none does. No `context/`: `"status": "building"` on the board. Done still comes only from
+  `context/shipped.md`, when it ships.
 
 ## Boards (curated canvases)
 

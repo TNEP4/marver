@@ -74,8 +74,9 @@ proposed; and `## Availability` pointing at its row in `shipped.md`.
 
 Feature and project boards wear a status read from these files (the first that matches wins):
 the board's own `"status"` - `archived`, `paused`, or `blocked` with a `"reason"`; Unknown when the
-evidence cannot be read; In progress when an open plan in `plans/` names the capability (filling by
-phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed` in an
+evidence cannot be read; when an open plan in `plans/` names the capability, Building if the plan
+says `stage: build` (its code is underway - write it as you start implementing), else In progress
+(filling by phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed` in an
 availability clause (one per `;`) with no negation or pending word ("nowhere", "not yet", "rolled
 back", "planned") and no pre-production place (staging, preview, dev, local, testing) unless it also
 names production; Done, reported when only `reported`; To do when its contract is `state: current`; else Backlog.

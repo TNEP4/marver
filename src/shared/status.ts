@@ -5,22 +5,23 @@
  *
  *   1-3  the board says archived, paused or blocked (with its reason)   - a decision, by hand
  *   4    the evidence it needs cannot be read                           - Unknown, never a stale Done
- *   5    an open plan names the capability                              - In progress, filling by phase
+ *   5    an open plan names the capability                              - Building when it says `stage: build`,
+ *                                                                         else In progress, filling by phase
  *   6    the shipped record shows it available, `confirmed`             - Done
  *   7    ... `reported` only                                            - Done, reported
  *   8    an accepted contract (`state: current`), no availability       - To do
  *   9    anything else                                                  - Backlog
  *
- * Without `context/`, a board may also say in-progress, todo or backlog by hand. Done is never
+ * Without `context/`, a board may also say in-progress, building, todo or backlog by hand. Done is never
  * set by hand: `"status": "done"` is ignored here and reported by `marver context check`.
  */
 import { DECISIONS, HAS_STATUS, type BoardType, type StatusWord } from './board-types.ts'
 import { strictest, type Audience, type Level } from './context.ts'
 
-export type Status = 'archived' | 'paused' | 'blocked' | 'unknown' | 'in-progress' | 'done' | 'done-reported' | 'todo' | 'backlog'
+export type Status = 'archived' | 'paused' | 'blocked' | 'unknown' | 'in-progress' | 'building' | 'done' | 'done-reported' | 'todo' | 'backlog'
 export const STATUS_LABEL: Record<Status, string> = {
   archived: 'Archived', paused: 'Paused', blocked: 'Blocked', unknown: 'Unknown', 'in-progress': 'In progress',
-  done: 'Done', 'done-reported': 'Done, reported', todo: 'To do', backlog: 'Backlog',
+  building: 'Building', done: 'Done', 'done-reported': 'Done, reported', todo: 'To do', backlog: 'Backlog',
 }
 
 /** A phase, as the fill reads it: 1 spec, 2 lo-fi, 3 hi-fi. */
@@ -37,8 +38,8 @@ export interface ContextFacts {
   shipped: Map<string, { levels: Level[]; where: string; audience: Audience }>
   /** capability -> its contract's state, where, and its audience */
   contracts: Map<string, { state: string; where: string; audience: Audience }>
-  /** capability -> its open plans, each with its audience */
-  plans: Map<string, { where: string; audience: Audience }[]>
+  /** capability -> its open plans, each with its audience - and `stage: 'build'` once its code is underway */
+  plans: Map<string, { where: string; audience: Audience; stage?: 'build' }[]>
 }
 export const NO_CONTEXT: ContextFacts = { present: false, unreadable: new Map(), shipped: new Map(), contracts: new Map(), plans: new Map() }
 
@@ -107,6 +108,7 @@ export function resolveStatus(b: BoardInput, ctx: ContextFacts): StatusResult | 
       const f = fillOf(capability, b.scenes)
       return out('in-progress', 5, [`design/boards/${b.name}.json: by hand`, ...f.evidence], strictest('publishable', ...f.audience), f.fill)
     }
+    if (b.status === 'building') return out('building', 5, [`design/boards/${b.name}.json: by hand`], 'publishable')
     if (b.status === 'todo') return out('todo', 8, [`design/boards/${b.name}.json: by hand`], 'publishable')
     return out('backlog', 9, [b.status === 'backlog' ? `design/boards/${b.name}.json: by hand` : 'no context/ - nothing records it'], 'publishable')
   }
@@ -118,9 +120,16 @@ export function resolveStatus(b: BoardInput, ctx: ContextFacts): StatusResult | 
   const row = ctx.shipped.get(capability)
   const live = row?.levels.includes('confirmed') ? 'confirmed' : row?.levels.includes('reported') ? 'reported' : null
 
-  // 5: an open plan - work on a shipped capability is version two being built, and says so
+  // 5: an open plan - work on a shipped capability is version two being built, and says so. A plan
+  // whose code is underway (`stage: build`) makes it Building: the design agreed, the code being written
   const plans = ctx.plans.get(capability)
   if (plans?.length) {
+    const building = plans.filter((p) => p.stage === 'build')
+    if (building.length) {
+      const ev = building.map((p) => `${p.where}: stage build`)
+      if (live && row) ev.push(`${row.where}: available, \`${live}\` - this is the next version`)
+      return out('building', 5, ev, strictest(...building.map((p) => p.audience), ...(live && row ? [row.audience] : [])))
+    }
     const f = fillOf(capability, b.scenes)
     const ev = [...plans.map((p) => `${p.where}: an open plan`), ...f.evidence]
     if (live && row) ev.push(`${row.where}: available, \`${live}\` - this is the next version`)
@@ -154,4 +163,4 @@ export function publishableStatus(r: { status: Status; row?: number; fill?: Phas
   return { status: r.status, ...(r.fill ? { fill: r.fill } : {}) }
 }
 /** The statuses rows 5-9 produce - the only ones a published canvas may show. */
-export const PUBLISHABLE: ReadonlySet<Status> = new Set(['in-progress', 'done', 'done-reported', 'todo', 'backlog'])
+export const PUBLISHABLE: ReadonlySet<Status> = new Set(['in-progress', 'building', 'done', 'done-reported', 'todo', 'backlog'])

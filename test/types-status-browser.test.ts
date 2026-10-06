@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -196,6 +196,68 @@ describe('board types and status in the sidebar (spec 20)', () => {
       await browser!.until(s, `!document.querySelector('.sh-ctxmenu')`)
     }
     board('checkout', { folder: 'features', order: 0 })
+  })
+
+  skippable('Building: an open plan lets the picker offer In progress and Building - Building writes the plan\'s stage, the glyph turns to the code', async () => {
+    const s = await open(browser!)
+    const plan = () => readFileSync(join(root, 'context', 'plans', 'pricing.md'), 'utf8')
+    const icon = (n: string) => browser!.eval(s, `document.querySelector('[data-board="${n}"] [data-status-icon]')?.getAttribute('data-status-icon')`)
+    const openPicker = async (n: string) => {
+      const c = await browser!.eval(s, `(() => { const el = document.querySelector('.sh-boards [data-board-row][data-board="${n}"]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()`)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'right', buttons: 2, clickCount: 1 }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'right', buttons: 0, clickCount: 1 }, s)
+      await browser!.until(s, `!!document.querySelector('.sh-ctxmenu')`)
+      await browser!.eval(s, `Array.from(document.querySelectorAll('.sh-ctxmenu button')).find((b) => b.textContent === 'Change status…').click()`)
+      await browser!.until(s, `!!document.querySelector('[data-status-picker="list"]')`)
+    }
+    const options = () => browser!.eval(s, `Array.from(document.querySelectorAll('[data-status-option]')).map((b) => b.dataset.statusOption).join()`)
+    const foot = () => browser!.eval(s, `document.querySelector('.sp-foot')?.textContent`)
+
+    // pricing has an open plan: In progress (current, from the plan) and Building are offered
+    expect(await icon('pricing')).toBe('in-progress')
+    await openPicker('pricing')
+    expect(await options()).toBe('in-progress,building,blocked,paused,archived')
+    expect(await foot()).toMatch(/Building and In progress write the plan/)
+    expect(await browser!.eval(s, `!!document.querySelector('[data-status-option="in-progress"] .sp-chk')`)).toBe(true)
+    await browser!.eval(s, `document.querySelector('[data-status-option="building"]').click()`)
+    await browser!.until(s, `document.querySelector('[data-board="pricing"] [data-status-icon]')?.getAttribute('data-status-icon') === 'building'`, 15_000)
+    expect(plan()).toBe('---\nstate: proposed\ncapability: pricing\nstage: build\n---\n# Pricing v1\n')
+    // the evidence now says Building - the picker marks it, In progress takes it back off
+    await openPicker('pricing')
+    expect(await browser!.eval(s, `!!document.querySelector('[data-status-option="building"] .sp-chk')`)).toBe(true)
+    await browser!.eval(s, `document.querySelector('[data-status-option="in-progress"]').click()`)
+    await browser!.until(s, `document.querySelector('[data-board="pricing"] [data-status-icon]')?.getAttribute('data-status-icon') === 'in-progress'`, 15_000)
+    expect(plan()).not.toMatch(/stage/)
+    // checkout has no open plan: Building is not offered, and the picker says why
+    await openPicker('checkout')
+    expect(await options()).toBe('blocked,paused,archived')
+    expect(await foot()).toMatch(/Building needs an open plan/)
+  })
+
+  skippable('an agent at work: the boards showing its frames shimmer in the sidebar, a closed folder too - and stop with the work', async () => {
+    const s = await open(browser!)
+    const live = () => browser!.eval(s, `Array.from(document.querySelectorAll('.sh-boards [data-board-row]')).filter((el) => el.querySelector('[data-live-icon]')).map((el) => el.dataset.board).sort().join()`)
+    const cli = (...a: string[]) => execFileSync(process.execPath, [CLI, ...a, '--root', root], { cwd: root, encoding: 'utf8' })
+    expect(await live()).toBe('')
+    cli('work', 'start', 'app/home')
+    // every board pinning app/home, and all-scenes; front shows another frame and stays still
+    await browser!.until(s, `document.querySelectorAll('.sh-boards [data-board-row] [data-live-icon]').length >= 7`, 15_000)
+    expect(await live()).toBe('all-scenes,checkout,home,pitch,pricing,refunds,scratch')
+    const glint = await browser!.eval(s, `(() => { const g = document.querySelector('[data-board="checkout"] [data-live-icon] .glint'); const cs = getComputedStyle(g); return { anim: cs.animationName, svg: getComputedStyle(g.querySelector('svg')).color, base: getComputedStyle(document.querySelector('[data-board="checkout"] [data-live-icon] > svg')).color } })()`)
+    expect(glint.anim).toBe('sh-live-glint')
+    // the sidebar's accent - the blue the current row wears
+    const accent = await browser!.eval(s, `(() => { const p = document.createElement('i'); p.style.color = 'var(--glass-accent)'; document.querySelector('.sh-boards').append(p); const c = getComputedStyle(p).color; p.remove(); return c })()`)
+    expect(glint.base).toBe(accent)
+    expect(glint.svg).not.toBe(accent)                              // the highlight is lighter
+    // close the decks folder: it carries pitch's signal
+    const c = await browser!.eval(s, `(() => { const el = document.querySelector('[data-folder-row="decks"]'); const r = el.getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', buttons: 1, clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', buttons: 0, clickCount: 1 }, s)
+    await browser!.until(s, `document.querySelector('[data-folder-row="decks"]')?.dataset.open === '0'`)
+    await browser!.until(s, `!!document.querySelector('[data-folder-row="decks"] [data-live-icon]')`)
+    expect(await browser!.eval(s, `!!document.querySelector('[data-folder-row="features"] [data-live-icon]')`)).toBe(false)   // open: its boards show it
+    cli('work', 'done', '--all')
+    await browser!.until(s, `!document.querySelector('[data-live-icon]')`, 15_000)
   })
 
   skippable('the open board changed on disk under it: a status and a rename still land, and keep the agent\'s edit', async () => {

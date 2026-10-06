@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useStore, HAS_ALL_SCENES, PUBLISHED, STATUS_AS_OF, fetchBoardTree, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
-import { StatusIcon, TypeIcon } from './board-icons.tsx'
+import { LiveIcon, StatusIcon, TypeIcon } from './board-icons.tsx'
 import { StatusPicker } from './StatusPicker.tsx'
 import type { StatusWord } from '../../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
@@ -44,6 +44,7 @@ type Intent = (tree: TreeItem[]) => TreeItem[] | null
 
 export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const board = useStore((s) => s.board)
+  const working = useStore((s) => s.workingBoards)   // boards an agent is working on right now
   const titles = useStore((s) => s.boardTitles)                       // board slug → title, off the last tree read
   const meta = useStore((s) => s.boardMeta)                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
@@ -449,7 +450,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onPointerUp={canDrag ? onPointerUp : undefined}
         onPointerCancel={canDrag ? () => resetPointer() : undefined}
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
-        {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}
+        <LiveIcon live={working.includes(n)}>{n === 'all-scenes' ? <CardsThreeIcon size={14} /> : meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}</LiveIcon>
         <span>{label(n)}</span>
         {meta[n]?.status && <i className="st" data-status={meta[n].status!.status} title={statusTip(meta[n])}><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>}
       </button>
@@ -496,7 +497,8 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
           onPointerUp={!PUBLISHED ? onPointerUp : undefined}
           onPointerCancel={!PUBLISHED ? () => resetPointer() : undefined}
           onLostPointerCapture={!PUBLISHED ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
-          {open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}
+          {/* a closed folder carries the live signal of the boards it hides */}
+          <LiveIcon live={!open && boards.some((b) => working.includes(b))}>{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}</LiveIcon>
           <span>{labelOf(f, it.title)}</span>
           <small>{boards.length}</small>
         </button>,

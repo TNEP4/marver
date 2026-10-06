@@ -109,19 +109,28 @@ but `marver build` suggests a publish type from it - `slides` for a deck, `refs`
 ## Status
 
 Feature and project boards also wear a status, read from the project's `context/` - Backlog, To do,
-In progress (filling by phase), Done, Done reported, Unknown - or decided on the board itself:
+In progress (filling by phase), Building (the design agreed, the code underway: `stage: build` in the
+open plan), Done, Done reported, Unknown - or decided on the board itself:
 `"status": "archived"`, `"paused"`, or `"blocked"` with a `"reason"`. **Done is never set by hand.**
 The tooltip says what decided it. [Context](context.md) has the rules.
 
 **Set it from the sidebar:** right-click a feature or project board, **Change status…**. The picker
 shows what the evidence says and offers only what a person decides - Blocked (it asks why), Paused,
-Archived, and **Back to the evidence** to undo a decision; without `context/`, Backlog, To do and In
-progress as well. Type to filter, or press a number. It writes `status` and `reason` into the board
-file and nothing else.
+Archived, and **Back to the evidence** to undo a decision; where an open plan names the capability,
+In progress and Building too, which write that plan's `stage` (no plan: "Building needs an open
+plan"); without `context/`, Backlog, To do, In progress and Building as well. Type to filter, or press
+a number. It writes `status` and `reason` into the board file, or the `stage` into the plan, and
+nothing else.
 
 One rule draws them: a status still open is an outline in its colour - grey, yellow filling by phase,
-red for blocked - and a settled one is filled: Done a green disc, Archived a solid brown box. Done,
-reported is the green outline - a written claim, not yet confirmed.
+the code in accent blue for Building, red for blocked - and a settled one is filled: Done a green
+disc, Archived a solid brown box. Done, reported is the green outline - a written claim, not yet
+confirmed.
+
+**An agent at work.** While an agent works on a board's frames (`marver work start`, or a Live Jam
+job), that board's icon in the sidebar turns accent blue with a highlight sweeping across it - the
+frames' working shimmer, in miniature - and so does a closed folder holding it. It lasts exactly as
+long as the work, so nobody sets it.
 
 ## Starting points
 

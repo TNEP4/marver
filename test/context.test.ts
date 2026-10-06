@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
 import { hash, scanFrames } from '../src/server/manifest.ts'
-import { annotateBoards, readContextFacts } from '../src/server/board-status.ts'
+import { annotateBoards, planWithStage, readContextFacts } from '../src/server/board-status.ts'
 import { addFolders } from '../src/server/boards.ts'
 import { assertProjected, publishedManifest, resolvePolicy, withoutEvidence } from '../src/server/build.ts'
 import { availableLevels, capabilityTable, frontMatter, globRe, parseMap, shippedRows, tables, type Audience, type Level } from '../src/shared/context.ts'
@@ -145,9 +145,22 @@ describe('status: the nine rows (spec 20)', () => {
     const shipped = new Map([['pay', lv(['confirmed'])]])
     expect(resolveStatus(board({ capability: 'pay' }), ctx({ shipped }))?.status).toBe('done')
   })
-  it('without context/: by hand for To do, Backlog and In progress - never Done', () => {
+  it('row 5: a plan whose code is underway (`stage: build`) is Building - the design agreed, no fill', () => {
+    const plans = new Map([['checkout', [{ where: 'context/plans/a.md', audience: 'team' as Audience }, { where: 'context/plans/b.md', audience: 'publishable' as Audience, stage: 'build' as const }]]])
+    const r = resolveStatus(board({ scenes: [{ name: 'checkout' }] }), ctx({ plans }))
+    expect(r).toMatchObject({ status: 'building', row: 5, evidence: ['context/plans/b.md: stage build'], audience: 'publishable' })
+    expect(r?.fill).toBeUndefined()
+    // version two of a shipped capability, being built
+    const v2 = resolveStatus(board(), ctx({ plans, shipped: new Map([['checkout', lv(['confirmed'])]]) }))
+    expect(v2?.status).toBe('building')
+    expect(v2?.evidence[1]).toMatch(/this is the next version/)
+    expect(publishableStatus({ status: 'building', row: 5, audience: 'publishable' })).toEqual({ status: 'building' })
+  })
+  it('without context/: by hand for To do, Backlog, In progress and Building - never Done', () => {
     expect(resolveStatus(board({ status: 'todo' }), NO_CONTEXT)?.status).toBe('todo')
     expect(resolveStatus(board({ status: 'in-progress' }), NO_CONTEXT)?.status).toBe('in-progress')
+    expect(resolveStatus(board({ status: 'building' }), NO_CONTEXT)).toMatchObject({ status: 'building', row: 5 })
+    expect(resolveStatus(board({ status: 'building' }), ctx())?.status).toBe('backlog')   // with context/ the plan says it, not the board
     expect(resolveStatus(board({ status: 'done' }), NO_CONTEXT)?.status).toBe('backlog')
     expect(resolveStatus(board({ status: 'done' }), ctx())?.status).toBe('backlog')
   })
@@ -175,8 +188,9 @@ describe('status: the nine rows (spec 20)', () => {
     const svg = (status: Parameters<typeof StatusIcon>[0]['status']) => renderToStaticMarkup(createElement(StatusIcon, { status }))
     // the first shape is the silhouette: an open status draws it as a ring, a settled one fills it
     const silhouette = (s: string) => /<(circle|rect|path)\b[^>]*>/.exec(s.replace(/<mask[\s\S]*?<\/mask>/g, ''))![0]
-    for (const s of ['backlog', 'todo', 'in-progress', 'blocked', 'unknown', 'paused', 'done-reported'] as const)
+    for (const s of ['backlog', 'todo', 'in-progress', 'building', 'blocked', 'unknown', 'paused', 'done-reported'] as const)
       expect(silhouette(svg(s))).toMatch(/<circle[^>]*fill="none"/)
+    expect(svg('building')).toMatch(/stroke="var\(--accent, #0088ff\)"[\s\S]*M5.6 4.9 L3.8 7 L5.6 9.1/)   // the code, in accent blue
     expect(silhouette(svg('done'))).toMatch(/<circle[^>]*fill="var\(--status-done, #34c759\)"/)
     expect(svg('done-reported')).toMatch(/stroke="var\(--status-done/)          // the same green, outlined: not yet confirmed
     // Done's check is cut out of the disc - the row behind shows through it, in either theme
@@ -202,6 +216,21 @@ describe('reading context/ off disk', () => {
     expect(f.contracts.get('b')?.state).toBe('current')
     expect(f.unreadable.get('c')).toMatch(/never closes/)
     expect([...f.plans.keys()].sort()).toEqual(['d', 'e'])
+    expect(f.plans.get('d')?.[0].stage).toBeUndefined()
+    put('context/plans/q.md', '---\nstate: proposed\ncapability: g\nstage: Building\n---\n')
+    put('context/plans/r.md', '---\nstate: proposed\ncapability: h\nstage: design\n---\n')
+    const g = readContextFacts(root)
+    expect(g.plans.get('g')?.[0].stage).toBe('build')                        // build or building, any case
+    expect(g.plans.get('h')?.[0].stage).toBeUndefined()
+  })
+
+  it('planWithStage moves only the stage line - inserted, replaced, removed - and refuses a plan with no front matter', () => {
+    expect(planWithStage('---\nstate: proposed\n---\nbody\n', 'build')).toBe('---\nstate: proposed\nstage: build\n---\nbody\n')
+    expect(planWithStage('---\nstage: design\nstate: proposed\n---\n', 'build')).toBe('---\nstage: build\nstate: proposed\n---\n')
+    expect(planWithStage('---\nstate: proposed\nstage: build\n---\nstage: build in the body stays\n', null)).toBe('---\nstate: proposed\n---\nstage: build in the body stays\n')
+    expect(planWithStage('---\nstate: proposed\n---\n', null)).toBe('---\nstate: proposed\n---\n')
+    expect(planWithStage('# no front matter\n', 'build')).toBeNull()
+    expect(planWithStage('---\nstate: proposed\n', 'build')).toBeNull()
   })
 
   it('a board inherits its folder type; a phase counts once its scene holds a frame', () => {
@@ -285,14 +314,37 @@ describe('the dev API (spec 20)', () => {
     expect(JSON.parse(read('design/boards/pay.json')).folder).toBe('features')
   })
 
-  it('settable: the three decisions with context/, the by-hand words as well without it - only on boards that carry a status', async () => {
+  it('settable: the three decisions with context/ (plus In progress and Building where an open plan names it), the by-hand words as well without it - only on boards that carry a status', async () => {
     put('design/boards/pay.json', { version: 1, type: 'feature', nodes: [] })
     put('design/boards/pitch.json', { version: 1, type: 'deck', nodes: [] })
     const of = async (n: string) => (await drive('GET', 'boards')).json.find((b: any) => b.name === n)
-    expect((await of('pay')).settable).toEqual(['backlog', 'todo', 'in-progress', 'blocked', 'paused', 'archived'])
+    expect((await of('pay')).settable).toEqual(['backlog', 'todo', 'in-progress', 'building', 'blocked', 'paused', 'archived'])
     expect((await of('pitch')).settable).toBeUndefined()
     put('context/INDEX.md', '# The index\n')
     expect((await of('pay')).settable).toEqual(['blocked', 'paused', 'archived'])
+    put('context/plans/pay-v1.md', '---\nstate: proposed\ncapability: pay\n---\n')
+    expect((await of('pay')).settable).toEqual(['in-progress', 'building', 'blocked', 'paused', 'archived'])
+  })
+
+  it('POST boards/status Building with context/: the open plan says `stage: build`, the board\'s decision gives way; In progress takes it off', async () => {
+    put('context/INDEX.md', '# The index\n')
+    put('design/boards/pay.json', { version: 1, type: 'feature', capability: 'payments', status: 'paused', nodes: [] })
+    // no open plan: Building has nothing to be read from
+    let r = await drive('POST', 'boards/status', { name: 'pay', status: 'building' })
+    expect(r.status).toBe(422)
+    expect(r.json.error).toMatch(/Building needs an open plan naming payments/)
+    put('context/plans/v2.md', '<!-- marver:managed v1 -->\r\n---\r\nstate: proposed\r\ncapability: payments\r\n---\r\n# Payments v2\r\n')
+    put('context/plans/old.md', '---\nstate: historical\ncapability: payments\n---\n')             // closed: never touched
+    r = await drive('POST', 'boards/status', { name: 'pay', status: 'building' })
+    expect(r.status).toBe(200)
+    expect(read('context/plans/v2.md')).toBe('<!-- marver:managed v1 -->\r\n---\r\nstate: proposed\r\ncapability: payments\r\nstage: build\r\n---\r\n# Payments v2\r\n')
+    expect(read('context/plans/old.md')).not.toMatch(/stage/)
+    expect(JSON.parse(read('design/boards/pay.json')).status).toBeUndefined()   // no longer paused
+    expect((await drive('GET', 'boards')).json.find((b: any) => b.name === 'pay').status).toMatchObject({ status: 'building', row: 5, evidence: ['context/plans/v2.md: stage build'] })
+    r = await drive('POST', 'boards/status', { name: 'pay', status: 'in-progress' })
+    expect(r.status).toBe(200)
+    expect(read('context/plans/v2.md')).not.toMatch(/stage/)
+    expect((await drive('GET', 'boards')).json.find((b: any) => b.name === 'pay').status.status).toBe('in-progress')
   })
 
   it('POST boards/status: a decision into the file, every other field kept; blocked says why; null clears both', async () => {
@@ -322,10 +374,10 @@ describe('the dev API (spec 20)', () => {
     put('design/boards/pitch.json', { version: 1, folder: 'decks', nodes: [] })
     expect((await drive('POST', 'boards/status', { name: 'pay', status: 'todo' })).status).toBe(200)          // no context/: by hand
     put('context/INDEX.md', '# The index\n')
-    for (const status of ['todo', 'backlog', 'in-progress', 'done']) {
+    for (const status of ['todo', 'backlog', 'in-progress', 'building', 'done']) {
       const r = await drive('POST', 'boards/status', { name: 'pay', status })
       expect(r.status).toBe(422)
-      expect(r.json.error).toMatch(status === 'done' ? /never set by hand/ : /read from the evidence/)
+      expect(r.json.error).toMatch(status === 'done' ? /never set by hand/ : status === 'in-progress' || status === 'building' ? /needs an open plan/ : /read from the evidence/)
     }
     expect((await drive('POST', 'boards/status', { name: 'pay', status: 'done-reported' })).status).toBe(400)
     expect((await drive('POST', 'boards/status', { name: 'pitch', status: 'paused' })).json.error).toMatch(/deck board carries no status/)

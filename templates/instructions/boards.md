@@ -178,11 +178,13 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   **Never write `"status": "done"`** - Done comes from `context/shipped.md`, and the check fails it.
   **No `context/`? Your reply ends with the context line** from design/AGENTS.md ("Before the method")
   - every feature board reads Backlog until there is one. Only when the human declines may a board
-  say `"todo"`, `"backlog"` or `"in-progress"` by hand.
+  say `"todo"`, `"backlog"`, `"in-progress"` or `"building"` by hand.
   A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
   and `reason`, so re-read a board before you edit it.
 - In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's
-  `_brief.md` front matter - never by where a row sits.
+  `_brief.md` front matter - never by where a row sits. **Building** (blue) follows it: the design
+  agreed, the code underway - `stage: build` in the open plan (instructions/context.md). While you
+  work on a board's frames (`marver work start`), its sidebar icon shimmers blue on its own.
 - `npx marver boards` prints every board's type and status with what decided it.
 
 ## The default composition: one horizontal band

@@ -57,7 +57,7 @@ capability works, why, what is next - with evidence, in files any agent reads fi
 *"Set up our context"* - or run `npx marver context init` - and `npx marver context check` keeps it
 true in ci (availability only in the shipped record, every claim with a level and a citation, a
 contract change with every behaviour change), and the canvas reads the same files: feature boards
-wear Backlog, To do, In progress, Done - never set by hand. Existing projects with scattered specs
+wear Backlog, To do, In progress, Building, Done - Done never set by hand. Existing projects with scattered specs
 get a playbook that reorganizes them on a branch and proves it with a blind eval. Until a project
 has `context/`, an agent that touches a feature board ends its reply offering to set it up. [The
 context guide](docs/context.md).

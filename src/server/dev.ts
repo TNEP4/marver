@@ -299,8 +299,12 @@ export async function dev(root: string, portFlag?: number) {
   // the `marver work` CLI write; the glow rides the existing HMR rail (sh:jam-activity), so
   // the canvas lights up within the first second - no extra poll. design/.local/dev.json is
   // the CLI's discovery + credential handshake, written per boot, removed on close.
-  const { workActivity, writeDevInfo, removeDevInfo } = await import('./work.ts')
-  const unsubscribe = workActivity.onChange((frames) => server.ws.send('sh:jam-activity', { frames } as any))
+  const { workActivity, writeDevInfo, removeDevInfo, boardsShowing } = await import('./work.ts')
+  // the frames glow, and the boards showing them light their sidebar icon
+  const activity = (frames: string[]) => ({ frames, boards: boardsShowing(root, frames) })
+  const unsubscribe = workActivity.onChange((frames) => server.ws.send('sh:jam-activity', activity(frames) as any))
+  // a page that opens mid-job learns what is lit at once, not at the next change
+  server.ws.on('connection', () => { const f = workActivity.active(); if (f.length) server.ws.send('sh:jam-activity', activity(f) as any) })
   const sweep = setInterval(() => workActivity.sweep(), 15_000)
   sweep.unref?.()
   writeDevInfo(root, port)

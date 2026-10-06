@@ -104,7 +104,7 @@ Feature and project boards wear a status, read from these files - the first that
 |---|---|---|
 | 1-3 | the board says `"status": "archived"`, `"paused"`, or `"blocked"` with a `"reason"` - by hand, or from the sidebar's **Change status…** | Archived · Paused · Blocked |
 | 4 | the evidence cannot be read | Unknown |
-| 5 | an open plan in `context/plans/` names the capability | In progress, filling by phase |
+| 5 | an open plan in `context/plans/` names the capability | Building when the plan says `stage: build`, else In progress, filling by phase |
 | 6 | `shipped.md` shows it available, `confirmed` - in a clause (one per `;`) with no negation or pending word ("nowhere", "not yet", "rolled back", "planned") and, for a product, no pre-production place (staging, preview, dev, local, testing) unless it also names production | Done |
 | 7 | ... `reported` only | Done, reported |
 | 8 | its contract is `state: current` | To do |

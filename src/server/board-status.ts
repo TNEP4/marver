@@ -102,7 +102,9 @@ function readFresh(dir: string): ContextFacts {
       const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined ? [] : [v])
       const caps = [...list(fm.data.capability), ...list(fm.data.capabilities)].map(readCapability).filter((c): c is string => !!c)
       const audience = readAudience(fm.data.audience)
-      for (const c of caps) facts.plans.set(c, [...(facts.plans.get(c) ?? []), { where, audience }])
+      // the code is underway: `stage: build` (an agent writes it as it starts implementing; the picker too)
+      const stage = typeof fm.data.stage === 'string' && /^build(ing)?$/i.test(fm.data.stage.trim()) ? 'build' as const : undefined
+      for (const c of caps) facts.plans.set(c, [...(facts.plans.get(c) ?? []), { where, audience, ...(stage ? { stage } : {}) }])
     } catch (e) { facts.unreadable.set('*', `${where}: ${(e as Error).message}`) }
   }
   return facts
@@ -175,4 +177,24 @@ export function annotateBoards(
     out.set(b.name, { type, status })
   }
   return out
+}
+
+/**
+ * A plan with its `stage` set - `build` (Building), or none (back to In progress) - the one context/
+ * edit the sidebar makes, for the picker's Building and In progress. Only the `stage:` line of the
+ * front matter moves; every other line, and the body, is kept byte for byte (line endings included).
+ * null when the plan has no front matter to write it into.
+ */
+export function planWithStage(raw: string, stage: 'build' | null): string | null {
+  const nl = raw.includes('\r\n') ? '\r\n' : '\n'
+  const lines = raw.split(/\r?\n/)
+  const start = /^(\uFEFF)?<!-- marver:managed [^\n]*-->$/.test(lines[0] ?? '') ? 1 : 0
+  if (lines[start]?.replace(/^\uFEFF/, '') !== '---') return null
+  const end = lines.findIndex((l, i) => i > start && /^---[ \t]*$/.test(l))
+  if (end === -1) return null
+  const at = lines.findIndex((l, i) => i > start && i < end && /^stage:/.test(l))
+  if (stage === null) { if (at !== -1) lines.splice(at, 1) }
+  else if (at === -1) lines.splice(end, 0, `stage: ${stage}`)
+  else lines[at] = `stage: ${stage}`
+  return lines.join(nl)
 }

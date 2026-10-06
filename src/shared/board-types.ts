@@ -56,18 +56,22 @@ export const PROPOSED_PUBLISH: Partial<Record<BoardType, 'slides' | 'refs' | 'do
 export const HAS_STATUS: readonly BoardType[] = ['feature', 'project']
 
 /** The decisions a board may state by hand. `done` is never one: Done comes only from the shipped
- *  record. `todo`, `backlog` and `in-progress` count only where there is no `context/`. */
+ *  record. `todo`, `backlog`, `in-progress` and `building` count only where there is no `context/`. */
 export const DECISIONS = ['archived', 'paused', 'blocked'] as const
-export const BY_HAND = ['in-progress', 'todo', 'backlog'] as const
+export const BY_HAND = ['in-progress', 'building', 'todo', 'backlog'] as const
 export const STATUS_WORDS = [...DECISIONS, ...BY_HAND, 'done'] as const
 export type StatusWord = (typeof STATUS_WORDS)[number]
 export const readStatusWord = (v: unknown): StatusWord | undefined =>
   (STATUS_WORDS as readonly string[]).includes(v as string) ? (v as StatusWord) : undefined
 /** The statuses a person may set on a feature or project board, in the order a picker lists them:
- *  the three decisions always; Backlog, To do and In progress only where there is no `context/`
- *  (with it they are read from the evidence). Never Done - that is the shipped record's alone. */
-export const settableStatuses = (contextPresent: boolean): StatusWord[] =>
-  contextPresent ? ['blocked', 'paused', 'archived'] : ['backlog', 'todo', 'in-progress', 'blocked', 'paused', 'archived']
+ *  the three decisions always; Backlog, To do, In progress and Building where there is no `context/`
+ *  (with it they are read from the evidence). With it, In progress and Building where an open plan
+ *  names the capability - choosing one writes that plan's `stage`, the evidence they are read from.
+ *  Never Done - that is the shipped record's alone. */
+export const settableStatuses = (contextPresent: boolean, openPlan = false): StatusWord[] =>
+  contextPresent
+    ? [...(openPlan ? (['in-progress', 'building'] as const) : []), 'blocked', 'paused', 'archived']
+    : ['backlog', 'todo', 'in-progress', 'building', 'blocked', 'paused', 'archived']
 
 /** A capability slug - the same grammar as a board name, so a feature board and its contract
  *  share it. */

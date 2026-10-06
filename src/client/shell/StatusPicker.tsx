@@ -7,9 +7,10 @@ import type { BoardMeta } from './store.ts'
 /**
  * A board's status, from its right-click menu - Linear's picker, on Marver's rule (spec 20): a
  * person decides only what the evidence cannot. With `context/` that is Blocked (with a reason),
- * Paused and Archived, and "Back to the evidence" undoes the decision; without it, Backlog, To do
- * and In progress as well. Done is never offered - it comes from the shipped record. The status
- * the evidence gives shows read-only at the top, with where it came from.
+ * Paused and Archived, and "Back to the evidence" undoes the decision - plus In progress and Building
+ * where an open plan names the capability (they write the plan's `stage`, the evidence itself);
+ * without it, Backlog, To do, In progress and Building as well. Done is never offered - it comes from
+ * the shipped record. The status the evidence gives shows read-only at the top, with where it came from.
  *
  * Type to filter, arrows and Enter, or a number. Blocked asks why before it writes.
  */
@@ -70,7 +71,9 @@ export function StatusPicker({ meta, onPick }: { meta: BoardMeta; onPick: (statu
       )}
       <div className="sp-list">
         {shown.map((o, i) => {
-          const isCurrent = o.status !== null && o.status === current?.status && (decided || !hasContext)
+          // with context/, In progress and Building are the plan's - current when the evidence says so
+          const fromPlan = o.status === 'in-progress' || o.status === 'building'
+          const isCurrent = o.status !== null && o.status === current?.status && (decided || !hasContext || fromPlan)
           return (
             <button key={o.key} data-status-option={o.key} className={i === hi ? 'hi' : undefined}
               onMouseEnter={() => setHi(i)} onClick={() => choose(o)}>
@@ -85,7 +88,11 @@ export function StatusPicker({ meta, onPick }: { meta: BoardMeta; onPick: (statu
         })}
         {!shown.length && <div className="sp-empty">No status matches</div>}
       </div>
-      <div className="sp-foot">{hasContext ? 'Backlog, To do, In progress and Done are read from context/' : 'Done needs a record - context/shipped.md'}</div>
+      <div className="sp-foot">{!hasContext
+        ? 'Done needs a record - context/shipped.md'
+        : settable.includes('building')
+          ? 'Building and In progress write the plan’s stage · Done needs a record'
+          : 'Building needs an open plan - context/plans/'}</div>
     </div>
   )
 }
