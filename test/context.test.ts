@@ -16,6 +16,9 @@ import { parseFolders, toWire, fromWire, validateWire, buildTree } from '../src/
 import { contextCheck, contextIndex, contextInit } from '../src/cli/context.ts'
 import { boardsNew, foldersAdd } from '../src/cli/boards.ts'
 import { init } from '../src/cli/init.ts'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { StatusIcon, TypeIcon } from '../src/client/shell/board-icons.tsx'
 
 let root = ''
 const put = (rel: string, body: string | object) => {
@@ -167,6 +170,16 @@ describe('status: the nine rows (spec 20)', () => {
   it('work on a shipped capability says it is the next version', () => {
     const r = resolveStatus(board(), ctx({ plans: new Map([['checkout', pl('context/plans/v2.md')]]), shipped: new Map([['checkout', lv(['confirmed'])]]) }))
     expect(r?.evidence[1]).toMatch(/this is the next version/)
+  })
+  it('archived wears the archive box, not a ring: out of the flow, not a step in it', () => {
+    const svg = (el: Parameters<typeof renderToStaticMarkup>[0]) => renderToStaticMarkup(el)
+    const archived = svg(createElement(StatusIcon, { status: 'archived' }))
+    expect(archived).not.toMatch(/<circle/)
+    // the same drawing as the archive type, so "archive" reads alike everywhere in the sidebar
+    const box = (s: string) => s.match(/<rect[^>]*>|<path[^>]*>/g)?.map((t) => t.replace(/\s*(stroke|fill)[\w-]*="[^"]*"/g, ''))
+    expect(box(archived)).toEqual(box(svg(createElement(TypeIcon, { type: 'archive' }))))
+    for (const s of ['backlog', 'todo', 'in-progress', 'blocked', 'done', 'done-reported', 'unknown', 'paused'] as const)
+      expect(svg(createElement(StatusIcon, { status: s }))).toMatch(/<circle/)
   })
 })
 

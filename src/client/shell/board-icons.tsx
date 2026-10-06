@@ -33,7 +33,6 @@ const GRAY = 'var(--glass-ink-3)'
 const YELLOW = '#e2b203'
 const RED = '#e5484d'
 const INDIGO = '#5e6ad2'
-const ARCHIVED = '#a3abb7'
 
 /** A pie wedge of the ring's interior, `f` of the way round from twelve o'clock. */
 const pie = (f: number, r = 3.4) => {
@@ -42,7 +41,8 @@ const pie = (f: number, r = 3.4) => {
   return `M7 7 L7 ${7 - r} A${r} ${r} 0 ${f > 0.5 ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)} Z`
 }
 
-/** A status ring. In progress fills by phase: a quarter at spec, half at lo-fi, three quarters at hi-fi. */
+/** A status ring. In progress fills by phase: a quarter at spec, half at lo-fi, three quarters at hi-fi.
+ *  Archived is no ring: it is out of the flow, not a step in it - the archive type's own box, in the grey of the other quiet statuses. */
 export function StatusIcon({ status, fill, size = 14 }: { status: Status; fill?: Phase; size?: number }) {
   const ring = (c: string, dash?: string) => <circle cx="7" cy="7" r="5.8" fill="none" stroke={c} strokeWidth="1.5" strokeDasharray={dash} />
   return (
@@ -55,7 +55,7 @@ export function StatusIcon({ status, fill, size = 14 }: { status: Status; fill?:
       {status === 'done-reported' && (<>{ring(INDIGO)}<path d="M4.4 7.2 L6.2 9 L9.7 5.3" fill="none" stroke={INDIGO} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></>)}
       {status === 'unknown' && (<>{ring(GRAY)}<path d="M5.4 5.6 A1.7 1.7 0 1 1 7.6 7.2 C7.1 7.4 7 7.7 7 8.2" fill="none" stroke={GRAY} strokeWidth="1.3" strokeLinecap="round" /><circle cx="7" cy="10" r=".8" fill={GRAY} /></>)}
       {status === 'paused' && (<>{ring(GRAY)}<rect x="4.9" y="4.4" width="1.4" height="5.2" rx=".5" fill={GRAY} /><rect x="7.7" y="4.4" width="1.4" height="5.2" rx=".5" fill={GRAY} /></>)}
-      {status === 'archived' && (<><circle cx="7" cy="7" r="6.5" fill={ARCHIVED} /><path d="M5 5 L9 9 M9 5 L5 9" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" /></>)}
+      {status === 'archived' && <g fill="none" stroke={GRAY} strokeWidth="1.4" strokeLinejoin="round" strokeLinecap="round">{TYPE_PATHS.archive}</g>}
     </svg>
   )
 }
