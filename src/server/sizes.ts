@@ -63,9 +63,7 @@ export function serializeSizes(heights: Record<string, number>): string {
 }
 
 /** Which width a frame measures at on its own (its auto size): the declared viewport's width, else
- *  the Doc layout's. null = nothing to keep: not a content frame, not a frame at all, or a content
- *  frame that does not render a Doc - only a Doc measures, so only a Doc's height is a fact (a
- *  frame that went from a Doc to a bare Md keeps the size its board gives it, never an old one). */
+ *  the Doc layout's. null = not a content frame, or not a frame at all - nothing to keep. */
 export type AutoWidth = (frameId: string) => number | null
 
 const keeps = (key: string, autoWidth: AutoWidth): boolean => {
@@ -73,15 +71,13 @@ const keeps = (key: string, autoWidth: AutoWidth): boolean => {
   return !!m && autoWidth(m[1]) === Number(m[2])
 }
 
-/** The entries a board can use - what the GET and the build hand the shell. */
-export const keptSizes = (heights: Record<string, number>, autoWidth: AutoWidth): Record<string, number> =>
-  Object.fromEntries(Object.entries(heights).filter(([k]) => keeps(k, autoWidth)))
-
-/** Merge incoming heights into the current ones, keeping only what a board can use: a Doc that
- *  still exists, at the width it measures at on its own. Everything else is pruned - a deleted
- *  frame, a Doc that went from document to wide. Returns the next map and the keys taken. */
+/** Merge incoming heights into the current ones, keeping only what a board can use: a content frame
+ *  that still exists, at the width it measures at on its own. Everything else is pruned - a deleted
+ *  frame, a Doc that went from document to wide. Returns the next map and the keys taken. Pruning
+ *  reads only the manifest: whether a frame still renders a Doc is asked on READ (keptSizes), so a
+ *  source caught mid-write can hide an entry for one load, never delete it. */
 export function mergeSizes(current: Record<string, number>, incoming: Record<string, unknown>, autoWidth: AutoWidth): { next: Record<string, number>; accepted: string[] } {
-  const next = keptSizes(current, autoWidth)
+  const next = Object.fromEntries(Object.entries(current).filter(([k]) => keeps(k, autoWidth)))
   const accepted: string[] = []
   for (const [k, v] of Object.entries(incoming)) {
     if (!validEntry(k, v) || !keeps(k, autoWidth)) continue
@@ -91,27 +87,43 @@ export function mergeSizes(current: Record<string, number>, incoming: Record<str
   return { next, accepted }
 }
 
-/** Does this frame source render a `<Doc>` - the one primitive that measures (content/index.tsx)?
- *  Lexical on the code (comments and strings blanked), like the content scan. */
-export const rendersDoc = (src: string): boolean => /<Doc[\s>/]/.test(codeOnly(src))
+/** The entries a board can use - what the GET and the build hand the shell: a content frame at its
+ *  own width that MEASURES (renders a Doc). A frame that went from a Doc to a bare Md keeps the size
+ *  its board gives it, never an old measurement. */
+export const keptSizes = (heights: Record<string, number>, autoWidth: AutoWidth, measuring: ReadonlySet<string>): Record<string, number> =>
+  Object.fromEntries(Object.entries(heights).filter(([k]) => keeps(k, autoWidth) && measuring.has(k.slice(0, k.lastIndexOf('@')))))
 
-/** The auto width rule over a manifest's frames (the shell's defaultSize, store.ts), restricted to
- *  frames that render a Doc. `file` is the frame's path from the root (manifest.ts); each source is
- *  read once, on first ask. */
-export function autoWidthOf(root: string, frames: { id: string; file?: string; kind?: string; contentWidth?: number; viewport?: string }[], viewports: Record<string, { width: number }>): AutoWidth {
+/** The auto width rule over a manifest's frames (the shell's defaultSize, store.ts). */
+export function autoWidthOf(frames: { id: string; contentWidth?: number; viewport?: string }[], viewports: Record<string, { width: number }>): AutoWidth {
   const byId = new Map(frames.map((f) => [f.id, f]))
-  const docs = new Map<string, boolean>()
-  const isDoc = (f: { id: string; file?: string; kind?: string }): boolean => {
-    let d = docs.get(f.id)
-    if (d === undefined) {
-      try { d = f.kind !== 'html' && !!f.file && !f.file.split('/').includes('..') && rendersDoc(readFileSync(join(root, f.file), 'utf8')) } catch { d = false }
-      docs.set(f.id, d)
-    }
-    return d
-  }
   return (id) => {
     const f = byId.get(id)
-    if (!f?.contentWidth || !isDoc(f)) return null
+    if (!f?.contentWidth) return null
     return viewports[f.viewport ?? '']?.width ?? f.contentWidth
   }
+}
+
+/** Does this frame source render a `<Doc>` - the one primitive that measures (content/index.tsx)?
+ *  Lexical on the code (comments and strings blanked), like the content scan, and it follows the
+ *  import: `Doc as Page` renders `<Page>`, `* as C` renders `<C.Doc>`. */
+export function rendersDoc(src: string): boolean {
+  const code = codeOnly(src)
+  const tags = ['Doc']
+  for (const m of code.matchAll(/\bDoc\s+as\s+([A-Za-z_$][\w$]*)/g)) tags.push(m[1])
+  for (const m of code.matchAll(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from/g)) tags.push(`${m[1]}\\.Doc`)
+  return tags.some((t) => new RegExp(`<${t.replace(/\$/g, '\\$')}[\\s>/]`).test(code))
+}
+
+/** The content frames that measure: their source renders a Doc. A source that cannot be read, or
+ *  reads empty (an editor mid-write), gets the benefit of the doubt - this only decides what a load
+ *  is handed, never what the file keeps. */
+export function measuringFrames(root: string, frames: { id: string; file?: string; kind?: string; contentWidth?: number }[]): Set<string> {
+  const out = new Set<string>()
+  for (const f of frames) {
+    if (!f.contentWidth || f.kind === 'html') continue
+    let src = ''
+    try { if (f.file && !f.file.split('/').includes('..')) src = readFileSync(join(root, f.file), 'utf8') } catch { /* unreadable: benefit of the doubt */ }
+    if (!src.trim() || rendersDoc(src)) out.add(f.id)
+  }
+  return out
 }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
-import { autoWidthOf, keptSizes, mergeSizes, readSizes, readSizesFile, rendersDoc, serializeSizes, validEntry } from '../src/server/sizes.ts'
+import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, rendersDoc, serializeSizes, validEntry } from '../src/server/sizes.ts'
 import { anchorNode, anchoredCamera } from '../src/client/shell/canvas/anchor.ts'
 
 /**
@@ -39,26 +39,34 @@ describe('the size cache (sizes.ts)', () => {
       expect(validEntry(k, h), `${k} ${h}`).toBe(false)
   })
 
-  it('only a Doc measures: a <Doc> in a comment or a string is no Doc', () => {
+  it('only a Doc measures: a <Doc> in a comment or a string is no Doc; an aliased import still is', () => {
     expect(rendersDoc(DOC)).toBe(true)
     expect(rendersDoc(WIDE)).toBe(true)
     expect(rendersDoc(BARE)).toBe(false)
     expect(rendersDoc(`const s = '<Doc>'\nexport default () => <Md>{s}</Md>\n`)).toBe(false)
+    expect(rendersDoc(`import { Doc as Page, Md } from '@marver-design/marver/content'\nexport default () => <Page><Md>{'x'}</Md></Page>\n`)).toBe(true)
+    expect(rendersDoc(`import * as C from '@marver-design/marver/content'\nexport default () => <C.Doc><C.Md>{'x'}</C.Md></C.Doc>\n`)).toBe(true)
   })
 
-  it('keeps only a live Doc at the width it measures at on its own - the viewport wins over the layout', () => {
+  it('the file keeps a live content frame at its own width; a load is handed only the frames that measure', () => {
     const root = mkdtempSync(join(tmpdir(), 'mv-sizes-aw-'))
     try {
       project(root)
-      const aw = autoWidthOf(root, FRAMES, VIEWPORTS)
-      expect(['docs/spec', 'docs/wide', 'docs/pinned', 'docs/bare', 'app/home', 'gone/frame'].map(aw)).toEqual([760, 1280, 1280, null, null, null])
+      const aw = autoWidthOf(FRAMES, VIEWPORTS)
+      expect(['docs/spec', 'docs/wide', 'docs/pinned', 'docs/bare', 'app/home', 'gone/frame'].map(aw)).toEqual([760, 1280, 1280, 760, null, null])
       const { next, accepted } = mergeSizes(
-        { 'docs/spec@760': 1000, 'gone/frame@760': 500, 'docs/wide@760': 700, 'docs/bare@760': 2000 },   // deleted; went wide; stopped measuring
-        { 'docs/wide@1280': 900, 'docs/pinned@1280': 2000, 'docs/pinned@760': 1500, 'app/home@390': 844, 'docs/bare@760': 300, 'docs/spec@760': 'x' },
+        { 'docs/spec@760': 1000, 'gone/frame@760': 500, 'docs/wide@760': 700 },   // deleted; went wide
+        { 'docs/wide@1280': 900, 'docs/pinned@1280': 2000, 'docs/pinned@760': 1500, 'app/home@390': 844, 'docs/spec@760': 'x' },
         aw)
       expect(next).toEqual({ 'docs/spec@760': 1000, 'docs/wide@1280': 900, 'docs/pinned@1280': 2000 })
       expect(accepted.sort()).toEqual(['docs/pinned@1280', 'docs/wide@1280'])
-      expect(keptSizes({ 'docs/bare@760': 2000, 'docs/spec@760': 1000 }, aw)).toEqual({ 'docs/spec@760': 1000 })
+      // a frame that stopped rendering a Doc (bare) keeps its line in the file, and is handed nothing
+      const measuring = measuringFrames(root, FRAMES)
+      expect([...measuring].sort()).toEqual(['docs/pinned', 'docs/spec', 'docs/wide'])
+      expect(keptSizes({ 'docs/bare@760': 2000, 'docs/spec@760': 1000 }, aw, measuring)).toEqual({ 'docs/spec@760': 1000 })
+      // a source caught mid-write (empty) gets the benefit of the doubt
+      writeFileSync(join(root, 'design/scenes/docs/spec.tsx'), '')
+      expect(measuringFrames(root, FRAMES).has('docs/spec')).toBe(true)
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
@@ -124,18 +132,21 @@ describe('the dev API: sizes', () => {
     expect(existsSync(file())).toBe(false)
   })
 
-  it('takes settled heights of live Docs at their own width, answers what it took, and reads them back', async () => {
-    expect((await drive('GET', 'sizes')).json).toEqual({ heights: {} })
+  it('takes settled heights of live content frames at their own width, answers what it took, and hands out what measures', async () => {
+    const MEASURING = ['docs/pinned', 'docs/spec', 'docs/wide']
+    expect((await drive('GET', 'sizes')).json).toEqual({ heights: {}, measuring: MEASURING })
     const r = await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1834, 'docs/wide@760': 900, 'app/home@390': 844, 'docs/bare@760': 400, 'nope@760': 900 } })
-    expect(r).toEqual({ status: 200, json: { accepted: ['docs/spec@760'] } })
-    expect(JSON.parse(readFileSync(file(), 'utf8')).heights).toEqual({ 'docs/spec@760': 1834 })
-    expect((await drive('GET', 'sizes')).json).toEqual({ heights: { 'docs/spec@760': 1834 } })
+    expect(r).toEqual({ status: 200, json: { accepted: ['docs/spec@760', 'docs/bare@760'] } })
+    expect(JSON.parse(readFileSync(file(), 'utf8')).heights).toEqual({ 'docs/bare@760': 400, 'docs/spec@760': 1834 })
+    expect((await drive('GET', 'sizes')).json).toEqual({ heights: { 'docs/spec@760': 1834 }, measuring: MEASURING })
   })
 
-  it('hands out only what a board can use: a frame that stopped rendering a Doc keeps the size its board gives it', async () => {
+  it('a frame that stopped rendering a Doc is handed no height - and its line survives, a source mid-write deletes nothing', async () => {
     await drive('POST', 'sizes', { heights: { 'docs/spec@760': 2000 } })
     writeFileSync(join(root, 'design/scenes/docs/spec.tsx'), BARE)   // the Doc became a bare Md: nothing measures it any more
-    expect((await drive('GET', 'sizes')).json).toEqual({ heights: {} })
+    expect((await drive('GET', 'sizes')).json).toEqual({ heights: {}, measuring: ['docs/pinned', 'docs/wide'] })
+    await drive('POST', 'sizes', { heights: { 'docs/wide@1280': 900 } })
+    expect(JSON.parse(readFileSync(file(), 'utf8')).heights).toEqual({ 'docs/spec@760': 2000, 'docs/wide@1280': 900 })
   })
 
   it('a later write prunes what a board can no longer use: a deleted frame, a Doc that changed width', async () => {

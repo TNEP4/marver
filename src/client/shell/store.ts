@@ -285,19 +285,34 @@ const measuredHeights = new Map<string, number>()
 
 /** Committed content heights (design/boards/_sizes.json - src/server/sizes.ts), keyed frameId@width:
  *  a content frame's height BEFORE it measures, so a board opens at its final geometry instead of
- *  growing from a guess and re-flowing row after row. Read once per page (dev: the API; published:
- *  the build inlines its own). A stale entry is still the best first guess - the live measurement
- *  corrects it, and the dev shell writes the correction back. */
+ *  growing from a guess and re-flowing row after row. Read at every board load in dev (the API: an
+ *  agent may have edited frames since), once from the bundle on a published canvas. A stale entry
+ *  is still the best first guess - the live measurement corrects it, and the dev shell writes the
+ *  correction back. */
 const savedHeights = new Map<string, number>()
-let savedLoad: Promise<void> | null = null
-const loadSavedHeights = (): Promise<void> => (savedLoad ??= (async () => {
-  let heights: unknown = DATA?.sizes
-  if (!DATA) {
-    try { const r = await fetch(`${ROUTE}/api/sizes`); if (r.ok) heights = (await r.json() as { heights?: unknown })?.heights } catch { /* no cache: placeholders, as before */ }
+/** The frames that measure (render a Doc), as the dev server read their sources at the last load -
+ *  only theirs is a height to trust: a Doc turned bare Md keeps the size its board gives it, even
+ *  in a page that measured it as a Doc earlier. null = no such list (a published bundle ships only
+ *  measuring frames' heights). */
+let measuring: Set<string> | null = null
+let publishedLoaded = false
+async function loadSavedHeights(): Promise<void> {
+  if (DATA) {
+    if (publishedLoaded) return
+    publishedLoaded = true
+    for (const [k, v] of Object.entries(DATA.sizes ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
+    return
   }
-  if (heights && typeof heights === 'object')
-    for (const [k, v] of Object.entries(heights)) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
-})())
+  try {
+    const r = await fetch(`${ROUTE}/api/sizes`)
+    if (!r.ok) return
+    const body = (await r.json()) as { heights?: Record<string, unknown>; measuring?: unknown }
+    savedHeights.clear()
+    for (const [k, v] of Object.entries(body.heights ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
+    measuring = Array.isArray(body.measuring) ? new Set(body.measuring.filter((x): x is string => typeof x === 'string')) : null
+  } catch { /* no cache: placeholders, as before */ }
+}
+const measures = (frameId: string) => !measuring || measuring.has(frameId)
 
 // settled heights that differ from the committed ones, written back in batches (dev only). One
 // write in flight at a time; a height that changes while its write is in flight queues behind it,
@@ -318,10 +333,18 @@ async function flushHeights() {
   flushing = true
   const batch = Object.fromEntries([...pendingHeights].slice(0, 500))
   for (const [k, v] of Object.entries(batch)) { pendingHeights.delete(k); inflightHeights.set(k, v) }
+  let answered = false
   try {
     const r = await postOwner('sizes', { heights: batch })
-    if (r.ok) for (const k of ((await r.json()) as { accepted?: string[] }).accepted ?? []) savedHeights.set(k, batch[k])
-  } catch { /* the next settled measurement of these frames tries again */ }
+    if (r.ok) {
+      const accepted = new Set(((await r.json()) as { accepted?: string[] }).accepted ?? [])
+      for (const k of Object.keys(batch)) if (accepted.has(k)) savedHeights.set(k, batch[k])
+      answered = true
+    }
+  } catch { /* lost: below */ }
+  // no answer = the write may or may not have landed: what the file holds is unknown, so nothing is
+  // deduplicated against it - a correction queued meanwhile still goes, the next report still writes
+  if (!answered) for (const k of Object.keys(batch)) savedHeights.delete(k)
   for (const k of Object.keys(batch)) inflightHeights.delete(k)
   // a height that settled while the write was in flight: still owed only if it differs from what landed
   for (const [k, v] of pendingHeights) if (savedHeights.get(k) === v) pendingHeights.delete(k)
@@ -329,7 +352,7 @@ async function flushHeights() {
   if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
 }
 
-const hasKnownHeight = (frameId: string, w: number) => measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`)
+const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`))
 
 function defaultSize(frame: FrameEntry) {
   // the precedence chain (spec 09 slice 1): slide stage → authored
@@ -344,7 +367,8 @@ function defaultSize(frame: FrameEntry) {
     const vp = CONFIG.viewports[frame.viewport ?? '']
     const w = vp?.width ?? frame.contentWidth
     const key = `${frame.id}@${w}`
-    return { w, h: measuredHeights.get(key) ?? savedHeights.get(key) ?? vp?.height ?? Math.round(w * 0.75) }
+    const known = measures(frame.id) ? measuredHeights.get(key) ?? savedHeights.get(key) : undefined
+    return { w, h: known ?? vp?.height ?? Math.round(w * 0.75) }
   }
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
   return { w: vp.width, h: vp.height }
@@ -531,15 +555,19 @@ export const useStore = create<State>((set, get) => {
    *  sh:scenes, either merged late by boot/switch): a composed board re-applies its layout. */
   const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow(cramped) }
   /** A composed board's saved positions were laid out around the heights of the session that saved
-   *  them. A committed height that changed since (the doc grew while another board was open) opens
-   *  at its new size - and no measurement will re-flow the rows, it already equals the committed
-   *  one. So once the board is up (its notes measured too), the recipe re-runs if it would place
-   *  anything differently - as the first measurement used to make it - and only then. */
+   *  them. A committed height that grew since (the doc changed while another board was open) opens
+   *  at its new size over the row below - and no measurement will re-flow it, it already equals the
+   *  committed one. So once the board is up, the recipe re-runs if a Doc sized from what is known now
+   *  OVERLAPS another frame - the one thing a size change does that a hand never meant. A frame the
+   *  human dragged elsewhere, at heights that did not change, stays where they put it. */
   const layoutStale = () => {
-    const s = get()
-    // saved positions are whole pixels (save rounds them): a sub-pixel difference is the same layout
-    return tidy(tidyInput(s.nodes, s.manifest), effectiveLayout(s.layout, s.sceneRows), () => {})
-      .some((p) => { const n = s.nodes.find((x) => x.key === p.key); return !!n && (Math.round(n.x) !== Math.round(p.x) || Math.round(n.y) !== Math.round(p.y)) })
+    const { nodes } = get()
+    const box = (n: Node) => ({ l: n.x, t: n.y, r: n.x + n.w, b: n.y + n.h + HEADER })
+    return nodes.some((a) => {
+      if (a.sizeMode !== 'auto' || !hasKnownHeight(a.frame, Math.round(a.w))) return false
+      const A = box(a)
+      return nodes.some((b) => { if (b === a) return false; const B = box(b); return A.l < B.r - 1 && B.l < A.r - 1 && A.t < B.b - 1 && B.t < A.b - 1 })
+    })
   }
   const recheckLayout = () => {
     const s = get()

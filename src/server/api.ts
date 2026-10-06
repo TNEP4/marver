@@ -9,7 +9,7 @@ import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTi
 import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, readContextFacts } from './board-status.ts'
-import { autoWidthOf, keptSizes, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
+import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -231,8 +231,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
 
       // Content-frame heights (sizes.ts): read before a board's first layout, written when the shell
       // reports a settled measurement that differs. Owner-gated like every write; the frames are
-      // checked against the manifest on disk, so only a live Doc at its own width lands - and only
-      // what a board can use is handed out (a frame that stopped rendering a Doc keeps its board size).
+      // checked against the manifest on disk, so only a live content frame at its own width lands -
+      // and only a frame that renders a Doc is handed a height (one that stopped keeps its board size).
       // Neither file is ever rewritten from a bad read: an unreadable manifest (mid-rewrite) or a
       // conflicted _sizes.json refuses the write instead of pruning every height away.
       const readManifestFrames = (): { id: string; file?: string; kind?: string; contentWidth?: number; viewport?: string }[] | null => {
@@ -243,7 +243,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       }
       if (path === 'sizes' && req.method === 'GET') {
         const frames = readManifestFrames()
-        return json(res, 200, { heights: frames ? keptSizes(readSizes(root), autoWidthOf(root, frames, opts.viewports ?? {})) : {} })
+        if (!frames) return json(res, 200, { heights: {}, measuring: [] })
+        // `measuring`: which content frames render a Doc NOW - the shell trusts no height, committed
+        // or measured earlier in the page, for a frame that stopped measuring
+        const measuring = measuringFrames(root, frames)
+        return json(res, 200, { heights: keptSizes(readSizes(root), autoWidthOf(frames, opts.viewports ?? {}), measuring), measuring: [...measuring].sort() })
       }
       if (path === 'sizes' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
@@ -265,7 +269,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (!sizesWarned) { sizesWarned = true; console.warn('  marver: design/boards/_sizes.json is not valid JSON (a merge conflict?) - resolve it, either side is fine; heights are not saved until then') }
           return json(res, 409, { error: 'design/boards/_sizes.json is not valid JSON - resolve it (either side is fine)' })
         }
-        const { next, accepted } = mergeSizes(cur.heights, incoming as Record<string, unknown>, autoWidthOf(root, frames, opts.viewports ?? {}))
+        const { next, accepted } = mergeSizes(cur.heights, incoming as Record<string, unknown>, autoWidthOf(frames, opts.viewports ?? {}))
         const text = serializeSizes(next)
         const current = existsSync(file) ? readFileSync(file, 'utf8') : ''
         if (text !== current && (Object.keys(next).length || current)) { mkdirSync(boardsDir, { recursive: true }); atomicWrite(file, text) }

@@ -110,8 +110,18 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     // on its side (event.source must map to a mounted iframe; reflow is board-scoped)
     const ro = new ResizeObserver(() => { if (!reported) return; clearTimeout(t); t = setTimeout(post, 300) })
     ro.observe(el)
+    // an image landing or failing, a font finishing: check again now - the poll stops after its tail,
+    // and a size-given image that loads a minute later still owes the settled report
+    const onAsset = () => { if (reported && !lastSettled && poll === undefined) poll = setTimeout(check, 50) }
+    el.addEventListener('load', onAsset, true)
+    el.addEventListener('error', onAsset, true)
+    document.fonts?.addEventListener?.('loadingdone', onAsset)
     check()
-    return () => { ro.disconnect(); clearTimeout(t); clearTimeout(poll) }
+    return () => {
+      ro.disconnect(); clearTimeout(t); clearTimeout(poll)
+      el.removeEventListener('load', onAsset, true); el.removeEventListener('error', onAsset, true)
+      document.fonts?.removeEventListener?.('loadingdone', onAsset)
+    }
   }, [layout])
   return <div ref={ref} className={`mv-doc mv-doc-${layout}`}>{children}</div>
 }

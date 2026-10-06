@@ -97,8 +97,9 @@ beforeAll(async () => {
     layout: { rows: [['docs']], scenes: { docs: { rows: [['a', 'b'], ['c']] } } },
     nodes: [{ key: 'k-a', frame: 'docs/a' }, { key: 'k-b', frame: 'docs/b' }, { key: 'k-c', frame: 'docs/c' }] }, null, 2) + '\n')
   writeFileSync(join(boards, 'private.json'), JSON.stringify({ version: 1, name: 'private', auto: false, nodes: [{ key: 'k-s', frame: 'secret/s', x: 0, y: 0 }] }, null, 2) + '\n')
-  // the same Doc on a second, hand-placed board
+  // the same Doc on a second, hand-placed board - and on a third that gives it a size of its own
   writeFileSync(join(boards, 'other.json'), JSON.stringify({ version: 1, name: 'other', auto: false, nodes: [{ key: 'k-oa', frame: 'docs/a', x: 0, y: 0 }] }, null, 2) + '\n')
+  writeFileSync(join(boards, 'authored.json'), JSON.stringify({ version: 1, name: 'authored', auto: false, nodes: [{ key: 'k-aa', frame: 'docs/a', x: 0, y: 0, w: 500, h: 444 }] }, null, 2) + '\n')
   // one frame in view, one 30 000px below it - far out of any lazy-load margin
   mkdirSync(join(root, 'design', 'scenes', 'lazy'), { recursive: true })
   writeFileSync(join(root, 'design', 'scenes', 'lazy', 'near.tsx'), doc(1))
@@ -202,6 +203,49 @@ describe('calm loading', () => {
     expect(a.h).toBe(heights()['docs/a@760'])                          // it opens at the new height...
     await browser.until(s, `(() => { const ns = window.__mvStore.getState().nodes; const a = ns.find((n) => n.key === 'k-a'), c = ns.find((n) => n.key === 'k-c'); return c.y > a.y + a.h + 28 })()`, 10_000)
     await browser.until(s, `!window.__mvStore.getState().dirty`, 10_000)   // ... and the re-laid rows are saved
+  }, 90_000)
+
+  it('a frame the human dragged on a recipe board stays where they put it when its heights did not change', async () => {
+    if (!browser) return
+    await closeAll()
+    const s1 = await open('#/b/docs')
+    await wait(2500)
+    await browser.eval(s1, `window.__mvStore.getState().moveNode('k-b', 4000, 300)`)
+    await browser.until(s1, `!window.__mvStore.getState().dirty`, 10_000)
+    await browser.go(s1, 'about:blank')
+    const s = await open('#/b/docs')
+    await wait(2500)
+    expect(await node(s, 'k-b')).toMatchObject({ x: 4000, y: 300 })
+  }, 90_000)
+
+  it('a write whose answer was lost leaves nothing deduplicated against it - the next height still lands', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    const H = heights()['docs/b@760']
+    // the first write to the size cache lands, but its answer never comes back
+    await browser.eval(s, `(() => { const f = window.fetch; let lost = false; window.fetch = (u, o) => String(u).includes('/api/sizes') && o && o.method === 'POST' && !lost ? (lost = true, f(u, o).then(() => { throw new Error('lost') })) : f(u, o) })()`)
+    const measure = (h: number) => browser!.eval(s, `window.__mvStore.getState().measureNode('k-b', 'docs/b', 760, 760, ${h}, true)`)
+    await measure(H + 100)
+    await until(() => heights()['docs/b@760'] === H + 100)              // it landed; the shell never heard
+    await wait(300)
+    await measure(H)
+    await until(() => heights()['docs/b@760'] === H)
+  }, 90_000)
+
+  it('a Doc turned bare Md in an open page opens at the size its next board gives it, not its old height', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    const src = readFileSync(join(root, 'design', 'scenes', 'docs', 'a.tsx'), 'utf8')
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'a.tsx'), `import { Md } from '@marver-design/marver/content'\nexport default () => <Md>{'# bare now'}</Md>\n`)
+    await wait(1500)
+    await browser.eval(s, `window.__mvStore.getState().switchBoard('authored')`)
+    await browser.until(s, `window.__mvStore.getState().board === 'authored'`, 10_000)
+    expect(await node(s, 'k-aa')).toMatchObject({ w: 500, h: 444 })
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'a.tsx'), src)
   }, 90_000)
 
   it('a height that changes while its write is in flight is the one the file ends with', async () => {
