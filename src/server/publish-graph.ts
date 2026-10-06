@@ -19,13 +19,29 @@ function publishedBoards(root: string): string[] {
   try { return Object.keys(JSON.parse(readFileSync(join(root, 'design', 'publish.json'), 'utf8')).boards ?? {}) } catch { return [] }
 }
 
+/** JSON with comments and trailing commas, as tsconfig allows - comments stripped outside strings only
+ *  (a "$schema": "https://..." is a string, not a comment). */
+export function parseJsonc(text: string): unknown {
+  let out = '', i = 0, str = false
+  const t = text.replace(/^\uFEFF/, '')
+  while (i < t.length) {
+    const c = t[i]
+    if (str) { out += c; if (c === '\\') { out += t[i + 1] ?? ''; i += 2; continue } if (c === '"') str = false; i++; continue }
+    if (c === '"') { str = true; out += c; i++; continue }
+    if (c === '/' && t[i + 1] === '/') { while (i < t.length && t[i] !== '\n') i++; continue }
+    if (c === '/' && t[i + 1] === '*') { i += 2; while (i < t.length && !(t[i] === '*' && t[i + 1] === '/')) i++; i += 2; continue }
+    out += c; i++
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'))
+}
+
 /** design/tsconfig.json's path aliases, resolved against the config that declares them - its own,
  *  or one it `extends` (the host's tsconfig), as TypeScript and Vite would. */
 function aliases(root: string): { prefix: string; targets: string[] }[] {
   const read = (rel: string, depth: number): { prefix: string; targets: string[] }[] => {
     if (depth > 4) return []
     let cfg: { extends?: unknown; compilerOptions?: { paths?: Record<string, unknown>; baseUrl?: unknown } }
-    try { cfg = JSON.parse(readFileSync(join(root, rel), 'utf8').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '').replace(/,(\s*[}\]])/g, '$1')) } catch { return [] }
+    try { cfg = parseJsonc(readFileSync(join(root, rel), 'utf8')) as typeof cfg } catch { return [] }
     const dir = dirname(rel)
     const base = typeof cfg.compilerOptions?.baseUrl === 'string' ? normalize(join(dir, cfg.compilerOptions.baseUrl)) : dir
     const own = Object.entries(cfg.compilerOptions?.paths ?? {}).flatMap(([k, v]) => (Array.isArray(v)
@@ -61,16 +77,17 @@ export function publishGraph(root: string): PublishGraph {
       for (const n of Array.isArray(j?.nodes) ? j.nodes : []) if (typeof n?.frame === 'string') wanted.add(n.frame)
     } catch { /* an unreadable board fails the build itself */ }
   }
-  const frames = manifest.frames.filter((f) => !wanted || wanted.has(f.id)).map((f) => rel(join(root, f.file)))
+  const entries = manifest.frames.filter((f) => !wanted || wanted.has(f.id))
+  const frames = entries.map((f) => rel(join(root, f.file)))
   const queue = [...frames]
   // what the published manifest carries beside each frame: its scene's brief (the description) and
   // the sticky notes - the scene's and the frame's own
-  for (const f of frames) {
-    // the scene is the first directory under design/scenes (or components); a nested frame's own
-    // directory may carry notes too
-    const parts = f.split('/')
-    const sceneDir = parts.slice(0, 3).join('/')
-    for (const dir of new Set([sceneDir, dirname(f)])) for (const n of ['_brief.md', '_note.md']) if (isFile(`${dir}/${n}`)) queue.push(`${dir}/${n}`)
+  for (const [i, f] of frames.entries()) {
+    // the manifest's rule: a frame's scene is its id's first segment, and that scene's brief and note
+    // live in design/scenes/<scene>/ - for a component frame too; a nested frame's own directory may
+    // carry notes as well
+    const scene = entries[i].scene
+    for (const dir of new Set([scene ? `design/scenes/${scene}` : dirname(f), dirname(f)])) for (const n of ['_brief.md', '_note.md']) if (isFile(`${dir}/${n}`)) queue.push(`${dir}/${n}`)
     const note = f.replace(/\.(tsx|jsx|html)$/, '.note.md')
     if (isFile(note)) queue.push(note)
   }

@@ -319,7 +319,7 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
         const resolution = r.cells[ri] ?? ''
         if (state !== 'shipped') continue
         // closure needs availability confirmed - not "implementation confirmed", not beside an unknown availability
-        const claims = resolution.split(';').filter((c) => !/\b(implement(ed|ation)|built|merged|coded|tested|test suite|ci)\b/i.test(c)).join(';')
+        const claims = resolution.split(';').filter((c) => !/\b(implement(ed|ation)|built|merged|coded|tested|test suite|ci)\b/i.test(c) || /\b(available|availability|production|live|delivered)\b/i.test(c)).join(';')
         if (ri === si || !availableLevels(claims).includes('confirmed') || !CITATION.test(resolution) || /availab\w*[^;]*`unknown`/i.test(resolution))
           fail('feedback-closed', where, 'shipped without a cited `confirmed` availability in its resolution')
         for (const m of resolution.matchAll(CITED_FILE)) { const problem = citationProblem(m[1], m[2], m[3]); if (problem) fail('dead-citation', where, problem) }

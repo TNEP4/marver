@@ -21,7 +21,7 @@ const AUDIENCE_RANK: Record<Audience, number> = { publishable: 0, team: 1, restr
 export const strictest = (...a: Audience[]): Audience => a.reduce((x, y) => (AUDIENCE_RANK[y] > AUDIENCE_RANK[x] ? y : x), 'publishable' as Audience)
 
 /** Line endings normalized: every reader parses LF, so a CRLF file means the same thing. */
-export const lf = (text: string): string => text.replace(/\r\n?/g, '\n')
+export const lf = (text: string): string => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
 /** The headers whose cells carry evidence in a shipped table. */
 export const EVIDENCE_COLUMN = /^(evidence|verified|available|delivered)$/i
 

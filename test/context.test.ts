@@ -737,3 +737,38 @@ describe('the review of 0.22, third pass: the check', () => {
     expect(where).toEqual(['context/secret.md', 'design/scenes/app/_brief.md'])
   })
 })
+
+// ---------------------------------------------------------------------------------------------
+describe('the review of 0.22, final pass', () => {
+  it('a byte-order mark never hides front matter', () => {
+    expect(frontMatter('﻿---\naudience: restricted\n---\nx\n').data).toEqual({ audience: 'restricted' })
+  })
+})
+
+describe('the review of 0.22, final pass: the check', () => {
+  const pass = () => contextCheck(root)
+  beforeEach(() => { git('init', '-q'); contextInit(root) })
+
+  it('a $schema URL in tsconfig does not hide its aliases', () => {
+    put('tsconfig.json', '{\n  "$schema": "https://json.schemastore.org/tsconfig", // the schema\n  "compilerOptions": { "paths": { "@ctx/*": ["./context/*"] } },\n}\n')
+    put('design/tsconfig.json', JSON.stringify({ $schema: 'https://json.schemastore.org/tsconfig', extends: ['../tsconfig.json'] }))
+    put('design/scenes/app/home.tsx', "import x from '@ctx/secret.md?raw'\nexport default () => x\n")
+    put('context/secret.md', '# secret\n')
+    put('design/boards/b.json', { version: 1, nodes: [{ frame: 'app/home' }] })
+    put('design/publish.json', { boards: { b: 'read' } })
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'audience', where: 'context/secret.md' }))
+  })
+
+  it('a published component frame carries the components scene\'s brief and note - checked where they live', () => {
+    put('design/components/card/button.tsx', 'export default () => null\n')
+    put('design/scenes/components/_note.md', '---\naudience: restricted\n---\nPrivate.\n')
+    put('design/boards/b.json', { version: 1, nodes: [{ frame: 'components/card/button' }] })
+    put('design/publish.json', { boards: { b: 'read' } })
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'audience', where: 'design/scenes/components/_note.md' }))
+  })
+
+  it('feedback: "implemented and available in production - confirmed" closes it', () => {
+    put('context/feedback/f.md', '| Item | What | State | Resolved by |\n|---|---|---|---|\n| F1 | x | shipped | implemented and available in production - `confirmed` by run 1234567 |\n')
+    expect(pass().failures.map((f) => f.rule)).not.toContain('feedback-closed')
+  })
+})

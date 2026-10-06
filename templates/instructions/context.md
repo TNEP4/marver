@@ -76,8 +76,9 @@ Feature and project boards wear a status read from these files (the first that m
 the board's own `"status"` - `archived`, `paused`, or `blocked` with a `"reason"`; Unknown when the
 evidence cannot be read; In progress when an open plan in `plans/` names the capability (filling by
 phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed` in an
-availability clause (one per `;`) that names no staging or preview and opens with no "nowhere" or
-"rolled back"; Done, reported when only `reported`; To do when its contract is `state: current`; else Backlog.
+availability clause (one per `;`) with no negation or pending word ("nowhere", "not yet", "rolled
+back", "planned") and no pre-production place (staging, preview, dev, local, testing) unless it also
+names production; Done, reported when only `reported`; To do when its contract is `state: current`; else Backlog.
 **Done is never set by hand** - `"status": "done"` fails the check. A board finds its capability by
 its own name, or `"capability": "<slug>"` in its JSON.
 

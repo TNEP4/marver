@@ -371,6 +371,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           for (const w of plan) {
             const same = w.obj.order === w.order && (w.folder ? w.obj.folder === w.folder : w.obj.folder === undefined)
             if (same) continue
+            // re-checked at the moment of writing, not only at preflight: an author's save landing
+            // while an earlier board in this batch was written is never overwritten
+            if (hash(readFileSync(w.path, 'utf8')) !== b.boards![w.name]) return reply(409, { error: 'boards changed on disk', stale: [w.name] })
             w.obj.order = w.order
             if (w.folder) w.obj.folder = w.folder; else delete w.obj.folder
             const next = JSON.stringify(w.obj, null, 2) + '\n'
@@ -378,6 +381,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             sha256[w.name] = hash(next)
           }
           mkdirSync(boardsDir, { recursive: true })
+          // the registry too, at the moment of writing: an editor's save since the preflight wins
+          const regNow = nodeAt(foldersPath) ? hash(readFileSync(foldersPath, 'utf8')) : null
+          if (regNow !== b.folders) return reply(409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
           let foldersSha: string | null = null
           if (folders.length) {
             const version = folders.some((f) => f.parent) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
