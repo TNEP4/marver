@@ -292,8 +292,11 @@ export type Drop = { list: string | null; index: number } | { into: string }
  *  folder's items, 2 a sub-folder's). `open` is a folder's disclosure; `left` is the row's
  *  left edge, from which the indent of each level is measured. */
 export interface Row { kind: TreeItem['kind']; name: string; parent: string | null; depth: number; open?: boolean; top: number; bottom: number; left: number }
-/** Px each level of nesting indents its rows; the seams inside draw from there too. */
-export const INDENT = 28
+/** Px each level of nesting indents its rows; the seams inside draw from there too. One step is
+ *  a row's lead (1px icon margin + 14px icon + 1px margin + 7px gap) less the icon's own left
+ *  margin, so a nested row's icon starts exactly where its folder's name does (styles.css,
+ *  `.in-folder` / `.in-sub`). */
+export const INDENT = 22
 
 /** How deep the dragged item may land: a board anywhere (2), a folder without sub-folders
  *  inside a top-level folder (1), a folder holding sub-folders at the root only (0). */

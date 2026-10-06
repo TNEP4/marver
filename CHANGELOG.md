@@ -50,6 +50,12 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - The board autosave keeps `type`, `capability`, `status` and `reason` from disk like `title` and
   `description`, and a folder drag keeps a folder's `type`.
 
+### Fixed
+
+- **Nested sidebar rows line up.** A board or sub-folder's icon now starts exactly where its folder's
+  name starts, at both levels, with one icon-to-name gap throughout - 0.21.0's indent left a folder's
+  boards 2px short of that line and a sub-folder's boards 6px past it. Drop seams follow the rows.
+
 ### Docs
 
 - A new guide, [docs/context.md](docs/context.md): the files, the evidence levels, the check and its

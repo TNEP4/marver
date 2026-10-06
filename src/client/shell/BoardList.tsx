@@ -405,7 +405,8 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (drop.list === null && HAS_ALL_SCENES) return { row: 'b:all-scenes', where: 'before', depth: 0 }
     return items.length ? { row: lastRow(items[items.length - 1]!), where: 'after', depth } : null
   })()
-  const seamLeft = (depth: number): CSSProperties => ({ ['--seam-left' as string]: `${depth ? depth * INDENT : 6}px` })
+  // a nested seam starts where that list's rows start: the row's own 8px padding plus its indent
+  const seamLeft = (depth: number): CSSProperties => ({ ['--seam-left' as string]: `${depth ? 8 + depth * INDENT : 6}px` })
   const seamOf = (row: string): { cls: string; style?: CSSProperties } =>
     seam && seam.row === row ? { cls: ` drop-${seam.where}`, style: seamLeft(seam.depth) } : { cls: '' }
   const indent = (depth: number) => (depth >= 2 ? ' in-folder in-sub' : depth === 1 ? ' in-folder' : '')

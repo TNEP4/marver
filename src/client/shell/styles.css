@@ -512,14 +512,16 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .it.folder.drop-after::after { bottom: -1px }
 .sh-panel .it.folder.drop-into { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px #0088ff }
 .sh-panel .it.folder.drop-into svg { color: #0088ff }
-.sh-panel .it.board.in-folder, .sh-panel .it.folder.in-folder { padding-left: 28px }
-.sh-panel .it.board.in-sub { padding-left: 56px }
+/* 8px row padding + INDENT (22px, board-tree.ts) per level: a nested row's icon starts exactly
+   where its folder's name starts, at every level */
+.sh-panel .it.board.in-folder, .sh-panel .it.folder.in-folder { padding-left: 30px }
+.sh-panel .it.board.in-sub { padding-left: 52px }
 .sh-panel .it.board.draft { cursor: default; opacity: .6 }
 /* seams are indented with the list they land in (--seam-left, set on the row that draws them),
    so "inside", "inside the sub-folder" and "at the root" never draw alike; an open EMPTY folder
    draws that indented seam under its own header (drop-in) */
 .sh-panel .it.folder.drop-in { position: relative }
-.sh-panel .it.folder.drop-in::after { content: ''; position: absolute; left: var(--seam-left, 28px); right: 6px; bottom: -1px; height: 3px; border-radius: 3px;
+.sh-panel .it.folder.drop-in::after { content: ''; position: absolute; left: var(--seam-left, 30px); right: 6px; bottom: -1px; height: 3px; border-radius: 3px;
   background: #0088ff; pointer-events: none }
 /* the Boards header carries a quiet folder-plus: tertiary, shows on hover of the header row */
 .sh-panel .sh-boards .hd { display: flex; align-items: center; margin-right: 6px }

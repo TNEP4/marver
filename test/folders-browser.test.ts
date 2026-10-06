@@ -575,4 +575,18 @@ describe('board folders - real dev server, real browser, real files', () => {
     expect(readBoard('specs').folder).toBeUndefined()
     expect(readBoard('archive')).toMatchObject({ folder: 'deep' })
   })
+
+  skippable('two levels: a nested row\'s icon starts where its folder\'s name starts, at every level', async () => {
+    writeBoard('specs', { order: 0, folder: 'research' }); writeBoard('archive', { order: 0, folder: 'deep' })
+    writeFileSync(join(boardsDir(), '_folders.json'), JSON.stringify({ version: 2, folders: [{ name: 'research', order: 2 }, { name: 'deep', parent: 'research', order: 1 }] }))
+    const s = await open(browser!)
+    await browser!.until(s, `${TREE_ROWS}.join() === 'overview,flow,folder:research,  specs,  folder:deep,    archive,all-scenes'`)
+    const edges = (sel: string) => browser!.eval(s, `(() => { const el = document.querySelector(${JSON.stringify(sel)}); const x = (q) => el.querySelector(q).getBoundingClientRect().left; return { icon: x(':scope > svg'), text: x(':scope > span') } })()`)
+    const [root, research, specs, deep, archive] = await Promise.all(['[data-board-row][data-board="flow"]', '[data-folder-row="research"]', '[data-board-row][data-board="specs"]', '[data-folder-row="deep"]', '[data-board-row][data-board="archive"]'].map(edges))
+    expect(research.icon).toBeCloseTo(root.icon, 0)                  // a top-level folder is a root row
+    expect(specs.icon).toBeCloseTo(research.text, 0)                 // level one under its folder's name
+    expect(deep.icon).toBeCloseTo(research.text, 0)
+    expect(archive.icon).toBeCloseTo(deep.text, 0)                   // level two under its sub-folder's name
+    for (const r of [root, research, specs, deep, archive]) expect(r.text - r.icon).toBeCloseTo(root.text - root.icon, 0)   // one icon-to-name gap
+  })
 })
