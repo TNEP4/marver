@@ -36,8 +36,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board
   rendering `context/INDEX.md` and `context/shipped.md`, a deck on its title slide.
 - **`"showStatus": true`** on a `publish.json` row shows a board's status on the published canvas -
-  only Backlog to Done, only when the evidence behind it is marked `audience: publishable`, never a
-  blocked reason or the evidence itself, with the date it was read.
+  only Backlog to Done, only when the evidence behind it is publishable (`audience: publishable` under
+  `context/`; a scene brief's phase counts unless the brief says otherwise - it ships with its board),
+  never a blocked reason or the evidence itself, with the date it was read.
 - **Knowledge work.** `npx marver context init --kind knowledge` keeps a delivered record - Project
   and Delivered columns - and project boards read Done from it. A repository without a canvas gets
   the conventions as `context/README.md`.

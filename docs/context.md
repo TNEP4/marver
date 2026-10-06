@@ -113,4 +113,5 @@ frame. The tooltip says what decided it. Change a file and the sidebar follows; 
 `restricted` - never tracked by git (a gitignored `context/private/`). A frame that renders a `team`
 file onto a published board fails the check, and a published build never carries a board's status,
 reason or capability unless its publish row opts in with `"showStatus": true` - and then only rows
-5 to 9, and only a status whose every source says `audience: publishable`.
+5 to 9, and only a status whose every source is publishable: a file under `context/` that says
+`audience: publishable`, or a scene brief that does not say otherwise (it ships with its board).

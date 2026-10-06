@@ -136,7 +136,8 @@ the read-privacy work also called "v2" further down.)
   note in `marver build`; the row decides.
 - **`showStatus`** (0.22) shows a feature or project board's status on the
   published canvas - only Backlog, To do, In progress, Done and Done reported,
-  only when every file it was read from says `audience: publishable`, never a
+  only when every file it was read from is publishable - `audience: publishable`
+  under `context/`; a scene brief counts unless it says otherwise - never a
   blocked reason or the evidence itself, and with the date the build read it.
   Without it no status ships, and a published board never carries its
   `status`, `reason` or `capability`.

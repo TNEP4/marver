@@ -134,7 +134,9 @@ function readScene(root: string, scene: string): { frames: boolean; phase?: stri
   let audience: Audience | undefined
   try {
     const fm = frontMatter(readFileSync(join(dir, '_brief.md'), 'utf8'))
-    if (typeof fm.data?.phase === 'string') { phase = fm.data.phase; audience = readAudience(fm.data.audience) }
+    // a brief ships with its board (it is the published scene's description), so its phase is as public
+    // as the board unless the brief says otherwise - the check's own rule for files outside context/
+    if (typeof fm.data?.phase === 'string') { phase = fm.data.phase; audience = fm.data.audience === undefined ? 'publishable' : readAudience(fm.data.audience) }
   } catch { /* no brief */ }
   return { frames, ...(phase ? { phase, audience } : {}) }
 }

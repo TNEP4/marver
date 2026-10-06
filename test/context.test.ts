@@ -691,6 +691,17 @@ describe('the review of 0.22, second pass', () => {
     expect(publishableStatus(a.get('x')?.status)).toBeNull()
   })
 
+  it('a brief that names no audience is as public as its board - its phase publishes; one that says team does not', () => {
+    put('design/scenes/work/_brief.md', '---\nphase: lofi\n---\n')
+    put('design/scenes/work/a.tsx', 'export default () => null\n')
+    put('context/plans/p.md', '---\nstate: proposed\ncapability: x\naudience: publishable\n---\n')
+    const read = () => annotateBoards(root, [{ name: 'x', json: { type: 'feature', layout: { rows: [['work']] } } }], [], () => null).get('x')?.status
+    expect(read()).toMatchObject({ status: 'in-progress', fill: 2, audience: 'publishable' })
+    expect(publishableStatus(read())).toEqual({ status: 'in-progress', fill: 2 })
+    put('design/scenes/work/_brief.md', '---\nphase: lofi\naudience: team\n---\n')
+    expect(publishableStatus(read())).toBeNull()
+  })
+
   it('a permission change on the record is never served from the cache as Done', () => {
     put('context/shipped.md', '| Capability | Available |\n|---|---|\n| `x` | production - `confirmed` - `a.md` |\n')
     expect(readContextFacts(root).shipped.get('x')?.levels).toEqual(['confirmed'])

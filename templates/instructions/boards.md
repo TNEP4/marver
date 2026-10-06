@@ -169,6 +169,7 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   folder's type), or `--type <type>`. A feature gets three phase scenes as three bands -
   `<name>-specs`, `<name>-lofi`, `<name>` - each with a brief; a start board renders
   `context/INDEX.md` and `context/shipped.md`; a deck starts on a title slide. It never overwrites.
+  The phase scenes start empty: pin each frame you make in one as a node, or the board never shows it.
 - **Add a typed folder:** `npx marver folders add decks` (or `start`, `features`, `surfaces`,
   `projects`, `feedback`, `context`, `archive`) - appended, never moving one that exists.
 - **Feature and project boards wear a status** read from `context/` (instructions/context.md): the
@@ -276,7 +277,8 @@ accounts and invites - is its own phase: **instructions/publish.md**.
 When you add a board to `publish.json`, write the `type` its board type suggests - `slides` for a
 deck, `refs` for a context board, `doc` for a project (`marver build` notes any row that names none).
 A board's status, reason and capability never ship - unless the row says `"showStatus": true`, and
-then only a status drawn from `audience: publishable` evidence, never Blocked, never a reason.
+then only a status drawn from publishable evidence (`audience: publishable` under `context/`; a scene
+brief counts unless it says otherwise), never Blocked, never a reason.
 
 The published gate page shows the app's identity: `design/logo.svg` + the host
 package name (overridable via config `share`). If the app has no logo asset yet,
