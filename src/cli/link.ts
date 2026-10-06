@@ -21,6 +21,8 @@ export interface Resolved {
   board: string
   /** Frame ids asked for by id, and scenes asked for whole. */
   frames: string[]
+  /** The frames named EXACTLY (not reached through a folder) - what `comments new` may pin on. */
+  exact: string[]
   scenes: string[]
   /** Every frame the link selects (scenes expanded) - what the board must show. */
   all: string[]
@@ -36,10 +38,10 @@ export function resolveLink(root: string, targets: string[], board?: string): Re
   if (!targets.length) throw new Error('name what to link: link <scene/frame | scene ...>')
   const known = scanFrames(root).frames.map((f) => f.id)
   const ids = new Set(known)
-  const frames: string[] = [], scenes: string[] = [], all: string[] = []
+  const frames: string[] = [], scenes: string[] = [], all: string[] = [], exact: string[] = []
   for (const raw of targets) {
     const t = raw.replace(/^design\/scenes\//, '').replace(/\.(tsx|jsx|html)$/, '').replace(/\/+$/, '')
-    if (ids.has(t)) { if (!frames.includes(t)) frames.push(t); if (!all.includes(t)) all.push(t); continue }
+    if (ids.has(t)) { if (!frames.includes(t)) frames.push(t); if (!all.includes(t)) all.push(t); if (!exact.includes(t)) exact.push(t); continue }
     const members = known.filter((id) => id.startsWith(`${t}/`))
     if (members.length) {
       // a scene is a top-level folder (`?s=`); a folder inside one (a variant scope, checkout/payment)
@@ -91,7 +93,7 @@ export function resolveLink(root: string, targets: string[], board?: string): Re
   }
 
   const q = [frames.length ? `f=${frames.join(',')}` : '', scenes.length ? `s=${scenes.join(',')}` : ''].filter(Boolean).join('&')
-  return { board: pick, frames, scenes, all, hash: `#/b/${pick}?${q}`, ...(fellBack ? { fellBack } : {}), nodesOf }
+  return { board: pick, frames, exact, scenes, all, hash: `#/b/${pick}?${q}`, ...(fellBack ? { fellBack } : {}), nodesOf }
 }
 
 /** The dev server's origin when it is running in this repo and answers like `marver dev` - else null. */

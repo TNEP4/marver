@@ -116,6 +116,15 @@ describe('a link that lands on the work', () => {
     await browser.until(s, `location.hash === '#/b/big?n=b-far'`, 20_000)
   }, 30_000)
 
+  it('a newer link wins over a reveal still on its way to another board', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/flow')
+    // follow a frame that lives on another board, then - before that lands - a link on this board
+    await browser.eval(s, `(() => { location.hash = '#/b/flow?f=other/far'; setTimeout(() => { location.hash = '#/b/flow?f=shop/pay' }, 5) })()`)
+    await wait(2500)               // long past any board load: whatever was going to land has landed
+    expect(await browser.eval(s, VIEW)).toMatchObject({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'] })
+  }, 30_000)
+
   it('marver link prints that link with the running port; work done prints it for what it cleared', () => {
     if (!browser) return
     expect(cli('link', 'shop/pay').trim()).toBe(`${ORIGIN}/#/b/flow?f=shop/pay`)

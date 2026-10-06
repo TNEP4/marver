@@ -122,13 +122,14 @@ describe('marver comments new / reply - Marver\'s voice', () => {
     expect(ev.commentId).toBeTruthy()
   })
 
-  it('new without --on is a frame-level pin; a scene is refused', async () => {
+  it('new without --on is a frame-level pin; a scene or a folder is refused', async () => {
     for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_THREAD_ID', 'CURSOR_AGENT', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT', 'PI_SESSION_ID']) delete process.env[k]
     await commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', board: 'flow' })
     const ev = log('flow').find((e) => e.frame === 'shop/cart')!
     expect(ev.anchor).toBeUndefined()
     expect(ev.agentMeta).toEqual({ devUser: 'Nic' })                     // no marker in the env: no harness claimed
-    await expect(commentsCommand(root, 'new', 'shop', { body: 'x' })).rejects.toThrow(/is a scene/)
+    await expect(commentsCommand(root, 'new', 'shop', { body: 'x' })).rejects.toThrow(/folder of frames/)
+    await expect(commentsCommand(root, 'new', 'shop/wallet', { body: 'Which wallet?' })).rejects.toThrow(/folder of frames/)   // never silently its first frame
     await expect(commentsCommand(root, 'new', 'shop/cart', {})).rejects.toThrow(/usage/)
   })
 
@@ -190,14 +191,18 @@ describe('a thread Marver started stays on this machine', () => {
 })
 
 describe('engagement starts when Marver engaged', () => {
-  it('a Live Jam reply engages from the start; a chat agent\'s reply or note from its own moment', () => {
+  it('a Live Jam reply engages from the mention that started it; a chat agent\'s reply or note from its own moment', () => {
     const m = engagedThreads([
+      { id: 'm-1', ts: 40, type: 'create', commentId: 't-jam', body: 'make it pop @marver' },
       { id: 'jam-abc', ts: 50, type: 'reply', parentId: 't-jam', agent: true },
+      { id: 'jam-def', ts: 55, type: 'reply', parentId: 't-unmentioned', agent: true },   // answered a follow-up: adds nothing
       { id: 'u-1', ts: 70, type: 'reply', parentId: 't-cli', agent: true },
+      { id: 'jam-ghi', ts: 80, type: 'reply', parentId: 't-cli', agent: true },           // no mention: the CLI moment stands
       { id: 'u-2', ts: 90, type: 'create', commentId: 't-note', agent: true },
       { id: 'h-1', ts: 95, type: 'reply', parentId: 't-human' },
     ] as any[])
-    expect(m.get('t-jam')).toBe(-Infinity)
+    expect(m.get('t-jam')).toBe(40)
+    expect(m.has('t-unmentioned')).toBe(false)
     expect(m.get('t-cli')).toBe(70)
     expect(m.get('t-note')).toBe(90)
     expect(m.has('t-human')).toBe(false)

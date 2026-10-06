@@ -168,6 +168,32 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
+  it('...nor once Live Jam answers a later follow-up in that thread', async () => {
+    const { root, dir, done } = setup()
+    const counting: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').appendFileSync('runs.log','x');process.stdout.write(JSON.stringify({result:'Done.'}))`] } },
+      parse: claudeAdapter.parse,
+    }
+    const jam = createJam(root, CFG, counting)
+    const runs = () => (existsSync(join(root, 'runs.log')) ? readFileSync(join(root, 'runs.log'), 'utf8').length : 0)
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'tighter rows' },
+      { id: 'old-fu2', ts: 2, type: 'reply', commentId: 'old-fuc2', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'and the header' },
+      { id: randomUUID(), ts: 3, type: 'reply', commentId: randomUUID(), parentId: tid, author: { email: 'nic@local' }, body: 'Done both.', agent: true },
+    ])
+    record(root, 'home', 'old-fu2')
+    appendEvents(dir, 'home', [{ id: 'next-fu', ts: 4, type: 'reply', commentId: 'next-fuc', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now darker' }])
+    record(root, 'home', 'next-fu')
+    await jam.tick()               // the follow-up runs, and Live Jam replies in the thread
+    expect(runs()).toBe(1)
+    expect(agentReplies(dir, 'home').some((r) => r.id.startsWith('jam-'))).toBe(true)
+    await jam.tick(); jam.stop()   // ...which must not re-arm the reply written before Marver engaged
+    expect(runs()).toBe(1)
+    done()
+  })
+
   it('a job already queued when its frame is lit waits at dispatch, and runs once the frame is free', async () => {
     const { root, dir, done } = setup()
     const slow: JamAdapter = {

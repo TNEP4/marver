@@ -14,19 +14,28 @@ import type { Journal, Pending } from './types.ts'
 
 const MENTION = /@marver\b/i
 
-/** Threads Marver is already ENGAGED in, each with the moment it engaged: a Live Jam reply there
- *  (from the start - an owner follow-up written while the job ran is part of the conversation), or a
- *  chat agent's note or reply from the CLI (from that event on - an owner reply written BEFORE it was
- *  answered by the chat agent, and must not wake a job retroactively). An owner follow-up in an
- *  engaged thread, after that moment, is a conversation turn - it triggers without re-tagging. */
+/** Threads Marver is already ENGAGED in, each with the moment it engaged. An owner follow-up in an
+ *  engaged thread written AFTER that moment is a conversation turn - it triggers without re-tagging;
+ *  one written before it never wakes a job retroactively, whatever engages the thread later.
+ *  - a chat agent's note or reply from the CLI engages from that event;
+ *  - a Live Jam reply engages from the @marver mention that started the conversation, so an owner
+ *    follow-up written while the job ran still counts. A jam reply with no mention in its thread
+ *    answered a follow-up, which a CLI event already engaged - it adds nothing. */
 export function engagedThreads(events: CommentEvent[]): Map<string, number> {
   const s = new Map<string, number>()
   const engage = (thread: string, at: number) => s.set(thread, Math.min(s.get(thread) ?? Infinity, at))
+  const mentioned = new Map<string, number>()   // thread -> its first owner @marver
+  for (const ev of events) {
+    if (ev.agent || (ev.type !== 'create' && ev.type !== 'reply') || !MENTION.test(ev.body ?? '')) continue
+    const t = threadId(ev)
+    if (t) mentioned.set(t, Math.min(mentioned.get(t) ?? Infinity, ev.ts))
+  }
   for (const ev of events) {
     if (!ev.agent) continue
-    const jam = ev.id.startsWith('jam-')
-    if (ev.type === 'reply' && ev.parentId) engage(ev.parentId, jam ? -Infinity : ev.ts)
     if (ev.type === 'create' && ev.commentId) engage(ev.commentId, ev.ts)
+    if (ev.type !== 'reply' || !ev.parentId) continue
+    if (!ev.id.startsWith('jam-')) engage(ev.parentId, ev.ts)
+    else if (mentioned.has(ev.parentId)) engage(ev.parentId, mentioned.get(ev.parentId)!)
   }
   return s
 }
