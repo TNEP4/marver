@@ -14,7 +14,8 @@ import { NAME } from './name.ts'
 import { checkBoardsDir, listBoardFiles, boardFields, readRegistry } from '../server/boards.ts'
 import { scanFrames } from '../server/manifest.ts'
 import { readDevInfo } from '../server/work.ts'
-import { buildTree, flatten, isBoardName } from '../shared/board-tree.ts'
+import { buildTree, flatten, folderMap, isBoardName } from '../shared/board-tree.ts'
+import { resolveType } from '../shared/board-types.ts'
 
 export interface Resolved {
   board: string
@@ -40,7 +41,13 @@ export function resolveLink(root: string, targets: string[], board?: string): Re
     const t = raw.replace(/^design\/scenes\//, '').replace(/\.(tsx|jsx|html)$/, '').replace(/\/+$/, '')
     if (ids.has(t)) { if (!frames.includes(t)) frames.push(t); if (!all.includes(t)) all.push(t); continue }
     const members = known.filter((id) => id.startsWith(`${t}/`))
-    if (members.length) { if (!scenes.includes(t)) scenes.push(t); for (const m of members) if (!all.includes(m)) all.push(m); continue }
+    if (members.length) {
+      // a scene is a top-level folder (`?s=`); a folder inside one (a variant scope, checkout/payment)
+      // travels as its frames - the link grammar names scenes, not paths
+      if (t.includes('/')) { for (const m of members) { if (!frames.includes(m)) frames.push(m); if (!all.includes(m)) all.push(m) } }
+      else { if (!scenes.includes(t)) scenes.push(t); for (const m of members) if (!all.includes(m)) all.push(m) }
+      continue
+    }
     throw new Error(`no frame or scene "${raw}" in design/scenes/ - a frame is <scene>/<name>, a scene is its folder`)
   }
 
@@ -66,9 +73,18 @@ export function resolveLink(root: string, targets: string[], board?: string): Re
     }
   } else {
     const reg = readRegistry(dir)
+    const folders = reg.state === 'ok' ? reg.folders : []
     const rows = files.filter((b) => b.name !== 'all-scenes').map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName) }))
-    const order = flatten(buildTree(rows, reg.state === 'ok' ? reg.folders : []))
-    const isArchive = (n: string) => n === 'archive' || rows.find((r) => r.name === n)?.type === 'archive'
+    const tree = buildTree(rows, folders)
+    const order = flatten(tree)
+    // a board's type is its own, else its folder's, else that folder's parent's (spec 20)
+    const fm = folderMap(tree)
+    const byName = new Map(folders.map((f) => [f.name, f]))
+    const typeOf = (n: string) => {
+      const folder = byName.get(fm.get(n) ?? '')
+      return resolveType(rows.find((r) => r.name === n)?.type, folder?.type, folder?.parent ? byName.get(folder.parent)?.type : undefined)
+    }
+    const isArchive = (n: string) => n === 'archive' || typeOf(n) === 'archive'
     const ranked = [...order.filter((n) => !isArchive(n)), ...order.filter(isArchive)]
     pick = ranked.find(shows)
     if (!pick) { pick = 'all-scenes'; fellBack = true }

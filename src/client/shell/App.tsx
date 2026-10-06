@@ -13,7 +13,7 @@ import { humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
 import { CommentsController, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, useComments } from './comments-store.ts'
-import { goTo, revealFrame } from './goto.ts'
+import { goTo, navigated, revealFrame } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
@@ -371,6 +371,9 @@ export function App() {
       }
       const ok = await boot()
       urlReady.current = true
+      // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
+      // for the first frame) - follow the frame to where it lives from here
+      if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0])
       if (ok && bootHash.focus) {
         // a frame deep link forces focus for that visit, over every other rule
         // (01-sharing §6.1 step 3) - the stage mounts any manifest frame, so no
@@ -417,6 +420,7 @@ export function App() {
   // restores never echo back into history.
   useEffect(() => {
     const onPop = async () => {
+      navigated()                              // a reveal still looking up its board must not land after this
       const h = parseHash()
       let s = useStore.getState()
       if (h.board && h.board !== s.board) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -145,6 +145,57 @@ describe('Live Jam M1: the daemon spine', () => {
     expect(existsSync(join(root, 'edited.marker'))).toBe(true)
     done()
   })
+
+  it('an owner reply written BEFORE a chat agent answered the thread does not wake a job retroactively', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, okAdapter)
+    const tid = randomUUID()
+    appendEvents(dir, 'home', [
+      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'tighter rows' },
+      { id: 'old-fu', ts: 2, type: 'reply', commentId: 'old-fuc', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'and the header' },
+    ])
+    record(root, 'home', 'old-fu')
+    await jam.tick()
+    // the chat agent answers from the CLI (Marver's voice, not a jam reply)
+    appendEvents(dir, 'home', [{ id: randomUUID(), ts: 3, type: 'reply', commentId: randomUUID(), parentId: tid, author: { email: 'nic@local' }, body: 'Done both.', agent: true }])
+    await jam.tick()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
+    // ...and the owner's NEXT reply is a conversation turn
+    appendEvents(dir, 'home', [{ id: 'new-fu', ts: Date.now(), type: 'reply', commentId: 'new-fuc', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now darker' }])
+    record(root, 'home', 'new-fu')
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
+    done()
+  })
+
+  it('a job already queued when its frame is lit waits at dispatch, and runs once the frame is free', async () => {
+    const { root, dir, done } = setup()
+    const slow: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() {
+        const script = `require('fs').appendFileSync('runs.log','x');setTimeout(()=>process.stdout.write(JSON.stringify({result:'Done.'})),300)`
+        return { cmd: process.execPath, args: ['-e', script] }
+      },
+      parse: claudeAdapter.parse,
+    }
+    let lit = false
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, slow, () => {}, { held: (f) => lit && f === 'demo/b' })
+    for (const f of ['demo/a', 'demo/b']) {
+      const id = randomUUID()
+      appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'create', commentId: id, frame: f, author: { email: 'nic@local', name: 'Nic' }, body: '@marver go' }])
+      record(root, 'home', id)
+    }
+    const runs = () => (existsSync(join(root, 'runs.log')) ? readFileSync(join(root, 'runs.log'), 'utf8').length : 0)
+    const t = jam.tick()           // claims both; A runs, B queues behind the cap of 1
+    lit = true                     // ...and the chat agent lights B before A finishes
+    await t
+    expect(runs()).toBe(1)
+    lit = false
+    for (let i = 0; i < 60 && runs() < 2; i++) await new Promise((r) => setTimeout(r, 100))
+    jam.stop()
+    expect(runs()).toBe(2)
+    done()
+  }, 15_000)
 
   it('non-engaged thread: an owner reply without @marver never triggers', async () => {
     const { root, dir, done } = setup()

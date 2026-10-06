@@ -14,14 +14,19 @@ import type { Journal, Pending } from './types.ts'
 
 const MENTION = /@marver\b/i
 
-/** Threads Marver is already ENGAGED in: it has replied there, or it started the thread (a note
- *  an agent pinned with `comments new`). An owner follow-up in one of these is a conversation turn -
- *  it triggers without re-tagging @marver. */
-export function engagedThreads(events: CommentEvent[]): Set<string> {
-  const s = new Set<string>()
+/** Threads Marver is already ENGAGED in, each with the moment it engaged: a Live Jam reply there
+ *  (from the start - an owner follow-up written while the job ran is part of the conversation), or a
+ *  chat agent's note or reply from the CLI (from that event on - an owner reply written BEFORE it was
+ *  answered by the chat agent, and must not wake a job retroactively). An owner follow-up in an
+ *  engaged thread, after that moment, is a conversation turn - it triggers without re-tagging. */
+export function engagedThreads(events: CommentEvent[]): Map<string, number> {
+  const s = new Map<string, number>()
+  const engage = (thread: string, at: number) => s.set(thread, Math.min(s.get(thread) ?? Infinity, at))
   for (const ev of events) {
-    if (ev.agent && ev.type === 'reply' && ev.parentId) s.add(ev.parentId)
-    if (ev.agent && ev.type === 'create' && ev.commentId) s.add(ev.commentId)
+    if (!ev.agent) continue
+    const jam = ev.id.startsWith('jam-')
+    if (ev.type === 'reply' && ev.parentId) engage(ev.parentId, jam ? -Infinity : ev.ts)
+    if (ev.type === 'create' && ev.commentId) engage(ev.commentId, ev.ts)
   }
   return s
 }
@@ -30,10 +35,11 @@ export function engagedThreads(events: CommentEvent[]): Set<string> {
  *  (board, id) in the ledger, so a synced event reusing a ledgered id on another board fails.
  *  Trigger = an explicit @marver, OR an owner REPLY in an engaged thread (answering Marver is
  *  a trigger - you don't re-tag someone mid-conversation). New threads always need the tag. */
-export function triggers(root: string, board: string, ev: CommentEvent, engaged?: Set<string>): boolean {
+export function triggers(root: string, board: string, ev: CommentEvent, engaged?: Map<string, number>): boolean {
   if (ev.agent) return false
   if (ev.type !== 'create' && ev.type !== 'reply') return false
-  const followUp = ev.type === 'reply' && !!engaged?.has(threadId(ev))
+  const since = ev.type === 'reply' ? engaged?.get(threadId(ev)) : undefined
+  const followUp = since !== undefined && ev.ts > since
   if (!MENTION.test(ev.body ?? '') && !followUp) return false
   return has(root, board, ev.id)
 }

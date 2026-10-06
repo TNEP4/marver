@@ -28,6 +28,7 @@ export function goTo(target: string, carry = false): void {
 let gotoSeq = 0
 async function gotoAcrossBoards(target: string, carry: boolean) {
   const s = useStore.getState()
+  const from = s.board
   // an id the manifest doesn't know resolves NOWHERE - a tombstone pin on some board
   // must not send us on a trip that ends in a silent timeout
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`unknown goto target "${target}"`)
@@ -54,11 +55,17 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
     setTimeout(() => canvasCtl.fitNode(node.key), 50)
     return
   }
-  await landOn(home, target, carry, seq)
+  await landOn(home, target, carry, seq, from)
 }
 
-/** Switch to `home` and select + fit `target` there once the board commits. */
-async function landOn(home: string, target: string, carry: boolean, seq: number) {
+/** Any other navigation (a pasted link, back/forward) supersedes a goto or reveal still resolving
+ *  its board - so a slow lookup can never yank the view away from where the human has gone since. */
+export function navigated(): void { gotoSeq++ }
+
+/** Switch to `home` and select + fit `target` there once the board commits - unless the human has
+ *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
+async function landOn(home: string, target: string, carry: boolean, seq: number, from: string) {
+  if (seq !== gotoSeq || useStore.getState().board !== from) return
   await useStore.getState().switchBoard(home)
   for (let i = 0; i < 12; i++) {                     // the board commits async - retry like viewNote
     if (seq !== gotoSeq) return
@@ -91,6 +98,7 @@ export async function revealFrame(target: string): Promise<void> {
   }
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
   const seq = ++gotoSeq
+  const from = s.board
   let home: string | null = null
   try {
     const all = await fetchBoardNames()
@@ -103,5 +111,5 @@ export async function revealFrame(target: string): Promise<void> {
   }
   if (seq !== gotoSeq) return
   if (!home) return useStore.getState().toast(`"${target}" is not on any board`)
-  await landOn(home, target, false, seq)
+  await landOn(home, target, false, seq, from)
 }

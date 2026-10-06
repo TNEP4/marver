@@ -7,6 +7,8 @@ import { resolveLink } from '../src/cli/link.ts'
 import { commentsCommand } from '../src/cli/comments.ts'
 import { createActivity } from '../src/server/jam/activity.ts'
 import { runningAgent } from '../src/server/jam/agent.ts'
+import { localOnlyThreads } from '../src/server/sync.ts'
+import { engagedThreads } from '../src/server/jam/watch.ts'
 
 /**
  * The agent loop on the canvas: a link an agent can write (frame ids, not node keys), the board it
@@ -49,7 +51,7 @@ const board = (name: string, extra: Record<string, unknown>, nodes: unknown[]) =
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'mv-agent-loop-'))
-  for (const [scene, files] of Object.entries({ shop: ['cart', 'pay'], other: ['far'], old: ['cart'] })) {
+  for (const [scene, files] of Object.entries({ shop: ['cart', 'pay'], other: ['far'], old: ['cart'], 'shop/wallet': ['a-card', 'b-apple'] })) {
     mkdirSync(join(root, 'design', 'scenes', scene), { recursive: true })
     for (const f of files) writeFileSync(join(root, 'design', 'scenes', scene, `${f}.tsx`), frame(f, '<p>Pay now with card</p>'))
   }
@@ -57,7 +59,11 @@ beforeAll(() => {
   // the archive ranks FIRST by order - and still loses to a feature board that shows the frame
   board('archive', { order: 0, type: 'archive' }, [{ frame: 'shop/cart' }, { frame: 'shop/pay' }, { frame: 'old/cart' }])
   board('cart-only', { order: 1 }, [{ frame: 'shop/cart', key: 'k-cart' }])
-  board('flow', { order: 2 }, [{ frame: 'shop/cart', key: 'f-cart' }, { frame: 'shop/pay', key: 'f-pay' }])
+  board('flow', { order: 2 }, [{ frame: 'shop/cart', key: 'f-cart' }, { frame: 'shop/pay', key: 'f-pay' }, { frame: 'shop/wallet/a-card' }, { frame: 'shop/wallet/b-apple' }])
+  // an archive by its folder, not its own type - ranked last all the same
+  board('old-flow', { order: 0, folder: 'history' }, [{ frame: 'other/far' }])
+  board('far-live', { order: 5 }, [{ frame: 'other/far' }])
+  writeFileSync(join(root, 'design', 'boards', '_folders.json'), JSON.stringify({ version: 2, folders: [{ name: 'history', type: 'archive' }] }, null, 2) + '\n')
   mkdirSync(join(root, 'design', '.local'), { recursive: true })
   writeFileSync(join(root, 'design', '.local', 'profile.json'), JSON.stringify({ name: 'Nic', email: 'nic@example.com' }))
 })
@@ -74,10 +80,16 @@ describe('marver link - which board', () => {
     expect(resolveLink(root, ['design/scenes/shop/pay.tsx']).frames).toEqual(['shop/pay'])
   })
 
-  it('ranks archive boards last, and falls back to all-scenes when no curated board shows them all', () => {
+  it('ranks archive boards last - by their own type or their folder\'s - and falls back to all-scenes', () => {
     expect(resolveLink(root, ['old/cart']).board).toBe('archive')          // only there - history is where it lives
-    const far = resolveLink(root, ['other/far'])
-    expect(far).toMatchObject({ board: 'all-scenes', fellBack: true, hash: '#/b/all-scenes?f=other/far' })
+    expect(resolveLink(root, ['other/far']).board).toBe('far-live')        // old-flow ranks first, but its folder is an archive
+    const both = resolveLink(root, ['other/far', 'shop/cart'])
+    expect(both).toMatchObject({ board: 'all-scenes', fellBack: true, hash: '#/b/all-scenes?f=other/far,shop/cart' })
+  })
+
+  it('a folder inside a scene travels as its frames - the link grammar names scenes, not paths', () => {
+    expect(resolveLink(root, ['shop/wallet']).hash).toBe('#/b/flow?f=shop/wallet/a-card,shop/wallet/b-apple')
+    expect(parseHash(resolveLink(root, ['shop/wallet']).hash).f).toEqual(['shop/wallet/a-card', 'shop/wallet/b-apple'])
   })
 
   it('honours --board, and refuses one that does not show the frames', () => {
@@ -157,5 +169,37 @@ describe('the jam hold and the harness marker', () => {
     expect(runningAgent({ CODEX_THREAD_ID: 't' })).toBe('codex')
     expect(runningAgent({ CLAUDE_CODE_ENTRYPOINT: 'cli' })).toBe('claude')
     expect(runningAgent({ PATH: process.env.PATH })).toBeUndefined()
+  })
+})
+
+describe('a thread Marver started stays on this machine', () => {
+  it('every event in it - the thread, replies, a reaction on a reply - maps into the local-only set', () => {
+    const evs = [
+      { id: '1', ts: 1, type: 'create', commentId: 'note', agent: true },
+      { id: '2', ts: 2, type: 'reply', commentId: 'r1', parentId: 'note' },
+      { id: '3', ts: 3, type: 'react', commentId: 'r1', emoji: '👍' },
+      { id: '4', ts: 4, type: 'resolve', commentId: 'note' },
+      { id: '5', ts: 5, type: 'create', commentId: 'human' },
+      { id: '6', ts: 6, type: 'reply', commentId: 'r2', parentId: 'human', agent: true },
+    ] as any[]
+    const set = localOnlyThreads(evs)
+    expect([...set].sort()).toEqual(['note', 'r1'])
+    // the human's thread syncs, even though Marver replied in it (that reply alone stays local)
+    expect(set.has('human')).toBe(false)
+  })
+})
+
+describe('engagement starts when Marver engaged', () => {
+  it('a Live Jam reply engages from the start; a chat agent\'s reply or note from its own moment', () => {
+    const m = engagedThreads([
+      { id: 'jam-abc', ts: 50, type: 'reply', parentId: 't-jam', agent: true },
+      { id: 'u-1', ts: 70, type: 'reply', parentId: 't-cli', agent: true },
+      { id: 'u-2', ts: 90, type: 'create', commentId: 't-note', agent: true },
+      { id: 'h-1', ts: 95, type: 'reply', parentId: 't-human' },
+    ] as any[])
+    expect(m.get('t-jam')).toBe(-Infinity)
+    expect(m.get('t-cli')).toBe(70)
+    expect(m.get('t-note')).toBe(90)
+    expect(m.has('t-human')).toBe(false)
   })
 })

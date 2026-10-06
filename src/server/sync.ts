@@ -143,8 +143,12 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     if (rights[board] === 'comment') {
       // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
       // (the published client validator rejects agent provenance; publishing them is a P3 feature
-      // needing a trusted path). Filter them out of the push set.
-      const missing = diffEvents(readLog(dir, board), remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent)
+      // needing a trusted path). Filter them out of the push set - and with them every event in a
+      // thread Marver STARTED (a note an agent pinned, `comments new`): the owner's reply in it, a
+      // resolve, a reaction would reach a server that never saw the thread, which rejects the batch.
+      const local = readLog(dir, board)
+      const marverThreads = localOnlyThreads(local)
+      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)))
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
@@ -290,4 +294,17 @@ export async function connectToken(root: string, url: string, token: string): Pr
   if (!body?.token || !body?.user?.email)
     throw new Error('the canvas accepted the token but issued nothing - is it running a current marver?')
   saveCollab(root, { url: base, token: body.token, email: body.user.email, name: body.user.name, avatar: body.user.avatar })
+}
+
+/** The thread an event belongs to: a reply names its root; everything else names its comment. */
+const threadOf = (e: CommentEvent): string => e.parentId ?? e.commentId ?? ''
+
+/** Threads that live on this machine only: started by Marver (an agent's `comments new`). Every id
+ *  that resolves to one - the thread, and each reply in it (an edit or reaction names the reply) - is
+ *  in the set, so `threadOf` of any event in such a thread hits it. */
+export function localOnlyThreads(events: CommentEvent[]): Set<string> {
+  const roots = new Set(events.filter((e) => e.agent && e.type === 'create' && e.commentId).map((e) => e.commentId!))
+  const out = new Set(roots)
+  for (const e of events) if (e.type === 'reply' && e.parentId && roots.has(e.parentId) && e.commentId) out.add(e.commentId)
+  return out
 }

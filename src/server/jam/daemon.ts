@@ -39,6 +39,8 @@ const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 mi
 const MAX_ATTEMPTS = 2
 const MAX_OUT = 2_000_000
 const RESCAN_MS = 5_000
+/** How often a chain held by a chat agent's `work start` looks again. */
+const HOLD_RECHECK_MS = 2_000
 
 export interface JamDaemon { stop(): void }
 export interface JamCore { tick(): Promise<void>; stop(): void; snapshot(): Journal }
@@ -317,16 +319,29 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return rt?.frame ? `f:${rt.frame}` : `t:${threadId(p.event) || p.event.id}`
   }
 
+  // A chain whose frame a chat agent has lit (`marver work start`) waits - checked at DISPATCH, so a
+  // job queued (or resumed, or retried) before the frame was lit still never starts while it is.
+  // Held chains do not take a concurrency slot; a recheck pumps them once the frame is free.
+  const heldKey = (key: string) => key.startsWith('f:') && !!hooks.held?.(key.slice(2))
+  let recheck: ReturnType<typeof setTimeout> | null = null
+  const holdLater = () => {
+    if (recheck || stopped) return
+    recheck = setTimeout(() => { recheck = null; pump() }, HOLD_RECHECK_MS)
+    recheck.unref?.()
+  }
+
   const pump = () => {
     if (stopped) return
     for (const [key, q] of chains) {
       if (activeChains >= Math.max(1, cfg.concurrency)) break
       if (q.running || !q.items.length) continue
+      if (heldKey(key)) { holdLater(); continue }
       q.running = true
       activeChains += 1
       void (async () => {
         try {
           while (!stopped && q.items.length) {
+            if (heldKey(key)) { holdLater(); break }   // lit between two jobs of the chain: the rest waits
             const job = q.items.shift()!
             try { await runBatch(job.b, job.p) } catch (err) {
               // a THROW must not strand the batch as `claimed` outside every queue (rescans skip
@@ -360,11 +375,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  ONE shared waiter: overlapping ticks (the 5s rescan during a 10-min job) join the same
    *  promise instead of each spinning its own poll loop. */
   let idleP: Promise<void> | null = null
+  // a held chain is idle work: it waits on a human's agent, not on this loop
+  const quiet = () => activeChains === 0 && [...chains].every(([key, q]) => !q.items.length || heldKey(key))
   const idle = () => {
-    if (activeChains === 0 && chains.size === 0) return Promise.resolve()
+    if (quiet()) return Promise.resolve()
     idleP ??= new Promise<void>((res) => {
       const check = () => {
-        if (stopped || (activeChains === 0 && chains.size === 0)) { idleP = null; res() }
+        if (stopped || quiet()) { idleP = null; res() }
         else setTimeout(check, 50)
       }
       check()
@@ -406,7 +423,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   return {
     tick,
-    stop() { stopped = true; for (const c of activeChildren) fenceGroup(c.pid) },
+    stop() { stopped = true; if (recheck) clearTimeout(recheck); for (const c of activeChildren) fenceGroup(c.pid) },
     snapshot() { return journal },
   }
 }

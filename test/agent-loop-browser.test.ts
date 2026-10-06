@@ -44,6 +44,7 @@ export default () => <main style={{ minHeight: '100vh', background: '${bg}', col
     { key: 'f-cart', frame: 'shop/cart', x: 0, y: 0, w: 390, h: 844 },
     { key: 'f-pay', frame: 'shop/pay', x: 3000, y: 0, w: 390, h: 844 },
   ] }, null, 2) + '\n')
+  writeFileSync(join(boards, 'empty.json'), JSON.stringify({ version: 1, name: 'empty', order: 3, auto: false, nodes: [] }, null, 2) + '\n')
   writeFileSync(join(boards, 'big.json'), JSON.stringify({ version: 1, name: 'big', order: 2, auto: false, nodes: [
     { key: 'b-far', frame: 'other/far', x: 0, y: 0, w: 390, h: 844 },
   ] }, null, 2) + '\n')
@@ -112,12 +113,20 @@ describe('a link that lands on the work', () => {
     expect(await browser.eval(s, VIEW)).toMatchObject({ sel: ['b-far'], visible: ['b-far'] })
   }, 30_000)
 
+  it('...even from a board with no frames at all', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/empty?f=other/far', 1)
+    await browser.until(s, `location.hash === '#/b/big?n=b-far'`, 20_000)
+  }, 30_000)
+
   it('marver link prints that link with the running port; work done prints it for what it cleared', () => {
     if (!browser) return
     expect(cli('link', 'shop/pay').trim()).toBe(`${ORIGIN}/#/b/flow?f=shop/pay`)
     expect(cli('link', 'shop').trim()).toBe(`${ORIGIN}/#/b/flow?s=shop`)
     cli('work', 'start', 'shop/cart')
     expect(cli('work', 'done', 'shop/cart')).toContain(`on the canvas: ${ORIGIN}/#/b/flow?f=shop/cart`)
+    cli('work', 'start', 'shop/cart', 'shop/pay')
+    expect(cli('work', 'done', '--all')).toMatch(new RegExp(`on the canvas: ${ORIGIN}/#/b/flow\\?f=shop/(cart,shop/pay|pay,shop/cart)`))
   })
 })
 

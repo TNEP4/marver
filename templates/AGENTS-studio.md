@@ -114,11 +114,13 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame.
-- **Pin a note only where you need the human**: `npx marver comments new <scene/frame>
-  --body "..." [--on "<words on screen>"]` - a decision to make, a judgment call you took, a
-  change they would not spot, a question. At most one per frame per turn, never a changelog:
-  the chat carries the summary. Never resolve your own notes - the human resolves them as they
-  review, and a reply they write in one comes back to you (Live Jam).
+- **A question or a decision about a frame goes ON that frame**, not only in the chat:
+  `npx marver comments new <scene/frame> --body "..." [--on "<words on screen>"]` pins it where
+  it applies, so the human answers in place. Also for a judgment call you took that they should
+  check, or a change they would not spot. Nothing else - never a changelog, at most one note per
+  frame per turn; the chat keeps the summary and can say "question on the form". Never resolve
+  your own notes: the human resolves them as they review, and a reply in one comes back to you
+  (Live Jam).
 - A comment-born (`@marver`) job hands back through its reply block alone
   (instructions/jam.md): no link, no CLI reply to its own thread.
 
