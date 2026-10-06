@@ -49,7 +49,9 @@ beforeAll(async () => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'pubsleep-fixture', private: true, type: 'module' }))
   const repoRoot = join(import.meta.dirname, '..'), repoNm = join(repoRoot, 'node_modules'), nm = join(root, 'node_modules')
   mkdirSync(nm)
-  for (const e of readdirSync(repoNm)) { if (e !== '.bin') symlinkSync(join(repoNm, e), join(nm, e)) }
+  // .vite stays out: each fixture's dev server keeps its own dependency cache - a shared one is rewritten
+  // by a parallel suite's server while this one's page loads a lazy engine (mermaid, echarts) from it
+  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite') symlinkSync(join(repoNm, e), join(nm, e)) }
   mkdirSync(join(nm, '@marver-design'))
   symlinkSync(repoRoot, join(nm, '@marver-design', 'marver'))
   const scenes = join(root, 'design', 'scenes', 'app')

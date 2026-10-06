@@ -44,7 +44,9 @@ beforeAll(async () => {
   const repoRoot = join(import.meta.dirname, '..')
   const nm = join(root, 'node_modules')
   mkdirSync(nm)
-  for (const e of readdirSync(join(repoRoot, 'node_modules'))) { if (e !== '.bin') symlinkSync(join(repoRoot, 'node_modules', e), join(nm, e)) }
+  // .vite stays out: each fixture's dev server keeps its own dependency cache - a shared one is rewritten
+  // by a parallel suite's server while this one's page loads a lazy engine (mermaid, echarts) from it
+  for (const e of readdirSync(join(repoRoot, 'node_modules'))) { if (e !== '.bin' && e !== '.vite') symlinkSync(join(repoRoot, 'node_modules', e), join(nm, e)) }
   mkdirSync(join(nm, '@marver-design'))
   symlinkSync(repoRoot, join(nm, '@marver-design', 'marver'))
   const scene = join(root, 'design', 'scenes', 'app')

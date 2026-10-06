@@ -87,8 +87,10 @@ beforeAll(async () => {
   const repoNm = join(repoRoot, 'node_modules')
   const nm = join(root, 'node_modules')
   mkdirSync(nm)
+  // .vite stays out: each fixture's dev server keeps its own dependency cache - a shared one is rewritten
+  // by a parallel suite's server while this one's page loads a lazy engine (mermaid, echarts) from it
   for (const e of readdirSync(repoNm)) {
-    if (e === '.bin') continue
+    if (e === '.bin' || e === '.vite') continue
     symlinkSync(join(repoNm, e), join(nm, e))
   }
   mkdirSync(join(nm, '@marver-design'))
