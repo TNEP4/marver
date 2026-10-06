@@ -354,20 +354,22 @@ async function flushHeights() {
 
 const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`))
 
-/** The Doc heights a layout was computed around: each auto content node whose height is known, by
- *  key. A composed board saves it with its positions (`laidOut`); a load where a node it names now
- *  has another height knows its rows were laid out around other heights - grown OR shrunk. A drag
- *  changes no height, and a node added or removed is no height change of the others. */
-export type LaidOut = Record<string, number>
+/** The Doc sizes a layout was computed around: each auto content node whose height is known, by key,
+ *  as "WxH" (one line per node in the board file). A composed board saves it with its positions
+ *  (`laidOut`); a load where a node it names now has another size knows its rows were laid out
+ *  around other sizes - grown, shrunk, or gone from document to wide. A drag changes no size, and a
+ *  node added or removed is no size change of the others. */
+export type LaidOut = Record<string, string>
+const sizeOf = (n: Node) => `${Math.round(n.w)}x${Math.round(n.h)}`
 function sizeRecord(nodes: readonly Node[]): LaidOut {
   const out: LaidOut = {}
-  for (const n of nodes) if (n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))) out[n.key] = Math.round(n.h)
+  for (const n of nodes) if (n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))) out[n.key] = sizeOf(n)
   return out
 }
 const readLaidOut = (v: unknown): LaidOut | null => {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null
   const out: LaidOut = {}
-  for (const [k, h] of Object.entries(v)) if (typeof h === 'number' && Number.isFinite(h)) out[k] = Math.round(h)
+  for (const [k, wh] of Object.entries(v)) if (typeof wh === 'string' && /^\d+x\d+$/.test(wh)) out[k] = wh
   return out
 }
 
@@ -584,12 +586,16 @@ export const useStore = create<State>((set, get) => {
    *  human dragged, at heights that did not change, stays where they put it. */
   const layoutStale = () => {
     const { nodes, laidOut } = get()
-    if (laidOut && Object.keys(laidOut).length) return nodes.some((n) => Object.prototype.hasOwnProperty.call(laidOut, n.key) && n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)) && Math.round(n.h) !== laidOut[n.key])
-    // a board that never recorded them (an agent wrote it, an older Marver saved it): an overlap is
-    // the one thing a size change does that a hand never meant
+    const record = laidOut ?? {}
+    const known = (n: Node) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))
+    const has = (n: Node) => Object.prototype.hasOwnProperty.call(record, n.key)
+    // a node the layout recorded, at another size now
+    if (nodes.some((n) => known(n) && has(n) && sizeOf(n) !== record[n.key])) return true
+    // a node it never recorded (an agent's board, an older save, a Doc that had not measured yet):
+    // an overlap is the one thing a size change does that a hand never meant
     const box = (n: Node) => ({ l: n.x, t: n.y, r: n.x + n.w, b: n.y + n.h + HEADER })
     return nodes.some((a) => {
-      if (a.sizeMode !== 'auto' || !hasKnownHeight(a.frame, Math.round(a.w))) return false
+      if (!known(a) || has(a)) return false
       const A = box(a)
       return nodes.some((b) => { if (b === a) return false; const B = box(b); return A.l < B.r - 1 && B.l < A.r - 1 && A.t < B.b - 1 && B.t < A.b - 1 })
     })
@@ -1270,7 +1276,7 @@ export const useStore = create<State>((set, get) => {
         return { deviceView: name, dirty: true, baseLayout, nodes, ...laid }
       })
       if (name) get().runTidy()                      // restore must NOT tidy - it would destroy positions
-      else { scheduleSave(); roomForNotes() }         // ...unless a note grew meanwhile and the restored rows stand under it
+      else { scheduleSave(); roomForNotes(); recheckLayout() }   // ...unless a note grew meanwhile, or a Doc changed size, under the restored rows
     },
     bumpRev(key) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, rev: (n.rev ?? 0) + 1 } : n)) })) },
     setThemeOn(key, theme) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, themeOn: theme } : n)) })) },

@@ -356,6 +356,62 @@ describe('calm loading', () => {
     await until(() => heights()['lazy/far@760'] === prov.h)
   }, 90_000)
 
+  // the board file, as the next tests stage it
+  const docsBoard = () => JSON.parse(readFileSync(join(root, 'design', 'boards', 'docs.json'), 'utf8'))
+  const putDocs = (b: unknown) => writeFileSync(join(root, 'design', 'boards', 'docs.json'), JSON.stringify(b, null, 2) + '\n')
+  const fresh = () => putDocs({ version: 1, name: 'docs', auto: false, layout: { rows: [['docs']], scenes: { docs: { rows: [['a', 'b'], ['c']] } } },
+    nodes: [{ key: 'k-a', frame: 'docs/a' }, { key: 'k-b', frame: 'docs/b' }, { key: 'k-c', frame: 'docs/c' }] })
+  const settledDocs = async () => {           // laid out, saved, with its record
+    await closeAll(); fresh()
+    const s = await open('#/b/docs')
+    await wait(2000)
+    await browser!.eval(s, `window.__mvStore.getState().runTidy()`)
+    await browser!.until(s, `!window.__mvStore.getState().dirty`, 10_000)
+    await browser!.go(s, 'about:blank')
+    return docsBoard()
+  }
+
+  it('a recorded Doc at another WIDTH (same height) is a size change too', async () => {
+    if (!browser) return
+    const b = await settledDocs()
+    const [w, h] = b.laidOut['k-a'].split('x').map(Number)
+    b.laidOut['k-a'] = `${w - 100}x${h}`                                  // laid out when it was narrower
+    b.nodes.find((n: { key: string }) => n.key === 'k-b').x += 777           // ... and b sits off its slot
+    putDocs(b)
+    const s = await open('#/b/docs')
+    await browser.until(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-b').x !== ${b.nodes.find((n: { key: string }) => n.key === 'k-b').x}`, 10_000)
+  }, 90_000)
+
+  it('a Doc missing from a partial record still gets the overlap check', async () => {
+    if (!browser) return
+    const b = await settledDocs()
+    delete b.laidOut['k-a']                                                  // it had not measured when the board was saved
+    const a = b.nodes.find((n: { key: string }) => n.key === 'k-a')
+    b.nodes.find((n: { key: string }) => n.key === 'k-c').y = a.y + 100     // and now the row below sits inside it
+    putDocs(b)
+    const s = await open('#/b/docs')
+    await browser.until(s, `(() => { const ns = window.__mvStore.getState().nodes; const a = ns.find((n) => n.key === 'k-a'), c = ns.find((n) => n.key === 'k-c'); return c.y > a.y + a.h + 28 })()`, 10_000)
+  }, 90_000)
+
+  it('Default after a device view meets today\'s sizes: a Doc that grew meanwhile re-lays the restored rows', async () => {
+    if (!browser) return
+    await settledDocs()
+    const s1 = await open('#/b/docs')
+    await wait(1500)
+    await browser.eval(s1, `window.__mvStore.getState().setDeviceView('laptop')`)
+    await browser.until(s1, `!window.__mvStore.getState().dirty`, 10_000)
+    await browser.go(s1, 'about:blank')
+    const s2 = await open('#/b/other')                                       // the Doc grows on another board
+    const before = heights()['docs/a@760']
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'a.tsx'), doc(30))
+    await until(() => heights()['docs/a@760'] > before + 300)
+    await browser.go(s2, 'about:blank')
+    const s = await open('#/b/docs')                                         // still in the device view
+    await wait(1500)
+    await browser.eval(s, `window.__mvStore.getState().setDeviceView(null)`)
+    await browser.until(s, `(() => { const ns = window.__mvStore.getState().nodes; const a = ns.find((n) => n.key === 'k-a'), c = ns.find((n) => n.key === 'k-c'); return c.y > a.y + a.h + 28 })()`, 10_000)
+  }, 90_000)
+
   it('the published bundle carries the committed heights of its own frames only', async () => {
     if (!browser) return
     const s = await open('#/b/private')
