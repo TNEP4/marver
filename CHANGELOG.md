@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## 0.22.0 - 2026-10-05
+## 0.22.0 - 2026-10-06
 
 ### Added
 
@@ -59,6 +59,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **Nested sidebar rows line up.** A board or sub-folder's icon now starts exactly where its folder's
   name starts, at both levels, with one icon-to-name gap throughout - 0.21.0's indent left a folder's
   boards 2px short of that line and a sub-folder's boards 6px past it. Drop seams follow the rows.
+- **Renaming the open board after an agent edited it works.** The rename retried with the canvas's
+  old copy of the file and failed again; it now reloads the board and retries once - and only when
+  nothing was edited, dragged or switched while the request was out, so a reload never lands over
+  your own change.
 
 ### Docs
 
