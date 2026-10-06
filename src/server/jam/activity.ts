@@ -18,6 +18,8 @@ export interface Activity {
   clear(frame: string, src?: WorkSource): void
   clearAll(src?: WorkSource): void
   active(): string[]
+  /** Is `frame` marked by `src` right now (an unexpired lease)? */
+  has(frame: string, src: WorkSource): boolean
   sweep(): void
   /** Returns an unsubscribe - a closing server must stop receiving broadcasts. */
   onChange(cb: (frames: string[]) => void): () => void
@@ -37,6 +39,7 @@ export function createActivity(ttlMs = 90_000): Activity {
       if (changed) emit()
     },
     active: frames,
+    has(frame, src) { const until = m.get(`${src}|${frame}`); return until !== undefined && until > Date.now() },
     sweep() {
       const now = Date.now()
       let changed = false

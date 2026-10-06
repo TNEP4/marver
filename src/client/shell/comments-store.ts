@@ -104,13 +104,16 @@ export const useComments = create<CommentsState>((set, get) => {
   // the boot instant: an event younger than the page can never be "history", so it may
   // notify even before its board's baseline sweep lands (the poke/SSE-beats-load race)
   const bootTs = Date.now()
-  // Live Jam: a Marver reply that arrives AFTER the baseline raises a persistent
-  // bottom-right pill - from ANY board (the store holds every log), keyed on the event id
-  // via `union`'s fresh filter so it fires exactly once. The pill's board is the THREAD's
-  // origin board, so View can navigate there.
+  // Marver - a Live Jam reply, or a note or reply an agent left from the CLI - arriving AFTER
+  // the baseline raises a persistent bottom-right pill - from ANY board (the store holds every
+  // log), keyed on the event id via `union`'s fresh filter so it fires exactly once. The pill's
+  // board is the THREAD's origin board, so View can navigate there. One ping per batch, like a
+  // person's - except for a jam job's opening "On it" line (ids `jam-e<attempt>-…`, daemon.ts): the pill
+  // shows it, the ping waits for the answer.
   const notifyAgent = (fresh: CommentEvent[]) => {
-    const replies = fresh.filter((e) => e.agent && e.type === 'reply')
+    const replies = fresh.filter((e) => e.agent && (e.type === 'reply' || e.type === 'create'))
     if (!replies.length) return
+    if (replies.some((e) => !/^jam-e\d+-/.test(e.id))) playPing()
     void import('./store.ts').then(({ useStore }) => {
       const s = useStore.getState()
       for (const e of replies) {

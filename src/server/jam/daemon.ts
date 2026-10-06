@@ -49,6 +49,9 @@ export interface JamHooks {
   /** The daemon wrote events (reply/reanchor) to `board` - nudge clients to fetch NOW
    *  instead of waiting out the 30s comment poll. */
   changed?(board: string): void
+  /** Is a CHAT-driven agent working on this frame right now (`marver work start`)? Then a job
+   *  on it waits - two agents never edit one file at once - and runs once the frame is free. */
+  held?(frame: string): boolean
 }
 
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
@@ -370,6 +373,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   let resumed = false
+  const waiting = new Set<string>()   // held event ids, so the wait is logged once, not every rescan
   const tick = async () => {
     if (stopped) return
     try {
@@ -384,8 +388,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           else finish(b)   // no longer authorized/present → drop, never run stale/foreign content
         }
       }
-      // 2. claim new owner-ledgered mentions IMMEDIATELY (sync) and pump
-      for (const p of scanPending(root, commentsDir, journal)) enqueue(claim(p), p)
+      // 2. claim new owner-ledgered mentions IMMEDIATELY (sync) and pump - except one on a frame a
+      //    chat agent is working on: it stays unclaimed, and the next rescan picks it up once free
+      for (const p of scanPending(root, commentsDir, journal)) {
+        if (p.frame && hooks.held?.(p.frame)) {
+          if (!waiting.has(p.event.id)) { waiting.add(p.event.id); log(`  jam: waiting - ${p.frame} is being worked on in chat; the comment runs once it is done`) }
+          continue
+        }
+        waiting.delete(p.event.id)
+        enqueue(claim(p), p)
+      }
     } catch (err) {
       log(`  jam: tick error - ${(err as Error).message}`)
     }
@@ -416,6 +428,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
     // extinguish a running jam job's glow (and vice versa)
     work: (f, on) => (on ? activity.mark(f ?? '', undefined, 'jam') : activity.clear(f ?? '', 'jam')),
     changed: onChanged,
+    held: (f) => activity.has(f, 'cli'),
   })
   let stopped = false
   let scheduled: ReturnType<typeof setTimeout> | null = null

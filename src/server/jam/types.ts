@@ -74,4 +74,4 @@ export interface JobPacket {
 }
 
 /** The triggering event plus the board it lives on. */
-export interface Pending { board: string; event: CommentEvent }
+export interface Pending { board: string; event: CommentEvent; /** the thread's frame, when known */ frame?: string }

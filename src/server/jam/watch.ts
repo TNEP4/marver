@@ -14,11 +14,15 @@ import type { Journal, Pending } from './types.ts'
 
 const MENTION = /@marver\b/i
 
-/** Threads Marver is already ENGAGED in (it has replied there). An owner follow-up in one of
- *  these is a conversation turn - it triggers without re-tagging @marver. */
+/** Threads Marver is already ENGAGED in: it has replied there, or it started the thread (a note
+ *  an agent pinned with `comments new`). An owner follow-up in one of these is a conversation turn -
+ *  it triggers without re-tagging @marver. */
 export function engagedThreads(events: CommentEvent[]): Set<string> {
   const s = new Set<string>()
-  for (const ev of events) if (ev.agent && ev.type === 'reply' && ev.parentId) s.add(ev.parentId)
+  for (const ev of events) {
+    if (ev.agent && ev.type === 'reply' && ev.parentId) s.add(ev.parentId)
+    if (ev.agent && ev.type === 'create' && ev.commentId) s.add(ev.commentId)
+  }
   return s
 }
 
@@ -40,9 +44,13 @@ export function scanPending(root: string, commentsDir: string, journal: Journal)
   for (const board of listBoards(commentsDir)) {
     const events = readLog(commentsDir, board)
     const engaged = engagedThreads(events)
+    // the frame each thread sits on (a reply names only its thread) - what a hold is keyed on
+    const frameOf = new Map<string, string>()
+    for (const ev of events) if (ev.type === 'create' && ev.commentId && ev.frame) frameOf.set(ev.commentId, ev.frame)
     for (const ev of events) {
       if (seen.has(ev.id) || !triggers(root, board, ev, engaged)) continue
-      out.push({ board, event: ev })
+      const frame = ev.frame ?? frameOf.get(threadId(ev))
+      out.push({ board, event: ev, ...(frame ? { frame } : {}) })
     }
   }
   return out

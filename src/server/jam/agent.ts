@@ -78,6 +78,11 @@ export function onPath(cmd: string, env: NodeJS.ProcessEnv = process.env): boole
  *  case is worth - so the answer is made visible instead of clever: `init` prints the agent
  *  it chose and writes it into design/config.ts, and instructions/jam.md has the agent confirm
  *  that line names the tool it actually is. One word to correct, once per repo. */
+/** The agent CLI this process runs under, by its env marker alone - provenance for what a CLI
+ *  command writes (`comments new` / `reply`), so never a PATH guess. */
+export const runningAgent = (env: NodeJS.ProcessEnv = process.env): JamAgent | undefined =>
+  AGENTS.find((a) => MARKERS[a].some((k) => env[k]))
+
 export function detectAgent(env: NodeJS.ProcessEnv = process.env): JamAgent | undefined {
   const running = AGENTS.find((a) => MARKERS[a].some((k) => env[k]))
   if (running && onPath(AGENT_BIN[running], env)) return running

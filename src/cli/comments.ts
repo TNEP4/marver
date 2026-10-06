@@ -8,7 +8,10 @@
  *                 has), --invite <t> to claim an invite, or email + password.
  * sync            one full exchange with the publish target (agent/CI path)
  * list            threads from design/comments/ (--open, --board, --json)
- * reply <thread>  append a reply (--body) - the agent's voice in the loop
+ * new <frame>    pin a note on a frame (--body, --on "<text on screen>") - Marver's voice, the
+ *                 owner's pill: what an agent leaves where it needs the human's eyes
+ * reply <thread>  append a reply (--body) - the agent's voice in the loop: Marver's on a thread
+ *                 started here, the owner's on a collaborator's (the voice that reaches them)
  * resolve <thread>  mark addressed (--addressed-in <frame> records WHICH variant)
  * invite <email>  mint a single-use invite link (owner only, needs connect first)
  * revoke <email>  revoke an account and its sessions (owner only)
@@ -20,6 +23,7 @@ import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
 import { connect, connectClaim, connectToken, loadCollab, syncOnce } from '../server/sync.ts'
 import { localProfile } from '../server/profile.ts'
+import { runningAgent } from '../server/jam/agent.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -83,7 +87,7 @@ export async function commentsCommand(root: string, action: string, value: strin
       if (!threads.length) return void console.log(`  no ${opts.open ? 'open ' : ''}comments`)
       for (const t of threads) {
         const anchor = t.frame ? ` on ${t.frame}` : ''
-        console.log(`  ${t.resolved ? '✓' : '○'} ${t.id}${anchor} - ${t.author?.name ?? '?'}: ${t.body ?? ''}${t.replies.length ? ` (+${t.replies.length})` : ''}${t.addressedIn ? ` → ${t.addressedIn}` : ''}`)
+        console.log(`  ${t.resolved ? '✓' : '○'} ${t.id}${anchor} - ${t.agent ? 'Marver' : t.author?.name ?? '?'}: ${t.body ?? ''}${t.replies.length ? ` (+${t.replies.length})` : ''}${t.addressedIn ? ` → ${t.addressedIn}` : ''}`)
       }
       return
     }
@@ -91,12 +95,38 @@ export async function commentsCommand(root: string, action: string, value: strin
       if (!value || !opts.body) throw new Error('usage: comments reply <thread-id> --body "..."')
       const t = allThreads(root).find((t) => t.id === value)
       if (!t) throw new Error(`no thread ${value} in design/comments/`)
+      // The reply goes where the asker is. A thread the owner (or Marver) started lives on this
+      // machine: the agent answers as Marver - its own voice, and the owner gets the pill. A thread a
+      // collaborator started arrived from the published canvas, and agent events never leave this
+      // machine (sync.ts) - so that reply keeps the owner's voice, the one that reaches them.
+      const local = ownerThread(root, t)
       appendEvents(join(root, 'design', 'comments'), t.board, [{
-        id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id,
-        author: localAuthor(root), body: String(opts.body),
+        id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id, board: t.board,
+        ...(local ? marverAuthor(root) : { author: localAuthor(root) }), body: plainDashes(String(opts.body)),
       }])
-      await pushIfConnected(root)
-      return void console.log(`  replied to ${t.id}`)
+      if (!local) await pushIfConnected(root)
+      return void console.log(local ? `  replied to ${t.id} as Marver` : `  replied to ${t.id} in your voice - ${t.author?.name ?? 'its author'} sees it on the published canvas`)
+    }
+    case 'new': {
+      if (!value || !opts.body) throw new Error('usage: comments new <scene/frame> --body "..." [--on "<text on screen>"] [--board <board>]')
+      const { resolveLink, devOrigin } = await import('./link.ts')
+      const r = resolveLink(root, [value], opts.board)
+      if (!r.frames.length) throw new Error(`"${value}" is a scene - pin a note on one frame: comments new <scene/frame>`)
+      const frame = r.frames[0]
+      const nodeKey = r.nodesOf(r.board).find((n) => n.frame === frame && typeof n.key === 'string')?.key
+      const on = opts.on === undefined ? '' : String(opts.on).replace(/\s+/g, ' ').trim()
+      const threadId = randomUUID()
+      appendEvents(join(root, 'design', 'comments'), r.board, [{
+        id: randomUUID(), ts: Date.now(), type: 'create', commentId: threadId, board: r.board, frame,
+        ...(nodeKey ? { nodeKey } : {}),
+        // an element anchor by its words: the frame finds the element showing them (inspect.js);
+        // the pin sits at its right edge. No --on = a frame-level pin, top right.
+        ...(on ? { anchor: { el: { semantics: { quote: on.slice(0, 120) } }, pos: { fx: 1, fy: 0.5 } } } : {}),
+        ...marverAuthor(root), body: plainDashes(String(opts.body)),
+      }])
+      const origin = await devOrigin(root)
+      console.log(`  pinned a note on ${frame} (board ${r.board})${origin ? `: ${origin}#/b/${r.board}?c=${threadId}` : ''}`)
+      return
     }
     case 'resolve': {
       if (!value) throw new Error('usage: comments resolve <thread-id> [--addressed-in <frame>]')
@@ -135,7 +165,7 @@ export async function commentsCommand(root: string, action: string, value: strin
       return void console.log(`  revoked ${value} - their sessions are dead`)
     }
     default:
-      throw new Error(`unknown action "${action}" - connect | sync | list | reply | resolve | invite | revoke`)
+      throw new Error(`unknown action "${action}" - connect | sync | list | new | reply | resolve | invite | revoke`)
   }
 }
 
@@ -157,6 +187,27 @@ const pushIfConnected = async (root: string) => {
   const collab = loadCollab(root)
   if (collab) await syncOnce(root, collab).catch((e) => console.log(`  (push deferred: ${(e as Error).message})`))
 }
+
+/** Did this thread start on this machine - by the owner, or by Marver? A thread a collaborator
+ *  started carries their address; one with no address was written here before a profile existed. */
+const ownerThread = (root: string, t: Thread): boolean => {
+  if (t.agent) return true
+  const theirs = t.author?.email?.toLowerCase()
+  const mine = localProfile(root).email?.toLowerCase()
+  return !theirs || (!!mine && theirs === mine)
+}
+
+/** Marver's voice for CLI-born events, the way Live Jam writes it (daemon.ts): the owner's identity
+ *  (attributable), `agent: true` (renders as Marver, raises the owner's pill, never triggers a jam
+ *  job, never syncs), and the harness that ran the command when its marker says so. */
+const marverAuthor = (root: string) => {
+  const me = localProfile(root)
+  const harness = runningAgent()
+  return { author: me, agent: true as const, agentMeta: { devUser: me.name, ...(harness ? { harness } : {}) } }
+}
+
+/** House style: never an em/en dash in a reply - a plain dash reads human (as Live Jam). */
+const plainDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ' - ')
 
 /** Author snapshot for CLI-born events: the connected account (the server validates
  *  authors against the session - an authorless push would be rejected), else the

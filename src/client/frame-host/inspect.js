@@ -290,8 +290,31 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
         for (const el of document.querySelectorAll(want.tag))
           if (match(el)) return el
       }
+      // an anchor an agent wrote (`comments new --on "<text>"`) names the words alone: the
+      // innermost element showing them
+      if (want.quote && !want.tag && !anchor?.el?.cssPath) return byWords(want.quote)
     } catch { /* malformed semantics must not sink the whole batch */ }
     return null
+  }
+
+  const norm = (t) => (t ?? '').replace(/\s+/g, ' ').trim()
+  const byWords = (quote) => {
+    const q = norm(quote).slice(0, 80).toLowerCase()
+    if (!q) return null
+    // one text node holding the words: its element (the common case, and cheap)
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const host = n.parentElement
+      if (!host || host.closest('script,style,noscript,template')) continue
+      if (norm(n.data).toLowerCase().includes(q)) return host
+    }
+    // words split across inline elements ("Pay <b>now</b>"): walk down from the body to the
+    // innermost element whose text still holds them (the first occurrence)
+    const holds = (el) => !el.matches('script,style,noscript,template') && norm(el.textContent).toLowerCase().includes(q)
+    let el = document.body
+    if (!holds(el)) return null
+    for (let next = [...el.children].find(holds); next; next = [...el.children].find(holds)) el = next
+    return el
   }
 
   // re-resolve + re-apply the shell-driven highlight. Called on set and on every

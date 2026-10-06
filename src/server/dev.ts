@@ -1,7 +1,7 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createServer as netServer } from 'node:net'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, watch as fsWatch } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
@@ -307,6 +307,26 @@ export async function dev(root: string, portFlag?: number) {
   {
     const close = server.close.bind(server)
     server.close = (async () => { unsubscribe(); clearInterval(sweep); removeDevInfo(root); return close() }) as typeof server.close
+  }
+
+  // Comments written OUTSIDE the shell - an agent's `comments new` / `reply` / `resolve`, a sync
+  // pull, a teammate's merge - reach the open canvas at once (the board's log is re-read, its
+  // fresh events raise their pill), instead of on the 30s poll. The shell's own writes echo here
+  // too: harmless, a re-read is a union.
+  {
+    const dir = join(root, 'design', 'comments')
+    const due = new Map<string, ReturnType<typeof setTimeout>>()
+    try {
+      mkdirSync(dir, { recursive: true })   // so the watcher attaches before the first comment
+      const w = fsWatch(dir, { persistent: false }, (_e, file) => {
+        const m = typeof file === 'string' ? file.match(/^([a-z0-9][a-z0-9-]*)\.jsonl$/) : null
+        if (!m) return
+        clearTimeout(due.get(m[1]))
+        due.set(m[1], setTimeout(() => { due.delete(m[1]); server.ws.send('sh:jam-comment', { board: m[1] } as any) }, 120))
+      })
+      const close = server.close.bind(server)
+      server.close = (async () => { w.close(); for (const t of due.values()) clearTimeout(t); return close() }) as typeof server.close
+    } catch { /* the 30s poll is the backstop */ }
   }
 
   // Live Jam: the dev server IS the daemon. On by default - a resolved jam block means armed.
