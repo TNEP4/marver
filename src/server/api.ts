@@ -9,6 +9,7 @@ import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTi
 import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, readContextFacts } from './board-status.ts'
+import { autoWidthOf, mergeSizes, readSizes, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -224,6 +225,32 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const next = JSON.stringify(obj, null, 2) + '\n'
         if (next !== current) atomicWrite(file, next)
         return json(res, 200, { name, sha256: hash(next) })
+      }
+
+      // Content-frame heights (sizes.ts): read before a board's first layout, written when the shell
+      // reports a settled measurement that differs. Owner-gated like every write; the frames are
+      // checked against the manifest on disk, so only a live content frame at its own width lands.
+      if (path === 'sizes' && req.method === 'GET') return json(res, 200, { heights: readSizes(root) })
+      if (path === 'sizes' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let body: { heights?: unknown } | null
+        try { body = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const incoming = body?.heights
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return json(res, 400, { error: 'expected { heights: { "scene/frame@width": height } }' })
+        if (Object.keys(incoming).length > SIZES_BATCH_MAX) return json(res, 400, { error: `at most ${SIZES_BATCH_MAX} heights per write` })
+        { const de = dirError(); if (de) return json(res, 400, { error: de }) }
+        let manifest: { frames?: { id: string; contentWidth?: number; viewport?: string }[] } = {}
+        try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet: nothing is a content frame */ }
+        const file = sizesPath(root)
+        if (!notSymlink(file)) return json(res, 400, { error: 'refusing to write a symlinked sizes file' })
+        // read-merge-write in one synchronous run: no other request interleaves inside it
+        const { next, accepted } = mergeSizes(readSizes(root), incoming as Record<string, unknown>, autoWidthOf(manifest.frames ?? [], opts.viewports ?? {}))
+        const text = serializeSizes(next)
+        const current = existsSync(file) ? readFileSync(file, 'utf8') : ''
+        if (text !== current && (Object.keys(next).length || current)) { mkdirSync(boardsDir, { recursive: true }); atomicWrite(file, text) }
+        return json(res, 200, { accepted })
       }
 
       // The folder registry: which folders exist and where they rank at the root. A separate

@@ -17,7 +17,7 @@ import { lodSupported, registerLodImage } from './img-lod.ts'
 const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
   `.mv-md .mv-c-${f}{color:${c.light}}.dark .mv-md .mv-c-${f},[data-theme="dark"] .mv-md .mv-c-${f}{color:${c.dark}}`).join('\n')
 
-import { Diagram as DiagramRoot } from './diagram.tsx'
+import { Diagram as DiagramRoot, diagramsPending } from './diagram.tsx'
 export function Diagram(props: Parameters<typeof DiagramRoot>[0]) { ensureStyles(); return <DiagramRoot {...props} /> }
 import { Slide as SlideRoot } from './slide.tsx'
 import { Chart as ChartRoot } from './chart.tsx'
@@ -34,6 +34,23 @@ const UNIT = 16   // one gap unit, px - plain adjacency on boards is one gutter;
 
 /* ---------------------------------- Doc ---------------------------------- */
 
+/** How long the first measurement waits for the doc to finish growing before it reports anyway. */
+const SETTLE_CAP = 2000
+/** After the cap, a provisional doc keeps checking (slower) for this long, to report once it IS done. */
+const SETTLE_TAIL = 60_000
+
+/** Is anything that still changes this doc's height in flight? Fonts loading, a diagram rendering,
+ *  an image not decoded yet (an LOD canvas pins its aspect on its first decode - img-lod.ts - and
+ *  an <img> with no size yet is 0 tall until it loads; a lazy one off-screen may not load at all).
+ *  A video poster sits in a fixed-ratio box: it never changes the height. */
+export function heightPending(el: HTMLElement, doc: Document = document): boolean {
+  if (doc.fonts?.status === 'loading') return true
+  if (diagramsPending() > 0) return true
+  for (const c of el.querySelectorAll<HTMLCanvasElement>('canvas.mv-img-el')) if (!c.style.aspectRatio && c.dataset.mvLod !== 'failed') return true
+  for (const img of el.querySelectorAll('img')) if (!img.complete && !img.closest('.mv-video')) return true
+  return false
+}
+
 export function Doc({ layout = 'document', children }: { layout?: 'document' | 'wide'; children?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -41,8 +58,14 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     const el = ref.current
     if (!el || window.parent === window) return
     let t: ReturnType<typeof setTimeout> | undefined
+    let poll: ReturnType<typeof setTimeout> | undefined
+    let reported = false            // the first measurement went out - the observer may report from here
+    let lastSettled = false
     const params = new URLSearchParams(location.search)
+    const height = () => Math.ceil(el.getBoundingClientRect().height)
     const post = () => {
+      reported = true
+      lastSettled = !heightPending(el)
       window.parent.postMessage({
         type: 'sh:measure',
         // identity guards: board files may reuse node keys (frame id must match), and
@@ -52,15 +75,36 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
         gen: params.get('r') ?? '',
         ownWidth: CONTENT_WIDTH[layout] ?? CONTENT_WIDTH.document,
         measuredWidth: window.innerWidth,          // the width this height is TRUE at (r3 #1)
-        height: Math.ceil(el.getBoundingClientRect().height),
+        height: height(),
+        // settled = the doc is done growing: the shell commits it as THE height (and the dev shell
+        // keeps it for the next load - sizes.ts). Provisional = it may still grow (an image to come)
+        settled: lastSettled,
       }, '*')
+    }
+    // The FIRST report waits until the doc is done: fonts, diagrams and images, and the height
+    // still the same two checks running - otherwise a board that already knows this frame's
+    // height (the committed cache) would see it shrink to the half-loaded doc and grow back.
+    // Capped: a slow or broken image never holds the frame hostage - it reports provisional,
+    // then once more, settled, when the image lands (or the observer sees it).
+    const start = performance.now()
+    let prevH = -1, quiet = 0
+    const check = () => {
+      const elapsed = performance.now() - start
+      if (!reported) {
+        const h = height()
+        quiet = !heightPending(el) && h === prevH ? quiet + 1 : 0
+        prevH = h
+        if (quiet >= 2 || elapsed >= SETTLE_CAP) post()
+        if (!reported) { poll = setTimeout(check, 50); return }
+      } else if (!lastSettled && !heightPending(el)) { post(); return }
+      if (!lastSettled && elapsed < SETTLE_TAIL) poll = setTimeout(check, 500)
     }
     // debounced ~300ms after the last content change; the shell guards staleness
     // on its side (event.source must map to a mounted iframe; reflow is board-scoped)
-    const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(post, 300) })
+    const ro = new ResizeObserver(() => { if (!reported) return; clearTimeout(t); t = setTimeout(post, 300) })
     ro.observe(el)
-    post()
-    return () => { ro.disconnect(); clearTimeout(t) }
+    check()
+    return () => { ro.disconnect(); clearTimeout(t); clearTimeout(poll) }
   }, [layout])
   return <div ref={ref} className={`mv-doc mv-doc-${layout}`}>{children}</div>
 }

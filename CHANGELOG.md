@@ -2,6 +2,31 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Changed
+
+- **Boards open at their final size.** A content frame - a `Doc` of markdown, diagrams and images -
+  used to open at a guess, three quarters of its width, and grow as it loaded; every growth re-flowed
+  the rows below it, so a board of specs swam for seconds (on one 36-frame board, 44 layout changes
+  over the first 2.7 s). The height each Doc measures at its own width is now kept in
+  `design/boards/_sizes.json`, which `marver dev` writes and you commit with the rest of `design/`:
+  the board opens with every frame at its real size, the content fills in, and nothing moves.
+  `marver build` ships the heights of the published frames, so a published canvas opens still too.
+  See [Boards and folders](docs/boards-and-folders.md#sizes).
+- **A Doc reports its height once it is done** - fonts, diagrams and images loaded - instead of first
+  half-loaded and again when complete. An image still loading off-screen may grow a frame, never
+  shrink it under the height it is known to have.
+- **The frame you are looking at stays put.** When content does change the layout - an agent makes a
+  doc in the row above taller - the canvas moves around the selected frame, or the one in the middle
+  of the view, instead of moving it out from under you.
+
+### Upgrading
+
+- Run `npx marver init` to take the new instructions. `_sizes.json` appears the first time a board of
+  Docs settles in `marver dev`; commit it. It is machine-written - a merge conflict in it is safe to
+  resolve either way, the canvas rewrites it.
+
 ## 0.22.1 - 2026-10-06
 
 ### Changed

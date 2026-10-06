@@ -78,6 +78,29 @@ nests a sub-folder with `parent`:
 with its rank, the landing board - and `--json` gives the same tree. The landing board is the first
 board in that reading order, down through folders.
 
+### Sizes
+
+A content frame - a `Doc` of markdown, diagrams and images - is as tall as its content, which only a
+render can tell. **`design/boards/_sizes.json` remembers it**: the height each one measured at its
+own width, one line per frame.
+
+```json
+{ "about": "Written by marver dev: ...",
+  "heights": {
+    "spec/checkout@760": 1834,
+    "spec/pricing@1280": 1210 } }
+```
+
+So a board opens with every frame at its real size - the content fills in, nothing moves - in
+`marver dev` and on a published canvas alike (`marver build` ships the heights of the published
+frames). `marver dev` writes it when a frame settles at a new height; commit it with the rest of
+`design/`, and never edit it. A stale height is only a first guess: the frame measures, and the file
+follows. A merge conflict in it is safe to resolve either way.
+
+When content does change the layout - an agent makes a doc taller, and the rows below move down -
+the canvas holds the frame you are looking at in place: the selected one when it is on screen, else
+the one in the middle of the view.
+
 ## Descriptions
 
 Every folder, board, scene and frame takes one `description`: a sentence for agents - what it is

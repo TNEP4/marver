@@ -23,4 +23,7 @@ export const canvasCtl = {
   zoomTo(_scale: number) {},
   zoom100() { canvasCtl.zoomTo(1) },
   wheel(_input: CanvasWheelInput) {},
+  /** Call right BEFORE a layout change the human did not ask for (a content-driven reflow): the
+   *  node they are looking at keeps its place on screen through it - scroll anchoring. */
+  holdView() {},
 }

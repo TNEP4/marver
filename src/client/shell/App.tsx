@@ -573,7 +573,8 @@ export function App() {
         if (String(data.gen ?? '') !== gen) return
         // measureNode does the rest of the admission (content frames only,
         // frame-id match, finite positive, clamped)
-        s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height))
+        s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height),
+          typeof data.settled === 'boolean' ? data.settled : undefined)
       } else if (data.type === 'sh:laser-copy') {
         // laser click = copy the element's full address for the agent: WHERE it lives on
         // the canvas ([board ▸ scene]) + frame source file + css path (+ jsx source loc)

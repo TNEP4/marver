@@ -15,6 +15,11 @@ viewport and lays it out:
   "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
 ```
 
+Never write `w`/`h` on a content frame's node (a `Doc`): its height is measured, and
+`design/boards/_sizes.json` - machine-written, committed, never edited by hand - keeps it so
+the board opens at its final size. Commit it with your changes; a merge conflict in it is safe
+to resolve either way.
+
 - **The file name is the board's identity** - what you, `publish.json`, URLs and
   comment threads address (`board: checkout-compare`). It is a slug
   (`^[a-z0-9][a-z0-9-]*$`) and never moves on a rename.

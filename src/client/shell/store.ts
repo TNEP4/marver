@@ -3,6 +3,7 @@ import { ROUTE, slideSize } from '../const.ts'
 import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
 import { clearNoteHeights, noteHeight, noteReserve, notesCramped, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
+import { canvasCtl } from './canvas/ctl.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -25,6 +26,8 @@ const DATA: {
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
   /** the generation of the glass textures this build shipped (publish-bakes.ts); absent = none */
   bakes?: number
+  /** content-frame heights, `scene/frame@width` -> px (design/boards/_sizes.json, published frames only) */
+  sizes?: Record<string, number>
 } | null = shData
 
 /** The published textures' generation, or 0: the static index this build shipped is at /__mv/bakes/<gen>/index.json. */
@@ -276,9 +279,47 @@ const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change co
 let scenesRev = 0                                                // bumps per sh:scenes, so a load that straddled one keeps the live labels
 let liveScenes: Manifest['scenes'] | null = null                 // the last sh:scenes payload - applied late when it beat the first manifest
 
-/** Latest measured content heights, keyed frameId@width. TRANSIENT by design:
- * auto sizes are never serialized - a reload remeasures. */
+/** Latest measured content heights, keyed frameId@width - this session's live truth. Board files
+ *  never carry auto sizes; the committed cache below does. */
 const measuredHeights = new Map<string, number>()
+
+/** Committed content heights (design/boards/_sizes.json - src/server/sizes.ts), keyed frameId@width:
+ *  a content frame's height BEFORE it measures, so a board opens at its final geometry instead of
+ *  growing from a guess and re-flowing row after row. Read once per page (dev: the API; published:
+ *  the build inlines its own). A stale entry is still the best first guess - the live measurement
+ *  corrects it, and the dev shell writes the correction back. */
+const savedHeights = new Map<string, number>()
+let savedLoad: Promise<void> | null = null
+const loadSavedHeights = (): Promise<void> => (savedLoad ??= (async () => {
+  let heights: unknown = DATA?.sizes
+  if (!DATA) {
+    try { const r = await fetch(`${ROUTE}/api/sizes`); if (r.ok) heights = (await r.json() as { heights?: unknown })?.heights } catch { /* no cache: placeholders, as before */ }
+  }
+  if (heights && typeof heights === 'object')
+    for (const [k, v] of Object.entries(heights)) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
+})())
+
+// settled heights that differ from the committed ones, written back in batches (dev only)
+const pendingHeights = new Map<string, number>()
+let heightsTimer: ReturnType<typeof setTimeout> | undefined
+const persistHeight = (key: string, h: number) => {
+  if (DATA || savedHeights.get(key) === h) { pendingHeights.delete(key); return }
+  pendingHeights.set(key, h)
+  heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
+}
+async function flushHeights() {
+  heightsTimer = undefined
+  if (!pendingHeights.size) return
+  const batch = Object.fromEntries([...pendingHeights].slice(0, 500))
+  for (const k of Object.keys(batch)) pendingHeights.delete(k)
+  try {
+    const r = await postOwner('sizes', { heights: batch })
+    if (r.ok) for (const k of ((await r.json()) as { accepted?: string[] }).accepted ?? []) savedHeights.set(k, batch[k])
+  } catch { /* the next settled measurement of these frames tries again */ }
+  if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
+}
+
+const hasKnownHeight = (frameId: string, w: number) => measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`)
 
 function defaultSize(frame: FrameEntry) {
   // the precedence chain (spec 09 slice 1): slide stage → authored
@@ -286,12 +327,14 @@ function defaultSize(frame: FrameEntry) {
   // a slide's stage is its declared viewport, else 1280×720
   const sl = slideSize(frame, CONFIG.viewports)
   if (sl) return { w: sl.width, h: sl.height }
-  // content frames: own width from Doc layout; height from the latest
-  // measurement at that width, or a placeholder until sh:measure lands.
-  // meta.viewport, when declared, wins - the existing precedence.
-  if (frame.contentWidth && !frame.viewport) {
-    const w = frame.contentWidth
-    return { w, h: measuredHeights.get(`${frame.id}@${w}`) ?? Math.round(w * 0.75) }
+  // content frames: own width from Doc layout (meta.viewport, when declared, wins - the existing
+  // precedence); height from this session's measurement at that width, else the committed one,
+  // else a placeholder until sh:measure lands
+  if (frame.contentWidth) {
+    const vp = CONFIG.viewports[frame.viewport ?? '']
+    const w = vp?.width ?? frame.contentWidth
+    const key = `${frame.id}@${w}`
+    return { w, h: measuredHeights.get(key) ?? savedHeights.get(key) ?? vp?.height ?? Math.round(w * 0.75) }
   }
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
   return { w: vp.width, h: vp.height }
@@ -353,7 +396,9 @@ interface State {
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
   resizeNode(key: string, w: number, h: number): void
-  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number): void
+  /** `settled`: the Doc's fonts, images and diagrams are done (content/index.tsx). false = provisional
+   *  (an image still loading) - it may grow a frame, never shrink it under a known height. */
+  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number, settled?: boolean): void
   /** A node's sticky column was drawn (or grew, or went): its extent from the node's top, world px. */
   noteMeasured(key: string, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
@@ -462,7 +507,8 @@ export const useStore = create<State>((set, get) => {
       if (s.board !== boardAt) return
       if (s.gesture) { scheduleReflow(check ?? undefined); return }   // defer, never drop - retries after the drag
       if (check && !check()) return
-      if (composed(s)) s.runTidy()
+      // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
+      if (composed(s)) { canvasCtl.holdView(); s.runTidy() }
     }, 400)
   }
   /** Boards whose layout the shell owns: a recipe, scene rows, or the auto board. Room for a
@@ -521,12 +567,14 @@ export const useStore = create<State>((set, get) => {
     clearNoteHeights()                     // heights are per column drawn; a key shared by two board files carries none across
     try {
       let raw: any
+      const saved = loadSavedHeights()       // in parallel with the manifest; every size below reads it
       if (DATA) raw = DATA.manifest
       else {
         const mRes = await fetch('/design/manifest.json')
         if (!mRes.ok) return null
         raw = await mRes.json().catch(() => undefined)
       }
+      await saved
       if (raw === undefined || raw === null || typeof raw !== 'object') return null
       bumpManifestRev()                        // fresh manifest → fresh iframe URLs
       const manifest: Manifest = {
@@ -585,11 +633,16 @@ export const useStore = create<State>((set, get) => {
             const sizeMode = f?.contentWidth
               ? { sizeMode: (n.sizeMode === 'manual' || n.sizeMode === 'device' ? n.sizeMode : 'auto') as Node['sizeMode'] }
               : {}
+            // an AUTO content node whose height is KNOWN (measured, or committed - sizes.ts) opens at
+            // it: a w/h in the file is a guess (an agent wrote the node) or a pre-auto leftover the
+            // first measurement overrides anyway - opening at it only to jump is the swim. Unknown
+            // (a frame that never measures: no Doc) keeps the file's size, as before
+            const own = sizeMode.sizeMode === 'auto' && !!f && hasKnownHeight(f.id, d.w)
             return {
               key,
               frame: n.frame,
               x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
-              w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
+              w: !own && typeof n.w === 'number' ? n.w : d.w, h: !own && typeof n.h === 'number' ? n.h : d.h,
               ...(!f && typeof n.w !== 'number' && typeof n.h !== 'number' ? { sizeFallback: true } : {}),
               ...sizeMode,
               // pins persist as their own field (exact round-trip). Legacy boards stored a
@@ -1040,7 +1093,7 @@ export const useStore = create<State>((set, get) => {
      *  clamped. A height only commits when it was measured at the width being applied;
      *  auto sizes are transient - applying one never dirties the board (positions from
      *  the follow-up reflow do, exactly like a human resize). */
-    measureNode(key, frameId, ownWidth, measuredWidth, height) {
+    measureNode(key, frameId, ownWidth, measuredWidth, height, settled) {
       const s = get()
       const node = s.nodes.find((n) => n.key === key)
       // Only an explicit DEVICE viewport locks a content frame's height. 'auto' and 'manual' both
@@ -1059,7 +1112,13 @@ export const useStore = create<State>((set, get) => {
       const maxH = 40000
       const H = Math.min(maxH, Math.max(80, Math.round(height)))
       const curW = Math.round(node.w)
-      measuredHeights.set(`${node.frame}@${Math.round(measuredWidth)}`, H)
+      const mKey = `${node.frame}@${Math.round(measuredWidth)}`
+      // a PROVISIONAL height (an image off-screen still lazy-loading) may grow a frame but never
+      // shrink it under a height already known for this width: that one is what the finished doc
+      // measures, and shrinking now would only grow back when the image lands - the swim again
+      const known = measuredHeights.get(mKey) ?? savedHeights.get(mKey)
+      if (settled === false && known !== undefined && H < known) return
+      measuredHeights.set(mKey, H)
       // AUTO owns the width too - adopt the Doc's declared/own width. MANUAL keeps the human's width
       // and only fits the height.
       if (node.sizeMode !== 'manual') {
@@ -1075,6 +1134,9 @@ export const useStore = create<State>((set, get) => {
         }
       }
       if (Math.round(measuredWidth) !== curW) return      // height only true at the width it was measured at
+      // a settled height at the frame's OWN width is the one the next load should open at (sizes.ts);
+      // a human-owned width is the board file's business (manual sizes save there)
+      if (settled === true && node.sizeMode !== 'manual') persistHeight(mKey, H)
       if (Math.round(node.h) === H) return
       set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) }))
       scheduleReflow()

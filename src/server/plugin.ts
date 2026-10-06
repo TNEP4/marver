@@ -6,6 +6,7 @@ import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
 import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, type Manifest } from './manifest.ts'
 import { apiMiddleware } from './api.ts'
+import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 
@@ -292,7 +293,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         // which the content broadcast below cannot carry (nothing left to hash)
         let listTimer: ReturnType<typeof setTimeout> | undefined
         const watcher = watch(boardsDir, (_event, file) => {
-          if (!file || !file.endsWith('.json')) return
+          // the size cache (sizes.ts) is no board and no folder: the shell that wrote it already
+          // holds every height in it - a sidebar re-read per settled Doc would be pure churn
+          if (!file || !file.endsWith('.json') || file === SIZES_FILE) return
           clearTimeout(listTimer)
           listTimer = setTimeout(() => { server.ws.send('sh:boards', {}); regen() }, 150)   // the manifest carries boards and folders too
           clearTimeout(timers.get(file))

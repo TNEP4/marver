@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch'
 import { CONFIG, useStore } from '../store.ts'
 import { bootHash } from '../hash.ts'
@@ -90,6 +90,9 @@ export function animateLayout(ms = 360) {
 // implementations below when it mounts
 import { canvasCtl, type CanvasWheelInput } from './ctl.ts'
 export { canvasCtl, type CanvasWheelInput }
+import { anchorNode, anchoredCamera, type Held } from './anchor.ts'
+/** The node a content-driven reflow must not move on screen (holdView -> the layout effect). */
+let heldView: Held | null = null
 
 /** Variant-group captions: "Landing · 3 variants" above each group with
  *  2+ members on this board. World-space (scales with the canvas); min screen size via
@@ -199,6 +202,18 @@ export function Canvas() {
       const k = target / scale   // zoom about the viewport center
       inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
     }
+    canvasCtl.holdView = () => {
+      heldView = null
+      const el = wrap(), inst = ref.current
+      // a camera already in flight (a fit, a zoom) lands where it was sent; a pan in progress is
+      // the human's own motion - neither is ours to correct
+      if (!el || !inst || inst.instance.animation || inst.instance.isPanning) return
+      const held = anchorNode(useStore.getState(), inst.instance.transformState, el.clientWidth, el.clientHeight)
+      if (!held) return
+      heldView = held
+      // the reflow commits before the next frame; an anchor nothing consumed must never steer a later change
+      requestAnimationFrame(() => { if (heldView === held) heldView = null })
+    }
   }, [])
 
   // first load opens on the whole board (same as ⇧1) - the default 100% transform is an
@@ -242,6 +257,20 @@ export function Canvas() {
     el.addEventListener('pointerdown', down)
     return () => el.removeEventListener('pointerdown', down)
   }, [])
+
+  // scroll anchoring, the commit half (holdView above): in the SAME commit that moved the nodes,
+  // before paint, shift the camera by the held node's displacement - it never visibly moves
+  useLayoutEffect(() => {
+    const held = heldView
+    if (!held) return
+    heldView = null
+    const inst = ref.current
+    const n = nodes.find((x) => x.key === held.key)
+    if (!inst || !n || inst.instance.animation) return
+    const { positionX, positionY, scale } = inst.instance.transformState
+    const [x, y] = anchoredCamera(held, n, positionX, positionY, scale)
+    if (x !== positionX || y !== positionY) inst.setTransform(x, y, scale, 0)
+  }, [nodes])
 
   // B0.2: the shell is the SINGLE wheel-camera owner. rzpp's wheel-pan is disabled (below);
   // both entry paths - a shell-document wheel over the canvas, and a wheel forwarded from a

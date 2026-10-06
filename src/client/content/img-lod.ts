@@ -59,7 +59,11 @@ async function decode(it: Item, bucket: number): Promise<void> {
     bmp = bucket
       ? await createImageBitmap(blob, { resizeWidth: bucket, resizeQuality: 'high' })
       : await createImageBitmap(blob)
-  } catch { return }                                       // network / decode failure: keep the last frame
+  } catch {                                                // network / decode failure: keep the last frame
+    // a first decode that failed will not pin an aspect: the Doc must not wait on it to settle
+    if (!it.canvas.style.aspectRatio) it.canvas.dataset.mvLod = 'failed'
+    return
+  }
   if (it.token !== token || !it.canvas.isConnected) { bmp.close(); return }   // superseded or unmounted
   const ctx = it.canvas.getContext('bitmaprenderer')
   if (!ctx) { bmp.close(); return }
