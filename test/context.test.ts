@@ -230,6 +230,7 @@ describe('reading context/ off disk', () => {
     expect(ok('---\nstage: design\nstate: proposed\n---\n', 'build')).toBe('---\nstage: build\nstate: proposed\n---\n')
     expect(ok('---\nstate: proposed\nstage: build\n---\nstage: build in the body stays\n', null)).toBe('---\nstate: proposed\n---\nstage: build in the body stays\n')
     expect(ok('---\nstate: proposed\n---\n', null)).toBe('---\nstate: proposed\n---\n')
+    expect(ok('---\nstage: build\n  # implementation underway\nstate: proposed\n---\n', null)).toBe('---\n  # implementation underway\nstate: proposed\n---\n')   // an indented comment is no value
     // CRLF front matter over an LF body: only the inserted line is new - the body keeps its endings
     expect(ok('<!-- marver:managed v1 -->\r\n---\r\nstate: proposed\r\n---\r\n# Body\nline\n', 'build')).toBe('<!-- marver:managed v1 -->\r\n---\r\nstate: proposed\r\nstage: build\r\n---\r\n# Body\nline\n')
     for (const [raw, why] of [

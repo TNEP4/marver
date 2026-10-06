@@ -206,7 +206,7 @@ export function planWithStage(raw: string, stage: 'build' | null): { text: strin
     // literal block) - and would be handed to the field before it once the header goes
     const after = lines.slice(lines.indexOf(line) + 1)
     const nextField = after.findIndex((l) => /^[A-Za-z_][\w-]*\s*:/.test(l.text))
-    const continues = (nextField === -1 ? after : after.slice(0, nextField)).some((l) => /^[ \t]+\S/.test(l.text))
+    const continues = (nextField === -1 ? after : after.slice(0, nextField)).some((l) => /^[ \t]+[^\s#]/.test(l.text))   // a comment is not a value
     if (!value || /^[[{|>#]/.test(value) || continues) return { error: 'has a `stage` that is not one word - write it as `stage: build`' }
   }
   const eol = (line?.text.match(/\r?\n$/) ?? lines[lines.length - 1]?.text.match(/\r?\n$/) ?? head[0].match(/\r?\n$/))![0]

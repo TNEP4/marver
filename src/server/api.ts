@@ -280,10 +280,15 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
           }
           try { atomicWrite(w.file, w.next); done.push(w) } catch (err) {
-            if (current_(w.file) === w.next) done.push(w)   // it landed before the throw: undo it like the rest
+            const after = current_(w.file)
+            if (after === w.next) done.push(w)                     // it landed before the throw: undo it like the rest
+            else if (after !== w.raw) { try { atomicWrite(w.file, w.raw) } catch { /* named below */ } }   // a copy that failed part way: our damage to put back
             const stuck = undo()
-            return json(res, 500, { error: stuck.length
-              ? `could not write the status (${(err as Error).message}), and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand`
+            // "nothing changed" only when every file is seen to hold what it held before
+            const off = writes.filter((x) => x.next !== x.raw && current_(x.file) !== x.raw).map((x) => x.plan ?? `design/boards/${name}.json`)
+            const named = [...new Set([...stuck, ...off.filter((o) => !stuck.some((s) => s.startsWith(o)))])]
+            return json(res, 500, { error: named.length
+              ? `could not write the status (${(err as Error).message}), and ${named.join(', ')} ${named.length === 1 ? 'is' : 'are'} not as before - check by hand`
               : `could not write the status (${(err as Error).message}) - nothing changed` })
           }
         }
