@@ -170,10 +170,29 @@ describe('a link that lands on the work', () => {
     expect(after.top).toBeLessThan(after.h)
     expect(v.below).toBe(true)
 
-    // a camera that never stops (a fit every 250 ms) still lets the rows move, within the wait's bound
+    // a camera that never stops - a fit every 250 ms, kept up until the rows have moved - still lets them
+    // move, and within the wait's bound: timed from the instant the Doc's new height lands
+    const moved = browser.eval(s, `new Promise((done) => {
+      let i = 0
+      const spam = setInterval(() => { location.hash = i++ % 2 ? '#/b/stack?f=shop/cart' : '#/b/stack?f=docs/tall' }, 250)
+      const d = ${DOC}, h0 = d.offsetHeight
+      const grown = () => {
+        if (d.offsetHeight <= h0 + 2000) return requestAnimationFrame(grown)
+        const t0 = performance.now()
+        const watch = () => {
+          const n = document.querySelector('[data-node="s-cart"]')
+          if (${Y}(n) > ${Y}(d) + d.offsetHeight) { clearInterval(spam); return done(Math.round(performance.now() - t0)) }
+          if (performance.now() - t0 > 8000) { clearInterval(spam); return done(-1) }
+          requestAnimationFrame(watch)
+        }
+        watch()
+      }
+      grown()
+    })`)
     writeFileSync(join(root, 'design', 'scenes', 'docs', 'tall.tsx'), docFrame(700))
-    await browser.eval(s, `(() => { let i = 0; const t = setInterval(() => { location.hash = i++ % 2 ? '#/b/stack?f=shop/cart' : '#/b/stack?f=docs/tall'; if (i > 16) clearInterval(t) }, 250) })()`)
-    await browser.until(s, `(() => { const n = document.querySelector('[data-node="s-cart"]'), d = ${DOC}; return d.offsetHeight > 20000 && ${Y}(n) > ${Y}(d) + d.offsetHeight })()`, 15_000)
+    const ms = await moved
+    expect(ms).toBeGreaterThan(0)                     // -1: the rows never moved while the camera kept moving
+    expect(ms).toBeLessThan(2600)                     // the 400 ms debounce + the 1.5 s bound, and room for a slow machine
   }, 60_000)
 
   it('marver link prints that link with the running port; work done prints it for what it cleared', () => {

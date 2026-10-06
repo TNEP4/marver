@@ -67,7 +67,9 @@ function atomicWrite(file: string, content: string) {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'EEXIST' && code !== 'EPERM') { rmSync(tmp, { force: true }); throw err }
-    copyFileSync(tmp, file)
+    // the one path that touches the destination before it is whole: a copy that fails may leave it
+    // truncated - the error says so, so a caller repairs only what this write damaged
+    try { copyFileSync(tmp, file) } catch (e) { try { rmSync(tmp, { force: true }) } catch { /* named by the throw */ } ; (e as { touched?: boolean }).touched = true; throw e }
     try { rmSync(tmp, { force: true }) } catch { /* the file is written - a stray temp file is not a failed write */ }
   }
 }
@@ -282,7 +284,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           try { atomicWrite(w.file, w.next); done.push(w) } catch (err) {
             const after = current_(w.file)
             if (after === w.next) done.push(w)                     // it landed before the throw: undo it like the rest
-            else if (after !== w.raw) { try { atomicWrite(w.file, w.raw) } catch { /* named below */ } }   // a copy that failed part way: our damage to put back
+            // a copy that failed part way left our damage: put back the original. Any other version is
+            // someone else's write - never overwritten, named below
+            else if (after !== w.raw && (err as { touched?: boolean }).touched) { try { atomicWrite(w.file, w.raw) } catch { /* named below */ } }
             const stuck = undo()
             // "nothing changed" only when every file is seen to hold what it held before
             const off = writes.filter((x) => x.next !== x.raw && current_(x.file) !== x.raw).map((x) => x.plan ?? `design/boards/${name}.json`)
