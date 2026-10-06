@@ -2,6 +2,15 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Docs
+
+- **"Set up our context" is the whole ask.** `instructions/context.md`'s setup is now the full recipe,
+  in order: the kind (`product` or `knowledge`), the draft from evidence, the canvas reading it -
+  typed folders, feature boards named after their capability, a start board - and the check in ci.
+  After upgrading (`npx marver init`), tell your agent: "Set up our context."
+
 ## 0.22.0 - 2026-10-06
 
 ### Added

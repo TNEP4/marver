@@ -98,11 +98,20 @@ Context starts with people. Ask, in one message:
 3. What is private, and who may see what?
 4. How is this project named in shared spaces - keywords, tags?
 
-Then `npx marver context init`, record the answers in `context/people.md`, and draft from evidence:
-the shipped record from deploy runs and the changelog (`unknown` where nothing proves it), a map from
-the code, contracts for the capabilities that matter now. **Context that exists but is scattered**
-- specs out of date, nobody sure what is live - is a job for
-`context/playbooks/reorganize-context/PLAYBOOK.md`, not for a rewrite.
+Then, in order - this is the whole recipe; "set up our context" asks for all of it:
+1. `npx marver context init --kind product` - or `--kind knowledge` when the work is deliverables
+   for clients rather than a product people use. Record the answers in `context/people.md`.
+2. Draft from evidence: the shipped record from deploy runs and the changelog (`unknown` where
+   nothing proves it), a map from the code, contracts for the capabilities that matter now.
+3. Let the canvas read it: `npx marver init --kind <the same kind>` adds the typed folders (it never
+   moves a board); put each feature board in Features (a project in Projects), named after its
+   capability or saying `"capability": "<slug>"`; then `npx marver boards new home --type start
+   --folder start-here`.
+4. Put the check in ci - a step running `npx marver context check` on a full-history checkout
+   (`fetch-depth: 0`) - and make it pass before you hand over.
+
+**Context that exists but is scattered** - specs out of date, nobody sure what is live - is a job
+for `context/playbooks/reorganize-context/PLAYBOOK.md`, not for a rewrite.
 
 ## The check
 
