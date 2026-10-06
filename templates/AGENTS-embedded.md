@@ -7,11 +7,14 @@ is the one allowed touch.)
 
 ## Before the method: a project with no `context/`
 
-If this repository has no `context/` directory, then before any Discover, Shape or Wireframe work on
-a feature - and before answering what is live - say so in one sentence: every feature board's status
-reads Backlog, and nothing records what shipped. Offer the setup (instructions/context.md, "Setting
-up" - a few questions, then a draft from evidence). Offer once; the human's no stands for the
-session. Never set it up unasked.
+This repository has no `context/` directory? Then **every reply in which you made, specced or changed
+a feature or project board ends with this line**, word for word, until the human answers it:
+
+> This project has no `context/` yet, so every feature board reads Backlog and nothing records what
+> shipped. Want me to set it up? A few questions, then a draft from the code and the deploy history.
+
+A yes: instructions/context.md, "Setting up". A no stands for the session - stop asking. Never set
+it up unasked.
 
 ## The method (binding)
 

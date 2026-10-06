@@ -181,7 +181,7 @@ cli
         for (const c of made) console.log(`  + ${c}`)
         // a feature's phase scenes start empty: a frame made in one shows once the board lists it
         if (/\((feature|project)\b/.test(made[0] ?? '') && !existsSync(join(resolve(opts.root), 'context')))
-          console.log(`\n  note: no context/ yet - this board's status reads Backlog until there is one. To start it, tell your agent: "Set up our context."`)
+          console.log(`\n  note: no context/ yet - this board's status reads Backlog until there is one. Agent: end your reply with the context line in design/AGENTS.md ("Before the method").`)
         if (made.some((c) => c.endsWith('/_brief.md')) && !made.some((c) => /\.(tsx|jsx|html)$/.test(c)))
           console.log(`\n  next: a frame you make in these scenes shows on the board once it is pinned - a node in\n  design/boards/${name}.json (an agent does this as it works: design/AGENTS.md)`)
       } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates`)

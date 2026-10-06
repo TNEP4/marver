@@ -410,8 +410,8 @@ describe('init --kind, folders add, boards new', () => {
 
   it('the contract and boards.md put the context offer before feature work in a project without one', () => {
     init(root, { mode: 'studio', demo: false })
-    expect(read('design/AGENTS.md')).toMatch(/## Before the method: a project with no `context\/`[\s\S]*Offer the setup[\s\S]*## The method/)
-    expect(read('design/instructions/boards.md')).toMatch(/No `context\/`\? Offer the setup first/)
+    expect(read('design/AGENTS.md')).toMatch(/## Before the method: a project with no `context\/`[\s\S]*ends with this line[\s\S]*Want me to set it up\?[\s\S]*## The method/)
+    expect(read('design/instructions/boards.md')).toMatch(/No `context\/`\? Your reply ends with the context line/)
   })
 
   it('folders add appends a module once, after everything at the root', () => {

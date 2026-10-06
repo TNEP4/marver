@@ -65,7 +65,7 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   // the listing is where an agent looks: a feature board reading Backlog says why, and what to offer
   const withStatus = [...notes.values()].filter((n) => n.status).length
   if (withStatus && !existsSync(join(root, 'context')))
-    console.log(`\nno context/ yet - every feature and project board reads Backlog. Offer the human the setup (design/instructions/context.md) before the next feature board: "Set up our context."`)
+    console.log(`\nno context/ yet - every feature and project board reads Backlog. Agent: end your reply with the context line in design/AGENTS.md ("Before the method").`)
 }
 
 /** `marver boards new <name>` - a board in its type's starting layout (spec 20): a feature's three
