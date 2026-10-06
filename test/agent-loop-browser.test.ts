@@ -90,9 +90,8 @@ describe('a link that lands on the work', () => {
   it('#/b/<board>?f=<frame> opens the canvas on that frame: selected, in view, the URL back to the shell\'s own form', async () => {
     if (!browser) return
     const s = await open(browser, '#/b/flow?f=shop/pay')
-    await browser.until(s, `${VIEW}.sel.join() === 'f-pay'`)
-    await wait(600)   // the fit animates 320ms
-    const v = await browser.eval(s, VIEW)
+    // the fit animates (320ms, longer on a loaded machine): wait for the settled view, not a clock
+    const v = await browser.until(s, `(() => { const v = ${VIEW}; return v.sel.join() === 'f-pay' && v.visible.join() === 'f-pay' && v })()`, 15_000)
     expect(v).toEqual({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'], visible: ['f-pay'] })
     expect(await browser.eval(s, `!!document.querySelector('.sh-play')`)).toBe(false)   // canvas mode, never focus
   })
@@ -100,17 +99,15 @@ describe('a link that lands on the work', () => {
   it('?s=<scene> selects every frame of the scene', async () => {
     if (!browser) return
     const s = await open(browser, '#/b/flow?s=shop')
-    await browser.until(s, `${VIEW}.sel.length === 2`)
-    await wait(600)
-    expect((await browser.eval(s, VIEW)).visible.sort()).toEqual(['f-cart', 'f-pay'])
+    const v = await browser.until(s, `(() => { const v = ${VIEW}; return v.sel.length === 2 && v.visible.length === 2 && v })()`, 15_000)
+    expect(v.visible.sort()).toEqual(['f-cart', 'f-pay'])
   })
 
   it('a frame the board does not show is followed to the board that does', async () => {
     if (!browser) return
     const s = await open(browser, '#/b/flow?f=other/far', 1)   // it leaves the 2-frame board for the 1-frame one
     await browser.until(s, `location.hash === '#/b/big?n=b-far'`, 20_000)
-    await wait(600)
-    expect(await browser.eval(s, VIEW)).toMatchObject({ sel: ['b-far'], visible: ['b-far'] })
+    await browser.until(s, `(() => { const v = ${VIEW}; return v.sel.join() === 'b-far' && v.visible.join() === 'b-far' })()`, 15_000)
   }, 30_000)
 
   it('...even from a board with no frames at all', async () => {
