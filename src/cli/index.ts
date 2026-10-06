@@ -177,7 +177,11 @@ cli
       if (action === undefined) boardsCommand(resolve(opts.root), opts)
       else if (action === 'new') {
         if (!name) throw new Error('name the board: `boards new <name>`')
-        for (const c of boardsNew(resolve(opts.root), name, opts)) console.log(`  + ${c}`)
+        const made = boardsNew(resolve(opts.root), name, opts)
+        for (const c of made) console.log(`  + ${c}`)
+        // a feature's phase scenes start empty: a frame made in one shows once the board lists it
+        if (made.some((c) => c.endsWith('/_brief.md')) && !made.some((c) => /\.(tsx|jsx|html)$/.test(c)))
+          console.log(`\n  next: a frame you make in these scenes shows on the board once it is pinned - a node in\n  design/boards/${name}.json (an agent does this as it works: design/AGENTS.md)`)
       } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates`)
     } catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
