@@ -1,0 +1,6 @@
+{
+  "about": "Which code each capability lives in - routing for agents, and the input of the pull-request rule in `npx marver context check`. A file may map to several capabilities. `source` names what must be mapped or excluded; the check reports any file that is neither. Only capabilities with a contract are checked on pull requests.",
+  "source": ["src/**", "app/**", "apps/**", "packages/**", "lib/**"],
+  "capabilities": {},
+  "excluded": []
+}

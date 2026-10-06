@@ -5,8 +5,10 @@ import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
-import { BOARD_NAME, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
-import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
+import { BOARD_NAME, buildTree, folderOf, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
+import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
+import { readType } from '../shared/board-types.ts'
+import { annotateBoards } from './board-status.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -156,7 +158,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // file, or a symlink. `order` ranks the board among its siblings; `folder` names the
         // sidebar folder it sits in - both author-owned, both read leniently. `sha256` is the
         // CAS token a tree write echoes for every board it touches.
-        const list = listBoardFiles(boardsDir).boards.map((b) => ({ name: b.name, sha256: b.sha256, ...boardFields(b.json, validName) }))
+        // spec 20: each board's resolved type (its own, else its folder's, else that folder's
+        // parent's) and its status read from context/ - computed per read, so a change to the
+        // shipped record shows on the next `sh:boards` refetch. Owner-only dev data: the
+        // evidence lines ride along for the tooltip; a published build never carries them.
+        const files = listBoardFiles(boardsDir).boards
+        const rows = files.map((b) => ({ name: b.name, ...boardFields(b.json, validName) }))
+        const reg = readRegistry(boardsDir)
+        const regFolders = reg.state === 'ok' ? reg.folders : []
+        const tree = buildTree(rows, regFolders)
+        const notes = annotateBoards(root, files, regFolders, (n) => folderOf(tree, n))
+        const list = files.map((b, i) => ({ ...rows[i], sha256: b.sha256, ...(notes.get(b.name) ?? {}) }))
         return json(res, 200, list)
       }
 
@@ -323,12 +335,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
           return null
         }
-        const folders: { name: string; order: number; parent?: string; title?: string; description?: string }[] = []
+        const folders: { name: string; order: number; parent?: string; title?: string; description?: string; type?: string }[] = []
         const walk = (list: WireItem[], parent: string | null): string | null => {
           for (const [i, it] of list.entries()) {
             if (typeof it === 'string') { const e = consider(it, i, parent); if (e) return e; continue }
-            const title = readTitle(it.title), description = readDescription(it.description)
-            folders.push({ name: it.folder, order: i, ...(parent ? { parent } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}) })
+            const title = readTitle(it.title), description = readDescription(it.description), type = readType(it.type)
+            folders.push({ name: it.folder, order: i, ...(parent ? { parent } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}), ...(type ? { type } : {}) })
             const e = walk(wireKids(it) as WireItem[], it.folder)
             if (e) return e
           }
@@ -390,18 +402,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return json(res, 409, { error: 'board changed on disk', board: disk, sha256: hash(current) })
           }
           mkdirSync(boardsDir, { recursive: true })
-          // Preserve author-owned fields the shell does not manage. `order` (the board's rank among
-          // its siblings), `folder` (the sidebar folder it sits in), `title` and `description` live
-          // in the file but never ride the shell's save shape, so a routine autosave would
-          // otherwise strip them. Carry them over from disk when the incoming board omits them.
+          // Preserve author-owned fields the shell does not manage (AUTHOR_FIELDS): the board's
+          // rank, its folder, title and description, and spec 20's type, capability, status and
+          // reason live in the file but never ride the shell's save shape, so a routine autosave
+          // would otherwise strip them. Carry each over from disk when the incoming board omits
+          // it - and only a well-formed one (boardFields reads leniently).
           const incoming = body.board as Record<string, unknown> | null
           if (incoming && typeof incoming === 'object' && current) {
             try {
-              const disk = JSON.parse(current) as { order?: unknown; folder?: unknown; title?: unknown; description?: unknown }
-              if (incoming.order === undefined && typeof disk.order === 'number' && Number.isFinite(disk.order)) incoming.order = disk.order
-              if (incoming.folder === undefined && validName(disk.folder)) incoming.folder = disk.folder
-              if (incoming.title === undefined && readTitle(disk.title)) incoming.title = disk.title
-              if (incoming.description === undefined && readDescription(disk.description)) incoming.description = disk.description
+              const disk = JSON.parse(current) as Record<string, unknown>
+              const valid = boardFields(disk, validName) as Record<string, unknown>
+              for (const k of AUTHOR_FIELDS) if (incoming[k] === undefined && valid[k] !== undefined) incoming[k] = disk[k]
             } catch { /* malformed disk */ }
           }
           const next2 = JSON.stringify(body.board, null, 2) + '\n'

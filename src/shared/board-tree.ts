@@ -8,6 +8,8 @@
  * tree - callers pin it last.
  */
 
+import { readType } from './board-types.ts'
+
 /** The on-disk name grammar shared by boards and folders (a board name is a filename). */
 export const BOARD_NAME = /^[a-z0-9][a-z0-9-]*$/
 export const NAME_MAX = 64
@@ -20,11 +22,11 @@ export const FOLDERS_FILE = '_folders.json'
 export const isBoardFile = (f: string): boolean => f.endsWith('.json') && isBoardName(f.slice(0, -5))
 
 /** A folder and what it holds, in order: boards, and - in a top-level folder only - sub-folders. */
-export type Folder = { kind: 'folder'; name: string; items: TreeItem[]; title?: string; description?: string }
+export type Folder = { kind: 'folder'; name: string; items: TreeItem[]; title?: string; description?: string; type?: string }
 export type TreeItem = { kind: 'board'; name: string } | Folder
 
 export interface BoardRow { name: string; order?: number; folder?: string; title?: string }
-export interface FolderRow { name: string; order?: number; parent?: string; title?: string; description?: string }
+export interface FolderRow { name: string; order?: number; parent?: string; title?: string; description?: string; type?: string }
 
 /** A description off a file: one sentence, trimmed, capped - absent when empty or not a string. */
 export const DESCRIPTION_MAX = 300
@@ -50,8 +52,12 @@ export const humanize = (s: string): string => s.replace(/-/g, ' ').replace(/(^|
 export const labelOf = (name: string, title?: string): string => title ?? humanize(name)
 
 const rank = (o: number | undefined) => (typeof o === 'number' && Number.isFinite(o) ? o : Infinity)
-/** A folder's title and description, present only when set. */
-const folderExtras = (it: { title?: string; description?: string }) => ({ ...(it.title ? { title: it.title } : {}), ...(it.description ? { description: it.description } : {}) })
+/** A folder's title, description and type, present only when set. */
+const folderExtras = (it: { title?: string; description?: string; type?: string }) => ({
+  ...(it.title ? { title: it.title } : {}),
+  ...(it.description ? { description: it.description } : {}),
+  ...(readType(it.type) ? { type: it.type } : {}),
+})
 
 /** The registry versions this code reads. Version 2 is written only when a folder has a
  *  `parent`, so a flat registry stays readable by every Marver; an older Marver refuses a
@@ -85,7 +91,8 @@ export function parseFolders(raw: unknown): FolderRow[] | string {
     if (p !== undefined && !isBoardName(p)) return `folder "${name}" has an invalid parent - a folder name`
     const t = readTitle((f as { title?: unknown }).title)
     const d = readDescription((f as { description?: unknown }).description)
-    out.push({ name, ...(typeof o === 'number' && Number.isFinite(o) ? { order: o } : {}), ...(p !== undefined ? { parent: p } : {}), ...(t ? { title: t } : {}), ...(d ? { description: d } : {}) })
+    const ty = readType((f as { type?: unknown }).type)
+    out.push({ name, ...(typeof o === 'number' && Number.isFinite(o) ? { order: o } : {}), ...(p !== undefined ? { parent: p } : {}), ...(t ? { title: t } : {}), ...(d ? { description: d } : {}), ...(ty ? { type: ty } : {}) })
   }
   const byName = new Map(out.map((f) => [f.name, f]))
   for (const f of out) {
@@ -104,7 +111,7 @@ export function parseFolders(raw: unknown): FolderRow[] | string {
  *  after ranked. The root holds root boards and top-level folders (registered without a
  *  parent, or implied by a board that names an unregistered folder); a top-level folder holds
  *  its boards and its sub-folders; a sub-folder holds its boards. A folder's title and
- *  description ride on its item (they live in the registry a tree write rewrites); a board's
+ *  description and type ride on its item (they live in the registry a tree write rewrites); a board's
  *  title stays with its row - it lives in the board's own file. */
 export function buildTree(boards: BoardRow[], folders: FolderRow[]): TreeItem[] {
   const reg = new Map<string, FolderRow>()
@@ -152,12 +159,12 @@ export function flatten(tree: TreeItem[]): string[] {
 
 /** The wire shape of a tree write (`POST boards/reorder`): plain strings for boards,
  *  `{ folder, items }` for folders, `items` holding boards and - one level down - folders.
- *  What the sidebar posts and the server validates. A folder's title and description ride
+ *  What the sidebar posts and the server validates. A folder's title, description and type ride
  *  with it (they live in the registry the write rewrites); a board's title lives in its own
  *  file and never rides the tree. A one-level `{ folder, boards }` item (an older shell) is
  *  still read. */
-export type WireItem = string | { folder: string; items: WireItem[]; title?: string; description?: string }
-type WireIn = string | { folder: string; items?: WireIn[]; boards?: string[]; title?: string; description?: string }
+export type WireItem = string | { folder: string; items: WireItem[]; title?: string; description?: string; type?: string }
+type WireIn = string | { folder: string; items?: WireIn[]; boards?: string[]; title?: string; description?: string; type?: string }
 export const toWire = (tree: TreeItem[]): WireItem[] =>
   tree.map((it) => (it.kind === 'board' ? it.name : { folder: it.name, items: toWire(it.items), ...folderExtras(it) }))
 export const wireKids = (w: Exclude<WireIn, string>): WireIn[] => w.items ?? w.boards ?? []
@@ -183,10 +190,11 @@ export function validateWire(wire: unknown): string | null {
       if (typeof w === 'string') { const e = board(w); if (e) return e; continue }
       if (!w || typeof w !== 'object' || Array.isArray(w)) return 'invalid tree item'
       if (depth >= 2) return 'folders nest one level only'
-      const { folder, items, boards: legacy, title, description } = w as { folder?: unknown; items?: unknown; boards?: unknown; title?: unknown; description?: unknown }
+      const { folder, items, boards: legacy, title, description, type } = w as { folder?: unknown; items?: unknown; boards?: unknown; title?: unknown; description?: unknown; type?: unknown }
       if (!isBoardName(folder)) return 'invalid folder name in tree'
       if (title !== undefined && (typeof title !== 'string' || Array.from(title).length > TITLE_MAX)) return 'invalid folder title'
       if (description !== undefined && (typeof description !== 'string' || description.length > DESCRIPTION_MAX)) return 'invalid folder description'
+      if (type !== undefined && !readType(type)) return 'invalid folder type'
       if (folders.has(folder)) return `folder "${folder}" appears twice`
       folders.add(folder)
       const kids = items ?? legacy
@@ -213,7 +221,7 @@ export function slugify(raw: string): string {
 // ---- reading the tree ----
 
 /** A deep copy: mutations work on it and the caller's tree stays as it was (a folder's
- *  title and description ride along). */
+ *  title, description and type ride along). */
 export const cloneTree = (t: TreeItem[]): TreeItem[] => t.map((it) => (it.kind === 'board' ? { ...it } : { ...it, items: cloneTree(it.items) }))
 /** Every folder with the folder it sits in (null = the root), top-level folders first in
  *  reading order, each followed by its sub-folders. */

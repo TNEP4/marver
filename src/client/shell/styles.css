@@ -469,6 +469,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .it.board svg { color: var(--glass-ink-3); flex: none; margin: 0 1px; transition: color .2s ease }
 .sh-panel .it.board.cur { background: var(--accent-wash); color: var(--glass-accent); font-weight: 600 }
 .sh-panel .it.board.cur svg { color: var(--glass-accent) }
+/* spec 20: a feature or project board's status ring sits at the row's end, in its own colours -
+   never the accent of the current row - with its evidence in the tooltip */
+.sh-panel .it.board .st { flex: none; display: inline-flex; margin-left: auto; font-style: normal }
+.sh-panel .it.board .st svg, .sh-panel .it.board.cur .st svg { color: inherit; margin: 0 }
 /* drag-to-reorder: a grab cursor, the lifted row dims, and a 2px accent rule marks the
    drop seam above or below the hovered row */
 /* a board row is click-to-switch first (pointer on hover); the grabbing hand appears the

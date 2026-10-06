@@ -40,10 +40,15 @@ cli
   .command('init', 'Scaffold design/ in this repo')
   .option('--mode <mode>', 'studio | embedded', { default: 'studio' })
   .option('--no-demo', 'Skip the demo scene (the demo ships unless this flag is passed)')
+  .option('--kind <kind>', "product | knowledge - the sidebar's typed folders (a fresh canvas: product when an app is detected)")
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .action(async (opts) => {
+    if (opts.kind !== undefined && opts.kind !== 'product' && opts.kind !== 'knowledge') {
+      console.error(`[${NAME}] --kind ${opts.kind}: use product or knowledge`)
+      process.exit(1)
+    }
     const { init } = await import('./init.ts')
-    init(resolve(opts.root), { mode: opts.mode === 'embedded' ? 'embedded' : 'studio', demo: opts.demo !== false })
+    init(resolve(opts.root), { mode: opts.mode === 'embedded' ? 'embedded' : 'studio', demo: opts.demo !== false, kind: opts.kind })
   })
 
 // One command, two names: `dev` reads naturally to developers, `canvas` to everyone
@@ -158,13 +163,71 @@ cli
   })
 
 cli
-  .command('boards', 'The sidebar as files: every folder and board in reading order, the landing board, the registry')
+  .command('boards [action] [name]', 'The sidebar as files: every folder and board in reading order, with types and statuses · new <name>: a board in its type\'s starting layout')
   .option('--root <dir>', 'Host repo root', { default: '.' })
-  .option('--json', 'The tree as JSON ({ tree, landing, registry })')
-  .action(async (opts) => {
-    const { boardsCommand } = await import('./boards.ts')
-    try { boardsCommand(resolve(opts.root), opts) }
-    catch (err) {
+  .option('--json', 'The tree as JSON ({ tree, boards, landing, registry })')
+  .option('--type <type>', 'new: start | feature | surface | project | feedback | context | deck | archive (default: the folder\'s)')
+  .option('--folder <folder>', 'new: the folder it sits in')
+  .option('--title <title>', 'new: what humans see')
+  .option('--description <sentence>', 'new: what agents read')
+  .option('--capability <slug>', 'new: the capability it shows, when not its own name')
+  .action(async (action: string | undefined, name: string | undefined, opts) => {
+    const { boardsCommand, boardsNew } = await import('./boards.ts')
+    try {
+      if (action === undefined) boardsCommand(resolve(opts.root), opts)
+      else if (action === 'new') {
+        if (!name) throw new Error('name the board: `boards new <name>`')
+        for (const c of boardsNew(resolve(opts.root), name, opts)) console.log(`  + ${c}`)
+      } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates`)
+    } catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
+  .command('folders <action> [...modules]', 'The shared sidebar\'s typed folders · add <start|features|surfaces|projects|feedback|context|decks|archive ...>')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .action(async (action: string, modules: string[], opts) => {
+    const { foldersAdd } = await import('./boards.ts')
+    try {
+      if (action !== 'add') throw new Error(`unknown action "${action}" - \`folders add <module ...>\``)
+      const { added, existing } = foldersAdd(resolve(opts.root), modules)
+      for (const a of added) console.log(`  + design/boards/_folders.json: ${a}`)
+      for (const e of existing) console.log(`  = ${e} exists - left as it is`)
+    } catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
+  .command('context <action>', 'The project\'s context/ (spec 19) · init: create it · check: keep it true (exit 0 pass, 1 fail, 2 cannot determine) · index: regenerate the index\'s capability table')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--base <ref>', 'check: the pull request\'s base - a change to a contracted capability\'s code must change its contract or say why (in ci, read from the event)')
+  .option('--head <ref>', 'check: the pull request\'s head (default HEAD)')
+  .option('--body-file <file>', 'check: the pull request\'s body, for `no-contract-change: <capability> - <why>`')
+  .option('--json', 'check: the findings as JSON ({ exit, failures, unsure, notes })')
+  .action(async (action: string, opts) => {
+    const ctx = await import('./context.ts')
+    const root = resolve(opts.root)
+    try {
+      if (action === 'init') {
+        const created = ctx.contextInit(root)
+        for (const c of created) console.log(`  + ${c}`)
+        if (!created.length) console.log('  context/ is already set up - nothing to add')
+        console.log(`\n  next: tell your agent "Read design/instructions/context.md and set up our context" - the setup interview, then a first draft from evidence.\n  in ci: npx ${NAME} context check  (with full history: fetch-depth: 0)\n`)
+      } else if (action === 'check') {
+        const { readFileSync } = await import('node:fs')
+        const pr = ctx.pullRequestFromEnv()
+        const r = ctx.contextCheck(root, pr ?? { base: opts.base, head: opts.head, body: opts.bodyFile ? readFileSync(opts.bodyFile, 'utf8') : '' })
+        if (opts.json) console.log(JSON.stringify(r, null, 2)); else ctx.printCheck(r)
+        process.exit(r.exit)
+      } else if (action === 'index') {
+        const { words, changed } = ctx.contextIndex(root)
+        console.log(`  context/INDEX.md: ${changed ? 'capability table regenerated' : 'already current'} - ${words} / ${ctx.INDEX_BUDGET} words`)
+      } else throw new Error(`unknown action "${action}" - init, check or index`)
+    } catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)
     }

@@ -5,10 +5,11 @@
  * the build can fail closed). The folder registry is read the same way: absent = no folders,
  * malformed = an error the human must fix, never a silently empty registry.
  */
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { hash } from './hash.ts'   // not manifest.ts: manifest imports this module
-import { FOLDERS_FILE, isBoardFile, parseFolders, readDescription, readTitle, type FolderRow } from '../shared/board-tree.ts'
+import { FOLDERS_FILE, isBoardFile, parseFolders, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, type FolderRow } from '../shared/board-tree.ts'
+import { readCapability, readReason, readStatusWord, readType } from '../shared/board-types.ts'
 
 /** Does realpath(dir) stay inside realpath(root)? A symlinked design/boards can't escape. */
 export function underRoot(root: string, dir: string): boolean {
@@ -63,18 +64,29 @@ export function listBoardFiles(boardsDir: string): { boards: BoardFile[]; skippe
 }
 
 /** The author-owned sidebar fields off a board's JSON, leniently: rank, folder, the title
- *  humans see, the sentence agents read. */
-export function boardFields(json: unknown, validName: (n: unknown) => n is string): { order?: number; folder?: string; title?: string; description?: string } {
-  const o = json as { order?: unknown; folder?: unknown; title?: unknown; description?: unknown } | null
+ *  humans see, the sentence agents read, and what spec 20 adds - the board's type, the
+ *  capability it shows, and a decision on its status (with its reason). */
+export interface BoardFields { order?: number; folder?: string; title?: string; description?: string; type?: string; capability?: string; status?: string; reason?: string }
+export function boardFields(json: unknown, validName: (n: unknown) => n is string): BoardFields {
+  const o = json as { order?: unknown; folder?: unknown; title?: unknown; description?: unknown; type?: unknown; capability?: unknown; status?: unknown; reason?: unknown } | null
   const title = readTitle(o?.title)
   const description = readDescription(o?.description)
+  const type = readType(o?.type), capability = readCapability(o?.capability), status = readStatusWord(o?.status), reason = readReason(o?.reason)
   return {
     ...(typeof o?.order === 'number' && Number.isFinite(o.order) ? { order: o.order } : {}),
     ...(validName(o?.folder) ? { folder: o.folder } : {}),
     ...(title ? { title } : {}),
     ...(description ? { description } : {}),
+    ...(type ? { type } : {}),
+    ...(capability ? { capability } : {}),
+    ...(status ? { status } : {}),
+    ...(reason ? { reason } : {}),
   }
 }
+
+/** The fields a board's file owns that the shell's save shape never carries: an autosave keeps
+ *  each one from disk when the incoming board omits it (spec 20 - the fields survive every write). */
+export const AUTHOR_FIELDS = ['order', 'folder', 'title', 'description', 'type', 'capability', 'status', 'reason'] as const
 
 export type Registry =
   | { state: 'absent'; folders: []; sha256: null }
@@ -93,4 +105,38 @@ export function readRegistry(boardsDir: string): Registry {
   const parsed = parseFolders(raw)
   if (typeof parsed === 'string') return { state: 'malformed', error: `design/boards/${FOLDERS_FILE}: ${parsed}`, sha256: hash(content) }
   return { state: 'ok', folders: parsed, sha256: hash(content) }
+}
+
+/** Append typed folders to the registry (spec 20: `init --kind`, `folders add`). Never renames,
+ *  moves or retypes a folder that exists - a name already registered is skipped and reported.
+ *  New folders rank after everything already at the root (ranked boards and folders alike).
+ *  Atomic (temp + rename); a malformed registry is an error, never overwritten. */
+export function addFolders(root: string, folders: { name: string; title?: string; type?: string }[]): { added: string[]; existing: string[] } {
+  const dir = join(root, 'design', 'boards')
+  const de = checkBoardsDir(root, dir)
+  if (de) throw new Error(de)
+  const reg = readRegistry(dir)
+  if (reg.state === 'malformed') throw new Error(reg.error)
+  const rows: FolderRow[] = reg.state === 'ok' ? [...reg.folders] : []
+  const have = new Set(rows.map((f) => f.name))
+  const rootRanks = [
+    ...rows.filter((f) => !f.parent).map((f) => f.order),
+    ...listBoardFiles(dir).boards.map((b) => boardFields(b.json, (n): n is string => typeof n === 'string').folder ? undefined : (b.json as { order?: unknown } | null)?.order),
+  ].filter((o): o is number => typeof o === 'number' && Number.isFinite(o))
+  let next = rootRanks.length ? Math.max(...rootRanks) + 1 : 0
+  const added: string[] = [], existing: string[] = []
+  for (const f of folders) {
+    if (have.has(f.name)) { existing.push(f.name); continue }
+    rows.push({ name: f.name, order: next++, ...(f.title ? { title: f.title } : {}), ...(f.type ? { type: f.type } : {}) })
+    have.add(f.name)
+    added.push(f.name)
+  }
+  if (!added.length) return { added, existing }
+  mkdirSync(dir, { recursive: true })
+  const version = rows.some((f) => f.parent) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
+  const file = join(dir, FOLDERS_FILE)
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  writeFileSync(tmp, JSON.stringify({ version, folders: rows }, null, 2) + '\n', { flag: 'wx' })
+  renameSync(tmp, file)
+  return { added, existing }
 }

@@ -26,6 +26,7 @@ import { Marked } from 'marked'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { cssFixPlugin } from './css-fix.ts'
 import { buildTree, flatten, isBoardName, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
+import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
@@ -122,6 +123,11 @@ export const DECK_TRANSITIONS = ['fade', 'none'] as const
 export const DECK_CHROME = ['full', 'minimal', 'none'] as const   // full (default) = the standard prototype chrome
 export interface BoardPolicy {
   max: 'read' | 'comment'; type: ArtifactType; open?: ViewMode; lock?: boolean
+  /** the type came from the board's own type (spec 20), not from the row - a proposal, so a deck
+   *  with no slide frames falls back to `mix` instead of failing the build */
+  proposed?: boolean
+  /** spec 20: show this board's status on the published canvas - rows 5-9 only, never a reason */
+  showStatus?: boolean
   /** Slides mode (v1.5): the deck's one transition and its chrome level. */
   transition?: typeof DECK_TRANSITIONS[number]
   chrome?: typeof DECK_CHROME[number]
@@ -135,22 +141,28 @@ export interface PublishPolicy {
  *  Boards absent from the result do not ship. */
 export function resolvePolicy(
   root: string, allBoards: Record<string, any>, boardsFlag?: string, allBoardsFlag?: boolean,
+  /** each board's resolved type (spec 20): a row that names no publish type takes the one it proposes */
+  typeOf: (board: string) => BoardType = () => 'plain',
 ): PublishPolicy {
   const known = (n: string) => n === 'all-scenes' || !!allBoards[n]
   const reveal = { structure: true, source: false }
-  const row = (max: 'read' | 'comment'): BoardPolicy => ({ max, type: 'mix' })
+  const proposal = (n: string): Pick<BoardPolicy, 'type' | 'proposed'> => {
+    const t = PROPOSED_PUBLISH[typeOf(n)]
+    return t ? { type: t, proposed: true } : { type: 'mix' }
+  }
+  const row = (max: 'read' | 'comment', n: string): BoardPolicy => ({ max, ...proposal(n) })
   if (boardsFlag !== undefined) {
     const names = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
     // an empty filter fails CLOSED - `--boards "$UNSET_VAR"` must never publish everything
     if (!names.length) throw new Error('--boards was given but named no boards')
     const missing = names.filter((n) => !known(n))
     if (missing.length) throw new Error(`--boards names not found in design/boards/: ${missing.join(', ')}`)
-    return { boards: Object.fromEntries(names.map((n) => [n, row('comment')])), reveal }
+    return { boards: Object.fromEntries(names.map((n) => [n, row('comment', n)])), reveal }
   }
   if (allBoardsFlag)
     return {
       boards: Object.fromEntries(
-        ['all-scenes', ...Object.keys(allBoards).filter((n) => n !== 'all-scenes')].map((n) => [n, row('comment')])),
+        ['all-scenes', ...Object.keys(allBoards).filter((n) => n !== 'all-scenes')].map((n) => [n, row('comment', n)])),
       reveal,
     }
   const policyFile = join(root, 'design', 'publish.json')
@@ -168,13 +180,16 @@ export function resolvePolicy(
   const out: Record<string, BoardPolicy> = {}
   for (const [n, level] of entries) {
     if (!known(n)) throw new Error(`design/publish.json names an unknown board: ${n}`)
-    if (level === 'read' || level === 'comment') { out[n] = row(level); continue }   // v1 row
+    if (level === 'read' || level === 'comment') { out[n] = row(level, n); continue }   // v1 row
     if (typeof level !== 'object' || level === null)
       throw new Error(`design/publish.json: board "${n}" has level "${level}" - use "read" or "comment", or a v2 object`)
     const p = level as Record<string, unknown>
     if (p.max !== 'read' && p.max !== 'comment')
       throw new Error(`design/publish.json: board "${n}" needs "max": "read" | "comment"`)
-    const type = p.type ?? 'mix'
+    const proposed = p.type === undefined ? proposal(n) : null
+    const type = p.type ?? proposed!.type
+    if (p.showStatus !== undefined && typeof p.showStatus !== 'boolean')
+      throw new Error(`design/publish.json: board "${n}" has showStatus "${p.showStatus}" - use true or false`)
     if (!ARTIFACT_TYPES.includes(type as ArtifactType))
       throw new Error(`design/publish.json: board "${n}" has type "${type}" - use ${ARTIFACT_TYPES.join(' | ')}`)
     if (p.open !== undefined && !VIEW_MODES.includes(p.open as ViewMode))
@@ -192,7 +207,8 @@ export function resolvePolicy(
     if (p.lock && p.open === undefined)
       throw new Error(`design/publish.json: board "${n}" sets "lock" without "open" - name the mode the lock freezes`)
     out[n] = {
-      max: p.max, type: type as ArtifactType,
+      max: p.max, type: type as ArtifactType, ...(proposed?.proposed ? { proposed: true } : {}),
+      ...(p.showStatus === true ? { showStatus: true } : {}),
       ...(p.open ? { open: p.open as ViewMode } : {}), ...(p.lock ? { lock: true } : {}),
       ...(p.transition ? { transition: p.transition as any } : {}), ...(p.chrome ? { chrome: p.chrome as any } : {}),
     }
@@ -252,10 +268,15 @@ export function publishedTree(published: string[], allBoards: Record<string, any
 /** The bundle's manifest: the published frames, and descriptions of published things ONLY -
  *  the project's, the published scenes' (their brief path only when source is revealed),
  *  the published boards' and the folders those sit in. No unpublished name or sentence. */
-export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], publishedNames: string[], strip: boolean): Manifest {
+export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], publishedNames: string[], strip: boolean, showStatus: ReadonlySet<string> = new Set()): Manifest {
   const pubScenes = new Set(pubFrames.map((f) => f.scene))
   const pubBoardSet = new Set(publishedNames)
-  const pubBoards = (manifest.boards ?? []).filter((b) => pubBoardSet.has(b.name))
+  // spec 20's publication projection: a board's status ships only where its publish row opts in,
+  // only the statuses that say nothing private (rows 5-9), and never its reason
+  const pubBoards = (manifest.boards ?? []).filter((b) => pubBoardSet.has(b.name)).map(({ status, ...b }) => {
+    const shown = status && showStatus.has(b.name) && PUBLISHABLE_STATUS.has(status.status) ? { status: status.status, ...(status.fill ? { fill: status.fill } : {}) } : null
+    return shown ? { ...b, status: shown } : b
+  })
   // the folders published boards sit in, and the parents of those - structure, like board names
   const pubFolderSet = new Set(pubBoards.map((b) => b.folder).filter(Boolean))
   for (const f of manifest.folders ?? []) if (f.parent && pubFolderSet.has(f.name)) pubFolderSet.add(f.parent)
@@ -269,6 +290,32 @@ export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], p
       .map(({ name, title, description, brief, note }) => ({ name, frames: pubFrames.filter((f) => f.scene === name).length, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(brief && !strip ? { brief } : {}), ...(note ? { note } : {}) })),
     frames: pubFrames,
   }
+}
+
+/** The statuses a published canvas may show (spec 20, rows 5-9): none of them carries a reason,
+ *  a tenant list or a record path. */
+const PUBLISHABLE_STATUS: ReadonlySet<string> = new Set(['in-progress', 'done', 'done-reported', 'todo', 'backlog'])
+/** The fields of a board file that point into context/ - stripped from every published board. */
+export const EVIDENCE_FIELDS = ['status', 'reason', 'capability'] as const
+export function withoutEvidence(board: any): any {
+  if (!board || typeof board !== 'object' || Array.isArray(board)) return board
+  const out = { ...board }
+  for (const k of EVIDENCE_FIELDS) delete out[k]
+  return out
+}
+/** The build's own check of the projection: if a stripped field survives into the bundle, the
+ *  build fails - a later edit to the assembly must never quietly ship the evidence trail. */
+export function assertProjected(data: { boards: Record<string, any>; manifest: Manifest; meta?: Record<string, { status?: { status: string } }> }, showStatus: ReadonlySet<string>) {
+  for (const [n, b] of Object.entries(data.boards)) for (const k of EVIDENCE_FIELDS)
+    if (b && typeof b === 'object' && k in b) throw new Error(`build: board "${n}" would ship its "${k}" - the publication projection failed`)
+  for (const b of data.manifest.boards ?? []) {
+    const st = (b as { status?: { status: string; reason?: string; evidence?: unknown } }).status
+    if (!st) continue
+    if (!showStatus.has(b.name) || !PUBLISHABLE_STATUS.has(st.status) || 'reason' in st || 'evidence' in st)
+      throw new Error(`build: board "${b.name}" would ship a status its publish row did not allow`)
+  }
+  for (const [n, m] of Object.entries(data.meta ?? {}))
+    if (m.status && (!showStatus.has(n) || !PUBLISHABLE_STATUS.has(m.status.status))) throw new Error(`build: board "${n}" would ship a status its publish row did not allow`)
 }
 
 /** The folder registry: absent = no folders (boards still imply theirs); malformed fails the build. */
@@ -380,7 +427,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // ---- data: manifest + boards, gated by the publish policy (the privacy boundary) ----
   const manifest = scanFrames(root, { name: config.share.name || basename(root), description: config.description })
   const allBoards = readBoards(root)
-  const policy = resolvePolicy(root, allBoards, boardsFlag, allBoardsFlag)
+  const typeOf = (n: string): BoardType => (manifest.boards?.find((b) => b.name === n)?.type as BoardType | undefined) ?? 'plain'
+  const policy = resolvePolicy(root, allBoards, boardsFlag, allBoardsFlag, typeOf)
   const rights = Object.fromEntries(Object.entries(policy.boards).map(([n, p]) => [n, p.max])) as Record<string, 'read' | 'comment'>
   // the source strip (01-sharing §6.2): with reveal.source off - the published
   // default - no repo path reaches the bundle. Manifest `file` fields, registry
@@ -394,7 +442,9 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const { tree, names: publishedNames } = publishedTree(Object.keys(rights), allBoards, readFolders(root))
   const includeAll = publishedNames.includes('all-scenes')
   const boards: Record<string, any> = {}
-  for (const n of publishedNames) if (allBoards[n]) boards[n] = allBoards[n]
+  // spec 20's projection: a published board keeps its layout and frames; its status, reason and
+  // capability - the evidence trail into context/ - never ship
+  for (const n of publishedNames) if (allBoards[n]) boards[n] = withoutEvidence(allBoards[n])
 
   let frames = manifest.frames
   if (!includeAll) {
@@ -410,7 +460,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const pubFrames = strip
     ? frames.map((f) => ({ ...f, file: opaquePath(f.id, f.kind === 'html' ? '.html' : '') }))
     : frames
-  const pubManifest = publishedManifest(manifest, pubFrames, publishedNames, strip)
+  const showStatus = new Set(publishedNames.filter((n) => policy.boards[n]?.showStatus))
+  const pubManifest = publishedManifest(manifest, pubFrames, publishedNames, strip, showStatus)
   // per-board artifact metadata rides beside rights: the type picks the landing
   // view, open/lock are the owner's explicit calls (04-solution §2.35)
   // a slides board (type OR open) plays only its slide: true frames. Non-slide
@@ -424,6 +475,12 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     const ids = new Set((boards[n]?.nodes ?? []).map((x: { frame: string }) => x.frame))
     const on = pubManifest.frames.filter((f) => ids.has(f.id))
     const off = on.filter((f) => !(f.kind === 'tsx' && f.slide))
+    if (off.length === on.length && pb.proposed) {
+      // a deck board's proposal, not the owner's word: present it as a mix rather than fail the build
+      console.warn(`  note: board "${n}" is a deck but none of its frames carry \`slide: true\` - publishing it as "mix"; set "type" in design/publish.json to choose`)
+      pb.type = 'mix'
+      continue
+    }
     if (off.length === on.length)     // zero slides - including an EMPTY board, which is a deck of nothing
       throw new Error(`design/publish.json: board "${n}" plays as slides but none of its ${on.length} frame(s) carry \`slide: true\` - add it to the frames' meta, or set "type"/"open" to "present" (0.13.0 let slides alias present; 0.14.0 plays only slide frames)`)
     if (off.length)
@@ -449,14 +506,18 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // default is where `/` opens - the first published board, never a synthesized aggregate
   // titles: what the published switcher labels boards by (folder titles ride on the tree)
   const titles = Object.fromEntries(publishedNames.flatMap((n) => { const t = boardFields(allBoards[n], isBoardName).title; return t ? [[n, t]] : [] }))
+  // types and opted-in statuses for the published sidebar (spec 20), off the projected manifest
+  const meta = Object.fromEntries((pubManifest.boards ?? []).flatMap((b) =>
+    b.type || b.status ? [[b.name, { ...(b.type ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}) }]] : []))
   // the textures' generation is minted BEFORE the bundle so the shell can name the index this build shipped
   const bakeGen = textures ? Date.now() : undefined
   const data = {
     bakes: bakeGen,
-    manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}),
+    manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}), ...(Object.keys(meta).length ? { meta } : {}),
     default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],
     rights, policy: { boards: boardsMeta, reveal: policy.reveal, ...(lockedShell ? { lockedShell: true } : {}) },
   }
+  assertProjected(data, showStatus)
 
   // ---- build overrides: real sh-data + the generated registry ----
   // The registry is generated whenever boards are filtered (explicit imports

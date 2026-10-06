@@ -1,6 +1,6 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
@@ -255,6 +255,18 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       server.watcher.on('add', bumpGen); server.watcher.on('unlink', bumpGen); server.watcher.on('change', bumpGen)
       server.watcher.on('add', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
       server.watcher.on('unlink', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
+      // spec 20: statuses are read from context/ (the shipped record, contracts, plans) and from
+      // the briefs' `phase`. A change there re-reads the sidebar (`sh:boards`) and the manifest -
+      // coalesced per burst, like the boards watcher. context/'s JSON never reaches here (Vite's
+      // watch ignores it: an out-of-graph .json change full-reloads every client).
+      const contextDir = join(root, 'context') + sep
+      let statusTimer: ReturnType<typeof setTimeout> | undefined
+      const restatus = (f: string) => {
+        if (!f.startsWith(contextDir) && !(inScope(f) && f.endsWith('_brief.md'))) return
+        clearTimeout(statusTimer)
+        statusTimer = setTimeout(() => { server.ws.send('sh:boards', {}); regen() }, 150)
+      }
+      server.watcher.on('add', restatus); server.watcher.on('unlink', restatus); server.watcher.on('change', restatus)
       // change: only meta edits matter; scanFrames re-extracts and writeManifest de-dupes writes.
       // a brief's first line is its scene's description; a note file IS its sticky (spec 18)
       server.watcher.on('change', (f) => inScope(f) && (/\.(tsx|jsx)$/.test(f) || f.endsWith('_brief.md') || isNoteFile(f)) && regen())

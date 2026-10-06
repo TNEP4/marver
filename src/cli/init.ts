@@ -6,8 +6,12 @@ import { DEFAULTS } from '../server/config.ts'
 import { detectAgent } from '../server/jam/agent.ts'
 import { scanFrames, writeManifest } from '../server/manifest.ts'
 import { MANAGED_PREFIX, LEGACY_PREFIX, hashBody, managedFile, pkgDir, enumerateInstructionTemplates } from '../server/managed.ts'
+import { writeManaged as writeManagedFile } from './managed-write.ts'
+import { addFolders } from '../server/boards.ts'
+import { FOLDERS_FILE } from '../shared/board-tree.ts'
+import { FOLDER_MODULES, KIND_FOLDERS, type Kind } from '../shared/board-types.ts'
 
-interface InitOpts { mode: 'studio' | 'embedded'; demo: boolean }
+interface InitOpts { mode: 'studio' | 'embedded'; demo: boolean; kind?: Kind }
 
 /** Idempotent scaffolder: never overwrites existing files; every host-repo touch prints a diff. */
 export function init(root: string, opts: InitOpts) {
@@ -45,60 +49,12 @@ export function init(root: string, opts: InitOpts) {
     created.push(`design/${rel}`)
   }
 
-  // Managed files (AGENTS.md, instructions/). The marker records a HASH of the body
-  // init generated, which makes three states distinguishable with no other stored state:
-  //   pristine  (body matches the hash)      -> updates flow through on upgrade
-  //   edited    (body differs from the hash) -> NEVER overwritten; when upstream also
-  //              moved, the fresh version is staged at design/.local/latest/<rel> and
-  //              one line tells the user/agent to merge - an agent merges semantically,
-  //              which is why no merge machinery ships here
-  //   detached  (marker line deleted)        -> never touched, never mentioned
-  const writeManaged = (rel: string, body: string) => {
-    const file = join(design, rel)
-    const next = managedFile(body)
-    const latest = join(design, '.local', 'latest', rel)
-    if (!existsSync(file)) return write(rel, next)
-    const current = readFileSync(file, 'utf8')
-    if (current === next) { rmSync(latest, { force: true }); return }
-    if (current.startsWith(MANAGED_PREFIX)) {
-      const recorded = current.slice(MANAGED_PREFIX.length).split(' ')[0]
-      const nl = current.indexOf('\n')
-      const currentBody = nl >= 0 ? current.slice(nl + 1) : ''
-      if (nl >= 0 && hashBody(currentBody) === recorded) {
-        writeFileSync(file, next)                 // pristine -> take the update
-        rmSync(latest, { force: true })
-        created.push(`design/${rel} (updated)`)
-      } else if (recorded !== hashBody(body)) {
-        // edited AND upstream moved: preserve their body verbatim, stage ours for a
-        // merge, and bump the marker's recorded base to the new upstream so this
-        // note fires ONCE per release, not on every init forever. The bump is
-        // ATOMIC (temp + rename) and skipped entirely for a malformed one-line
-        // file - user bytes are never on the losing side of a partial write.
-        mkdirSync(dirname(latest), { recursive: true })
-        writeFileSync(latest, body)
-        if (nl >= 0) {
-          const tmp = file + '.tmp'
-          writeFileSync(tmp, managedFile(body).split('\n')[0] + '\n' + currentBody)
-          renameSync(tmp, file)
-        }
-        console.warn(`  ~ design/${rel}: you customized it and a newer version exists - your edits are untouched. Merge what you want from design/.local/latest/${rel}`)
-      }
-      // edited, upstream unchanged since their base: silence. A previously staged
-      // copy stays put - it is the merge source the note pointed at, and it still
-      // matches the current upstream.
-    } else if (current.startsWith(LEGACY_PREFIX)) {
-      // hashless 0.2.2-dev marker: edits are undetectable; take the update (these
-      // files are hours old and ours) and move them onto hashed markers
-      writeFileSync(file, next)
-      rmSync(latest, { force: true })
-      created.push(`design/${rel} (updated)`)
-    } else if (current !== body) {
-      // no marker: user-owned (fine) or a collision with foreign content that
-      // AGENTS.md now declares binding - say so once per init, never touch it
-      rmSync(latest, { force: true })              // a detached file keeps no stale stage
-      console.warn(`  note: design/${rel} exists without a marver marker - left untouched. If you did not author it, delete it and re-run init to restore the managed version.`)
-    }
-  }
+  // Managed files (AGENTS.md, instructions/): pristine ones take updates, edited ones are never
+  // overwritten (the new version is staged for a merge), detached ones are never touched -
+  // managed-write.ts, shared with `context init`.
+  const writeManaged = (rel: string, body: string) => writeManagedFile({
+    base: design, rel, body, shown: `design/${rel}`, stageDir: join(design, '.local', 'latest'), created, rerun: `\`npx ${NAME} init\``,
+  })
 
   // config (commented defaults + native-TS sharp edges). Theme is deliberately absent:
   // design/theme.css (the wrapper) is the source of truth and always wins over config.
@@ -316,6 +272,21 @@ export function init(root: string, opts: InitOpts) {
   write('.gitattributes', 'comments/*.jsonl merge=union\n')
   write('scenes/_layout.tsx', readFileSync(join(templates, 'root-layout.tsx'), 'utf8'))
   if (!existsSync(join(design, 'boards'))) { mkdirSync(join(design, 'boards'), { recursive: true }); writeFileSync(join(design, 'boards', '.gitkeep'), ''); created.push('design/boards/') }
+  // spec 20: one sidebar every canvas shares - the kind's typed folders. A FRESH canvas (no board,
+  // no registry) gets them unasked, the kind detected (an app = product) and said out loud; an
+  // existing canvas only when --kind asks, and then only the missing ones - never a rename or move.
+  {
+    const boardsDir = join(design, 'boards')
+    const fresh = !existsSync(join(boardsDir, FOLDERS_FILE)) && !readdirSync(boardsDir).some((f) => f.endsWith('.json'))
+    if (opts.kind || fresh) {
+      const kind: Kind = opts.kind ?? (noApp(host) ? 'knowledge' : 'product')
+      const { added } = addFolders(root, KIND_FOLDERS[kind].map((m) => FOLDER_MODULES[m]))
+      if (added.length) {
+        created.push(`design/boards/_folders.json (${kind}: ${added.join(', ')})`)
+        if (!opts.kind) console.log(`  folders for ${kind === 'product' ? 'a product (an app was detected)' : 'knowledge work (no app detected)'} - \`npx ${NAME} init --kind ${kind === 'product' ? 'knowledge' : 'product'}\` adds the other set; \`npx ${NAME} folders add decks\` the deck folder`)
+      }
+    }
+  }
 
   // demo frames exist to show the FILE SHAPES on a first canvas - re-running init on a
   // workspace with real scenes must never resurrect them (they were deleted on purpose)

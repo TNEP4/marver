@@ -1,0 +1,451 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { apiMiddleware } from '../src/server/api.ts'
+import { ROUTE } from '../src/cli/name.ts'
+import { hash, scanFrames } from '../src/server/manifest.ts'
+import { annotateBoards, readContextFacts } from '../src/server/board-status.ts'
+import { addFolders } from '../src/server/boards.ts'
+import { assertProjected, publishedManifest, resolvePolicy, withoutEvidence } from '../src/server/build.ts'
+import { capabilityTable, frontMatter, globRe, parseMap, shippedRows, tables } from '../src/shared/context.ts'
+import { resolveType, readType } from '../src/shared/board-types.ts'
+import { NO_CONTEXT, phaseOf, publishableStatus, resolveStatus, type ContextFacts } from '../src/shared/status.ts'
+import { parseFolders, toWire, fromWire, validateWire, buildTree } from '../src/shared/board-tree.ts'
+import { contextCheck, contextIndex, contextInit } from '../src/cli/context.ts'
+import { boardsNew, foldersAdd } from '../src/cli/boards.ts'
+import { init } from '../src/cli/init.ts'
+
+let root = ''
+const put = (rel: string, body: string | object) => {
+  const f = join(root, rel)
+  mkdirSync(dirname(f), { recursive: true })
+  writeFileSync(f, typeof body === 'string' ? body : JSON.stringify(body, null, 2))
+}
+const read = (rel: string) => readFileSync(join(root, rel), 'utf8')
+const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+const commitAll = (msg: string) => { git('add', '-A'); git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', msg); return git('rev-parse', 'HEAD').trim() }
+
+beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'mv-context-')) })
+afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
+
+// ---------------------------------------------------------------------------------------------
+describe('shared/context: the parsers', () => {
+  it('front matter: flow maps, block lists, a managed marker line before it, an unclosed block', () => {
+    const fm = frontMatter('---\nstate: current\nreviewed: { revision: abc, scope: "a, b" }\ndepends_on:\n  - x.yml\n  - "y z"\n---\n# Body\n')
+    expect(fm.data).toEqual({ state: 'current', reviewed: { revision: 'abc', scope: 'a, b' }, depends_on: ['x.yml', 'y z'] })
+    expect(fm.offset).toBe(7)
+    const managed = frontMatter('<!-- marver:managed 0123 - edit freely -->\n---\nname: release\n---\nbody\n')
+    expect(managed.data).toEqual({ name: 'release' })
+    expect(managed.offset).toBe(4)
+    expect(frontMatter('---\nstate: current\n# no close\n').error).toMatch(/never closes/)
+    expect(frontMatter('# plain\n').data).toBeNull()
+  })
+
+  it('tables: pipes inside backticks stay in their cell; code fences are not tables', () => {
+    const t = tables('| A | B |\n|---|---|\n| `a|b` | c |\n\n```\n| x | y |\n```\n')
+    expect(t).toHaveLength(1)
+    expect(t[0].rows[0].cells).toEqual(['`a|b`', 'c'])
+  })
+
+  it('shipped rows: capability tables with an Available column, levels read per row', () => {
+    const rows = shippedRows([
+      '| Service | Evidence |', '|---|---|', '| app | `confirmed` - run 1234567 |', '',
+      '| Capability | Implemented | Available |', '|---|---|---|',
+      '| `checkout` - pay | `src/c.ts` | production - `confirmed` by run 1234567 |',
+      '| `quote` | `src/q.ts` | production - `reported`, `CHANGELOG.md:3` |',
+    ].join('\n'))
+    expect(rows.map((r) => [r.capability, r.levels])).toEqual([['checkout', ['confirmed']], ['quote', ['reported']]])
+  })
+
+  it('globs: **, *, {a,b}, and literal dots and dollars', () => {
+    expect(globRe('apps/{desk,run}/app/routes/api.$id.ts*').test('apps/run/app/routes/api.$id.tsx')).toBe(true)
+    expect(globRe('apps/**').test('apps/a/b/c.ts')).toBe(true)
+    expect(globRe('src/*.ts').test('src/a/b.ts')).toBe(false)
+    expect(globRe('packages/db/drizzle/{0017_m3-run,0018_x}.sql').test('packages/db/drizzle/0018_x.sql')).toBe(true)
+  })
+
+  it('the map and its generated index table', () => {
+    const m = parseMap(JSON.stringify({ capabilities: { a: { contract: 'context/product/a.md', paths: ['src/a/**'] }, b: { paths: [] } } }))
+    expect(typeof m).toBe('object')
+    expect(capabilityTable(m as Exclude<typeof m, string>)).toBe('| Capability | Contract |\n|---|---|\n| `a` | [`product/a.md`](product/a.md) |\n| `b` | none yet - see the map |')
+    expect(parseMap('{"capabilities": {"a": {}}}')).toMatch(/needs a "paths" list/)
+    const withSummary = parseMap(JSON.stringify({ capabilities: { pay: { summary: 'taking money | refunds', contract: 'context/product/pay.md', paths: [] } } }))
+    expect(capabilityTable(withSummary as Exclude<typeof withSummary, string>)).toMatch(/^\| `pay` - taking money \/ refunds \| \[`product\/pay.md`\]\(product\/pay.md\) \|$/m)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('board types (spec 20)', () => {
+  it('own type, else the folder, else its parent, else plain; an unknown own type reads plain', () => {
+    expect(resolveType('deck', 'feature')).toBe('deck')
+    expect(resolveType(undefined, 'feature', 'project')).toBe('feature')
+    expect(resolveType(undefined, undefined, 'project')).toBe('project')
+    expect(resolveType(undefined, 'brand-new-kind', 'project')).toBe('project')
+    expect(resolveType('brand-new-kind', 'feature')).toBe('plain')
+    expect(resolveType(undefined)).toBe('plain')
+    expect(readType('Not A Type')).toBeUndefined()
+  })
+
+  it('a folder type survives the registry, the tree and the wire - an unknown word included', () => {
+    const rows = parseFolders({ version: 1, folders: [{ name: 'features', type: 'feature' }, { name: 'brand', type: 'brand-kit' }, { name: 'x', type: 'NOPE' }] })
+    expect(rows).toEqual([{ name: 'features', type: 'feature' }, { name: 'brand', type: 'brand-kit' }, { name: 'x' }])
+    const tree = buildTree([{ name: 'a', folder: 'features' }], rows as never)
+    const wire = toWire(tree)
+    expect(wire).toContainEqual({ folder: 'features', items: ['a'], type: 'feature' })
+    expect(validateWire(wire)).toBeNull()
+    expect(validateWire([{ folder: 'f', items: [], type: 'Bad Type' }])).toMatch(/invalid folder type/)
+    expect(fromWire(wire as never).find((f) => f.name === 'brand')).toMatchObject({ type: 'brand-kit' })
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('status: the nine rows (spec 20)', () => {
+  const ctx = (over: Partial<ContextFacts> = {}): ContextFacts => ({ present: true, unreadable: new Map(), shipped: new Map(), contracts: new Map(), plans: new Map(), ...over })
+  const board = (over = {}) => ({ name: 'checkout', type: 'feature' as const, scenes: [], ...over })
+
+  it('only feature and project boards wear one', () => {
+    expect(resolveStatus({ ...board(), type: 'deck' }, ctx())).toBeNull()
+    expect(resolveStatus({ ...board(), type: 'project' }, ctx())?.status).toBe('backlog')
+  })
+  it('rows 1-3: the board decides, a blocked board says why', () => {
+    expect(resolveStatus(board({ status: 'archived' }), ctx())).toMatchObject({ status: 'archived', row: 1 })
+    expect(resolveStatus(board({ status: 'paused' }), ctx())).toMatchObject({ status: 'paused', row: 2 })
+    expect(resolveStatus(board({ status: 'blocked', reason: 'the provider' }), ctx())).toMatchObject({ status: 'blocked', row: 3, reason: 'the provider' })
+  })
+  it('row 4: unreadable evidence is Unknown - never a stale Done', () => {
+    const shipped = new Map([['checkout', { levels: ['confirmed' as const], where: 'x' }]])
+    expect(resolveStatus(board(), ctx({ shipped, unreadable: new Map([['*', 'context/shipped.md: broken']]) }))).toMatchObject({ status: 'unknown', row: 4 })
+    expect(resolveStatus(board(), ctx({ unreadable: new Map([['checkout', 'bad contract']]) }))?.status).toBe('unknown')
+    expect(resolveStatus(board({ name: 'other' }), ctx({ unreadable: new Map([['checkout', 'bad']]) }))?.status).toBe('backlog')
+  })
+  it('row 5 wins over a shipped record: version two is being built', () => {
+    const r = resolveStatus(board({ scenes: [{ name: 'checkout-specs' }, { name: 'checkout-lofi' }] }), ctx({
+      plans: new Map([['checkout', ['context/plans/v2.md']]]),
+      shipped: new Map([['checkout', { levels: ['confirmed' as const], where: 'x' }]]),
+    }))
+    expect(r).toMatchObject({ status: 'in-progress', row: 5, fill: 2 })
+  })
+  it('rows 6-9: confirmed, reported, an accepted contract, else Backlog', () => {
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', { levels: ['reported', 'confirmed'], where: 'x' }]]) }))?.status).toBe('done')
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', { levels: ['reported'], where: 'x' }]]) }))?.status).toBe('done-reported')
+    expect(resolveStatus(board(), ctx({ shipped: new Map([['checkout', { levels: ['unknown'], where: 'x' }]]) }))?.status).toBe('backlog')
+    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', { state: 'current', where: 'c' }]]) }))?.status).toBe('todo')
+    expect(resolveStatus(board(), ctx({ contracts: new Map([['checkout', { state: 'proposed', where: 'c' }]]) }))?.status).toBe('backlog')
+  })
+  it('a board names its capability, or is it', () => {
+    const shipped = new Map([['pay', { levels: ['confirmed' as const], where: 'x' }]])
+    expect(resolveStatus(board({ capability: 'pay' }), ctx({ shipped }))?.status).toBe('done')
+  })
+  it('without context/: by hand for To do, Backlog and In progress - never Done', () => {
+    expect(resolveStatus(board({ status: 'todo' }), NO_CONTEXT)?.status).toBe('todo')
+    expect(resolveStatus(board({ status: 'in-progress' }), NO_CONTEXT)?.status).toBe('in-progress')
+    expect(resolveStatus(board({ status: 'done' }), NO_CONTEXT)?.status).toBe('backlog')
+    expect(resolveStatus(board({ status: 'done' }), ctx())?.status).toBe('backlog')
+  })
+  it('phases come from scene names or a brief, never geometry', () => {
+    expect(phaseOf('c', [{ name: 'c-specs' }])).toBe(1)
+    expect(phaseOf('c', [{ name: 'c-specs' }, { name: 'c' }])).toBe(3)
+    expect(phaseOf('c', [{ name: 'anything', phase: 'lofi' }])).toBe(2)
+    expect(phaseOf('c', [{ name: 'other' }])).toBeUndefined()
+  })
+  it('what a published canvas may show: rows 5-9, no reason', () => {
+    expect(publishableStatus({ status: 'blocked', row: 3, capability: 'c', evidence: [], reason: 'x' })).toBeNull()
+    expect(publishableStatus({ status: 'in-progress', row: 5, fill: 2, capability: 'c', evidence: ['secret'] })).toEqual({ status: 'in-progress', fill: 2 })
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('reading context/ off disk', () => {
+  it('the record, contracts and open plans; a broken contract is Unknown for its capability', () => {
+    put('context/shipped.md', '| Capability | Available |\n|---|---|\n| `a` | production - `confirmed` by run 1234567 |\n')
+    put('context/product/b.md', '---\nstate: current\ncapability: b\n---\n')
+    put('context/product/c.md', '---\nstate: current\n')
+    put('context/plans/p.md', '---\nstate: proposed\ncapabilities: [d, e]\n---\n')
+    put('context/plans/old.md', '---\nstate: historical\ncapability: f\n---\n')
+    const f = readContextFacts(root)
+    expect([...f.shipped.keys()]).toEqual(['a'])
+    expect(f.contracts.get('b')?.state).toBe('current')
+    expect(f.unreadable.get('c')).toMatch(/never closes/)
+    expect([...f.plans.keys()].sort()).toEqual(['d', 'e'])
+  })
+
+  it('a board inherits its folder type; a phase counts once its scene holds a frame', () => {
+    put('design/scenes/x-lofi/_brief.md', '---\nphase: lofi\n---\n')
+    put('context/plans/p.md', '---\nstate: proposed\ncapability: x\n---\n')
+    const boards = [{ name: 'x', json: { folder: 'features', layout: { rows: [['x-lofi']] } } }]
+    const folders = [{ name: 'features', type: 'feature' }]
+    let a = annotateBoards(root, boards, folders, () => 'features')
+    expect(a.get('x')).toMatchObject({ type: 'feature', status: { status: 'in-progress' } })
+    expect(a.get('x')?.status?.fill).toBeUndefined()
+    put('design/scenes/x-lofi/one.tsx', 'export default () => null\n')
+    a = annotateBoards(root, boards, folders, () => 'features')
+    expect(a.get('x')?.status?.fill).toBe(2)
+  })
+
+  it('the manifest carries types and compact statuses - never the evidence', () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'features', type: 'feature' }] })
+    put('design/boards/pay.json', { version: 1, folder: 'features', nodes: [] })
+    put('design/boards/plain.json', { version: 1, nodes: [] })
+    put('context/shipped.md', '| Capability | Available |\n|---|---|\n| `pay` | production - `confirmed` by run 1234567 |\n')
+    const m = scanFrames(root)
+    expect(m.folders).toEqual([{ name: 'features', type: 'feature' }])
+    expect(m.boards?.find((b) => b.name === 'pay')).toMatchObject({ type: 'feature', status: { status: 'done' } })
+    expect(JSON.stringify(m.boards)).not.toMatch(/evidence|run 1234567/)
+    expect(m.boards?.find((b) => b.name === 'plain')).toEqual({ name: 'plain' })
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// the dev API: types and statuses out, spec 20's fields kept through every write
+function drive(method: string, path: string, body?: unknown) {
+  const mw = apiMiddleware(root)
+  const req: any = {
+    method, url: `${ROUTE}/api/${path}`,
+    headers: { host: 'localhost:5200', cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: 'http://localhost:5200' },
+    _cbs: {} as Record<string, (arg?: unknown) => void>,
+    on(ev: string, cb: (arg?: unknown) => void) { this._cbs[ev] = cb; return this },
+    destroy() {},
+  }
+  const res: any = { statusCode: 0, body: '', setHeader() {}, end(s?: string) { this.body = s ?? ''; this._done?.() } }
+  const done = new Promise<{ status: number; json: any }>((resolve) => {
+    res._done = () => resolve({ status: res.statusCode, json: (() => { try { return JSON.parse(res.body) } catch { return null } })() })
+    void mw(req, res, () => resolve({ status: 404, json: null }))
+  })
+  if (method === 'POST' || method === 'PUT') {
+    const raw = Buffer.from(JSON.stringify(body ?? {}))
+    queueMicrotask(() => { req._cbs.data?.(raw); req._cbs.end?.() })
+  }
+  return done
+}
+
+describe('the dev API (spec 20)', () => {
+  it('lists each board with its resolved type and its status with evidence', async () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'features', type: 'feature' }] })
+    put('design/boards/pay.json', { version: 1, folder: 'features', nodes: [] })
+    put('context/product/pay.md', '---\nstate: current\ncapability: pay\n---\n')
+    const r = await drive('GET', 'boards')
+    expect(r.json[0]).toMatchObject({ name: 'pay', type: 'feature', status: { status: 'todo', row: 8, evidence: [expect.stringMatching(/context\/product\/pay.md/)] } })
+    const f = await drive('GET', 'folders')
+    expect(f.json.folders).toEqual([{ name: 'features', type: 'feature' }])
+  })
+
+  it('an autosave keeps type, capability, status and reason from disk', async () => {
+    put('design/boards/pay.json', { version: 1, type: 'feature', capability: 'payments', status: 'blocked', reason: 'the provider', nodes: [] })
+    const sha = hash(read('design/boards/pay.json'))
+    const r = await drive('PUT', 'boards/pay', { board: { version: 1, nodes: [{ frame: 'a/b' }] }, baseHash: sha, mustExist: true })
+    expect(r.status).toBe(200)
+    expect(JSON.parse(read('design/boards/pay.json'))).toMatchObject({ type: 'feature', capability: 'payments', status: 'blocked', reason: 'the provider', nodes: [{ frame: 'a/b' }] })
+  })
+
+  it('a tree write keeps a folder type', async () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'features', type: 'feature' }] })
+    put('design/boards/pay.json', { version: 1, nodes: [] })
+    const b = await drive('GET', 'boards'), f = await drive('GET', 'folders')
+    const r = await drive('POST', 'boards/reorder', {
+      protocol: 2, tree: [{ folder: 'features', items: ['pay'], type: 'feature' }],
+      base: { boards: { pay: b.json[0].sha256 }, folders: f.json.sha256 },
+    })
+    expect(r.status).toBe(200)
+    expect(JSON.parse(read('design/boards/_folders.json')).folders).toEqual([{ name: 'features', order: 0, type: 'feature' }])
+    expect(JSON.parse(read('design/boards/pay.json')).folder).toBe('features')
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('publishing (spec 20): the projection', () => {
+  it('a row with no type takes the one the board type proposes; a stated type wins', () => {
+    put('design/publish.json', { boards: { deck: 'read', pay: { max: 'comment' }, own: { max: 'read', type: 'design' } } })
+    const types: Record<string, string> = { deck: 'deck', pay: 'feature', own: 'deck' }
+    const p = resolvePolicy(root, { deck: {}, pay: {}, own: {} }, undefined, undefined, (n) => types[n] as never)
+    expect(p.boards.deck).toMatchObject({ type: 'slides', proposed: true })
+    expect(p.boards.pay).toMatchObject({ type: 'mix', proposed: true })
+    expect(p.boards.own).toMatchObject({ type: 'design' })
+    expect(p.boards.own.proposed).toBeUndefined()
+  })
+
+  it('showStatus is a boolean', () => {
+    put('design/publish.json', { boards: { pay: { max: 'read', showStatus: 'yes' } } })
+    expect(() => resolvePolicy(root, { pay: {} })).toThrow(/showStatus/)
+  })
+
+  it('boards ship without their evidence fields; a status only where opted in, rows 5-9, no reason', () => {
+    expect(withoutEvidence({ nodes: [], status: 'blocked', reason: 'r', capability: 'c', type: 'feature' })).toEqual({ nodes: [], type: 'feature' })
+    const manifest = {
+      frames: [], scenes: [],
+      boards: [
+        { name: 'a', type: 'feature', status: { status: 'done' as const } },
+        { name: 'b', type: 'feature', status: { status: 'blocked' as const, reason: 'secret' } },
+        { name: 'c', type: 'feature', status: { status: 'in-progress' as const, fill: 2 as const } },
+      ],
+    }
+    const pub = publishedManifest(manifest, [], ['a', 'b', 'c'], true, new Set(['b', 'c']))
+    expect(pub.boards).toEqual([{ name: 'a', type: 'feature' }, { name: 'b', type: 'feature' }, { name: 'c', type: 'feature', status: { status: 'in-progress', fill: 2 } }])
+  })
+
+  it('the build fails when a stripped field survives', () => {
+    const base = { manifest: { frames: [], scenes: [] }, boards: { a: { nodes: [] } } }
+    expect(() => assertProjected(base as never, new Set())).not.toThrow()
+    expect(() => assertProjected({ ...base, boards: { a: { status: 'blocked' } } } as never, new Set())).toThrow(/would ship its "status"/)
+    expect(() => assertProjected({ ...base, manifest: { frames: [], scenes: [], boards: [{ name: 'a', status: { status: 'done' } }] } } as never, new Set())).toThrow(/did not allow/)
+    expect(() => assertProjected({ ...base, manifest: { frames: [], scenes: [], boards: [{ name: 'a', status: { status: 'blocked' } }] } } as never, new Set(['a']))).toThrow(/did not allow/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('init --kind, folders add, boards new', () => {
+  it('a fresh canvas gets its kind\'s typed folders; a re-run never rearranges', () => {
+    init(root, { mode: 'studio', demo: false, kind: 'knowledge' })
+    const reg = () => JSON.parse(read('design/boards/_folders.json')).folders
+    expect(reg().map((f: { name: string }) => f.name)).toEqual(['start-here', 'projects', 'feedback', 'context', 'archive'])
+    expect(reg()[0]).toMatchObject({ title: 'Start here', type: 'start' })
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'context', order: 0, type: 'context' }, { name: 'mine', order: 1 }] })
+    init(root, { mode: 'studio', demo: false })
+    expect(reg().map((f: { name: string }) => f.name)).toEqual(['context', 'mine'])
+    init(root, { mode: 'studio', demo: false, kind: 'knowledge' })
+    expect(reg().map((f: { name: string }) => f.name)).toEqual(['context', 'mine', 'start-here', 'projects', 'feedback', 'archive'])
+    expect(reg()[0]).toEqual({ name: 'context', order: 0, type: 'context' })
+  })
+
+  it('folders add appends a module once, after everything at the root', () => {
+    put('design/boards/top.json', { version: 1, order: 7, nodes: [] })
+    expect(foldersAdd(root, ['decks'])).toEqual({ added: ['decks'], existing: [] })
+    expect(foldersAdd(root, ['decks'])).toEqual({ added: [], existing: ['decks'] })
+    expect(JSON.parse(read('design/boards/_folders.json')).folders).toEqual([{ name: 'decks', order: 8, type: 'deck' }])
+    expect(() => foldersAdd(root, ['brand'])).toThrow(/unknown folder module/)
+  })
+
+  it('a feature board starts as three phase bands, its type from its folder', () => {
+    addFolders(root, [{ name: 'features', type: 'feature' }])
+    boardsNew(root, 'checkout', { folder: 'features' })
+    const b = JSON.parse(read('design/boards/checkout.json'))
+    expect(b.type).toBeUndefined()
+    expect(b.layout.rows).toEqual([['checkout-specs'], { space: 3 }, ['checkout-lofi'], { space: 4 }, ['checkout']])
+    expect(frontMatter(read('design/scenes/checkout-lofi/_brief.md')).data).toMatchObject({ phase: 'lofi' })
+    expect(() => boardsNew(root, 'checkout', {})).toThrow(/never overwritten/)
+  })
+
+  it('a start board renders the index and the shipped record; a deck starts on a slide', () => {
+    boardsNew(root, 'home', { type: 'start' })
+    expect(read('design/scenes/home/index.tsx')).toMatch(/context\/INDEX\.md\?raw/)
+    expect(JSON.parse(read('design/boards/home.json')).nodes).toEqual([{ frame: 'home/index' }, { frame: 'home/shipped' }])
+    boardsNew(root, 'pitch', { type: 'deck', title: 'The pitch' })
+    expect(read('design/scenes/pitch/01-title.tsx')).toMatch(/slide: true/)
+    expect(() => boardsNew(root, 'x', { type: 'nope' })).toThrow(/--type nope/)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('marver context: init, index, check', () => {
+  const pass = () => contextCheck(root)
+  const rules = (r = pass()) => r.failures.map((f) => f.rule)
+  beforeEach(() => {
+    git('init', '-q')
+    put('package.json', { name: '@acme/app' })
+    contextInit(root)
+  })
+
+  it('init creates the files once, the playbooks managed, and routes the root AGENTS.md', () => {
+    expect(read('context/INDEX.md')).toMatch(/^---\naudience: team\n---\n\n# app - the index/)
+    expect(read('context/playbooks/reorganize-context/PLAYBOOK.md')).toMatch(/^<!-- marver:managed [0-9a-f]{64} /)
+    expect(read('AGENTS.md')).toMatch(/start at context\/INDEX\.md/)
+    expect(contextInit(root)).toEqual([])
+    expect(read('AGENTS.md').match(/context\/INDEX\.md/g)).toHaveLength(1)
+    expect(pass().exit).toBe(0)
+  })
+
+  it('index regenerates the table from the map; the check catches a drift', () => {
+    put('context/map.json', { capabilities: { pay: { paths: ['src/pay/**'] } }, excluded: [] })
+    expect(rules()).toContain('index-table')
+    contextIndex(root)
+    expect(read('context/INDEX.md')).toMatch(/\| `pay` \| none yet - see the map \|/)
+    expect(rules()).not.toContain('index-table')
+  })
+
+  it('P0 probes: an unlabelled evidence cell, a citation that does not resolve', () => {
+    const shipped = read('context/shipped.md')
+    put('context/shipped.md', shipped + '| `pay` | `src/pay.ts` | `unknown` - none | available on production | - |\n')
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'shipped-level', what: 'the Available cell has no evidence level' }))
+    put('context/shipped.md', shipped + '| `pay` | x | `unknown` - none | production - `confirmed` - `MISSING.md:999999` | - |\n')
+    expect(rules()).toContain('dead-citation')
+    put('context/shipped.md', shipped + '| `pay` | x | `unknown` - none | production - `confirmed` | - |\n')
+    expect(rules()).toContain('shipped-citation')
+  })
+
+  it('contracts: no status line, no availability, no supersession; a contract state', () => {
+    put('context/product/pay.md', '---\nstate: current\ncapability: pay\n---\n\nStatus: built\n\nIt went live on 3 May.\n\nSection 20 wins where it differs.\n')
+    expect(rules()).toEqual(expect.arrayContaining(['status-line', 'availability', 'supersession']))
+    put('context/product/pay.md', '---\nstate: done\n---\n')
+    expect(rules()).toContain('state')
+  })
+
+  it('feedback: a state from the list, and shipped only on a confirmed availability', () => {
+    put('context/feedback/f.md', '| Item | What | State | Resolved by |\n|---|---|---|---|\n| F1 | x | shipped | `reported` - `CHANGELOG.md:1` |\n| F2 | y | done | - |\n')
+    const f = pass().failures
+    expect(f).toContainEqual(expect.objectContaining({ rule: 'feedback-closed' }))
+    expect(f).toContainEqual(expect.objectContaining({ rule: 'state', what: expect.stringMatching(/"done" is not a feedback state/) }))
+  })
+
+  it('audiences: restricted never tracked; nothing team reaches a published board', () => {
+    put('context/private/notes.md', '---\naudience: restricted\n---\n')
+    git('add', '-A')
+    expect(rules()).toContain('audience')
+    git('rm', '-q', '--cached', 'context/private/notes.md')
+    expect(rules()).not.toContain('audience')
+    boardsNew(root, 'home', { type: 'start' })
+    put('design/publish.json', { boards: { home: 'read' } })
+    expect(pass().failures.filter((f) => f.rule === 'audience').map((f) => f.where).sort()).toEqual(['context/INDEX.md', 'context/shipped.md'])
+  })
+
+  it('Done is never set by hand on a board', () => {
+    put('design/boards/pay.json', { version: 1, status: 'done', nodes: [] })
+    expect(rules()).toContain('board-status')
+  })
+
+  it('the index budget', () => {
+    put('context/INDEX.md', read('context/INDEX.md') + 'word '.repeat(900))
+    expect(rules()).toContain('index-budget')
+  })
+
+  it('a pull request touching a shared file needs every contract it feeds, or a stated reason', () => {
+    put('src/shared.ts', 'export const a = 1\n')
+    put('context/product/pay.md', '---\nstate: current\ncapability: pay\n---\n')
+    put('context/product/ship.md', '---\nstate: current\ncapability: ship\n---\n')
+    put('context/map.json', { capabilities: {
+      pay: { contract: 'context/product/pay.md', paths: ['src/shared.ts'] },
+      ship: { contract: 'context/product/ship.md', paths: ['src/{shared,ship}.ts'] },
+    }, excluded: [] })
+    contextIndex(root)
+    const base = commitAll('base')
+    put('src/shared.ts', 'export const a = 2\n')
+    commitAll('change')
+    let r = contextCheck(root, { base })
+    expect(r.failures.filter((f) => f.rule === 'pr').map((f) => f.where).sort()).toEqual(['pay', 'ship'])
+    r = contextCheck(root, { base, body: 'no-contract-change: pay - a constant\nno-contract-change: ship - a constant' })
+    expect(r.failures.filter((f) => f.rule === 'pr')).toEqual([])
+    put('context/product/pay.md', '---\nstate: current\ncapability: pay\n---\n\nNow 2.\n')
+    commitAll('contract')
+    r = contextCheck(root, { base, body: 'no-contract-change: ship - a constant' })
+    expect(r.exit).toBe(0)
+    expect(contextCheck(root, { base: 'no-such-ref' }).exit).toBe(2)
+  })
+
+  it('a playbook is current, stale or unknown since its last success', () => {
+    put('deploy.yml', 'a\n')
+    const rev = commitAll('base')
+    put('context/playbooks/release/PLAYBOOK.md', `---\nname: release\nlast_success: { revision: ${rev} }\ndepends_on:\n  - deploy.yml\n---\n`)
+    expect(pass().notes.find((n) => n.what.includes('release'))?.what).toMatch(/current since/)
+    put('deploy.yml', 'b\n')
+    expect(pass().notes.find((n) => n.what.includes('release'))?.what).toMatch(/stale - 1 dependencies changed/)
+    expect(pass().notes.find((n) => n.what.includes('publish-canvas'))?.what).toMatch(/unknown - no last_success/)
+  })
+
+  it('the map: every source file mapped or excluded, as a note', () => {
+    put('src/a.ts', '1'); put('src/b.ts', '2')
+    put('context/map.json', { source: ['src/**'], capabilities: { a: { paths: ['src/a.ts'] } }, excluded: [] })
+    contextIndex(root)
+    git('add', '-A')
+    expect(pass().notes.find((n) => n.rule === 'map')?.what).toMatch(/1 source files neither mapped nor excluded, e.g. src\/b.ts/)
+  })
+})

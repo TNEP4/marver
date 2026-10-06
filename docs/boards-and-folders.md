@@ -85,9 +85,52 @@ for, and its state when that is not obvious. A folder's sits on its entry in `_f
 all land in `design/manifest.json`, the file an agent reads first, so a new session knows what each
 folder is for before it files a single board.
 
+## Types
+
+Every board wears an icon for what it is for, the same on every canvas:
+
+| Type | For |
+|---|---|
+| `start` | the way in: the index, the shipped record, the timeline |
+| `feature` | one capability: its spec, lo-fi and hi-fi |
+| `surface` | the whole product to walk, from frames on feature boards |
+| `project` | a deliverable or a question |
+| `feedback` | one frame per theme |
+| `context` | what came in from outside: meetings, threads, competitors |
+| `deck` | slides |
+| `archive` | snapshots and retired work |
+
+A board states `"type"` in its JSON, or wears the type of the folder it sits in - `"type"` on the
+folder's entry in `_folders.json` - or of that folder's parent; else it is plain. Moving a board
+changes an inherited type, never one the board states. The type never decides how a board publishes,
+but it proposes it: a deck publishes as `slides`, a context board as `refs`, a project as `doc`,
+features and surfaces as `mix` - unless the publish row says otherwise.
+
+## Status
+
+Feature and project boards also wear a status, read from the project's `context/` - Backlog, To do,
+In progress (filling by phase), Done, Done reported, Unknown - or decided on the board itself:
+`"status": "archived"`, `"paused"`, or `"blocked"` with a `"reason"`. **Done is never set by hand.**
+The tooltip says what decided it. [Context](context.md) has the rules.
+
+## Starting points
+
+- `npx marver init --kind product|knowledge` - on a fresh canvas, the typed folders every canvas
+  shares: Start here, Features and Surfaces (a product) or Projects (knowledge work), Feedback,
+  Context, Archive. Without the flag a fresh canvas gets product folders when an app is detected,
+  knowledge otherwise, and says which. On an existing canvas only `--kind` adds them, and only the
+  missing ones - init never renames or moves a folder.
+- `npx marver folders add decks` - one more typed folder later: `start`, `features`, `surfaces`,
+  `projects`, `feedback`, `context`, `decks`, `archive`.
+- `npx marver boards new <name> --folder features` - a board in its type's starting layout: a
+  feature's three phase scenes as three bands (spec, lo-fi, hi-fi), a start board rendering
+  `context/INDEX.md` and `context/shipped.md`, a deck on its title slide. `--type` overrides the
+  folder's; `--title`, `--description`, `--capability` fill the rest.
+
 ## Agents
 
-Agents make the same moves by editing those two files; `instructions/boards.md` in your project
+Agents make the same moves by editing those two files (`npx marver boards` prints the tree with each
+board's type and status); `instructions/boards.md` in your project
 teaches each one - creating a sub-folder, moving a folder in or out, renaming a slug (members'
 `folder` and sub-folders' `parent` move with it), deleting (contents up one level). The sidebar
 refuses a write that would overwrite an edit it has not seen, so an agent's file write and a
@@ -97,7 +140,9 @@ person's drag never silently erase each other.
 
 A published canvas shows the folders of the published boards only - a sub-folder's parent included,
 since the tree needs it. A folder with nothing published at any depth never reaches the bundle, so
-its name and description stay private.
+its name and description stay private. Board types ship; statuses do not - a published board loses its
+`status`, `reason` and `capability`, and shows a status only where its publish row says
+`"showStatus": true`, never a blocked reason.
 
 ## Mixed versions
 

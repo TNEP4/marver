@@ -200,6 +200,8 @@ export async function dev(root: string, portFlag?: number) {
           '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
           // tool-output dirs written into the project must never reload the canvas
           '**/.gstack/**', '**/.git/**', '**/.playwright-mcp/**',
+          // context/'s JSON (the map, sync state): read by the check and the status pass, never by a frame
+          '**/context/map.json', '**/context/sync/**',
         ],
       },
       // A8: pre-transform the frame boot chain at server start so the FIRST frame load never

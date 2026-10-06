@@ -2,6 +2,68 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.22.0 - 2026-10-06
+
+### Added
+
+- **Context.** `npx marver context init` gives a repository `context/`: an index any agent reads first,
+  `shipped.md` - the only place availability is written, every claim `confirmed`, `reported` or
+  `unknown` with a citation - one current contract per capability, a map of which code each capability
+  lives in, a feedback inbox, and two playbooks Marver maintains (`reorganize-context`,
+  `publish-canvas`). The root `AGENTS.md` gets one line routing every agent to the index.
+- **`npx marver context check`** keeps it true, in ci or by hand: no availability or status line in a
+  contract, no "section 20 wins", a level and a citation on every evidence cell, links and `path:line`
+  citations that resolve, the index under 800 words and equal to the map, `restricted` files out of
+  git and `team` files off published boards, feedback closed only on a confirmed deploy, no
+  `"status": "done"` on a board - and on a pull request, a contract change with every change to a
+  contracted capability's code, or `no-contract-change: <capability> - <why>` in the body. Exit 0
+  pass, 1 fail, 2 cannot determine. `npx marver context index` regenerates the index's table.
+- **Board types.** Every board wears an icon for what it is for - `start`, `feature`, `surface`,
+  `project`, `feedback`, `context`, `deck`, `archive` - stated on the board or inherited from its
+  folder (`"type"` on a folder's entry in `_folders.json`), then the folder's parent.
+- **Status, read from evidence.** Feature and project boards wear a status in the sidebar - Backlog,
+  To do, In progress (filling by phase: spec, lo-fi, hi-fi), Done, Done reported, Unknown - read from
+  `context/`, or decided on the board: archived, paused, blocked with a reason. Done is never set by
+  hand. The tooltip says what decided it; a change to the files reaches the sidebar without a reload.
+  `npx marver boards` and the manifest carry types and statuses too.
+- **Starting points.** `npx marver init --kind product|knowledge` gives a fresh canvas the typed
+  folders every canvas shares: Start here, Features and Surfaces or Projects, Feedback, Context,
+  Archive. `npx marver folders add <module>` adds one later. `npx marver boards new <name>` makes a
+  board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board
+  rendering `context/INDEX.md` and `context/shipped.md`, a deck on its title slide.
+- **`"showStatus": true`** on a `publish.json` row shows a board's status on the published canvas -
+  only Backlog to Done, never a blocked reason or the evidence.
+
+### Changed
+
+- **A published board never carries its `status`, `reason` or `capability`,** and the build fails if
+  one would. A publish row with no `type` takes the one the board's type proposes - a deck publishes
+  as `slides` (or `mix`, with a note, when it has no slide frames yet), a context board as `refs`, a
+  project as `doc`.
+- **A fresh `npx marver init` creates typed folders** - product ones when an app is detected,
+  knowledge ones otherwise, said out loud. On a canvas that already has boards or folders, init adds
+  them only with `--kind`, and never renames or moves one.
+- The board autosave keeps `type`, `capability`, `status` and `reason` from disk like `title` and
+  `description`, and a folder drag keeps a folder's `type`.
+
+### Docs
+
+- A new guide, [docs/context.md](docs/context.md): the files, the evidence levels, the check and its
+  ci step, statuses on the canvas, audiences. [Boards and folders](docs/boards-and-folders.md) gains
+  types, status and starting points; [Sharing](docs/sharing.md) documents `showStatus` and the
+  proposed publish type; the README links it all.
+- A new managed instruction, `instructions/context.md`, routed from the AGENTS contract: what to read
+  at session start, when a contract changes, the setup interview when there is no `context/`.
+  `instructions/boards.md` teaches types, status and the new commands.
+
+### Upgrading
+
+- Run `npx marver init` to take the new instructions (unedited files update in place; edited ones are
+  staged in `design/.local/latest/`). Existing canvases keep their sidebar; `--kind` adds the typed
+  folders when you want them.
+- A board that says `"status": "done"` now fails `marver context check` - remove it; Done comes from
+  `context/shipped.md`.
+
 ## 0.21.0 - 2026-10-05
 
 ### Added

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, rememberTitles, type TreeBase } from './store.ts'
+import { useStore, HAS_ALL_SCENES, PUBLISHED, fetchBoardTree, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
+import { StatusIcon, TypeIcon } from './board-icons.tsx'
+import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
@@ -26,6 +28,13 @@ const readClosed = (): Record<string, true> => { try { return JSON.parse(localSt
 /** The inline input: renaming a board or a folder, or naming a NEW folder that does not exist
  *  yet - drawn at `index` in `parent`'s items (null = the root), optionally with `board`
  *  already inside it. */
+/** A status's tooltip: what it is, how far along, why, and the evidence that decided it. */
+function statusTip(m: BoardMeta): string {
+  const st = m.status!
+  const head = STATUS_LABEL[st.status] + (st.fill ? ` - ${PHASE_LABEL[st.fill]}` : '')
+  return [head, st.reason, ...(st.evidence ?? [])].filter(Boolean).join('\n')
+}
+
 type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string; parent: string | null }
 /** A mutation as intent: applied to whichever tree is current, so a 409 can replay it. */
 type Intent = (tree: TreeItem[]) => TreeItem[] | null
@@ -33,6 +42,7 @@ type Intent = (tree: TreeItem[]) => TreeItem[] | null
 export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const board = useStore((s) => s.board)
   const titles = useStore((s) => s.boardTitles)                       // board slug → title, off the last tree read
+  const meta = useStore((s) => s.boardMeta)                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
   const [naming, setNaming] = useState<Naming | null>(null)
@@ -74,6 +84,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       confirmedRef.current = snap.tree
       baseRef.current = snap.base
       rememberTitles(snap.titles)                                    // the labels follow the same latest-wins rule
+      rememberMeta(snap.meta)                                        // ...and so do types and statuses (spec 20)
       lastErr.current = ''
       show()
       return true
@@ -420,8 +431,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onPointerUp={canDrag ? onPointerUp : undefined}
         onPointerCancel={canDrag ? () => resetPointer() : undefined}
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
-        {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : <CardsIcon size={14} />}
+        {n === 'all-scenes' ? <CardsThreeIcon size={14} /> : meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}
         <span>{label(n)}</span>
+        {meta[n]?.status && <i className="st" data-status={meta[n].status!.status} title={statusTip(meta[n])}><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>}
       </button>
     )
   }

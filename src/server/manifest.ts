@@ -4,6 +4,8 @@ import { join, relative, sep } from 'node:path'
 import { CONTENT_WIDTH, PKG } from '../client/const.ts'
 import { buildTree, flatten, folderEntries, isBoardName, readDescription, readTitle } from '../shared/board-tree.ts'
 import { boardFields, checkBoardsDir, checkRealDirs, listBoardFiles, readRegistry } from './boards.ts'
+import { annotateBoards } from './board-status.ts'
+import type { Phase, Status } from '../shared/status.ts'
 import { hash } from './hash.ts'
 
 export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean; description?: string }
@@ -43,9 +45,12 @@ export interface Manifest {
   /** `title` = what humans see (the brief's front matter); `name` = the directory */
   scenes: { name: string; frames: number; title?: string; description?: string; brief?: string; note?: string }[]
   project?: { name?: string; description?: string }
-  folders?: { name: string; parent?: string; title?: string; description?: string }[]
-  /** curated boards in sidebar order (folders flattened); never all-scenes */
-  boards?: { name: string; folder?: string; title?: string; description?: string }[]
+  folders?: { name: string; parent?: string; title?: string; description?: string; type?: string }[]
+  /** curated boards in sidebar order (folders flattened); never all-scenes. `type` is resolved
+   *  (spec 20: its own, else its folder's); `status` is read from context/ for feature and
+   *  project boards - the evidence lines stay out of this committed file (`marver boards` and
+   *  the sidebar's tooltip carry them) */
+  boards?: { name: string; folder?: string; title?: string; description?: string; type?: string; status?: { status: Status; fill?: Phase; reason?: string } }[]
 }
 /** What a project says about itself - from design/config.ts, handed in by whoever loaded it. */
 export interface ProjectInfo { name?: string; description?: string }
@@ -285,10 +290,17 @@ function scanBoards(root: string): Pick<Manifest, 'folders' | 'boards'> {
   const entries = folderEntries(tree)
   const folderOf = new Map<string, string>()
   for (const { folder } of entries) for (const k of folder.items) if (k.kind === 'board') folderOf.set(k.name, folder.name)
-  const folders = entries.map(({ folder: it, parent }) => ({ name: it.name, ...(parent ? { parent } : {}), ...(it.title ? { title: it.title } : {}), ...(it.description ? { description: it.description } : {}) }))
+  const folders = entries.map(({ folder: it, parent }) => ({ name: it.name, ...(parent ? { parent } : {}), ...(it.title ? { title: it.title } : {}), ...(it.description ? { description: it.description } : {}), ...(it.type ? { type: it.type } : {}) }))
+  const notes = annotateBoards(root, files, reg.folders, (n) => folderOf.get(n) ?? null)
   const boards = flatten(tree).map((name) => {
     const r = rows.find((x) => x.name === name)
-    return { name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(r?.title ? { title: r.title } : {}), ...(r?.description ? { description: r.description } : {}) }
+    const n = notes.get(name)
+    const st = n?.status
+    return {
+      name, ...(folderOf.has(name) ? { folder: folderOf.get(name) } : {}), ...(r?.title ? { title: r.title } : {}), ...(r?.description ? { description: r.description } : {}),
+      ...(n && n.type !== 'plain' ? { type: n.type } : {}),
+      ...(st ? { status: { status: st.status, ...(st.fill ? { fill: st.fill } : {}), ...(st.reason ? { reason: st.reason } : {}) } } : {}),
+    }
   })
   return { ...(folders.length ? { folders } : {}), ...(boards.length ? { boards } : {}) }
 }

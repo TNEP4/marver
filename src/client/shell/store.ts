@@ -17,6 +17,8 @@ const DATA: {
   tree?: TreeItem[]
   /** slug → title of the published boards (0.16.1 bundles); folder titles ride on `tree` */
   titles?: Record<string, string>
+  /** slug → resolved type, and the status a publish row opted into (0.22 bundles; spec 20) */
+  meta?: Record<string, BoardMeta>
   /** publish.json v2: per-board artifact type + open/lock, and the reveal flags. */
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
   /** the generation of the glass textures this build shipped (publish-bakes.ts); absent = none */
@@ -139,20 +141,26 @@ export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
 import { buildTree, flatten, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
+import type { BoardType } from '../../shared/board-types.ts'
+import type { Phase, Status } from '../../shared/status.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
 export interface TreeBase { boards: Record<string, string>; folders: string | null }
-export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase; titles: Record<string, string> }
+export interface TreeSnapshot { tree: TreeItem[]; base: TreeBase; titles: Record<string, string>; meta: Record<string, BoardMeta> }
+/** What spec 20 adds to a board's row: its resolved type, and - for feature and project boards -
+ *  its status read from context/. Dev carries the evidence for the tooltip; a published bundle
+ *  carries only what its publish row opted into. */
+export interface BoardMeta { type?: BoardType; status?: { status: Status; fill?: Phase; reason?: string; evidence?: string[] } }
 
 /** The sidebar tree: root boards and folders in rank order, each folder's boards and
  *  sub-folders inside (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
  *  is pinned last by the callers. Throws on transport failure and on a malformed registry
  *  (the server's 422 message) - callers keep their last known tree. */
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
-  if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {} }
+  if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
   const [boards, reg] = await Promise.all([
-    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string }[]>,
+    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
       const j = await r.json() as { folders?: { name: string; order?: number; parent?: string; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
@@ -163,7 +171,12 @@ export async function fetchBoardTree(): Promise<TreeSnapshot> {
     tree: buildTree(boards, reg.folders ?? []),
     base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null },
     titles: Object.fromEntries(boards.flatMap((b) => (b.title ? [[b.name, b.title]] : []))),
+    meta: Object.fromEntries(boards.map((b) => [b.name, { ...(b.type && b.type !== 'plain' ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}) }])),
   }
+}
+/** A tree read's types and statuses, kept under the same latest-wins rule as its titles. */
+export function rememberMeta(meta: Record<string, BoardMeta>) {
+  if (JSON.stringify(useStore.getState().boardMeta) !== JSON.stringify(meta)) useStore.setState({ boardMeta: meta })
 }
 /** A tree read's board titles become the labels' - called by the reader once it knows the
  *  read is its latest (an older response must not overwrite a newer one's labels). Folder
@@ -179,6 +192,7 @@ export async function fetchBoardNames(): Promise<string[]> {
   if (DATA) return DATA.names
   const snap = await fetchBoardTree()
   rememberTitles(snap.titles)
+  rememberMeta(snap.meta)
   return [...flatten(snap.tree), 'all-scenes']
 }
 /** Does the switcher carry the auto `all-scenes` board? Always in dev; published only when it shipped. */
@@ -353,6 +367,8 @@ interface State {
   switchBoard(name: string): Promise<void>
   /** what the sidebar labels boards by: slug → title, off the last tree read */
   boardTitles: Record<string, string>
+  /** what the sidebar draws beside a board: its type and status (spec 20), off the last tree read */
+  boardMeta: Record<string, BoardMeta>
   /** retitle a board - what humans see ('' = back to the Title-Cased slug). The file never
    *  moves: its name is the board's identity (agents, publish.json, URLs, comment threads).
    *  `baseHash` = the file as last seen; a 409 (`stale`) means someone wrote it since. */
@@ -669,7 +685,7 @@ export const useStore = create<State>((set, get) => {
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
-    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {},
+    panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
     async boot() {
