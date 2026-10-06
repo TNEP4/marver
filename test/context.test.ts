@@ -241,6 +241,9 @@ describe('reading context/ off disk', () => {
       // a list behind a comment: the reader would hand `- build` to capability once the header goes
       ['---\ncapability: pay\nstage: # list follows\n# a comment\n  - build\n---\n', /not one word|cannot edit as one line/],
       ['---\nstage: # list follows\n# a comment\n  - build\ncapability: pay\n---\n', /not one word/],   // first field: the reader drops the orphaned list
+      ['---\ncapability: pay\nstage: |-\n  build\n---\n', /not one word/],                     // a block: \`pay build\` once the header goes
+      ['---\ncapability: pay\nstage: >\n  build\n---\n', /not one word/],
+      ['---\ncapability: pay\nstage: build\n  more\n---\n', /not one word/],                   // a plain scalar continued on an indented line
     ] as const) expect((planWithStage(raw, null) as { error: string }).error).toMatch(why)
   })
 

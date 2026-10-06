@@ -67,7 +67,7 @@ function atomicWrite(file: string, content: string) {
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'EEXIST' && code !== 'EPERM') { rmSync(tmp, { force: true }); throw err }
     copyFileSync(tmp, file)
-    rmSync(tmp, { force: true })
+    try { rmSync(tmp, { force: true }) } catch { /* the file is written - a stray temp file is not a failed write */ }
   }
 }
 
@@ -277,6 +277,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
           }
           try { atomicWrite(w.file, w.next); done.push(w) } catch (err) {
+            if (current_(w.file) === w.next) done.push(w)   // it landed before the throw: undo it like the rest
             const stuck = undo()
             return json(res, 500, { error: stuck.length
               ? `could not write the status (${(err as Error).message}), and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand`
