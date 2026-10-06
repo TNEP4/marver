@@ -25,6 +25,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   To do, In progress (filling by phase: spec, lo-fi, hi-fi), Done, Done reported, Unknown - read from
   `context/`, or decided on the board: archived, paused, blocked with a reason. Done is never set by
   hand. The tooltip says what decided it; a change to the files reaches the sidebar without a reload.
+  An open status is an outline in its colour; a settled one is filled - Done green, Archived a box.
   `npx marver boards` and the manifest carry types and statuses too.
 - **Starting points.** `npx marver init --kind product|knowledge` gives a fresh canvas the typed
   folders every canvas shares: Start here, Features and Surfaces or Projects, Feedback, Context,
