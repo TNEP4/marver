@@ -203,6 +203,7 @@ export function Canvas() {
       const k = target / scale   // zoom about the viewport center
       inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
     }
+    canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
     canvasCtl.holdView = () => {
       heldView = null
       const el = wrap(), inst = ref.current

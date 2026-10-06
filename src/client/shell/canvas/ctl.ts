@@ -26,4 +26,7 @@ export const canvasCtl = {
   /** Call right BEFORE a layout change the human did not ask for (a content-driven reflow): the
    *  node they are looking at keeps its place on screen through it - scroll anchoring. */
   holdView() {},
+  /** Is the camera mid-flight (a fit, a zoom)? A content-driven reflow waits for it to land: a fit
+   *  aimed at the frames a link names must not land on where they were before the rows moved. */
+  cameraBusy(): boolean { return false },
 }

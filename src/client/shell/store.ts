@@ -578,7 +578,9 @@ export const useStore = create<State>((set, get) => {
       reflowCheck = null
       const s = get()
       if (s.board !== boardAt) return
-      if (s.gesture) { scheduleReflow(check ?? undefined); return }   // defer, never drop - retries after the drag
+      // defer, never drop: after the drag, and after a camera flight - a link's fit lands first, then
+      // the rows move around the frames it showed (holdView keeps them where the fit put them)
+      if (s.gesture || canvasCtl.cameraBusy()) { scheduleReflow(check ?? undefined); return }
       if (check && !check()) return
       // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
       if (composed(s)) { canvasCtl.holdView(); s.runTidy() }

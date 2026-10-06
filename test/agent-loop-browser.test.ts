@@ -44,6 +44,12 @@ export default () => <main style={{ minHeight: '100vh', background: '${bg}', col
     { key: 'f-cart', frame: 'shop/cart', x: 0, y: 0, w: 390, h: 844 },
     { key: 'f-pay', frame: 'shop/pay', x: 3000, y: 0, w: 390, h: 844 },
   ] }, null, 2) + '\n')
+  // a Doc above a frame, on a board that lays itself out: the Doc can grow and push the frame down
+  mkdirSync(join(root, 'design', 'scenes', 'docs'), { recursive: true })
+  writeFileSync(join(root, 'design', 'scenes', 'docs', 'tall.tsx'), docFrame(6))
+  writeFileSync(join(boards, 'stack.json'), JSON.stringify({ version: 1, name: 'stack', order: 4, auto: false, layout: { rows: [['docs'], ['shop']] }, nodes: [
+    { frame: 'docs/tall' }, { key: 's-cart', frame: 'shop/cart' },
+  ] }, null, 2) + '\n')
   writeFileSync(join(boards, 'empty.json'), JSON.stringify({ version: 1, name: 'empty', order: 3, auto: false, nodes: [] }, null, 2) + '\n')
   writeFileSync(join(boards, 'big.json'), JSON.stringify({ version: 1, name: 'big', order: 2, auto: false, nodes: [
     { key: 'b-far', frame: 'other/far', x: 0, y: 0, w: 390, h: 844 },
@@ -71,6 +77,12 @@ afterAll(async () => {
 })
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+function docFrame(paras: number) {
+  return `import { Doc, Md } from '@marver-design/marver/content'
+export const meta = { title: 'Tall', intent: 'spec' }
+export default () => <Doc><Md>{\`${Array.from({ length: paras }, (_, i) => `Paragraph ${i + 1}: the spec keeps going so the frame keeps growing.`).join('\n\n')}\`}</Md></Doc>
+`
+}
 const cli = (...args: string[]) => execFileSync(process.execPath, [CLI, ...args, '--root', root], { cwd: root, encoding: 'utf8' })
 async function open(b: Browser, hash: string, nodes = 2): Promise<string> {
   const s = await b.tab({ width: 1500, height: 950 })
@@ -128,6 +140,24 @@ describe('a link that lands on the work', () => {
     await wait(2500)               // long past any board load: whatever was going to land has landed
     expect(await browser.eval(s, VIEW)).toMatchObject({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'] })
   }, 30_000)
+
+  it('a link followed while a Doc above its frame is still growing lands on the frame - the rows move after the camera does', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/stack')
+    const docH = () => browser!.eval(s, `(() => { const n = [...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall')); return n ? n.offsetHeight : 0 })()`)
+    await browser.until(s, `(() => { const n = [...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall')); return n && n.offsetHeight > 200 })()`, 20_000)
+    await wait(1500)                                  // settled: measured, laid out
+    const before = await docH()
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'tall.tsx'), docFrame(400))   // the agent makes the doc far taller
+    // the instant the Doc's new height lands - its reflow still pending - follow a link to the frame below
+    await browser.until(s, `(() => { const n = [...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall')); return n && n.offsetHeight > ${before} + 2000 })()`, 20_000)
+    await browser.eval(s, `location.hash = '#/b/stack?f=shop/cart'`)
+    await wait(2500)                                  // the fit, the deferred reflow, and the hold have all run
+    const v = await browser.eval(s, `(() => { const n = document.querySelector('[data-node="s-cart"]'); const r = n.getBoundingClientRect(); return { sel: n.classList.contains('sel'), top: Math.round(r.top), bottom: Math.round(r.bottom), h: innerHeight } })()`)
+    expect(v.sel).toBe(true)
+    expect(v.top).toBeGreaterThanOrEqual(0)
+    expect(v.top).toBeLessThan(v.h)                   // on screen - not where it was before the rows moved
+  }, 60_000)
 
   it('marver link prints that link with the running port; work done prints it for what it cleared', () => {
     if (!browser) return
