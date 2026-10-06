@@ -48,6 +48,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   never edit one file at once.
 - A focus link (`#/f/<frame>`) opened on your dev canvas keeps its way back to the canvas (the grid
   button, or Esc). On a published canvas it is still a page of its own.
+- **A tab names its canvas.** A canvas tab reads "Start here - Acme Studio" - the board, then the
+  canvas, as the sidebar heads it - where every tab said "- Marver", so a row of canvas tabs now
+  says which project each one is. Published canvases too.
 
 ### Fixed
 

@@ -210,6 +210,11 @@ export const HAS_ALL_SCENES = !DATA || DATA.names.includes('all-scenes')
 /** Display name for a board: its title when one is set (subscribe to `boardTitles` to
  *  re-render on change), else the Title-Cased slug ('all-scenes' reads "All Scenes"). */
 export const boardLabel = (n: string) => labelOf(n, useStore.getState().boardTitles[n])
+/** The canvas's name, as the sidebar heads it: the project's (share.name, else the repo folder). */
+export const CANVAS_NAME = CONFIG.projectName ? humanize(CONFIG.projectName) : 'Marver'
+/** The browser tab: the board, then the canvas - "Start here - Acme Studio" - so a row of canvas tabs
+ *  says which project each one is (it said "- Marver" on all of them). */
+export const tabTitle = (board: string | null | undefined): string => (board ? `${boardLabel(board)} - ${CANVAS_NAME}` : CANVAS_NAME)
 /** Display name for a scene: the title in its brief's front matter, else the Title-Cased directory. */
 export const sceneLabel = (n: string) => labelOf(n, useStore.getState().manifest?.scenes.find((s) => s.name === n)?.title)
 

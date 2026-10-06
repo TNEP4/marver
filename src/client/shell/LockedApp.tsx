@@ -10,7 +10,7 @@
  * within what the lock allows.
  */
 import { Component, useEffect, useRef, type ReactNode } from 'react'
-import { useStore, boardLabel, landingMode } from './store.ts'
+import { useStore, landingMode, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
 import { bootHash, parseHash, writeHash } from './hash.ts'
 import { useComments } from './comments-store.ts'
@@ -108,7 +108,7 @@ export function App() {
   }, [board])
 
   const titles = useStore((s) => s.boardTitles)
-  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board, titles])
+  useEffect(() => { document.title = tabTitle(board) }, [board, titles])
 
   return (
     <div tabIndex={-1} className="sh-app dark">

@@ -94,6 +94,10 @@ describe('a link that lands on the work', () => {
     const v = await browser.until(s, `(() => { const v = ${VIEW}; return v.sel.join() === 'f-pay' && v.visible.join() === 'f-pay' && v })()`, 15_000)
     expect(v).toEqual({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'], visible: ['f-pay'] })
     expect(await browser.eval(s, `!!document.querySelector('.sh-play')`)).toBe(false)   // canvas mode, never focus
+    // the tab says the board, then the canvas - the name the sidebar heads it with, never "Marver"
+    const tab = await browser.eval(s, `({ title: document.title, name: document.querySelector('.sh-panel .name')?.textContent })`)
+    expect(tab.name).toBeTruthy()
+    expect(tab.title).toBe(`Flow - ${tab.name}`)
   })
 
   it('?s=<scene> selects every frame of the scene', async () => {

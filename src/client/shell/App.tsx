@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
@@ -457,7 +457,7 @@ export function App() {
   // page title follows the open board (and its title, when one is set)
   const board = useStore((s) => s.board)
   const titles = useStore((s) => s.boardTitles)
-  useEffect(() => { document.title = board ? `${boardLabel(board)} - Marver` : 'Marver' }, [board, titles])
+  useEffect(() => { document.title = tabTitle(board) }, [board, titles])
 
   // favicon follows the mode: blue pack in design mode, purple pack in interact.
   // The links are rebuilt (not toggled) so the set stays deterministic; the .ico is
@@ -802,7 +802,7 @@ export function App() {
                 <ParallelogramDuoIcon size={21} className="mark" />
               </a>
             </Tip>
-            <span className="name" title={CONFIG.projectName || 'Marver'}>{CONFIG.projectName ? humanize(CONFIG.projectName) : 'Marver'}</span>
+            <span className="name" title={CONFIG.projectName || 'Marver'}>{CANVAS_NAME}</span>
             <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={togglePanel} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">
