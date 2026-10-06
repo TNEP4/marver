@@ -72,15 +72,17 @@ function atomicWrite(file: string, content: string) {
   }
 }
 
-/** A replacement that is whole or not at all: a temp file renamed over the destination, never the copy
- *  fallback - a copy can fail part way, or not at all, and nothing tells which. For the status write,
- *  which writes several files and must be able to say exactly what it changed. A rename that fails
- *  leaves the destination as it was and throws. */
-function renameWrite(file: string, content: string) {
+/** A replacement that is whole or not at all, in two steps: `stageWrite` puts the new content in a temp
+ *  file beside the destination; `rename` swaps it in - one syscall, so a caller can look at the
+ *  destination right before it and nothing but that rename stands between the look and the write.
+ *  Never the copy fallback: a copy can fail part way, or not at all, and nothing tells which. For the
+ *  status write, which writes several files and must say exactly what it changed. */
+function stageWrite(file: string, content: string): string {
   const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
   writeFileSync(tmp, content, { flag: 'wx' })
-  try { renameSync(tmp, file) } catch (err) { try { rmSync(tmp, { force: true }) } catch { /* stray temp */ } throw err }
+  return tmp
 }
+const discard = (tmp: string) => { try { rmSync(tmp, { force: true }) } catch { /* a stray temp file */ } }
 
 /** Containment beyond string prefixes: the realpath of the parent dir must stay inside base. */
 function contained(target: string, base: string): boolean {
@@ -272,24 +274,35 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const done: typeof writes = []
         // every file left holding this request's change is named: one that could not be written back,
         // and one edited since it was written - that edit is kept, and so is the change under it
+        // each replacement: the temp file first, then the look at the destination, then the rename -
+        // so only a read and one rename stand between "it still holds what we expect" and the swap
         const undo = (): string[] => {
           const stuck: string[] = []
           for (const w of done.reverse()) {
             const label = w.plan ?? `design/boards/${name}.json`
-            if (current_(w.file) !== w.next) { stuck.push(`${label} (edited since - kept)`); continue }
-            try { renameWrite(w.file, w.raw) } catch { stuck.push(label) }
+            let tmp: string
+            try { tmp = stageWrite(w.file, w.raw) } catch { stuck.push(label); continue }
+            if (current_(w.file) !== w.next) { discard(tmp); stuck.push(`${label} (edited since - kept)`); continue }
+            try { renameSync(tmp, w.file) } catch { discard(tmp); stuck.push(label) }
           }
           return stuck
         }
         for (const w of writes) {
           if (w.next === w.raw) continue
-          const now = current_(w.file)
-          if (now !== w.raw) {
-            const stuck = undo()
-            if (stuck.length) return json(res, 500, { error: `${w.plan ?? `board "${name}"`} changed on disk mid-write, and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand` })
-            return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
-          }
-          try { renameWrite(w.file, w.next); done.push(w) } catch (err) {
+          let tmp: string | null = null
+          try {
+            tmp = stageWrite(w.file, w.next)
+            const now = current_(w.file)
+            if (now !== w.raw) {
+              discard(tmp)
+              const stuck = undo()
+              if (stuck.length) return json(res, 500, { error: `${w.plan ?? `board "${name}"`} changed on disk mid-write, and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand` })
+              return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
+            }
+            renameSync(tmp, w.file)
+            done.push(w)
+          } catch (err) {
+            if (tmp) discard(tmp)
             // a failed rename leaves the destination as it was - any other version there is someone
             // else's write, never overwritten, named below
             if (current_(w.file) === w.next) done.push(w)
