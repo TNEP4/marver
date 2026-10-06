@@ -239,7 +239,8 @@ describe('reading context/ off disk', () => {
       ['---\nstage: [build]\n---\n', /not one word/],
       ['---\nstage: build\nstage: design\n---\n', /twice/],
       // a list behind a comment: the reader would hand `- build` to capability once the header goes
-      ['---\ncapability: pay\nstage: # list follows\n# a comment\n  - build\n---\n', /cannot edit as one line/],
+      ['---\ncapability: pay\nstage: # list follows\n# a comment\n  - build\n---\n', /not one word|cannot edit as one line/],
+      ['---\nstage: # list follows\n# a comment\n  - build\ncapability: pay\n---\n', /not one word/],   // first field: the reader drops the orphaned list
     ] as const) expect((planWithStage(raw, null) as { error: string }).error).toMatch(why)
   })
 
@@ -387,6 +388,11 @@ describe('the dev API (spec 20)', () => {
     expect(r.status).toBe(200)
     expect(read('context/plans/v2.md')).not.toMatch(/stage/)
     expect((await drive('GET', 'boards')).json.find((b: any) => b.name === 'pay').status.status).toBe('in-progress')
+    // a plan naming the capability twice is one file, written once
+    put('context/plans/twice.md', '---\nstate: proposed\ncapabilities: [payments, payments]\ncapability: payments\n---\n')
+    r = await drive('POST', 'boards/status', { name: 'pay', status: 'building' })
+    expect(r.status).toBe(200)
+    expect(read('context/plans/twice.md').match(/stage: build/g)).toHaveLength(1)
   })
 
   it('POST boards/status: a decision into the file, every other field kept; blocked says why; null clears both', async () => {

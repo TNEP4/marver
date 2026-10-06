@@ -214,6 +214,7 @@ export function planWithStage(raw: string, stage: 'build' | null): { text: strin
   // proof by the reader: the edited plan must parse to the same fields, the stage alone changed - a
   // stage written as a list across comments, say, would hand its items to the field before it
   const before = frontMatter(raw).data ?? {}, after = frontMatter(text).data ?? {}
+  if ('stage' in before && typeof before.stage !== 'string') return { error: 'has a `stage` that is not one word - write it as `stage: build`' }
   const rest = (d: Record<string, unknown>) => JSON.stringify(Object.entries(d).filter(([k]) => k !== 'stage').sort(([a], [b]) => a.localeCompare(b)))
   if (rest(before) !== rest(after) || (stage ? after.stage !== stage : 'stage' in after)) return { error: 'has a `stage` this cannot edit as one line - write it as `stage: build`' }
   return { text }

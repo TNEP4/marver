@@ -232,7 +232,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // the evidence is the plan: Building writes its `stage: build`, In progress takes it away - on
           // every open plan naming the capability, so they never disagree. The board's own decision gives
           // way (a board picked Building is no longer paused), as with any status picked.
-          for (const p of plans) {
+          // one plan naming the capability twice (`capabilities: [pay, pay]`) is still one file to write
+          for (const p of plans.filter((x, i) => plans.findIndex((y) => y.where === x.where) === i)) {
             const file = join(root, p.where)
             if (!notSymlink(file)) return json(res, 400, { error: `refusing to write a symlinked plan (${p.where})` })
             const raw = readFileSync(file, 'utf8')
@@ -256,11 +257,14 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // put back is named, never reported as unchanged.
         const current_ = (f: string) => { try { return readFileSync(f, 'utf8') } catch { return null } }
         const done: typeof writes = []
+        // every file left holding this request's change is named: one that could not be written back,
+        // and one edited since it was written - that edit is kept, and so is the change under it
         const undo = (): string[] => {
           const stuck: string[] = []
           for (const w of done.reverse()) {
-            if (current_(w.file) !== w.next) continue
-            try { atomicWrite(w.file, w.raw) } catch { stuck.push(w.plan ?? `design/boards/${name}.json`) }
+            const label = w.plan ?? `design/boards/${name}.json`
+            if (current_(w.file) !== w.next) { stuck.push(`${label} (edited since - kept)`); continue }
+            try { atomicWrite(w.file, w.raw) } catch { stuck.push(label) }
           }
           return stuck
         }
@@ -269,13 +273,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const now = current_(w.file)
           if (now !== w.raw) {
             const stuck = undo()
-            if (stuck.length) return json(res, 500, { error: `${w.plan ?? `board "${name}"`} changed on disk mid-write, and ${stuck.join(', ')} could not be put back - check ${stuck.length === 1 ? 'it' : 'them'} by hand` })
+            if (stuck.length) return json(res, 500, { error: `${w.plan ?? `board "${name}"`} changed on disk mid-write, and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand` })
             return json(res, 409, { error: `${w.plan ?? `board "${name}"`} changed on disk - try again`, ...(w.plan || now === null ? {} : { sha256: hash(now) }) })
           }
           try { atomicWrite(w.file, w.next); done.push(w) } catch (err) {
             const stuck = undo()
             return json(res, 500, { error: stuck.length
-              ? `could not write the status (${(err as Error).message}), and ${stuck.join(', ')} could not be put back - check ${stuck.length === 1 ? 'it' : 'them'} by hand`
+              ? `could not write the status (${(err as Error).message}), and ${stuck.join(', ')} still ${stuck.length === 1 ? 'holds' : 'hold'} this change - check by hand`
               : `could not write the status (${(err as Error).message}) - nothing changed` })
           }
         }
