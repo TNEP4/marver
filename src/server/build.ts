@@ -29,6 +29,7 @@ import { buildTree, flatten, isBoardName, type FolderRow, type TreeItem } from '
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
+import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -511,9 +512,15 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     b.type || b.status ? [[b.name, { ...(b.type ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}) }]] : []))
   // the textures' generation is minted BEFORE the bundle so the shell can name the index this build shipped
   const bakeGen = textures ? Date.now() : undefined
+  // content-frame heights (sizes.ts), published frames only: the published canvas opens at its
+  // final geometry too - it never measures into a file, so this is the only one it gets
+  const pubIds = new Set(frames.map((f) => f.id))
+  const sizes = Object.fromEntries(Object.entries(keptSizes(readSizes(root), autoWidthOf(manifest.frames, config.viewports), measuringFrames(root, manifest.frames)))
+    .filter(([k]) => pubIds.has(k.slice(0, k.lastIndexOf('@')))))
   const data = {
     bakes: bakeGen,
     manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}), ...(Object.keys(meta).length ? { meta } : {}),
+    ...(Object.keys(sizes).length ? { sizes } : {}),
     // a published status is a snapshot: the tooltip says when it was read
     ...(Object.values(meta).some((m) => (m as { status?: unknown }).status) ? { statusAsOf: new Date().toISOString() } : {}),
     default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],

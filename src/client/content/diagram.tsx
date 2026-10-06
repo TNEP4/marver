@@ -11,6 +11,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FONT_STACK, THEME_CSS, themeVars } from './palette.ts'
 
 let uidSeq = 0
+/** Renders in flight - mermaid loads and lays out asynchronously, so a Doc is not done growing
+ *  until this is 0 (the Doc's settled measurement reads it; the frame's own innerHTML is set
+ *  before the count drops). */
+let diagramsBusy = 0
+export const diagramsPending = (): number => diagramsBusy
 
 const isDark = () =>
   document.documentElement.classList.contains('dark') || document.documentElement.dataset.theme === 'dark'
@@ -121,6 +126,7 @@ export function Diagram({ title, children }: { title?: string; children?: ReactN
     let renderSeq = 0
     const render = async () => {
       const mySeq = ++seq
+      diagramsBusy++
       try {
         // the zero-external-request boundary must hold BEFORE render: mermaid's image
         // shapes fetch their URL during render(), so post-render SVG sanitizing alone
@@ -145,7 +151,7 @@ export function Diagram({ title, children }: { title?: string; children?: ReactN
         setError(null)
       } catch (e) {
         if (live && mySeq === seq) setError(String((e as Error)?.message ?? e))
-      }
+      } finally { diagramsBusy-- }
     }
     render()
     // the bridge mutates <html data-theme>/.dark with no React event - observe and re-render

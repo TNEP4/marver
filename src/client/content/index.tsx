@@ -11,13 +11,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useInSlide } from './slide.tsx'
 import { CONTENT_WIDTH } from '../const.ts'
 import { assetUrl, renderMarkdown, sanitizeMarkdownHtml, FAMILIES } from './md.ts'
-import { lodSupported, registerLodImage } from './img-lod.ts'
+import { LOD_SETTLED, lodSupported, registerLodImage } from './img-lod.ts'
 
 // D3: family color classes for inline Md (`:blue[...]`), theme-aware (frames carry .dark + [data-theme])
 const FAMILY_CSS = Object.entries(FAMILIES).map(([f, c]) =>
   `.mv-md .mv-c-${f}{color:${c.light}}.dark .mv-md .mv-c-${f},[data-theme="dark"] .mv-md .mv-c-${f}{color:${c.dark}}`).join('\n')
 
-import { Diagram as DiagramRoot } from './diagram.tsx'
+import { Diagram as DiagramRoot, diagramsPending } from './diagram.tsx'
 export function Diagram(props: Parameters<typeof DiagramRoot>[0]) { ensureStyles(); return <DiagramRoot {...props} /> }
 import { Slide as SlideRoot } from './slide.tsx'
 import { Chart as ChartRoot } from './chart.tsx'
@@ -34,6 +34,23 @@ const UNIT = 16   // one gap unit, px - plain adjacency on boards is one gutter;
 
 /* ---------------------------------- Doc ---------------------------------- */
 
+/** How long the first measurement waits for the doc to finish growing before it reports anyway. */
+const SETTLE_CAP = 2000
+/** After the cap, a provisional doc keeps checking (slower) for this long, to report once it IS done. */
+const SETTLE_TAIL = 60_000
+
+/** Is anything that still changes this doc's height in flight? Fonts loading, a diagram rendering,
+ *  an image not decoded yet (an LOD canvas pins its aspect on its first decode - img-lod.ts - and
+ *  an <img> with no size yet is 0 tall until it loads; a lazy one off-screen may not load at all).
+ *  A video poster sits in a fixed-ratio box: it never changes the height. */
+export function heightPending(el: HTMLElement, doc: Document = document): boolean {
+  if (doc.fonts?.status === 'loading') return true
+  if (diagramsPending() > 0) return true
+  for (const c of el.querySelectorAll<HTMLCanvasElement>('canvas.mv-img-el')) if (!c.style.aspectRatio && c.dataset.mvLod !== 'failed') return true
+  for (const img of el.querySelectorAll('img')) if (!img.complete && !img.closest('.mv-video')) return true
+  return false
+}
+
 export function Doc({ layout = 'document', children }: { layout?: 'document' | 'wide'; children?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -41,8 +58,18 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     const el = ref.current
     if (!el || window.parent === window) return
     let t: ReturnType<typeof setTimeout> | undefined
+    let poll: ReturnType<typeof setTimeout> | undefined
+    let reported = false            // the first measurement went out - the observer may report from here
+    let lastSettled = false
+    let tailFrom = 0
     const params = new URLSearchParams(location.search)
+    const height = () => Math.ceil(el.getBoundingClientRect().height)
     const post = () => {
+      reported = true
+      lastSettled = !heightPending(el)
+      // ANY provisional report - the first, or a later one (an edit that brought a loading image) -
+      // is followed by a settled one once the doc is done, even when finishing changes no geometry
+      if (!lastSettled && poll === undefined) { tailFrom = performance.now(); poll = setTimeout(check, 500) }
       window.parent.postMessage({
         type: 'sh:measure',
         // identity guards: board files may reuse node keys (frame id must match), and
@@ -52,15 +79,51 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
         gen: params.get('r') ?? '',
         ownWidth: CONTENT_WIDTH[layout] ?? CONTENT_WIDTH.document,
         measuredWidth: window.innerWidth,          // the width this height is TRUE at (r3 #1)
-        height: Math.ceil(el.getBoundingClientRect().height),
+        height: height(),
+        // settled = the doc is done growing: the shell commits it as THE height (and the dev shell
+        // keeps it for the next load - sizes.ts). Provisional = it may still grow (an image to come)
+        settled: lastSettled,
       }, '*')
+    }
+    // The FIRST report waits until the doc is done: fonts, diagrams and images, and the height
+    // still the same two checks running - otherwise a board that already knows this frame's
+    // height (the committed cache) would see it shrink to the half-loaded doc and grow back.
+    // Capped: a slow or broken image never holds the frame hostage - it reports provisional,
+    // then once more, settled, when the image lands (or the observer sees it).
+    const start = performance.now()
+    let prevH = -1, quiet = 0
+    function check() {
+      poll = undefined
+      if (!reported) {
+        const h = height()
+        quiet = !heightPending(el!) && h === prevH ? quiet + 1 : 0
+        prevH = h
+        if (quiet >= 2 || performance.now() - start >= SETTLE_CAP) post()
+        else poll = setTimeout(check, 50)
+        return
+      }
+      if (lastSettled) return
+      if (!heightPending(el!)) { post(); return }
+      if (performance.now() - tailFrom < SETTLE_TAIL) poll = setTimeout(check, 500)
     }
     // debounced ~300ms after the last content change; the shell guards staleness
     // on its side (event.source must map to a mounted iframe; reflow is board-scoped)
-    const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(post, 300) })
+    const ro = new ResizeObserver(() => { if (!reported) return; clearTimeout(t); t = setTimeout(post, 300) })
     ro.observe(el)
-    post()
-    return () => { ro.disconnect(); clearTimeout(t) }
+    // an image landing or failing, a font finishing: check again now - the poll stops after its tail,
+    // and a size-given image that loads a minute later still owes the settled report
+    const onAsset = () => { if (reported && !lastSettled && poll === undefined) poll = setTimeout(check, 50) }
+    el.addEventListener('load', onAsset, true)
+    el.addEventListener('error', onAsset, true)
+    el.addEventListener(LOD_SETTLED, onAsset)    // a canvas image's first decode, landed or failed (img-lod.ts)
+    document.fonts?.addEventListener?.('loadingdone', onAsset)
+    check()
+    return () => {
+      ro.disconnect(); clearTimeout(t); clearTimeout(poll)
+      el.removeEventListener('load', onAsset, true); el.removeEventListener('error', onAsset, true)
+      el.removeEventListener(LOD_SETTLED, onAsset)
+      document.fonts?.removeEventListener?.('loadingdone', onAsset)
+    }
   }, [layout])
   return <div ref={ref} className={`mv-doc mv-doc-${layout}`}>{children}</div>
 }

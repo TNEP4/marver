@@ -113,8 +113,44 @@ export function extractMeta(src: string): FrameMeta {
  *  <Chart> is still a screen (device height, no document measuring), never a spec. Returns
  *  the inferred intent + natural width, or null for UI frames. */
 const CONTENT_IMPORT = new RegExp(`from\\s+['"]${PKG}/content['"]`)
-const WIDE_DOC = /<Doc\b[^>]*\blayout\s*=\s*["']wide["']/
-export const contentWidthOf = (src: string): number => (WIDE_DOC.test(src) ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document)
+/** The JSX names a Doc renders under in this source: `Doc`, an alias (`import { Doc as Page }`),
+ *  a namespace's member (`import * as C` -> `C.Doc`). Read from the code only (codeOnly). */
+export function docTags(code: string): string[] {
+  const tags = ['Doc']
+  for (const m of code.matchAll(/\bDoc\s+as\s+([A-Za-z_$][\w$]*)/g)) tags.push(m[1])
+  for (const m of code.matchAll(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from/g)) tags.push(`${m[1]}.Doc`)
+  return tags
+}
+export const tagPattern = (tag: string): string => tag.replace(/[.$]/g, '\\$&')
+/** Does this source render a `<Doc>` - the one primitive that measures (content/index.tsx)? Lexical
+ *  on the code (comments and strings blanked), through an aliased or namespace import too. */
+export function rendersDoc(src: string): boolean {
+  const code = codeOnly(src)
+  return docTags(code).some((t) => new RegExp(`<${tagPattern(t)}[\\s>/]`).test(code))
+}
+/** The source of the nearest `_layout.tsx|jsx` around a frame that renders a Doc - the frame host
+ *  wraps a frame in every `_layout` from its directory up to `scenes/` or `components/` - or null.
+ *  `file` is the frame's path from the root; `memo` caches per directory across one scan. */
+export function layoutDocSource(root: string, file: string, memo: Map<string, string | null>): string | null {
+  const parts = file.split('/').slice(0, -1)
+  if (parts.includes('..')) return null
+  for (let i = parts.length; i >= 2; i--) {
+    const dir = parts.slice(0, i).join('/')
+    let found = memo.get(dir)
+    if (found === undefined) {
+      found = null
+      for (const ext of ['tsx', 'jsx']) {
+        try { const src = readFileSync(join(root, dir, `_layout.${ext}`), 'utf8'); if (rendersDoc(src)) { found = src; break } } catch { /* none here */ }
+      }
+      memo.set(dir, found)
+    }
+    if (found !== null) return found
+  }
+  return null
+}
+export const contentWidthOf = (src: string): number =>
+  docTags(codeOnly(src)).some((t) => new RegExp(`<${tagPattern(t)}\\b[^>]*\\blayout\\s*=\\s*["']wide["']`).test(src))
+    ? CONTENT_WIDTH.wide : CONTENT_WIDTH.document
 /** The source with comments, template literals and CODE-shaped strings blanked (a JSX
  *  expression string `{'<Diagram>'}`, an attribute value), so a tag name quoted in an example
  *  or a comment never counts as a rendered element. Prose is left alone: JSX text has
@@ -314,6 +350,7 @@ export const statusBoards = (root: string): string[] =>
 export function scanFrames(root: string, project?: ProjectInfo): Manifest {
   const design = join(root, 'design')
   const frames: FrameEntry[] = []
+  const layoutDocs = new Map<string, string | null>()
   for (const base of ['scenes', 'components']) {
     for (const abs of walk(join(design, base))) {
       const name = abs.split(sep).pop()!
@@ -345,7 +382,9 @@ export function scanFrames(root: string, project?: ProjectInfo): Manifest {
         // must always work
         if (content || meta.intent) {
           entry.intent = meta.intent ?? content!.intent   // declared purpose wins
-          entry.contentWidth = content?.width ?? contentWidthOf(src)
+          // a frame with no Doc of its own measures in the Doc of a _layout around it, at ITS width
+          const layout = rendersDoc(src) ? null : layoutDocSource(root, entry.file, layoutDocs)
+          entry.contentWidth = layout !== null ? contentWidthOf(layout) : content?.width ?? contentWidthOf(src)
         }
       }
       frames.push(entry)

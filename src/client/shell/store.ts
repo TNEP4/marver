@@ -3,6 +3,7 @@ import { ROUTE, slideSize } from '../const.ts'
 import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
 import { clearNoteHeights, noteHeight, noteReserve, notesCramped, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
+import { canvasCtl } from './canvas/ctl.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -25,6 +26,8 @@ const DATA: {
   policy?: { boards: Record<string, { type?: string; open?: string; lock?: boolean }>; reveal?: { structure?: boolean; source?: boolean }; lockedShell?: boolean }
   /** the generation of the glass textures this build shipped (publish-bakes.ts); absent = none */
   bakes?: number
+  /** content-frame heights, `scene/frame@width` -> px (design/boards/_sizes.json, published frames only) */
+  sizes?: Record<string, number>
 } | null = shData
 
 /** The published textures' generation, or 0: the static index this build shipped is at /__mv/bakes/<gen>/index.json. */
@@ -281,9 +284,99 @@ const manifestKey = (m: Manifest) => JSON.stringify(m.frames)   // any change co
 let scenesRev = 0                                                // bumps per sh:scenes, so a load that straddled one keeps the live labels
 let liveScenes: Manifest['scenes'] | null = null                 // the last sh:scenes payload - applied late when it beat the first manifest
 
-/** Latest measured content heights, keyed frameId@width. TRANSIENT by design:
- * auto sizes are never serialized - a reload remeasures. */
+/** Latest measured content heights, keyed frameId@width - this session's live truth. Board files
+ *  never carry auto sizes; the committed cache below does. */
 const measuredHeights = new Map<string, number>()
+
+/** Committed content heights (design/boards/_sizes.json - src/server/sizes.ts), keyed frameId@width:
+ *  a content frame's height BEFORE it measures, so a board opens at its final geometry instead of
+ *  growing from a guess and re-flowing row after row. Read at every board load in dev (the API: an
+ *  agent may have edited frames since), once from the bundle on a published canvas. A stale entry
+ *  is still the best first guess - the live measurement corrects it, and the dev shell writes the
+ *  correction back. */
+const savedHeights = new Map<string, number>()
+/** The frames that measure (render a Doc), as the dev server read their sources at the last load -
+ *  only theirs is a height to trust: a Doc turned bare Md keeps the size its board gives it, even
+ *  in a page that measured it as a Doc earlier. null = no such list (a published bundle ships only
+ *  measuring frames' heights). */
+let measuring: Set<string> | null = null
+let publishedLoaded = false
+async function loadSavedHeights(): Promise<void> {
+  if (DATA) {
+    if (publishedLoaded) return
+    publishedLoaded = true
+    for (const [k, v] of Object.entries(DATA.sizes ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
+    return
+  }
+  try {
+    const r = await fetch(`${ROUTE}/api/sizes`)
+    if (!r.ok) return
+    const body = (await r.json()) as { heights?: Record<string, unknown>; measuring?: unknown }
+    savedHeights.clear()
+    for (const [k, v] of Object.entries(body.heights ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
+    measuring = Array.isArray(body.measuring) ? new Set(body.measuring.filter((x): x is string => typeof x === 'string')) : null
+  } catch { /* no cache: placeholders, as before */ }
+}
+const measures = (frameId: string) => !measuring || measuring.has(frameId)
+
+// settled heights that differ from the committed ones, written back in batches (dev only). One
+// write in flight at a time; a height that changes while its write is in flight queues behind it,
+// so the LAST settled height is the one the file ends with
+const pendingHeights = new Map<string, number>()
+const inflightHeights = new Map<string, number>()
+let heightsTimer: ReturnType<typeof setTimeout> | undefined
+let flushing = false
+const persistHeight = (key: string, h: number) => {
+  if (DATA) return
+  if (!inflightHeights.has(key) && savedHeights.get(key) === h) { pendingHeights.delete(key); return }
+  pendingHeights.set(key, h)
+  if (!flushing) heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
+}
+async function flushHeights() {
+  heightsTimer = undefined
+  if (flushing || !pendingHeights.size) return
+  flushing = true
+  const batch = Object.fromEntries([...pendingHeights].slice(0, 500))
+  for (const [k, v] of Object.entries(batch)) { pendingHeights.delete(k); inflightHeights.set(k, v) }
+  let answered = false
+  try {
+    const r = await postOwner('sizes', { heights: batch })
+    if (r.ok) {
+      const accepted = new Set(((await r.json()) as { accepted?: string[] }).accepted ?? [])
+      for (const k of Object.keys(batch)) if (accepted.has(k)) savedHeights.set(k, batch[k])
+      answered = true
+    }
+  } catch { /* lost: below */ }
+  // no answer = the write may or may not have landed: what the file holds is unknown, so nothing is
+  // deduplicated against it - a correction queued meanwhile still goes, the next report still writes
+  if (!answered) for (const k of Object.keys(batch)) savedHeights.delete(k)
+  for (const k of Object.keys(batch)) inflightHeights.delete(k)
+  // a height that settled while the write was in flight: still owed only if it differs from what landed
+  for (const [k, v] of pendingHeights) if (savedHeights.get(k) === v) pendingHeights.delete(k)
+  flushing = false
+  if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
+}
+
+const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`))
+
+/** The Doc sizes a layout was computed around: each auto content node whose height is known, by key,
+ *  as "WxH" (one line per node in the board file). A composed board saves it with its positions
+ *  (`laidOut`); a load where a node it names now has another size knows its rows were laid out
+ *  around other sizes - grown, shrunk, or gone from document to wide. A drag changes no size, and a
+ *  node added or removed is no size change of the others. */
+export type LaidOut = Record<string, string>
+const sizeOf = (n: Node) => `${Math.round(n.w)}x${Math.round(n.h)}`
+function sizeRecord(nodes: readonly Node[]): LaidOut {
+  const out: LaidOut = {}
+  for (const n of nodes) if (n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))) out[n.key] = sizeOf(n)
+  return out
+}
+const readLaidOut = (v: unknown): LaidOut | null => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const out: LaidOut = {}
+  for (const [k, wh] of Object.entries(v)) if (typeof wh === 'string' && /^\d+x\d+$/.test(wh)) out[k] = wh
+  return out
+}
 
 function defaultSize(frame: FrameEntry) {
   // the precedence chain (spec 09 slice 1): slide stage → authored
@@ -291,12 +384,15 @@ function defaultSize(frame: FrameEntry) {
   // a slide's stage is its declared viewport, else 1280×720
   const sl = slideSize(frame, CONFIG.viewports)
   if (sl) return { w: sl.width, h: sl.height }
-  // content frames: own width from Doc layout; height from the latest
-  // measurement at that width, or a placeholder until sh:measure lands.
-  // meta.viewport, when declared, wins - the existing precedence.
-  if (frame.contentWidth && !frame.viewport) {
-    const w = frame.contentWidth
-    return { w, h: measuredHeights.get(`${frame.id}@${w}`) ?? Math.round(w * 0.75) }
+  // content frames: own width from Doc layout (meta.viewport, when declared, wins - the existing
+  // precedence); height from this session's measurement at that width, else the committed one,
+  // else a placeholder until sh:measure lands
+  if (frame.contentWidth) {
+    const vp = CONFIG.viewports[frame.viewport ?? '']
+    const w = vp?.width ?? frame.contentWidth
+    const key = `${frame.id}@${w}`
+    const known = measures(frame.id) ? measuredHeights.get(key) ?? savedHeights.get(key) : undefined
+    return { w, h: known ?? vp?.height ?? Math.round(w * 0.75) }
   }
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
   return { w: vp.width, h: vp.height }
@@ -334,6 +430,8 @@ interface State {
   layout: BoardLayout | null          // lane-flow recipe, parsed; wins over sceneRows when both exist
   layoutRaw: unknown                  // the author's layout VERBATIM - save round-trips this, never the parse
   baseLayout: Record<string, { x: number; y: number; w?: number; h?: number }> | null   // snapshot taken on entering a device view; Default restores it exactly (auto content entries carry positions only - their sizes are measured)
+  laidOut: LaidOut | null            // a composed board's record of the Doc heights its positions were laid out around (sizeRecord)
+  baseLaidOut: LaidOut | null        // the free-form layout's laidOut, kept with baseLayout while a device view is up; Default restores both
   panelOpen: boolean
   scale: number
   toasts: Toast[]
@@ -358,7 +456,9 @@ interface State {
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
   resizeNode(key: string, w: number, h: number): void
-  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number): void
+  /** `settled`: the Doc's fonts, images and diagrams are done (content/index.tsx). false = provisional
+   *  (an image still loading) - it may grow a frame, never shrink it under a known height. */
+  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number, settled?: boolean): void
   /** A node's sticky column was drawn (or grew, or went): its extent from the node's top, world px. */
   noteMeasured(key: string, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
@@ -460,12 +560,17 @@ export const useStore = create<State>((set, get) => {
   // The captured board name is the generation guard - a debounce surviving a board
   // switch fires into a name check and dies, never touching the new board.
   // `onlyIf` (a note asking for room) is re-judged when the timer fires - a drag or a restore
-  // in the meantime may have settled it - and never downgrades an unconditional reflow pending.
+  // in the meantime may have settled it - and never downgrades an unconditional reflow pending;
+  // two conditions pending are EITHER one (a later ask never drops an earlier one).
   let reflowTimer: ReturnType<typeof setTimeout> | undefined
   let reflowCheck: (() => boolean) | null = null
+  /** A board load (boot, switch) starts its own reflow story: whatever was pending - an
+   *  unconditional reflow from the board that was up - must never carry over and tidy this one. */
+  const cancelReflow = () => { clearTimeout(reflowTimer); reflowTimer = undefined; reflowCheck = null }
   const scheduleReflow = (onlyIf?: () => boolean) => {
     const boardAt = get().board
-    reflowCheck = reflowTimer !== undefined && reflowCheck === null ? null : (onlyIf ?? null)
+    const prev = reflowTimer !== undefined ? reflowCheck : undefined   // undefined: nothing pending
+    reflowCheck = prev === null || !onlyIf ? null : prev ? () => prev() || onlyIf() : onlyIf
     clearTimeout(reflowTimer)
     reflowTimer = setTimeout(() => {
       reflowTimer = undefined
@@ -475,7 +580,8 @@ export const useStore = create<State>((set, get) => {
       if (s.board !== boardAt) return
       if (s.gesture) { scheduleReflow(check ?? undefined); return }   // defer, never drop - retries after the drag
       if (check && !check()) return
-      if (composed(s)) s.runTidy()
+      // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
+      if (composed(s)) { canvasCtl.holdView(); s.runTidy() }
     }, 400)
   }
   /** Boards whose layout the shell owns: a recipe, scene rows, or the auto board. Room for a
@@ -485,6 +591,32 @@ export const useStore = create<State>((set, get) => {
   /** A note may have landed with no room (a frame note via the manifest, a scene note via
    *  sh:scenes, either merged late by boot/switch): a composed board re-applies its layout. */
   const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow(cramped) }
+  /** A composed board's saved positions were laid out around the heights of the session that saved
+   *  them. A committed height that changed since (the doc grew or shrank while another board was
+   *  open) opens at its new size over - or far above - the row below, and no measurement will re-flow
+   *  it: it already equals the committed one. So once the board is up, the recipe re-runs if the
+   *  known heights differ from the ones its positions were laid out around (`laidOut`). A frame the
+   *  human dragged, at heights that did not change, stays where they put it. */
+  const layoutStale = () => {
+    const { nodes, laidOut } = get()
+    const record = laidOut ?? {}
+    const known = (n: Node) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))
+    const has = (n: Node) => Object.prototype.hasOwnProperty.call(record, n.key)
+    // a node the layout recorded, at another size now
+    if (nodes.some((n) => known(n) && has(n) && sizeOf(n) !== record[n.key])) return true
+    // a node it never recorded (an agent's board, an older save, a Doc that had not measured yet):
+    // an overlap is the one thing a size change does that a hand never meant
+    const box = (n: Node) => ({ l: n.x, t: n.y, r: n.x + n.w, b: n.y + n.h + HEADER })
+    return nodes.some((a) => {
+      if (!known(a) || has(a)) return false
+      const A = box(a)
+      return nodes.some((b) => { if (b === a) return false; const B = box(b); return A.l < B.r - 1 && B.l < A.r - 1 && A.t < B.b - 1 && B.t < A.b - 1 })
+    })
+  }
+  const recheckLayout = () => {
+    const s = get()
+    if (composed(s) && s.nodes.some((n) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)))) scheduleReflow(layoutStale)
+  }
 
   /** Theme resolution ladder: user pin > the frame's declared meta.theme > viewTheme. */
   const resolveTheme = (frame?: FrameEntry, user?: string) => user ?? frame?.theme ?? get().viewTheme
@@ -534,12 +666,14 @@ export const useStore = create<State>((set, get) => {
     clearNoteHeights()                     // heights are per column drawn; a key shared by two board files carries none across
     try {
       let raw: any
+      const saved = loadSavedHeights()       // in parallel with the manifest; every size below reads it
       if (DATA) raw = DATA.manifest
       else {
         const mRes = await fetch('/design/manifest.json')
         if (!mRes.ok) return null
         raw = await mRes.json().catch(() => undefined)
       }
+      await saved
       if (raw === undefined || raw === null || typeof raw !== 'object') return null
       bumpManifestRev()                        // fresh manifest → fresh iframe URLs
       const manifest: Manifest = {
@@ -555,6 +689,8 @@ export const useStore = create<State>((set, get) => {
       let layout: BoardLayout | null = null
       let layoutRaw: unknown = undefined
       let baseLayout: State['baseLayout'] = null
+      let laidOut: LaidOut | null = null
+      let baseLaidOut: LaidOut | null = null
       let needTidy = false
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
       let loaded: { board: any; sha256: string } | 'fresh' | null
@@ -598,11 +734,16 @@ export const useStore = create<State>((set, get) => {
             const sizeMode = f?.contentWidth
               ? { sizeMode: (n.sizeMode === 'manual' || n.sizeMode === 'device' ? n.sizeMode : 'auto') as Node['sizeMode'] }
               : {}
+            // an AUTO content node whose height is KNOWN (measured, or committed - sizes.ts) opens at
+            // it: a w/h in the file is a guess (an agent wrote the node) or a pre-auto leftover the
+            // first measurement overrides anyway - opening at it only to jump is the swim. Unknown
+            // (a frame that never measures: no Doc) keeps the file's size, as before
+            const own = sizeMode.sizeMode === 'auto' && !!f && hasKnownHeight(f.id, d.w)
             return {
               key,
               frame: n.frame,
               x: typeof n.x === 'number' ? n.x : 0, y: typeof n.y === 'number' ? n.y : 0,
-              w: typeof n.w === 'number' ? n.w : d.w, h: typeof n.h === 'number' ? n.h : d.h,
+              w: !own && typeof n.w === 'number' ? n.w : d.w, h: !own && typeof n.h === 'number' ? n.h : d.h,
               ...(!f && typeof n.w !== 'number' && typeof n.h !== 'number' ? { sizeFallback: true } : {}),
               ...sizeMode,
               // pins persist as their own field (exact round-trip). Legacy boards stored a
@@ -632,6 +773,8 @@ export const useStore = create<State>((set, get) => {
         layout = parseLayout(board?.layout, layoutWarn)
         if (layout && sceneRows) layoutWarn('board has layout AND sceneRows - layout wins')
         if (board?.baseLayout && typeof board.baseLayout === 'object') baseLayout = board.baseLayout
+        laidOut = readLaidOut(board?.laidOut)
+        baseLaidOut = readLaidOut(board?.baseLaidOut)
       }
       // auto-managed goes both ways (friction log #15): an auto board gains new frames
       // AND sheds deleted ones. Tombstone cards are a curated-board concept.
@@ -698,6 +841,7 @@ export const useStore = create<State>((set, get) => {
       if ((!boardHash || needTidy || cramped) && nodes.length) {
         const placedAll = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn)
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
+        laidOut = sizeRecord(nodes)
       }
       // dirty matches disk by construction - except when load-time pruning changed the
       // node set (or a cramped note re-ran the recipe); callers see dirty:true and
@@ -707,13 +851,13 @@ export const useStore = create<State>((set, get) => {
       if (layout && boardHash && !needTidy && !cramped && nodes.length) {
         tidy(tidyInput(nodes, manifest), layout, layoutWarn)
       }
-      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, selection: [], dirty: prunedAtLoad || cramped }
+      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }
     } catch { return null }
   }
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null,
+    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
@@ -728,10 +872,12 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
+      cancelReflow()
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
       roomForNotes()                          // whichever way the notes arrived, they get their room
+      recheckLayout()                         // and a height committed since the board was laid out, its rows
       return true
     },
 
@@ -763,10 +909,12 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
+      cancelReflow()
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })
       roomForNotes()
+      recheckLayout()
     },
 
     renameBoard(name, title, baseHash) {
@@ -1056,7 +1204,7 @@ export const useStore = create<State>((set, get) => {
      *  clamped. A height only commits when it was measured at the width being applied;
      *  auto sizes are transient - applying one never dirties the board (positions from
      *  the follow-up reflow do, exactly like a human resize). */
-    measureNode(key, frameId, ownWidth, measuredWidth, height) {
+    measureNode(key, frameId, ownWidth, measuredWidth, height, settled) {
       const s = get()
       const node = s.nodes.find((n) => n.key === key)
       // Only an explicit DEVICE viewport locks a content frame's height. 'auto' and 'manual' both
@@ -1069,13 +1217,22 @@ export const useStore = create<State>((set, get) => {
       const f = s.manifest?.frames.find((x) => x.id === node.frame)
       if (!f?.contentWidth) return                        // not a content frame - spoof-proofing
       if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return
+      // a Doc that reports IS one, whatever the last load's scan said (it arrived since): its heights
+      // count until the next load re-reads the sources
+      measuring?.add(f.id)
       // Generous cap: a reference doc with many screenshots is legitimately very tall and must fit in
       // FULL (this was 2.5x a viewport ~= 2700px, which clipped image-heavy docs). Still bounded so a
       // broken measurement can't mint an infinite frame.
       const maxH = 40000
       const H = Math.min(maxH, Math.max(80, Math.round(height)))
       const curW = Math.round(node.w)
-      measuredHeights.set(`${node.frame}@${Math.round(measuredWidth)}`, H)
+      const mKey = `${node.frame}@${Math.round(measuredWidth)}`
+      // a PROVISIONAL height (an image off-screen still lazy-loading) may grow a frame but never
+      // shrink it under a height already known for this width: that one is what the finished doc
+      // measures, and shrinking now would only grow back when the image lands - the swim again
+      const known = measuredHeights.get(mKey) ?? savedHeights.get(mKey)
+      if (settled === false && known !== undefined && H < known) return
+      measuredHeights.set(mKey, H)
       // AUTO owns the width too - adopt the Doc's declared/own width. MANUAL keeps the human's width
       // and only fits the height.
       if (node.sizeMode !== 'manual') {
@@ -1091,6 +1248,9 @@ export const useStore = create<State>((set, get) => {
         }
       }
       if (Math.round(measuredWidth) !== curW) return      // height only true at the width it was measured at
+      // a settled height at the frame's OWN width is the one the next load should open at (sizes.ts);
+      // a human-owned width is the board file's business (manual sizes save there)
+      if (settled === true && node.sizeMode !== 'manual') persistHeight(mKey, H)
       if (Math.round(node.h) === H) return
       set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) }))
       scheduleReflow()
@@ -1127,10 +1287,15 @@ export const useStore = create<State>((set, get) => {
           const d = defaultSize(f)                   // frames added mid-device-view get their default
           return { ...n, w: d.w, h: d.h }
         })
-        return { deviceView: name, dirty: true, baseLayout, nodes }
+        // the snapshot's positions were laid out around the free-form heights: its laidOut goes and
+        // comes back with it (null = not known - the next load falls back to the overlap check)
+        const laid = name
+          ? { baseLaidOut: s.deviceView === null ? s.laidOut : s.baseLaidOut }
+          : s.baseLayout ? { laidOut: s.baseLaidOut, baseLaidOut: null } : { baseLaidOut: null }
+        return { deviceView: name, dirty: true, baseLayout, nodes, ...laid }
       })
       if (name) get().runTidy()                      // restore must NOT tidy - it would destroy positions
-      else { scheduleSave(); roomForNotes() }         // ...unless a note grew meanwhile and the restored rows stand under it
+      else { scheduleSave(); roomForNotes(); recheckLayout() }   // ...unless a note grew meanwhile, or a Doc changed size, under the restored rows
     },
     bumpRev(key) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, rev: (n.rev ?? 0) + 1 } : n)) })) },
     setThemeOn(key, theme) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, themeOn: theme } : n)) })) },
@@ -1344,6 +1509,7 @@ export const useStore = create<State>((set, get) => {
           const p = placed.find((x) => x.key === n.key)
           return p ? { ...n, x: p.x, y: p.y } : n
         }),
+        laidOut: sizeRecord(nodes),
         dirty: true,
       }))
       scheduleSave()
@@ -1439,6 +1605,7 @@ export const useStore = create<State>((set, get) => {
           ...(deviceView ? { deviceView } : {}),
           ...(get().sceneRows?.length ? { sceneRows: get().sceneRows } : {}),
           ...(get().layoutRaw !== undefined ? { layout: get().layoutRaw } : {}),
+          ...(get().laidOut && Object.keys(get().laidOut!).length && composed(get()) ? { laidOut: get().laidOut } : {}),
           // baseLayout entries for auto content nodes keep POSITIONS only - their
           // measured dimensions are transient and never reach the file
           ...(baseLayout ? {
@@ -1446,6 +1613,7 @@ export const useStore = create<State>((set, get) => {
               const n = nodes.find((x) => x.key === k)
               return n?.sizeMode === 'auto' ? [k, { x: b.x, y: b.y }] : [k, b]
             })),
+            ...(get().baseLaidOut ? { baseLaidOut: get().baseLaidOut } : {}),
           } : {}),
           // only PINNED themes persist - inherited values follow viewTheme at load time.
           // Content frames in AUTO save no dimensions: measured sizes are
