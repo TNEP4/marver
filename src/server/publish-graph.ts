@@ -9,7 +9,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, normalize, relative, sep } from 'node:path'
 import { scanFrames } from './manifest.ts'
 
-const IMPORT = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|require\(\s*['"]([^'"]+)['"]\s*\)|['"]((?:\.{1,2}\/)+[^'"\s]+\.[a-z0-9]{1,5})(?:\?[a-z]+)?['"]/g
+const IMPORT = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|require\(\s*['"]([^'"]+)['"]\s*\)|['"]((?:\.{1,2}\/|\/)[^'"\s]+\.[a-z0-9]{1,5})(?:\?[a-z]+)?['"]/g
 const CODE = /\.(tsx?|jsx?|mjs|cjs|mdx?)$/
 
 export interface PublishGraph { files: Set<string>; unresolved: { from: string; spec: string }[] }
@@ -19,15 +19,22 @@ function publishedBoards(root: string): string[] {
   try { return Object.keys(JSON.parse(readFileSync(join(root, 'design', 'publish.json'), 'utf8')).boards ?? {}) } catch { return [] }
 }
 
-/** design/tsconfig.json's path aliases, resolved from design/ ("@/*" -> ["../src/*"]). */
+/** design/tsconfig.json's path aliases, resolved against the config that declares them - its own,
+ *  or one it `extends` (the host's tsconfig), as TypeScript and Vite would. */
 function aliases(root: string): { prefix: string; targets: string[] }[] {
-  try {
-    const raw = readFileSync(join(root, 'design', 'tsconfig.json'), 'utf8').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '')
-    const paths = JSON.parse(raw)?.compilerOptions?.paths ?? {}
-    return Object.entries(paths).flatMap(([k, v]) => (Array.isArray(v)
-      ? [{ prefix: k.replace(/\*$/, ''), targets: (v as string[]).map((t) => normalize(join('design', t.replace(/\*$/, '')))) }]
+  const read = (rel: string, depth: number): { prefix: string; targets: string[] }[] => {
+    if (depth > 4) return []
+    let cfg: { extends?: unknown; compilerOptions?: { paths?: Record<string, unknown>; baseUrl?: unknown } }
+    try { cfg = JSON.parse(readFileSync(join(root, rel), 'utf8').replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '').replace(/,(\s*[}\]])/g, '$1')) } catch { return [] }
+    const dir = dirname(rel)
+    const base = typeof cfg.compilerOptions?.baseUrl === 'string' ? normalize(join(dir, cfg.compilerOptions.baseUrl)) : dir
+    const own = Object.entries(cfg.compilerOptions?.paths ?? {}).flatMap(([k, v]) => (Array.isArray(v)
+      ? [{ prefix: k.replace(/\*$/, ''), targets: (v as string[]).map((t) => normalize(join(base, t.replace(/\*$/, '')))) }]
       : []))
-  } catch { return [] }
+    const parent = typeof cfg.extends === 'string' && cfg.extends.startsWith('.') ? read(normalize(join(dir, cfg.extends.endsWith('.json') ? cfg.extends : `${cfg.extends}.json`)), depth + 1) : []
+    return [...own, ...parent.filter((p) => !own.some((o) => o.prefix === p.prefix))]
+  }
+  return read('design/tsconfig.json', 0)
 }
 
 export function publishGraph(root: string): PublishGraph {
@@ -50,6 +57,14 @@ export function publishGraph(root: string): PublishGraph {
   }
   const frames = manifest.frames.filter((f) => !wanted || wanted.has(f.id)).map((f) => rel(join(root, f.file)))
   const queue = [...frames]
+  // what the published manifest carries beside each frame: its scene's brief (the description) and
+  // the sticky notes - the scene's and the frame's own
+  for (const f of frames) {
+    const dir = dirname(f)
+    for (const n of ['_brief.md', '_note.md']) if (isFile(`${dir}/${n}`)) queue.push(`${dir}/${n}`)
+    const note = f.replace(/\.(tsx|jsx|html)$/, '.note.md')
+    if (isFile(note)) queue.push(note)
+  }
 
   // each frame's layout chain, up to its base, and the providers every frame wraps in
   for (const f of frames) {
@@ -68,6 +83,7 @@ export function publishGraph(root: string): PublishGraph {
     const bare = spec.replace(/\?[a-z]+$/, '')
     let bases: string[] = []
     if (bare.startsWith('.')) bases = [normalize(join(dirname(from), bare))]
+    else if (bare.startsWith('/')) bases = [normalize(bare.slice(1))]          // root-relative, as Vite serves it
     else {
       const a = al.find((x) => bare.startsWith(x.prefix) && x.prefix)
       if (!a) return ''                                       // a package: not ours to follow
@@ -92,7 +108,7 @@ export function publishGraph(root: string): PublishGraph {
       if (!spec) continue
       const r = resolve(p, spec)
       if (r === '') continue
-      if (r === null) { if (spec.startsWith('.') || al.some((x) => x.prefix && spec.startsWith(x.prefix))) unresolved.push({ from: p, spec }); continue }
+      if (r === null) { if (spec.startsWith('.') || spec.startsWith('/') || al.some((x) => x.prefix && spec.startsWith(x.prefix))) unresolved.push({ from: p, spec }); continue }
       queue.push(r)
     }
   }

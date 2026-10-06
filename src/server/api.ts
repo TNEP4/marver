@@ -6,7 +6,7 @@ import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
-import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry } from './boards.ts'
+import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
 import { readType } from '../shared/board-types.ts'
 import { annotateBoards } from './board-status.ts'
 const BODY_LIMIT = 1_000_000
@@ -309,79 +309,88 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const b = base as { boards?: Record<string, unknown>; folders?: unknown } | null
         if (!b || typeof b !== 'object' || !b.boards || typeof b.boards !== 'object' || (b.folders !== null && typeof b.folders !== 'string')) return json(res, 400, { error: 'expected base hashes' })
         { const de = dirError(); if (de) return json(res, 400, { error: de }) }
-        // preflight the registry, and the LIST: a board that appeared since the client looked is
-        // stale too (a folder it names would outlive the client's "delete folder"; the replay
-        // sees it and moves it with the rest)
-        const reg = readRegistry(boardsDir)
-        if (reg.state === 'malformed') return json(res, 422, { error: reg.error })
-        // a shell that predates nesting reads a nested registry flat and would post it back flat,
-        // with a current hash: refuse it, and say what to do (never a 409 - it would only replay)
-        if (reg.state === 'ok' && reg.folders.some((f) => f.parent) && (parsed as { protocol?: unknown }).protocol !== TREE_PROTOCOL) {
-          return json(res, 422, { error: 'this tab predates folders in folders - reload the canvas, then try again' })
-        }
-        if (reg.sha256 !== b.folders) return json(res, 409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
-        const unseen = listBoardFiles(boardsDir).boards.map((x) => x.name).filter((n) => !(n in b.boards!))
-        if (unseen.length) return json(res, 409, { error: 'boards changed on disk', stale: unseen })
-        // preflight every named board: present, regular, well-formed, unchanged since the client looked
-        const plan: { name: string; path: string; obj: Record<string, unknown>; order: number; folder: string | null }[] = []
-        const stale: string[] = []
-        const consider = (name: string, order: number, folder: string | null): string | null => {
-          const p = boardPath(name)
-          if (!p || !isRegularFile(p)) { stale.push(name); return null }
-          const content = readFileSync(p, 'utf8')
-          if (b.boards![name] !== hash(content)) { stale.push(name); return null }
-          let obj: unknown
-          try { obj = JSON.parse(content) } catch { return `board "${name}" is not valid JSON - fix the file` }
-          if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return `board "${name}" is not a JSON object - fix the file`
-          plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
-          return null
-        }
-        // what the registry holds beyond what a tree write manages - a folder's type when the shell
-        // that posted predates types (a 0.21 tab), and any field a newer Marver wrote - survives the
-        // rewrite: a write never drops what it did not understand
-        const onDisk = new Map<string, Record<string, unknown>>()
-        try {
-          const raw = JSON.parse(readFileSync(join(boardsDir, FOLDERS_FILE), 'utf8')) as { folders?: unknown }
-          if (Array.isArray(raw.folders)) for (const r of raw.folders) if (r && typeof r === 'object' && typeof (r as { name?: unknown }).name === 'string') onDisk.set((r as { name: string }).name, r as Record<string, unknown>)
-        } catch { /* absent - nothing to keep */ }
-        const MANAGED = new Set(['name', 'order', 'parent', 'title', 'description', 'type'])
-        const folders: Record<string, unknown>[] = []
-        const walk = (list: WireItem[], parent: string | null): string | null => {
-          for (const [i, it] of list.entries()) {
-            if (typeof it === 'string') { const e = consider(it, i, parent); if (e) return e; continue }
-            const title = readTitle(it.title), description = readDescription(it.description)
-            const disk = onDisk.get(it.folder)
-            const type = readType(it.type) ?? readType(disk?.type)
-            const kept = disk ? Object.fromEntries(Object.entries(disk).filter(([k]) => !MANAGED.has(k))) : {}
-            folders.push({ ...kept, name: it.folder, order: i, ...(parent ? { parent } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}), ...(type ? { type } : {}) })
-            const e = walk(wireKids(it) as WireItem[], it.folder)
-            if (e) return e
+        const reply = (status: number, body: unknown) => ({ status, body })
+        // one writer at a time with `folders add` and `init --kind` (another process): never block the
+        // event loop on it - a held lock is a 409 the shell already answers by reloading and replaying
+        const locked = withRegistryLock(boardsDir, 0, () => {
+          // preflight the registry, and the LIST: a board that appeared since the client looked is
+          // stale too (a folder it names would outlive the client's "delete folder"; the replay
+          // sees it and moves it with the rest)
+          const reg = readRegistry(boardsDir)
+          if (reg.state === 'malformed') return reply(422, { error: reg.error })
+          // a shell that predates nesting reads a nested registry flat and would post it back flat,
+          // with a current hash: refuse it, and say what to do (never a 409 - it would only replay)
+          if (reg.state === 'ok' && reg.folders.some((f) => f.parent) && (parsed as { protocol?: unknown }).protocol !== TREE_PROTOCOL) {
+            return reply(422, { error: 'this tab predates folders in folders - reload the canvas, then try again' })
           }
-          return null
-        }
-        { const e = walk(tree as WireItem[], null); if (e) return json(res, 422, { error: e }) }
-        if (stale.length) return json(res, 409, { error: 'boards changed on disk', stale })
-        // write: only the files whose fields actually change (an untouched board keeps its hash)
-        const sha256: Record<string, string> = {}
-        for (const w of plan) {
-          const same = w.obj.order === w.order && (w.folder ? w.obj.folder === w.folder : w.obj.folder === undefined)
-          if (same) continue
-          w.obj.order = w.order
-          if (w.folder) w.obj.folder = w.folder; else delete w.obj.folder
-          const next = JSON.stringify(w.obj, null, 2) + '\n'
-          atomicWrite(w.path, next)
-          sha256[w.name] = hash(next)
-        }
-        mkdirSync(boardsDir, { recursive: true })
-        let foldersSha: string | null = null
-        if (folders.length) {
-          const version = folders.some((f) => f.parent) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
-          const next = JSON.stringify({ version, folders }, null, 2) + '\n'
-          atomicWrite(foldersPath, next)
-          foldersSha = hash(next)
-        }
-        else rmSync(foldersPath, { force: true })                 // no folders = no registry file
-        return json(res, 200, { ok: true, sha256: { boards: sha256, folders: foldersSha } })
+          if (reg.sha256 !== b.folders) return reply(409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
+          const unseen = listBoardFiles(boardsDir).boards.map((x) => x.name).filter((n) => !(n in b.boards!))
+          if (unseen.length) return reply(409, { error: 'boards changed on disk', stale: unseen })
+          // preflight every named board: present, regular, well-formed, unchanged since the client looked
+          const plan: { name: string; path: string; obj: Record<string, unknown>; order: number; folder: string | null }[] = []
+          const stale: string[] = []
+          const consider = (name: string, order: number, folder: string | null): string | null => {
+            const p = boardPath(name)
+            if (!p || !isRegularFile(p)) { stale.push(name); return null }
+            const content = readFileSync(p, 'utf8')
+            if (b.boards![name] !== hash(content)) { stale.push(name); return null }
+            let obj: unknown
+            try { obj = JSON.parse(content) } catch { return `board "${name}" is not valid JSON - fix the file` }
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return `board "${name}" is not a JSON object - fix the file`
+            plan.push({ name, path: p, obj: obj as Record<string, unknown>, order, folder })
+            return null
+          }
+          // what the registry holds beyond what a tree write manages - a folder's type when the shell
+          // that posted predates types (a 0.21 tab), and any field a newer Marver wrote - survives the
+          // rewrite: a write never drops what it did not understand
+          const onDisk = new Map<string, Record<string, unknown>>()
+          try {
+            const raw = JSON.parse(readFileSync(join(boardsDir, FOLDERS_FILE), 'utf8')) as { folders?: unknown }
+            if (Array.isArray(raw.folders)) for (const r of raw.folders) if (r && typeof r === 'object' && typeof (r as { name?: unknown }).name === 'string') onDisk.set((r as { name: string }).name, r as Record<string, unknown>)
+          } catch { /* absent - nothing to keep */ }
+          const MANAGED = new Set(['name', 'order', 'parent', 'title', 'description', 'type'])
+          const folders: Record<string, unknown>[] = []
+          const walk = (list: WireItem[], parent: string | null): string | null => {
+            for (const [i, it] of list.entries()) {
+              if (typeof it === 'string') { const e = consider(it, i, parent); if (e) return e; continue }
+              const title = readTitle(it.title), description = readDescription(it.description)
+              const disk = onDisk.get(it.folder)
+              const type = readType(it.type) ?? readType(disk?.type)
+              const kept = disk ? Object.fromEntries(Object.entries(disk).filter(([k]) => !MANAGED.has(k))) : {}
+              folders.push({ ...kept, name: it.folder, order: i, ...(parent ? { parent } : {}), ...(title ? { title } : {}), ...(description ? { description } : {}), ...(type ? { type } : {}) })
+              const e = walk(wireKids(it) as WireItem[], it.folder)
+              if (e) return e
+            }
+            return null
+          }
+          { const e = walk(tree as WireItem[], null); if (e) return reply(422, { error: e }) }
+          if (stale.length) return reply(409, { error: 'boards changed on disk', stale })
+          // write: only the files whose fields actually change (an untouched board keeps its hash)
+          const sha256: Record<string, string> = {}
+          for (const w of plan) {
+            const same = w.obj.order === w.order && (w.folder ? w.obj.folder === w.folder : w.obj.folder === undefined)
+            if (same) continue
+            w.obj.order = w.order
+            if (w.folder) w.obj.folder = w.folder; else delete w.obj.folder
+            const next = JSON.stringify(w.obj, null, 2) + '\n'
+            atomicWrite(w.path, next)
+            sha256[w.name] = hash(next)
+          }
+          mkdirSync(boardsDir, { recursive: true })
+          let foldersSha: string | null = null
+          if (folders.length) {
+            const version = folders.some((f) => f.parent) ? REGISTRY_VERSION_NESTED : REGISTRY_VERSION_FLAT
+            const next = JSON.stringify({ version, folders }, null, 2) + '\n'
+            atomicWrite(foldersPath, next)
+            foldersSha = hash(next)
+          }
+          else rmSync(foldersPath, { force: true })                 // no folders = no registry file
+
+          return reply(200, { ok: true, sha256: { boards: sha256, folders: foldersSha } })
+        })
+        if (!locked) return json(res, 409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
+        return json(res, locked.status, locked.body)
+
       }
 
       const boardMatch = /^boards\/([^/]+)$/.exec(path)

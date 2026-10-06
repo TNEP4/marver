@@ -221,10 +221,13 @@ cli
         console.log(`\n  next: tell your agent "Read ${ctx.conventionsPath(root)} and set up our context" - the setup interview, then a first draft from evidence.\n  in ci: npx ${NAME} context check  (with full history: fetch-depth: 0)\n`)
       } else if (action === 'check') {
         const { readFileSync } = await import('node:fs')
-        // explicit arguments win; in ci on a pull request the event supplies them
-        const explicit = opts.base !== undefined
-        const pr = explicit ? null : ctx.pullRequestFromEnv()
-        const r = ctx.contextCheck(root, pr ?? { base: opts.base, head: opts.head, body: opts.bodyFile ? readFileSync(opts.bodyFile, 'utf8') : '' })
+        // in ci on a pull request the event supplies base, head and body; each one given here wins
+        const fromEnv = ctx.pullRequestFromEnv() ?? {}
+        const given = { ...(opts.base !== undefined ? { base: String(opts.base) } : {}), ...(opts.head !== undefined ? { head: String(opts.head) } : {}), ...(opts.bodyFile !== undefined ? { body: readFileSync(opts.bodyFile, 'utf8') } : {}) }
+        const merged = { ...fromEnv, ...given }
+        // an unreadable event no longer matters once a base is given explicitly
+        if (given.base !== undefined) delete (merged as { prError?: string }).prError
+        const r = ctx.contextCheck(root, merged)
         if (opts.json) console.log(JSON.stringify(r, null, 2)); else ctx.printCheck(r)
         process.exit(r.exit)
       } else if (action === 'index') {

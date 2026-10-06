@@ -107,6 +107,26 @@ export function readRegistry(boardsDir: string): Registry {
   return { state: 'ok', folders: parsed, sha256: hash(content) }
 }
 
+/** The registry's write lock - one writer at a time across processes (the dev server's tree write,
+ *  `folders add`, `init --kind`), so a read-modify-write of `_folders.json` is atomic among Marver's
+ *  writers. A lock older than 10 s is a crashed writer's and is taken over. `wait` = how long to
+ *  try (the CLI waits; the dev server never blocks its event loop - it answers 409 instead). */
+export const REGISTRY_LOCK = '.folders.lock'
+export function withRegistryLock<T>(dir: string, wait: number, fn: () => T): T | null {
+  const lock = join(dir, REGISTRY_LOCK)
+  const t0 = Date.now()
+  for (;;) {
+    try { writeFileSync(lock, `${process.pid} ${Date.now()}\n`, { flag: 'wx' }); break }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      try { if (Date.now() - lstatSync(lock).mtimeMs > 10_000) { rmSync(lock, { force: true }); continue } } catch { continue }
+      if (Date.now() - t0 >= wait) return null
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+    }
+  }
+  try { return fn() } finally { rmSync(lock, { force: true }) }
+}
+
 /** Append typed folders to the registry (spec 20: `init --kind`, `folders add`). Never renames,
  *  moves or retypes a folder that exists - a name already registered is skipped and reported - and
  *  never drops a field of an existing entry it does not manage. New folders rank after everything
@@ -119,6 +139,12 @@ export function addFolders(root: string, folders: { name: string; title?: string
   if (de) throw new Error(de)
   mkdirSync(dir, { recursive: true })
   const file = join(dir, FOLDERS_FILE)
+  const done = withRegistryLock(dir, 5_000, () => appendFolders(dir, file, folders))
+  if (!done) throw new Error(`design/boards/${FOLDERS_FILE} is being written by another process - try again`)
+  return done
+}
+
+function appendFolders(dir: string, file: string, folders: { name: string; title?: string; type?: string }[]): { added: string[]; existing: string[] } {
   for (let attempt = 0; attempt < 5; attempt++) {
     const before = nodeExists(file) ? readFileSync(file, 'utf8') : null
     const reg = readRegistry(dir)

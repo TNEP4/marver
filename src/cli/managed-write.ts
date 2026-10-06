@@ -26,12 +26,21 @@ export function writeManaged(o: { base: string; rel: string; body: string; shown
   }
   const current = readFileSync(file, 'utf8')
   if (current === next) { rmSync(latest, { force: true }); return }
+  // replace the file only if it is still the version judged here - a write landing in between
+  // (an editor's save, another agent) is never overwritten; the next run judges it instead
+  const replace = (content: string): boolean => {
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(tmp, content, { flag: 'wx' })
+    if (readFileSync(file, 'utf8') !== current) { rmSync(tmp, { force: true }); return false }
+    renameSync(tmp, file)
+    return true
+  }
   if (current.startsWith(MANAGED_PREFIX)) {
     const recorded = current.slice(MANAGED_PREFIX.length).split(' ')[0]
     const nl = current.indexOf('\n')
     const currentBody = nl >= 0 ? current.slice(nl + 1) : ''
     if (nl >= 0 && hashBody(currentBody) === recorded) {
-      writeFileSync(file, next)                 // pristine -> take the update
+      if (!replace(next)) return                // pristine -> take the update (unless edited meanwhile)
       rmSync(latest, { force: true })
       created.push(`${shown} (updated)`)
     } else if (recorded !== hashBody(body)) {
@@ -42,11 +51,7 @@ export function writeManaged(o: { base: string; rel: string; body: string; shown
       // partial write.
       mkdirSync(dirname(latest), { recursive: true })
       writeFileSync(latest, body)
-      if (nl >= 0) {
-        const tmp = file + '.tmp'
-        writeFileSync(tmp, managedFile(body).split('\n')[0] + '\n' + currentBody)
-        renameSync(tmp, file)
-      }
+      if (nl >= 0) replace(managedFile(body).split('\n')[0] + '\n' + currentBody)
       console.warn(`  ~ ${shown}: you customized it and a newer version exists - your edits are untouched. Merge what you want from ${latest.slice(latest.indexOf('design/.local/'))}`)
     }
     // edited, upstream unchanged since their base: silence. A previously staged copy stays
@@ -54,7 +59,7 @@ export function writeManaged(o: { base: string; rel: string; body: string; shown
   } else if (current.startsWith(LEGACY_PREFIX)) {
     // hashless 0.2.2-dev marker: edits are undetectable; take the update (these files are
     // hours old and ours) and move them onto hashed markers
-    writeFileSync(file, next)
+    if (!replace(next)) return
     rmSync(latest, { force: true })
     created.push(`${shown} (updated)`)
   } else if (current !== body) {

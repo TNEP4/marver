@@ -48,8 +48,8 @@ export interface BoardInput {
   capability?: string
   status?: StatusWord
   reason?: string
-  /** the scenes the board shows, with any `phase` their brief declares */
-  scenes: { name: string; phase?: string }[]
+  /** the scenes the board shows, with any `phase` their brief declares and that brief's audience */
+  scenes: { name: string; phase?: string; audience?: Audience }[]
 }
 
 export interface StatusResult {
@@ -74,13 +74,16 @@ const PHASE_WORDS: Record<string, Phase> = { spec: 1, specs: 1, lofi: 2, 'lo-fi'
 /** The latest phase a board's scenes show: a scene named `<cap>-specs` (spec), `<cap>-lofi`
  *  (lo-fi) or `<cap>` itself (hi-fi), or a `phase` in a scene's brief. Never geometry. */
 export function phaseOf(capability: string, scenes: BoardInput['scenes']): Phase | undefined {
-  let best: Phase | undefined
+  return phaseSource(capability, scenes)?.phase
+}
+/** The deciding phase and where it came from - a brief's phase carries that brief's audience. */
+function phaseSource(capability: string, scenes: BoardInput['scenes']): { phase: Phase; scene: string; fromBrief: boolean; audience: Audience } | undefined {
+  let best: { phase: Phase; scene: string; fromBrief: boolean; audience: Audience } | undefined
   for (const s of scenes) {
-    const p = (s.phase && PHASE_WORDS[s.phase.toLowerCase()])
-      || (s.name === `${capability}-specs` || s.name === `${capability}-spec` ? 1
-        : s.name === `${capability}-lofi` ? 2
-          : s.name === capability ? 3 : undefined)
-    if (p && (!best || p > best)) best = p
+    const declared = s.phase ? PHASE_WORDS[s.phase.toLowerCase()] : undefined
+    const named = s.name === `${capability}-specs` || s.name === `${capability}-spec` ? 1 : s.name === `${capability}-lofi` ? 2 : s.name === capability ? 3 : undefined
+    const p = (declared ?? named) as Phase | undefined
+    if (p && (!best || p > best.phase)) best = { phase: p, scene: s.name, fromBrief: !!declared, audience: declared ? (s.audience ?? 'team') : 'publishable' }
   }
   return best
 }
@@ -100,7 +103,10 @@ export function resolveStatus(b: BoardInput, ctx: ContextFacts): StatusResult | 
   if (!ctx.present) {
     // without context/ a project sets To do, Backlog and In progress by hand; Done needs a record
     // the board's own word, and a board ships as written - publishable
-    if (b.status === 'in-progress') return out('in-progress', 5, [`design/boards/${b.name}.json: by hand`], 'publishable', fillOf(capability, b.scenes))
+    if (b.status === 'in-progress') {
+      const f = fillOf(capability, b.scenes)
+      return out('in-progress', 5, [`design/boards/${b.name}.json: by hand`, ...f.evidence], strictest('publishable', ...f.audience), f.fill)
+    }
     if (b.status === 'todo') return out('todo', 8, [`design/boards/${b.name}.json: by hand`], 'publishable')
     return out('backlog', 9, [b.status === 'backlog' ? `design/boards/${b.name}.json: by hand` : 'no context/ - nothing records it'], 'publishable')
   }
@@ -115,9 +121,10 @@ export function resolveStatus(b: BoardInput, ctx: ContextFacts): StatusResult | 
   // 5: an open plan - work on a shipped capability is version two being built, and says so
   const plans = ctx.plans.get(capability)
   if (plans?.length) {
-    const ev = plans.map((p) => `${p.where}: an open plan`)
+    const f = fillOf(capability, b.scenes)
+    const ev = [...plans.map((p) => `${p.where}: an open plan`), ...f.evidence]
     if (live && row) ev.push(`${row.where}: available, \`${live}\` - this is the next version`)
-    return out('in-progress', 5, ev, strictest(...plans.map((p) => p.audience), ...(live && row ? [row.audience] : [])), fillOf(capability, b.scenes))
+    return out('in-progress', 5, ev, strictest(...plans.map((p) => p.audience), ...f.audience, ...(live && row ? [row.audience] : [])), f.fill)
   }
 
   // 6-7: the shipped record
@@ -132,9 +139,12 @@ export function resolveStatus(b: BoardInput, ctx: ContextFacts): StatusResult | 
   return out('backlog', 9, [c ? `${c.where}: state ${c.state}` : `no contract for ${capability}`], c ? c.audience : 'publishable')
 }
 
-const fillOf = (capability: string, scenes: BoardInput['scenes']): Partial<StatusResult> => {
-  const p = phaseOf(capability, scenes)
-  return p ? { fill: p } : {}
+/** The fill, the line that says where it came from, and the audience of that source. */
+const fillOf = (capability: string, scenes: BoardInput['scenes']): { fill: Partial<StatusResult>; evidence: string[]; audience: Audience[] } => {
+  const src = phaseSource(capability, scenes)
+  if (!src) return { fill: {}, evidence: [], audience: [] }
+  const where = src.fromBrief ? `design/scenes/${src.scene}/_brief.md: phase ${PHASE_LABEL[src.phase]}` : `design/scenes/${src.scene}: the ${PHASE_LABEL[src.phase]} scene`
+  return { fill: { fill: src.phase }, evidence: [where], audience: [src.audience] }
 }
 
 /** What a published canvas may show of a status (spec 20, Publishing status): rows 5-9 only, drawn

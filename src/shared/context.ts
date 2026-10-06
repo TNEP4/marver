@@ -137,16 +137,18 @@ export function looseTables(text: string): number[] {
   return proseLines(text).filter(([, l]) => !/^\s*\|/.test(l) && /^\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(l)).map(([n]) => n)
 }
 
-/** The levels an Available cell grants, clause by clause (`;` separates them). A clause counts only
- *  when it claims availability where it matters: never one that opens with a negation ("nowhere",
- *  "not", "rolled back"), never one scoped to a non-production place (staging, preview, dev) that
- *  does not also name production. So "staging only - `confirmed`" grants nothing toward Done. */
-export function availableLevels(cell: string): Level[] {
+/** The levels an availability cell grants, clause by clause (`;` separates them). A clause counts
+ *  only when it claims availability: never one carrying a negation anywhere ("nowhere", "not
+ *  available", "rolled back", "withdrawn") - and, for a product's Available cell, never one scoped to
+ *  a pre-production place (staging, preview, sandbox) that does not also name production. A
+ *  knowledge-work Delivered cell has no environments: only negations void it. */
+const NEGATION = /\b(nowhere|none|never|no longer|not (available|live|deployed|delivered|on|in|shipped|released)|withdrawn|rolled back|reverted|removed|retired|pulled)\b|^\s*not\b/i
+export function availableLevels(cell: string, kind: 'available' | 'delivered' = 'available'): Level[] {
   const out: Level[] = []
   for (const clause of cell.split(';')) {
     const c = clause.replace(/\*\*/g, '').trim()
-    if (/^(nowhere|not\b|none\b|never\b|no longer|withdrawn|rolled back|removed|retired)/i.test(c)) continue
-    if (/\b(staging|preview|dev|development|test|testing|sandbox|local)\b/i.test(c) && !/\b(production|prod|live|delivered)\b/i.test(c)) continue
+    if (NEGATION.test(c)) continue
+    if (kind === 'available' && /\b(staging|preview|sandbox)\b/i.test(c) && !/\b(production|prod)\b/i.test(c)) continue
     out.push(...levelsIn(c))
   }
   return out
@@ -165,11 +167,12 @@ export function shippedRows(text: string): ShippedRow[] {
   for (const t of tables(text)) {
     if (!isRecordTable(t)) continue
     const a = t.header.findIndex((h) => RECORD_AVAILABLE.test(h))
+    const kind = /^delivered$/i.test(t.header[a]) ? 'delivered' : 'available'
     for (const r of t.rows) {
       const slug = /`([a-z0-9][a-z0-9-]*)`/.exec(r.cells[0] ?? '')?.[1]
       if (!slug) continue
       const available = r.cells[a] ?? ''
-      out.push({ capability: slug, line: r.line, available, levels: availableLevels(available) })
+      out.push({ capability: slug, line: r.line, available, levels: availableLevels(available, kind) })
     }
   }
   return out
@@ -191,7 +194,7 @@ export function globRe(glob: string): RegExp {
     if (c === '*') {
       if (glob[i + 1] === '*') {
         i++
-        if (glob[i + 1] === '/') { i++; re += '(?:.*/)?' } else re += '.*'
+        if (glob[i + 1] === '/') { i++; re += '(?:[\\s\\S]*/)?' } else re += '[\\s\\S]*'
       } else re += '[^/]*'
     } else if (c === '?') re += '[^/]'
     else if (c === '{') { brace++; re += '(?:' }
@@ -219,8 +222,8 @@ export function parseMap(text: string): CapabilityMap | string {
   const globs = (where: string, v: unknown, required: boolean): string | null => {
     if (v === undefined && !required) return null
     if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) return `context/map.json: ${where} must be a list of paths`
-    const bad = (v as string[]).find((g) => !validGlob(g))
-    return bad ? `context/map.json: ${where} has an invalid glob "${bad}" (balanced, unnested {a,b}; no [...])` : null
+    const bad = (v as string[]).findIndex((g) => !validGlob(g))
+    return bad >= 0 ? `context/map.json: ${where} has an invalid glob "${(v as string[])[bad]}" (not empty; balanced, unnested {a,b}; no [...])` : null
   }
   for (const [k, c] of Object.entries(m.capabilities)) {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(k)) return `context/map.json: "${k}" is not a capability slug`

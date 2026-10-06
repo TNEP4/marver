@@ -11,7 +11,7 @@
 import { lstatSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { HAS_STATUS, resolveType, readCapability, readReason, readStatusWord, type BoardType } from '../shared/board-types.ts'
-import { frontMatter, isRecordTable, readAudience, shippedRows, tables } from '../shared/context.ts'
+import { frontMatter, isRecordTable, readAudience, shippedRows, tables, type Audience } from '../shared/context.ts'
 import { NO_CONTEXT, resolveStatus, type ContextFacts, type StatusResult } from '../shared/status.ts'
 import type { FolderRow } from '../shared/board-tree.ts'
 
@@ -30,7 +30,8 @@ function mdIn(dir: string): { files: string[]; error?: string } {
 /** What decides the facts: every file they are read from, by size and mtime. */
 function signature(dir: string): string {
   const parts: string[] = []
-  const stamp = (p: string) => { try { const s = statSync(p); parts.push(`${p}:${s.size}:${s.mtimeMs}`) } catch { parts.push(`${p}:-`) } }
+  // mode and ctime too: a permission change alters neither size nor mtime, and must not leave a cached Done
+  const stamp = (p: string) => { try { const s = statSync(p); parts.push(`${p}:${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.mode}`) } catch { parts.push(`${p}:-`) } }
   stamp(join(dir, 'shipped.md'))
   for (const sub of ['product', 'plans']) {
     const d = join(dir, sub)
@@ -95,13 +96,14 @@ function readFresh(dir: string): ContextFacts {
     const slug = f.slice(0, -3)
     try {
       const fm = frontMatter(readFileSync(join(dir, 'plans', f), 'utf8'))
-      // a plan that cannot be read may be open - Unknown for the capability its file names
-      if (fm.error || !fm.data) { facts.unreadable.set(slug, `${where}: ${fm.error ?? 'no front matter'}`); continue }
+      // a plan that cannot be read may be open for any capability - nothing it might name is Done
+      if (fm.error || !fm.data) { facts.unreadable.set('*', `${where}: ${fm.error ?? 'no front matter'}`); continue }
       if (typeof fm.data.state === 'string' && CLOSED_PLAN.has(fm.data.state)) continue
-      const caps = [fm.data.capability, ...(Array.isArray(fm.data.capabilities) ? fm.data.capabilities : [])].map(readCapability).filter((c): c is string => !!c)
+      const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined ? [] : [v])
+      const caps = [...list(fm.data.capability), ...list(fm.data.capabilities)].map(readCapability).filter((c): c is string => !!c)
       const audience = readAudience(fm.data.audience)
       for (const c of caps) facts.plans.set(c, [...(facts.plans.get(c) ?? []), { where, audience }])
-    } catch (e) { facts.unreadable.set(slug, `${where}: ${(e as Error).message}`) }
+    } catch (e) { facts.unreadable.set('*', `${where}: ${(e as Error).message}`) }
   }
   return facts
 }
@@ -123,17 +125,18 @@ const SCENE = /^[a-z0-9][a-z0-9-]*$/
 /** A scene as the fill reads it: does it hold a frame yet (a phase counts only once it does - a
  *  feature's starting layout names its three phase scenes before any frame exists), and the
  *  `phase` its brief declares. */
-function readScene(root: string, scene: string): { frames: boolean; phase?: string } {
+function readScene(root: string, scene: string): { frames: boolean; phase?: string; audience?: Audience } {
   if (!SCENE.test(scene)) return { frames: false }
   const dir = join(root, 'design', 'scenes', scene)
   let frames = false
   try { frames = readdirSync(dir).some((f) => /\.(tsx|jsx|html)$/.test(f) && !f.startsWith('_')) } catch { /* absent */ }
   let phase: string | undefined
+  let audience: Audience | undefined
   try {
     const fm = frontMatter(readFileSync(join(dir, '_brief.md'), 'utf8'))
-    if (typeof fm.data?.phase === 'string') phase = fm.data.phase
+    if (typeof fm.data?.phase === 'string') { phase = fm.data.phase; audience = readAudience(fm.data.audience) }
   } catch { /* no brief */ }
-  return { frames, ...(phase ? { phase } : {}) }
+  return { frames, ...(phase ? { phase, audience } : {}) }
 }
 
 export interface BoardAnnotation { type: BoardType; status: StatusResult | null }
@@ -148,7 +151,7 @@ export function annotateBoards(
   facts: ContextFacts = readContextFacts(root),
 ): Map<string, BoardAnnotation> {
   const byName = new Map(folders.map((f) => [f.name, f]))
-  const scenes = new Map<string, { frames: boolean; phase?: string }>()
+  const scenes = new Map<string, { frames: boolean; phase?: string; audience?: Audience }>()
   const scene = (s: string) => { let v = scenes.get(s); if (!v) { v = readScene(root, s); scenes.set(s, v) } return v }
   const out = new Map<string, BoardAnnotation>()
   for (const b of boards) {
@@ -160,7 +163,7 @@ export function annotateBoards(
     if (!HAS_STATUS.includes(type)) { out.set(b.name, { type, status: null }); continue }
     const shown = boardScenes(b.json).flatMap((name) => {
       const sc = scene(name)
-      return sc.frames ? [{ name, ...(sc.phase ? { phase: sc.phase } : {}) }] : []
+      return sc.frames ? [{ name, ...(sc.phase ? { phase: sc.phase, audience: sc.audience } : {}) }] : []
     })
     const status = resolveStatus({
       name: b.name, type,

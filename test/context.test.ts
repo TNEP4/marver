@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
@@ -496,7 +496,7 @@ describe('the review of 0.22: evidence, writes, the check', () => {
     put('context/plans/b.md', '---\nstate: proposed\n')
     const f = readContextFacts(root)
     expect(f.unreadable.get('a')).toMatch(/state "" is not current/)
-    expect(f.unreadable.get('b')).toMatch(/never closes/)
+    expect(f.unreadable.get('*')).toMatch(/plans\/b\.md: .*never closes/)   // a plan that cannot be read may name anything
   })
 
   it('CRLF files read the same', () => {
@@ -595,5 +595,95 @@ describe('the review of 0.22: the check', () => {
     put('context/INDEX.md', 'mine\n')
     contextInit(root)
     expect(read('context/INDEX.md')).toBe('mine\n')
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+describe('the review of 0.22, second pass', () => {
+  it('a negation anywhere voids a clause; delivered work has no environments', () => {
+    expect(availableLevels('production - rolled back, `confirmed` run 1234567')).toEqual([])
+    expect(availableLevels('production - not available since May - `confirmed`')).toEqual([])
+    expect(availableLevels('to the client: test strategy - `confirmed` - `x.md`', 'delivered')).toEqual(['confirmed'])
+    expect(availableLevels('the test suite on production - `confirmed` by run 1234567')).toEqual(['confirmed'])
+  })
+
+  it('a plan may name its capabilities as a list', () => {
+    put('context/plans/p.md', '---\nstate: proposed\ncapability: [pay, ship]\n---\n')
+    expect([...readContextFacts(root).plans.keys()].sort()).toEqual(['pay', 'ship'])
+  })
+
+  it('a phase from a restricted brief keeps the status off a published canvas, and is named as evidence', () => {
+    put('design/scenes/work/_brief.md', '---\nphase: hifi\naudience: restricted\n---\n')
+    put('design/scenes/work/a.tsx', 'export default () => null\n')
+    put('context/plans/p.md', '---\nstate: proposed\ncapability: x\naudience: publishable\n---\n')
+    const a = annotateBoards(root, [{ name: 'x', json: { type: 'feature', layout: { rows: [['work']] } } }], [], () => null)
+    expect(a.get('x')?.status).toMatchObject({ status: 'in-progress', fill: 3, audience: 'restricted' })
+    expect(a.get('x')?.status?.evidence).toContain('design/scenes/work/_brief.md: phase hi-fi')
+    expect(publishableStatus(a.get('x')?.status)).toBeNull()
+  })
+
+  it('a permission change on the record is never served from the cache as Done', () => {
+    put('context/shipped.md', '| Capability | Available |\n|---|---|\n| `x` | production - `confirmed` - `a.md` |\n')
+    expect(readContextFacts(root).shipped.get('x')?.levels).toEqual(['confirmed'])
+    execFileSync('chmod', ['000', join(root, 'context/shipped.md')])
+    try {
+      expect(readContextFacts(root).unreadable.get('*')).toMatch(/context\/shipped\.md/)
+    } finally { execFileSync('chmod', ['644', join(root, 'context/shipped.md')]) }
+  })
+
+  it('an empty glob is invalid', () => {
+    expect(parseMap(JSON.stringify({ capabilities: { a: { paths: [''] } } }))).toMatch(/invalid glob ""/)
+    expect(parseMap(JSON.stringify({ capabilities: {}, source: [''] }))).toMatch(/invalid glob ""/)
+  })
+
+  it('a held registry lock is a 409 for the dev server; a stale one is taken over', async () => {
+    put('design/boards/_folders.json', { version: 1, folders: [{ name: 'f', order: 0 }] })
+    put('design/boards/pay.json', { version: 1, nodes: [] })
+    const b = await drive('GET', 'boards'), f = await drive('GET', 'folders')
+    put('design/boards/.folders.lock', '999 0\n')
+    const r = await drive('POST', 'boards/reorder', { protocol: 2, tree: [{ folder: 'f', items: ['pay'] }], base: { boards: { pay: b.json[0].sha256 }, folders: f.json.sha256 } })
+    expect(r.status).toBe(409)
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(join(root, 'design/boards/.folders.lock'), old, old)
+    expect(foldersAdd(root, ['decks']).added).toEqual(['decks'])
+    expect(existsSync(join(root, 'design/boards/.folders.lock'))).toBe(false)
+  })
+})
+
+describe('the review of 0.22, second pass: the check', () => {
+  const pass = () => contextCheck(root)
+  const rules = (r = pass()) => r.failures.map((f) => f.rule)
+  beforeEach(() => { git('init', '-q'); contextInit(root) })
+
+  it('a CRLF index still equals its map', () => {
+    put('context/INDEX.md', read('context/INDEX.md').replace(/\n/g, '\r\n'))
+    expect(rules()).not.toContain('index-table')
+  })
+
+  it('citations: a bare name nothing carries fails; a range backwards fails; an ambiguous bare name is shorthand', () => {
+    put('src/one.ts', 'a\nb\nc\n'); put('a/home.tsx', 'x\n'); put('b/home.tsx', 'y\n')
+    git('add', '-A')
+    put('context/product/p.md', '---\nstate: current\n---\n\n`missing.md:1` `src/one.ts:3-1` `one.ts:2` `one.ts:9` `home.tsx:40`\n')
+    const f = pass().failures.filter((x) => x.rule === 'dead-citation').map((x) => x.what)
+    expect(f).toEqual(['missing.md does not exist', 'src/one.ts:3-1 runs backwards', 'one.ts:9 is past the end of src/one.ts (4 lines)'])
+  })
+
+  it('a feedback resolution must claim availability, and its citations must resolve', () => {
+    put('context/feedback/f.md', '| Item | What | State | Resolved by |\n|---|---|---|---|\n| F1 | x | shipped | nowhere - `confirmed` by run 1234567 |\n')
+    expect(rules()).toContain('feedback-closed')
+    put('context/feedback/f.md', '| Item | What | State | Resolved by |\n|---|---|---|---|\n| F1 | x | shipped | production - `confirmed` - `missing.md` |\n')
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'dead-citation', what: 'missing.md does not exist' }))
+  })
+
+  it('the graph follows root-relative imports, and the brief and notes a published frame carries', () => {
+    put('design/scenes/app/home.tsx', "import x from '/context/secret.md?raw'\nexport default () => x\n")
+    put('context/secret.md', '# secret\n')
+    put('design/boards/b.json', { version: 1, nodes: [{ frame: 'app/home' }] })
+    put('design/publish.json', { boards: { b: 'read' } })
+    expect(pass().failures).toContainEqual(expect.objectContaining({ rule: 'audience', where: 'context/secret.md' }))
+    put('design/scenes/app/home.tsx', 'export default () => null\n')
+    put('design/scenes/app/_brief.md', '---\naudience: team\n---\nThe app, for the client only.\n')
+    put('design/scenes/app/home.note.md', '---\naudience: restricted\n---\nA private aside.\n')
+    expect(pass().failures.filter((f) => f.rule === 'audience').map((f) => f.where).sort()).toEqual(['design/scenes/app/_brief.md', 'design/scenes/app/home.note.md'])
   })
 })

@@ -15,7 +15,7 @@ import { writeManaged } from './managed-write.ts'
 import { checkRealDirs } from '../server/boards.ts'
 import { readStatusWord } from '../shared/board-types.ts'
 import {
-  CITATION, CITED_FILE, EVIDENCE_COLUMN, GENERATED, LEVEL, capabilityTable, frontMatter, globRe, hasGlob, isRecordTable, levelsIn,
+  CITATION, CITED_FILE, EVIDENCE_COLUMN, GENERATED, LEVEL, availableLevels, capabilityTable, frontMatter, globRe, hasGlob, isRecordTable, levelsIn, lf,
   looseTables, parseMap, proseLines, tables, wordCount, type CapabilityMap,
 } from '../shared/context.ts'
 import { publishGraph } from '../server/publish-graph.ts'
@@ -130,9 +130,9 @@ const AVAILABILITY = /\b(on production|on staging|in production since|live since
 const CONTRACT_STATES = ['current', 'proposed', 'historical']
 const FEEDBACK_STATES = ['new', 'triaged', 'proposed', 'planned', 'shipped', 'declined']
 const LINK = /\[[^\]]*\]\(([^)\s]+)\)/g
-/** A citation the check resolves: a path with a directory, or a file at the root (`CHANGELOG.md:12`).
- *  A bare module name (`home.tsx:17`) is shorthand for the file named before it - not checked. */
-const CITE = /`((?:\.{0,2}[\w@.-]+\/)+[\w@.$-]+\.[a-z]{1,5}|[A-Z][\w-]*\.(?:md|json|ya?ml)):(\d+)(?:-(\d+))?`/g
+/** A `path:line` citation - a path from the root, or a bare name the resolver looks up by basename
+ *  (`run.ts:12` when one tracked file is run.ts; shorthand for the file named before it when several are). */
+const CITE = /`((?:\.{0,2}[\w@.-]+\/)*[\w@.$-]+\.[a-z]{1,5}):(\d+)(?:-(\d+))?`/g
 const IMPORT = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|['"]((?:\.{1,2}\/)+[^'"]+\.(?:md|mdx|png|jpe?g|webp|svg|pdf|json|txt|csv))(?:\?raw)?['"]/g
 
 export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
@@ -187,10 +187,29 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
 
   let tracked: Set<string> | null = null
   try { tracked = new Set(git('ls-files', '-z').split('\0').filter(Boolean)) } catch { cannot('git', 'git ls-files failed - not a repository?') }
-  /** A cited file: a path from the root, or a bare name some tracked file carries (`run.test.ts`). */
-  const citedExists = (f: string): boolean => {
-    if (exists(f)) return statSync(join(root, f)).isFile()
-    return !f.includes('/') && !!tracked && [...tracked].some((t) => t.endsWith(`/${f}`))
+  /** A cited file, resolved: a path from the root, or a bare name (`run.test.ts`) that one tracked
+   *  file carries - several mean the citation is shorthand for the one named before it. Returns the
+   *  path, 'ambiguous', or null when nothing carries it. */
+  const byBase = new Map<string, string[]>()
+  if (tracked) for (const t of tracked) { const b = t.slice(t.lastIndexOf('/') + 1); byBase.set(b, [...(byBase.get(b) ?? []), t]) }
+  const resolveCited = (f: string): string | 'ambiguous' | null => {
+    if (exists(f)) return statSync(join(root, f)).isFile() ? f : null
+    if (f.includes('/')) return null
+    const hits = byBase.get(f) ?? []
+    return hits.length === 1 ? hits[0] : hits.length > 1 ? 'ambiguous' : null
+  }
+  const lines = new Map<string, number>()
+  const linesOf = (p: string) => { if (!lines.has(p)) lines.set(p, read(p).split('\n').length); return lines.get(p)! }
+  /** What is wrong with a citation - a file nothing carries, a line past its end, a range backwards - or null. */
+  const citationProblem = (file: string, from?: string, to?: string): string | null => {
+    const f = file.replace(/^\.\//, '')
+    const r = resolveCited(f)
+    if (r === null) return `${f} does not exist`
+    if (r === 'ambiguous' || !from) return null
+    const a = Number(from), z = Number(to ?? from)
+    if (z < a) return `${f}:${from}-${to} runs backwards`
+    if (z > linesOf(r)) return `${f}:${from}${to ? `-${to}` : ''} is past the end of ${r} (${linesOf(r)} lines)`
+    return null
   }
 
   // 3. the shipped record: a level in every evidence cell, a citation beside confirmed and reported
@@ -209,10 +228,10 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
             fail('shipped-level', where, `the ${t.header[i]} cell has no evidence level`)
           for (const m of c.matchAll(LEVEL))
             if (m[1] !== 'unknown' && !CITATION.test(c)) fail('shipped-citation', where, `\`${m[1]}\` with no citation in its cell`)
-          // a cited file must exist, with or without a line (lines are checked below)
+          // a cited file must resolve, with or without a line
           if (levelsIn(c).length) for (const m of c.matchAll(CITED_FILE)) {
-            const f = m[1].replace(/^\.\//, '')
-            if (!m[2] && !citedExists(f)) fail('dead-citation', where, `${f} does not exist`)
+            const problem = citationProblem(m[1], m[2], m[3])
+            if (problem) fail('dead-citation', where, problem)
           }
         })
       }
@@ -220,8 +239,6 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   }
 
   // 4. links and citations resolve
-  const lines = new Map<string, number>()
-  const linesOf = (p: string) => { if (!lines.has(p)) lines.set(p, read(p).split('\n').length); return lines.get(p)! }
   for (const d of docs) {
     for (const [n, line] of proseLines(d.body, d.offset)) {
       for (const m of line.matchAll(LINK)) {
@@ -232,10 +249,8 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
       // a historical document cites files as they were at its revision, and says so
       if (d.data?.state === 'historical') continue
       for (const m of line.matchAll(CITE)) {
-        const p = m[1].replace(/^\.\//, '')
-        if (!exists(p) || !statSync(join(root, p)).isFile()) { fail('dead-citation', `${d.path}:${n}`, `${p} does not exist`); continue }
-        const last = Number(m[3] || m[2])
-        if (last > linesOf(p)) fail('dead-citation', `${d.path}:${n}`, `${p}:${m[2]} is past the end of the file (${linesOf(p)} lines)`)
+        const problem = citationProblem(m[1], m[2], m[3])
+        if (problem) fail('dead-citation', `${d.path}:${n}`, problem)
       }
     }
   }
@@ -259,7 +274,7 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
       const fenced = GENERATED.exec(text)?.[1]
       if (fenced === undefined) fail('index-table', indexPath, 'no <!-- generated --> fences around the capability table')
       else {
-        const want = capabilityTable(map).trim(), have = fenced.trim()
+        const want = capabilityTable(map).trim(), have = lf(fenced).trim()
         if (want !== have) fail('index-table', indexPath, `the capability table differs from ${mapPath} - run \`npx ${NAME} context index\``)
       }
     }
@@ -302,8 +317,10 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
         const where = `${d.path}:${r.line}`
         if (!FEEDBACK_STATES.includes(state)) fail('state', where, `"${state}" is not a feedback state (${FEEDBACK_STATES.join(', ')})`)
         const resolution = r.cells[ri] ?? ''
-        if (state === 'shipped' && (ri === si || !levelsIn(resolution).includes('confirmed') || !CITATION.test(resolution)))
+        if (state !== 'shipped') continue
+        if (ri === si || !availableLevels(resolution).includes('confirmed') || !CITATION.test(resolution))
           fail('feedback-closed', where, 'shipped without a cited `confirmed` availability in its resolution')
+        for (const m of resolution.matchAll(CITED_FILE)) { const problem = citationProblem(m[1], m[2], m[3]); if (problem) fail('dead-citation', where, problem) }
       }
     }
   }
