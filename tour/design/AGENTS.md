@@ -1,4 +1,4 @@
-<!-- marver:managed 3a88cfa98b4db2b6642254b2a5c29e37003295d9eccce855b6033ea9831da903 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 6345c6eeb1019c4084ecaab29b47842410e05f18da7175df219fe881ffdf4ff3 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -23,6 +23,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Iterate | changing a frame the human has seen, a round of feedback on a scene, or retiring explorations | instructions/iterate.md |
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
+| Context | any question about what the product does or what is live; a behaviour change; a deploy; no `context/` yet | instructions/context.md |
 | Slides | a deck is asked for, or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
 | Live Jam | responding to an `@marver` comment (a spawned job); on by default - confirm it names YOUR tool | instructions/jam.md |

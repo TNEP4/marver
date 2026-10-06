@@ -1,4 +1,4 @@
-<!-- marver:managed c6de6c507d9066904516b1fe075ea6c21dcc97223eaba1c662a9001761150ed6 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 519786a3c21284df2d0c4c45c6723a82794ba8b5f0bcdb056af47a28dde24341 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Boards - curated canvases and publishing
 
 A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
@@ -159,6 +159,31 @@ you rewrite it. Published canvases show the folders of the published boards only
 sub-folder's parent included; a folder with nothing published at any depth never reaches
 the bundle.
 
+## Types and status - what a board is for, and where it stands
+
+Every canvas shares one sidebar vocabulary. A board's `"type"` - `start`, `feature`, `surface`,
+`project`, `feedback`, `context`, `deck`, `archive` - draws its icon; set it on the board, or on a
+folder's entry in `_folders.json` and every board inside wears it (its own type wins; a sub-folder's
+boards fall back to the parent folder's type). Moving a board changes an inherited type only.
+
+- **Make a board in its starting layout:** `npx marver boards new <name> --folder features` (the
+  folder's type), or `--type <type>`. A feature gets three phase scenes as three bands -
+  `<name>-specs`, `<name>-lofi`, `<name>` - each with a brief; a start board renders
+  `context/INDEX.md` and `context/shipped.md`; a deck starts on a title slide. It never overwrites.
+  The phase scenes start empty: pin each frame you make in one as a node, or the board never shows it.
+- **Add a typed folder:** `npx marver folders add decks` (or `start`, `features`, `surfaces`,
+  `projects`, `feedback`, `context`, `archive`) - appended, never moving one that exists.
+- **Feature and project boards wear a status** read from `context/` (instructions/context.md): the
+  capability is the board's name, or `"capability": "<slug>"`. You may decide only three things on
+  the board: `"status": "archived"`, `"paused"`, or `"blocked"` with `"reason": "<one sentence>"`.
+  **Never write `"status": "done"`** - Done comes from `context/shipped.md`, and the check fails it.
+  Without `context/` a board may also say `"todo"`, `"backlog"` or `"in-progress"` by hand.
+  A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
+  and `reason`, so re-read a board before you edit it.
+- In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's
+  `_brief.md` front matter - never by where a row sits.
+- `npx marver boards` prints every board's type and status with what decided it.
+
 ## The default composition: one horizontal band
 
 A board reads like a page: left to right first, down only for a reason. The
@@ -249,6 +274,12 @@ with `read` or `comment` rights (`marver build` fails without it - default-close
 be ON a published board - unlisted frames are excluded from the bundle at build
 time. Deploying the built canvas - gate password, the collaboration volume,
 accounts and invites - is its own phase: **instructions/publish.md**.
+
+When you add a board to `publish.json`, write the `type` its board type suggests - `slides` for a
+deck, `refs` for a context board, `doc` for a project (`marver build` notes any row that names none).
+A board's status, reason and capability never ship - unless the row says `"showStatus": true`, and
+then only a status drawn from publishable evidence (`audience: publishable` under `context/`; a scene
+brief counts unless it says otherwise), never Blocked, never a reason.
 
 The published gate page shows the app's identity: `design/logo.svg` + the host
 package name (overridable via config `share`). If the app has no logo asset yet,
