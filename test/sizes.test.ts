@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
 import { ROUTE } from '../src/cli/name.ts'
-import { autoWidthOf, mergeSizes, readSizes, serializeSizes, validEntry } from '../src/server/sizes.ts'
+import { autoWidthOf, keptSizes, mergeSizes, readSizes, readSizesFile, rendersDoc, serializeSizes, validEntry } from '../src/server/sizes.ts'
 import { anchorNode, anchoredCamera } from '../src/client/shell/canvas/anchor.ts'
 
 /**
@@ -14,12 +14,21 @@ import { anchorNode, anchoredCamera } from '../src/client/shell/canvas/anchor.ts
  */
 
 const VIEWPORTS = { mobile: { width: 390, height: 844 }, laptop: { width: 1280, height: 800 } }
+const DOC = `import { Doc, Md } from '@marver-design/marver/content'\nexport default () => <Doc><Md>{'# Hi'}</Md></Doc>\n`
+const WIDE = `import { Doc, Md } from '@marver-design/marver/content'\nexport default () => <Doc layout="wide"><Md>{'# Hi'}</Md></Doc>\n`
+const BARE = `import { Md } from '@marver-design/marver/content'\n// no <Doc> here - it never measures\nexport default () => <Md>{'# Hi'}</Md>\n`
 const FRAMES = [
-  { id: 'docs/spec', contentWidth: 760 },
-  { id: 'docs/wide', contentWidth: 1280 },
-  { id: 'docs/pinned', contentWidth: 760, viewport: 'laptop' },
-  { id: 'app/home', viewport: 'mobile' },                       // a UI frame: never measured, never kept
+  { id: 'docs/spec', file: 'design/scenes/docs/spec.tsx', kind: 'tsx', contentWidth: 760, src: DOC },
+  { id: 'docs/wide', file: 'design/scenes/docs/wide.tsx', kind: 'tsx', contentWidth: 1280, src: WIDE },
+  { id: 'docs/pinned', file: 'design/scenes/docs/pinned.tsx', kind: 'tsx', contentWidth: 760, viewport: 'laptop', src: DOC },
+  { id: 'docs/bare', file: 'design/scenes/docs/bare.tsx', kind: 'tsx', contentWidth: 760, src: BARE },   // content, but no Doc
+  { id: 'app/home', file: 'design/scenes/app/home.tsx', kind: 'tsx', viewport: 'mobile', src: 'export default () => <main />\n' },
 ]
+const project = (root: string, frames = FRAMES) => {
+  for (const f of frames) { mkdirSync(dirname(join(root, f.file)), { recursive: true }); writeFileSync(join(root, f.file), f.src) }
+  mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+  writeFileSync(join(root, 'design', 'manifest.json'), JSON.stringify({ frames: frames.map(({ src: _src, ...f }) => f), scenes: [] }))
+}
 
 describe('the size cache (sizes.ts)', () => {
   it('takes a frame id at a width, and a height in the shell clamp - nothing else', () => {
@@ -30,15 +39,27 @@ describe('the size cache (sizes.ts)', () => {
       expect(validEntry(k, h), `${k} ${h}`).toBe(false)
   })
 
-  it('keeps only a live content frame at the width it measures at on its own - the viewport wins over the Doc', () => {
-    const aw = autoWidthOf(FRAMES, VIEWPORTS)
-    expect([aw('docs/spec'), aw('docs/wide'), aw('docs/pinned'), aw('app/home'), aw('gone/frame')]).toEqual([760, 1280, 1280, null, null])
-    const { next, accepted } = mergeSizes(
-      { 'docs/spec@760': 1000, 'gone/frame@760': 500, 'docs/wide@760': 700 },   // a deleted frame; a Doc that went wide
-      { 'docs/wide@1280': 900, 'docs/pinned@1280': 2000, 'docs/pinned@760': 1500, 'app/home@390': 844, 'docs/spec@760': 'x' },
-      aw)
-    expect(next).toEqual({ 'docs/spec@760': 1000, 'docs/wide@1280': 900, 'docs/pinned@1280': 2000 })
-    expect(accepted.sort()).toEqual(['docs/pinned@1280', 'docs/wide@1280'])
+  it('only a Doc measures: a <Doc> in a comment or a string is no Doc', () => {
+    expect(rendersDoc(DOC)).toBe(true)
+    expect(rendersDoc(WIDE)).toBe(true)
+    expect(rendersDoc(BARE)).toBe(false)
+    expect(rendersDoc(`const s = '<Doc>'\nexport default () => <Md>{s}</Md>\n`)).toBe(false)
+  })
+
+  it('keeps only a live Doc at the width it measures at on its own - the viewport wins over the layout', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mv-sizes-aw-'))
+    try {
+      project(root)
+      const aw = autoWidthOf(root, FRAMES, VIEWPORTS)
+      expect(['docs/spec', 'docs/wide', 'docs/pinned', 'docs/bare', 'app/home', 'gone/frame'].map(aw)).toEqual([760, 1280, 1280, null, null, null])
+      const { next, accepted } = mergeSizes(
+        { 'docs/spec@760': 1000, 'gone/frame@760': 500, 'docs/wide@760': 700, 'docs/bare@760': 2000 },   // deleted; went wide; stopped measuring
+        { 'docs/wide@1280': 900, 'docs/pinned@1280': 2000, 'docs/pinned@760': 1500, 'app/home@390': 844, 'docs/bare@760': 300, 'docs/spec@760': 'x' },
+        aw)
+      expect(next).toEqual({ 'docs/spec@760': 1000, 'docs/wide@1280': 900, 'docs/pinned@1280': 2000 })
+      expect(accepted.sort()).toEqual(['docs/pinned@1280', 'docs/wide@1280'])
+      expect(keptSizes({ 'docs/bare@760': 2000, 'docs/spec@760': 1000 }, aw)).toEqual({ 'docs/spec@760': 1000 })
+    } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
   it('writes one sorted entry per line, so a changed height is a one-line diff', () => {
@@ -49,16 +70,19 @@ describe('the size cache (sizes.ts)', () => {
     expect(text.endsWith('}\n')).toBe(true)
   })
 
-  it('reads leniently: absent, malformed (a merge conflict) or off-grammar entries are nothing', () => {
+  it('tells absent, ok and invalid (a merge conflict) apart; readers see an invalid file as no heights', () => {
     const root = mkdtempSync(join(tmpdir(), 'mv-sizes-read-'))
     try {
-      expect(readSizes(root)).toEqual({})
+      expect(readSizesFile(root)).toEqual({ state: 'absent', heights: {} })
       mkdirSync(join(root, 'design', 'boards'), { recursive: true })
       const file = join(root, 'design', 'boards', '_sizes.json')
       writeFileSync(file, '{\n<<<<<<< HEAD\n  "heights": {}\n')
+      expect(readSizesFile(root).state).toBe('invalid')
       expect(readSizes(root)).toEqual({})
+      writeFileSync(file, JSON.stringify({ heights: [1] }))
+      expect(readSizesFile(root).state).toBe('invalid')
       writeFileSync(file, JSON.stringify({ heights: { 'docs/spec@760': 900, '../x@760': 900, 'docs/wide@1280': -4 } }))
-      expect(readSizes(root)).toEqual({ 'docs/spec@760': 900 })
+      expect(readSizesFile(root)).toEqual({ state: 'ok', heights: { 'docs/spec@760': 900 } })
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 })
@@ -87,13 +111,11 @@ function drive(method: string, path: string, body?: unknown, owner = true) {
   return done
 }
 const file = () => join(root, 'design', 'boards', '_sizes.json')
-const manifest = (frames: unknown[]) => writeFileSync(join(root, 'design', 'manifest.json'), JSON.stringify({ frames, scenes: [] }))
 
 describe('the dev API: sizes', () => {
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'mv-sizes-api-'))
-    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
-    manifest(FRAMES)
+    project(root)
   })
   afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
@@ -102,19 +124,37 @@ describe('the dev API: sizes', () => {
     expect(existsSync(file())).toBe(false)
   })
 
-  it('takes settled heights of live content frames at their own width, answers what it took, and reads them back', async () => {
+  it('takes settled heights of live Docs at their own width, answers what it took, and reads them back', async () => {
     expect((await drive('GET', 'sizes')).json).toEqual({ heights: {} })
-    const r = await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1834, 'docs/wide@760': 900, 'app/home@390': 844, 'nope@760': 900 } })
+    const r = await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1834, 'docs/wide@760': 900, 'app/home@390': 844, 'docs/bare@760': 400, 'nope@760': 900 } })
     expect(r).toEqual({ status: 200, json: { accepted: ['docs/spec@760'] } })
     expect(JSON.parse(readFileSync(file(), 'utf8')).heights).toEqual({ 'docs/spec@760': 1834 })
     expect((await drive('GET', 'sizes')).json).toEqual({ heights: { 'docs/spec@760': 1834 } })
   })
 
+  it('hands out only what a board can use: a frame that stopped rendering a Doc keeps the size its board gives it', async () => {
+    await drive('POST', 'sizes', { heights: { 'docs/spec@760': 2000 } })
+    writeFileSync(join(root, 'design/scenes/docs/spec.tsx'), BARE)   // the Doc became a bare Md: nothing measures it any more
+    expect((await drive('GET', 'sizes')).json).toEqual({ heights: {} })
+  })
+
   it('a later write prunes what a board can no longer use: a deleted frame, a Doc that changed width', async () => {
     await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1000, 'docs/wide@1280': 700 } })
-    manifest([{ id: 'docs/spec', contentWidth: 1280 }, { id: 'docs/new', contentWidth: 760 }])   // spec went wide; wide is gone
+    project(root, [{ ...FRAMES[0], contentWidth: 1280, src: WIDE }, { ...FRAMES[0], id: 'docs/new', file: 'design/scenes/docs/new.tsx' }])   // spec went wide; wide is gone
     expect((await drive('POST', 'sizes', { heights: { 'docs/new@760': 400 } })).json).toEqual({ accepted: ['docs/new@760'] })
     expect(JSON.parse(readFileSync(file(), 'utf8')).heights).toEqual({ 'docs/new@760': 400 })
+  })
+
+  it('never rewrites from a bad read: a conflicted file or an unreadable manifest refuses, and both stay as they were', async () => {
+    await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1000, 'docs/wide@1280': 700 } })
+    const conflicted = readFileSync(file(), 'utf8').replace('  "heights": {', '<<<<<<< HEAD\n  "heights": {')
+    writeFileSync(file(), conflicted)
+    expect((await drive('POST', 'sizes', { heights: { 'docs/pinned@1280': 900 } })).status).toBe(409)
+    expect(readFileSync(file(), 'utf8')).toBe(conflicted)
+    writeFileSync(file(), serializeSizes({ 'docs/spec@760': 1000, 'docs/wide@1280': 700 }))
+    writeFileSync(join(root, 'design', 'manifest.json'), '{"frames": [')                                // mid-rewrite
+    expect((await drive('POST', 'sizes', { heights: { 'docs/pinned@1280': 900 } })).status).toBe(409)
+    expect(JSON.parse(readFileSync(file(), 'utf8')).heights).toEqual({ 'docs/spec@760': 1000, 'docs/wide@1280': 700 })
   })
 
   it('an unchanged height is no write, nothing is created for nothing, and the batch is bounded', async () => {
@@ -122,7 +162,6 @@ describe('the dev API: sizes', () => {
     expect(existsSync(file())).toBe(false)
     await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1000 } })
     const before = readFileSync(file(), 'utf8')
-    writeFileSync(file(), before)   // the same bytes - the mtime is ours, the content the server's
     await drive('POST', 'sizes', { heights: { 'docs/spec@760': 1000 } })
     expect(readFileSync(file(), 'utf8')).toBe(before)
     const many = Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`docs/f${i}@760`, 900]))

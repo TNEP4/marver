@@ -61,11 +61,15 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     let poll: ReturnType<typeof setTimeout> | undefined
     let reported = false            // the first measurement went out - the observer may report from here
     let lastSettled = false
+    let tailFrom = 0
     const params = new URLSearchParams(location.search)
     const height = () => Math.ceil(el.getBoundingClientRect().height)
     const post = () => {
       reported = true
       lastSettled = !heightPending(el)
+      // ANY provisional report - the first, or a later one (an edit that brought a loading image) -
+      // is followed by a settled one once the doc is done, even when finishing changes no geometry
+      if (!lastSettled && poll === undefined) { tailFrom = performance.now(); poll = setTimeout(check, 500) }
       window.parent.postMessage({
         type: 'sh:measure',
         // identity guards: board files may reuse node keys (frame id must match), and
@@ -88,16 +92,19 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
     // then once more, settled, when the image lands (or the observer sees it).
     const start = performance.now()
     let prevH = -1, quiet = 0
-    const check = () => {
-      const elapsed = performance.now() - start
+    function check() {
+      poll = undefined
       if (!reported) {
         const h = height()
-        quiet = !heightPending(el) && h === prevH ? quiet + 1 : 0
+        quiet = !heightPending(el!) && h === prevH ? quiet + 1 : 0
         prevH = h
-        if (quiet >= 2 || elapsed >= SETTLE_CAP) post()
-        if (!reported) { poll = setTimeout(check, 50); return }
-      } else if (!lastSettled && !heightPending(el)) { post(); return }
-      if (!lastSettled && elapsed < SETTLE_TAIL) poll = setTimeout(check, 500)
+        if (quiet >= 2 || performance.now() - start >= SETTLE_CAP) post()
+        else poll = setTimeout(check, 50)
+        return
+      }
+      if (lastSettled) return
+      if (!heightPending(el!)) { post(); return }
+      if (performance.now() - tailFrom < SETTLE_TAIL) poll = setTimeout(check, 500)
     }
     // debounced ~300ms after the last content change; the shell guards staleness
     // on its side (event.source must map to a mounted iframe; reflow is board-scoped)

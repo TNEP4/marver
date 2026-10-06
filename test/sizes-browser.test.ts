@@ -57,13 +57,17 @@ const RECORDER = `(() => {
   poll()
 })()`
 
+const opened: string[] = []
 async function open(hash: string): Promise<string> {
   const s = await browser!.tab({ width: 1440, height: 900 })
+  opened.push(s)
   await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: RECORDER }, s)
   await browser!.go(s, `${ORIGIN}/${hash}`)
   await browser!.until(s, `document.querySelectorAll('.sh-node').length > 0`, 30_000)
   return s
 }
+/** Every canvas this suite opened goes blank - an open board would re-measure and re-save on HMR. */
+async function closeAll() { for (const s of opened.splice(0)) await browser!.go(s, 'about:blank').catch(() => {}) }
 const node = (s: string, key: string) => browser!.eval(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.key === ${JSON.stringify(key)}); return n && { x: n.x, y: n.y, w: n.w, h: n.h } })()`)
 
 beforeAll(async () => {
@@ -93,6 +97,14 @@ beforeAll(async () => {
     layout: { rows: [['docs']], scenes: { docs: { rows: [['a', 'b'], ['c']] } } },
     nodes: [{ key: 'k-a', frame: 'docs/a' }, { key: 'k-b', frame: 'docs/b' }, { key: 'k-c', frame: 'docs/c' }] }, null, 2) + '\n')
   writeFileSync(join(boards, 'private.json'), JSON.stringify({ version: 1, name: 'private', auto: false, nodes: [{ key: 'k-s', frame: 'secret/s', x: 0, y: 0 }] }, null, 2) + '\n')
+  // the same Doc on a second, hand-placed board
+  writeFileSync(join(boards, 'other.json'), JSON.stringify({ version: 1, name: 'other', auto: false, nodes: [{ key: 'k-oa', frame: 'docs/a', x: 0, y: 0 }] }, null, 2) + '\n')
+  // one frame in view, one 30 000px below it - far out of any lazy-load margin
+  mkdirSync(join(root, 'design', 'scenes', 'lazy'), { recursive: true })
+  writeFileSync(join(root, 'design', 'scenes', 'lazy', 'near.tsx'), doc(1))
+  writeFileSync(join(root, 'design', 'scenes', 'lazy', 'far.tsx'), doc(1))
+  writeFileSync(join(boards, 'far.json'), JSON.stringify({ version: 1, name: 'far', auto: false, nodes: [
+    { key: 'k-near', frame: 'lazy/near', x: 0, y: 0 }, { key: 'k-far', frame: 'lazy/far', x: 0, y: 30_000 }] }, null, 2) + '\n')
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { docs: 'comment' } }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d })
@@ -175,6 +187,52 @@ describe('calm loading', () => {
     await browser.until(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-c').y > ${before.y + 200}`, 30_000)
     await wait(200)
     expect(Math.abs((await top()) - before.top)).toBeLessThan(2)
+  }, 90_000)
+
+  it('a board whose Doc grew while it was closed opens with its rows re-laid, never overlapping', async () => {
+    if (!browser) return
+    await closeAll()
+    const s1 = await open('#/b/other')                                 // the Doc grows on ANOTHER board
+    const before = heights()['docs/a@760']
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'a.tsx'), doc(26))
+    await until(() => heights()['docs/a@760'] > before + 300)
+    await browser.go(s1, 'about:blank')
+    const s = await open('#/b/docs')
+    const a = await node(s, 'k-a')
+    expect(a.h).toBe(heights()['docs/a@760'])                          // it opens at the new height...
+    await browser.until(s, `(() => { const ns = window.__mvStore.getState().nodes; const a = ns.find((n) => n.key === 'k-a'), c = ns.find((n) => n.key === 'k-c'); return c.y > a.y + a.h + 28 })()`, 10_000)
+    await browser.until(s, `!window.__mvStore.getState().dirty`, 10_000)   // ... and the re-laid rows are saved
+  }, 90_000)
+
+  it('a height that changes while its write is in flight is the one the file ends with', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    const H = heights()['docs/b@760']
+    // every write to the size cache answers a second late
+    await browser.eval(s, `(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/sizes') && o && o.method === 'POST' ? new Promise((r) => setTimeout(r, 1000)).then(() => f(u, o)) : f(u, o) })()`)
+    const measure = (h: number) => browser!.eval(s, `window.__mvStore.getState().measureNode('k-b', 'docs/b', 760, 760, ${h}, true)`)
+    await measure(H + 100)
+    await wait(1800)                                                     // the throttle fired: H+100 is in flight
+    await measure(H)                                                     // ... and the doc is back to H
+    await wait(3500)
+    expect(heights()['docs/b@760']).toBe(H)
+  }, 90_000)
+
+  it('a later provisional report is followed by a settled one, even when finishing changes no geometry', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/far?n=k-near')
+    await browser.until(s, `window.__measures.some((m) => m.frame === 'lazy/far' && m.settled)`, 30_000)
+    // an edit brings a lazy image with its size already given: off-screen it does not load - and when
+    // it does, nothing moves, so only the Doc's own check can say it is done
+    writeFileSync(join(root, 'design', 'scenes', 'lazy', 'far.tsx'), doc(1, `    <img src="/design/assets/sq.png" width={200} height={400} loading="lazy" alt="" />`))
+    const prov = await browser.until(s, `(() => { const ms = window.__measures.filter((m) => m.frame === 'lazy/far'); const i = ms.findIndex((m, j) => j > 0 && !m.settled); return i > 0 && { i, h: ms[i].h } })()`, 30_000)
+    await browser.eval(s, `location.hash = '#/b/far?n=k-far'`)             // bring it into view: the image loads
+    const done = await browser.until(s, `(() => { const ms = window.__measures.filter((m) => m.frame === 'lazy/far'); return ms.slice(${prov.i} + 1).find((m) => m.settled) })()`, 30_000)
+    expect(done.h).toBe(prov.h)
+    await until(() => heights()['lazy/far@760'] === prov.h)
   }, 90_000)
 
   it('the published bundle carries the committed heights of its own frames only', async () => {

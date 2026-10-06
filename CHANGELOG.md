@@ -25,7 +25,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 - Run `npx marver init` to take the new instructions. `_sizes.json` appears the first time a board of
   Docs settles in `marver dev`; commit it. It is machine-written - a merge conflict in it is safe to
-  resolve either way, the canvas rewrites it.
+  resolve either way (until it is resolved, `marver dev` leaves the file alone and says so).
 
 ## 0.22.1 - 2026-10-06
 

@@ -29,7 +29,7 @@ import { buildTree, flatten, isBoardName, type FolderRow, type TreeItem } from '
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
-import { readSizes } from './sizes.ts'
+import { autoWidthOf, keptSizes, readSizes } from './sizes.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -515,7 +515,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // content-frame heights (sizes.ts), published frames only: the published canvas opens at its
   // final geometry too - it never measures into a file, so this is the only one it gets
   const pubIds = new Set(frames.map((f) => f.id))
-  const sizes = Object.fromEntries(Object.entries(readSizes(root)).filter(([k]) => pubIds.has(k.slice(0, k.lastIndexOf('@')))))
+  const sizes = Object.fromEntries(Object.entries(keptSizes(readSizes(root), autoWidthOf(root, manifest.frames, config.viewports)))
+    .filter(([k]) => pubIds.has(k.slice(0, k.lastIndexOf('@')))))
   const data = {
     bakes: bakeGen,
     manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}), ...(Object.keys(meta).length ? { meta } : {}),

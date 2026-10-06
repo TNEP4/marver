@@ -299,23 +299,33 @@ const loadSavedHeights = (): Promise<void> => (savedLoad ??= (async () => {
     for (const [k, v] of Object.entries(heights)) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
 })())
 
-// settled heights that differ from the committed ones, written back in batches (dev only)
+// settled heights that differ from the committed ones, written back in batches (dev only). One
+// write in flight at a time; a height that changes while its write is in flight queues behind it,
+// so the LAST settled height is the one the file ends with
 const pendingHeights = new Map<string, number>()
+const inflightHeights = new Map<string, number>()
 let heightsTimer: ReturnType<typeof setTimeout> | undefined
+let flushing = false
 const persistHeight = (key: string, h: number) => {
-  if (DATA || savedHeights.get(key) === h) { pendingHeights.delete(key); return }
+  if (DATA) return
+  if (!inflightHeights.has(key) && savedHeights.get(key) === h) { pendingHeights.delete(key); return }
   pendingHeights.set(key, h)
-  heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
+  if (!flushing) heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
 }
 async function flushHeights() {
   heightsTimer = undefined
-  if (!pendingHeights.size) return
+  if (flushing || !pendingHeights.size) return
+  flushing = true
   const batch = Object.fromEntries([...pendingHeights].slice(0, 500))
-  for (const k of Object.keys(batch)) pendingHeights.delete(k)
+  for (const [k, v] of Object.entries(batch)) { pendingHeights.delete(k); inflightHeights.set(k, v) }
   try {
     const r = await postOwner('sizes', { heights: batch })
     if (r.ok) for (const k of ((await r.json()) as { accepted?: string[] }).accepted ?? []) savedHeights.set(k, batch[k])
   } catch { /* the next settled measurement of these frames tries again */ }
+  for (const k of Object.keys(batch)) inflightHeights.delete(k)
+  // a height that settled while the write was in flight: still owed only if it differs from what landed
+  for (const [k, v] of pendingHeights) if (savedHeights.get(k) === v) pendingHeights.delete(k)
+  flushing = false
   if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
 }
 
@@ -492,12 +502,14 @@ export const useStore = create<State>((set, get) => {
   // The captured board name is the generation guard - a debounce surviving a board
   // switch fires into a name check and dies, never touching the new board.
   // `onlyIf` (a note asking for room) is re-judged when the timer fires - a drag or a restore
-  // in the meantime may have settled it - and never downgrades an unconditional reflow pending.
+  // in the meantime may have settled it - and never downgrades an unconditional reflow pending;
+  // two conditions pending are EITHER one (a later ask never drops an earlier one).
   let reflowTimer: ReturnType<typeof setTimeout> | undefined
   let reflowCheck: (() => boolean) | null = null
   const scheduleReflow = (onlyIf?: () => boolean) => {
     const boardAt = get().board
-    reflowCheck = reflowTimer !== undefined && reflowCheck === null ? null : (onlyIf ?? null)
+    const prev = reflowTimer !== undefined ? reflowCheck : undefined   // undefined: nothing pending
+    reflowCheck = prev === null || !onlyIf ? null : prev ? () => prev() || onlyIf() : onlyIf
     clearTimeout(reflowTimer)
     reflowTimer = setTimeout(() => {
       reflowTimer = undefined
@@ -518,6 +530,21 @@ export const useStore = create<State>((set, get) => {
   /** A note may have landed with no room (a frame note via the manifest, a scene note via
    *  sh:scenes, either merged late by boot/switch): a composed board re-applies its layout. */
   const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow(cramped) }
+  /** A composed board's saved positions were laid out around the heights of the session that saved
+   *  them. A committed height that changed since (the doc grew while another board was open) opens
+   *  at its new size - and no measurement will re-flow the rows, it already equals the committed
+   *  one. So once the board is up (its notes measured too), the recipe re-runs if it would place
+   *  anything differently - as the first measurement used to make it - and only then. */
+  const layoutStale = () => {
+    const s = get()
+    // saved positions are whole pixels (save rounds them): a sub-pixel difference is the same layout
+    return tidy(tidyInput(s.nodes, s.manifest), effectiveLayout(s.layout, s.sceneRows), () => {})
+      .some((p) => { const n = s.nodes.find((x) => x.key === p.key); return !!n && (Math.round(n.x) !== Math.round(p.x) || Math.round(n.y) !== Math.round(p.y)) })
+  }
+  const recheckLayout = () => {
+    const s = get()
+    if (composed(s) && s.nodes.some((n) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)))) scheduleReflow(layoutStale)
+  }
 
   /** Theme resolution ladder: user pin > the frame's declared meta.theme > viewTheme. */
   const resolveTheme = (frame?: FrameEntry, user?: string) => user ?? frame?.theme ?? get().viewTheme
@@ -772,6 +799,7 @@ export const useStore = create<State>((set, get) => {
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
       roomForNotes()                          // whichever way the notes arrived, they get their room
+      recheckLayout()                         // and a height committed since the board was laid out, its rows
       return true
     },
 
@@ -807,6 +835,7 @@ export const useStore = create<State>((set, get) => {
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })
       roomForNotes()
+      recheckLayout()
     },
 
     renameBoard(name, title, baseHash) {

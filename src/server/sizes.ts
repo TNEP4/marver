@@ -13,6 +13,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { codeOnly } from './manifest.ts'
 
 export const SIZES_FILE = '_sizes.json'
 /** `scene/frame@width` - the frame id grammar the focus route accepts, then the width it was measured at. */
@@ -33,19 +34,25 @@ export function validEntry(key: unknown, h: unknown): boolean {
   return !!m && !m[1].split('/').some((p) => p === '..' || p === '.' || p === '')
 }
 
-/** Lenient read: absent, malformed (a merge conflict, a hand edit) or off-grammar entries read as
- *  nothing - the next settled measurement rewrites the file clean. Never throws. */
-export function readSizes(root: string): Record<string, number> {
+/** The file as it stands: absent, ok (off-grammar entries dropped), or INVALID - a merge conflict
+ *  or a hand edit. An invalid file is never rewritten from a partial view: the API refuses to write
+ *  until it is resolved (either side is fine), so no committed height is lost to one measurement. */
+export type SizesRead = { state: 'absent' | 'ok' | 'invalid'; heights: Record<string, number> }
+export function readSizesFile(root: string): SizesRead {
   const file = sizesPath(root)
-  if (!existsSync(file)) return {}
+  if (!existsSync(file)) return { state: 'absent', heights: {} }
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8'))
-    const heights = raw && typeof raw === 'object' && raw.heights && typeof raw.heights === 'object' ? raw.heights : {}
+    if (!raw || typeof raw !== 'object' || !raw.heights || typeof raw.heights !== 'object' || Array.isArray(raw.heights)) return { state: 'invalid', heights: {} }
     const out: Record<string, number> = {}
-    for (const [k, v] of Object.entries(heights)) if (validEntry(k, v)) out[k] = v as number
-    return out
-  } catch { return {} }
+    for (const [k, v] of Object.entries(raw.heights)) if (validEntry(k, v)) out[k] = v as number
+    return { state: 'ok', heights: out }
+  } catch { return { state: 'invalid', heights: {} } }
 }
+
+/** Lenient read for the readers (the shell's first layout, the build): an absent or invalid file is
+ *  no heights - every frame opens at its placeholder, as before. Never throws. */
+export const readSizes = (root: string): Record<string, number> => readSizesFile(root).heights
 
 /** The file's text for a set of heights: sorted keys, one entry per line - a changed height is a
  *  one-line diff, and two branches that measured different frames merge without a conflict. */
@@ -56,34 +63,55 @@ export function serializeSizes(heights: Record<string, number>): string {
 }
 
 /** Which width a frame measures at on its own (its auto size): the declared viewport's width, else
- *  the Doc layout's. null = not a content frame (or not a frame at all) - nothing to keep. */
+ *  the Doc layout's. null = nothing to keep: not a content frame, not a frame at all, or a content
+ *  frame that does not render a Doc - only a Doc measures, so only a Doc's height is a fact (a
+ *  frame that went from a Doc to a bare Md keeps the size its board gives it, never an old one). */
 export type AutoWidth = (frameId: string) => number | null
 
-/** Merge incoming heights into the current ones, keeping only what a board can use: a content frame
- *  that still exists, at the width it measures at on its own. Everything else is pruned - a deleted
+const keeps = (key: string, autoWidth: AutoWidth): boolean => {
+  const m = SIZE_KEY.exec(key)
+  return !!m && autoWidth(m[1]) === Number(m[2])
+}
+
+/** The entries a board can use - what the GET and the build hand the shell. */
+export const keptSizes = (heights: Record<string, number>, autoWidth: AutoWidth): Record<string, number> =>
+  Object.fromEntries(Object.entries(heights).filter(([k]) => keeps(k, autoWidth)))
+
+/** Merge incoming heights into the current ones, keeping only what a board can use: a Doc that
+ *  still exists, at the width it measures at on its own. Everything else is pruned - a deleted
  *  frame, a Doc that went from document to wide. Returns the next map and the keys taken. */
 export function mergeSizes(current: Record<string, number>, incoming: Record<string, unknown>, autoWidth: AutoWidth): { next: Record<string, number>; accepted: string[] } {
-  const keep = (key: string): boolean => {
-    const m = SIZE_KEY.exec(key)
-    return !!m && autoWidth(m[1]) === Number(m[2])
-  }
-  const next: Record<string, number> = {}
-  for (const [k, v] of Object.entries(current)) if (keep(k)) next[k] = v
+  const next = keptSizes(current, autoWidth)
   const accepted: string[] = []
   for (const [k, v] of Object.entries(incoming)) {
-    if (!validEntry(k, v) || !keep(k)) continue
+    if (!validEntry(k, v) || !keeps(k, autoWidth)) continue
     next[k] = v as number
     accepted.push(k)
   }
   return { next, accepted }
 }
 
-/** The auto width rule over a manifest's frames (the shell's defaultSize, store.ts). */
-export function autoWidthOf(frames: { id: string; contentWidth?: number; viewport?: string }[], viewports: Record<string, { width: number }>): AutoWidth {
+/** Does this frame source render a `<Doc>` - the one primitive that measures (content/index.tsx)?
+ *  Lexical on the code (comments and strings blanked), like the content scan. */
+export const rendersDoc = (src: string): boolean => /<Doc[\s>/]/.test(codeOnly(src))
+
+/** The auto width rule over a manifest's frames (the shell's defaultSize, store.ts), restricted to
+ *  frames that render a Doc. `file` is the frame's path from the root (manifest.ts); each source is
+ *  read once, on first ask. */
+export function autoWidthOf(root: string, frames: { id: string; file?: string; kind?: string; contentWidth?: number; viewport?: string }[], viewports: Record<string, { width: number }>): AutoWidth {
   const byId = new Map(frames.map((f) => [f.id, f]))
+  const docs = new Map<string, boolean>()
+  const isDoc = (f: { id: string; file?: string; kind?: string }): boolean => {
+    let d = docs.get(f.id)
+    if (d === undefined) {
+      try { d = f.kind !== 'html' && !!f.file && !f.file.split('/').includes('..') && rendersDoc(readFileSync(join(root, f.file), 'utf8')) } catch { d = false }
+      docs.set(f.id, d)
+    }
+    return d
+  }
   return (id) => {
     const f = byId.get(id)
-    if (!f?.contentWidth) return null
+    if (!f?.contentWidth || !isDoc(f)) return null
     return viewports[f.viewport ?? '']?.width ?? f.contentWidth
   }
 }
