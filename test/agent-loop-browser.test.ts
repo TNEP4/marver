@@ -144,19 +144,36 @@ describe('a link that lands on the work', () => {
   it('a link followed while a Doc above its frame is still growing lands on the frame - the rows move after the camera does', async () => {
     if (!browser) return
     const s = await open(browser, '#/b/stack')
-    const docH = () => browser!.eval(s, `(() => { const n = [...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall')); return n ? n.offsetHeight : 0 })()`)
-    await browser.until(s, `(() => { const n = [...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall')); return n && n.offsetHeight > 200 })()`, 20_000)
+    const DOC = `[...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall'))`
+    await browser.until(s, `(() => { const n = ${DOC}; return n && n.offsetHeight > 200 })()`, 20_000)
     await wait(1500)                                  // settled: measured, laid out
-    const before = await docH()
+    // In the page: the instant the Doc's new height lands (its reflow is then due in 400 ms), wait 200 ms
+    // and follow a link to the frame below - so the link's 320 ms fit is certainly in flight when the
+    // reflow comes due, every run.
+    const armed = browser.eval(s, `new Promise((done) => {
+      const n = ${DOC}, h0 = n.offsetHeight
+      const tick = () => n.offsetHeight > h0 + 2000 ? setTimeout(() => { location.hash = '#/b/stack?f=shop/cart'; done(true) }, 200) : requestAnimationFrame(tick)
+      tick()
+    })`)
     writeFileSync(join(root, 'design', 'scenes', 'docs', 'tall.tsx'), docFrame(400))   // the agent makes the doc far taller
-    // the instant the Doc's new height lands - its reflow still pending - follow a link to the frame below
-    await browser.until(s, `(() => { const n = [...document.querySelectorAll('.sh-node')].find((x) => x.querySelector('iframe')?.src.includes('tall')); return n && n.offsetHeight > ${before} + 2000 })()`, 20_000)
-    await browser.eval(s, `location.hash = '#/b/stack?f=shop/cart'`)
-    await wait(2500)                                  // the fit, the deferred reflow, and the hold have all run
-    const v = await browser.eval(s, `(() => { const n = document.querySelector('[data-node="s-cart"]'); const r = n.getBoundingClientRect(); return { sel: n.classList.contains('sel'), top: Math.round(r.top), bottom: Math.round(r.bottom), h: innerHeight } })()`)
-    expect(v.sel).toBe(true)
-    expect(v.top).toBeGreaterThanOrEqual(0)
-    expect(v.top).toBeLessThan(v.h)                   // on screen - not where it was before the rows moved
+    await armed
+    // a node's place on the board is its translate (world px), not its offsetTop
+    const Y = `((n) => +/translate\\([-\\d.]+px, ([-\\d.]+)px\\)/.exec(n.style.transform)[1])`
+    const CART = `(() => { const n = document.querySelector('[data-node="s-cart"]'), d = ${DOC}, r = n.getBoundingClientRect()
+      return { sel: n.classList.contains('sel'), below: ${Y}(n) > ${Y}(d) + d.offsetHeight, top: Math.round(r.top), h: innerHeight } })()`
+    // the reflow ran - the row moved below the taller Doc - and the frame the link named is on screen
+    const v = await browser.until(s, `(() => { const v = ${CART}; return v.below && v }) ()`, 10_000)
+    await wait(600)
+    const after = await browser.eval(s, CART)
+    expect(after).toMatchObject({ sel: true, below: true })
+    expect(after.top).toBeGreaterThanOrEqual(0)
+    expect(after.top).toBeLessThan(after.h)
+    expect(v.below).toBe(true)
+
+    // a camera that never stops (a fit every 250 ms) still lets the rows move, within the wait's bound
+    writeFileSync(join(root, 'design', 'scenes', 'docs', 'tall.tsx'), docFrame(700))
+    await browser.eval(s, `(() => { let i = 0; const t = setInterval(() => { location.hash = i++ % 2 ? '#/b/stack?f=shop/cart' : '#/b/stack?f=docs/tall'; if (i > 16) clearInterval(t) }, 250) })()`)
+    await browser.until(s, `(() => { const n = document.querySelector('[data-node="s-cart"]'), d = ${DOC}; return d.offsetHeight > 20000 && ${Y}(n) > ${Y}(d) + d.offsetHeight })()`, 15_000)
   }, 60_000)
 
   it('marver link prints that link with the running port; work done prints it for what it cleared', () => {

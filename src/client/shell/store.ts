@@ -567,7 +567,9 @@ export const useStore = create<State>((set, get) => {
   /** A board load (boot, switch) starts its own reflow story: whatever was pending - an
    *  unconditional reflow from the board that was up - must never carry over and tidy this one. */
   const cancelReflow = () => { clearTimeout(reflowTimer); reflowTimer = undefined; reflowCheck = null }
-  const scheduleReflow = (onlyIf?: () => boolean) => {
+  /** How long a content reflow waits for a camera in flight - past it, the rows move anyway. */
+  const REFLOW_CAMERA_WAIT = 1500
+  const scheduleReflow = (onlyIf?: () => boolean, delay = 400, cameraSince?: number) => {
     const boardAt = get().board
     const prev = reflowTimer !== undefined ? reflowCheck : undefined   // undefined: nothing pending
     reflowCheck = prev === null || !onlyIf ? null : prev ? () => prev() || onlyIf() : onlyIf
@@ -578,13 +580,18 @@ export const useStore = create<State>((set, get) => {
       reflowCheck = null
       const s = get()
       if (s.board !== boardAt) return
-      // defer, never drop: after the drag, and after a camera flight - a link's fit lands first, then
-      // the rows move around the frames it showed (holdView keeps them where the fit put them)
-      if (s.gesture || canvasCtl.cameraBusy()) { scheduleReflow(check ?? undefined); return }
+      // defer, never drop - retries after the drag
+      if (s.gesture) { scheduleReflow(check ?? undefined); return }
+      // and after a camera flight: a link's fit lands first, then the rows move around the frames it
+      // showed (holdView keeps them where the fit put them). Looked at often, so the reflow follows the
+      // landing closely - and never waited on past REFLOW_CAMERA_WAIT: a camera that keeps moving (fit
+      // after fit) does not hold the rows apart forever
+      const since = cameraSince ?? Date.now()
+      if (canvasCtl.cameraBusy() && Date.now() - since < REFLOW_CAMERA_WAIT) { scheduleReflow(check ?? undefined, 60, since); return }
       if (check && !check()) return
       // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
       if (composed(s)) { canvasCtl.holdView(); s.runTidy() }
-    }, 400)
+    }, delay)
   }
   /** Boards whose layout the shell owns: a recipe, scene rows, or the auto board. Room for a
    *  note is made here; a board the human placed by hand is never moved (spec 18, 0.19.1). */
