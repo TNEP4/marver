@@ -33,9 +33,9 @@ const GRAY = 'var(--glass-ink-3)'
 const YELLOW = '#e2b203'
 const RED = '#e5484d'
 // done is the content palette's green (Apple's systemGreen, per theme - styles.css), the green Marver
-// keeps for done alone; archived is Apple's systemGray, the same in both themes
+// keeps for done alone; archived is Apple's brown - a cardboard box - per theme as well
 const GREEN = 'var(--status-done, #34c759)'
-const ARCHIVED = '#8e8e93'
+const ARCHIVED = 'var(--status-archived, #956d51)'
 
 /** A pie wedge of the ring's interior, `f` of the way round from twelve o'clock. */
 const pie = (f: number, r = 3.4) => {

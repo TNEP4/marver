@@ -114,7 +114,7 @@ In progress (filling by phase), Done, Done reported, Unknown - or decided on the
 The tooltip says what decided it. [Context](context.md) has the rules.
 
 One rule draws them: a status still open is an outline in its colour - grey, yellow filling by phase,
-red for blocked - and a settled one is filled: Done a green disc, Archived a solid grey box. Done,
+red for blocked - and a settled one is filled: Done a green disc, Archived a solid brown box. Done,
 reported is the green outline - a written claim, not yet confirmed.
 
 ## Starting points

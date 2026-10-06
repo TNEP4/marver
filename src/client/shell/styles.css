@@ -472,9 +472,11 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* spec 20: a feature or project board's status ring sits at the row's end, in its own colours -
    never the accent of the current row - with its evidence in the tooltip */
 .sh-panel .it.board .st { flex: none; display: inline-flex; margin-left: auto; font-style: normal }
-/* the done green: the content palette's (Apple's systemGreen), one value per theme */
-.sh-app { --status-done: #34c759 }
-.sh-app.dark { --status-done: #30d158 }
+/* the settled statuses' fills, one value per theme: done is the content palette's green (Apple's
+   systemGreen); archived is Apple's brown - its increased-contrast value on light, its default on
+   dark, where the increased-contrast one turns peach - so it reads as the same brown box in both */
+.sh-app { --status-done: #34c759; --status-archived: #956d51 }
+.sh-app.dark { --status-done: #30d158; --status-archived: #b78a66 }
 .sh-panel .it.board .st svg, .sh-panel .it.board.cur .st svg { color: inherit; margin: 0 }
 /* drag-to-reorder: a grab cursor, the lifted row dims, and a 2px accent rule marks the
    drop seam above or below the hovered row */

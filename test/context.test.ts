@@ -171,7 +171,7 @@ describe('status: the nine rows (spec 20)', () => {
     const r = resolveStatus(board(), ctx({ plans: new Map([['checkout', pl('context/plans/v2.md')]]), shipped: new Map([['checkout', lv(['confirmed'])]]) }))
     expect(r?.evidence[1]).toMatch(/this is the next version/)
   })
-  it('status glyphs follow one rule: open is an outline, settled is filled - done green, archived a solid box', () => {
+  it('status glyphs follow one rule: open is an outline, settled is filled - done green, archived a solid brown box', () => {
     const svg = (status: Parameters<typeof StatusIcon>[0]['status']) => renderToStaticMarkup(createElement(StatusIcon, { status }))
     // the first shape is the silhouette: an open status draws it as a ring, a settled one fills it
     const silhouette = (s: string) => /<(circle|rect|path)\b[^>]*>/.exec(s)![0]
@@ -181,7 +181,7 @@ describe('status: the nine rows (spec 20)', () => {
     expect(svg('done-reported')).toMatch(/stroke="var\(--status-done/)          // the same green, outlined: not yet confirmed
     const archived = svg('archived')
     expect(archived).not.toMatch(/<circle|fill="none"/)                       // no ring: out of the flow, and solid
-    expect(archived.match(/fill="#8e8e93"/g)).toHaveLength(2)                // the lid and the body
+    expect(archived.match(/fill="var\(--status-archived, #956d51\)"/g)).toHaveLength(2)   // the lid and the body, in brown
     expect(renderToStaticMarkup(createElement(TypeIcon, { type: 'archive' }))).toMatch(/fill="none"/)   // the type icon stays an outline
   })
 })
