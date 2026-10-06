@@ -8,5 +8,7 @@ export default defineConfig({
     // a dozen suites drive a real Chrome and a dev server each; at one worker per core they starve
     // one another (the folders suite fails its file-write races under that load, never alone)
     maxWorkers: 4,
+    // agent worktrees live inside the repo (.claude/worktrees/): their copies of the suite are theirs
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
   },
 })
