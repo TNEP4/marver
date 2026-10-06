@@ -1,5 +1,5 @@
 import type { Connect } from 'vite'
-import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, copyFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
@@ -79,7 +79,9 @@ function atomicWrite(file: string, content: string) {
  *  status write, which writes several files and must say exactly what it changed. */
 function stageWrite(file: string, content: string): string {
   const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
-  writeFileSync(tmp, content, { flag: 'wx' })
+  const fd = openSync(tmp, 'wx')                       // ours from here: a failure below removes it
+  try { writeFileSync(fd, content) } catch (err) { try { closeSync(fd) } catch { /* closing a failed write */ } discard(tmp); throw err }
+  closeSync(fd)
   return tmp
 }
 const discard = (tmp: string) => { try { rmSync(tmp, { force: true }) } catch { /* a stray temp file */ } }
@@ -303,9 +305,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             done.push(w)
           } catch (err) {
             if (tmp) discard(tmp)
-            // a failed rename leaves the destination as it was - any other version there is someone
-            // else's write, never overwritten, named below
-            if (current_(w.file) === w.next) done.push(w)
+            // a rename either happened or threw: this one did not, so the destination is not ours to
+            // undo - whatever it holds now (someone else's write) is never overwritten, named below
             const stuck = undo()
             // "nothing changed" only when every file is seen to hold what it held before
             const off = writes.filter((x) => x.next !== x.raw && current_(x.file) !== x.raw).map((x) => x.plan ?? `design/boards/${name}.json`)
