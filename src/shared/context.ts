@@ -142,13 +142,15 @@ export function looseTables(text: string): number[] {
  *  available", "rolled back", "withdrawn") - and, for a product's Available cell, never one scoped to
  *  a pre-production place (staging, preview, sandbox) that does not also name production. A
  *  knowledge-work Delivered cell has no environments: only negations void it. */
-const NEGATION = /\b(nowhere|none|never|no longer|not (available|live|deployed|delivered|on|in|shipped|released)|withdrawn|rolled back|reverted|removed|retired|pulled)\b|^\s*not\b/i
+const NEGATION = /\b(nowhere|none|never|no longer|not (yet )?(available|live|deployed|delivered|on|in|shipped|released|out)|not yet|pending|planned|scheduled|upcoming|awaiting|withdrawn|rolled back|reverted|removed|retired|pulled)\b|^\s*not\b/i
+/** The places a product is NOT yet available to its users, unless the clause also names production. */
+const PRE_PRODUCTION = /\b(staging|preview|sandbox|dev|development|local|locally|testing|test environment|qa)\b/i
 export function availableLevels(cell: string, kind: 'available' | 'delivered' = 'available'): Level[] {
   const out: Level[] = []
   for (const clause of cell.split(';')) {
     const c = clause.replace(/\*\*/g, '').trim()
     if (NEGATION.test(c)) continue
-    if (kind === 'available' && /\b(staging|preview|sandbox)\b/i.test(c) && !/\b(production|prod)\b/i.test(c)) continue
+    if (kind === 'available' && PRE_PRODUCTION.test(c) && !/\b(production|prod)\b/i.test(c)) continue
     out.push(...levelsIn(c))
   }
   return out

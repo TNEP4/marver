@@ -687,3 +687,53 @@ describe('the review of 0.22, second pass: the check', () => {
     expect(pass().failures.filter((f) => f.rule === 'audience').map((f) => f.where).sort()).toEqual(['design/scenes/app/_brief.md', 'design/scenes/app/home.note.md'])
   })
 })
+
+// ---------------------------------------------------------------------------------------------
+describe('the review of 0.22, third pass', () => {
+  it('pre-production places and pending words grant nothing toward a product\'s Done', () => {
+    for (const c of ['local only - `confirmed` run 1234567', 'dev only - `confirmed` run 1234567', 'testing only - `confirmed` run 1234567', 'production - not yet live - `confirmed` run 1234567', 'production - planned for May - `confirmed` run 1234567'])
+      expect(availableLevels(c)).toEqual([])
+    expect(availableLevels('dev only - `confirmed`', 'delivered')).toEqual(['confirmed'])
+  })
+
+  it('the first folder creates the boards directory and its lock', async () => {
+    const r = await drive('POST', 'boards/reorder', { protocol: 2, tree: [{ folder: 'new', items: [] }], base: { boards: {}, folders: null } })
+    expect(r.status).toBe(200)
+    expect(JSON.parse(read('design/boards/_folders.json')).folders).toEqual([{ name: 'new', order: 0 }])
+  })
+})
+
+describe('the review of 0.22, third pass: the check', () => {
+  const pass = () => contextCheck(root)
+  const rules = (r = pass()) => r.failures.map((f) => f.rule)
+  beforeEach(() => { git('init', '-q'); contextInit(root) })
+
+  it('a backwards range fails even on an ambiguous bare name', () => {
+    put('a/home.tsx', 'x\n'); put('b/home.tsx', 'y\n')
+    git('add', '-A')
+    put('context/product/p.md', '---\nstate: current\n---\n\n`home.tsx:40-1`\n')
+    expect(pass().failures.map((f) => f.what)).toContain('home.tsx:40-1 runs backwards')
+  })
+
+  it('feedback closes on availability, never on implementation', () => {
+    put('context/feedback/f.md', '| Item | What | State | Resolved by |\n|---|---|---|---|\n| F1 | x | shipped | implementation `confirmed` by run 1234567; availability `unknown` |\n')
+    expect(rules()).toContain('feedback-closed')
+  })
+
+  it('a contract may not claim delivery either', () => {
+    put('context/product/memo.md', '---\nstate: current\n---\n\nThe memo was delivered to the client on 1 October.\n')
+    expect(rules()).toContain('availability')
+  })
+
+  it('the graph follows a list of extended configs, and a nested frame\'s scene brief and note', () => {
+    put('tsconfig.json', JSON.stringify({ compilerOptions: { paths: { '@ctx/*': ['./context/*'] } } }))
+    put('design/tsconfig.json', JSON.stringify({ extends: ['../tsconfig.json'] }))
+    put('design/scenes/app/nested/home.tsx', "import x from '@ctx/secret.md?raw'\nexport default () => x\n")
+    put('context/secret.md', '# secret\n')
+    put('design/scenes/app/_brief.md', '---\naudience: restricted\n---\nPrivate.\n')
+    put('design/boards/b.json', { version: 1, nodes: [{ frame: 'app/nested/home' }] })
+    put('design/publish.json', { boards: { b: 'read' } })
+    const where = pass().failures.filter((f) => f.rule === 'audience').map((f) => f.where).sort()
+    expect(where).toEqual(['context/secret.md', 'design/scenes/app/_brief.md'])
+  })
+})

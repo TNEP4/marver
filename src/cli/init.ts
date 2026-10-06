@@ -196,7 +196,7 @@ export function init(root: string, opts: InitOpts) {
       providersTemplate(host.router, host.toaster, host.routerPkg))
     refresh('tsconfig.json', [STANDALONE_TSCONFIG], tsconfigNow())
   }
-  write('.gitignore', '.local/\n.dist/\n.dist-seeds/\nslides-inspiration/\n')
+  write('.gitignore', '.local/\n.dist/\n.dist-seeds/\nslides-inspiration/\nboards/.folders.lock\n')
   // a pre-1.5 .gitignore predates the inspiration folder: append the one rule
   // (never rewrite - the file is theirs), or a dropped PPTX gets committed
   {
@@ -205,6 +205,15 @@ export function init(root: string, opts: InitOpts) {
     if (!cur.split('\n').some((l) => l.trim() === 'slides-inspiration/' || l.trim() === 'slides-inspiration')) {
       writeFileSync(gi, cur + (cur.endsWith('\n') || cur === '' ? '' : '\n') + 'slides-inspiration/\n')
       created.push('design/.gitignore (+ slides-inspiration/)')
+    }
+  }
+  // 0.22: the folder registry's write lock is transient, but a crashed writer can leave it behind
+  {
+    const gi = join(design, '.gitignore')
+    const cur = readFileSync(gi, 'utf8')
+    if (!cur.split('\n').some((l) => l.trim() === 'boards/.folders.lock')) {
+      writeFileSync(gi, cur + (cur.endsWith('\n') || cur === '' ? '' : '\n') + 'boards/.folders.lock\n')
+      created.push('design/.gitignore (+ boards/.folders.lock)')
     }
   }
   // the living slide-layout list (v1.5): write-once, project-owned forever -

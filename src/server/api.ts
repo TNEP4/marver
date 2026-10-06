@@ -312,6 +312,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const reply = (status: number, body: unknown) => ({ status, body })
         // one writer at a time with `folders add` and `init --kind` (another process): never block the
         // event loop on it - a held lock is a 409 the shell already answers by reloading and replaying
+        mkdirSync(boardsDir, { recursive: true })   // the lock lives beside the registry - the first folder creates both
         const locked = withRegistryLock(boardsDir, 0, () => {
           // preflight the registry, and the LIST: a board that appeared since the client looked is
           // stale too (a folder it names would outlive the client's "delete folder"; the replay

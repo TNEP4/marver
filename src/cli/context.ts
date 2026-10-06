@@ -126,7 +126,7 @@ export interface CheckOpts { base?: string; head?: string; body?: string; /** a 
 /** The supersession smells a current document never carries. */
 const SUPERSEDED = /wins where it differs|wins over sections?|overrides (section|§)|section \d+ wins|supersedes section|amended by section/i
 /** Availability is the shipped record's alone - a contract saying what is live is the smell. */
-const AVAILABILITY = /\b(on production|on staging|in production since|live since|went live|deployed to|released to|rolled out to|shipped (on|to|in|since))\b/i
+const AVAILABILITY = /\b(on production|on staging|in production since|live since|went live|deployed to|released to|rolled out to|shipped (on|to|in|since)|(was|were|been) delivered (to|on)|delivered on \d|handed over (to|on))\b/i
 const CONTRACT_STATES = ['current', 'proposed', 'historical']
 const FEEDBACK_STATES = ['new', 'triaged', 'proposed', 'planned', 'shipped', 'declined']
 const LINK = /\[[^\]]*\]\(([^)\s]+)\)/g
@@ -205,9 +205,9 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
     const f = file.replace(/^\.\//, '')
     const r = resolveCited(f)
     if (r === null) return `${f} does not exist`
-    if (r === 'ambiguous' || !from) return null
     const a = Number(from), z = Number(to ?? from)
-    if (z < a) return `${f}:${from}-${to} runs backwards`
+    if (from && z < a) return `${f}:${from}-${to} runs backwards`
+    if (r === 'ambiguous' || !from) return null
     if (z > linesOf(r)) return `${f}:${from}${to ? `-${to}` : ''} is past the end of ${r} (${linesOf(r)} lines)`
     return null
   }
@@ -318,7 +318,9 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
         if (!FEEDBACK_STATES.includes(state)) fail('state', where, `"${state}" is not a feedback state (${FEEDBACK_STATES.join(', ')})`)
         const resolution = r.cells[ri] ?? ''
         if (state !== 'shipped') continue
-        if (ri === si || !availableLevels(resolution).includes('confirmed') || !CITATION.test(resolution))
+        // closure needs availability confirmed - not "implementation confirmed", not beside an unknown availability
+        const claims = resolution.split(';').filter((c) => !/\b(implement(ed|ation)|built|merged|coded|tested|test suite|ci)\b/i.test(c)).join(';')
+        if (ri === si || !availableLevels(claims).includes('confirmed') || !CITATION.test(resolution) || /availab\w*[^;]*`unknown`/i.test(resolution))
           fail('feedback-closed', where, 'shipped without a cited `confirmed` availability in its resolution')
         for (const m of resolution.matchAll(CITED_FILE)) { const problem = citationProblem(m[1], m[2], m[3]); if (problem) fail('dead-citation', where, problem) }
       }

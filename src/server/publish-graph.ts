@@ -31,8 +31,14 @@ function aliases(root: string): { prefix: string; targets: string[] }[] {
     const own = Object.entries(cfg.compilerOptions?.paths ?? {}).flatMap(([k, v]) => (Array.isArray(v)
       ? [{ prefix: k.replace(/\*$/, ''), targets: (v as string[]).map((t) => normalize(join(base, t.replace(/\*$/, '')))) }]
       : []))
-    const parent = typeof cfg.extends === 'string' && cfg.extends.startsWith('.') ? read(normalize(join(dir, cfg.extends.endsWith('.json') ? cfg.extends : `${cfg.extends}.json`)), depth + 1) : []
-    return [...own, ...parent.filter((p) => !own.some((o) => o.prefix === p.prefix))]
+    // `extends` is one config or a list (TypeScript 5): later entries win, the config's own paths win over all
+    const ext = (Array.isArray(cfg.extends) ? cfg.extends : [cfg.extends]).filter((e): e is string => typeof e === 'string' && e.startsWith('.'))
+    let inherited: { prefix: string; targets: string[] }[] = []
+    for (const e of ext) {
+      const got = read(normalize(join(dir, e.endsWith('.json') ? e : `${e}.json`)), depth + 1)
+      inherited = [...got, ...inherited.filter((p) => !got.some((g) => g.prefix === p.prefix))]
+    }
+    return [...own, ...inherited.filter((p) => !own.some((o) => o.prefix === p.prefix))]
   }
   return read('design/tsconfig.json', 0)
 }
@@ -60,8 +66,11 @@ export function publishGraph(root: string): PublishGraph {
   // what the published manifest carries beside each frame: its scene's brief (the description) and
   // the sticky notes - the scene's and the frame's own
   for (const f of frames) {
-    const dir = dirname(f)
-    for (const n of ['_brief.md', '_note.md']) if (isFile(`${dir}/${n}`)) queue.push(`${dir}/${n}`)
+    // the scene is the first directory under design/scenes (or components); a nested frame's own
+    // directory may carry notes too
+    const parts = f.split('/')
+    const sceneDir = parts.slice(0, 3).join('/')
+    for (const dir of new Set([sceneDir, dirname(f)])) for (const n of ['_brief.md', '_note.md']) if (isFile(`${dir}/${n}`)) queue.push(`${dir}/${n}`)
     const note = f.replace(/\.(tsx|jsx|html)$/, '.note.md')
     if (isFile(note)) queue.push(note)
   }

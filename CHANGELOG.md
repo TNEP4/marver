@@ -67,6 +67,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   folders when you want them.
 - A board that says `"status": "done"` now fails `marver context check` - remove it; Done comes from
   `context/shipped.md`.
+- Folder registry writes now take a short lock, `design/boards/.folders.lock`, so the sidebar, `folders
+  add` and `init --kind` never overwrite one another; `npx marver init` adds it to `design/.gitignore`.
 
 ## 0.21.0 - 2026-10-05
 
