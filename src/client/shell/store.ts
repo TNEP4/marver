@@ -710,7 +710,7 @@ export const useStore = create<State>((set, get) => {
       if (seq !== loadSeq) return false        // a newer load superseded this one
       if (!next) { get().toast(`board "${boardName}" failed to load`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
-      if (get().board !== boardName || editRev !== revAtStart) return false
+      if (get().board !== boardName || editRev !== revAtStart || get().gesture) return false   // ...or one is mid-drag
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
@@ -768,6 +768,8 @@ export const useStore = create<State>((set, get) => {
           // hash the rewrite is about to move
           holdSaves()
         }
+        const rev = editRev                                          // setBoardStatus's guard on the reload
+        const mayReload = () => active && get().board === from && editRev === rev && !get().gesture
         try {
           // the active board's hash is freshest in the store (an autosave may have landed since
           // the sidebar looked); every other board's is the sidebar's
@@ -776,7 +778,7 @@ export const useStore = create<State>((set, get) => {
           try {
             res = await send(active && get().boardHash ? get().boardHash : baseHash)
             // the open board changed on disk: reload it, then once more (setBoardStatus's reasoning)
-            if (res.status === 409 && active && await get().boot()) res = await send(get().boardHash)
+            if (res.status === 409 && mayReload() && await get().boot()) res = await send(get().boardHash)
           }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
@@ -802,15 +804,19 @@ export const useStore = create<State>((set, get) => {
           if (get().dirty) return { ok: false, error: 'unsaved changes - try again' }
           holdSaves()
         }
+        // what a reload may replace: this board as flushed - holdSaves pauses saving, not editing, so an
+        // edit, a drag or a board switch while the request is out means the reload is not ours to do
+        const rev = editRev
+        const mayReload = () => active && get().board === name && editRev === rev && !get().gesture
         try {
           const send = (base: string | null | undefined) => postOwner('boards/status', { name, status, ...(reason ? { reason } : {}), ...(base ? { baseHash: base } : {}) })
           let res: Response
           try {
             res = await send(active && get().boardHash ? get().boardHash : baseHash)
             // the open board changed on disk (an agent wrote it): its hash in the store is behind, and a
-            // retry with it would 409 again - reload the board (layout and hash together, nothing unsaved
-            // after the flush above), then try once more against what is on disk now
-            if (res.status === 409 && active && await get().boot()) res = await send(get().boardHash)
+            // retry with it would 409 again - reload the board (layout and hash together) when nothing
+            // has changed here since the flush, then try once more against what is on disk now
+            if (res.status === 409 && mayReload() && await get().boot()) res = await send(get().boardHash)
           }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))

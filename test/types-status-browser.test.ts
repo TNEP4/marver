@@ -71,10 +71,16 @@ beforeAll(async () => {
   browser = await Browser.launch()
 }, 120_000)
 
-afterAll(() => {
+afterAll(async () => {
   browser?.close()
-  try { server?.kill('SIGTERM') } catch { /* gone */ }
-  rmSync(root, { recursive: true, force: true })
+  // the dev server may still be writing (a manifest regen) as it dies: wait for it to exit, and let
+  // the delete retry - a fixture removed mid-write fails with ENOTEMPTY on a loaded machine
+  if (server && server.exitCode === null) {
+    const gone = new Promise((r) => server!.once('exit', r))
+    try { server.kill('SIGTERM') } catch { /* gone */ }
+    await Promise.race([gone, new Promise((r) => setTimeout(r, 5000))])
+  }
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 const ICONS = `Object.fromEntries(Array.from(document.querySelectorAll('.sh-boards [data-board-row]')).map((el) => [el.dataset.board, {
@@ -203,6 +209,39 @@ describe('board types and status in the sidebar (spec 20)', () => {
     board('pricing', { folder: 'features', order: 2, description: 'and again' })
     expect(await browser!.eval(s, `window.__mvStore.getState().renameBoard('pricing', 'Pricing v1')`)).toEqual({ ok: true })
     expect(JSON.parse(readFileSync(join(root, 'design', 'boards', 'pricing.json'), 'utf8'))).toMatchObject({ title: 'Pricing v1', description: 'and again' })
+    board('pricing', { folder: 'features', order: 2 })
+  })
+
+  skippable('that reload never lands over an edit, a drag or a board switch made while the request was out', async () => {
+    const s = await browser!.tab({ width: 1400, height: 900 })
+    await browser!.go(s, `${ORIGIN}/#/b/pricing`)
+    await browser!.until(s, `window.__mvStore?.getState().board === 'pricing' && !!window.__mvStore.getState().boardHash`, 30_000)
+    // every status write waits 400 ms on its way out, so something can happen meanwhile
+    await browser!.eval(s, `(() => { const f = window.fetch; window.fetch = async (u, i) => { if (/boards\\/status$/.test(String(u))) await new Promise((r) => setTimeout(r, 400)); return f(u, i) } })()`)
+    for (const race of ['edit', 'drag', 'switch']) {
+      await browser!.eval(s, `window.__mvStore.getState().switchBoard('pricing')`)
+      await browser!.until(s, `window.__mvStore.getState().board === 'pricing' && !!window.__mvStore.getState().boardHash && !window.__mvStore.getState().dirty`, 15_000)
+      board('pricing', { folder: 'features', order: 2, description: `the agent, before the ${race}` })   // the store's hash is now behind
+      const r = await browser!.eval(s, `(async () => {
+        const st = window.__mvStore
+        const p = st.getState().setBoardStatus('pricing', 'paused')
+        await new Promise((r) => setTimeout(r, 150))
+        let moved = null
+        if (${JSON.stringify(race)} === 'edit') { const s0 = st.getState(); const n = s0.nodes[0]; moved = n.x + 120; s0.moveSelectedBy(120, 80, { [n.key]: { x: n.x, y: n.y } }) }
+        if (${JSON.stringify(race)} === 'drag') st.getState().setGesture(true)
+        if (${JSON.stringify(race)} === 'switch') await st.getState().switchBoard('checkout')
+        const out = await p
+        const now = st.getState()
+        const res = { out, board: now.board, x: now.nodes[0]?.x, moved }
+        if (${JSON.stringify(race)} === 'drag') st.getState().setGesture(false)
+        return res
+      })()`)
+      // the reload was not this write's to do: it reports the conflict instead of erasing anything
+      expect(r.out).toMatchObject({ ok: false, stale: true })
+      if (race === 'edit') expect(r.x).toBe(r.moved)                                              // the edit is still there
+      if (race === 'switch') expect(r.board).toBe('checkout')
+      expect(JSON.parse(readFileSync(join(root, 'design', 'boards', 'pricing.json'), 'utf8')).status).toBeUndefined()
+    }
     board('pricing', { folder: 'features', order: 2 })
   })
 

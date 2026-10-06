@@ -61,10 +61,16 @@ export default () => <main style={{ minHeight: '100vh', background: '#0b5' }}><h
   browser = await Browser.launch()
 }, 120_000)
 
-afterAll(() => {
+afterAll(async () => {
   browser?.close()
-  try { server?.kill('SIGTERM') } catch { /* gone */ }
-  rmSync(root, { recursive: true, force: true })
+  // the dev server may still be writing (a manifest regen) as it dies: wait for it to exit, and let
+  // the delete retry - a fixture removed mid-write fails with ENOTEMPTY on a loaded machine
+  if (server && server.exitCode === null) {
+    const gone = new Promise((r) => server!.once('exit', r))
+    try { server.kill('SIGTERM') } catch { /* gone */ }
+    await Promise.race([gone, new Promise((r) => setTimeout(r, 5000))])
+  }
+  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 /** The sidebar's rows, top to bottom, as the human reads them: `name` or `folder:name(open|closed)`, with in-folder rows prefixed by two spaces. */
