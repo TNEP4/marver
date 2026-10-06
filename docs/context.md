@@ -21,6 +21,14 @@ project this was run on, a blind eval answered the same 16 questions correctly b
 
 ## Start
 
+On a canvas, the shortest way in is one sentence to your agent: *"Set up our context."* The context
+instruction is the whole recipe - it asks you a few questions, runs `context init` with the right
+kind, drafts from evidence, files your feature boards so they wear a status, and puts the check in ci.
+Until a project has `context/`, an agent that makes or changes a feature board ends its reply with one
+line offering exactly that; say no and it stops asking for the session.
+
+By hand:
+
 ```bash
 npx marver context init
 ```
@@ -32,7 +40,7 @@ stages a new version beside any you have. `--kind knowledge` keeps a delivered r
 Project and Delivered columns - and a repository without a canvas gets the conventions themselves as
 `context/README.md`.
 
-Then ask your agent: *"Read design/instructions/context.md and set up our context."* It interviews
+Then tell your agent: *"Set up our context."* It interviews
 you first - who is involved, where each relationship happens, what is private - then drafts from
 evidence: the shipped record from deploy runs and the changelog, the map from the code, contracts
 for the capabilities that matter now. Where nothing proves a claim, it writes `unknown`.

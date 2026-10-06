@@ -53,12 +53,14 @@ Frames appear on the canvas the moment the files land. That's the loop.
 ## Context
 
 Code says what is implemented; `context/` says the rest - what is available and to whom, how each
-capability works, why, what is next - with evidence, in files any agent reads first.
-`npx marver context init` sets it up, `npx marver context check` keeps it true in ci (availability
-only in the shipped record, every claim with a level and a citation, a contract change with every
-behaviour change), and the canvas reads the same files: feature boards wear Backlog, To do, In
-progress, Done - never set by hand. Existing projects with scattered specs get a playbook that
-reorganizes them on a branch and proves it with a blind eval. [The context guide](docs/context.md).
+capability works, why, what is next - with evidence, in files any agent reads first. Tell your agent
+*"Set up our context"* - or run `npx marver context init` - and `npx marver context check` keeps it
+true in ci (availability only in the shipped record, every claim with a level and a citation, a
+contract change with every behaviour change), and the canvas reads the same files: feature boards
+wear Backlog, To do, In progress, Done - never set by hand. Existing projects with scattered specs
+get a playbook that reorganizes them on a branch and proves it with a blind eval. Until a project
+has `context/`, an agent that touches a feature board ends its reply offering to set it up. [The
+context guide](docs/context.md).
 
 ## Slides
 
