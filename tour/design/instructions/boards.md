@@ -1,4 +1,4 @@
-<!-- marver:managed eb150b6a3161233350316aad6e9c6df01a8f1bed0bfb8d7d0ac2ca8bd67ee2d6 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 1b0d48378ea854a8e77ef84d05b5868976f15689e67e310b617b09cdfde794b8 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Boards - curated canvases and publishing
 
 A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
@@ -15,6 +15,12 @@ viewport and lays it out:
   "description": "Cart step, direction A vs B side by side - B is the current favourite",
   "nodes": [ { "frame": "checkout-a/cart" }, { "frame": "checkout-b/cart" } ] }
 ```
+
+Never write `w`/`h` on a content frame's node (a `Doc`): its height is measured, and
+`design/boards/_sizes.json` - machine-written, committed, never edited by hand - keeps it so
+the board opens at its final size (a board's `laidOut` is the canvas's note of the heights its
+rows were laid out around - leave it too). Commit it with your changes; a merge conflict in it
+is safe to resolve either way.
 
 - **The file name is the board's identity** - what you, `publish.json`, URLs and
   comment threads address (`board: checkout-compare`). It is a slug
@@ -179,11 +185,15 @@ boards fall back to the parent folder's type). Moving a board changes an inherit
   **Never write `"status": "done"`** - Done comes from `context/shipped.md`, and the check fails it.
   **No `context/`? Your reply ends with the context line** from design/AGENTS.md ("Before the method")
   - every feature board reads Backlog until there is one. Only when the human declines may a board
-  say `"todo"`, `"backlog"` or `"in-progress"` by hand.
+  say `"todo"`, `"backlog"`, `"in-progress"` or `"building"` by hand.
   A person sets the same from the sidebar (right-click, Change status…) - it rewrites only `status`
-  and `reason`, so re-read a board before you edit it.
+  and `reason`; with `context/`, its In progress and Building rewrite the `stage:` line of every open
+  plan naming the capability instead (and clear the board's decision). So re-read a board, and its
+  plan, before you edit them.
 - In progress fills by phase: the phase scenes above, or `phase: spec | lofi | hifi` in a scene's
-  `_brief.md` front matter - never by where a row sits.
+  `_brief.md` front matter - never by where a row sits. **Building** (blue) follows it: the design
+  agreed, the code underway - `stage: build` in the open plan (instructions/context.md). While you
+  work on a board's frames (`marver work start`), its sidebar icon shimmers blue on its own.
 - `npx marver boards` prints every board's type and status with what decided it.
 
 ## The default composition: one horizontal band

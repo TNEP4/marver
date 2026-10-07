@@ -1,4 +1,4 @@
-<!-- marver:managed c5c8098fd2fe5b04cb36b730fff4b61ac41b36f557eab5867ed6506ebcf1254a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 85c05313afb9db5aaf7e04d46df87fd4be7a4220b86fe86fd168b8febedaad92 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Context - what the product is, kept true
 
 The project's knowledge lives in `context/`, beside `design/`. Code says what is implemented;
@@ -63,6 +63,9 @@ proposed; and `## Availability` pointing at its row in `shipped.md`.
 
 - **Behaviour** - update its contract in the same change. A change that leaves behaviour alone says
   `no-contract-change: <capability> - <why>` in the pull request body.
+- **Work starting on a feature** - an open plan in `plans/` names its capability (In progress on its
+  board); `stage: build` in it once the code starts (Building). The board's status is how anyone
+  who is not watching knows; never leave a feature you are working on reading Backlog.
 - **A deploy** - write its row in `shipped.md` with the run that proves it (`playbooks/` usually
   has the release recipe).
 - **A decision** - in the project's decision log, numbered, with what it applies to.
@@ -75,8 +78,9 @@ proposed; and `## Availability` pointing at its row in `shipped.md`.
 
 Feature and project boards wear a status read from these files (the first that matches wins):
 the board's own `"status"` - `archived`, `paused`, or `blocked` with a `"reason"`; Unknown when the
-evidence cannot be read; In progress when an open plan in `plans/` names the capability (filling by
-phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed` in an
+evidence cannot be read; when an open plan in `plans/` names the capability, Building if the plan
+says `stage: build` (its code is underway - write it as you start implementing), else In progress
+(filling by phase: `<cap>-specs`, `<cap>-lofi`, `<cap>`); Done when `shipped.md` shows it `confirmed` in an
 availability clause (one per `;`) with no negation or pending word ("nowhere", "not yet", "rolled
 back", "planned") and no pre-production place (staging, preview, dev, local, testing) unless it also
 names production; Done, reported when only `reported`; To do when its contract is `state: current`; else Backlog.

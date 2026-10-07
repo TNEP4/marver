@@ -1,4 +1,4 @@
-<!-- marver:managed dadf0f94b6bd7d97414325ec380626847e92fa68f604083ed44a2023973a5e2a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed d69d05419ecc4cf320ae4a62afca295d6adb788c1e6ffc28b7300a63d02f5c39 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Iterate - versions are nearly free, so keep them
 
 Read this when you are about to CHANGE a frame the human has already seen, when
@@ -76,13 +76,18 @@ to step 4.
    ```
 4. **Now do the round on the live scene**, in place - the snapshot is the
    before. Keep each anchored element's tag, `data-testid` and visible text
-   where you can, so pins self-heal; when a change must remove an anchored
-   element, reply and close that thread FIRST, then make the change (resolve
-   first, restructure second). Reply per thread with one line: what changed,
-   and that `v<N>` is on the archive board. Who closes the thread depends on
-   how the work arrived: from the CLI queue (`comments list --open`), you
-   resolve with `--addressed-in <scene>/<frame>`; from a comment-born jam job,
-   you never resolve - the owner does (instructions/jam.md).
+   where you can, so pins self-heal. Reply per thread with one line: what
+   changed, and that `v<N>` is on the archive board. Who closes the thread
+   depends on who started it: a thread the owner started (`comments reply`
+   printed "as Marver") stays OPEN - the owner reviews your change on the
+   canvas, in the thread, and resolves it; a collaborator's thread (the reply
+   printed "in your voice") you resolve with `--addressed-in <scene>/<frame>`;
+   from a comment-born jam job you never resolve - the owner does
+   (instructions/jam.md). A change that removes an anchored element: a
+   collaborator's thread is replied to and resolved FIRST, then the change
+   (resolve first, restructure second); the owner's stays open - say in the
+   reply what replaced the element (its pin parks at the frame's corner, still
+   in view).
 
 Never wait for the human to ask for this. They should be able to say "make the
 cards denser", "drop the sidebar", "try a warmer palette" three times in a row
@@ -141,6 +146,7 @@ the open list as a queue:
 npx marver comments list --open --json     # what needs you (anchors included)
 npx marver comments reply <thread> --body "…"
 npx marver comments resolve <thread> --addressed-in <scene/frame>
+npx marver comments new <scene/frame> --body "…" [--on "<words on screen>"]   # a note where you need them
 ```
 
 The discipline:
@@ -165,10 +171,14 @@ The discipline:
    iterate the live frames in place. A single frame going in a new direction:
    fork a variant (the letter convention) and iterate there - the commented
    frame stays as the before, your variant is the after.
-4. **Resolve with the receipt.** `--addressed-in <the-new-variant>` records
-   WHICH frame answered the feedback - the thread becomes an auditable link
-   from complaint to fix. Reply first when the change deserves a sentence of
-   explanation; resolve silently only for trivial mechanical fixes.
+4. **Reply where they look, resolve with the receipt.** Reply in the thread -
+   one line, what changed. The owner's own threads stay open after your reply:
+   they review the change on the canvas and close it (a resolved thread leaves
+   the canvas, and your reply with it). A collaborator's thread, you resolve:
+   `--addressed-in <the-new-variant>` records WHICH frame answered the feedback -
+   the thread becomes an auditable link from complaint to fix. `comments reply`
+   says which it was: "as Marver" (the owner's) or "in your voice" (a
+   collaborator's - the voice that reaches them on the published canvas).
 5. **Never resolve what you didn't address.** Disagree? Reply with your
    reasoning and leave the thread open - the human closes debates, you close
    completed work.
@@ -177,9 +187,12 @@ The discipline:
    frame and the anchors strand (a dead anchor parks the pin at the frame
    edge; deleting the whole frame strands the thread off-canvas entirely -
    never lost from the log, but invisible until the frame returns). So: with a
-   version snapshot taken, edit the live frame and resolve each thread right
-   after its change, so no pin sits stranded; without one, fork the variant
-   and iterate THERE, leave the commented frame untouched as the before, and
-   only once you `resolve --addressed-in <variant>` its threads may it move to
-   `archive/`. Resolve first, restructure second - never the reverse. Check `comments list --board <b>` (no `--open`) to see resolved
+   version snapshot taken, edit the live frame and close out each thread right
+   after its change - a collaborator's resolved, the owner's replied to and left
+   open for them (step 4 above); without one, fork the variant and iterate
+   THERE, leave the commented frame untouched as the before, and only once its
+   threads are closed (`resolve --addressed-in <variant>` for a collaborator's;
+   the owner's, once the owner has resolved them after your reply naming the
+   variant) may it move to `archive/`. Answer first, restructure second - never
+   the reverse. Check `comments list --board <b>` (no `--open`) to see resolved
    threads too; the full history lives in the append-only log and in git.

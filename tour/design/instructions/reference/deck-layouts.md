@@ -1,4 +1,4 @@
-<!-- marver:managed 30e23a53c9de4223b6410206c0a15051b5fb47e9d5903cca17f71e0c588a912f - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed cf7d613dc643480428b1f152696c155791bdd3845b8ce3c30fa0c84986694b9b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Deck layouts - an idea bank
 
 Compositions to borrow when a slide needs a shape and none comes. Nothing
@@ -147,7 +147,8 @@ mode - and default to faithful:
 
 - **Faithful** - their order, their words, exactly. You may normalise
   punctuation and number formats; you may not change a word. Suggested
-  rewrites go in a comment on the frame, never on the slide.
+  rewrites go in a note on the frame (`npx marver comments new <scene/frame>
+  --on "<their words>" --body "Suggest: ..."`), never on the slide.
 - **Editorial** (opt-in) - order kept, copy passed through the slides
   guide's words: jargon, hedges and filler out; numbers, names and dates
   verbatim; titles turned into claims where the source supports them.

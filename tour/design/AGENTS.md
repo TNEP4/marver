@@ -1,4 +1,4 @@
-<!-- marver:managed 0cf4945296d257991fb8164f37fca2552d8e3dbec7ca27358ee99adc0eef2164 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 0431d8dade066f568cf5e5f453a653a94609c4ffd47484eba5c63016d01b3a44 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -90,19 +90,50 @@ planning. The human should see the request land on the canvas within the first m
    JSON - adding is always yours, only rearranging belongs to the shell; auto boards pick
    new frames up on their own). Changing existing frames only? Skip this step.
 2. **Light them up**: `npx marver work start <scene/frame ...>` - each frame wears the
-   live working shimmer. Only now do research, discovery, and planning begin - under a
-   lit frame, never before one.
-3. Build. Independent frames can go in parallel - one subagent per frame, each marking
+   live working shimmer, and its board's icon in the sidebar. Only now do research,
+   discovery, and planning begin - under a lit frame, never before one.
+3. **Make the board's status true.** The glow says someone is on it now; the status says
+   where it stands when nobody is - so a feature or project board you work on never stays
+   Backlog or To do. With `context/`: an open plan in `context/plans/` names its capability -
+   In progress. None does? Write one, in the form of the plans already there - it opens with
+   front matter (`---`, `state: proposed`, `capability: <slug>`, `---`), then what you are
+   building and why, a few lines; a plan without front matter leaves every status Unknown.
+   Once its code starts, add `stage: build` to that front matter - Building. No `context/`:
+   once the human has answered the context line, `"status": "in-progress"` (or `"building"`)
+   on the board. `work start` names any board still behind; `npx marver boards` shows every
+   status.
+4. Build. Independent frames can go in parallel - one subagent per frame, each marking
    its own; frames that depend on one another go in order.
-4. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,
+5. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,
    `--all`) renders the frames headless in one go - one PNG path per line - and you READ
    the PNGs. No shell? instructions/jam.md has the file-drop way (`{"scene":"..."}`).
-5. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
+6. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
-   and never lean on expiry instead of `done`.
+   and never lean on expiry instead of `done`. `done` prints the canvas link to the
+   frames it cleared (`on the canvas: ...`).
 
-Report where the request came from: chat requests get chat replies; only comment-born
-(`@marver`) work replies in its thread.
+## Hand it back on the canvas
+
+The human reviews on the canvas, not in the chat - so the reply puts them there:
+
+- **Every reply in which you created or changed frames ends with their canvas link**, on its
+  own line: the `on the canvas:` line `work done` printed, or `npx marver link <scene/frame |
+  scene ...>` for any set. It opens the board they sit on with them selected and in view -
+  the human finds the work at once on a board of fifty frames. Never a full-screen focus link
+  (`#/f/...`) unless they ask for full screen. No `marver dev` running? End with
+  `npx marver dev` instead - the link carries its port.
+- **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
+  <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
+  the human started it posts as Marver and pings them on the frame.
+- **A question or a decision about a frame goes ON that frame**, not only in the chat:
+  `npx marver comments new <scene/frame> --body "..." [--on "<words on screen>"]` pins it where
+  it applies, so the human answers in place. Also for a judgment call you took that they should
+  check, or a change they would not spot. Nothing else - never a changelog, at most one note per
+  frame per turn; the chat keeps the summary and can say "question on the form". Never resolve
+  your own notes: the human resolves them as they review, and a reply in one comes back to you
+  (Live Jam).
+- A comment-born (`@marver`) job hands back through its reply block alone
+  (instructions/jam.md): no link, no CLI reply to its own thread.
 
 ## Frames
 - A frame = one file: design/scenes/<scene>/<name>.tsx or .html. One frame, one surface.
@@ -198,6 +229,10 @@ Report where the request came from: chat requests get chat replies; only comment
 - Move the screen from design/screens/ into the app (src/features/...), replace fixture
   props with live data/handlers, replace data-goto with the router's navigation.
 - Leave the frame in place, importing from its new home, so the canvas stays true.
+- **The feature board turns Building** (blue) when its code starts: write `stage: build` in the
+  front matter of the open plan in `context/plans/` that names the capability - write the plan if
+  none does. No `context/`: `"status": "building"` on the board. Done still comes only from
+  `context/shipped.md`, when it ships.
 
 ## Boards (curated canvases)
 
