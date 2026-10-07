@@ -90,7 +90,7 @@ afterAll(async () => {
 const ICONS = `Object.fromEntries(Array.from(document.querySelectorAll('.sh-boards [data-board-row]')).map((el) => [el.dataset.board, {
   type: el.querySelector('[data-type-icon]')?.getAttribute('data-type-icon') ?? null,
   status: el.querySelector('[data-status-icon]')?.getAttribute('data-status-icon') ?? null,
-  tip: el.querySelector('.st')?.getAttribute('aria-label') ?? null,
+  tip: el.querySelector('[data-status-text]')?.textContent?.replace(/^, /, '').replace(/; /g, '\\n') ?? null,
 }]))`
 
 async function open(b: Browser): Promise<string> {
@@ -189,7 +189,7 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await key('Enter')
     await browser!.until(s, `document.querySelector('[data-board="checkout"] [data-status-icon]')?.getAttribute('data-status-icon') === 'blocked'`, 15_000)
     expect(readBoard('checkout')).toMatchObject({ status: 'blocked', reason: 'waiting on legal' })
-    await browser!.until(s, `/waiting on legal/.test(document.querySelector('[data-board="checkout"] .st')?.getAttribute('aria-label') ?? '')`, 15_000)
+    await browser!.until(s, `/waiting on legal/.test(document.querySelector('[data-board="checkout"] [data-status-text]')?.textContent ?? '')`, 15_000)
 
     // Back to the evidence: the decision leaves the file, the record decides again
     await openPicker('checkout')
@@ -253,7 +253,7 @@ describe('board types and status in the sidebar (spec 20)', () => {
     const started = cli('work', 'start', 'app/home')
     // the other half: a feature board this work sits on that still reads Backlog is named, with how to fix it -
     // invoices (no plan); never checkout (Done, reported), pricing (In progress) or home (no status)
-    expect(started).toMatch(/note: board "invoices" still reads Backlog - you are working on it, so make it In progress: an open plan in context\/plans\/ naming "invoices"/)
+    expect(started).toMatch(/note: board "invoices" still reads Backlog - you are working on it, so make it In progress: a plan in context\/plans\/ that opens with front matter naming it - "---" \/ "state: proposed" \/ "capability: invoices" \/ "---"/)
     expect(started).not.toMatch(/"checkout"|"pricing"|"home"/)
     // every board pinning app/home, and all-scenes; front shows another frame and stays still
     await browser!.until(s, `document.querySelectorAll('.sh-boards [data-board-row] [data-live-icon]').length >= 8`, 15_000)
@@ -295,6 +295,11 @@ describe('board types and status in the sidebar (spec 20)', () => {
     board('scratch', { order: 3 })
     cli('work', 'done', '--all')
     await browser!.until(s, `!document.querySelector('[data-live-icon]')`, 15_000)
+    // pinned a moment ago, before any watcher caught up: still named - the note reads the board files fresh
+    board('latecomer', { folder: 'features', order: 9 })
+    expect(cli('work', 'start', 'app/home')).toMatch(/note: board "latecomer" still reads Backlog/)
+    cli('work', 'done', '--all')
+    rmSync(join(root, 'design', 'boards', 'latecomer.json'))
   })
 
   skippable('the open board changed on disk under it: a status and a rename still land, and keep the agent\'s edit', async () => {

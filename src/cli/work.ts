@@ -54,7 +54,7 @@ export async function workCommand(root: string, action: string, frames: string[]
       const label = (st: string) => (st === 'todo' ? 'To do' : 'Backlog')
       for (const b of behind) {
         console.log(context
-          ? `note: board "${b.board}" still reads ${label(b.status)} - you are working on it, so make it In progress: an open plan in context/plans/ naming "${b.capability}" (what you are building and why, a few lines); \`stage: build\` in it once its code starts (Building). design/AGENTS.md, "Show the work".`
+          ? `note: board "${b.board}" still reads ${label(b.status)} - you are working on it, so make it In progress: a plan in context/plans/ that opens with front matter naming it - "---" / "state: proposed" / "capability: ${b.capability}" / "---" - then what you are building and why, a few lines (follow the form of the plans already there). Once its code starts, add "stage: build" to that front matter (Building). design/AGENTS.md, "Show the work".`
           : `note: board "${b.board}" reads ${label(b.status)} - with no context/ its status is set by hand: once the human has answered the context line (design/AGENTS.md), "status": "in-progress" on the board says it is being worked on ("building" once its code starts).`)
       }
       return

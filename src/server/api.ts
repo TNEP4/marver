@@ -829,9 +829,14 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           let behind: { board: string; status: string; capability: string }[] = []
           let contextPresent = false
           try {
-            const { boardsShowing } = await import('./work.ts')
-            const lit = new Set(boardsShowing(root, frames))
+            // one fresh read of the board files for both questions - which boards show these frames (a node
+            // appended a moment ago included, before the watcher has re-indexed) and what each one says
             const files = listBoardFiles(boardsDir).boards
+            const want = new Set(frames)
+            const lit = new Set(files.filter((b) => {
+              const j = b.json as { auto?: unknown; nodes?: unknown } | null
+              return j?.auto === true || (Array.isArray(j?.nodes) && j.nodes.some((n) => !!n && typeof n === 'object' && want.has((n as { frame?: unknown }).frame as string)))
+            }).map((b) => b.name))
             const reg = readRegistry(boardsDir)
             const regFolders = reg.state === 'ok' ? reg.folders : []
             const fm = folderMap(buildTree(files.map((b) => ({ name: b.name, ...boardFields(b.json, validName) })), regFolders))

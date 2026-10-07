@@ -93,11 +93,14 @@ planning. The human should see the request land on the canvas within the first m
    discovery, and planning begin - under a lit frame, never before one.
 3. **Make the board's status true.** The glow says someone is on it now; the status says
    where it stands when nobody is - so a feature or project board you work on never stays
-   Backlog or To do. With `context/`: an open plan in `context/plans/` names its capability
-   (write one if none does - what you are building and why, a few lines) - In progress; once
-   its code starts, `stage: build` in that plan - Building. No `context/`: once the human has
-   answered the context line, `"status": "in-progress"` (or `"building"`) on the board.
-   `work start` names any board still behind; `npx marver boards` shows every status.
+   Backlog or To do. With `context/`: an open plan in `context/plans/` names its capability -
+   In progress. None does? Write one, in the form of the plans already there - it opens with
+   front matter (`---`, `state: proposed`, `capability: <slug>`, `---`), then what you are
+   building and why, a few lines; a plan without front matter leaves every status Unknown.
+   Once its code starts, add `stage: build` to that front matter - Building. No `context/`:
+   once the human has answered the context line, `"status": "in-progress"` (or `"building"`)
+   on the board. `work start` names any board still behind; `npx marver boards` shows every
+   status.
 4. Build. Independent frames can go in parallel - one subagent per frame, each marking
    its own; frames that depend on one another go in order.
 5. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,

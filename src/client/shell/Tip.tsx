@@ -23,10 +23,23 @@ export function Tip({ label, side = 'top', inv = false, children }: { label: Rea
     const el = tipRef.current
     if (!el) return
     el.style.marginLeft = '0px'
+    el.style.marginTop = '0px'
     const r = el.getBoundingClientRect()
     const over = r.right - (window.innerWidth - 8)
     if (over > 0) el.style.marginLeft = `${-over}px`
     else if (r.left < 8) el.style.marginLeft = `${8 - r.left}px`
+    // and up and down: a tall tip beside a row near the bottom (a status and its evidence) stays whole
+    const below = r.bottom - (window.innerHeight - 8)
+    if (below > 0) el.style.marginTop = `${-below}px`
+    else if (r.top < 8) el.style.marginTop = `${8 - r.top}px`
+  }, [pos])
+  // a tip is placed once, where its trigger was: anything that scrolls under it puts it away
+  useLayoutEffect(() => {
+    if (!pos) return
+    const away = () => hide()
+    window.addEventListener('scroll', away, true)
+    window.addEventListener('resize', away)
+    return () => { window.removeEventListener('scroll', away, true); window.removeEventListener('resize', away) }
   }, [pos])
   return (
     <>

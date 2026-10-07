@@ -459,9 +459,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
         <LiveIcon live={working.includes(n)}>{n === 'all-scenes' ? <CardsThreeIcon size={14} /> : meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}</LiveIcon>
         <span>{label(n)}</span>
+        {/* the status for a screen reader, part of the board button's own name: the glyph is the eye's */}
+        {meta[n]?.status && <span className="sh-sr" data-status-text>{`, ${statusTip(meta[n]).replace(/\n/g, '; ')}`}</span>}
         {meta[n]?.status && (
           <Tip side="right" label={<StatusTipLabel m={meta[n]} />}>
-            <i className="st" data-status={meta[n].status!.status} aria-label={statusTip(meta[n])}><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>
+            <i className="st" data-status={meta[n].status!.status} aria-hidden="true"><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>
           </Tip>
         )}
       </button>
