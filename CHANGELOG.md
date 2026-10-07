@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## Unreleased
+## 0.23.0 - 2026-10-06
 
 ### Added
 
@@ -23,16 +23,16 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   on your machine for now, like Live Jam's replies.
 - **Building - the stretch between design and shipped.** Feature and project boards gain a status
   between In progress and Done: the design is agreed, the code is underway - the code glyph in
-  accent blue (yellow is being shaped, blue is being built, green is shipped). In progress could not
+  Marver's blue (yellow is being shaped, blue is being built, green is shipped). In progress could not
   tell drawing the hi-fi from writing the code, the longest stretch of all. With `context/` it is
   read from the open plan, `stage: build`: the agent writes it as it starts implementing, and the
   sidebar's Change status picker writes it too (In progress takes it back off; no plan, and the
   picker says Building needs one). Without `context/` it is set on the board like In progress. Done
   still comes only from the shipped record ([Boards and folders](docs/boards-and-folders.md#status)).
 - **The sidebar shows an agent at work.** While an agent works on a board's frames (`marver work
-  start`, or a Live Jam job), the board's icon turns accent blue with a highlight sweeping across
-  it - the frames' working shimmer in miniature - and so does a closed folder holding it. Nobody sets
-  it: it lasts exactly as long as the work.
+  start`, or a Live Jam job), the board's icon turns blue with a highlight sweeping across
+  it - the frames' working shimmer in miniature - and so does a closed folder holding it, at either
+  level, so something cooking is never hidden. Nobody sets it: it lasts exactly as long as the work.
 
 ### Changed
 
@@ -62,6 +62,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   never edit one file at once.
 - A focus link (`#/f/<frame>`) opened on your dev canvas keeps its way back to the canvas (the grid
   button, or Esc). On a published canvas it is still a page of its own.
+- **An agent keeps a board's status true while it works.** Lighting frames showed the work, but the
+  board could still read Backlog while an agent built on it. The AGENTS contract's "Show the work"
+  gains a step - the glow says someone is on it now, the status says where it stands when nobody is:
+  with `context/`, an open plan naming the capability (In progress), `stage: build` once the code
+  starts (Building) - and `npx marver work start` names any board it lights that still reads Backlog
+  or To do, with what makes it true. Asked to start designing a Backlog feature, Claude Code and
+  Codex both wrote its plan, and the board read In progress before they handed it back.
+- **Status tooltips are the canvas's own.** Hovering a board's status opens the same tooltip as the
+  toolbar - the status in bold, each piece of evidence beneath - instead of the browser's.
 - **A tab names its canvas.** A canvas tab reads "Start here - Acme Studio" - the board, then the
   canvas, as the sidebar heads it - where every tab said "- Marver", so a row of canvas tabs now
   says which project each one is. Published canvases too.
