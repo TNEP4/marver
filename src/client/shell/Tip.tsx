@@ -24,7 +24,13 @@ export function Tip({ label, side = 'top', inv = false, children }: { label: Rea
     if (!el) return
     el.style.marginLeft = '0px'
     el.style.marginTop = '0px'
-    const r = el.getBoundingClientRect()
+    if (!pos) return
+    // the box it settles into, from its unscaled size - not the rect mid-animation (scaled .95, it
+    // reads smaller than it lands): top centres above, below centres under, right centres beside
+    const w = el.offsetWidth, h = el.offsetHeight
+    const left = side === 'right' ? pos.x : pos.x - w / 2
+    const top = side === 'right' ? pos.y - h / 2 : side === 'top' ? pos.y - h : pos.y
+    const r = { left, right: left + w, top, bottom: top + h }
     const over = r.right - (window.innerWidth - 8)
     if (over > 0) el.style.marginLeft = `${-over}px`
     else if (r.left < 8) el.style.marginLeft = `${8 - r.left}px`
