@@ -31,11 +31,18 @@ const readClosed = (): Record<string, true> => { try { return JSON.parse(localSt
  *  yet - drawn at `index` in `parent`'s items (null = the root), optionally with `board`
  *  already inside it. */
 /** A status's tooltip: what it is, how far along, why, and the evidence that decided it. */
-function statusTip(m: BoardMeta): string {
+/** A status, said: the status (and its phase), then why - the reason, each piece of evidence, as of when. */
+function statusLines(m: BoardMeta): [string, string[]] {
   const st = m.status!
   const head = STATUS_LABEL[st.status] + (st.fill ? ` - ${PHASE_LABEL[st.fill]}` : '')
   const asOf = STATUS_AS_OF ? `as of ${new Date(STATUS_AS_OF).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` : null
-  return [head, st.reason, ...(st.evidence ?? []), asOf].filter(Boolean).join('\n')
+  return [head, [st.reason, ...(st.evidence ?? []), asOf].filter((x): x is string => !!x)]
+}
+const statusTip = (m: BoardMeta): string => { const [head, rest] = statusLines(m); return [head, ...rest].join('\n') }
+/** The house tooltip for it (Tip), never the browser's: the status in bold, its evidence beneath. */
+function StatusTipLabel({ m }: { m: BoardMeta }) {
+  const [head, rest] = statusLines(m)
+  return <div className="sh-tip-lines"><b>{head}</b>{rest.map((l, i) => <small key={i}>{l}</small>)}</div>
 }
 
 type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string; parent: string | null }
@@ -452,7 +459,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
         <LiveIcon live={working.includes(n)}>{n === 'all-scenes' ? <CardsThreeIcon size={14} /> : meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}</LiveIcon>
         <span>{label(n)}</span>
-        {meta[n]?.status && <i className="st" data-status={meta[n].status!.status} title={statusTip(meta[n])}><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>}
+        {meta[n]?.status && (
+          <Tip side="right" label={<StatusTipLabel m={meta[n]} />}>
+            <i className="st" data-status={meta[n].status!.status} aria-label={statusTip(meta[n])}><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>
+          </Tip>
+        )}
       </button>
     )
   }

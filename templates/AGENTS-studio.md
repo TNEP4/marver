@@ -89,14 +89,21 @@ planning. The human should see the request land on the canvas within the first m
    JSON - adding is always yours, only rearranging belongs to the shell; auto boards pick
    new frames up on their own). Changing existing frames only? Skip this step.
 2. **Light them up**: `npx marver work start <scene/frame ...>` - each frame wears the
-   live working shimmer. Only now do research, discovery, and planning begin - under a
-   lit frame, never before one.
-3. Build. Independent frames can go in parallel - one subagent per frame, each marking
+   live working shimmer, and its board's icon in the sidebar. Only now do research,
+   discovery, and planning begin - under a lit frame, never before one.
+3. **Make the board's status true.** The glow says someone is on it now; the status says
+   where it stands when nobody is - so a feature or project board you work on never stays
+   Backlog or To do. With `context/`: an open plan in `context/plans/` names its capability
+   (write one if none does - what you are building and why, a few lines) - In progress; once
+   its code starts, `stage: build` in that plan - Building. No `context/`: once the human has
+   answered the context line, `"status": "in-progress"` (or `"building"`) on the board.
+   `work start` names any board still behind; `npx marver boards` shows every status.
+4. Build. Independent frames can go in parallel - one subagent per frame, each marking
    its own; frames that depend on one another go in order.
-4. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,
+5. **Look before you say done**: `npx marver shot --scene <scene>` (or `<scene/frame ...>`,
    `--all`) renders the frames headless in one go - one PNG path per line - and you READ
    the PNGs. No shell? instructions/jam.md has the file-drop way (`{"scene":"..."}`).
-5. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
+6. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
    and never lean on expiry instead of `done`. `done` prints the canvas link to the
    frames it cleared (`on the canvas: ...`).

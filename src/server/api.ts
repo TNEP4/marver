@@ -823,7 +823,25 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (!frames.length) return json(res, 400, { error: 'frames required' })
           const ttl = Math.min(Math.max(Number(b.ttlMs) || WORK_TTL_DEFAULT, 10_000), WORK_TTL_MAX)
           for (const f of frames) on ? workActivity.mark(f, ttl, 'cli') : workActivity.clear(f, 'cli')
-          return json(res, 200, { frames: workActivity.active() })
+          if (!on) return json(res, 200, { frames: workActivity.active() })
+          // the other half of showing the work: the boards these frames sit on that still read Backlog or To
+          // do - a feature being worked on is In progress, and its evidence says so (the CLI prints how)
+          let behind: { board: string; status: string; capability: string }[] = []
+          let contextPresent = false
+          try {
+            const { boardsShowing } = await import('./work.ts')
+            const lit = new Set(boardsShowing(root, frames))
+            const files = listBoardFiles(boardsDir).boards
+            const reg = readRegistry(boardsDir)
+            const regFolders = reg.state === 'ok' ? reg.folders : []
+            const fm = folderMap(buildTree(files.map((b) => ({ name: b.name, ...boardFields(b.json, validName) })), regFolders))
+            const facts = readContextFacts(root)
+            contextPresent = facts.present
+            const notes = annotateBoards(root, files.filter((b) => lit.has(b.name)), regFolders, (n) => fm.get(n) ?? null, facts)
+            behind = [...notes].filter(([, a]) => a.status && (a.status.status === 'backlog' || a.status.status === 'todo'))
+              .map(([board, a]) => ({ board, status: a.status!.status, capability: a.status!.capability }))
+          } catch { /* advisory - the work is lit either way */ }
+          return json(res, 200, { frames: workActivity.active(), behind, context: contextPresent })
         }
       }
       if (path === 'boards.rights' && req.method === 'GET') {

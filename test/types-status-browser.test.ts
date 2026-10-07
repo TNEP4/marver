@@ -45,9 +45,10 @@ beforeAll(async () => {
   for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/scenes/app/home.tsx', `export const meta = { title: 'Home', viewport: 'mobile' }\nexport default () => <main><h1>Home</h1></main>\n`)
-  put('design/boards/_folders.json', { version: 1, folders: [
+  put('design/boards/_folders.json', { version: 2, folders: [
     { name: 'start-here', order: 0, title: 'Start here', type: 'start' },
     { name: 'features', order: 1, type: 'feature' },
+    { name: 'billing', parent: 'features', order: 3 },                  // a sub-folder: the live signal two levels down
     { name: 'decks', order: 2, type: 'deck' },
   ] })
   board('home', { folder: 'start-here', order: 0 })
@@ -55,6 +56,7 @@ beforeAll(async () => {
   board('refunds', { folder: 'features', order: 1, status: 'blocked', reason: 'waiting on the payment provider' })
   board('pricing', { folder: 'features', order: 2 })
   board('pitch', { folder: 'decks', order: 0 })
+  board('invoices', { folder: 'billing', order: 0 })
   board('scratch', { order: 3 })
   put('context/shipped.md', SHIPPED('reported'))
   put('context/plans/pricing.md', '---\nstate: proposed\ncapability: pricing\n---\n# Pricing v1\n')
@@ -88,7 +90,7 @@ afterAll(async () => {
 const ICONS = `Object.fromEntries(Array.from(document.querySelectorAll('.sh-boards [data-board-row]')).map((el) => [el.dataset.board, {
   type: el.querySelector('[data-type-icon]')?.getAttribute('data-type-icon') ?? null,
   status: el.querySelector('[data-status-icon]')?.getAttribute('data-status-icon') ?? null,
-  tip: el.querySelector('.st')?.getAttribute('title') ?? null,
+  tip: el.querySelector('.st')?.getAttribute('aria-label') ?? null,
 }]))`
 
 async function open(b: Browser): Promise<string> {
@@ -114,6 +116,15 @@ describe('board types and status in the sidebar (spec 20)', () => {
     expect(icons.refunds).toMatchObject({ status: 'blocked' })
     expect(icons.refunds.tip).toMatch(/^Blocked\nwaiting on the payment provider/)
     expect(icons.pricing).toMatchObject({ status: 'in-progress' })
+    // hovered, the glyph opens the house tooltip beside it - never the browser's own (no title attribute)
+    expect(await browser!.eval(s, `document.querySelector('[data-board="checkout"] .st').hasAttribute('title')`)).toBe(false)
+    const at = await browser!.eval(s, `(() => { const r = document.querySelector('[data-board="checkout"] .st').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, right: r.right } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y }, s)
+    const tip = await browser!.until(s, `(() => { const t = document.querySelector('.sh-tip.right'); return t && { head: t.querySelector('b')?.textContent, lines: [...t.querySelectorAll('small')].map((x) => x.textContent), left: t.getBoundingClientRect().left } })()`)
+    expect(tip).toMatchObject({ head: 'Done, reported', lines: ['context/shipped.md:3: available, `reported` only'] })
+    expect(tip.left).toBeGreaterThan(at.right)                                       // to the right of the glyph
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 600 }, s)
+    await browser!.until(s, `!document.querySelector('.sh-tip.right')`)
     if (process.env.MARVER_SHOT_DIR) {
       const shot = await browser!.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: 340, height: 520, scale: 2 } }, s)
       writeFileSync(join(process.env.MARVER_SHOT_DIR, 'sidebar-types-status.png'), Buffer.from(shot.data, 'base64'))
@@ -178,7 +189,7 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await key('Enter')
     await browser!.until(s, `document.querySelector('[data-board="checkout"] [data-status-icon]')?.getAttribute('data-status-icon') === 'blocked'`, 15_000)
     expect(readBoard('checkout')).toMatchObject({ status: 'blocked', reason: 'waiting on legal' })
-    await browser!.until(s, `/waiting on legal/.test(document.querySelector('[data-board="checkout"] .st')?.getAttribute('title') ?? '')`, 15_000)
+    await browser!.until(s, `/waiting on legal/.test(document.querySelector('[data-board="checkout"] .st')?.getAttribute('aria-label') ?? '')`, 15_000)
 
     // Back to the evidence: the decision leaves the file, the record decides again
     await openPicker('checkout')
@@ -239,10 +250,14 @@ describe('board types and status in the sidebar (spec 20)', () => {
     const live = () => browser!.eval(s, `Array.from(document.querySelectorAll('.sh-boards [data-board-row]')).filter((el) => el.querySelector('[data-live-icon]')).map((el) => el.dataset.board).sort().join()`)
     const cli = (...a: string[]) => execFileSync(process.execPath, [CLI, ...a, '--root', root], { cwd: root, encoding: 'utf8' })
     expect(await live()).toBe('')
-    cli('work', 'start', 'app/home')
+    const started = cli('work', 'start', 'app/home')
+    // the other half: a feature board this work sits on that still reads Backlog is named, with how to fix it -
+    // invoices (no plan); never checkout (Done, reported), pricing (In progress) or home (no status)
+    expect(started).toMatch(/note: board "invoices" still reads Backlog - you are working on it, so make it In progress: an open plan in context\/plans\/ naming "invoices"/)
+    expect(started).not.toMatch(/"checkout"|"pricing"|"home"/)
     // every board pinning app/home, and all-scenes; front shows another frame and stays still
-    await browser!.until(s, `document.querySelectorAll('.sh-boards [data-board-row] [data-live-icon]').length >= 7`, 15_000)
-    expect(await live()).toBe('all-scenes,checkout,home,pitch,pricing,refunds,scratch')
+    await browser!.until(s, `document.querySelectorAll('.sh-boards [data-board-row] [data-live-icon]').length >= 8`, 15_000)
+    expect(await live()).toBe('all-scenes,checkout,home,invoices,pitch,pricing,refunds,scratch')
     const glint = await browser!.eval(s, `(() => { const g = document.querySelector('[data-board="checkout"] [data-live-icon] .glint'); const cs = getComputedStyle(g); return { anim: cs.animationName, svg: getComputedStyle(g.querySelector('svg')).color, base: getComputedStyle(document.querySelector('[data-board="checkout"] [data-live-icon] > svg')).color } })()`)
     expect(glint.anim).toBe('sh-live-glint')
     expect(glint.base).toBe('rgb(0, 136, 255)')                     // Marver's blue - its own token, whatever the mode
@@ -254,13 +269,28 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await browser!.until(s, `document.querySelector('[data-folder-row="decks"]')?.dataset.open === '0'`)
     await browser!.until(s, `!!document.querySelector('[data-folder-row="decks"] [data-live-icon]')`)
     expect(await browser!.eval(s, `!!document.querySelector('[data-folder-row="features"] [data-live-icon]')`)).toBe(false)   // open: its boards show it
+    // two levels down: a board in a sub-folder lights its closed sub-folder - and, closed too, the folder above it
+    const clickRow = async (sel: string) => {
+      const c = await browser!.eval(s, `(() => { const el = document.querySelector('${sel}'); const r = el.getBoundingClientRect(); return { x: r.left + 40, y: r.top + r.height / 2 } })()`)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', buttons: 1, clickCount: 1 }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', buttons: 0, clickCount: 1 }, s)
+    }
+    await browser!.until(s, `!!document.querySelector('[data-folder-row="billing"]')`)
+    await clickRow('[data-folder-row="billing"]')
+    await browser!.until(s, `document.querySelector('[data-folder-row="billing"]')?.dataset.open === '0' && !!document.querySelector('[data-folder-row="billing"] [data-live-icon]')`)
+    await clickRow('[data-folder-row="features"]')
+    await browser!.until(s, `document.querySelector('[data-folder-row="features"]')?.dataset.open === '0' && !!document.querySelector('[data-folder-row="features"] [data-live-icon]')`)
+    await clickRow('[data-folder-row="features"]')
+    await browser!.until(s, `document.querySelector('[data-folder-row="features"]')?.dataset.open === '1'`)
+    await clickRow('[data-folder-row="billing"]')
+    await browser!.until(s, `document.querySelector('[data-folder-row="billing"]')?.dataset.open === '1'`)
     // a page opened mid-job is lit from the start - it asks, it does not wait for the next change
     const s2 = await open(browser!)
     await browser!.until(s2, `!!document.querySelector('[data-board="checkout"] [data-live-icon]')`, 10_000)
     // the frame's pin leaves scratch while the work runs: scratch goes dark, nothing else moves
     board('scratch', { order: 3, nodes: [{ frame: 'front/index' }] })
     await browser!.until(s, `!document.querySelector('[data-board="scratch"] [data-live-icon]')`, 15_000)
-    expect(await live()).toBe('all-scenes,checkout,home,pricing,refunds')     // pitch is in the closed decks folder...
+    expect(await live()).toBe('all-scenes,checkout,home,invoices,pricing,refunds')     // pitch is in the closed decks folder...
     expect(await browser!.eval(s, `!!document.querySelector('[data-folder-row="decks"] [data-live-icon]')`)).toBe(true)   // ...which carries it
     board('scratch', { order: 3 })
     cli('work', 'done', '--all')

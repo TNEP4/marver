@@ -36,7 +36,7 @@ export async function workCommand(root: string, action: string, frames: string[]
     if (!res.ok) throw new Error(String((data as any)?.error ?? `work ${action} failed (${res.status})`))
     // the port may have been reused by something else entirely - never trust the shape
     if (!Array.isArray((data as any)?.frames)) throw new Error(`port ${info.port} did not answer like \`${NAME} dev\` - is it still running?`)
-    return data as { frames: string[] }
+    return data as { frames: string[]; behind?: { board: string; status: string; capability: string }[]; context?: boolean }
   }
 
   switch (action) {
@@ -47,9 +47,16 @@ export async function workCommand(root: string, action: string, frames: string[]
       const ttlMs = Number.isFinite(min) && min > 0
         ? Math.min(Math.max(min * 60_000, 10_000), WORK_TTL_MAX)
         : WORK_TTL_DEFAULT
-      const { frames: active } = await call('POST', { frames, on: true, ttlMs })
+      const { frames: active, behind = [], context } = await call('POST', { frames, on: true, ttlMs })
       const pretty = ttlMs >= 60_000 ? `${Math.round(ttlMs / 60_000)} min` : `${Math.round(ttlMs / 1000)} s`
       console.log(`working: ${active.join(', ')}   (auto-expires in ${pretty} - re-run to extend, \`work done\` to clear)`)
+      // the work is lit; is the board's status true? A feature being worked on is not Backlog or To do
+      const label = (st: string) => (st === 'todo' ? 'To do' : 'Backlog')
+      for (const b of behind) {
+        console.log(context
+          ? `note: board "${b.board}" still reads ${label(b.status)} - you are working on it, so make it In progress: an open plan in context/plans/ naming "${b.capability}" (what you are building and why, a few lines); \`stage: build\` in it once its code starts (Building). design/AGENTS.md, "Show the work".`
+          : `note: board "${b.board}" reads ${label(b.status)} - with no context/ its status is set by hand: once the human has answered the context line (design/AGENTS.md), "status": "in-progress" on the board says it is being worked on ("building" once its code starts).`)
+      }
       return
     }
     case 'done': {

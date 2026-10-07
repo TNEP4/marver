@@ -62,6 +62,9 @@ proposed; and `## Availability` pointing at its row in `shipped.md`.
 
 - **Behaviour** - update its contract in the same change. A change that leaves behaviour alone says
   `no-contract-change: <capability> - <why>` in the pull request body.
+- **Work starting on a feature** - an open plan in `plans/` names its capability (In progress on its
+  board); `stage: build` in it once the code starts (Building). The board's status is how anyone
+  who is not watching knows; never leave a feature you are working on reading Backlog.
 - **A deploy** - write its row in `shipped.md` with the run that proves it (`playbooks/` usually
   has the release recipe).
 - **A decision** - in the project's decision log, numbered, with what it applies to.

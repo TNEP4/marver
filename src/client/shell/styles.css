@@ -641,6 +641,11 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* top-of-screen chrome flips its tooltip below the trigger */
 .sh-tip.below { transform: translate(-50%, 0); animation-name: sh-tip-pop-b }
 @keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
+.sh-tip.right { transform: translate(0, -50%); animation-name: sh-tip-pop-r }
+@keyframes sh-tip-pop-r { from { opacity: 0; transform: translate(0, -50%) scale(.95) } }
+/* a status's tooltip: the status, then where it came from - each piece of evidence on its own line */
+.sh-tip .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; max-width: 420px; white-space: normal }
+.sh-tip .sh-tip-lines small { opacity: .62; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere }
 /* play chrome is fixed dark glass regardless of board theme - its tips pin the light bubble */
 .sh-tip.inv { background: #f4f4f5; color: #18181b }
 .sh-tip b { font-weight: 600 }
