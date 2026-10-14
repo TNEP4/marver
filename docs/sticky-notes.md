@@ -17,7 +17,7 @@ One markdown file, nothing to declare:
 
 Markdown with the Md block's rules: headings, lists, tables, emphasis, code; `[text](goto:scene/frame)`
 links jump to a frame; `http(s)` links open a new tab; images come from `design/assets/`; raw HTML is
-inert. A scene note is 380 wide, a frame note 260; when a frame has both, they stack in one column,
+inert, shown as plain text, and HTML comments (`<!-- ... -->`) are not shown at all. A scene note is 380 wide, a frame note 260; when a frame has both, they stack in one column,
 scene first. An edit lands on the canvas as you save, without reloading the frame.
 
 The room is the layout's job. Every layout the shell composes (a board's `layout` recipe, the auto

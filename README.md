@@ -112,7 +112,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` (prints the canvas link) · `list` |
 | `npx marver link <scene/frame \| scene ...>` | The canvas link that lands on those frames - their board, selected and in view (needs `dev` running) |
 | `npx marver shot <frame ...> \| --scene <name> \| --all [--scale 1-4] [--json]` | Render frames headless and print the PNG paths (needs `dev` running); a scene is one browser, several frames at a time; 2x by default |
-| `npx marver boards [--json]` | The sidebar as the files say it is: folders and sub-folders, boards in reading order with their title, type, status, `order` and description, the landing board |
+| `npx marver boards [--json]` | The sidebar as the files say it is: folders and sub-folders, boards in reading order with their title, type, status, `order` and description, the landing board; a board file that is not valid JSON says why, with line and column |
 | `npx marver boards new <name> [--folder f] [--type t]` | A board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board rendering `context/` |
 | `npx marver folders add <module ...>` | Add a typed folder: `start`, `features`, `surfaces`, `projects`, `feedback`, `context`, `decks`, `archive` |
 | `npx marver context init \| check \| index` | Set up `context/`; check it (exit 0 / 1 / 2; `--base`, `--body-file` for a pull request); regenerate the index's capability table |

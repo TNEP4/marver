@@ -78,6 +78,10 @@ nests a sub-folder with `parent`:
 with its rank, the landing board - and `--json` gives the same tree. The landing board is the first
 board in that reading order, down through folders.
 
+A board file that is not valid JSON says why, with the line and column: a red mark on its row in the
+sidebar (hover it), the toast when you open it, the dev server's log, and an `(invalid JSON: …)` note
+on its line in `npx marver boards` (`invalid` in `--json`).
+
 ### Sizes
 
 A content frame - a `Doc` of markdown, diagrams and images - is as tall as its content, which only a
@@ -171,7 +175,8 @@ long as the work, so nobody sets it.
 - `npx marver boards new <name> --folder features` - a board in its type's starting layout: a
   feature's three phase scenes as three bands (spec, lo-fi, hi-fi), a start board rendering
   `context/INDEX.md` and `context/shipped.md`, a deck on its title slide. `--type` overrides the
-  folder's; `--title`, `--description`, `--capability` fill the rest.
+  folder's; `--title`, `--description`, `--capability` fill the rest. A phase scene with its brief
+  and no frame yet waits quietly: its band takes no room until its first frame lands.
 
 ## Agents
 
