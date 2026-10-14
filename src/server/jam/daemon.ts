@@ -90,8 +90,9 @@ const sceneFrameMtimes = (root: string): Map<string, number> => {
   let entries: string[]
   try { entries = readdirSync(scenesDir, { recursive: true }) as string[] } catch { return out }
   for (const rel of entries) {
-    const base = rel.split('/').pop() ?? rel
-    if (base.startsWith('_') || !FRAME_FILE.test(base)) continue
+    const parts = rel.split(/[\\/]/)
+    const base = parts[parts.length - 1]
+    if (!FRAME_FILE.test(base) || base.startsWith('_') || parts.slice(1, -1).some((s) => s.startsWith('_'))) continue   // as scanFrames: #8
     try { out.set(toFrameId(`scenes/${rel}`), statSync(join(scenesDir, rel)).mtimeMs) } catch { /* vanished mid-walk */ }
   }
   return out

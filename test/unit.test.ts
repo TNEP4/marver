@@ -63,6 +63,18 @@ describe('renderMarkdown color families (D3)', () => {
   })
 })
 
+describe('renderMarkdown HTML comments (#15)', () => {
+  it('drops comments, block and inline, and keeps other raw HTML escaped', () => {
+    const out = renderMarkdown('<!-- generated: keep -->\n\n| a |\n|-|\n| 1 |\n\n<!-- /generated -->\n\nx <!-- inline --> <b>y</b> <!--> z\n\n`<!-- in code -->`')
+    expect(out).not.toMatch(/&#60;!--|generated|inline/)
+    expect(out).toContain('<table>')
+    expect(out).toContain('&#60;b&#62;y&#60;/b&#62;')
+    expect(out).toContain(' z')                                  // an empty comment hides nothing after it
+    expect(out).toMatch(/<code>&lt;!-- in code --&gt;<\/code>/)   // code keeps it literally
+    expect(renderMarkdown('Visible\n\n<!-- unclosed, to the end')).not.toMatch(/unclosed/)
+  })
+})
+
 describe('humanize (D5 sidebar labels)', () => {
   it('de-hyphenates and Title-Cases', () => {
     expect(humanize('crm-high-level')).toBe('Crm High Level')
@@ -161,11 +173,18 @@ describe('scanFrames on a real tree', async () => {
     mk('design/scenes/deck/cover.tsx', `export const meta = { title: "Cover", slide: true }\nexport default () => null\n`)
     mk('design/scenes/checkout/_fixtures.ts')
     mk('design/scenes/checkout/_layout.tsx')
+    mk('design/scenes/checkout/_snapshot/Comp.tsx')   // #8: inside an underscore folder → infra
+    mk('design/scenes/_draft/home.tsx')               // an underscore SCENE is still a scene
+    mk('design/components/_parts/Button.tsx')         // ...but a component's helpers folder is not
     mk('design/scenes/demo/plain.html', '<html></html>')
     mk('design/scenes/screens/nope.tsx')          // reserved scene → skipped
     mk('design/components/button/variants.tsx')
+    mk('design/scenes/pay-lofi/_brief.md', '---\ntitle: Pay - lo-fi\n---\n')   // #18: brief, no frame yet
+    mk('design/scenes/stray/notes.txt')                                           // no brief: not a scene
     const m = scanFrames(root)
-    expect(m.frames.map((f) => f.id)).toEqual(['checkout/filled', 'components/button/variants', 'deck/cover', 'demo/plain'])
+    expect(m.scenes.find((s) => s.name === 'pay-lofi')).toMatchObject({ frames: 0, title: 'Pay - lo-fi' })
+    expect(m.scenes.some((s) => s.name === 'stray')).toBe(false)
+    expect(m.frames.map((f) => f.id)).toEqual(['_draft/home', 'checkout/filled', 'components/button/variants', 'deck/cover', 'demo/plain'])
     expect(m.frames.find((f) => f.id === 'deck/cover')).toMatchObject({ slide: true })
     expect(m.frames.find((f) => f.id === 'checkout/filled')).toMatchObject({ kind: 'tsx', title: 'Filled', viewport: 'mobile', scene: 'checkout' })
     expect(m.frames.find((f) => f.id === 'demo/plain')?.kind).toBe('html')
@@ -551,6 +570,24 @@ describe('lane flow', () => {
     expect(p.b.y).toBe(0)
     expect(warnings.join(' ')).toMatch(/unknown scene "ghost"/)
     expect(warnings.join(' ')).toMatch(/invalid space/)
+  })
+
+  it('a known scene with no node here skips quietly; a typo still warns (#18)', async () => {
+    const { tidy } = await import('../src/client/shell/tidy.ts')
+    const warnings: string[] = []
+    const known = new Set(['alpha', 'alpha-lofi', 'alpha-hifi'])
+    // the feature starter: [[specs], 3, [lofi], 4, [hifi]] with both later phases still empty
+    const starter = tidy([N('a', 'alpha/x', 'alpha')], { rows: [['alpha'], { space: 3 }, ['alpha-lofi'], { space: 4 }, ['alpha-hifi']] }, (m) => warnings.push(m), known)
+    expect(warnings).toEqual([])
+    expect(starter).toEqual([{ key: 'a', x: 0, y: 0 }])
+    // an empty phase first and between: its spacer goes with it; real lanes keep their gap
+    const mid = tidy([N('a', 'alpha/x', 'alpha'), N('b', 'beta/x', 'beta')],
+      { rows: [['alpha-lofi'], { space: 3 }, ['alpha'], { space: 2 }, ['alpha-hifi'], { space: 4 }, ['beta']] }, (m) => warnings.push(m), new Set([...known, 'beta']))
+    expect(warnings).toEqual([])
+    expect(mid.find((p) => p.key === 'a')).toMatchObject({ x: 0, y: 0 })
+    // a typo still warns
+    tidy([N('a', 'alpha/x', 'alpha')], { rows: [['alpha'], ['ghost']] }, (m) => warnings.push(m), known)
+    expect(warnings[0]).toBe('unknown scene "ghost" in layout - skipped')
   })
 
   it('rows AND columns is invalid: plain tidy, not a silent pick', async () => {
@@ -1499,5 +1536,50 @@ describe('isSecureDeployment (the Secure flag on a thirty-day cookie)', async ()
     withOrigin('   ', () => {
       expect(isSecureDeployment(req({ 'x-forwarded-proto': 'https' }))).toBe(true)
     })
+  })
+})
+
+describe('no-theme warning (#4)', () => {
+  it('a canvas of content frames alone needs no theme; one app frame brings the warning back', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { scanFrames } = await import('../src/server/manifest.ts')
+    const { contentOnly } = await import('../src/shared/frames.ts')
+    const root = mkdtempSync(join(tmpdir(), 'sh-theme-'))
+    const put = (p: string, c: string) => { mkdirSync(join(root, p, '..'), { recursive: true }); writeFileSync(join(root, p), c) }
+    expect(contentOnly(scanFrames(root).frames)).toBe(false)          // empty canvas: still worth saying
+    put('design/scenes/notes/spec.tsx', "import { Doc, Md } from '@marver-design/marver/content'\nexport default () => <Doc><Md>{'x'}</Md></Doc>\n")
+    expect(contentOnly(scanFrames(root).frames)).toBe(true)
+    put('design/scenes/app/home.tsx', 'export default () => <main>home</main>\n')
+    expect(contentOnly(scanFrames(root).frames)).toBe(false)
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('empty phase scenes in a published bundle (#18)', () => {
+  it('ship by name only when a published recipe names them; nothing else leaks', async () => {
+    const { publishedManifest } = await import('../src/server/build.ts')
+    const manifest = {
+      scenes: [
+        { name: 'pay-specs', frames: 1, title: 'Pay - spec', brief: 'design/scenes/pay-specs/_brief.md' },
+        { name: 'pay-lofi', frames: 0, title: 'Pay - lo-fi', description: 'private words', brief: 'design/scenes/pay-lofi/_brief.md' },
+        { name: 'secret', frames: 0, title: 'Not on any recipe' },
+        { name: 'drafts', frames: 2, title: 'Frames not published', note: 'private note' },
+      ],
+      frames: [{ id: 'pay-specs/one', file: 'design/scenes/pay-specs/one.tsx', kind: 'tsx', scene: 'pay-specs' }],
+    } as any
+    const m = publishedManifest(manifest, manifest.frames, ['pay'], true, new Set(), new Set(['pay-specs', 'pay-lofi', 'pay', 'drafts']))
+    expect(m.scenes).toEqual([{ name: 'pay-specs', frames: 1, title: 'Pay - spec' }, { name: 'pay-lofi', frames: 0 }, { name: 'drafts', frames: 0 }])
+  })
+})
+
+describe('parseBoard (#6)', () => {
+  it('names the line and column - at end of input too', async () => {
+    const { parseBoard } = await import('../src/server/boards.ts')
+    expect(parseBoard('{ "a": 1 }').json).toEqual({ a: 1 })
+    expect(parseBoard('{ "a": 1 }\\n').error).toMatch(/line 1 column 11/)
+    expect(parseBoard('{\n  "nodes": [').error).toMatch(/end of JSON input.*\(line 2 column 13\)/)
+    expect(parseBoard('x\n\n\n').error).not.toMatch(/line 4/)          // no location made up for an early error
   })
 })

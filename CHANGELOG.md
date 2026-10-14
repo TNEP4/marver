@@ -2,6 +2,39 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Fixed
+
+- **A board file that is not JSON says why.** One stray character used to leave only `could not
+  load "<board>" - staying on <board>`, while `marver boards` listed it as fine. Now the parser's
+  own words, with the line and column, appear in four places:
+  - a red mark on the board's sidebar row;
+  - the toast;
+  - the dev server's log;
+  - a `(invalid JSON: …)` note on the board's line in `marver boards`.
+  (#6)
+- **Folders inside a scene that start with `_` stay off the canvas.** Files in a folder such as
+  `_snapshot/` (the iterate guide's frozen copies) were registered as frames, shown on all scenes,
+  and shot as frames with no default export. Inside a scene, a `_` now marks infrastructure for a
+  folder as it already did for a file; a scene's own folder name is unaffected. (#8)
+- **Tables in a wide `Doc` use its width.** Every `Md` was held to a 72-character measure, so a
+  comparison table in `<Doc layout="wide">` wrapped into a tall, half-empty column. In a wide Doc,
+  prose keeps that measure and a table grows as far as its cells need, up to the Doc's width. (#12)
+- **HTML comments stay invisible in markdown.** `Md` and sticky notes printed `<!-- ... -->` as
+  text, as on a start board's index around its generated table. Comments are now dropped; any other
+  raw HTML still shows as plain text. (#15)
+- **An empty phase scene waits quietly.** A feature board names its lo-fi and hi-fi scenes before
+  they hold a frame, and the canvas warned `unknown scene ... skipped` on every render, toast
+  included. A scene with a brief and no frames is now known, and the layout passes over it and its
+  spacer; a misspelt name still warns. (#18)
+- **Re-running `init` keeps the project's name.** `npx marver init` on an existing project rewrote
+  `design/manifest.json`'s project line to the folder name and dropped its description, until the
+  next `dev`. It now keeps the line it finds. (#13)
+- **No theme warning where no theme is needed.** A canvas made only of content frames (`Doc`, `Md`,
+  `Diagram`) brings its own styling, but every boot warned "no theme configured" with a banner. The
+  warning now waits for a frame that needs the app's styles. (#4)
+
 ## 0.23.0 - 2026-10-06
 
 ### Added

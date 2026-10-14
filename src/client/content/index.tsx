@@ -272,6 +272,10 @@ body { margin: 0; }
    breathe ABOVE far more than below, so structure reads at a glance. Every
    list-style is re-asserted: host Tailwind preflight strips markers. */
 .mv-md { max-width: 72ch; min-width: 0; font-size: 16px; line-height: 1.65; }
+/* #12: prose keeps its measure, but a table straight in a wide Doc grows past it as far as its
+   cells need, up to the Doc's own width (cqi) - never into a Row's neighbour */
+.mv-doc-wide { container-type: inline-size; }
+.mv-doc-wide > .mv-md table { width: max-content; min-width: 100%; max-width: 100cqi; }
 .mv-md > :first-child { margin-top: 0; }
 .mv-md > :last-child { margin-bottom: 0; }
 .mv-md h1 { font-size: 30px; line-height: 1.16; letter-spacing: -0.021em; font-weight: 700; margin: 44px 0 14px; }

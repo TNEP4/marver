@@ -313,7 +313,10 @@ export function init(root: string, opts: InitOpts) {
   // the first manifest, so AGENTS.md's "read design/manifest.json" is true before dev runs
   // the project line carries the name here; `dev` (which every flow starts next) adds the
   // config's description - init stays synchronous, and config.ts loads only through `dev`
-  writeManifest(root, scanFrames(root, { name: basename(root) }))
+  // a re-run keeps the line already there (#13) - `dev` derived it from config.ts, which init never reads
+  const prev = readJson(join(design, 'manifest.json'))?.project
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+  writeManifest(root, scanFrames(root, { name: str(prev?.name) ?? basename(root), description: str(prev?.description) }))
 
   console.log(`\n${NAME} initialized (${opts.mode} mode). Created:`)
   for (const f of created) console.log(`  + ${f}`)

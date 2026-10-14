@@ -108,6 +108,15 @@ beforeAll(async () => {
   writeFileSync(join(root, 'design', 'scenes', 'lazy', 'far.tsx'), doc(1))
   writeFileSync(join(boards, 'far.json'), JSON.stringify({ version: 1, name: 'far', auto: false, nodes: [
     { key: 'k-near', frame: 'lazy/near', x: 0, y: 0 }, { key: 'k-far', frame: 'lazy/far', x: 0, y: 30_000 }] }, null, 2) + '\n')
+  // #12: a wide Doc with prose and a many-column table, opened on its own (on no board)
+  mkdirSync(join(root, 'design', 'scenes', 'wide'), { recursive: true })
+  writeFileSync(join(root, 'design', 'scenes', 'wide', 'table.tsx'), `import { Doc, Md } from '@marver-design/marver/content'
+export default () => (
+  <Doc layout="wide">
+    <Md>{${JSON.stringify(`A paragraph that keeps the 72 character measure even inside a wide document, because long lines are hard to read.\n\n| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| ${'a cell long enough to need room '.repeat(2)} | two | three | four | five | ${'the last column also says a good deal '.repeat(2)} |`)}}</Md>
+  </Doc>
+)
+`)
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { docs: 'comment' } }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d; const m = log.match(/→ (http:\/\/localhost:\d+)\//); if (m) ORIGIN = m[1] })
@@ -426,6 +435,16 @@ describe('calm loading', () => {
     await wait(300)
     expect((await browser.eval(s, `window.__mvStore.getState().nodes.find((n) => n.frame === 'lazy/late').h`))).toBe(h)
   }, 90_000)
+
+  it('a table in a wide Doc takes the Doc\'s width; prose keeps its 72ch measure (#12)', async () => {
+    if (!browser) return
+    const s = await browser.tab({ width: 1280, height: 800 })
+    opened.push(s)
+    await browser.go(s, `${ORIGIN}/__mv/frame/?id=wide/table&theme=light`)
+    const w = await browser.until(s, `(() => { const t = document.querySelector('.mv-md table'), p = document.querySelector('.mv-md p'); return t && p && { t: t.getBoundingClientRect().width, p: p.getBoundingClientRect().width } })()`, 30_000)
+    expect(w.t).toBeGreaterThan(1000)
+    expect(w.p).toBeLessThan(760)
+  }, 60_000)
 
   it('the published bundle carries the committed heights of its own frames only', async () => {
     if (!browser) return

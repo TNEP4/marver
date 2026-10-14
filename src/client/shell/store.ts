@@ -164,6 +164,8 @@ export interface BoardMeta {
   status?: { status: Status; row?: number; fill?: Phase; reason?: string; evidence?: string[] }
   /** what a person may set it to from the sidebar (dev only) - shared/board-types settableStatuses */
   settable?: StatusWord[]
+  /** the board file is not valid JSON: the parser's words, line and column (#6) */
+  error?: string
 }
 
 /** The sidebar tree: root boards and folders in rank order, each folder's boards and
@@ -173,7 +175,7 @@ export interface BoardMeta {
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
   if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
   const [boards, reg] = await Promise.all([
-    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[] }[]>,
+    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[]; error?: string }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
       const j = await r.json() as { folders?: { name: string; order?: number; parent?: string; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
@@ -184,7 +186,7 @@ export async function fetchBoardTree(): Promise<TreeSnapshot> {
     tree: buildTree(boards, reg.folders ?? []),
     base: { boards: Object.fromEntries(boards.map((b) => [b.name, b.sha256])), folders: reg.sha256 ?? null },
     titles: Object.fromEntries(boards.flatMap((b) => (b.title ? [[b.name, b.title]] : []))),
-    meta: Object.fromEntries(boards.map((b) => [b.name, { ...(b.type && b.type !== 'plain' ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}), ...(b.settable?.length ? { settable: b.settable } : {}) }])),
+    meta: Object.fromEntries(boards.map((b) => [b.name, { ...(b.type && b.type !== 'plain' ? { type: b.type } : {}), ...(b.status ? { status: b.status } : {}), ...(b.settable?.length ? { settable: b.settable } : {}), ...(b.error ? { error: b.error } : {}) }])),
   }
 }
 /** A tree read's types and statuses, kept under the same latest-wins rule as its titles. */
@@ -399,12 +401,20 @@ function defaultSize(frame: FrameEntry) {
 }
 
 let resizedInGesture = false
+/** Why a board's last load failed, from the server (a parse error names its line) - for its toast. */
+const loadErrors = new Map<string, string>()
+const whyNot = (name: string) => { const e = loadErrors.get(name); return e ? ` - ${e}` : '' }
 
 /** sceneRows is the legacy shorthand for a plain rows layout. */
 const effectiveLayout = (layout: BoardLayout | null, sceneRows: string[][] | null): BoardLayout | undefined =>
   layout ?? (sceneRows?.length ? { rows: sceneRows.map((r) => [...r]) } : undefined)
 
+/** Every scene of the project, empty phase scenes included - a layout naming one is no typo (#18).
+ *  A published bundle carries the empty scenes its recipes name, so it lays out as dev does. */
+const knownScenes = (m: Manifest | null): ReadonlySet<string> => new Set(m?.scenes.map((s) => s.name))
+
 const layoutWarn = (msg: string) => {
+  if (PUBLISHED) return   // a viewer cannot fix a recipe - the owner sees it in dev (#18: empty phase scenes)
   console.warn('[marver layout]', msg)
   try { useStore.getState().toast(`layout: ${msg}`) } catch { /* store not ready during boot */ }
 }
@@ -673,6 +683,7 @@ export const useStore = create<State>((set, get) => {
    *  keeps whatever board is currently mounted. */
   const loadBoardState = async (boardName: string): Promise<Partial<State> | null> => {
     clearNoteHeights()                     // heights are per column drawn; a key shared by two board files carries none across
+    loadErrors.delete(boardName)
     try {
       let raw: any
       const saved = loadSavedHeights()       // in parallel with the manifest; every size below reads it
@@ -711,7 +722,7 @@ export const useStore = create<State>((set, get) => {
           loaded = body?.board == null ? 'fresh' : body   // board:null = not materialized yet
         }
         else if (res.status === 404) loaded = 'fresh'    // older servers still 404 fresh boards
-        else loaded = null                     // anything else must not commit an empty canvas
+        else { loadErrors.set(boardName, (await res.json().catch(() => null))?.error ?? ''); loaded = null }   // anything else must not commit an empty canvas - and says why (#6)
       }
       if (loaded === null) return null
       if (loaded !== 'fresh') {
@@ -848,7 +859,7 @@ export const useStore = create<State>((set, get) => {
       // a board with a recipe re-applies it (spec 18 - room is the layout's job)
       const cramped = !!boardHash && !needTidy && !!(layout || sceneRows?.length || boardAuto) && notesCramped(nodes, manifest)
       if ((!boardHash || needTidy || cramped) && nodes.length) {
-        const placedAll = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn)
+        const placedAll = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn, knownScenes(manifest))
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
         laidOut = sizeRecord(nodes)
       }
@@ -858,7 +869,7 @@ export const useStore = create<State>((set, get) => {
       // surface recipe problems at load (dry-run): materialized boards otherwise
       // never run tidy, so a broken agent-authored layout would fail silently
       if (layout && boardHash && !needTidy && !cramped && nodes.length) {
-        tidy(tidyInput(nodes, manifest), layout, layoutWarn)
+        tidy(tidyInput(nodes, manifest), layout, layoutWarn, knownScenes(manifest))
       }
       return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }
     } catch { return null }
@@ -876,7 +887,7 @@ export const useStore = create<State>((set, get) => {
       const revAtStart = editRev, scenesAtStart = scenesRev
       const next = await loadBoardState(boardName)
       if (seq !== loadSeq) return false        // a newer load superseded this one
-      if (!next) { get().toast(`board "${boardName}" failed to load`); return false }
+      if (!next) { get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
@@ -909,7 +920,7 @@ export const useStore = create<State>((set, get) => {
       // there is never an empty intermediate state and nothing to roll back
       const next = await loadBoardState(name)
       if (mySwitch !== switchSeq) return
-      if (!next) { get().toast(`could not load "${name}" - staying on ${get().board}`); return }
+      if (!next) { get().toast(`could not load "${name}"${whyNot(name)} - staying on ${get().board}`); return }
       // edits may have landed on the still-mounted old board during the target load
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
       if (mySwitch !== switchSeq) return
@@ -1512,7 +1523,7 @@ export const useStore = create<State>((set, get) => {
     },
     runTidy() {
       const { nodes, manifest, sceneRows, layout } = get()
-      const placed = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn)
+      const placed = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn, knownScenes(manifest))
       set((s) => ({
         nodes: s.nodes.map((n) => {
           const p = placed.find((x) => x.key === n.key)

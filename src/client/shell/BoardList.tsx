@@ -461,6 +461,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         <span>{label(n)}</span>
         {/* the status for a screen reader, part of the board button's own name: the glyph is the eye's */}
         {meta[n]?.status && <span className="sh-sr" data-status-text>{`, ${statusTip(meta[n]).replace(/\n/g, '; ')}`}</span>}
+        {meta[n]?.error && (
+          <Tip side="right" label={<div className="sh-tip-lines"><b>Not valid JSON - fix the file</b><small>{`design/boards/${n}.json: ${meta[n].error}`}</small></div>}>
+            <i className="st st-error" data-board-error aria-label={`not valid JSON: ${meta[n].error}`}>!</i>
+          </Tip>
+        )}
         {meta[n]?.status && (
           <Tip side="right" label={<StatusTipLabel m={meta[n]} />}>
             <i className="st" data-status={meta[n].status!.status} aria-hidden="true"><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>

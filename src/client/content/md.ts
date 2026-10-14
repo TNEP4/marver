@@ -39,8 +39,9 @@ export function assetUrl(src: string): string | null {
 const marked = new Marked({
   gfm: true,
   renderer: {
-    // raw HTML (block or inline) renders as its literal text - inert by construction
-    html(token: any) { return escapeHtml(String(token.text ?? '')) },
+    // raw HTML (block or inline) renders as its literal text - inert by construction. Comments
+    // are the exception: markdown readers never show them, an unclosed one runs to the end (#15)
+    html(token: any) { return escapeHtml(String(token.text ?? '').replace(/<!--(?:-?>|[\s\S]*?(?:-->|$))/g, '')) },
     // marked leaves the text INSIDE a raw block (<script>, <style>, <pre>, <textarea>) unescaped
     // (`token.escaped`); here every text token is escaped - there is no raw block to serve
     text(token: any) {

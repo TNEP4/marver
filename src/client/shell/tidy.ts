@@ -21,6 +21,19 @@ export interface BoardLayout extends Flow { scenes?: Record<string, Flow> }
 export type Warn = (msg: string) => void
 
 const isSpace = (x: unknown): x is Space => !!x && typeof x === 'object' && !Array.isArray(x)
+/** Drop the items `isGone` names, each with the spacer that led into it (or, at the start, the
+ *  one that followed it) - what is left reads as if the item was never there. */
+function dropGone<T>(items: T[], isGone: (x: T) => boolean): T[] {
+  const out: T[] = []
+  let skip = false
+  for (const it of items) {
+    if (isGone(it)) { if (isSpace(out[out.length - 1])) out.pop(); else if (!out.length) skip = true; continue }
+    if (skip && isSpace(it)) { skip = false; continue }
+    skip = false
+    out.push(it)
+  }
+  return out
+}
 const units = (s: Space, warn: Warn): number =>
   Number.isInteger(s.space) && s.space > 0 ? s.space : (warn(`invalid space ${JSON.stringify(s.space)} - using 1`), 1)
 
@@ -268,7 +281,9 @@ function layoutScene(scene: string, members: TidyNode[], flow: Flow | undefined,
  * array is never reordered (iframe law G-1). Two passes: each scene lays out its
  * frames (recipe or default lane), then the board flow places the scene boxes.
  */
-export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () => {}): Placed[] {
+/** `known`: every scene of the project. A layout naming a known scene with no node on this board
+ *  (an empty phase scene, frames not pinned here) skips it quietly; only an unknown name warns (#18). */
+export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () => {}, known?: ReadonlySet<string>): Placed[] {
   const scenes = [...new Set(nodes.map((n) => n.scene))]
 
   // pass 1: per-scene relative layouts + bounding boxes
@@ -300,7 +315,23 @@ export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () =>
   // PLAIN tidy (default trailing lanes), never a silent pick
   let boardFlow: Flow
   if (layout && layout.rows && layout.columns) { warn('layout has rows AND columns - ignoring it (plain tidy)'); boardFlow = { rows: [] } }
-  else if (layout && (layout.rows || layout.columns)) boardFlow = { rows: layout.rows, columns: layout.columns }
+  else if (layout && (layout.rows || layout.columns)) {
+    // #18: a known scene with nothing on this board (an empty phase scene) leaves the recipe
+    // with the spacer that went with it, so the rest lays out as if it was never named - quietly
+    const gone = (a: unknown) => typeof a === 'string' && !!known?.has(a) && !sceneBoxes.has(a)
+    const prune = (flow?: Array<Lane | Space>) => {
+      if (!flow || !known) return flow
+      const emptied = new Set<unknown>()
+      const lanes = flow.map((e) => {
+        if (!Array.isArray(e) || !e.some(gone)) return e
+        const kept = dropGone(e, gone)
+        if (kept.every(isSpace)) emptied.add(kept)
+        return kept
+      })
+      return dropGone(lanes, (e) => emptied.has(e))
+    }
+    boardFlow = { rows: prune(layout.rows), columns: prune(layout.columns) }
+  }
   else boardFlow = { rows: [] }      // default: every scene its own trailing lane (alphabetical)
 
   const listed = new Set<string>()
@@ -315,7 +346,7 @@ export function tidy(nodes: TidyNode[], layout?: BoardLayout, warn: Warn = () =>
     boardFlow,
     (atom) => {
       const b = sceneBoxes.get(atom)
-      if (!b) warn(`unknown scene "${atom}" in layout - skipped`)
+      if (!b && !known?.has(atom)) warn(`unknown scene "${atom}" in layout - skipped`)
       return b ?? null
     },
     trailing,

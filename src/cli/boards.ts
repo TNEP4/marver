@@ -20,7 +20,7 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   const { boards, skipped } = listBoardFiles(dir)
   const reg = readRegistry(dir)
   if (reg.state === 'malformed') throw new Error(reg.error)
-  const rows = boards.map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName) }))
+  const rows = boards.map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName), ...(b.error ? { error: b.error } : {}) }))
   const tree = buildTree(rows, reg.folders)
   const hasAll = boards.some((b) => b.name === 'all-scenes')
   // spec 20: each board's resolved type, and its status with the evidence that decided it
@@ -28,7 +28,8 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   const notes = annotateBoards(root, boards.filter((b) => b.name !== 'all-scenes'), reg.folders, (n) => fm.get(n) ?? null)
   if (opts.json) {
     const out = rows.filter((r) => r.name !== 'all-scenes').map((r) => ({ ...r, ...(notes.get(r.name) ?? {}) }))
-    console.log(JSON.stringify({ tree, boards: out, landing: flatten(tree)[0] ?? (hasAll ? 'all-scenes' : null), registry: reg.state === 'ok' ? 'design/boards/_folders.json' : null }, null, 2))
+    const invalid = Object.fromEntries(boards.flatMap((b) => (b.error ? [[b.name, b.error]] : [])))
+    console.log(JSON.stringify({ tree, boards: out, landing: flatten(tree)[0] ?? (hasAll ? 'all-scenes' : null), registry: reg.state === 'ok' ? 'design/boards/_folders.json' : null, ...(Object.keys(invalid).length ? { invalid } : {}) }, null, 2))
     return
   }
   if (!tree.length && !hasAll) { console.log('no boards yet - design/boards/ is empty'); return }
@@ -41,7 +42,8 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
     const st = a.status ? ` · ${STATUS_LABEL[a.status.status]}${a.status.fill ? ` (${PHASE_LABEL[a.status.fill]})` : ''}${a.status.reason ? `: ${a.status.reason}` : ''}` : ''
     return a.type === 'plain' && !st ? '' : `  [${a.type}${st}]`
   }
-  const boardLine = (n: string) => { const r = rows.find((x) => x.name === n); return `${n}${title(r?.title)}${kind(n)}${order(n)}${desc(r?.description)}` }
+  const bad = (n: string) => { const e = boards.find((b) => b.name === n)?.error; return e ? `  (invalid JSON: ${e})` : '' }   // #6
+  const boardLine = (n: string) => { const r = rows.find((x) => x.name === n); return `${n}${bad(n)}${title(r?.title)}${kind(n)}${order(n)}${desc(r?.description)}` }
   const count = (f: Folder) => {
     const boards = f.items.filter((k) => k.kind === 'board').length, subs = f.items.length - boards
     return `${boards} board${boards === 1 ? '' : 's'}${subs ? `, ${subs} folder${subs === 1 ? '' : 's'}` : ''}`
@@ -57,7 +59,7 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
     }
   }
   print(tree, '', null)
-  if (hasAll) console.log('all-scenes  (auto, always last)')
+  if (hasAll) console.log(`all-scenes${bad('all-scenes')}  (auto, always last)`)
   const landing = flatten(tree)[0]
   if (landing) console.log(`\nlanding board: ${landing}`)
   console.log(`registry: ${reg.state === 'ok' ? 'design/boards/_folders.json' : 'none (no empty or ranked folders yet)'}`)

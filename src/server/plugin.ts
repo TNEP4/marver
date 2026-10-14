@@ -6,6 +6,8 @@ import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
 import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, type Manifest } from './manifest.ts'
+import { checkBoardsDir, isRegularFile, listBoardFiles, parseBoard } from './boards.ts'
+import { contentOnly } from '../shared/frames.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
@@ -44,6 +46,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
     devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}` })
   }, 120)
 
+  /** No theme is only a problem for app frames: a canvas made of content frames alone (Doc, Md,
+   *  Diagram ship their own styling) needs none (#4). The shell decides its banner from the live
+   *  manifest; the config carries only whether a theme exists. */
+  const themeMissing = () => themeFile() == null && !contentOnly(manifest.frames)
+
   /** Theme resolution: design/theme.css wrapper > configured > detected > empty (spec §5.4). */
   const themeFile = (): string | null => {
     const wrapper = join(root, 'design', 'theme.css')
@@ -73,7 +80,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
 
     load(id) {
       if (id === '\0' + VIRTUAL_THEME + '.css') {
-        console.warn('[marver] no theme detected - frames render unstyled. Create design/theme.css importing your app\'s stylesheet (or set `theme` in design/config.ts).')
+        if (themeMissing()) console.warn('[marver] no theme detected - frames render unstyled. Create design/theme.css importing your app\'s stylesheet (or set `theme` in design/config.ts).')
         return '/* marver: no theme configured */'
       }
       if (id === '\0' + VIRTUAL_CONFIG) {
@@ -289,6 +296,15 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       try {
         mkdirSync(boardsDir, { recursive: true })   // watch needs it to exist; the API creates it lazily
         const timers = new Map<string, ReturnType<typeof setTimeout>>()
+        // a board that is not JSON is said once per content (#6) - at boot, and whenever it changes
+        const badBoards = new Map<string, string>()   // file → hash of the invalid content last reported
+        const reportBad = (file: string, content: string, error: string) => {
+          if (badBoards.get(file) === hash(content)) return
+          badBoards.set(file, hash(content))
+          console.warn(`[marver] design/boards/${file} is not valid JSON - ${error}`)
+        }
+        // never through a symlinked design/boards: what lies elsewhere is never read into the log
+        if (!checkBoardsDir(root, boardsDir)) for (const b of listBoardFiles(boardsDir).boards) if (b.error) reportBad(`${b.name}.json`, b.content, b.error)
         // the LIST changed (a board or the folder registry added, written, or deleted): one
         // coalesced `sh:boards` per burst, so the sidebar re-reads its tree - deletions too,
         // which the content broadcast below cannot carry (nothing left to hash)
@@ -302,11 +318,15 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
           clearTimeout(timers.get(file))
           timers.set(file, setTimeout(() => {
             timers.delete(file)
-            try {
-              const content = readFileSync(join(boardsDir, file), 'utf8')
-              JSON.parse(content)                   // a mid-write partial must not broadcast - viewers would reload onto garbage
-              server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
-            } catch { /* deleted, partial, or invalid; the next settled write broadcasts */ }
+            let content: string
+            if (!isRegularFile(join(boardsDir, file))) return   // deleted, a directory, a symlink: never followed, never printed
+            try { content = readFileSync(join(boardsDir, file), 'utf8') } catch { return }
+            // a mid-write partial must not broadcast - viewers would reload onto garbage; a settled
+            // invalid file says why, so the human and the agent both see it
+            const { error } = parseBoard(content)
+            if (error) { if (!checkBoardsDir(root, boardsDir)) reportBad(file, content, error); return }   // checked per read: the folder can change under us
+            badBoards.delete(file)
+            server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
           }, 120))
         })
         server.httpServer?.once('close', () => watcher.close())

@@ -44,7 +44,16 @@ export const isRegularFile = (p: string): boolean => { try { return lstatSync(p)
 /** Is there ANY node at p (a dangling symlink counts)? */
 export const nodeExists = (p: string): boolean => { try { lstatSync(p); return true } catch { return false } }
 
-export interface BoardFile { name: string; file: string; content: string; sha256: string; json: unknown | null }
+export interface BoardFile { name: string; file: string; content: string; sha256: string; json: unknown | null; error?: string }
+
+/** A board file's JSON, or why it is not JSON - the parser's own words, naming the line and column (#6). */
+export function parseBoard(content: string): { json: unknown; error?: string } {
+  try { return { json: JSON.parse(content) } } catch (e) {
+    // V8 names the line and column - except at end of input, where we point at the end ourselves
+    const msg = (e as Error).message, lines = content.split('\n')
+    return { json: null, error: /end of JSON input$/.test(msg) ? `${msg} (line ${lines.length} column ${lines[lines.length - 1].length + 1})` : msg }
+  }
+}
 
 /** Every board file: name, raw content, hash, and its JSON (null when malformed). `skipped`
  *  names the entries that looked like boards but were not regular files. */
@@ -56,9 +65,8 @@ export function listBoardFiles(boardsDir: string): { boards: BoardFile[]; skippe
     const file = join(boardsDir, f)
     if (!isRegularFile(file)) { skipped.push(f); continue }
     const content = readFileSync(file, 'utf8')
-    let json: unknown = null
-    try { json = JSON.parse(content) } catch { /* malformed: listed, but carries no fields */ }
-    boards.push({ name: f.slice(0, -5), file, content, sha256: hash(content), json })
+    // malformed: listed, carries no fields, and says why
+    boards.push({ name: f.slice(0, -5), file, content, sha256: hash(content), ...parseBoard(content) })
   }
   return { boards, skipped }
 }

@@ -374,4 +374,22 @@ describe('board types and status in the sidebar (spec 20)', () => {
     await browser!.until(s, `${FRAME_TEXT}.includes('Second version.')`, 20_000)
     expect(await browser!.eval(s, `window.__noReload === true`)).toBe(true)
   })
+
+  skippable('a board file that is not JSON says why - on its row, in the toast, in the dev log, and in the CLI (#6)', async () => {
+    const s = await open(browser!)
+    mkdirSync(join(root, 'design', 'boards', 'odd.json'))                                          // a directory named like a board: no crash
+    put('design/boards/broken.json', '{ "version": 1, "name": "broken", "nodes": [] }\\n')   // the two stray bytes from the issue
+    const label = await browser!.until(s, `document.querySelector('[data-board="broken"] [data-board-error]')?.getAttribute('aria-label')`, 15_000)
+    expect(label).toMatch(/not valid JSON: .*line 1 column/)
+    await browser!.eval(s, `document.querySelector('[data-board="broken"]').click()`)
+    const toast = await browser!.until(s, `Array.from(document.querySelectorAll('.sh-toast, [class*=toast]')).map((t) => t.textContent).find((t) => t.includes('broken.json')) ?? false`, 15_000)
+    expect(toast).toMatch(/design\/boards\/broken\.json is not valid JSON - .*line 1 column/)
+    expect(log).toMatch(/design\/boards\/broken\.json is not valid JSON/)
+    expect(execFileSync(process.execPath, [CLI, 'boards', '--root', root], { encoding: 'utf8' })).toMatch(/broken  \(invalid JSON: .*line 1 column/)
+    expect(JSON.parse(execFileSync(process.execPath, [CLI, 'boards', '--root', root, '--json'], { encoding: 'utf8' })).boards.find((b: any) => b.name === 'broken').error).toMatch(/line 1 column/)
+    rmSync(join(root, 'design', 'boards', 'broken.json'))
+    rmSync(join(root, 'design', 'boards', 'odd.json'), { recursive: true })
+    await browser!.until(s, `!document.querySelector('[data-board="broken"]')`, 15_000)
+    expect(server!.exitCode).toBe(null)
+  })
 })

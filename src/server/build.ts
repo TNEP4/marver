@@ -260,7 +260,7 @@ export function publishedTree(published: string[], allBoards: Record<string, any
 /** The bundle's manifest: the published frames, and descriptions of published things ONLY -
  *  the project's, the published scenes' (their brief path only when source is revealed),
  *  the published boards' and the folders those sit in. No unpublished name or sentence. */
-export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], publishedNames: string[], strip: boolean, showStatus: ReadonlySet<string> = new Set()): Manifest {
+export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], publishedNames: string[], strip: boolean, showStatus: ReadonlySet<string> = new Set(), recipeScenes: ReadonlySet<string> = new Set()): Manifest {
   const pubScenes = new Set(pubFrames.map((f) => f.scene))
   const pubBoardSet = new Set(publishedNames)
   // spec 20's publication projection: a board's status ships only where its publish row opts in,
@@ -277,9 +277,12 @@ export function publishedManifest(manifest: Manifest, pubFrames: FrameEntry[], p
     ...(manifest.project ? { project: manifest.project } : {}),
     ...(pubFolders.length ? { folders: pubFolders } : {}),
     ...(pubBoards.length ? { boards: pubBoards } : {}),
-    scenes: manifest.scenes.filter((s) => pubScenes.has(s.name))
-      // the note is viewer-facing canvas content (spec 18): it survives the source strip, the brief path does not
-      .map(({ name, title, description, brief, note }) => ({ name, frames: pubFrames.filter((f) => f.scene === name).length, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(brief && !strip ? { brief } : {}), ...(note ? { note } : {}) })),
+    // the note is viewer-facing canvas content (spec 18): it survives the source strip, the brief path does
+    // not. A scene a published recipe names but none of whose frames ship (an empty phase scene) goes by
+    // name only - the recipe already says that name - so the recipe lays out as in dev (#18)
+    scenes: manifest.scenes.flatMap(({ name, title, description, brief, note }) => pubScenes.has(name)
+      ? [{ name, frames: pubFrames.filter((f) => f.scene === name).length, ...(title ? { title } : {}), ...(description ? { description } : {}), ...(brief && !strip ? { brief } : {}), ...(note ? { note } : {}) }]
+      : recipeScenes.has(name) ? [{ name, frames: 0 }] : []),
     frames: pubFrames,
   }
 }
@@ -468,7 +471,9 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     ? frames.map((f) => ({ ...f, file: opaquePath(f.id, f.kind === 'html' ? '.html' : '') }))
     : frames
   const showStatus = new Set(publishedNames.filter((n) => policy.boards[n]?.showStatus))
-  const pubManifest = publishedManifest(manifest, pubFrames, publishedNames, strip, showStatus)
+  const lanes = (x: unknown): unknown[] => (Array.isArray(x) ? x : [])
+  const recipeScenes = new Set(Object.values(boards).flatMap((b) => [...lanes(b?.layout?.rows), ...lanes(b?.layout?.columns)]).flatMap(lanes).filter((a): a is string => typeof a === 'string'))
+  const pubManifest = publishedManifest(manifest, pubFrames, publishedNames, strip, showStatus, recipeScenes)
   // per-board artifact metadata rides beside rights: the type picks the landing
   // view, open/lock are the owner's explicit calls (04-solution §2.35)
   // a slides board (type OR open) plays only its slide: true frames. Non-slide

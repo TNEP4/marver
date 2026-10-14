@@ -354,8 +354,11 @@ export function scanFrames(root: string, project?: ProjectInfo): Manifest {
   for (const base of ['scenes', 'components']) {
     for (const abs of walk(join(design, base))) {
       const name = abs.split(sep).pop()!
-      if (name.startsWith('_') || !FRAME_EXT.test(name)) continue
       const rel = relative(design, abs).split(sep).join('/')
+      // `_` marks infrastructure: an underscore FILE, or anything in an underscore folder below a
+      // scene's own (`_snapshot/`, `_parts/` - #8), is never a frame. A scene's folder name is free
+      const folders = rel.split('/').slice(base === 'scenes' ? 2 : 1, -1)
+      if (!FRAME_EXT.test(name) || name.startsWith('_') || folders.some((s) => s.startsWith('_'))) continue
       const id = toFrameId(rel)
       const scene = id.includes('/') ? id.split('/')[0] : ''
       if (base === 'scenes' && RESERVED_SCENES.has(scene)) {
@@ -413,6 +416,13 @@ export function scanFrames(root: string, project?: ProjectInfo): Manifest {
 
   const sceneCounts = new Map<string, number>()
   for (const f of frames) sceneCounts.set(f.scene, (sceneCounts.get(f.scene) ?? 0) + 1)
+  // #18: a scene with a brief but no frame yet (a feature board's empty phase scenes) is still
+  // a scene - listed with 0 frames, so a layout naming it waits quietly instead of warning
+  const scenesDir = join(design, 'scenes')
+  if (existsSync(scenesDir)) for (const e of readdirSync(scenesDir, { withFileTypes: true })) {
+    if (e.isDirectory() && !e.name.startsWith('.') && !RESERVED_SCENES.has(e.name) && !sceneCounts.has(e.name)
+      && existsSync(join(scenesDir, e.name, '_brief.md'))) sceneCounts.set(e.name, 0)
+  }
   const scenes = [...sceneCounts.entries()].map(([name, n]) => {
     const note = sceneNote(root, name)
     return { name, frames: n, ...sceneBrief(root, name), ...(note ? { note } : {}) }

@@ -6,7 +6,7 @@ import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
-import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
+import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
@@ -188,7 +188,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // shipped record shows on the next `sh:boards` refetch. Owner-only dev data: the
         // evidence lines ride along for the tooltip; a published build never carries them.
         const files = listBoardFiles(boardsDir).boards
-        const rows = files.map((b) => ({ name: b.name, ...boardFields(b.json, validName) }))
+        const rows = files.map((b) => ({ name: b.name, ...boardFields(b.json, validName), ...(b.error ? { error: b.error } : {}) }))
         const reg = readRegistry(boardsDir)
         const regFolders = reg.state === 'ok' ? reg.folders : []
         const tree = buildTree(rows, regFolders)
@@ -610,11 +610,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // save), not an error: 200 + board:null keeps the devtools console clean
           if (!existsSync(p)) return json(res, 200, { board: null })
           const content = readFileSync(p, 'utf8')
-          try {
-            return json(res, 200, { board: JSON.parse(content), sha256: hash(content) })
-          } catch {
-            return json(res, 422, { error: `board "${boardMatch[1]}" is not valid JSON - fix the file` })
-          }
+          const parsed = parseBoard(content)
+          if (parsed.error) return json(res, 422, { error: `design/boards/${boardMatch[1]}.json is not valid JSON - ${parsed.error}` })
+          return json(res, 200, { board: parsed.json, sha256: hash(content) })
         }
         if (req.method === 'PUT') {
           const raw = await readBody(req)

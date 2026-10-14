@@ -291,3 +291,15 @@ describe('v1.5: the living slide list is write-once', async () => {
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 })
+
+describe('init: the manifest project line (#13)', () => {
+  it('a re-run keeps the name and description dev wrote; a first run uses the folder name', () => {
+    init(root, OPTS)
+    expect(JSON.parse(read('manifest.json')).project).toEqual({ name: root.split('/').pop() })
+    const m = JSON.parse(read('manifest.json'))
+    m.project = { name: 'Acme Studio', description: 'An identity laboratory.' }
+    writeFileSync(join(root, 'design', 'manifest.json'), JSON.stringify(m, null, 2) + '\n')
+    init(root, OPTS)
+    expect(JSON.parse(read('manifest.json')).project).toEqual({ name: 'Acme Studio', description: 'An identity laboratory.' })
+  })
+})
