@@ -43,6 +43,31 @@ you can drop into the sub-folder, after it in its folder, or after the folder at
 hold the pointer decides - over the row above, its indent picks the level; over the row below, the
 seam takes that row's level.
 
+## What is new, what needs you
+
+The sidebar shows where to look.
+
+- **New** - a frame that changed since you looked: its icon and title turn blue, with a dot at the
+  right of its row. On the canvas, its title above the card does the same.
+- **Needs you** - Marver asked you something on a frame (a note from your agent, or a jam reply that
+  asks): its icon turns orange, and an orange bubble at the right holds how many questions are open -
+  `1`, `2`. Answer in the thread and the bubble goes hollow while the agent works; it is gone once
+  the thread is resolved, and the frame turns blue if the agent changed it.
+- **One slot per row.** Every row keeps the one item at its right edge it has today, and what matters
+  most takes it: a question's bubble first, then the row's own count or status, then a frame's dot. A
+  board you are not on turns blue when its frames hold something new, and a question there takes its
+  status glyph's place until answered. A closed folder or a folded scene changes only its count: blue
+  when something inside is new, the bubble when something inside needs you.
+- **`U`** goes to the next frame that needs you, then the next new one.
+
+"Changed" means the frame's file or its sticky note changed - an edit, your agent, a `git pull` - or
+an agent named the frame in `npx marver work done`. "Looked at" means you selected it, opened it from
+the sidebar or a link, opened it in focus or play, kept it on screen at a readable zoom (50 % or more)
+for two seconds, or chose **Mark all as seen** on a scene, board or folder. An edit still waiting to
+load (behind **Update** in focus or play) counts as seen only once it is on screen. Your marks live in `design/.local/seen.json`, on
+this machine only; the day you upgrade, everything already on the canvas counts as seen. A published
+canvas shows no marks.
+
 ## In the files
 
 Two files carry it, and they are the truth.

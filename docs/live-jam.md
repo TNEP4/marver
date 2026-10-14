@@ -158,7 +158,10 @@ Live Jam answers comments; the same voice works the other way. An agent you are 
 a note where it needs you - `npx marver comments new <scene/frame> --body "..." [--on "<words on
 screen>"]` pins it on the frame, or on the element showing those words - and answers your threads
 with `npx marver comments reply`. Both post as Marver, with the same provenance, land on your canvas
-at once, and raise the bottom-right pill with a ping. Reply in a note and it is a jam job like any
+at once, and raise the bottom-right pill with a ping - Marver's replies on one board fold into a
+single notice ("2 replies", View walks through them), a new note or a reply that asks stands on its
+own, and the frame wears the orange question
+bubble in the sidebar until the thread is resolved. Reply in a note and it is a jam job like any
 reply to Marver - no tag needed; while the chat agent still has that frame lit (`marver work
 start`), the job waits for it. Notes stay on your machine for now, like jam replies; a reply to a
 collaborator's thread keeps your voice, the one that reaches them on the published canvas.

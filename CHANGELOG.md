@@ -2,6 +2,29 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **The sidebar shows where to look.** A frame that changed since you looked turns blue - icon,
+  title and a dot - in the sidebar and on its title above the card; one where Marver asked you
+  something turns orange, with a bubble holding how many questions are open, hollow once you have
+  answered, gone when the thread is resolved. Every row keeps the one item at its right edge it has
+  today, and what matters most takes it, so nothing shifts or truncates further: a board you are not
+  on turns blue or wears the bubble in place of its status, a closed folder or folded scene turns its
+  count blue or shows the bubble. Selecting a frame, opening it from the sidebar, a link, focus or
+  play, two seconds on screen at a readable zoom, or **Mark all as seen** on a scene, board or folder clears
+  it. `u` goes to the next frame that needs you, then the next new one. A change is the frame's
+  file or sticky note changing, a `git pull`, or an agent's `npx marver work done`; the day you
+  upgrade, everything already there counts as seen. Marks are kept in `design/.local/seen.json` on
+  your machine ([What is new, what needs you](docs/boards-and-folders.md#what-is-new-what-needs-you)).
+
+### Changed
+
+- **One notice per round.** Marver's replies on a board fold into one notice that counts them
+  ("directions · 4 replies") instead of a stack of eight, and View walks through them one by one; a
+  new note, or a reply that asks a question, still raises its own.
+
 ## 0.23.1 - 2026-10-14
 
 ### Fixed
