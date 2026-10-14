@@ -12,6 +12,7 @@ import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
 import { noteId, sceneNoteHost } from '../notes.ts'
 import { slideSize, stageFit } from '../../const.ts'
+import { FrameSlot, toneOf, useFrameMark } from '../marks-ui.tsx'
 
 export const HEADER = 28
 const SNAP = 12
@@ -64,6 +65,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const selected = useStore((s) => s.selection.includes(node.key))
   const interact = useStore((s) => s.interact === node.key)
   const working = useStore((s) => s.working.includes(node.frame))   // Live Jam: Marver is editing this frame
+  const mark = useFrameMark(node.frame)                              // spec 25: new, or a question for you
   // sticky notes (spec 18): the scene's note when this node is the scene's first on the board
   // (reading order), then the frame's own. Text is compared by value - a note edit re-renders
   // only its column; a pan never re-renders any node (no position subscription here).
@@ -272,6 +274,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // shift-click toggles multi-selection instead of dragging (Figma convention)
     if (e.shiftKey && mode === 'move') { select(node.key, true); return }
     if (!(selected && useStore.getState().selection.length > 1)) select(node.key)
+    else useStore.getState().markSeen([node.frame])   // a click inside a group selection still looks at this one
     const el = e.currentTarget as HTMLElement
     const world = document.getElementById('sh-world')!
     // Law G-5: measured scale, never stored zoom state. #sh-world is 1px wide by design,
@@ -391,13 +394,15 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           <span>{variantName}</span>
         </div>
       )}
-      <div className="sh-node-head sh-no-pan" onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
+      <div className={`sh-node-head sh-no-pan${toneOf(mark)}`} onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
         {/* the chrome badge: slide first, else the content intent glyph */}
         {frame.slide
           ? <SlideFrameIcon size={12} className="iicon sh-no-pan" role="img" aria-hidden={false} aria-label="slide" />
           : frame.intent && <IntentGlyph intent={frame.intent} size={12} className="iicon sh-no-pan" aria-label={frame.intent} />}
         <span className="id sh-no-pan">{frame.title ?? frame.id}</span>
         <span className="dim sh-no-pan">{Math.round(node.w)} · {node.theme}</span>
+        {/* the sidebar's marks on the frame itself (spec 25): no outline, no glow - the glow is an agent working */}
+        <FrameSlot m={mark} />
       </div>
 
       <div className="sh-node-body" style={{ height: node.h }}>

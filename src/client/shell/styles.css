@@ -12,6 +12,7 @@
   --glass-ink: #18181b;
   --glass-ink-2: rgba(24, 24, 27, .66);
   --glass-ink-3: rgba(24, 24, 27, .4);
+  --mk-ask: #f08a00; --mk-new: #0077e6;
   --glass-hover: rgba(24, 24, 27, .06);
   --glass-accent: #0077e6;
   --glass-accent-bg: rgba(0, 136, 255, .13);
@@ -52,6 +53,7 @@
   --glass-ink: #f5f5f7;
   --glass-ink-2: rgba(245, 245, 247, .64);
   --glass-ink-3: rgba(245, 245, 247, .4);
+  --mk-ask: #ff9f0a; --mk-new: #5cb3ff;
   --glass-hover: rgba(255, 255, 255, .1);
   --glass-accent: #5cb3ff;
   --glass-accent-bg: rgba(0, 136, 255, .28);
@@ -1398,3 +1400,23 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
      research/notes/diagprobe5.ts */
   text-rendering: geometricPrecision }
 .sh-sticky-diagram svg text, .sh-sticky-diagram svg tspan { text-rendering: geometricPrecision }
+
+/* sidebar marks (spec 25, variant B - one slot): colour on the icon and title carries the state,
+   blue new, orange needs you; the row's one right-hand slot holds the bubble or the dot. Their own
+   tokens: the accent turns purple in interact mode, a mark never does */
+.sh-panel .sub .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.mk-slot { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; margin-left: 6px; font-style: normal }
+.sh-node-head .mk-slot { margin-left: 0 }
+.mk-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mk-new); flex: none }
+.mk-bubble { flex: none; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px 8px 8px 2px;
+  background: var(--mk-ask); color: #fff; font: 700 10px/15px -apple-system, system-ui, sans-serif; font-style: normal;
+  text-align: center; font-variant-numeric: tabular-nums }
+.mk-bubble.hollow { background: transparent; color: var(--mk-ask); box-shadow: inset 0 0 0 1.5px var(--mk-ask) }
+.sh-panel .sub.mk-new, .sh-panel .sub.mk-new .nm { color: var(--mk-new); font-weight: 600 }
+.sh-panel .sub.mk-new .iicon, .sh-panel .sub.mk-new .chip { color: var(--mk-new); opacity: 1 }
+.sh-panel .sub.mk-ask .iicon, .sh-panel .sub.mk-ask .chip { color: var(--mk-ask); opacity: 1 }
+.sh-panel .it.board.mk-new { color: var(--mk-new) }
+.sh-panel .it.board.mk-new > .sh-live-ic svg, .sh-panel .it.board.mk-new > svg { color: var(--mk-new) }
+.sh-panel .it.board.mk-ask > .sh-live-ic svg, .sh-panel .it.board.mk-ask > svg { color: var(--mk-ask) }
+.sh-panel .it small.mk-fresh { color: var(--mk-new); font-weight: 700 }
+.sh-node-head.mk-new .id { color: var(--mk-new) }

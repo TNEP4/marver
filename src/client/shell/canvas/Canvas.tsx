@@ -231,6 +231,8 @@ export function Canvas() {
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
         useStore.setState({ selection: keys })
+        const st = useStore.getState()   // a link opened is a look (marks not in yet: their first load acknowledges it)
+        st.markSeen(keys.map((k) => st.nodes.find((n) => n.key === k)?.frame).filter((f): f is string => !!f))
         canvasCtl.fitNodes(keys)
       } else {
         canvasCtl.fitAll()

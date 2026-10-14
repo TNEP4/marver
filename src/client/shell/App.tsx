@@ -16,6 +16,8 @@ import { avatarFallback, useComments } from './comments-store.ts'
 import { goTo, navigated, revealFrame } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
+import { nextToLook } from '../../shared/marks.ts'
+import { asksNow, Bubble, MarkedRow, useRollup, useSeenOnScreen } from './marks-ui.tsx'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -26,8 +28,9 @@ let booted = false                             // survives Fast Refresh; see the
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group.
  *  `renaming` swaps the label for an input: the scene's TITLE (its brief's front matter) -
  *  the directory never moves from here. */
-function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onContextMenu, children }: { name: string; label: string; count: number; held: boolean; renaming?: boolean; onRename?: (title: string | null) => void; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; children: ReactNode }) {
+function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onContextMenu, ids, children }: { name: string; label: string; count: number; held: boolean; renaming?: boolean; onRename?: (title: string | null) => void; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; ids: string[]; children: ReactNode }) {
   const [open, setOpen] = useState(true)
+  const fold = useRollup(open ? [] : ids)   // only a folded scene rolls up (spec 25)
   const done = useRef(false)   // Enter then blur: one commit
   if (renaming) { done.current = false }
   const finish = (v: string | null) => { if (done.current) return; done.current = true; onRename?.(v) }
@@ -45,7 +48,8 @@ function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onCo
           <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
           {/* the NAME selects every frame in the scene; the caret/row still collapses */}
           <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{label || '(root)'}</span>
-          <small>{count}</small>
+          {/* folded, its one slot rolls the frames up (spec 25): a question first, else a blue count */}
+          {fold.asks ? <Bubble n={fold.asks} /> : <small className={fold.fresh ? 'mk-fresh' : undefined}>{count}</small>}
         </button>
       )}
       {open && children}
@@ -329,6 +333,7 @@ function ThemeMenu() {
 export function App() {
   // B0.1: per-field selectors, NOT `useStore()` (which subscribes to the whole store and
   // re-rendered the entire shell on every setScale tick during a pan/zoom).
+  useSeenOnScreen()
   const manifest = useStore((s) => s.manifest)
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
@@ -442,6 +447,7 @@ export function App() {
         if (s.play) s.setPlay(null)
         const keys = linkTargets(h, s.nodes)
         useStore.setState({ selection: keys })
+        s.markSeen(keys.map((k) => s.nodes.find((n) => n.key === k)?.frame).filter((f): f is string => !!f))   // a link opened is a look
         if (!keys.length && h.f?.length) void revealFrame(h.f[0])   // not on this board - where it lives
         else setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
       }
@@ -513,11 +519,16 @@ export function App() {
     import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
     // Live Jam presence: the daemon broadcasts the set of frames Marver is editing.
     // Camera-safe by construction - this only toggles a glow class, never moves the view.
-    import.meta.hot.on('sh:jam-activity', (m: any) => useStore.getState().setWorkingFrom(m))
+    import.meta.hot.on('sh:jam-activity', (m: any) => { useStore.getState().setWorkingFrom(m); void useStore.getState().syncMarks() })
     // then ask for what is lit now - a broadcast sent before this listener existed is gone - and again
     // after the dev server reconnects
     void useStore.getState().syncWorking()
     import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncWorking())
+    // sidebar marks (spec 25): a frame changed on disk, or an agent's work started or ended
+    void useStore.getState().syncMarks()
+    import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncMarks())
+    import.meta.hot.on('sh:marks', () => void useStore.getState().syncMarks())
+    import.meta.hot.on('sh:boards', () => void useStore.getState().syncMarks())   // a board's frames changed: its roll-up too
     // Live Jam reply delivery: the daemon just wrote to a board's log - fetch it NOW instead of
     // waiting out the 30s comment poll, so the reply + notification land within a second.
     import.meta.hot.on('sh:jam-comment', (m: any) => { if (typeof m?.board === 'string') useComments.getState().poke(m.board) })
@@ -687,6 +698,15 @@ export function App() {
       }
       if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); c.setShow(!c.show) }
       // sticky notes (spec 18): any note visible -> hide all; none -> show all
+      // U: the next frame that needs you, else the next new one (spec 25)
+      if (e.key === 'u' && !e.shiftKey && !PUBLISHED) {
+        const live = s.nodes.filter((n) => !n.missing).sort((a, b) => a.y - b.y || a.x - b.x)
+        const from = s.selection.length ? s.nodes.find((n) => n.key === s.selection[s.selection.length - 1])?.frame ?? null : null
+        const id = nextToLook(s.marks, asksNow(), [...new Set(live.map((n) => n.frame))], from)
+        const n = id ? live.find((x) => x.frame === id) : null
+        if (n) { s.select(n.key); canvasCtl.fitNode(n.key) } else toast('nothing new on this board')
+        return
+      }
       if (e.key === 'n' && !e.shiftKey) { const visible = document.querySelectorAll('.sh-notes:not(.off)').length > 0; useNotes.getState().toggleAll(visible); toast(visible ? 'notes hidden' : 'notes shown'); return }
       // Shift+L = laser comment: the laser-sharp lighting on the element a comment tags
       // (pick hover, compose lock, open-thread highlight). Pins and cards stay - this
@@ -813,6 +833,7 @@ export function App() {
             <div className="hd" style={{ marginTop: 10 }}>Scenes</div>
             {scenes.map((sc) => (
               <SceneGroup key={sc.name} name={sc.name} label={sceneLabel(sc.name)} count={sc.frames}
+                ids={frames.filter((f) => f.scene === sc.name).map((f) => f.id)}
                 held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}
                 renaming={sceneNaming === sc.name}
                 onRename={(raw) => {
@@ -829,7 +850,8 @@ export function App() {
                   onClick: () => copyToClipboard(sc.name
                     ? `board: ${useStore.getState().board} · scene: ${sc.name}  (design/scenes/${sc.name}/)`
                     : `board: ${useStore.getState().board} · scene: (root)`, 'path copied'),
-                }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : [])])}
+                }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : []),
+                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(frames.filter((f) => f.scene === sc.name).map((f) => f.id), true) }] : [])])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   if (!keys.length) return
@@ -897,10 +919,10 @@ export function App() {
                           const on = !!n && selection.includes(n.key)
                           const nm = m.title ?? cap((m.id.split('/').pop() ?? '').replace(/^[a-z]-/, '').replace(/-/g, ' '))
                           rows.push(
-                            <div key={m.id} className={`sub vrow${on ? ' on' : ''}`} onClick={(e) => go(m.id, e.shiftKey)}
+                            <MarkedRow key={m.id} frame={m.id} className={`sub vrow${on ? ' on' : ''}`} onClick={(e) => go(m.id, e.shiftKey)}
                               onContextMenu={(e) => cm.open(e, frameMenu(m))}>
                               <span className={`chip${on ? ' on' : ''}`}>{(m.variant ?? '?').toUpperCase()}</span><span className="nm">{nm}</span>
-                            </div>,
+                            </MarkedRow>,
                           )
                         }
                         continue
@@ -909,7 +931,7 @@ export function App() {
                     const n = nodeFor(f.id)
                     const on = !!n && selection.includes(n.key)
                     rows.push(
-                      <div key={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} onContextMenu={(e) => cm.open(e, frameMenu(f))} title={f.intent}>
+                      <MarkedRow key={f.id} frame={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} onContextMenu={(e) => cm.open(e, frameMenu(f))} title={f.intent}>
                         {/* every frame leads with an icon: the slide badge first (a deck
                             frame is a deck frame whatever it imports), intent glyph for
                             content frames, the plain rectangle for UI frames */}
@@ -918,8 +940,8 @@ export function App() {
                           : f.intent
                             ? <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />
                             : <FrameRectIcon size={13} className="iicon" />}
-                        {cap(f.id.split('/').slice(1).join('/') || f.id)}
-                      </div>,
+                        <span className="nm">{cap(f.id.split('/').slice(1).join('/') || f.id)}</span>
+                      </MarkedRow>,
                     )
                   }
                   return rows
@@ -1053,13 +1075,15 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
       <div className="sh-jam-txt">
         {human
           ? <b className="sh-jam-frame"><span className="t">{note.author!.name ?? 'Someone'}</span> <span className="v">{note.kind === 'mention' ? 'mentioned you' : 'replied'}</span></b>
-          : <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>}
+          : note.stack?.length
+            ? <b className="sh-jam-frame"><span className="t">{boardLabel(note.board)}</span> <span className="v">· {note.stack.length + 1} replies</span></b>
+            : <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>}
         <span className="sh-jam-prev">{note.preview}</span>
       </div>
       {badge != null
         ? <span className="sh-jam-badge">+{badge}</span>
         : !inert && <>
-            <button className="sh-jam-view" onClick={() => void viewNote(note, dismiss)}>View</button>
+            <button className="sh-jam-view" onClick={() => void viewNote(note, () => useStore.getState().advanceToast(id))}>View</button>
             <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
           </>}
     </div>

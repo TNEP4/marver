@@ -5,9 +5,10 @@ import { basename, join, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
-import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, type Manifest } from './manifest.ts'
+import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, noteFileFor, type Manifest } from './manifest.ts'
 import { checkBoardsDir, isRegularFile, listBoardFiles, parseBoard } from './boards.ts'
 import { contentOnly } from '../shared/frames.ts'
+import { recordChanged } from './marks.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
@@ -196,7 +197,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       }
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen }))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any) }))
       server.middlewares.use(routesMiddleware(server, clientDir))
 
       devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
@@ -279,6 +280,17 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       // change: only meta edits matter; scanFrames re-extracts and writeManifest de-dupes writes.
       // a brief's first line is its scene's description; a note file IS its sticky (spec 18)
       server.watcher.on('change', (f) => inScope(f) && (/\.(tsx|jsx)$/.test(f) || f.endsWith('_brief.md') || isNoteFile(f)) && regen())
+      // sidebar marks (spec 25): a frame or its sticky note changed on disk - an edit, an agent, a
+      // git pull. The shell re-reads /api/marks; what changed is the file's own clock.
+      const marksChanged = debounce(() => server.ws.send('sh:marks', {}), 300)
+      for (const ev of ['add', 'change', 'unlink'] as const)
+        server.watcher.on(ev, (f) => { if (inScope(f) && (/\.(tsx|jsx|html)$/.test(f) || isNoteFile(f))) marksChanged() })
+      // a deleted sticky note leaves no file to date it: its frame changed now
+      server.watcher.on('unlink', (f) => {
+        if (!inScope(f) || !isNoteFile(f)) return
+        const fr = manifest.frames.find((x) => noteFileFor(join(root, x.file)) === f)
+        if (fr) recordChanged(root, [fr.id])   // before the debounced sh:marks lands
+      })
       const configFile = join(root, 'design', 'config.ts')
       server.watcher.on('change', (f) => {
         if (f !== configFile) return

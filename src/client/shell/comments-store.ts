@@ -125,6 +125,8 @@ export const useComments = create<CommentsState>((set, get) => {
           threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts,
           preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
           frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
+          // a reply folds into the board's round; a new note, or a reply that asks (ends in "?"), stands alone
+          round: e.type === 'reply' && !/\?\s*$/.test(e.body ?? ''),
         })
       }
     })

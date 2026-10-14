@@ -5,9 +5,11 @@ import { StatusPicker } from './StatusPicker.tsx'
 import type { StatusWord } from '../../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
+import { rollup } from '../../shared/marks.ts'
+import { Bubble, useAsks } from './marks-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
-import { ArrowLineUpIcon, CardsIcon, CardsThreeIcon, FolderIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
+import { ArrowLineUpIcon, CardsIcon, CheckIcon, CardsThreeIcon, FolderIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
   applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
   resolveDrop, retitleFolder, rootIndex, slugFor,
@@ -53,7 +55,12 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const board = useStore((s) => s.board)
   const working = useStore((s) => s.workingBoards)   // boards an agent is working on right now
   const titles = useStore((s) => s.boardTitles)                       // board slug → title, off the last tree read
-  const meta = useStore((s) => s.boardMeta)                           // board slug → type and status (spec 20)
+  const meta = useStore((s) => s.boardMeta)
+  // sidebar marks (spec 25): a board you are not on, or a closed folder, rolls up its frames
+  const marks = useStore((s) => s.marks)
+  const asks = useAsks()
+  const framesOf = (boards: string[]) => boards.flatMap((b) => marks?.boards[b] ?? [])
+  const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(framesOf(boards), true) }] : [])                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
   const [naming, setNaming] = useState<Naming | null>(null)
@@ -329,7 +336,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     refresh()                                                        // a clear: what the evidence says now
   }
   const boardMenu = (n: string, parent: string | null): MenuItem[] => {
-    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') }]
+    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') }, ...seeAll([n])]
     if (PUBLISHED || n === 'all-scenes') return items
     // a feature or project board: its status first, as Linear puts it - the picker opens in place
     const m = useStore.getState().boardMeta[n]
@@ -352,7 +359,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const folderMenu = (f: string, boards: string[], parent: string | null): MenuItem[] => {
     const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`folder: ${f}${parent ? ` (in ${parent})` : ''}  (boards: ${boards.join(', ') || 'none'})`, 'path copied') }]
     if (PUBLISHED) return items
-    items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) })
+    items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) }, ...seeAll(boards))
     // two levels: a top-level folder can hold folders; a sub-folder can leave its parent
     if (!parent) items.push({ label: 'New folder inside', icon: <FolderPlusIcon size={15} />, onClick: () => newFolderAt(listIn(treeRef.current, f)?.length ?? 0, undefined, f) })
     else items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => {
@@ -444,9 +451,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     )
     const canDrag = !PUBLISHED && n !== 'all-scenes'
     const item: Drag = { kind: 'board', name: n }
+    // the board you are on shows nothing: its rows below speak for themselves
+    const r = n === board ? { asks: 0, fresh: 0 } : rollup(marks, asks, framesOf([n]))
     return (
       <button key={`b:${n}`} data-board-row data-board={n} data-folder={parent ?? undefined} data-depth={depth} data-reorderable={canDrag || undefined}
-        className={`it board${indent(depth)}${n === board ? ' cur' : ''}${dragging ? ' dragging' : ''}${s.cls}`} style={s.style}
+        className={`it board${indent(depth)}${n === board ? ' cur' : ''}${r.asks ? ' mk-ask' : r.fresh ? ' mk-new' : ''}${dragging ? ' dragging' : ''}${s.cls}`} style={s.style}
         // draggable rows switch on the pointer tap (onPointerUp), so their trailing mouse
         // click (detail >= 1) must be ignored to avoid a double switch; keyboard clicks
         // (detail === 0) and non-draggable rows (all-scenes, published) switch here as normal
@@ -466,7 +475,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
             <i className="st st-error" data-board-error aria-label={`not valid JSON: ${meta[n].error}`}>!</i>
           </Tip>
         )}
-        {meta[n]?.status && (
+        {/* one slot: a question for you takes it until answered, then the status comes back */}
+        {r.asks > 0 && <i className="st"><Bubble n={r.asks} /></i>}
+        {meta[n]?.status && !r.asks && (
           <Tip side="right" label={<StatusTipLabel m={meta[n]} />}>
             <i className="st" data-status={meta[n].status!.status} aria-hidden="true"><StatusIcon status={meta[n].status!.status} fill={meta[n].status!.fill} /></i>
           </Tip>
@@ -518,7 +529,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
           {/* a closed folder carries the live signal of the boards it hides */}
           <LiveIcon live={!open && boards.some((b) => working.includes(b))}>{open ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}</LiveIcon>
           <span>{labelOf(f, it.title)}</span>
-          <small>{boards.length}</small>
+          {(() => {
+            // a closed folder's one slot rolls up what it hides: a question first, else a blue count
+            const r = open ? { asks: 0, fresh: 0 } : rollup(marks, asks, framesOf(boards))
+            return r.asks ? <Bubble n={r.asks} /> : <small className={r.fresh ? 'mk-fresh' : undefined}>{boards.length}</small>
+          })()}
         </button>,
       )
     }

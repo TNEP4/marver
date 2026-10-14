@@ -102,6 +102,10 @@ export interface JamNote {
   frame?: string; frameTitle?: string; intent?: string
   kind?: 'mention' | 'reply'                      // absent = the agent pill
   author?: { name?: string; avatar?: string; id?: string; email?: string }
+  /** an agent REPLY (not a new question): a board's replies fold into one notice per round (spec 25) */
+  round?: boolean
+  /** the earlier replies of the round, under this one - View walks through them */
+  stack?: JamNote[]
 }
 export interface Toast { id: number; text: string; jam?: JamNote }
 
@@ -150,6 +154,7 @@ import { canAutoReload } from './canvas/ready-watch.ts'
 import { buildTree, flatten, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
+import { isNew, type Marks } from '../../shared/marks.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
@@ -401,6 +406,12 @@ function defaultSize(frame: FrameEntry) {
 }
 
 let resizedInGesture = false
+// sidebar marks: the fetch in flight, and acknowledgements the server has not confirmed yet
+let marksSeq = 0
+let marksTimer: ReturnType<typeof setTimeout> | undefined
+const pendingSeen: Record<string, number> = {}
+/** frames looked at before the first marks arrived (a link, a click, focus) - acknowledged when they land */
+const lookedEarly = new Set<string>()
 /** Why a board's last load failed, from the server (a parse error names its line) - for its toast. */
 const loadErrors = new Map<string, string>()
 const whyNot = (name: string) => { const e = loadErrors.get(name); return e ? ` - ${e}` : '' }
@@ -518,6 +529,8 @@ interface State {
   toast(text: string): void
   jamToast(note: JamNote): void
   dismissToast(id: number): void
+  /** View on a notice: a round's notice moves to its next reply, any other one goes. */
+  advanceToast(id: number): void
   clearJamToasts(): void
   /** Frames Marver is editing right now (Live Jam presence) - drives the working glow. */
   working: string[]
@@ -529,6 +542,12 @@ interface State {
   setWorkingFrom(m: unknown): void
   /** Fetch what is lit now (dev only) - the snapshot behind the broadcasts. */
   syncWorking(): Promise<void>
+  /** Sidebar marks (spec 25): what changed since you looked - null on a published canvas. */
+  marks: Marks | null
+  syncMarks(): Promise<void>
+  /** You looked at these frames: clear their "new", here and on disk - skipping one still holding a
+   *  deferred update, unless `shown` (the dwell and the play stage know what is on screen; Mark all as seen) */
+  markSeen(frameIds: readonly string[], shown?: boolean): void
   /** Boards showing a working frame - their sidebar icon shimmers while an agent works. */
   workingBoards: string[]
   /** The place in the server's order of the activity last applied - an older answer is dropped. */
@@ -1348,6 +1367,8 @@ export const useStore = create<State>((set, get) => {
             : [key]
         return { selection, interact: s.interact && selection.includes(s.interact) ? s.interact : null }
       })
+      // selecting a frame is looking at it, every time - even one already selected (spec 25)
+      if (key != null) { const f = get().nodes.find((n) => n.key === key)?.frame; if (f) get().markSeen([f]) }
     },
     // scoped device sizing: only the selected frames change; null restores their defaults.
     // Always followed by a tidy - a preset change must never scramble the layout.
@@ -1384,6 +1405,8 @@ export const useStore = create<State>((set, get) => {
         const valid = keys.filter((k) => s.nodes.some((n) => n.key === k))
         return { selection: valid, interact: s.interact && valid.includes(s.interact) ? s.interact : null }
       })
+      // a frame link, a scene's name: the frames brought in front of you are looked at (⌘A is selectAll - not a look)
+      const st = get(); st.markSeen(st.selection.map((k) => st.nodes.find((n) => n.key === k)?.frame).filter((f): f is string => !!f))
     },
     // interact is a ONE-frame mode: entering it collapses any multi-selection to the
     // interacted frame (a 4-frame selection double-clicked otherwise leaves all four
@@ -1544,9 +1567,30 @@ export const useStore = create<State>((set, get) => {
     jamToast(note) {
       const id = ++toastSeq
       const text = note.kind === 'mention' ? 'You were mentioned' : note.kind === 'reply' ? 'New reply' : 'Marver replied'
-      set((s) => ({ toasts: [...s.toasts.filter((t) => t.jam?.threadId !== note.threadId), { id, text, jam: note }].slice(-8) }))
+      set((s) => {
+        // one notice per board per round: an agent reply folds into that board's open notice (spec 25)
+        // a round ends after ten quiet minutes: a later reply opens a fresh notice
+        const prev = note.round ? s.toasts.find((t) => t.jam?.round && t.jam.board === note.board && note.ts - t.jam.ts < 600_000) : undefined
+        const jam = prev ? { ...note, stack: [...(prev.jam!.stack ?? []), { ...prev.jam!, stack: undefined }].filter((n) => n.threadId !== note.threadId) } : note
+        // a notice whose top reply is this thread steps down to the replies under it, never loses them
+        const others = s.toasts.flatMap((t) => {
+          if (t === prev) return []
+          const rest = (t.jam?.stack ?? []).filter((n) => n.threadId !== note.threadId)
+          if (t.jam?.threadId !== note.threadId) return [t.jam?.stack ? { ...t, jam: { ...t.jam, stack: rest } } : t]
+          return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], stack: rest.slice(0, -1) } }] : []
+        })
+        return { toasts: [...others, { id, text, jam }].slice(-8) }
+      })
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
+    advanceToast(id) {
+      // a merged round notice steps to its next reply; any other notice goes
+      set((s) => ({ toasts: s.toasts.flatMap((t) => {
+        if (t.id !== id) return [t]
+        const rest = t.jam?.stack ?? []
+        return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], stack: rest.slice(0, -1) } }] : []
+      }) }))
+    },
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
     setWorkingFrom(m) {
       const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : [])
@@ -1556,6 +1600,45 @@ export const useStore = create<State>((set, get) => {
       if (seq !== undefined && seq < get().workingSeq) return
       if (seq !== undefined) set({ workingSeq: seq })
       get().setWorking(strings(o.frames), strings(o.boards))
+    },
+    marks: null,
+    // one fetch per burst (activity, board edits, file changes), and only the newest answer lands;
+    // acknowledgements still in flight are kept over any answer that predates them
+    async syncMarks() {
+      if (PUBLISHED) return
+      clearTimeout(marksTimer)
+      await new Promise<void>((done) => { marksTimer = setTimeout(done, 200) })
+      const seq = ++marksSeq
+      try {
+        for (let i = 0; i < 2; i++) {   // the first ask may prime the CSRF cookie (as syncWorking)
+          const r = await fetch(`${ROUTE}/api/marks`, { headers: { 'x-mv-c': csrf() } })
+          if (seq !== marksSeq) return
+          if (r.ok) {
+            const m = await r.json() as Marks
+            if (seq !== marksSeq) return
+            const seen = { ...m.seen }
+            for (const [id, at] of Object.entries(pendingSeen)) seen[id] = Math.max(seen[id] ?? 0, at)
+            set({ marks: { ...m, seen } })
+            if (lookedEarly.size) { const early = [...lookedEarly]; lookedEarly.clear(); get().markSeen(early) }
+            return
+          }
+          if (r.status !== 403) return
+        }
+      } catch { /* the next broadcast heals it */ }
+    },
+    markSeen(frameIds, shown) {
+      const m = get().marks, held = get().pendingFrameRevisions
+      if (!m) { if (!PUBLISHED) for (const id of frameIds) lookedEarly.add(id); return }
+      const fresh = frameIds.filter((id) => isNew(m, id) && (shown || !held[id]))
+      if (!m || !fresh.length) return
+      // you saw the change the page shows - its stamp, never a clock: an edit landing after this is new
+      const seen = Object.fromEntries(fresh.map((id) => [id, m.changed[id] ?? 0]))
+      Object.assign(pendingSeen, seen)
+      set({ marks: { ...m, seen: { ...m.seen, ...seen } } })
+      void postOwner('marks/seen', { frames: seen })
+        // kept once confirmed too (stamps only ever rise): an answer that left before this one cannot undo it
+        .then((r) => { if (!r.ok) throw new Error(String(r.status)) })
+        .catch(() => { for (const [id, at] of Object.entries(seen)) if (pendingSeen[id] === at) delete pendingSeen[id]; void get().syncMarks() })
     },
     async syncWorking() {
       if (PUBLISHED) return
@@ -1681,6 +1764,13 @@ export const useStore = create<State>((set, get) => {
       return p
     },
   }
+})
+
+// a frame opened in focus or play is looked at (spec 25); selecting one is handled in select()
+useStore.subscribe((s, prev) => {
+  // a frame opened in focus or play is in front of you too - stepping within play while an edit is
+  // held behind Update shows the old version, so that waits for the dwell after Update
+  if (s.play?.at && s.play.at !== prev.play?.at && (!prev.play || !s.playUpdateRevision)) { const f = s.nodes.find((n) => n.key === s.play!.at)?.frame ?? s.play.at; s.markSeen([f], true) }
 })
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)

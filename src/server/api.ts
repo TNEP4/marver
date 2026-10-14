@@ -3,7 +3,7 @@ import { closeSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, op
 import { randomBytes } from 'node:crypto'
 import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
-import { hash, scanFrames, setSceneTitle } from './manifest.ts'
+import { hash, scanFrames, setSceneTitle, type Manifest } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
 import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
@@ -109,7 +109,7 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void } = {}): Connect.NextHandleFunction {
   const boardsDir = join(root, 'design', 'boards')
   const foldersPath = join(boardsDir, FOLDERS_FILE)
 
@@ -791,6 +791,26 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         atomicWrite(join(dir, 'profile.json'), JSON.stringify(prof, null, 2) + '\n')
         return json(res, 200, { user: localProfile(root) })
       }
+      // Sidebar marks (spec 25): what changed since you looked. Owner-only, dev only - a
+      // published canvas has none. The manifest the dev server keeps is the frame list.
+      if (path === 'marks' || path === 'marks/seen') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { readMarks, markSeen } = await import('./marks.ts')
+        let manifest: Manifest
+        try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { manifest = scanFrames(root) }
+        if (path === 'marks' && req.method === 'GET') return json(res, 200, readMarks(root, manifest))
+        if (path === 'marks/seen' && req.method === 'POST') {
+          const raw = await readBody(req)
+          if (raw == null) return json(res, 400, { error: 'body too large' })
+          let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+          // { frames: { id: the change stamp the page displayed } } - never a clock (spec 25)
+          if (!b?.frames || typeof b.frames !== 'object' || Array.isArray(b.frames)) return json(res, 400, { error: 'frames: { id: stamp } required' })
+          markSeen(root, b.frames, new Set(manifest.frames.map((f) => f.id)))
+          opts.notify?.('sh:marks')                                  // every other open tab clears it too
+          return json(res, 200, { ok: true })
+        }
+        return json(res, 405, { error: 'method not allowed' })
+      }
       if (path === 'work') {
         // The working-state rail (work.ts): chat-driven agents mark the frames they are
         // building so the canvas glows before the first component exists. Auth is the
@@ -817,11 +837,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const frames: string[] = Array.isArray(b.frames) ? b.frames.filter((f: unknown) => typeof f === 'string' && f) : []
           const on = b.on !== false
           // this endpoint only ever touches CLI-scoped leases - jam jobs keep their own
-          if (!on && b.all === true) { workActivity.clearAll('cli'); return json(res, 200, { frames: workActivity.active() }) }
+          if (!on && b.all === true) {
+            // the frames an agent finishes all at once changed too (spec 25) - an edit to a shared kit included
+            const done = workActivity.active().filter((f) => workActivity.has(f, 'cli'))
+            if (done.length) { (await import('./marks.ts')).recordChanged(root, done); opts.notify?.('sh:marks') }
+            workActivity.clearAll('cli'); return json(res, 200, { frames: workActivity.active() })
+          }
           if (!frames.length) return json(res, 400, { error: 'frames required' })
           const ttl = Math.min(Math.max(Number(b.ttlMs) || WORK_TTL_DEFAULT, 10_000), WORK_TTL_MAX)
           for (const f of frames) on ? workActivity.mark(f, ttl, 'cli') : workActivity.clear(f, 'cli')
-          if (!on) return json(res, 200, { frames: workActivity.active() })
+          // the agent says it changed these: a mark for whoever has not looked yet (spec 25)
+          if (!on) { (await import('./marks.ts')).recordChanged(root, frames); opts.notify?.('sh:marks'); return json(res, 200, { frames: workActivity.active() }) }
           // the other half of showing the work: the boards these frames sit on that still read Backlog or To
           // do - a feature being worked on is In progress, and its evidence says so (the CLI prints how)
           let behind: { board: string; status: string; capability: string }[] = []
