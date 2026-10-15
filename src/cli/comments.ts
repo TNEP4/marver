@@ -112,6 +112,8 @@ export async function commentsCommand(root: string, action: string, value: strin
       const { resolveLink, devOrigin } = await import('./link.ts')
       const r = resolveLink(root, [value], opts.board)
       if (r.exact.length !== 1) throw new Error(`"${value}" is a folder of frames - pin a note on one frame: comments new <scene/frame>`)
+      // a note lives on a board: a frame on none gets the hint instead (spec 26, Part 7)
+      if (!r.board) throw new Error(`a note needs a board to live on - ${r.hints.join('\n')}`)
       const frame = r.exact[0]
       const nodeKey = r.nodesOf(r.board).find((n) => n.frame === frame && typeof n.key === 'string')?.key
       const on = opts.on === undefined ? '' : String(opts.on).replace(/\s+/g, ' ').trim()

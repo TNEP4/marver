@@ -251,3 +251,21 @@ describe('a focus link in dev', () => {
     await browser.until(s, `!document.querySelector('.sh-play') && location.hash === '#/b/big?n=b-far'`, 20_000)
   })
 })
+
+describe('no more All Scenes - the agent is never blocked (spec 26)', () => {
+  it('work done --all with a frame on no board clears the glow and warns; boards pin fixes it; frames on two boards link to both', () => {
+    if (!browser) return
+    mkdirSync(join(root, 'design', 'scenes', 'loose'), { recursive: true })
+    writeFileSync(join(root, 'design', 'scenes', 'loose', 'idea.tsx'), `export default () => <main><h1>Idea</h1></main>\n`)
+    cli('work', 'start', 'loose/idea', 'shop/pay')
+    const done = cli('work', 'done', '--all')
+    expect(done).toContain('nothing working - all clear')
+    expect(done).toContain(`on the canvas: ${ORIGIN}/#/b/flow?f=shop/pay`)
+    expect(done).toContain('warning: loose/idea is on no board - pin it where it belongs: npx marver boards pin <board> loose/idea')
+    expect(cli('work', 'list').trim()).toBe('nothing working')
+    expect(cli('boards', 'pin', 'empty', 'loose/idea')).toContain('+ loose/idea on empty')
+    cli('work', 'start', 'loose/idea')
+    expect(cli('work', 'done', 'loose/idea')).toContain(`on the canvas: ${ORIGIN}/#/b/empty?f=loose/idea`)
+    expect(cli('link', 'shop/pay', 'other/far').trim().split('\n')).toEqual([`${ORIGIN}/#/b/flow?f=shop/pay`, `${ORIGIN}/#/b/big?f=other/far`])
+  })
+})

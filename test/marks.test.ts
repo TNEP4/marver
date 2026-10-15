@@ -88,7 +88,7 @@ describe('sidebar marks: the dev server (spec 25)', () => {
     expect(m.changed['s/b']).toBe(1_000_000)
     expect(m.boards.b1).toEqual(['s/a'])                                    // a pinned frame that no longer exists is dropped
     expect(m.boards.auto.sort()).toEqual(['s/a', 's/b'])                    // an auto board holds every frame
-    expect(m.boards['all-scenes'].sort()).toEqual(['s/a', 's/b'])
+    expect(m.boards['all-scenes']).toBeUndefined()                         // no built-in everything-board (spec 26)
     await new Promise((r) => setTimeout(r, 5))                              // the baseline was set a moment ago
     recordChanged(root, ['s/b'])                                            // an agent named it in work done
     m = readMarks(root, manifest)

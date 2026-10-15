@@ -549,7 +549,9 @@ describe('marver boards - the tree as the files say it is', () => {
     const dir = join(root, 'design', 'boards')
     mkdirSync(dir, { recursive: true })
     const w = (n: string, o: unknown) => writeFileSync(join(dir, `${n}.json`), JSON.stringify(o))
-    w('overview', { version: 1, nodes: [], order: 0, description: 'The first thing we show' }); w('spec', { version: 1, nodes: [], order: 0, folder: 'research', title: 'The Spec' }); w('old', { version: 1, nodes: [], folder: 'implied' }); w('all-scenes', { version: 1, nodes: [] })
+    w('overview', { version: 1, nodes: [{ frame: 's/on' }], order: 0, description: 'The first thing we show' }); w('spec', { version: 1, nodes: [], order: 0, folder: 'research', title: 'The Spec' }); w('old', { version: 1, nodes: [], folder: 'implied' }); w('all-scenes', { version: 1, nodes: [{ frame: 's/loose' }] })
+    mkdirSync(join(root, 'design', 'scenes', 's'), { recursive: true })
+    for (const f of ['on', 'loose']) writeFileSync(join(root, 'design', 'scenes', 's', `${f}.tsx`), 'export default () => <main />\n')
     writeFileSync(join(dir, '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'research', order: 1, title: 'R&D', description: 'The thinking' }, { name: 'empty', order: 2 }] }))
     const { boardsCommand } = await import('../src/cli/boards.ts')
     const lines: string[] = []
@@ -561,12 +563,15 @@ describe('marver boards - the tree as the files say it is', () => {
       expect(text).toMatch(/^research\/  "R&D"  \(folder, 1 board\)  - The thinking\n  spec  "The Spec"  order 0/m)
       expect(text).toMatch(/^empty\/ .*\n  \(empty\)/m)
       expect(text).toMatch(/^implied\/ .*implied by its boards/m)
-      expect(text).toMatch(/all-scenes  \(auto, always last\)/)
+      expect(text).not.toMatch(/all-scenes/)                                // a leftover file is no board
       expect(text).toMatch(/landing board: overview/)
+      expect(text).toMatch(/not on a board \(1\): s\/loose\n  every frame goes on the board it belongs to: npx marver boards pin <board> <scene\/frame \.\.\.>/)
       lines.length = 0
       boardsCommand(root, { json: true })
       const j = JSON.parse(lines.join('\n'))
       expect(j.landing).toBe('overview')
+      expect(j.unplaced).toEqual(['s/loose'])
+      expect(j.boards.map((b: any) => b.name)).not.toContain('all-scenes')
       expect(j.tree.map((t: any) => t.name)).toEqual(['overview', 'research', 'empty', 'implied'])
     } finally { console.log = orig; rmSync(root, { recursive: true, force: true }) }
   })
@@ -586,5 +591,84 @@ describe('marver boards - the tree as the files say it is', () => {
       expect(text).toMatch(/^features\/  \(folder, 1 board, 2 folders\)\n  x  order 0\n  shipper\/  \(sub-folder of features, 1 board\)\n    p  order 0\n  phone\/  \(sub-folder of features, 0 boards\)\n    \(empty\)/m)
       expect(text).toMatch(/landing board: x/)
     } finally { console.log = orig; rmSync(root, { recursive: true, force: true }) }
+  })
+})
+
+describe('no more All Scenes (spec 26, Part 7) - one meaning of "on a board", boards pin, the leftover file', () => {
+  let root = ''
+  const dir = () => join(root, 'design', 'boards')
+  const w = (n: string, o: unknown) => writeFileSync(join(dir(), `${n}.json`), typeof o === 'string' ? o : JSON.stringify(o))
+  const read = (n: string) => JSON.parse(readFileSync(join(dir(), `${n}.json`), 'utf8'))
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'mv-no-all-'))
+    mkdirSync(dir(), { recursive: true })
+    for (const [scene, frames] of Object.entries({ shop: ['cart', 'pay', 'new'], notes: ['idea'] })) {
+      mkdirSync(join(root, 'design', 'scenes', scene), { recursive: true })
+      for (const f of frames) writeFileSync(join(root, 'design', 'scenes', scene, `${f}.tsx`), 'export default () => <main />\n')
+    }
+    w('archive', { version: 1, order: 0, type: 'archive', nodes: [{ frame: 'shop/cart' }] })
+    w('flow', { version: 1, order: 1, nodes: [{ frame: 'shop/cart' }, { frame: 'shop/pay' }, { frame: 'gone/x' }] })
+  })
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
+
+  it('membership: every board in sidebar order with archive boards last, its live frames, and the frames on none', async () => {
+    const r = await drive(root, 'GET', 'membership')
+    expect(r.status).toBe(200)
+    expect(r.json).toEqual({ boards: [{ name: 'flow', frames: ['shop/cart', 'shop/pay'] }, { name: 'archive', frames: ['shop/cart'] }], unplaced: ['notes/idea', 'shop/new'] })
+    w('everything', { version: 1, order: 2, auto: true, nodes: [] })              // an auto board holds every live frame
+    expect((await drive(root, 'GET', 'membership')).json.unplaced).toEqual([])
+  })
+
+  it('boards pin appends nodes, skips what the board shows, expands a scene, never makes a board', async () => {
+    const { boardsPin } = await import('../src/cli/boards.ts')
+    expect(boardsPin(root, 'flow', ['shop/new', 'shop/cart'])).toEqual({ added: ['shop/new'], already: ['shop/cart'] })
+    expect(read('flow').nodes).toEqual([{ frame: 'shop/cart' }, { frame: 'shop/pay' }, { frame: 'gone/x' }, { frame: 'shop/new' }])
+    expect(boardsPin(root, 'archive', ['shop'])).toEqual({ added: ['shop/new', 'shop/pay'], already: ['shop/cart'] })
+    expect(() => boardsPin(root, 'nope', ['shop/new'])).toThrow(/no board "nope".*boards new nope/)
+    expect(() => boardsPin(root, 'all-scenes', ['shop/new'])).toThrow(/not a board name/)
+    expect(() => boardsPin(root, 'flow', ['shop/ghost'])).toThrow(/no frame or scene "shop\/ghost"/)
+    expect(() => boardsPin(root, 'flow', [])).toThrow(/name the frames/)
+    w('broken', '{ "nodes": [')
+    expect(() => boardsPin(root, 'broken', ['shop/new'])).toThrow(/broken\.json is not a board object/)
+    w('everything', { version: 1, auto: true, nodes: [] })
+    expect(boardsPin(root, 'everything', ['notes/idea'])).toEqual({ added: [], already: ['notes/idea'] })
+    expect(read('everything').nodes).toEqual([])
+  })
+
+  it('Add to board from the canvas: the same pin, owner-gated', async () => {
+    expect((await drive(root, 'POST', 'boards/pin', { board: 'flow', frames: ['notes/idea'] })).status).toBe(403)
+    const r = await drive(root, 'POST', 'boards/pin', { board: 'flow', frames: ['notes/idea'] }, OWNER)
+    expect(r).toMatchObject({ status: 200, json: { added: ['notes/idea'], already: [] } })
+    expect(read('flow').nodes.at(-1)).toEqual({ frame: 'notes/idea' })
+    expect((await drive(root, 'POST', 'boards/pin', { board: 'flow', frames: ['nowhere/x'] }, OWNER)).status).toBe(400)
+    expect((await drive(root, 'POST', 'boards/pin', { board: 'ghost', frames: ['notes/idea'] }, OWNER)).status).toBe(409)
+  })
+
+  it('all-scenes is reserved: never created, renamed to or autosaved; a leftover file is read only for its node keys', async () => {
+    expect((await drive(root, 'PUT', 'boards/all-scenes')).status).toBe(400)
+    expect(existsSync(join(dir(), 'all-scenes.json'))).toBe(false)
+    expect((await drive(root, 'POST', 'boards/rename', { from: 'flow', to: 'all-scenes' }, OWNER)).status).toBe(400)
+    const { boardsNew } = await import('../src/cli/boards.ts')
+    expect(() => boardsNew(root, 'all-scenes', {})).toThrow(/not a board name/)
+    w('all-scenes', { version: 1, auto: true, nodes: [{ key: 'k-old', frame: 'shop/pay' }] })
+    expect((await drive(root, 'GET', 'boards/all-scenes')).json.board.nodes).toEqual([{ key: 'k-old', frame: 'shop/pay' }])
+  })
+
+  it('a leftover all-scenes.json, valid or malformed, is set aside: no board, no membership, folder moves still work', async () => {
+    for (const leftover of ['{ "version": 1, "nodes": [', JSON.stringify({ version: 1, auto: true, nodes: [] })]) {
+      w('all-scenes', leftover)
+      const list = await drive(root, 'GET', 'boards')
+      expect(list.json.map((b: any) => b.name)).toEqual(['archive', 'flow'])
+      expect((await drive(root, 'GET', 'membership')).json.unplaced).toEqual(['notes/idea', 'shop/new'])   // an auto leftover holds nothing
+      // a folder move: the tree names every board the client saw - the leftover is never one it missed
+      const base = { boards: Object.fromEntries(list.json.map((b: any) => [b.name, b.sha256])), folders: null }
+      const r = await drive(root, 'POST', 'boards/reorder', { tree: [{ folder: 'past', items: ['archive'] }, 'flow'], base, protocol: 2 }, OWNER)
+      expect(r.status, JSON.stringify(r.json)).toBe(200)
+      expect(read('archive').folder).toBe('past')
+      const { readBoards } = await import('../src/server/build.ts')
+      expect(Object.keys(readBoards(root)).sort()).toEqual(['archive', 'flow'])   // the build never fails on it either
+      w('archive', { version: 1, order: 0, type: 'archive', nodes: [{ frame: 'shop/cart' }] })
+      rmSync(join(dir(), '_folders.json'), { force: true })
+    }
   })
 })

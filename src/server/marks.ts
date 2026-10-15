@@ -83,13 +83,13 @@ export function readMarks(root: string, manifest: Manifest): Marks {
   const done = readChanges(root)
   const changed: Record<string, number> = {}
   for (const f of manifest.frames) changed[f.id] = Math.max(mtime(join(root, f.file)), noteAt[f.id], done[f.id] ?? 0)
-  // each board's live frames: an auto board (All Scenes) holds them all; a curated one, the frames
-  // it pins that still exist
-  const boards: Record<string, string[]> = { 'all-scenes': all }
+  // each board's live frames: an auto board holds them all; a curated one, the frames it pins that
+  // still exist
+  const boards: Record<string, string[]> = {}
   const boardsDir = join(root, 'design', 'boards')
   if (existsSync(boardsDir) && !checkBoardsDir(root, boardsDir)) for (const b of listBoardFiles(boardsDir).boards) {
     const j = b.json as { auto?: unknown; nodes?: unknown } | null
-    if (!j || b.name === 'all-scenes') continue
+    if (!j) continue
     boards[b.name] = j.auto === true ? all
       : Array.isArray(j.nodes) ? j.nodes.map((n) => (n as { frame?: unknown })?.frame).filter((f): f is string => typeof f === 'string' && known.has(f)) : []
   }

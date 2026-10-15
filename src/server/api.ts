@@ -5,8 +5,8 @@ import { join, resolve, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle, type Manifest } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
-import { BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
-import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, readRegistry, withRegistryLock } from './boards.ts'
+import { ALL_SCENES, BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
+import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, pinFrames, readMembership, readRegistry, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
@@ -215,7 +215,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'expected an object' })
         const { name, status: statusRaw, reason: reasonRaw, baseHash } = parsed as { name?: unknown; status?: unknown; reason?: unknown; baseHash?: unknown }
-        if (!validName(name) || name === 'all-scenes') return json(res, 400, { error: 'invalid board name' })
+        if (!validName(name) || name === ALL_SCENES) return json(res, 400, { error: 'invalid board name' })
         if (baseHash !== undefined && typeof baseHash !== 'string') return json(res, 400, { error: 'invalid baseHash' })
         const status = statusRaw === null ? null : readStatusWord(statusRaw)
         if (status === undefined) return json(res, 400, { error: 'invalid status' })
@@ -384,6 +384,29 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return json(res, 200, { folders: reg.folders, sha256: reg.sha256 })
       }
 
+      // Which board shows which frame (spec 26, Part 7): every board in sidebar order with archive
+      // boards last, its live frames, and the frames on no board - the sidebar's Not on a board
+      // entry and view, and where an old link or a focus exit lands.
+      if (path === 'membership' && req.method === 'GET') {
+        const de = dirError(); if (de) return json(res, 422, { error: de })
+        return json(res, 200, readMembership(root, scanFrames(root).frames.map((f) => f.id)))
+      }
+      // Add to board (the Not on a board view): `{ board, frames }` appended as nodes, the ones the
+      // board already shows skipped - `marver boards pin` from the canvas. Owner-gated (a mutation);
+      // placed BEFORE the boards/<name> regex.
+      if (path === 'boards/pin' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let parsed: { board?: unknown; frames?: unknown }
+        try { parsed = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const live = scanFrames(root).frames.map((f) => f.id)
+        const frames = Array.isArray(parsed?.frames) ? parsed.frames.filter((f): f is string => typeof f === 'string' && live.includes(f)) : []
+        if (!validName(parsed?.board) || !frames.length) return json(res, 400, { error: 'a board and frames on this canvas' })
+        try { return json(res, 200, pinFrames(root, parsed.board, frames, live)) }
+        catch (err) { return json(res, 409, { error: (err as Error).message }) }
+      }
+
       // Rename a board: its title (what humans see - free text, written into the file) and/or
       // its file name (`to`; omitted or equal to `from` = title only - the sidebar's path: a
       // board's file name is its identity for agents, publish.json, URLs and comment threads, so
@@ -406,7 +429,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!validName(from) || !validName(to)) return json(res, 400, { error: 'invalid board name' })
         if (titleRaw !== undefined && (typeof titleRaw !== 'string' || Array.from(titleRaw).length > TITLE_MAX)) return json(res, 400, { error: 'invalid title' })
         if (baseHash !== undefined && typeof baseHash !== 'string') return json(res, 400, { error: 'invalid baseHash' })
-        if (to === 'all-scenes' || from === 'all-scenes') return json(res, 400, { error: 'invalid rename' })
+        if (to === ALL_SCENES || from === ALL_SCENES) return json(res, 400, { error: 'invalid rename' })
         if (to === from && titleRaw === undefined) return json(res, 400, { error: 'invalid rename' })
         { const de = dirError(); if (de) return json(res, 400, { error: de }) }
         const fromPath = boardPath(from), toPath = boardPath(to)
@@ -606,8 +629,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const p = boardPath(boardMatch[1])
         if (!p) return json(res, 400, { error: 'invalid board name' })
         if (req.method === 'GET') {
-          // a board that does not exist yet is a normal state (all-scenes before first
-          // save), not an error: 200 + board:null keeps the devtools console clean
+          // a board that does not exist yet is a normal state, not an error: 200 + board:null keeps
+          // the devtools console clean. A leftover all-scenes.json is read here only, for the node
+          // keys an old link names (spec 26, Part 7)
           if (!existsSync(p)) return json(res, 200, { board: null })
           const content = readFileSync(p, 'utf8')
           const parsed = parseBoard(content)
@@ -615,6 +639,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           return json(res, 200, { board: parsed.json, sha256: hash(content) })
         }
         if (req.method === 'PUT') {
+          if (boardMatch[1] === ALL_SCENES) return json(res, 400, { error: `"${ALL_SCENES}" is a reserved name` })
           const raw = await readBody(req)
           if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
           let body: { board: unknown; baseHash?: string; mustExist?: boolean }

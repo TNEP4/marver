@@ -6,7 +6,8 @@ import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
 import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, noteFileFor, type Manifest } from './manifest.ts'
-import { checkBoardsDir, isRegularFile, listBoardFiles, parseBoard } from './boards.ts'
+import { checkBoardsDir, isRegularFile, listBoardFiles, nodeExists, parseBoard, readMembership } from './boards.ts'
+import { ALL_SCENES } from '../shared/board-tree.ts'
 import { contentOnly } from '../shared/frames.ts'
 import { recordChanged } from './marks.ts'
 import { apiMiddleware } from './api.ts'
@@ -207,8 +208,18 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       // never re-key the live iframes. The file itself is rewritten on any change.
       let framesKey = JSON.stringify(manifest.frames)
       let scenesKey = JSON.stringify(manifest.scenes)
+      // spec 26: the frames on no board are said in the log - at boot, and whenever the list changes
+      let unplacedKey = ''
+      const sayUnplaced = () => {
+        const { unplaced } = readMembership(root, manifest.frames.map((f) => f.id))
+        const key = unplaced.join(',')
+        if (key && key !== unplacedKey) console.log(`[${NAME}] not on a board (${unplaced.length}): ${unplaced.join(', ')} - every frame goes on the board it belongs to: npx ${NAME} boards pin <board> <scene/frame ...>`)
+        unplacedKey = key
+      }
+      sayUnplaced()
       const regen = debounce(() => {
         manifest = scanFrames(root, projectInfo())   // keep the cached manifest fresh for affectedFrameIds
+        sayUnplaced()
         const changed = writeManifest(root, manifest)
         const key = JSON.stringify(manifest.frames), sKey = JSON.stringify(manifest.scenes)
         if (changed && key !== framesKey) server.ws.send('sh:manifest', manifest as any)
@@ -317,6 +328,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         }
         // never through a symlinked design/boards: what lies elsewhere is never read into the log
         if (!checkBoardsDir(root, boardsDir)) for (const b of listBoardFiles(boardsDir).boards) if (b.error) reportBad(`${b.name}.json`, b.content, b.error)
+        // the built-in All Scenes board is gone (spec 26): a leftover file is set aside, said once
+        if (nodeExists(join(boardsDir, `${ALL_SCENES}.json`))) console.log(`[${NAME}] design/boards/${ALL_SCENES}.json is left over from the All Scenes board, gone since 0.25 - nothing reads it any more; delete it when you like (its threads stay in design/comments/)`)
         // the LIST changed (a board or the folder registry added, written, or deleted): one
         // coalesced `sh:boards` per burst, so the sidebar re-reads its tree - deletions too,
         // which the content broadcast below cannot carry (nothing left to hash)
@@ -324,7 +337,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         const watcher = watch(boardsDir, (_event, file) => {
           // the size cache (sizes.ts) is no board and no folder: the shell that wrote it already
           // holds every height in it - a sidebar re-read per settled Doc would be pure churn
-          if (!file || !file.endsWith('.json') || file === SIZES_FILE) return
+          if (!file || !file.endsWith('.json') || file === SIZES_FILE || file === `${ALL_SCENES}.json`) return
           clearTimeout(listTimer)
           listTimer = setTimeout(() => { server.ws.send('sh:boards', {}); regen(); boardsChanged(root) }, 150)   // the manifest carries boards and folders too; boardsChanged re-lights the sidebar's live boards
           clearTimeout(timers.get(file))

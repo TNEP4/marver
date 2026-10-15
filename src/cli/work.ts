@@ -2,7 +2,7 @@
  * `marver work` - the coding agent's hand on the canvas working state.
  *
  *   work start <scene/frame ...> [--ttl <minutes>]   mark frames actively working
- *   work done  <scene/frame ...> | --all             clear the glow; print the canvas link to them
+ *   work done  <scene/frame ...> | --all             clear the glow; print the canvas links to them
  *   work list                                        what is glowing right now
  *
  * The intended choreography (taught in design/AGENTS.md): on accepting a request,
@@ -65,11 +65,13 @@ export async function workCommand(root: string, action: string, frames: string[]
       const before = opts.all ? (await call('GET')).frames : frames
       const { frames: active } = await call('POST', opts.all ? { on: false, all: true } : { frames, on: false })
       console.log(active.length ? `still working: ${active.join(', ')}` : 'nothing working - all clear')
-      // the hand-back: the link that opens the canvas ON what was just finished - the agent's
-      // reply ends with it (design/AGENTS.md, "Show the work")
+      // the hand-back: the links that open the canvas ON what was just finished - the agent's
+      // reply ends with them (design/AGENTS.md, "Show the work"); a frame on no board is never
+      // blocked, it is named, with where it belongs (spec 26, Part 7)
       const done = before.filter((f) => !active.includes(f))
-      const link = done.length ? await (await import('./link.ts')).linkLine(root, done) : null
-      if (link) console.log(`on the canvas: ${link}`)
+      const { links, hints } = done.length ? await (await import('./link.ts')).handBack(root, done) : { links: [], hints: [] }
+      for (const l of links) console.log(`on the canvas: ${l}`)
+      for (const h of hints) console.log(`warning: ${h}`)
       return
     }
     case 'list': {
