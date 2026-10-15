@@ -65,7 +65,7 @@ export function App() {
       let notice: string | null = null
       if (isLegacyLink(bootHash)) { const r = await landLegacy(bootHash); retargetBoot(r.hash); notice = r.notice }
       // the Not on a board view is dev's: a published canvas opens its default board instead
-      if (bootHash.board === UNPLACED) retargetBoot({ ...bootHash, board: undefined })
+      if (bootHash.board === UNPLACED) retargetBoot({})
       if (bootHash.board && bootHash.board !== useStore.getState().board)
         useStore.setState({ board: bootHash.board, boardAuto: false })
       const ok = await boot()
@@ -101,7 +101,7 @@ export function App() {
       // a lookup newer navigation overtook - a link, a step on the stage - is dropped
       const mine = ++popSeq, was = useStore.getState()
       const parsed = parseHash()
-      const raw = parsed.board === UNPLACED ? { ...parsed, board: undefined } : parsed   // dev's view: not here
+      const raw = parsed.board === UNPLACED ? {} : parsed   // dev's view, and what it names: not here
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
       const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
       const h = r.hash
