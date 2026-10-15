@@ -29,7 +29,8 @@ import { ROUTE } from '../../const.ts'
 import { BAKES, PUBLISHED } from '../store.ts'
 import { readOwn, sleepRule } from '../../../shared/sleep-rule.ts'
 
-export interface SleepKey { frame: string; theme: string; w: number; h: number }
+/** `doc`: the revision the document shows (spec 26) - the compiler refuses a document behind its frame */
+export interface SleepKey { frame: string; theme: string; w: number; h: number; doc?: string }
 interface Target { sel: string; rect: { x: number; y: number; w: number; h: number }; filter: string; level: number; texture: string; verified: boolean }
 type Answer = { ok: true; targets: Target[] } | { ok: false; error: string }
 
@@ -43,7 +44,7 @@ const TOL = 0.5
 const AWAKE = new URLSearchParams(location.search).get('awake') === '1'
 const PAUSE = `*,*::before,*::after{animation-play-state:paused!important}`
 const csrf = () => document.cookie.match(/(?:^|; )mv_c=([^;]+)/)?.[1] ?? ''
-const keyOf = (k: SleepKey) => `${k.frame}|${k.theme}|${Math.round(k.w)}|${Math.round(k.h)}`
+const keyOf = (k: SleepKey) => `${k.frame}|${k.theme}|${Math.round(k.w)}|${Math.round(k.h)}${k.doc ? `|${k.doc}` : ''}`
 
 /** What a node's DOCUMENT is asleep under, published only once its override is INSTALLED. */
 const asleep = new Map<string, { key: string; doc: Document }>()
@@ -82,7 +83,7 @@ function ask(key: SleepKey): Promise<Answer> {
       // one ask per key; every waiter for that key gets the same answer
       const byKey = new Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>()
       for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.resolve); else byKey.set(kk, { key: q.key, waiters: [q.resolve] }) }
-      const asks = [...byKey.values()].map((e) => ({ frame: e.key.frame, theme: e.key.theme, w: Math.round(e.key.w), h: Math.round(e.key.h) }))
+      const asks = [...byKey.values()].map((e) => ({ frame: e.key.frame, theme: e.key.theme, w: Math.round(e.key.w), h: Math.round(e.key.h), ...(e.key.doc ? { doc: e.key.doc } : {}) }))
       let data: { answers?: (Answer & SleepKey)[] } | null = null
       const index = PUBLISHED ? await staticAnswers() : null
       if (!index) {

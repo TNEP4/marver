@@ -98,6 +98,9 @@ export interface Node {
   /** spec 26: the revision of the document it shows - "epoch:doc", stamped by the dev server when it
    *  served the document, echoed by its sh:ready. A look counts only up to it. Transient. */
   shown?: string
+  /** spec 26: the revision ("epoch:doc") a stale node waits for - a document showing it (or later)
+   *  clears the wait, an older one keeps it. Transient. */
+  want?: string
 }
 /** A comment notification: a persistent bottom-right glass pill. Three kinds
  *  share it - a Marver (agent) reply renders frame-first with the mark; a
@@ -440,6 +443,13 @@ const lookedEarly = new Set<string>()
 const armed = new Map<string, { until: number; board: string; frame: string }>()
 const ARMED_MS = 10_000
 /** The doc revision a node's document shows, in this epoch - -1 when unknown or from another one. */
+/** "epoch:rev" stamps: does `a` show at least `b` (same epoch, revision as high)? */
+const atLeast = (a: string | undefined, b: string) => {
+  const [ea, ra] = (a ?? '').split(':'), [eb, rb] = b.split(':')
+  return ea === eb && Number(ra) >= Number(rb)
+}
+/** The later of two waits (a new epoch replaces the old one's). */
+const later = (a: string | undefined, b: string | undefined) => (!a || !b ? a ?? b : atLeast(a, b) ? a : b)
 export const shownRev = (n: Node, m: Marks): number => {
   const [epoch, rev] = (n.shown ?? '').split(':')
   return epoch === m.epoch && rev !== undefined && /^\d+$/.test(rev) ? Number(rev) : -1
@@ -526,7 +536,7 @@ interface State {
   setPlay(p: State['play']): void
   setGesture(g: boolean): void
   setLaser(on: boolean): void
-  invalidateFrames(frameIds: string[], revision: string): void
+  invalidateFrames(frameIds: string[], revision: string, docs?: { epoch?: string; docs?: Record<string, number> }): void
   setExternalLease(nodeKey: string, reason: 'laser' | 'comment', on: boolean): void
   /** A safe point (a lease ended, a gesture ended): stale nodes may reload now. */
   flushFrameUpdates(): void
@@ -701,7 +711,7 @@ export const useStore = create<State>((set, get) => {
       if (n.stale || n.status !== 'ready' || n.missing || !n.shown) return n
       if (shownRev(n, m) >= (m.doc[n.frame] ?? 0)) return n
       any = true
-      return { ...n, stale: true }
+      return { ...n, stale: true, want: later(n.want, `${m.epoch}:${m.doc[n.frame] ?? 0}`) }
     })
     if (any) { set({ nodes }); pumpUpdates() }
     // the stage too: one that missed an update (a lost event) offers Update
@@ -1009,7 +1019,7 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
-      cancelReflow(); dropHolds()
+      cancelReflow(); dropHolds(); reloadCause.clear()
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
@@ -1046,7 +1056,7 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
-      cancelReflow(); dropHolds()
+      cancelReflow(); dropHolds(); reloadCause.clear()
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })
@@ -1242,7 +1252,8 @@ export const useStore = create<State>((set, get) => {
           if (arrived) { delete n.sizeFallback; n.readyRetried = false }   // a fresh mount earns a fresh allowance
           // gone or back, the node has no document: an update waiting for the old one is void, and the
           // next document boots fresh through admission (a reload job must never stand in for it)
-          delete n.stale; delete n.shown
+          delete n.stale; delete n.shown; delete n.want
+          if (missing) letGo(n.key, false)
           n.missing = missing
           changed = true
         }
@@ -1284,6 +1295,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     removeNode(key) {
+      letGo(key, false)   // a node that goes holds no batch
       set((s) => ({
         nodes: s.nodes.filter((n) => n.key !== key),
         selection: s.selection.filter((k) => k !== key),
@@ -1553,13 +1565,14 @@ export const useStore = create<State>((set, get) => {
     // Calm updates (spec 26): an edit reached these frames. Their nodes that show a document go
     // stale and reload through the boot queue - on screen first, never while in use; one still loading
     // its first document is checked against the marks when it is ready (setShown).
-    invalidateFrames(frameIds, revision) {
+    invalidateFrames(frameIds, revision, docs) {
       const ids = new Set(frameIds.filter((x) => typeof x === 'string'))
       if (!ids.size) return
       const s = get()
       // every document of these frames is behind - one loading too (one running, one waiting): a document
-      // that turns out to show the edit already clears it when it is ready (setShown)
-      const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing ? { ...n, stale: true } : n))
+      // that shows the revision the edit made clears it when it is ready (setShown)
+      const want = (f: string) => (docs?.epoch && typeof docs.docs?.[f] === 'number' ? `${docs.epoch}:${docs.docs[f]}` : undefined)
+      const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing ? { ...n, stale: true, want: later(n.want, want(n.frame)) } : n))
       set({ nodes, ...(s.play ? { playUpdateRevision: revision } : {}) })
       pumpUpdates()
     },
@@ -1575,13 +1588,15 @@ export const useStore = create<State>((set, get) => {
         : x)) }))
     },
     setShown(key, shown) {
-      const m = get().marks
       set((s) => ({ nodes: s.nodes.map((x) => {
         if (x.key !== key) return x
+        // a document that shows the revision its node waits for (or later) clears the wait; an older
+        // one - a reload that started before the edit - keeps it, so the edit still lands
         const n = { ...x, shown }
-        if (n.stale && m && shownRev(n, m) >= (m.doc[n.frame] ?? 0)) n.stale = false   // it shows the edit already
+        if (n.want) { if (atLeast(shown, n.want)) { n.stale = false; delete n.want } else n.stale = true }
         return n
       }) }))
+      pumpUpdates()
       reconcile()
       if (armed.has(key)) get().look([key], false)   // a look you made while it loaded
     },
@@ -1599,6 +1614,10 @@ export const useStore = create<State>((set, get) => {
       if (!get().playUpdateRevision) return
       bumpManifestRev()
       set((s) => ({ playUpdateRevision: null, playNav: s.playNav + 1, stageShown: null }))   // counted again once the new stage commits
+      // pending until the new stage commits: one that never reports (its document failed before it
+      // could) offers Update again
+      const nav = get().playNav
+      setTimeout(() => { const s = get(); if (s.play && s.playNav === nav && !s.stageShown && !s.playUpdateRevision) set({ playUpdateRevision: 'retry' }) }, 15_000)
     },
     setScale(scale) { set({ scale }) },
     pulsePath() { set((s) => ({ pathPulse: s.pathPulse + 1 })) },

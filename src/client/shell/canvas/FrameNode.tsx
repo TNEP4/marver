@@ -205,7 +205,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // one being installed
     if (interact || dirty.current || resizing.current || node.status !== 'ready' || node.stale || behind) return
     if (node.themeOn !== undefined && node.themeOn !== node.theme) return   // the frame has not painted the new theme yet
-    const t = setTimeout(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h }) }, 250)
+    const t = setTimeout(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h, doc: node.shown }) }, 250)
     return () => clearTimeout(t)
   }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, node.stale, behind, w, h, node.missing, frame?.id, node.key, resizeTick])
   useEffect(() => () => wake(node.key, iframeRef.current), [node.key])

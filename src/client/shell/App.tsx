@@ -538,7 +538,7 @@ export function App() {
     // reload, never a React Fast Refresh yanking a frame the user is in.
     import.meta.hot.on('sh:frame-invalidated', (m: any) => {
       const frameIds = Array.isArray(m?.frameIds) ? m.frameIds.filter((x: unknown) => typeof x === 'string') : []
-      if (frameIds.length && typeof m?.revision === 'string') useStore.getState().invalidateFrames(frameIds, m.revision)
+      if (frameIds.length && typeof m?.revision === 'string') useStore.getState().invalidateFrames(frameIds, m.revision, { epoch: m?.epoch, docs: m?.docs })
     })
     // multi-viewer sync: another viewer (or an agent) saved this board. A clean canvas
     // re-boots silently, keeping whatever selection survives; a dirty one keeps its

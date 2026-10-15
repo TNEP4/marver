@@ -42,7 +42,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const flushInv = debounce(() => {
     if (!devServer || !pendingInv.size) return
     const frameIds = [...pendingInv]; pendingInv.clear()
-    devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}` })
+    // with each frame's doc revision: a node waits until a document of it shows that one
+    const docs = docRevs(root, manifest.frames)
+    devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}`, epoch: docs?.epoch, docs: docs ? Object.fromEntries(frameIds.map((id) => [id, docs.doc[id] ?? 0])) : undefined })
   }, 120)
 
   // Calm updates (spec 26): an edit reached these frames. The marks look first (the static index
@@ -50,21 +52,24 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   // graph found that the index missed; the frames that must reload get a queued, lease-aware reload.
   const observeMarks = () => observed(observe(root, manifest.frames))
   const hooks: UpdateHooks = {
-    onFrames(t: Touched, cause) {
-      const seen = observe(root, manifest.frames, t.file ? { file: t.file } : {})   // this edit's frames only
-      const doc = t.doc.filter((id) => !seen.doc.includes(id))
-      const touched = t.touched.filter((id) => !seen.doc.includes(id) && !seen.note.includes(id) && !doc.includes(id))
-      if (doc.length) recordChanged(root, manifest.frames, doc, { doc: true })
-      if (touched.length) recordChanged(root, manifest.frames, touched, { doc: false })
-      const reload = [...new Set([...seen.doc, ...t.doc])]
-      for (const id of reload) pendingInv.add(id)
-      flushInv()
-      if (reload.length || touched.length || seen.note.length) devServer?.ws.send('sh:marks', {})
-      logReload(root, { kind: 'update', cause, file: t.file ? relative(root, t.file).split(sep).join('/') : null, reload, inPlace: t.touched })
-    },
+    // a tick later: Vite finishes this update after the hooks (it invalidates the modules it walks), so
+    // a revision is published - and a document stamped with it - only once its code is there to serve
+    onFrames: (t: Touched, cause) => { setTimeout(() => record(t, cause), 0) },
     onReload(p, passed) {
       logReload(root, { kind: 'full-reload', passed, triggeredBy: p.triggeredBy ?? null, path: p.path ?? null })
     },
+  }
+  function record(t: Touched, cause: string) {
+    const seen = observe(root, manifest.frames, t.file ? { file: t.file } : {})   // this edit's frames only
+    const doc = t.doc.filter((id) => !seen.doc.includes(id))
+    const touched = t.touched.filter((id) => !seen.doc.includes(id) && !seen.note.includes(id) && !doc.includes(id))
+    if (doc.length) recordChanged(root, manifest.frames, doc, { doc: true })
+    if (touched.length) recordChanged(root, manifest.frames, touched, { doc: false })
+    const reload = [...new Set([...seen.doc, ...t.doc])]
+    for (const id of reload) pendingInv.add(id)
+    flushInv()
+    if (reload.length || touched.length || seen.note.length) devServer?.ws.send('sh:marks', {})
+    logReload(root, { kind: 'update', cause, file: t.file ? relative(root, t.file).split(sep).join('/') : null, reload, inPlace: t.touched })
   }
 
   /** No theme is only a problem for app frames: a canvas made of content frames alone (Doc, Md,

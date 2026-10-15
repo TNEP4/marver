@@ -746,22 +746,31 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
         const frames = new Map((manifest.frames ?? []).map((f) => [f.id, f]))
         const asks: { frame: string; theme: string; w: number; h: number }[] = []
+        const docs: (string | undefined)[] = []
         for (const a of body.asks as Record<string, unknown>[]) {
           const frame = typeof a?.frame === 'string' ? a.frame : ''
           const theme = typeof a?.theme === 'string' && /^[a-z0-9-]{1,32}$/i.test(a.theme) ? a.theme : ''
           const w = Math.round(Number(a?.w)), h = Math.round(Number(a?.h))
           if (!frames.has(frame) || !theme || !(w >= 120 && h >= 80 && w <= ASK_MAX.side && h <= ASK_MAX.side && w * h <= ASK_MAX.area)) return json(res, 400, { error: `invalid ask for "${frame}"` })
           asks.push({ frame, theme, w, h })
+          docs.push(typeof a?.doc === 'string' ? a.doc : undefined)
         }
+        // spec 26: the compiler renders the newest source - never for a document behind its frame
+        const { docRev } = await import('./marks.ts')
+        const all = devManifest().frames
+        const behind = docs.map((d, i) => d !== undefined && d !== docRev(root, all, asks[i].frame))
         const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
         const { ROUTE } = await import('../cli/name.ts')
         const gen = opts.bakeGen?.() ?? 0
-        const answers = await bakeBatch({
-          root, gen, asks, live: () => opts.bakeGen?.() ?? 0,
+        const current = asks.filter((_, i) => !behind[i])
+        const baked = await bakeBatch({
+          root, gen, asks: current, live: () => opts.bakeGen?.() ?? 0,
           log: (a) => { if (a.ok) console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - ${a.targets.length} effects, ${a.rejected} stay live, ${a.ms} ms`); else console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - stays live: ${a.error}`) },
           urlFor: (ask) => { const f = frames.get(ask.frame)!; return f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}` },
           urlBase: `${ROUTE}/bakes`,
         })
+        let k = 0
+        const answers = asks.map((a, i) => ({ ...(behind[i] ? { ...a, ok: false as const, error: 'the document is behind its frame' } : baked[k++]), ...(docs[i] ? { doc: docs[i] } : {}) }))
         return json(res, 200, { gen, answers })
       }
 
