@@ -303,3 +303,27 @@ describe('init: the manifest project line (#13)', () => {
     expect(JSON.parse(read('manifest.json')).project).toEqual({ name: 'Acme Studio', description: 'An identity laboratory.' })
   })
 })
+
+describe('init: a fresh canvas lands on a real board (spec 26)', () => {
+  const boards = () => JSON.parse(read('manifest.json')).boards?.map((b: { name: string }) => b.name) ?? []
+  for (const mode of ['studio', 'embedded'] as const) {
+    it(`${mode}: the demo on a welcome board, the landing board; init again adds nothing`, () => {
+      init(root, { mode, demo: true })
+      const welcome = JSON.parse(read('boards/welcome.json'))
+      expect(welcome.nodes).toEqual([{ frame: 'demo/welcome' }, { frame: 'demo/form' }, { frame: 'demo/dark' }])
+      expect(boards()[0]).toBe('welcome')
+      writeFileSync(join(root, 'design', 'boards', 'welcome.json'), JSON.stringify({ ...welcome, title: 'Mine' }))
+      init(root, { mode, demo: true })
+      expect(JSON.parse(read('boards/welcome.json')).title).toBe('Mine')                  // never rewritten
+    })
+  }
+  it('--no-demo makes no board (the canvas shows its empty state); a canvas with boards never gains welcome', () => {
+    init(root, { mode: 'studio', demo: false })
+    expect(existsSync(join(root, 'design', 'boards', 'welcome.json'))).toBe(false)
+    expect(boards()).toEqual([])
+    writeFileSync(join(root, 'design', 'boards', 'flow.json'), JSON.stringify({ version: 1, nodes: [] }))
+    init(root, { mode: 'studio', demo: true })                                             // the demo arrives, beside a board
+    expect(existsSync(join(root, 'design', 'scenes', 'demo'))).toBe(true)
+    expect(existsSync(join(root, 'design', 'boards', 'welcome.json'))).toBe(false)
+  })
+})
