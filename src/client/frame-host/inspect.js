@@ -100,24 +100,31 @@ const elBundle = (el) => {
 }
 
 const SKIP = 'script,style,noscript,template'
+/** An element's text as a person sees it: only the text whose own element is shown. */
+const seenText = (el) => {
+  let t = ''
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) if (n.parentElement && !n.parentElement.closest(SKIP) && shown(n.parentElement)) t += n.data
+  return t
+}
 /** The visible elements showing these words (case and spacing aside): the innermost element
- *  whose RENDERED text holds them - "Pay <b>now</b>" is its paragraph, and a hidden copy inside
- *  never hides the visible one around it - once per place they appear. */
+ *  whose SEEN text holds them - "Pay <b>now</b>" is its paragraph, and a hidden or transparent
+ *  copy inside never stands in for words nobody sees - once per place they appear. */
 const byWords = (words) => {
   const q = norm(words).toLowerCase()
   if (!q) return []
   const has = (t) => norm(t).toLowerCase().includes(q)
-  // textContent prunes the walk cheaply; innerText (what is rendered) decides
+  // textContent prunes the walk cheaply; the seen text decides
   const walk = (el) => {
     const inner = [...el.children].filter((c) => !c.matches(SKIP) && has(c.textContent)).flatMap(walk)
-    return inner.length || el === document.body || !shown(el) || !has(el.innerText) ? inner : [el]
+    return inner.length || el === document.body || !shown(el) || !has(seenText(el)) ? inner : [el]
   }
   return document.body && has(document.body.textContent) ? walk(document.body) : []
 }
-/** `--at`: its data-testid first, else a CSS selector (throws on one that is neither). */
+/** `--at`: its exact data-testid first, else a CSS selector (throws on one that is neither). */
 const byAt = (at) => {
   const all = (sel) => [...document.querySelectorAll(sel)].filter(shown)
-  const ids = /^[\w-]+$/.test(at) ? all(`[data-testid="${CSS.escape(at)}"]`) : []
+  const ids = all(`[data-testid="${CSS.escape(at)}"]`)
   return ids.length ? ids : all(at)
 }
 

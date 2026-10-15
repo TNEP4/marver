@@ -163,12 +163,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           // ("On it.\n\nNow let me gather context..."). The ack is ONE line to the owner, so keep
           // only the first paragraph - the narration after the blank line never reaches the thread.
           // A fenced first message is the real completion; leave its (possibly multi-paragraph) body.
-          // One parser either way (packet.ts), so the flag the ack carries is the final's rule too.
+          // One parser either way (packet.ts). A plain ack asks nothing: only the final block can
+          // say `ask`, and when its words match the ack the daemon re-flags it - so a flag only
+          // ever turns on, the way a question's notice can follow.
           const parsed = parseAgentText(hit.text)
-          const early = /```marver-reply/.test(hit.text) ? parsed : parseAgentText(parsed.reply.split(/\n\s*\n/)[0])
-          if (!early.reply || metaNarration(early.reply)) continue
+          const fenced = /```marver-reply/.test(hit.text)
+          const text = fenced ? parsed.reply : parsed.reply.split(/\n\s*\n/)[0].trim()
+          if (!text || metaNarration(text)) continue
           earlyFired = true
-          try { onEarly!(early.reply, early.asks, hit.model) } catch { /* early delivery is best-effort */ }
+          try { onEarly!(text, fenced && parsed.asks, hit.model) } catch { /* early delivery is best-effort */ }
           break
         }
       })
@@ -294,10 +297,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) { clearGlow(); return }
     if (run.ok) {
       // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
-      // one, so don't post it twice. The dedup compares the words and the flag: same words with
-      // another flag (the `ask` header only the final block carries) re-flags the early message.
+      // one, so don't post it twice. The dedup compares the words and the flag: same words, and
+      // the final asks where the ack did not (the `ask` header only the final block carries) -
+      // the early message is re-flagged, and its question gets its own notice.
       if (run.reply !== early?.body) writeReply(b, p, run.reply, run.asks, run.model)
-      else if (run.asks !== early.asks) {
+      else if (run.asks && !early.asks) {
         const me = localProfile(root)
         appendEvents(commentsDir, b.board, [{
           id: `jam-f-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early.commentId, asks: run.asks, board: b.board,

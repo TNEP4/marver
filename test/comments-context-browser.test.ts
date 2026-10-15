@@ -41,6 +41,8 @@ export default () => <main style={{ padding: 24 }}>
   <style>{'.wide { display: none } @media (min-width: 700px) { .wide { display: block } } .night { display: none } [data-theme=dark] .night { display: block }'}</style>
   <h2>Account</h2>
   <p>Keep it<span style={{ display: 'none' }}>Keep it</span></p>
+  <p>Visible<span style={{ opacity: 0 }}>Secret words</span></p>
+  <button data-testid="settings.icon">*</button>
   <div className="wide">Wide only</div>
   <div className="night">Night only</div>
 </main>
@@ -188,6 +190,12 @@ describe('an agent note names its element, checked in the rendered frame', () =>
     const keep = cli('comments', 'new', 'ctx/phone', '--on', 'Keep it', '--body', 'x', '--fyi')
     expect(keep.code, keep.err).toBe(0)
     expect(anchorOf(keep.out.match(/\?c=([\w-]+)/)![1]).el.semantics.tag).toBe('p')
+    // ...and transparent words are words nobody sees: refused, never their visible parent
+    expect(cli('comments', 'new', 'ctx/phone', '--on', 'Secret words', '--body', 'x').code).toBe(1)
+    // any test id, punctuation included, is tried as an exact test id before it is a selector
+    const dotted = cli('comments', 'new', 'ctx/phone', '--at', 'settings.icon', '--body', 'x', '--fyi')
+    expect(dotted.code, dotted.err).toBe(0)
+    expect(anchorOf(dotted.out.match(/\?c=([\w-]+)/)![1]).el.semantics.testId).toBe('settings.icon')
     const r = cli('comments', 'new', 'ctx/decide', '--at', 'gear', '--body', 'The gear is new')
     expect(r.code, r.err).toBe(0)
     ids.gear = r.out.match(/\?c=([\w-]+)/)![1]

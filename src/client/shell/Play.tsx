@@ -253,7 +253,7 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
     const at = !show || !showAnchor ? null : (draft?.frame === frameId && !isNoteAnchor(draft.anchor) ? draft.anchor
       : (active ? (threads.find((t) => t.id === active && (t.anchor as any)?.el)?.anchor ?? null) : null))
     win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: at ?? null }, location.origin)
-  }, [active, draft, show, showAnchor, frameId, iframe, points, ready])
+  }, [active, draft, show, showAnchor, frameId, iframe, points, ready, JSON.stringify(threads.find((t) => t.id === active)?.anchor ?? null)])
 
   if (!show) return null
 

@@ -680,10 +680,10 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     done()
   })
 
-  it('the dedup compares words and flag: the same words with another flag re-flag the posted message, never a second copy', async () => {
+  it('a plain ack never asks, whatever its last character: only the final block says ask', async () => {
     const { root, dir, done } = setup()
     const text = 'Swapped the hero for the photo?'
-    // the ack streams with a trailing "?" (it reads as asking), the final block says it does not
+    // the ack streams with a trailing "?", the final plain block repeats it: one message, not asking
     const ackLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
     const resultLine = JSON.stringify({ type: 'result', result: '```marver-reply\n' + text + '\n```', modelUsage: {} })
     const adapter: JamAdapter = {
@@ -696,6 +696,7 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     await jam.tick(); jam.stop()
     const replies = agentReplies(dir, 'home')
     expect(replies.map((r) => [r.body, r.asks])).toEqual([[text, false]])
+    expect(readLog(dir, 'home').some((e) => e.type === 'edit')).toBe(false)
     done()
   })
 
