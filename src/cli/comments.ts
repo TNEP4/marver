@@ -116,13 +116,13 @@ export async function commentsCommand(root: string, action: string, value: strin
     case 'new': {
       if (opts.thread !== undefined) return addToThread(root, String(opts.thread), value, opts)
       if (!value || !opts.body) throw new Error('usage: comments new <scene/frame> --body "..." --on "<words it shows>" | --at "<selector or data-testid>" [--nth <n>] [--fyi] [--board <board>]')
-      const target = readTarget(opts)
-      if (typeof target === 'string') throw new Error(`a note goes on an element - ${target}`)
       const { resolveLink, devOrigin } = await import('./link.ts')
       const r = resolveLink(root, [value], opts.board)
       if (r.exact.length !== 1) throw new Error(`"${value}" is a folder of frames - pin a note on one frame: comments new <scene/frame>`)
-      // a note lives on a board: a frame on none gets the hint instead (spec 26, Part 7)
+      // a note lives on a board: a frame on none gets the hint first (spec 26, Part 7) - then its element
       if (!r.board) throw new Error(`a note needs a board to live on - ${r.hints.join('\n')}`)
+      const target = readTarget(opts)
+      if (typeof target === 'string') throw new Error(`a note goes on an element - ${target}`)
       const frame = r.exact[0]
       const nodeKey = r.nodesOf(r.board).find((n) => n.frame === frame && typeof n.key === 'string')?.key
       const open = allThreads(root).filter((t) => !t.resolved && t.frame === frame && !isNoteThread(t))
