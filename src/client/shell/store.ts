@@ -619,6 +619,9 @@ interface State {
   /** The place in the server's order of the activity last applied - an older answer is dropped. */
   workingSeq: number
   spawn(frameId: string): Node | null
+  /** The Not on a board view follows its list in place: frames that left go, new ones join - the
+   *  frames that stay keep their documents (no reload, no lost input). */
+  syncUnplaced(ids: readonly string[]): void
   save(): Promise<boolean>
 }
 
@@ -1870,6 +1873,26 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
       get().toast(`added ${f.id}`)
       return node
+    },
+
+    syncUnplaced(ids) {
+      const s = get()
+      if (s.board !== UNPLACED || !s.manifest) return
+      const want = new Set(ids)
+      const keep = s.nodes.filter((n) => want.has(n.frame))
+      const add = ids.filter((id) => !keep.some((n) => n.frame === id))
+      if (keep.length === s.nodes.length && !add.length) return
+      for (const n of s.nodes) if (!want.has(n.frame)) letGo(n.key, false)
+      const joined: Node[] = add.flatMap((id) => {
+        const f = s.manifest!.frames.find((x) => x.id === id)
+        if (!f) return []
+        const d = defaultSize(f)
+        return [{ key: nodeKey(), frame: f.id, x: 0, y: 0, w: d.w, h: d.h, theme: resolveTheme(f), status: 'loading' as const, ...(f.contentWidth ? { sizeMode: 'auto' as const } : {}) }]
+      })
+      const nodes = [...keep, ...joined]
+      const scenes = [...new Set(nodes.map((n) => s.manifest!.frames.find((f) => f.id === n.frame)?.scene).filter((x): x is string => !!x))]
+      set({ nodes, selection: s.selection.filter((k) => nodes.some((n) => n.key === k)), layout: scenes.length ? { rows: [scenes] } : null })
+      get().runTidy()   // one band of its scenes again; the view is never saved
     },
 
     save() {

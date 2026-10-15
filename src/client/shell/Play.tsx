@@ -470,6 +470,7 @@ function PlayInner() {
         // (Update serves a fresh stage), not an error
         if (/^unknown frame id/.test(String(data.message ?? ''))) useStore.setState({ playUpdateRevision: 'new frame' })
         else {
+          useStore.setState({ stageShown: null })   // an error card holds the stage now: nothing on it counts as seen
           s.toast(`play: ${String(data.message ?? 'frame error')}`)
           if (s.playNav && !s.stageShown) useStore.setState({ playUpdateRevision: 'retry' })   // an Update that failed: offer it again
         }

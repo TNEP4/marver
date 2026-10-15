@@ -154,7 +154,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     fetchMembership().then((m) => {
       const key = m.unplaced.join()
       if (!current || key === listed.current) return
-      if (listed.current !== null && useStore.getState().board === UNPLACED) void useStore.getState().boot()
+      if (listed.current !== null) useStore.getState().syncUnplaced(m.unplaced)   // the open view follows, in place
       listed.current = key
       setUnplaced(m.unplaced)
     }).catch(() => { /* keep the last list */ })

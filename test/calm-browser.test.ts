@@ -200,6 +200,19 @@ describe('calm updates (spec 26)', () => {
     expect(moves).toBeLessThanOrEqual(1)                                                          // once
   }, 90_000)
 
+  it('the Not on a board view follows its list in place: a frame that stays keeps its document', async () => {
+    if (!browser) return
+    await ev(`location.hash = '#/b/~unplaced', 1`)
+    await until(`window.__mvStore.getState().board === '~unplaced' && ${node('kit/late')}?.status === 'ready'`, 30_000)
+    const key = await ev(`${node('kit/late')}.key`)
+    await ev(`(() => { const k = ${JSON.stringify(key)}; document.querySelector('.sh-node[data-node="' + k + '"] iframe').contentWindow.__kept = 1; return 1 })()`)
+    put('design/scenes/kit/later.tsx', 'export default () => <main>later</main>\n')     // another frame on no board
+    await until(`${node('kit/later')}?.status === 'ready'`, 30_000)
+    expect(await ev(`${node('kit/late')}.key`)).toBe(key)
+    expect(await ev(`document.querySelector('.sh-node[data-node="' + ${JSON.stringify(key)} + '"] iframe').contentWindow.__kept`)).toBe(1)   // not reloaded
+    await ev(`location.hash = '#/b/main', 1`)
+  }, 60_000)
+
   it('the reload log says what happened, and the CLI reads it', async () => {
     if (!browser) return
     const lines = readFileSync(join(root, 'design/.local/perf/reloads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
@@ -207,5 +220,6 @@ describe('calm updates (spec 26)', () => {
     expect(kit?.reload?.sort()).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((n) => `kit/f${n}`))
     expect(lines.some((l) => l.kind === 'ready' && l.frame === 'kit/f1')).toBe(true)
     expect(lines.filter((l) => l.kind === 'shell-boot').length).toBe(1)                          // one page load, the first
+    expect(lines.filter((l) => l.kind === 'full-reload' && l.passed).length).toBeLessThanOrEqual(1)   // at most the first dependency rebuild
   })
 })
