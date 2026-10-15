@@ -87,16 +87,15 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
 /** Wraps the client's hot channel: the reload guard and refused refreshes. */
 export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks): void {
   const env = server.environments.client
-  const optimised = () => (env as { depsOptimizer?: { metadata?: { browserHash?: string } } }).depsOptimizer?.metadata?.browserHash
-  let hash = optimised()
   const wrap = (ch: { send: (...a: any[]) => void }) => {
     const send = ch.send.bind(ch)
     ch.send = (...a: any[]) => {
       const p = a[0] as HotPayload | string
       if (typeof p === 'object' && p?.type === 'full-reload') {
-        const now = optimised()
-        const passed = now !== undefined && now !== hash   // the optimiser committed new module URLs
-        hash = now
+        // the one that passes reloads every page and names no file: the dependency optimiser's (module
+        // URLs changed) or a restart's. A dead end in the graph names its file, Tailwind names no page,
+        // an HTML page names itself - those become calm reloads instead
+        const passed = p.path === '*' && !p.triggeredBy
         hooks.onReload({ triggeredBy: p.triggeredBy, path: p.path }, passed)
         if (!passed) {
           // the file behind it: the one it names, else the page it reloads (an HTML frame no page has

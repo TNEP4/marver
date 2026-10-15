@@ -12,7 +12,7 @@
 import { Component, useEffect, useRef, type ReactNode } from 'react'
 import { useStore, landingBoard, landingMode, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
-import { bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
+import { UNPLACED, bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 
@@ -64,6 +64,8 @@ export function App() {
       // an old All Scenes link: a real board, at the frame it names, with what to say about it
       let notice: string | null = null
       if (isLegacyLink(bootHash)) { const r = await landLegacy(bootHash); retargetBoot(r.hash); notice = r.notice }
+      // the Not on a board view is dev's: a published canvas opens its default board instead
+      if (bootHash.board === UNPLACED) retargetBoot({ ...bootHash, board: undefined })
       if (bootHash.board && bootHash.board !== useStore.getState().board)
         useStore.setState({ board: bootHash.board, boardAuto: false })
       const ok = await boot()
@@ -98,7 +100,8 @@ export function App() {
     const onPop = async () => {
       // a lookup newer navigation overtook - a link, a step on the stage - is dropped
       const mine = ++popSeq, was = useStore.getState()
-      const raw = parseHash()
+      const parsed = parseHash()
+      const raw = parsed.board === UNPLACED ? { ...parsed, board: undefined } : parsed   // dev's view: not here
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
       const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
       const h = r.hash
