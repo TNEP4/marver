@@ -7,6 +7,8 @@
  */
 
 export interface AnchorTarget { on?: string; at?: string; nth?: number }
+/** Where to look for a target only another viewport or theme shows (`--viewport`, `--theme`). */
+export interface AnchorLook { viewport?: string; theme?: string }
 
 export interface Anchor {
   el: {
@@ -37,10 +39,13 @@ export function readTarget(raw: { on?: unknown; at?: unknown; nth?: unknown }): 
   const clean = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/\s+/g, ' ').trim() : '')
   const on = clean(raw.on), at = clean(raw.at)
   if (!on === !at) return 'name the element with --on "<words it shows>" or --at "<css selector or data-testid>" (one of them)'
+  // never cut short: a shortened target could match an element that shows only its beginning
+  if ((on || at).length > MAX_TARGET) return `--on / --at take at most ${MAX_TARGET} characters - name fewer words`
   const nth = raw.nth === undefined ? undefined : Number(raw.nth)
   if (nth !== undefined && !(Number.isInteger(nth) && nth >= 1)) return '--nth takes a whole number from 1'
-  return { ...(on ? { on: on.slice(0, 120) } : { at: at.slice(0, 200) }), ...(nth ? { nth } : {}) }
+  return { ...(on ? { on } : { at }), ...(nth ? { nth } : {}) }
 }
+const MAX_TARGET = 200
 
 /** The anchor written when the frame cannot be checked (dev off, no Chrome, a frame that throws):
  *  the target alone, which the canvas resolves exactly as the check would - by its words, or by

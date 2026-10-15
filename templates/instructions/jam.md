@@ -133,7 +133,8 @@ did not.
 If your edit renamed or moved the commented element so its old anchor no longer matches, re-pin
 the thread so it does not dangle. End your reply with a fenced block (nothing after it) naming
 the element the way `comments move` does: `"on"` = words it shows, or `"at"` = its data-testid
-or a CSS selector (an element without words); `"nth"` picks one of several matches:
+or a CSS selector (an element without words); `"nth"` picks one of several matches, and
+`"viewport"` / `"theme"` name where to look when only another viewport or theme shows it:
 ```
 ```marver-reanchor
 [{"thread":"<threadId from the packet>","on":"Get started"}]

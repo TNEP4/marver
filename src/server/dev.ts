@@ -349,7 +349,7 @@ export async function dev(root: string, portFlag?: number) {
     const jam = startJam(root, config.jam, (m) => console.log(m),
       (board) => server.ws.send('sh:jam-comment', { board } as any),   // reply landed - fetch now, don't wait the 30s poll
       // a re-pin is found in the rendered frame, as `comments move` finds it
-      (frameId, target, others) => checkAnchor({ root, viewports: config.viewports, origin: `http://localhost:${port}`, frameId, target, others }))
+      (frameId, target, others, look) => checkAnchor({ root, viewports: config.viewports, origin: `http://localhost:${port}`, frameId, target, others, ...look }))
     if (jam) {
       const close = server.close.bind(server)
       server.close = (async () => { jam.stop(); return close() }) as typeof server.close

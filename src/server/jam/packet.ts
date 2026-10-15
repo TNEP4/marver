@@ -99,7 +99,8 @@ export function goalText(packet: JobPacket, subagents = true): string {
     'If you RENAMED or MOVED the commented element so its old anchor no longer matches, re-pin the thread',
     'with a fenced block (after your marver-reply block) naming the element per thread: "on" = words it',
     'shows, or "at" = its data-testid or a CSS selector (an element without words); "nth" picks one of',
-    'several matches (1 = the first). The system finds it in the rendered frame and pins it, e.g.',
+    'several matches (1 = the first); "viewport" / "theme" when only another viewport or theme shows it.',
+    'The system finds it in the rendered frame and pins it, e.g.',
     '```marver-reanchor',
     '[{"thread":"<threadId from the packet>","on":"Get started"}]',
     '```',
@@ -170,7 +171,9 @@ export function extractReanchors(text: string): { reply: string; reanchors: Rean
     const parsed = JSON.parse(m[1].trim())
     for (const r of Array.isArray(parsed) ? parsed : []) {
       const target = r && typeof r.thread === 'string' ? readTarget(r) : 'no thread'
-      if (typeof target !== 'string') reanchors.push({ thread: r.thread, target })
+      const word = (v: unknown) => (typeof v === 'string' && /^[a-z0-9-]+$/i.test(v) ? v : undefined)
+      const look = { viewport: word(r.viewport), theme: word(r.theme) }
+      if (typeof target !== 'string') reanchors.push({ thread: r.thread, target, ...(look.viewport || look.theme ? { look } : {}) })
     }
   } catch { /* malformed block - drop it, keep the reply readable */ }
   return { reply: text.replace(m[0], '').trim(), reanchors }

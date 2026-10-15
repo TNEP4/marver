@@ -516,11 +516,11 @@ describe('Live Jam M4: activity presence', () => {
 describe('Live Jam M2: reanchor', () => {
   it('extractReanchors pulls a trailing block and strips it from the visible reply', async () => {
     const { extractReanchors } = await import('../src/server/jam/packet.ts')
-    const text = 'Renamed the button.\n```marver-reanchor\n[{"thread":"t1","on":"Get Started"},{"thread":"t2","at":"cart-icon","nth":2},{"thread":"t3","anchor":{"quote":"old shape"}}]\n```'
+    const text = 'Renamed the button.\n```marver-reanchor\n[{"thread":"t1","on":"Get Started"},{"thread":"t2","at":"cart-icon","nth":2,"theme":"dark","viewport":"no such thing!"},{"thread":"t3","anchor":{"quote":"old shape"}}]\n```'
     const out = extractReanchors(text)
     expect(out.reply).toBe('Renamed the button.')
     // one format: an element named the way `comments move` names it; an entry naming none is dropped
-    expect(out.reanchors).toEqual([{ thread: 't1', target: { on: 'Get Started' } }, { thread: 't2', target: { at: 'cart-icon', nth: 2 } }])
+    expect(out.reanchors).toEqual([{ thread: 't1', target: { on: 'Get Started' } }, { thread: 't2', target: { at: 'cart-icon', nth: 2 }, look: { theme: 'dark', viewport: undefined } }])
   })
   it('no block → the reply passes through unchanged, no reanchors', async () => {
     const { extractReanchors } = await import('../src/server/jam/packet.ts')

@@ -4,11 +4,11 @@
  */
 import type { CommentEvent } from '../../shared/events.ts'
 import type { JamAgent } from './agent.ts'
-import type { AnchorTarget } from '../../shared/anchor.ts'
+import type { AnchorLook, AnchorTarget } from '../../shared/anchor.ts'
 
 /** A re-pin: the agent moved the commented element, so the whole thread follows. It names the
  *  element the way `comments move` does; the daemon turns that into the shared anchor. */
-export interface Reanchor { thread: string; target: AnchorTarget }
+export interface Reanchor { thread: string; target: AnchorTarget; look?: AnchorLook }
 
 /** One agent CLI the daemon can spawn. The full set lives in adapter/index.ts. */
 export interface JamAdapter {

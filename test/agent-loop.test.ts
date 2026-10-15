@@ -134,6 +134,7 @@ describe('marver comments new / reply - Marver\'s voice', () => {
     await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here' })).rejects.toThrow(/a note goes on an element/)
     await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', on: 'Pay', at: 'button' })).rejects.toThrow(/one of them/)
     await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', on: 'Pay', nth: 0 })).rejects.toThrow(/--nth/)
+    await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', on: 'word '.repeat(50) })).rejects.toThrow(/at most 200 characters/)   // never cut short
     await expect(commentsCommand(root, 'new', 'shop', { body: 'x', on: 'Pay' })).rejects.toThrow(/folder of frames/)
     await expect(commentsCommand(root, 'new', 'shop/wallet', { body: 'Which wallet?', on: 'Pay' })).rejects.toThrow(/folder of frames/)   // never silently its first frame
     await expect(commentsCommand(root, 'new', 'shop/cart', {})).rejects.toThrow(/usage/)

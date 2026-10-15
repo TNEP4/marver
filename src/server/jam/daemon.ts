@@ -31,7 +31,7 @@ import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
 import { buildMember, buildPacket, goalText, parseAgentText, threadId } from './packet.ts'
-import { uncheckedAnchor, type AnchorCheck, type AnchorTarget } from '../../shared/anchor.ts'
+import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
 import { scanPending, triggers, engagedThreads, allEventIds } from './watch.ts'
 import { has } from './ledger.ts'
 import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
@@ -58,7 +58,7 @@ export interface JamHooks {
   held?(frame: string): boolean
   /** Find a re-pin's element in the rendered frame (the dev server's anchor check, as the CLI's
    *  `comments move`). Absent = the anchor is written unchecked. */
-  anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[]): Promise<AnchorCheck>
+  anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[], look?: AnchorLook): Promise<AnchorCheck>
 }
 
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
@@ -228,7 +228,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (!t?.frame) { log(`  jam: re-pin skipped - no thread ${r.thread} on ${b.board}`); continue }
       const others = threads.filter((o) => !o.resolved && o.frame === t.frame && o.id !== t.id).map((o) => ({ key: o.id, anchor: o.anchor }))
       const check: AnchorCheck = hooks.anchor
-        ? await hooks.anchor(t.frame, r.target, others).catch((err) => ({ ok: false as const, unchecked: (err as Error).message }))
+        ? await hooks.anchor(t.frame, r.target, others, r.look).catch((err) => ({ ok: false as const, unchecked: (err as Error).message }))
         : { ok: false, unchecked: 'no anchor check here' }
       if (!check.ok && 'refused' in check) { log(`  jam: re-pin skipped - ${t.frame} shows ${check.refused === 'none' ? 'no' : 'several'} matching elements`); continue }
       events.push({
