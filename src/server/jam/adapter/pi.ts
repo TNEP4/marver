@@ -10,7 +10,7 @@
  * `--no-extensions --no-skills` keeps the headless run to those built-ins: extensions load
  * arbitrary code outside the allowlist, which has no place in an unattended spawn.
  */
-import { extractReanchors, extractReplyBlock } from '../packet.ts'
+import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 /** Assistant text + model of one message object (message_end payload or agent_end member). */
@@ -66,8 +66,7 @@ export const piAdapter: JamAdapter = {
     }
     if (last?.error) failed = true
     // NO fallback to raw stdout: pi prints auth errors as prose; prose is never a reply.
-    const { reply: visible, reanchors } = extractReanchors(last?.text ?? '')
-    const reply = extractReplyBlock(visible)
-    return { reply, model: last?.model, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors } = parseAgentText(last?.text ?? '')
+    return { reply, model: last?.model, asks, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

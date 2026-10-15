@@ -8,10 +8,14 @@
  *                 has), --invite <t> to claim an invite, or email + password.
  * sync            one full exchange with the publish target (agent/CI path)
  * list            threads from design/comments/ (--open, --board, --json)
- * new <frame>    pin a note on a frame (--body, --on "<text on screen>") - Marver's voice, the
- *                 owner's pill: what an agent leaves where it needs the human's eyes
+ * new <frame>    pin a note on an element of a frame (--body, --on "<words it shows>" or --at
+ *                 "<selector or data-testid>") - Marver's voice, the owner's pill: what an agent
+ *                 leaves where it needs the human's eyes. Checked against the rendered frame when
+ *                 `dev` runs; it asks (--fyi: it does not). --thread <id> adds it to an open thread.
  * reply <thread>  append a reply (--body) - the agent's voice in the loop: Marver's on a thread
- *                 started here, the owner's on a collaborator's (the voice that reaches them)
+ *                 started here, the owner's on a collaborator's (the voice that reaches them);
+ *                 --ask when the reply asks the human something
+ * move <thread>   re-pin a thread on another element (--on / --at) - its author's only
  * resolve <thread>  mark addressed (--addressed-in <frame> records WHICH variant)
  * invite <email>  mint a single-use invite link (owner only, needs connect first)
  * revoke <email>  revoke an account and its sessions (owner only)
@@ -24,6 +28,8 @@ import { appendEvents, listBoards, readLog, replay, type Thread } from '../serve
 import { connect, connectClaim, connectToken, loadCollab, syncOnce } from '../server/sync.ts'
 import { localProfile } from '../server/profile.ts'
 import { runningAgent } from '../server/jam/agent.ts'
+import { readDevInfo } from '../server/work.ts'
+import { readTarget, uncheckedAnchor, type Anchor, type AnchorCheck, type AnchorTarget } from '../shared/anchor.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -102,31 +108,55 @@ export async function commentsCommand(root: string, action: string, value: strin
       const local = ownerThread(root, t)
       appendEvents(join(root, 'design', 'comments'), t.board, [{
         id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id, board: t.board,
-        ...(local ? marverAuthor(root) : { author: localAuthor(root) }), body: plainDashes(String(opts.body)),
+        ...(local ? marverAuthor(root) : { author: localAuthor(root) }), body: plainDashes(String(opts.body)), asks: !!opts.ask,
       }])
       if (!local) await pushIfConnected(root)
       return void console.log(local ? `  replied to ${t.id} as Marver` : `  replied to ${t.id} in your voice - ${t.author?.name ?? 'its author'} sees it on the published canvas`)
     }
     case 'new': {
-      if (!value || !opts.body) throw new Error('usage: comments new <scene/frame> --body "..." [--on "<text on screen>"] [--board <board>]')
+      if (opts.thread !== undefined) return addToThread(root, String(opts.thread), value, opts)
+      if (!value || !opts.body) throw new Error('usage: comments new <scene/frame> --body "..." --on "<words it shows>" | --at "<selector or data-testid>" [--nth <n>] [--fyi] [--board <board>]')
+      const target = readTarget(opts)
+      if (typeof target === 'string') throw new Error(`a note goes on an element - ${target}`)
       const { resolveLink, devOrigin } = await import('./link.ts')
       const r = resolveLink(root, [value], opts.board)
       if (r.exact.length !== 1) throw new Error(`"${value}" is a folder of frames - pin a note on one frame: comments new <scene/frame>`)
       const frame = r.exact[0]
       const nodeKey = r.nodesOf(r.board).find((n) => n.frame === frame && typeof n.key === 'string')?.key
-      const on = opts.on === undefined ? '' : String(opts.on).replace(/\s+/g, ' ').trim()
+      const open = allThreads(root).filter((t) => !t.resolved && t.frame === frame && !isNoteThread(t))
+      const { anchor, holders } = await pinOn(root, frame, target, opts, open)
       const threadId = randomUUID()
       appendEvents(join(root, 'design', 'comments'), r.board, [{
         id: randomUUID(), ts: Date.now(), type: 'create', commentId: threadId, board: r.board, frame,
-        ...(nodeKey ? { nodeKey } : {}),
-        // an element anchor by its words: the frame finds the element showing them (inspect.js);
-        // the pin sits at its right edge. No --on = a frame-level pin, top right.
-        ...(on ? { anchor: { el: { semantics: { quote: on.slice(0, 120) } }, pos: { fx: 1, fy: 0.5 } } } : {}),
-        ...marverAuthor(root), body: plainDashes(String(opts.body)),
+        ...(nodeKey ? { nodeKey } : {}), anchor,
+        ...marverAuthor(root), body: plainDashes(String(opts.body)), asks: !opts.fyi,
       }])
       const origin = await devOrigin(root)
       console.log(`  pinned a note on ${frame} (board ${r.board})${origin ? `: ${origin}#/b/${r.board}?c=${threadId}` : ''}`)
+      // one thread per topic: the note is written, and the next one about this element is a reply
+      for (const t of open.filter((t) => holders.includes(t.id))) {
+        const next = ownerThread(root, t) ? `comments new --thread ${t.id} --body "..."` : `comments reply ${t.id} --body "..."`
+        console.log(`  that element already holds thread ${t.id} (${t.agent ? 'Marver' : t.author?.name ?? 'someone'}: "${(t.body ?? '').slice(0, 60)}") - a follow-up on it is \`${NAME} ${next}\``)
+      }
       return
+    }
+    case 'move': {
+      if (!value) throw new Error('usage: comments move <thread-id> --on "<words it shows>" | --at "<selector or data-testid>" [--nth <n>]')
+      const target = readTarget(opts)
+      if (typeof target === 'string') throw new Error(target)
+      const t = allThreads(root).find((t) => t.id === value)
+      if (!t) throw new Error(`no thread ${value} in design/comments/`)
+      if (!t.frame || isNoteThread(t)) throw new Error(`thread ${value} is not pinned in a frame - move it on the canvas`)
+      // who may move a pin follows the published rule (collab.ts): its author - here, the owner or Marver
+      if (!ownerThread(root, t)) throw new Error(`thread ${value} is ${t.author?.name ?? 'a collaborator'}'s - only its author can move it`)
+      const others = allThreads(root).filter((o) => !o.resolved && o.frame === t.frame && o.id !== t.id && !isNoteThread(o))
+      const { anchor } = await pinOn(root, t.frame, target, opts, others)
+      appendEvents(join(root, 'design', 'comments'), t.board, [{
+        id: randomUUID(), ts: Date.now(), type: 'reanchor', commentId: t.id, board: t.board, anchor,
+        ...(t.agent ? marverAuthor(root) : { author: localAuthor(root) }),
+      }])
+      if (!t.agent) await pushIfConnected(root)
+      return void console.log(`  moved ${t.id} on ${t.frame}`)
     }
     case 'resolve': {
       if (!value) throw new Error('usage: comments resolve <thread-id> [--addressed-in <frame>]')
@@ -165,8 +195,74 @@ export async function commentsCommand(root: string, action: string, value: strin
       return void console.log(`  revoked ${value} - their sessions are dead`)
     }
     default:
-      throw new Error(`unknown action "${action}" - connect | sync | list | new | reply | resolve | invite | revoke`)
+      throw new Error(`unknown action "${action}" - connect | sync | list | new | reply | move | resolve | invite | revoke`)
   }
+}
+
+/** `comments new --thread <id>`: one thread per topic - a follow-up joins the open thread, as
+ *  Marver, and asks unless --fyi. A collaborator's thread is answered with `comments reply`, which
+ *  keeps its voice and sync rules. */
+const addToThread = (root: string, id: string, frame: string | undefined, opts: any) => {
+  if (!id || !opts.body) throw new Error('usage: comments new --thread <thread-id> --body "..." [--fyi]')
+  if (opts.on !== undefined || opts.at !== undefined) throw new Error(`--thread adds to a thread already pinned - leave out --on/--at (\`${NAME} comments move\` re-pins it)`)
+  const t = allThreads(root).find((t) => t.id === id)
+  if (!t) throw new Error(`no thread ${id} in design/comments/`)
+  if (frame && frame !== t.frame) throw new Error(`thread ${id} is on ${t.frame}, not ${frame}`)
+  if (t.resolved) throw new Error(`thread ${id} is resolved - start a new note on its element instead`)
+  if (!ownerThread(root, t)) throw new Error(`thread ${id} is ${t.author?.name ?? 'a collaborator'}'s - answer it with \`${NAME} comments reply ${id} --body "..."\``)
+  appendEvents(join(root, 'design', 'comments'), t.board, [{
+    id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id, board: t.board,
+    ...marverAuthor(root), body: plainDashes(String(opts.body)), asks: !opts.fyi,
+  }])
+  console.log(`  added to ${t.id} on ${t.frame} as Marver`)
+}
+
+/** A thread pinned on a sticky note (spec 18), not in the frame document. */
+const isNoteThread = (t: Thread) => !!(t.anchor as { el?: { note?: unknown } } | undefined)?.el?.note
+
+/** The anchor for a target: checked against the rendered frame when `dev` runs (the full element
+ *  bundle, and which open threads already sit on that element), unchecked with a warning when the
+ *  check cannot run, refused only when the frame rendered with no match or several. */
+const pinOn = async (root: string, frame: string, target: AnchorTarget, opts: any, open: Thread[]): Promise<{ anchor: Anchor; holders: string[] }> => {
+  const check = await askDev(root, frame, target, opts, open)
+  if (check.ok) {
+    console.log(`  found it on ${frame} at ${check.viewport}, ${check.theme} theme`)
+    return { anchor: check.anchor, holders: check.holders }
+  }
+  const named = target.on ? `"${target.on}"` : `--at "${target.at}"`
+  if ('refused' in check && check.refused === 'none') {
+    const shows = check.visible.length ? ` It shows:\n${check.visible.map((v) => `    ${v}`).join('\n')}\n ` : ''
+    throw new Error(`no visible element on ${frame} matches ${named} (checked at ${check.viewport}, ${check.theme} theme).${shows} Use words one of them shows (--on), --at for an element without words, or --viewport / --theme if only another one shows it.`)
+  }
+  if ('refused' in check) {
+    const past = target.nth ? ` (--nth ${target.nth} is past them)` : ''
+    throw new Error(`${named} matches ${check.matches.length} visible elements on ${frame}${past}:\n${check.matches.map((m, i) => `    ${i + 1}. ${m}`).join('\n')}\n  add --nth <n> to pick one`)
+  }
+  console.error(`  (not checked - ${check.unchecked}. Pinned as named; if it does not resolve on the canvas it shows in the frame's column, and \`${NAME} comments move\` fixes it)`)
+  // without the frame, the best guess at "already holds a thread": the same words or selector
+  const anchor = uncheckedAnchor(target)
+  const sameKey = (a: unknown) => (a as Anchor | undefined)?.el?.semantics?.quote?.toLowerCase() ?? (a as Anchor | undefined)?.el?.cssPath
+  return { anchor, holders: open.filter((t) => sameKey(t.anchor) === sameKey(anchor)).map((t) => t.id) }
+}
+
+/** Ask the running dev server to find the target in the frame - within 20 s, else unchecked. */
+const askDev = async (root: string, frame: string, target: AnchorTarget, opts: any, open: Thread[]): Promise<AnchorCheck> => {
+  const info = readDevInfo(root)
+  if (!info) return { ok: false, unchecked: `\`${NAME} dev\` is not running` }
+  let res: Response
+  try {
+    res = await fetch(`http://localhost:${info.port}/__mv/api/anchor`, {
+      method: 'POST', headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ frame, ...target, viewport: opts.viewport, theme: opts.theme, others: open.map((t) => ({ key: t.id, anchor: t.anchor })) }),
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch (err) {
+    return { ok: false, unchecked: (err as Error).name === 'TimeoutError' ? 'the check passed its 20 s deadline' : `could not reach \`${NAME} dev\` on port ${info.port}` }
+  }
+  const data = await res.json().catch(() => null) as (AnchorCheck & { error?: string }) | null
+  if (res.status === 400 && data?.error) throw new Error(data.error)
+  if (!res.ok || !data) return { ok: false, unchecked: `the dev server answered ${res.status}` }
+  return data
 }
 
 /** Owner-only account call against the connected canvas, via the device credential. */

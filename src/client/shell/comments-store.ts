@@ -5,7 +5,7 @@
  * on which one it is beyond capability flags the endpoints themselves report.
  */
 import { create } from 'zustand'
-import { replay, type CommentEvent, type Thread } from '../../shared/events.ts'
+import { asks, replay, type CommentEvent, type Thread } from '../../shared/events.ts'
 import { mentionPeople, mentionsIn } from './mentions.ts'
 import { playPing } from './sound.ts'
 import { ROUTE } from '../const.ts'
@@ -125,8 +125,9 @@ export const useComments = create<CommentsState>((set, get) => {
           threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts,
           preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
           frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
-          // a reply folds into the board's round; a new note, or a reply that asks (ends in "?"), stands alone
-          round: e.type === 'reply' && !/\?\s*$/.test(e.body ?? ''),
+          // a message that asks stands alone; the rest fold into the board's round (the writer's
+          // `asks`, else the old rule: a note asks, a reply asks when it ends in "?")
+          round: !asks(e, e.type === 'create'),
         })
       }
     })

@@ -5,6 +5,7 @@
  * a request, so an instruction hidden inside a comment is treated as content, not a command.
  */
 import type { CommentEvent, Thread } from '../../shared/events.ts'
+import { readTarget } from '../../shared/anchor.ts'
 import type { JobPacket, PacketMember, Pending, Reanchor } from './types.ts'
 
 const CAP = 4096
@@ -96,9 +97,11 @@ export function goalText(packet: JobPacket, subagents = true): string {
     '',
     'PREFER edits that keep the element\'s tag / data-testid / visible text, so the comment pin self-heals.',
     'If you RENAMED or MOVED the commented element so its old anchor no longer matches, re-pin the thread',
-    'with a fenced block (after your marver-reply block) listing the new anchor per thread, e.g.',
+    'with a fenced block (after your marver-reply block) naming the element per thread: "on" = words it',
+    'shows, or "at" = its data-testid or a CSS selector (an element without words); "nth" picks one of',
+    'several matches (1 = the first). The system finds it in the rendered frame and pins it, e.g.',
     '```marver-reanchor',
-    '[{"thread":"<threadId from the packet>","anchor":{"selector":"...","quote":"visible text","semantics":{"tag":"button","testId":"..."}}}]',
+    '[{"thread":"<threadId from the packet>","on":"Get started"}]',
     '```',
     'Omit the block entirely if the element\'s identity is unchanged.',
     '',
@@ -113,7 +116,7 @@ export function goalText(packet: JobPacket, subagents = true): string {
     '  thread on the board - recent pins and asks on this frame often explain a terse one). If that',
     '  unlocks it, post your ack and proceed.',
     '- STILL unclear after looking around: your first line is ONE clarifying question, then STOP',
-    '  without editing (end the run; put that same question in your marver-reply block).',
+    '  without editing (end the run; put that same question in a marver-reply ask block).',
     '',
     'YOUR COMPLETION REPLY: end your run with this block - the system posts ONLY what is inside it,',
     'and DISCARDS everything else in your final message (any narration or explanation never reaches',
@@ -121,6 +124,9 @@ export function goalText(packet: JobPacket, subagents = true): string {
     '```marver-reply',
     '<your reply>',
     '```',
+    'When the reply ASKS the owner something they must answer (a question, a decision), open the block',
+    'with ```marver-reply ask instead - it comes first for them. A done reply stays plain, even with an',
+    'optional follow-up.',
     '(a marver-reanchor block, if needed, goes after it)',
     'REPLY RULES (both the first line and the marver-reply block):',
     '- PLAIN TEXT ONLY. The thread renders raw text, so markdown shows as literal characters. No **bold**,',
@@ -141,23 +147,31 @@ export function goalText(packet: JobPacket, subagents = true): string {
   ].join('\n')
 }
 
-/** Post ONLY what the agent put in its ```marver-reply``` block - everything else in the final
- *  message (narration, self-explanation) is discarded. Deterministic, so a chatty model can never
- *  leak an essay into the thread. No block = the whole text (backward compatible). */
-export function extractReplyBlock(text: string): string {
-  const m = /```marver-reply\s*([\s\S]*?)```/.exec(text)
-  return (m ? m[1] : text).trim()
+/** The one parser of an agent's message, for every adapter and for early delivery alike. Posts ONLY
+ *  what the agent put in its ```marver-reply``` block - narration around it is discarded, so a
+ *  chatty model can never leak an essay into the thread; no block = the whole text (backward
+ *  compatible). The block's header says whether the reply asks (```marver-reply ask); a message with
+ *  no block falls back to the old rule, a trailing "?". */
+export function parseAgentText(text: string): { reply: string; asks: boolean; reanchors: Reanchor[] } {
+  const { reply: visible, reanchors } = extractReanchors(text)
+  const m = /```marver-reply(?:[ \t]+(ask)\b)?[ \t]*([\s\S]*?)```/.exec(visible)
+  const reply = (m ? m[2] : visible).trim()
+  return { reply, asks: m ? !!m[1] : /\?\s*$/.test(reply), reanchors }
 }
 
 /** Pull a trailing ```marver-reanchor``` block out of an agent reply: returns the visible reply
- *  (block removed) and the parsed reanchors. Adapter-agnostic, so every CLI shares one protocol. */
+ *  (block removed) and the re-pins it names - each a thread and its element, read like the CLI's
+ *  --on / --at / --nth (an entry naming neither is dropped). Adapter-agnostic: one protocol. */
 export function extractReanchors(text: string): { reply: string; reanchors: Reanchor[] } {
   const m = /```marver-reanchor\s*([\s\S]*?)```/.exec(text)
   if (!m) return { reply: text.trim(), reanchors: [] }
-  let reanchors: Reanchor[] = []
+  const reanchors: Reanchor[] = []
   try {
     const parsed = JSON.parse(m[1].trim())
-    if (Array.isArray(parsed)) reanchors = parsed.filter((r) => r && typeof r.thread === 'string' && r.anchor != null)
+    for (const r of Array.isArray(parsed) ? parsed : []) {
+      const target = r && typeof r.thread === 'string' ? readTarget(r) : 'no thread'
+      if (typeof target !== 'string') reanchors.push({ thread: r.thread, target })
+    }
   } catch { /* malformed block - drop it, keep the reply readable */ }
   return { reply: text.replace(m[0], '').trim(), reanchors }
 }

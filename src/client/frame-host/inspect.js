@@ -19,6 +19,10 @@
 //
 //   shell -> frame : sh:laser · sh:pick · sh:copy-ok · sh:resolve-anchors · sh:highlight-anchor
 //   frame -> shell : sh:frame-down · sh:picked · sh:laser-copy · sh:anchor-rects
+//
+// Anchors (spec 26): only VISIBLE elements ever match, a pin attaches at the end of its element's
+// first rendered line (a person's pin: where they clicked), and `window.__mvAnchorCheck` is the
+// dev server's door - it loads the frame headless and asks which element a CLI target names.
 
 // comment-mode cursor: the pin's teardrop in the comment green, duotone (dark rim,
 // lighter inner) with a white halo ring so it pops on any content; hotspot at the tail
@@ -49,6 +53,160 @@ const DEPTH_HUE = (() => {
   for (let d = 1; d <= 12; d++) r += `body ${'> * '.repeat(d)}{ --mv-hue: ${(d % 6) * 60} }\n`
   return r
 })()
+
+const norm = (t) => (t ?? '').replace(/\s+/g, ' ').trim()
+
+/** Rendered and not hidden: a display:none subtree has no boxes, a visibility:hidden or
+ *  transparent one fails checkVisibility. A hidden duplicate is never an anchor's element. */
+const shown = (el) => el.getClientRects().length > 0 &&
+  (el.checkVisibility?.({ visibilityProperty: true, opacityProperty: true }) ?? true)
+
+const cssPath = (el) => {
+  const seg = []
+  for (let cur = el; cur && cur !== document.body; cur = cur.parentElement) {
+    if (cur.id) { seg.unshift(`#${CSS.escape(cur.id)}`); break }
+    const tag = cur.tagName.toLowerCase()
+    let n = 1
+    for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling)
+      if (sib.tagName === cur.tagName) n++
+    seg.unshift(n > 1 ? `${tag}:nth-of-type(${n})` : tag)
+  }
+  return seg.join(' > ')
+}
+// the element's live depth hue (0..300) - so the shell can tint the pin / composer /
+// thread card in the same colour the element wears in laser, and keep it after a reload
+const hueOf = (el) => {
+  const raw = getComputedStyle(el).getPropertyValue('--mv-hue').trim()   // set by the mode sheet
+  const n = raw === '' ? NaN : Number(raw)
+  return Number.isFinite(n) ? ((n % 360) + 360) % 360 : 210              // fallback: a calm blue
+}
+/** The element half of every anchor - a click's and a checked CLI target's alike (one format). */
+const elBundle = (el) => {
+  const text = norm(el.textContent)
+  return {
+    el: {
+      semantics: {
+        tag: el.tagName.toLowerCase(),
+        role: el.getAttribute('role') ?? undefined,
+        ariaLabel: el.getAttribute('aria-label') ?? undefined,
+        testId: el.getAttribute('data-testid') ?? undefined,
+        quote: text.slice(0, 200) || undefined,
+      },
+      cssPath: cssPath(el),
+      source: el.dataset.mvLoc ?? undefined,
+      hue: hueOf(el),
+    },
+  }
+}
+
+const SKIP = 'script,style,noscript,template'
+/** The visible elements showing these words (case and spacing aside): the innermost element
+ *  holding them - "Pay <b>now</b>" is its paragraph - once per place they appear. */
+const byWords = (words) => {
+  const q = norm(words).slice(0, 80).toLowerCase()
+  if (!q) return []
+  const holds = (el) => !el.matches(SKIP) && norm(el.textContent).toLowerCase().includes(q)
+  const out = []
+  const walk = (el) => {
+    const inner = [...el.children].filter(holds)
+    if (!inner.length) { if (el !== document.body) out.push(el); return }
+    inner.forEach(walk)
+  }
+  if (document.body && holds(document.body)) walk(document.body)
+  return out.filter(shown)
+}
+
+/** Does this element still fit what an anchor says about it? */
+const fits = (el, want) => {
+  if (want.tag && el.tagName.toLowerCase() !== want.tag) return false
+  if (want.role && el.getAttribute('role') !== want.role) return false
+  if (want.ariaLabel && el.getAttribute('aria-label') !== want.ariaLabel) return false
+  if (want.testId && el.getAttribute('data-testid') !== want.testId) return false
+  const text = norm(el.textContent)
+  if (want.quote && !(text.startsWith(want.quote.slice(0, 60)) || text.includes(want.quote.slice(0, 40)))) return false
+  return true
+}
+/** Every visible element an anchor can mean, in document order: by its test id, tag or selector,
+ *  filtered by its semantics - or, for an agent's words-only anchor, the elements showing them. */
+const anchorMatches = (anchor) => {
+  const a = anchor?.el ?? {}
+  const want = a.semantics ?? {}
+  if (want.quote && !want.tag && !a.cssPath) return byWords(want.quote)
+  const tag = typeof want.tag === 'string' && /^[a-z][a-z0-9-]*$/.test(want.tag) ? want.tag : null
+  const pool = want.testId ? `[data-testid="${CSS.escape(want.testId)}"]` : tag && (want.quote || !a.cssPath) ? tag : a.cssPath
+  if (!pool) return []
+  try { return [...document.querySelectorAll(pool)].filter((el) => fits(el, want) && shown(el)) } catch { return [] }
+}
+/** A captured bundle's exact path wins while it still fits; otherwise the `nth` of its matches. */
+const resolveAnchor = (anchor) => {
+  const a = anchor?.el ?? {}
+  if (a.semantics?.tag && a.cssPath) {
+    try {
+      const exact = document.querySelector(a.cssPath)
+      if (exact && fits(exact, a.semantics) && shown(exact)) return exact
+    } catch { /* stale selector */ }
+  }
+  return anchorMatches(anchor)[(a.nth ?? 1) - 1] ?? null
+}
+
+/** Where a pin attaches, in this document's viewport px. A person's pin: the point they clicked.
+ *  Otherwise the end of the element's first rendered line - a text range over its text, so a
+ *  heading, a paragraph and a bold run wrapped over two lines all take their first line's end -
+ *  and for an element with no text, its top-right corner. */
+const attachPoint = (el, anchor) => {
+  const r = el.getBoundingClientRect()
+  const pos = anchor?.pos
+  if (pos && anchor?.el?.cssPath && Number.isFinite(pos.fx) && Number.isFinite(pos.fy))
+    return { x: r.left + pos.fx * r.width, y: r.top + pos.fy * r.height }
+  const range = document.createRange()
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let line = null
+  for (let n = walk.nextNode(), i = 0; n && i < 400; n = walk.nextNode(), i++) {
+    if (!n.data.trim() || n.parentElement?.closest(SKIP)) continue
+    range.selectNodeContents(n)
+    for (const q of range.getClientRects()) {
+      if (!q.width || !q.height) continue
+      if (!line) { line = { top: q.top, bottom: q.bottom, right: q.right }; continue }
+      if ((q.top + q.bottom) / 2 > line.bottom) return { x: line.right, y: (line.top + line.bottom) / 2 }   // the second line
+      line.right = Math.max(line.right, q.right)
+    }
+  }
+  return line ? { x: line.right, y: (line.top + line.bottom) / 2 } : { x: r.right, y: r.top }
+}
+
+/** The headings, labels and buttons a frame shows - what to suggest when words match nothing. */
+const landmarks = () => {
+  const seen = new Set()
+  for (const el of document.querySelectorAll('h1,h2,h3,h4,h5,h6,label,button,[role=button],a,legend,th')) {
+    const t = norm(el.textContent).slice(0, 60)
+    if (t && shown(el)) seen.add(t)
+    if (seen.size >= 30) break
+  }
+  return [...seen]
+}
+const describeEl = (el) => `${el.tagName.toLowerCase()} "${norm(el.textContent).slice(0, 50)}"`
+
+/** The dev server's anchor check (server/anchor-check.ts): which visible element does an agent's
+ *  target name? Refuses only on evidence - none, or several without `nth` - and for the one it
+ *  finds returns the full bundle (exact on the canvas), plus the open threads already on it. */
+const checkTarget = ({ on, at, nth } = {}, others = []) => {
+  let found = []
+  if (on) found = byWords(on)
+  else if (at) {
+    try { if (/^[\w-]+$/.test(at)) found = [...document.querySelectorAll(`[data-testid="${CSS.escape(at)}"]`)].filter(shown) } catch { /* not a test id */ }
+    try { if (!found.length) found = [...document.querySelectorAll(at)].filter(shown) } catch { return { bad: `"${at}" is neither a data-testid nor a CSS selector` } }
+  }
+  if (!found.length) return { none: landmarks() }
+  const el = found.length === 1 && !nth ? found[0] : nth ? found[nth - 1] : null
+  if (!el) return { several: found.slice(0, 20).map(describeEl) }
+  const anchor = elBundle(el)
+  // the fallback scan (a stale path) must land on this one of several look-alikes too
+  const i = anchorMatches({ el: { ...anchor.el, cssPath: undefined } }).indexOf(el)
+  if (i > 0) anchor.el.nth = i + 1
+  const holders = others.filter((o) => { try { return resolveAnchor(o.anchor) === el } catch { return false } }).map((o) => o.key)
+  return { anchor, holders }
+}
+if (typeof window !== 'undefined') window.__mvAnchorCheck = checkTarget
 
 export function createInspect({ post, getId, onModeChange }) {
   let laserOn = false, pickOn = false
@@ -200,41 +358,10 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     place(labelEl, e)
   }, true)
 
-  const cssPath = (el) => {
-    const seg = []
-    for (let cur = el; cur && cur !== document.body; cur = cur.parentElement) {
-      if (cur.id) { seg.unshift(`#${CSS.escape(cur.id)}`); break }
-      const tag = cur.tagName.toLowerCase()
-      let n = 1
-      for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling)
-        if (sib.tagName === cur.tagName) n++
-      seg.unshift(n > 1 ? `${tag}:nth-of-type(${n})` : tag)
-    }
-    return seg.join(' > ')
-  }
-  // the element's live depth hue (0..300) - so the shell can tint the pin / composer /
-  // thread card in the same colour the element wears in laser, and keep it after a reload
-  const hueOf = (el) => {
-    const raw = getComputedStyle(el).getPropertyValue('--mv-hue').trim()   // set by the mode sheet
-    const n = raw === '' ? NaN : Number(raw)
-    return Number.isFinite(n) ? ((n % 360) + 360) % 360 : 210              // fallback: a calm blue
-  }
   const anchorBundle = (el, e) => {
     const r = el.getBoundingClientRect()
-    const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ')
     return {
-      el: {
-        semantics: {
-          tag: el.tagName.toLowerCase(),
-          role: el.getAttribute('role') ?? undefined,
-          ariaLabel: el.getAttribute('aria-label') ?? undefined,
-          testId: el.getAttribute('data-testid') ?? undefined,
-          quote: text.slice(0, 200) || undefined,
-        },
-        cssPath: cssPath(el),
-        source: el.dataset.mvLoc ?? undefined,
-        hue: hueOf(el),
-      },
+      ...elBundle(el),
       pos: {
         fx: r.width ? Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) : .5,
         fy: r.height ? Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) : .5,
@@ -265,57 +392,6 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
       post({ type: 'sh:laser-copy', id: getId(), seq: ++copySeq, path: cssPath(el), source: el.dataset.mvLoc ?? null })
     }
   }, true)
-
-  const resolveAnchor = (anchor) => {
-    const want = anchor?.el?.semantics ?? {}
-    const match = (el) => {
-      if (want.tag && el.tagName.toLowerCase() !== want.tag) return false
-      if (want.role && el.getAttribute('role') !== want.role) return false
-      if (want.ariaLabel && el.getAttribute('aria-label') !== want.ariaLabel) return false
-      if (want.testId && el.getAttribute('data-testid') !== want.testId) return false
-      const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ')
-      if (want.quote && !(text.startsWith(want.quote.slice(0, 60)) || text.includes(want.quote.slice(0, 40)))) return false
-      return true
-    }
-    try {
-      const byPath = anchor?.el?.cssPath && document.querySelector(anchor.el.cssPath)
-      if (byPath && match(byPath)) return byPath
-    } catch { /* stale selector */ }
-    try {
-      if (want.testId) {
-        const el = document.querySelector(`[data-testid="${CSS.escape(want.testId)}"]`)
-        if (el && match(el)) return el
-      }
-      if (want.quote && typeof want.tag === 'string' && /^[a-z][a-z0-9-]*$/.test(want.tag)) {
-        for (const el of document.querySelectorAll(want.tag))
-          if (match(el)) return el
-      }
-      // an anchor an agent wrote (`comments new --on "<text>"`) names the words alone: the
-      // innermost element showing them
-      if (want.quote && !want.tag && !anchor?.el?.cssPath) return byWords(want.quote)
-    } catch { /* malformed semantics must not sink the whole batch */ }
-    return null
-  }
-
-  const norm = (t) => (t ?? '').replace(/\s+/g, ' ').trim()
-  const byWords = (quote) => {
-    const q = norm(quote).slice(0, 80).toLowerCase()
-    if (!q) return null
-    // one text node holding the words: its element (the common case, and cheap)
-    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-      const host = n.parentElement
-      if (!host || host.closest('script,style,noscript,template')) continue
-      if (norm(n.data).toLowerCase().includes(q)) return host
-    }
-    // words split across inline elements ("Pay <b>now</b>"): walk down from the body to the
-    // innermost element whose text still holds them (the first occurrence)
-    const holds = (el) => !el.matches('script,style,noscript,template') && norm(el.textContent).toLowerCase().includes(q)
-    let el = document.body
-    if (!holds(el)) return null
-    for (let next = [...el.children].find(holds); next; next = [...el.children].find(holds)) el = next
-    return el
-  }
 
   // re-resolve + re-apply the shell-driven highlight. Called on set and on every
   // resolve-anchors pass, so a stage frame swapped in AFTER the highlight arrived
@@ -359,7 +435,7 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
         try { el = resolveAnchor(a.anchor) } catch { /* one bad anchor, not the batch */ }
         if (!el) return { key: a.key, orphan: true }
         const r = el.getBoundingClientRect()
-        return { key: a.key, rect: { x: r.left, y: r.top, w: r.width, h: r.height } }
+        return { key: a.key, rect: { x: r.left, y: r.top, w: r.width, h: r.height }, point: attachPoint(el, a.anchor) }
       })
       reapplyHighlight()
       post({ type: 'sh:anchor-rects', id: getId(), rects })

@@ -14,7 +14,7 @@
  * opencode's stream names NO model in any event (verified against its schema) - so replies
  * carry the harness without a model, same honest gap as codex. Never faked.
  */
-import { extractReanchors, extractReplyBlock } from '../packet.ts'
+import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 const textPart = (o: Record<string, any>): string | undefined =>
@@ -57,8 +57,7 @@ export const opencodeAdapter: JamAdapter = {
       } catch { /* non-JSON line (banner) - skip */ }
     }
     // NO fallback to raw stdout: a status-only or error stream must not become a bogus reply.
-    const { reply: visible, reanchors } = extractReanchors(parts.join('\n\n'))
-    const reply = extractReplyBlock(visible)
-    return { reply, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors } = parseAgentText(parts.join('\n\n'))
+    return { reply, asks, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

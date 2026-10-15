@@ -713,6 +713,32 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         }
       }
 
+      // ---- anchor: which visible element of a frame does an agent's --on / --at name (spec 26)?
+      // The CLI asks before it pins a note; the frame renders headless, no screenshot. Same gate as
+      // `shot` (it spawns a browser). 400 for a request it cannot start on; otherwise 200 and the
+      // answer says found, refused (none, several) or unchecked.
+      if (path === 'anchor' && req.method === 'POST') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const { readTarget } = await import('../shared/anchor.ts')
+        const target = readTarget(b ?? {})
+        if (typeof target === 'string') return json(res, 400, { error: target })
+        const others = Array.isArray(b.others) ? b.others.filter((o: any) => typeof o?.key === 'string').slice(0, 200) : []
+        const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
+        const { checkAnchor, CheckInputError } = await import('./anchor-check.ts')
+        try {
+          return json(res, 200, await checkAnchor({ root, viewports: opts.viewports ?? {}, origin, frameId: String(b.frame ?? ''), target, others,
+            viewport: typeof b.viewport === 'string' ? b.viewport : undefined, theme: typeof b.theme === 'string' ? b.theme : undefined }))
+        } catch (err) {
+          if (err instanceof CheckInputError) return json(res, 400, { error: err.message })
+          throw err
+        }
+      }
+
       // ---- bakes: compile frames so they can SLEEP on the canvas (spec 16) - the textures that replace
       // their backdrop-filters, computed and certified by headless Chrome at each node's own width/theme.
       // Many frames, one browser; the disk cache first. Owner-gated like shot (spawns a browser).

@@ -35,6 +35,9 @@ export interface CommentEvent {
   mentions?: Mention[]            // create/reply only - people named in the body (v1.1)
   emoji?: string                  // react events
   addressedIn?: string            // resolve events: the variant frame that answered
+  /** create/reply (and an edit of one): does this message ask the human something (spec 26)?
+   *  Absent = written before 0.25, read by `asks()` with the old rule. */
+  asks?: boolean
   // --- Live Jam additions ---
   agent?: boolean                 // true = written by the Marver agent (never trusted for execution; render + guard only)
   agentMeta?: AgentMeta           // provenance for the Marver avatar tooltip (agent events only)
@@ -53,9 +56,16 @@ export interface Thread {
   agent?: boolean                 // root authored by the agent
   agentMeta?: AgentMeta
   mentions?: Mention[]
-  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[] }[]
+  asks?: boolean
+  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[]; asks?: boolean }[]
   reactions: Record<string, string[]>   // emoji -> author emails (toggle semantics)
 }
+
+/** Does this message ask the human something? The writer says so (`asks`); a message written
+ *  before 0.25 says nothing, and the old rule reads it: a note asks, a reply asks when it ends
+ *  in "?". `note` = the thread's root (a create event). */
+export const asks = (m: { asks?: boolean; body?: string }, note: boolean): boolean =>
+  m.asks ?? (note || /\?\s*$/.test(m.body ?? ''))
 
 /** Events the other side lacks, by id - the sync payload in either direction. */
 export function diffEvents(mine: CommentEvent[], theirIds: Iterable<string>): CommentEvent[] {
@@ -76,7 +86,7 @@ export function replay(events: CommentEvent[]): Thread[] {
     threads.set(ev.commentId, {
       id: ev.commentId, board: ev.board, nodeKey: ev.nodeKey, frame: ev.frame,
       anchor: ev.anchor, author: ev.author, body: ev.body, ts: ev.ts,
-      resolved: false, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, replies: [], reactions: {},
+      resolved: false, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, asks: ev.asks, replies: [], reactions: {},
     })
   }
   for (const ev of ordered) {
@@ -84,17 +94,16 @@ export function replay(events: CommentEvent[]): Thread[] {
       case 'reply': {
         const t = ev.parentId ? threads.get(ev.parentId) : undefined
         if (!t || !ev.commentId || t.replies.some((r) => r.id === ev.commentId)) break
-        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions })
+        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, asks: ev.asks })
         break
       }
       case 'edit': {
-        if (!ev.commentId || ev.body === undefined) break
-        const t = threads.get(ev.commentId)
-        if (t) { t.body = ev.body; break }
-        for (const th of threads.values()) {
-          const r = th.replies.find((r) => r.id === ev.commentId)
-          if (r) { r.body = ev.body; break }
-        }
+        // an edit changes the words, the `asks` flag, or both - and keeps whichever it leaves out
+        if (!ev.commentId || (ev.body === undefined && ev.asks === undefined)) break
+        const m = threads.get(ev.commentId) ?? [...threads.values()].flatMap((th) => th.replies).find((r) => r.id === ev.commentId)
+        if (!m) break
+        if (ev.body !== undefined) m.body = ev.body
+        if (ev.asks !== undefined) m.asks = ev.asks
         break
       }
       case 'resolve': {

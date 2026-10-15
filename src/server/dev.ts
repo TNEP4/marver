@@ -345,8 +345,11 @@ export async function dev(root: string, portFlag?: number) {
   // Live Jam: the dev server IS the daemon. On by default - a resolved jam block means armed.
   if (config.jam) {
     const { startJam } = await import('./jam/daemon.ts')
+    const { checkAnchor } = await import('./anchor-check.ts')
     const jam = startJam(root, config.jam, (m) => console.log(m),
-      (board) => server.ws.send('sh:jam-comment', { board } as any))   // reply landed - fetch now, don't wait the 30s poll
+      (board) => server.ws.send('sh:jam-comment', { board } as any),   // reply landed - fetch now, don't wait the 30s poll
+      // a re-pin is found in the rendered frame, as `comments move` finds it
+      (frameId, target, others) => checkAnchor({ root, viewports: config.viewports, origin: `http://localhost:${port}`, frameId, target, others }))
     if (jam) {
       const close = server.close.bind(server)
       server.close = (async () => { jam.stop(); return close() }) as typeof server.close
