@@ -1208,6 +1208,9 @@ export const useStore = create<State>((set, get) => {
             n.h = vp?.height ?? d.h
           }
           if (arrived) { delete n.sizeFallback; n.readyRetried = false }   // a fresh mount earns a fresh allowance
+          // gone or back, the node has no document: an update waiting for the old one is void, and the
+          // next document boots fresh through admission (a reload job must never stand in for it)
+          delete n.stale; delete n.shown
           n.missing = missing
           changed = true
         }

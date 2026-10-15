@@ -353,19 +353,24 @@ describe('calm loading', () => {
     expect(heights()['docs/b@760']).toBe(H)
   }, 90_000)
 
-  it('a later provisional report is followed by a settled one, even when finishing changes no geometry', async () => {
+  it('an edit off screen waits for the frame to come into view; then a provisional report is followed by a settled one, even when finishing changes no geometry', async () => {
     if (!browser) return
     await closeAll()
     const s = await open('#/b/far?n=k-near')
     await browser.until(s, `window.__measures.some((m) => m.frame === 'lazy/far' && m.settled)`, 30_000)
     // an edit brings a lazy image with its size already given: off-screen it does not load - and when
     // it does, nothing moves, so only the Doc's own check can say it is done
+    const n0: number = await browser.eval(s, `window.__measures.filter((m) => m.frame === 'lazy/far').length`)
     writeFileSync(join(root, 'design', 'scenes', 'lazy', 'far.tsx'), doc(1, `    <img src="/design/assets/sq.png" width={200} height={400} loading="lazy" alt="" />`))
-    const prov = await browser.until(s, `(() => { const ms = window.__measures.filter((m) => m.frame === 'lazy/far'); const i = ms.findIndex((m, j) => j > 0 && !m.settled); return i > 0 && { i, h: ms[i].h } })()`, 30_000)
-    await browser.eval(s, `location.hash = '#/b/far?n=k-far'`)             // bring it into view: the image loads
-    const done = await browser.until(s, `(() => { const ms = window.__measures.filter((m) => m.frame === 'lazy/far'); return ms.slice(${prov.i} + 1).find((m) => m.settled) })()`, 30_000)
-    expect(done.h).toBe(prov.h)
-    await until(() => heights()['lazy/far@760'] === prov.h)
+    // off screen, the edit waits for the frame to come into view (spec 26): no reload, no report
+    await browser.until(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-far')?.stale === true`, 30_000)
+    await wait(1000)
+    expect(await browser.eval(s, `window.__measures.filter((m) => m.frame === 'lazy/far').length`)).toBe(n0)
+    await browser.eval(s, `location.hash = '#/b/far?n=k-far'`)             // bring it into view: it reloads, the image loads
+    const done = await browser.until(s, `window.__measures.filter((m) => m.frame === 'lazy/far').slice(${n0}).find((m) => m.settled)`, 30_000)
+    const prov: { h: number }[] = await browser.eval(s, `window.__measures.filter((m) => m.frame === 'lazy/far').slice(${n0}).filter((m) => !m.settled)`)
+    for (const p of prov) expect(p.h).toBe(done.h)                       // finishing changed no geometry
+    await until(() => heights()['lazy/far@760'] === done.h)
   }, 90_000)
 
   // the board file, as the next tests stage it

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { frameMark, isNew, nextToLook, questions, rollup, type Marks } from '../src/shared/marks.ts'
-import { markSeen, readMarks, readSeen, recordChanged } from '../src/server/marks.ts'
+import { asksOf, frameMark, isNew, nextToLook, questions, rollup, type Marks } from '../src/shared/marks.ts'
+import { initMarks, markSeen, observe, projectMarks, readMarks, recordChanged, resetMarksMemory } from '../src/server/marks.ts'
 import { scanFrames } from '../src/server/manifest.ts'
 import type { Thread } from '../src/shared/events.ts'
 
@@ -12,14 +12,22 @@ const T = (id: string, frame: string, agentLast: boolean, extra: Partial<Thread>
   replies: agentLast ? [] : [{ id: `${id}-r`, ts: 2, body: 'my answer' }], ...extra,
 })
 
-describe('sidebar marks: the rules (spec 25)', () => {
-  const m: Marks = { changed: { a: 200, b: 50, c: 300, d: 300 }, seen: { c: 400 }, baseline: 100, boards: {} }
+describe('sidebar marks: the rules (spec 25, revisions since spec 26)', () => {
+  const m: Marks = { epoch: 'e', changed: { a: 2, c: 3, d: 3 }, doc: { a: 2, c: 3, d: 3 }, seen: { c: 4 }, boards: {} }
 
-  it('new = changed after both the baseline and your last look', () => {
-    expect(isNew(m, 'a')).toBe(true)      // after the baseline, never seen
-    expect(isNew(m, 'b')).toBe(false)     // before the baseline: already there the day marks arrived
-    expect(isNew(m, 'c')).toBe(false)     // seen after it changed
+  it('new = changed after the revision you last saw', () => {
+    expect(isNew(m, 'a')).toBe(true)      // changed, never seen
+    expect(isNew(m, 'b')).toBe(false)     // never changed since the marks started
+    expect(isNew(m, 'c')).toBe(false)     // seen at or after its change
     expect(isNew(null, 'a')).toBe(false)  // a published canvas has no marks
+  })
+
+  it('a word asks when the agent says so; before 0.25, a note asks and a reply asks when it ends in "?"', () => {
+    expect(asksOf({ body: 'Done.' }, true)).toBe(true)                        // a legacy note
+    expect(asksOf({ body: 'Done - tightened.' }, false)).toBe(false)          // a legacy reply that reports
+    expect(asksOf({ body: 'Which one?' }, false)).toBe(true)                  // a legacy reply that asks
+    expect(asksOf({ body: 'Which one?', asks: false } as { body: string }, false)).toBe(false)   // the flag wins
+    expect(asksOf({ body: 'FYI', asks: true } as { body: string }, false)).toBe(true)
   })
 
   it("a question's state is read from its thread: Marver's word last needs you; yours last, answered", () => {
@@ -31,10 +39,10 @@ describe('sidebar marks: the rules (spec 25)', () => {
       T('t5', 'd', true, { agent: false, replies: [] }),                     // a person's thread, no Marver: not a question
       T('t6', 'd', true, { agent: false, replies: [{ id: 'x', ts: 3, agent: true }] }),   // Marver's follow-up in it: needs you
     ])
-    expect(q.get('a')).toEqual({ ask: 2, answered: 0 })
-    expect(q.get('b')).toEqual({ ask: 0, answered: 1 })
+    expect(q.get('a')).toEqual({ ask: 2, asking: 2, answered: 0 })              // notes ask
+    expect(q.get('b')).toEqual({ ask: 0, asking: 0, answered: 1 })
     expect(q.has('c')).toBe(false)
-    expect(q.get('d')).toEqual({ ask: 1, answered: 0 })
+    expect(q.get('d')).toEqual({ ask: 1, asking: 0, answered: 0 })              // a reply with no "?": waiting, not asking
   })
 
   it('one slot: a question outranks answered, answered outranks new', () => {
@@ -50,95 +58,186 @@ describe('sidebar marks: the rules (spec 25)', () => {
     expect(rollup(m, q, ['a', 'b', 'c', 'd', 'a'])).toEqual({ asks: 1, fresh: 2 })
   })
 
+  it('U: a frame that asks first, then one waiting on you, then a new one (D2)', () => {
+    const q = questions([
+      T('t1', 'b', true, { agent: false, replies: [{ id: 'x', ts: 3, agent: true, body: 'Done - tightened.' }] }),   // waiting, reports
+      T('t2', 'c', true, { agent: false, replies: [{ id: 'y', ts: 3, agent: true, body: 'Which of the two?' }] }),   // asks
+    ])
+    expect(nextToLook(m, q, ['a', 'b', 'c', 'd'], null)).toBe('c')            // the asking one, though b comes first
+    expect(nextToLook(m, questions([q && T('t1', 'b', true, { agent: false, replies: [{ id: 'x', ts: 3, agent: true, body: 'Done.' }] })]), ['a', 'b', 'c', 'd'], null)).toBe('b')
+  })
+
   it('U: the next frame that needs you, else the next new one, after the current one, wrapping', () => {
     const q = questions([T('t1', 'd', true)])
     const order = ['a', 'b', 'c', 'd']
     expect(nextToLook(m, q, order, null)).toBe('d')                        // a question first
     expect(nextToLook(m, new Map(), order, 'a')).toBe('d')                  // after a: d is new
     expect(nextToLook(m, new Map(), order, 'd')).toBe('a')                  // wraps
-    expect(nextToLook({ ...m, seen: { a: 999, c: 999, d: 999 } }, new Map(), order, null)).toBe(null)
+    expect(nextToLook({ ...m, seen: { a: 9, c: 9, d: 9 } }, new Map(), order, null)).toBe(null)
     expect(nextToLook(m, questions([T('t2', 'a', false)]), order, null)).toBe('d')   // a is new but answered: U skips it
   })
 })
 
-describe('sidebar marks: the dev server (spec 25)', () => {
+describe('sidebar marks: the dev server (spec 26 - revisions, the clock at boot, what each frame reads)', () => {
   let root = ''
-  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
+  afterEach(() => { resetMarksMemory(); if (root) { try { chmodSync(join(root, 'design', '.local'), 0o755) } catch { /* not there */ } rmSync(root, { recursive: true, force: true }) } })
   const mk = (p: string, c = 'export default () => null\n') => { mkdirSync(join(root, p, '..'), { recursive: true }); writeFileSync(join(root, p), c) }
-  const at = (p: string, ms: number) => utimesSync(join(root, p), ms / 1000, ms / 1000)
+  const touch = (p: string, c?: string) => { const f = join(root, p); writeFileSync(f, c ?? readFileSync(f, 'utf8') + '\n'); const t = Date.now() / 1000 + 5; utimesSync(f, t, t) }
+  const frames = () => scanFrames(root).frames
+  const marks = () => readMarks(root, scanFrames(root))!
+  const fresh = (m: Marks) => Object.keys(m.changed).filter((id) => isNew(m, id)).sort()
+  const boot = () => { resetMarksMemory(root); initMarks(root, frames()) }   // a dev server start
+  const local = (f: string) => JSON.parse(readFileSync(join(root, 'design', '.local', f), 'utf8'))
 
-  it('the first read sets the baseline: everything already there counts as seen', () => {
+  const canvas = () => {
     root = mkdtempSync(join(tmpdir(), 'mv-marks-'))
-    const before = Date.now()
-    const s = readSeen(root)
-    expect(s.baseline).toBeGreaterThanOrEqual(before)
-    expect(readSeen(root).baseline).toBe(s.baseline)                       // read again: the same line
+    mk('design/scenes/s/_kit.tsx', 'export const Kit = () => null\n')
+    mk('design/scenes/s/a.tsx', "import { Kit } from './_kit.tsx'\nexport default () => null\n")
+    mk('design/scenes/s/b.tsx', "import { Kit } from './_kit'\nimport text from '../../../specs/s.md?raw'\nexport default () => null\n")
+    mk('design/scenes/t/c.tsx')
+    mk('specs/s.md', '# spec')
+  }
+
+  it('the clock starts with marver dev: the state exists before any page asks, and nothing is new', () => {
+    canvas()
+    boot()
+    for (const f of ['changes.json', 'seen.json', 'deps.json']) expect(existsSync(join(root, 'design', '.local', f))).toBe(true)
+    expect(fresh(marks())).toEqual([])
   })
 
-  it("changed = the latest of the frame's file, its sticky note, and work done; seen is the stamp you saw", async () => {
-    root = mkdtempSync(join(tmpdir(), 'mv-marks-'))
-    mk('design/scenes/s/a.tsx'); mk('design/scenes/s/a.note.md', 'a note'); mk('design/scenes/s/b.tsx')
+  it('an agent working before anyone opens the page: an added frame (old mtime too) and an edit are new', () => {
+    canvas()
+    boot()
+    mk('design/scenes/t/old.tsx'); utimesSync(join(root, 'design/scenes/t/old.tsx'), 1_000, 1_000)
+    touch('design/scenes/t/c.tsx')
+    observe(root, frames())                                                   // what the watcher does
+    expect(fresh(marks())).toEqual(['t/c', 't/old'])
+  })
+
+  it('a shared file lights every frame that reads it - a kit, a spec read with ?raw - and only those', () => {
+    canvas()
+    boot()
+    touch('design/scenes/s/_kit.tsx')
+    expect(observe(root, frames()).doc.sort()).toEqual(['s/a', 's/b'])
+    touch('specs/s.md')
+    expect(observe(root, frames()).doc).toEqual(['s/b'])
+    expect(fresh(marks())).toEqual(['s/a', 's/b'])
+  })
+
+  it('a sticky note or work done changes the frame without a new document', () => {
+    canvas()
+    boot()
+    mk('design/scenes/s/a.note.md', 'a note')
+    expect(observe(root, frames())).toEqual({ doc: [], note: ['s/a'] })
+    recordChanged(root, frames(), ['t/c'], { doc: false })
+    const m = marks()
+    expect(fresh(m)).toEqual(['s/a', 't/c'])
+    expect(m.doc['s/a'] ?? 0).toBe(0)
+    expect(m.doc['t/c'] ?? 0).toBe(0)
+  })
+
+  it('app code a frame imports (an embedded app) changes it without a new document - Fast Refresh shows it', () => {
+    canvas()
+    mk('src/Button.tsx', 'export const Button = () => null\n')
+    mk('design/scenes/t/c.tsx', "import { Button } from '../../../src/Button.tsx'\nexport default () => null\n")
+    boot()
+    touch('src/Button.tsx')
+    expect(observe(root, frames())).toEqual({ doc: [], note: ['t/c'] })
+  })
+
+  it('seen: the revision you saw - never lowered, never past the last, refused from another epoch', () => {
+    canvas()
+    boot()
+    touch('design/scenes/t/c.tsx'); observe(root, frames())
+    const m = marks()
+    expect(markSeen(root, frames(), 'not-the-epoch', { 't/c': m.changed['t/c'] })).toBe(false)
+    expect(isNew(marks(), 't/c')).toBe(true)
+    expect(markSeen(root, frames(), m.epoch, { 't/c': 999, 'gone/x': 1 })).toBe(true)
+    expect(local('seen.json').frames).toEqual({ 't/c': m.changed['t/c'] })   // capped to the last revision; unknown ids dropped
+    markSeen(root, frames(), m.epoch, { 't/c': 0 })                           // an older acknowledgement never lowers it
+    expect(isNew(marks(), 't/c')).toBe(false)
+    touch('design/scenes/t/c.tsx'); observe(root, frames())
+    expect(isNew(marks(), 't/c')).toBe(true)                                  // a change after you looked: new again
+  })
+
+  it('dev off: a kit edited and a layout removed are new on the next start; reviewed, a plain restart keeps them clear', () => {
+    canvas()
+    mk('design/scenes/t/_layout.tsx', 'export default ({ children }: any) => children\n')
+    boot()
+    touch('design/scenes/s/_kit.tsx')
+    rmSync(join(root, 'design/scenes/t/_layout.tsx'))
+    boot()
+    const m = marks()
+    expect(fresh(m)).toEqual(['s/a', 's/b', 't/c'])
+    markSeen(root, frames(), m.epoch, m.changed)
+    boot()
+    expect(fresh(marks())).toEqual([])
+  })
+
+  it('a frame renamed (its old mtime kept) is new; a deleted frame leaves nothing behind', () => {
+    canvas()
+    boot()
+    rmSync(join(root, 'design/scenes/t/c.tsx'))
+    mk('design/scenes/t/renamed.tsx'); utimesSync(join(root, 'design/scenes/t/renamed.tsx'), 1_000, 1_000)
+    observe(root, frames())
+    const m = marks()
+    expect(fresh(m)).toEqual(['t/renamed'])
+    expect(m.changed['t/c']).toBeUndefined()
+    expect(Object.keys(local('changes.json').frames)).toEqual(['t/renamed'])
+  })
+
+  it('a 0.24 state converts once: what was new stays new (acknowledged by any look), the rest starts seen', () => {
+    canvas()
+    for (const p of ['design/scenes/s/a.tsx', 'design/scenes/s/b.tsx', 'design/scenes/t/c.tsx']) utimesSync(join(root, p), 500, 500)   // before the old baseline
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    writeFileSync(join(root, 'design/.local/seen.json'), JSON.stringify({ version: 1, baseline: 1_000_000, ids: ['s/a', 's/b', 't/c'], frames: { 's/b': 3_000_000 } }))
+    writeFileSync(join(root, 'design/.local/changes.json'), JSON.stringify({ version: 1, frames: { 's/b': 2_500_000, 't/c': 5_000_000 } }))
+    boot()
+    const m = marks()
+    expect(fresh(m)).toEqual(['t/c'])                                          // work done after the look; s/b was seen since
+    expect(m.doc['t/c'] ?? 0).toBe(0)
+    expect(local('seen.json').version).toBe(2)
+  })
+
+  it('an invalid state starts over (all seen, a new epoch); a state the disk refuses turns marks off and resets nothing', () => {
+    canvas()
+    boot()
+    const epoch = marks().epoch
+    for (const bad of ['{not json', JSON.stringify({ version: 2, epoch, rev: 1e309, frames: {} }), JSON.stringify({ version: 2, epoch, rev: 3, frames: { 's/a': 'x' } })]) {
+      writeFileSync(join(root, 'design/.local/changes.json'), bad)
+      boot()
+      expect(marks().epoch).not.toBe(epoch)
+      expect(fresh(marks())).toEqual([])
+    }
+    if (process.getuid?.() === 0) return                                       // root reads anything
+    const before = readFileSync(join(root, 'design/.local/changes.json'), 'utf8')
+    chmodSync(join(root, 'design/.local/changes.json'), 0o000)
+    boot()
+    expect(readMarks(root, scanFrames(root))).toBe(null)
+    chmodSync(join(root, 'design/.local/changes.json'), 0o644)
+    expect(readFileSync(join(root, 'design/.local/changes.json'), 'utf8')).toBe(before)
+  })
+
+  it('the read-only view (marver marks) writes nothing: null before the first start, and dev-off changes included', () => {
+    canvas()
+    expect(projectMarks(root, scanFrames(root))).toBe(null)
+    expect(existsSync(join(root, 'design', '.local'))).toBe(false)
+    boot()
+    resetMarksMemory(root)                                                     // dev stopped
+    const t0 = statSync(join(root, 'design/.local/changes.json')).mtimeMs
+    touch('design/scenes/s/_kit.tsx')
+    const p = projectMarks(root, scanFrames(root))!
+    expect(fresh(p)).toEqual(['s/a', 's/b'])
+    expect(statSync(join(root, 'design/.local/changes.json')).mtimeMs).toBe(t0)
+  })
+
+  it('boards roll up over their live frames; an auto board holds every frame', () => {
+    canvas()
     mk('design/boards/b1.json', JSON.stringify({ version: 1, name: 'b1', nodes: [{ frame: 's/a' }, { frame: 'gone/x' }] }))
     mk('design/boards/auto.json', JSON.stringify({ version: 1, name: 'auto', auto: true, nodes: [] }))
-    at('design/scenes/s/a.tsx', 1_000_000); at('design/scenes/s/a.note.md', 2_000_000); at('design/scenes/s/b.tsx', 1_000_000)
-    const manifest = scanFrames(root)
-    const known = new Set(manifest.frames.map((f) => f.id))
-    let m = readMarks(root, manifest)
-    expect(m.changed['s/a']).toBe(2_000_000)                                // the note is newer than the frame
-    expect(m.changed['s/b']).toBe(1_000_000)
-    expect(m.boards.b1).toEqual(['s/a'])                                    // a pinned frame that no longer exists is dropped
-    expect(m.boards.auto.sort()).toEqual(['s/a', 's/b'])                    // an auto board holds every frame
-    expect(m.boards['all-scenes'].sort()).toEqual(['s/a', 's/b'])
-    await new Promise((r) => setTimeout(r, 5))                              // the baseline was set a moment ago
-    recordChanged(root, ['s/b'])                                            // an agent named it in work done
-    m = readMarks(root, manifest)
-    const stamp = m.changed['s/b']
-    expect(stamp).toBeGreaterThan(2_000_000)
-    expect(isNew(m, 's/b')).toBe(true)
-    markSeen(root, { 's/b': stamp, 'gone/frame': 5 }, known)               // you saw that change
-    m = readMarks(root, manifest)
-    expect(isNew(m, 's/b')).toBe(false)
-    expect(Object.keys(JSON.parse(readFileSync(join(root, 'design', '.local', 'seen.json'), 'utf8')).frames)).toEqual(['s/b'])   // unknown ids dropped
-    markSeen(root, { 's/b': 1 }, known)                                     // an older acknowledgement never lowers it
-    expect(isNew(readMarks(root, manifest), 's/b')).toBe(false)
-    await new Promise((r) => setTimeout(r, 5))
-    recordChanged(root, ['s/b'])                                            // a change after you looked: new again
-    expect(isNew(readMarks(root, manifest), 's/b')).toBe(true)
-  })
-
-  it('an empty canvas is still a started one: a frame moved in later, with an old mtime, counts as new', async () => {
-    root = mkdtempSync(join(tmpdir(), 'mv-marks-'))
-    mkdirSync(join(root, 'design', 'scenes'), { recursive: true })
-    readMarks(root, scanFrames(root))                                       // marks start on an empty canvas
-    await new Promise((r) => setTimeout(r, 5))
-    mk('design/scenes/s/old.tsx'); at('design/scenes/s/old.tsx', 1_000_000)
-    expect(isNew(readMarks(root, scanFrames(root)), 's/old')).toBe(true)
-  })
-
-  it('a sticky note deleted while dev was off is a change; a deleted frame leaves nothing behind', async () => {
-    root = mkdtempSync(join(tmpdir(), 'mv-marks-'))
-    mk('design/scenes/s/a.tsx'); mk('design/scenes/s/a.note.md', 'note'); mk('design/scenes/s/b.tsx')
-    for (const p of ['design/scenes/s/a.tsx', 'design/scenes/s/a.note.md', 'design/scenes/s/b.tsx']) at(p, 1_000_000)
-    let m = readMarks(root, scanFrames(root))
-    markSeen(root, { 's/a': m.changed['s/a'], 's/b': m.changed['s/b'] }, new Set(['s/a', 's/b']))
-    await new Promise((r) => setTimeout(r, 5))
-    rmSync(join(root, 'design/scenes/s/a.note.md'))                         // a git pull while dev was off
-    rmSync(join(root, 'design/scenes/s/b.tsx'))
-    m = readMarks(root, scanFrames(root))
-    expect(isNew(m, 's/a')).toBe(true)
-    const seenFile = JSON.parse(readFileSync(join(root, 'design', '.local', 'seen.json'), 'utf8'))
-    expect(Object.keys(seenFile.frames)).toEqual(['s/a'])                     // b's mark is gone with b
-  })
-
-  it('a frame under a new id - added, or renamed with its old mtime - counts as new', async () => {
-    root = mkdtempSync(join(tmpdir(), 'mv-marks-'))
-    mk('design/scenes/s/a.tsx'); at('design/scenes/s/a.tsx', 1_000_000)
-    readMarks(root, scanFrames(root))                                       // the first read: everything seen, the ids recorded
-    await new Promise((r) => setTimeout(r, 5))
-    rmSync(join(root, 'design/scenes/s/a.tsx'))
-    mk('design/scenes/s/renamed.tsx'); at('design/scenes/s/renamed.tsx', 1_000_000)   // a rename keeps the old mtime
-    const m = readMarks(root, scanFrames(root))
-    expect(isNew(m, 's/renamed')).toBe(true)
-    expect(m.changed['s/a']).toBeUndefined()
+    boot()
+    const m = marks()
+    expect(m.boards.b1).toEqual(['s/a'])
+    expect(m.boards.auto.sort()).toEqual(['s/a', 's/b', 't/c'])
   })
 })

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, statSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -46,6 +46,8 @@ const HELPERS = `(() => {
 })()`
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const seenOnDisk = (): Record<string, number> => { try { return JSON.parse(readFileSync(join(root, 'design', '.local', 'seen.json'), 'utf8')).frames } catch { return {} } }
+/** the revision a frame last changed at, as the dev server recorded it (spec 26) */
+const changedOnDisk = (id: string): number => { try { return JSON.parse(readFileSync(join(root, 'design', '.local', 'changes.json'), 'utf8')).frames[id]?.[0] ?? 0 } catch { return 0 } }
 const mark = (name: string) => browser!.eval(s, `window.__mark(${JSON.stringify(name)})`)
 const until = (expr: string, ms = 15_000) => browser!.until(s, expr, ms)
 /** keep the two-second rule out of a step: at this zoom nothing counts as looked at */
@@ -95,7 +97,9 @@ const skippable = (name: string, fn: () => Promise<void>, ms = 60_000) =>
 describe('sidebar marks (spec 25)', () => {
   skippable('a canvas starts with nothing marked: what was there the day marks arrived counts as seen', async () => {
     expect(await browser!.eval(s, `document.querySelectorAll('.mk-dot, .mk-bubble, .mk-new, .mk-ask').length`)).toBe(0)
-    expect(JSON.parse(readFileSync(join(root, 'design', '.local', 'seen.json'), 'utf8')).baseline).toBeGreaterThan(0)
+    const seen = JSON.parse(readFileSync(join(root, 'design', '.local', 'seen.json'), 'utf8'))
+    expect(seen.version).toBe(2)                                              // revisions since spec 26, started with marver dev
+    expect(typeof seen.epoch).toBe('string')
   })
 
   skippable('an edit lights the frame - blue row with a dot, blue header with a dot - and selecting it clears both, on disk too', async () => {
@@ -119,8 +123,8 @@ describe('sidebar marks (spec 25)', () => {
     await browser!.eval(s, `sessionStorage.setItem('mvSlowBoard', '1'), 1`)      // the marks land first, the board after
     await browser!.go(s, 'about:blank')                                         // a link opened in a new page
     await browser!.go(s, `${ORIGIN}/#/b/main?f=spec/alpha`)
-    for (let i = 0; i < 60 && !(seenOnDisk()['spec/alpha'] >= statSync(join(root, 'design/scenes/spec/alpha.tsx')).mtimeMs); i++) await sleep(50)
-    expect(seenOnDisk()['spec/alpha']).toBeGreaterThanOrEqual(statSync(join(root, 'design/scenes/spec/alpha.tsx')).mtimeMs)
+    for (let i = 0; i < 60 && !(seenOnDisk()['spec/alpha'] >= changedOnDisk('spec/alpha')); i++) await sleep(50)
+    expect(seenOnDisk()['spec/alpha']).toBeGreaterThanOrEqual(changedOnDisk('spec/alpha'))
     await browser!.go(s, `${ORIGIN}/#/b/main`)
     await until(`window.__mvStore?.getState().nodes.length === 3 && !!window.__mvStore.getState().marks && !!window.__row('Alpha')`, 30_000)
     await sleep(300); await farAway()

@@ -514,7 +514,6 @@ export function App() {
   // live updates from the dev server (source-served shell has import.meta.hot)
   useEffect(() => {
     if (!import.meta.hot) return
-    logReload({ kind: 'shell-boot' })   // the reload log: every time the canvas page itself loads
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
     // a brief's title or description changed with the frames intact: relabel, never re-key
     import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
@@ -525,8 +524,9 @@ export function App() {
     // after the dev server reconnects
     void useStore.getState().syncWorking()
     import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncWorking())
-    // sidebar marks (spec 25): a frame changed on disk, or an agent's work started or ended
-    void useStore.getState().syncMarks()
+    // sidebar marks (spec 25): a frame changed on disk, or an agent's work started or ended - and the
+    // reload log's line for this page load, once that first read has primed the request cookie
+    void useStore.getState().syncMarks().then(() => logReload({ kind: 'shell-boot' }))
     import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncMarks())
     import.meta.hot.on('sh:marks', () => void useStore.getState().syncMarks())
     import.meta.hot.on('sh:boards', () => void useStore.getState().syncMarks())   // a board's frames changed: its roll-up too

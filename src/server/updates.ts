@@ -99,7 +99,8 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
           const by = p.triggeredBy
           const mods = by ? env.moduleGraph.getModulesByFile(by) : undefined
           const all = manifest().frames.map((f: FrameEntry) => f.id)
-          hooks.onFrames(by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: all, touched: [] }, 'reload')
+          const t = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: all, touched: [] }
+          if (t.doc.length || t.touched.length) hooks.onFrames(t, 'reload')   // a file no frame reads reloads nothing
           return
         }
       }

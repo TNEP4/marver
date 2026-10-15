@@ -110,6 +110,9 @@ planning. The human should see the request land on the canvas within the first m
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
    and never lean on expiry instead of `done`. `done` prints the canvas link to the
    frames it cleared (`on the canvas: ...`).
+   An edit to a file several frames read (a kit, a spec read with `?raw`) already marks each of
+   them as changed for the human; name a frame in `done` for a change no import shows - data
+   fetched at run time, the app behind an embedded frame.
 
 ## Hand it back on the canvas
 
@@ -201,6 +204,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   `description` when one was written, and its `title` when the human (or you) named it.
   Read it before exploring; `marver dev` keeps it fresh. `npx marver boards` prints the
   boards part as a tree.
+- **What the human has not reviewed.** At the start of a session, `npx marver marks`: the frames
+  waiting on them (your notes and replies they have not resolved - the ones that ask first) and
+  the frames new since they last looked. When it bears on the work, say so in your first message
+  ("you have not looked at the checkout frames since I changed them").
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,

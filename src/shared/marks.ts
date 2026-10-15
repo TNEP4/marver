@@ -23,9 +23,15 @@ export interface Marks {
 export const isNew = (m: Marks | null, id: string): boolean =>
   !!m && (m.changed[id] ?? 0) > (m.seen[id] ?? 0)
 
+/** Does Marver's word ask you something (spec 26)? The agent says so (`asks`); one written before
+ *  0.25 falls back to the old rule - a note asks, a reply asks when it ends in "?". */
+export const asksOf = (e: { body?: string }, isNote: boolean): boolean =>
+  (e as { asks?: unknown }).asks === true || ((e as { asks?: unknown }).asks === undefined && (isNote || /\?\s*$/.test(e.body ?? '')))
+
 /** A question's state is read from its thread - nobody sets it. Open with Marver's word last:
- *  needs you. Open with yours last, after Marver spoke: answered, waiting on the agent. */
-export type Ask = { ask: number; answered: number }
+ *  waiting on you (`ask`), `asking` when that word asks something. Open with yours last, after
+ *  Marver spoke: answered, waiting on the agent. */
+export type Ask = { ask: number; asking: number; answered: number }
 export function questions(threads: readonly Thread[]): Map<string, Ask> {
   const out = new Map<string, Ask>()
   for (const t of threads) {
@@ -33,8 +39,8 @@ export function questions(threads: readonly Thread[]): Map<string, Ask> {
     const last = t.replies.length ? t.replies[t.replies.length - 1] : t
     const marver = !!t.agent || t.replies.some((r) => r.agent)
     if (!marver) continue
-    const q = out.get(t.frame) ?? { ask: 0, answered: 0 }
-    if (last.agent) q.ask++
+    const q = out.get(t.frame) ?? { ask: 0, asking: 0, answered: 0 }
+    if (last.agent) { q.ask++; if (asksOf(last, last === t)) q.asking++ }
     else q.answered++
     out.set(t.frame, q)
   }
@@ -57,11 +63,13 @@ export function rollup(m: Marks | null, q: Map<string, Ask>, ids: Iterable<strin
   return { asks, fresh }
 }
 
-/** `U`: the next frame that needs you, else the next new one - after `from` in reading order,
- *  wrapping. `order` is the board's frames top-to-bottom, left-to-right. */
+/** `U`: the next frame that asks you something, then the next one waiting on you (work to review),
+ *  then the next new one (spec 26) - after `from` in reading order, wrapping. `order` is the board's
+ *  frames top-to-bottom, left-to-right. */
 export function nextToLook(m: Marks | null, q: Map<string, Ask>, order: readonly string[], from: string | null): string | null {
   const i = from ? order.indexOf(from) : -1
   const ring = [...order.slice(i + 1), ...order.slice(0, i + 1)]
   // an answered frame waits on the agent, not on you: U skips it even when it is also new
-  return ring.find((id) => (q.get(id)?.ask ?? 0) > 0) ?? ring.find((id) => isNew(m, id) && !q.get(id)?.answered) ?? null
+  return ring.find((id) => (q.get(id)?.asking ?? 0) > 0) ?? ring.find((id) => (q.get(id)?.ask ?? 0) > 0)
+    ?? ring.find((id) => isNew(m, id) && !q.get(id)?.answered) ?? null
 }

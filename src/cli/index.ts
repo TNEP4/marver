@@ -261,6 +261,25 @@ cli
   })
 
 cli
+  .command('marks', 'What the human has not reviewed: frames waiting on them (the ones that ask first) and frames new since they looked')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--json', 'Machine-readable output')
+  .action(async (opts) => {
+    const { marksCommand } = await import('./marks.ts')
+    marksCommand(resolve(opts.root), opts)
+  })
+
+cli
+  .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--minutes <n>', 'How far back to read (default 60)')
+  .option('--json', 'Machine-readable output')
+  .action(async (opts) => {
+    const { perfCommand } = await import('./perf.ts')
+    perfCommand(resolve(opts.root), opts)
+  })
+
+cli
   .command('shot [...frames]', 'Render frames headless and print the PNG paths (needs `dev` running): ids, --scene <name> or --all')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--scene <name>', 'Every frame of one scene')

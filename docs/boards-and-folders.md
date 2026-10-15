@@ -49,24 +49,43 @@ The sidebar shows where to look.
 
 - **New** - a frame that changed since you looked: its icon and title turn blue, with a dot at the
   right of its row. On the canvas, its title above the card does the same.
-- **Needs you** - Marver asked you something on a frame (a note from your agent, or a jam reply that
-  asks): its icon turns orange, and an orange bubble at the right holds how many questions are open -
-  `1`, `2`. Answer in the thread and the bubble goes hollow while the agent works; it is gone once
-  the thread is resolved, and the frame turns blue if the agent changed it.
+- **Waiting on you** - Marver is waiting on you on a frame: a question (a note from your agent, or
+  a reply that asks), or work to review and resolve. Its icon turns orange, and an orange bubble at
+  the right holds how many threads are open - `1`, `2`. Answer in the thread and the bubble goes
+  hollow while the agent works; it is gone once the thread is resolved, and the frame turns blue if
+  the agent changed it.
 - **One slot per row.** Every row keeps the one item at its right edge it has today, and what matters
-  most takes it: a question's bubble first, then the row's own count or status, then a frame's dot. A
-  board you are not on turns blue when its frames hold something new, and a question there takes its
-  status glyph's place until answered. A closed folder or a folded scene changes only its count: blue
-  when something inside is new, the bubble when something inside needs you.
-- **`U`** goes to the next frame that needs you, then the next new one.
+  most takes it: the bubble first, then the row's own count or status, then a frame's dot. A board
+  you are not on turns blue when its frames hold something new, and the bubble takes its status
+  glyph's place until answered. A closed folder or a folded scene changes only its count: blue when
+  something inside is new, the bubble when something inside waits on you.
+- **`U`** goes to the next frame that asks you something, then the next one waiting on you, then the
+  next new one.
 
-"Changed" means the frame's file or its sticky note changed - an edit, your agent, a `git pull` - or
-an agent named the frame in `npx marver work done`. "Looked at" means you selected it, opened it from
-the sidebar or a link, opened it in focus or play, kept it on screen at a readable zoom (50 % or more)
-for two seconds, or chose **Mark all as seen** on a scene, board or folder. An edit still waiting to
-load (behind **Update** in focus or play) counts as seen only once it is on screen. Your marks live in `design/.local/seen.json`, on
-this machine only; the day you upgrade, everything already on the canvas counts as seen. A published
-canvas shows no marks.
+"Changed" means the frame or anything it reads changed - its file, its sticky note, a kit or a
+spec's markdown it imports, a layout or the providers around it; an edit, your agent, a `git pull`
+(even while `marver dev` was off) - or an agent named the frame in `npx marver work done`. A file
+every frame reads lights every frame; **Mark all as seen** on the board clears them.
+
+"Looked at" means you selected it, opened it from the sidebar or a link, opened it in focus or play,
+kept it on screen at a readable zoom (50 % or more) for two seconds, or chose **Mark all as seen** on
+a scene, board or folder - for the version on screen: a change still loading (or behind **Update** in
+focus or play) stays new until its new version shows, and a look you made while it loaded counts as
+soon as it does.
+
+The marks start when `marver dev` starts, so whatever your agent makes before you open the canvas is
+new when you do; everything already there the first time counts as seen. They live in
+`design/.local/`, on this machine only, and a published canvas shows none. `npx marver marks` prints
+them - for you, or for your agent at the start of a session.
+
+## Edits land calmly
+
+When a file changes, the canvas reloads only the frames that read it, a few at a time, the ones on
+screen first; a frame off screen waits until you scroll to it, and one you are using (typing in it,
+drawing a laser, commenting) waits until you are done. A content frame keeps its height while it
+reloads, so the rows below stay still; if heights did change, the board moves once. The canvas page
+itself never reloads for a design edit. `npx marver perf` shows what each edit reloaded and how long
+it took (from `design/.local/perf/reloads.jsonl`).
 
 ## In the files
 

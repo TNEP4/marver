@@ -1,8 +1,8 @@
 /**
  * Calm updates, the shell's half (spec 26 Part 2): a node an edit made stale reloads through the
  * same boot queue a board uses (admission.ts) - at most four at a time, the one nearest the centre
- * of the view first - and only while it is on screen and not in use. Off screen it waits until it
- * comes into view; in use (interact, a drag, laser or comment on it) it waits for a safe point; while
+ * of the view first - and only while it is on screen (or within half a screen of it) and not in use.
+ * Further off it waits until it comes near; in use (interact, a drag, laser or comment on it) it waits for a safe point; while
  * the play stage covers the canvas, the canvas counts as off screen. A job checks all of that again
  * when its turn comes.
  */
@@ -12,10 +12,13 @@ import { frameIsLeased, useStore, type Node } from '../store.ts'
 const rect = (key: string) => document.querySelector(`[data-node="${CSS.escape(key)}"]`)?.getBoundingClientRect()
 const view = () => document.querySelector('.sh-canvas')?.getBoundingClientRect()
 
-/** On screen at any zoom: the node's rect meets the canvas's. */
+/** On screen at any zoom - or within half a screen of it, so a small pan shows fresh frames and a
+ *  camera still moving between two places does not starve the frames on its way. */
 function onScreen(key: string): boolean {
   const r = rect(key), c = view()
-  return !!r && !!c && r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom
+  if (!r || !c) return false
+  const mx = c.width / 2, my = c.height / 2
+  return r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
 }
 const rank = (key: string) => () => {
   const r = rect(key), c = view()
@@ -24,7 +27,8 @@ const rank = (key: string) => () => {
 
 const ready = (n: Node) => {
   const s = useStore.getState()
-  return !!n.stale && !n.missing && n.status !== 'loading' && !s.play && !frameIsLeased(n.frame, s) && onScreen(n.key)
+  // a document to replace (ready, or errored), never one still booting for the first time
+  return !!n.stale && !n.missing && (n.status === 'ready' || n.status === 'error') && !s.play && !frameIsLeased(n.frame, s) && onScreen(n.key)
 }
 
 let ticker: ReturnType<typeof setInterval> | undefined
