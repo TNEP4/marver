@@ -427,7 +427,9 @@ describe('calm loading', () => {
   it('a Doc added while the board is open keeps its measured height through Default', async () => {
     if (!browser) return
     await closeAll()
-    const s = await open('#/b/all-scenes')
+    // an auto board: it holds every frame, so a frame an agent adds joins it live
+    writeFileSync(join(root, 'design', 'boards', 'everything.json'), JSON.stringify({ version: 1, name: 'everything', auto: true, nodes: [] }, null, 2) + '\n')
+    const s = await open('#/b/everything')
     await wait(2000)
     writeFileSync(join(root, 'design', 'scenes', 'lazy', 'late.tsx'), doc(12))   // an agent adds a Doc: it joins live
     const h = await browser.until(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.frame === 'lazy/late'); return n && n.h > 900 && n.h })()`, 30_000)

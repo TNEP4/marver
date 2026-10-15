@@ -10,8 +10,8 @@ import shConfig from 'virtual:sh-config'
 import shData from 'virtual:sh-data'
 
 /** Published-build data. Non-null = static site: no API, no saves, no live events.
- *  `names` is the switcher list (all-scenes only when actually published); `default`
- *  is where `/` opens - never a synthesized aggregate of a filtered build. */
+ *  `names` is the switcher list; `default` is where `/` opens - never a synthesized
+ *  aggregate of a filtered build. */
 const DATA: {
   manifest: Manifest; boards: Record<string, unknown>; names: string[]; default: string
   /** the sidebar's folder tree over the published boards (0.16.0 bundles; older ones have none) */
@@ -151,7 +151,8 @@ export const modeAllowed = (board: string, mode: 'present' | 'focus' | 'slides')
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
-import { buildTree, flatten, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
+import { archiveLast, buildTree, flatten, framesOn, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
+import { UNPLACED } from './hash.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 import { isNew, type Marks } from '../../shared/marks.ts'
@@ -174,11 +175,11 @@ export interface BoardMeta {
 }
 
 /** The sidebar tree: root boards and folders in rank order, each folder's boards and
- *  sub-folders inside (shared/board-tree.ts), plus the hashes it was built from. `all-scenes` is not in it - it
- *  is pinned last by the callers. Throws on transport failure and on a malformed registry
- *  (the server's 422 message) - callers keep their last known tree. */
+ *  sub-folders inside (shared/board-tree.ts), plus the hashes it was built from. Throws on
+ *  transport failure and on a malformed registry (the server's 422 message) - callers keep
+ *  their last known tree. */
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
-  if (DATA) return { tree: DATA.tree ?? DATA.names.filter((n) => n !== 'all-scenes').map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
+  if (DATA) return { tree: DATA.tree ?? DATA.names.map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
   const [boards, reg] = await Promise.all([
     fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[]; error?: string }[]>,
     fetch(`${ROUTE}/api/folders`).then(async (r) => {
@@ -205,21 +206,34 @@ export function rememberTitles(titles: Record<string, string>) {
   if (JSON.stringify(useStore.getState().boardTitles) !== JSON.stringify(titles)) useStore.setState({ boardTitles: titles })
 }
 
-/** Board names for switchers: the sidebar's reading order (folders flattened depth-first) and
- *  the auto `all-scenes` everything-board LAST - it is the expensive one, never the landing.
- *  Throws on transport failure - callers keep their last known list. */
+/** Board names for switchers: the sidebar's reading order (folders flattened depth-first); the
+ *  first is the landing board. Throws on transport failure - callers keep their last known list. */
 export async function fetchBoardNames(): Promise<string[]> {
   if (DATA) return DATA.names
   const snap = await fetchBoardTree()
   rememberTitles(snap.titles)
   rememberMeta(snap.meta)
-  return [...flatten(snap.tree), 'all-scenes']
+  return flatten(snap.tree)
 }
-/** Does the switcher carry the auto `all-scenes` board? Always in dev; published only when it shipped. */
-export const HAS_ALL_SCENES = !DATA || DATA.names.includes('all-scenes')
+/** Where the canvas opens with no link: the first board in sidebar order, else (no board yet) the
+ *  Not on a board view - empty, on a canvas with no frames either. */
+export const landingBoard = async (): Promise<string> => (await fetchBoardNames().catch(() => [] as string[]))[0] ?? UNPLACED
+/** Which board shows which frame (spec 26, Part 7): every board in sidebar order with archive
+ *  boards last, the live frames each shows, and the frames on no board - from the dev server, or
+ *  off a published bundle (whose frames are all on a published board). Throws on transport failure. */
+export async function fetchMembership(): Promise<{ boards: { name: string; frames: string[] }[]; unplaced: string[] }> {
+  if (!DATA) {
+    const r = await fetch(`${ROUTE}/api/membership`)
+    if (!r.ok) throw new Error(`membership ${r.status}`)
+    return r.json()
+  }
+  const live = DATA.manifest.frames.map((f) => f.id)
+  const names = archiveLast(DATA.names, (n) => n === 'archive' || DATA.meta?.[n]?.type === 'archive')
+  return { boards: names.map((name) => ({ name, frames: framesOn(DATA.boards[name], live) })), unplaced: [] }
+}
 /** Display name for a board: its title when one is set (subscribe to `boardTitles` to
- *  re-render on change), else the Title-Cased slug ('all-scenes' reads "All Scenes"). */
-export const boardLabel = (n: string) => labelOf(n, useStore.getState().boardTitles[n])
+ *  re-render on change), else the Title-Cased slug. */
+export const boardLabel = (n: string) => (n === UNPLACED ? 'Not on a board' : labelOf(n, useStore.getState().boardTitles[n]))
 /** The canvas's name, as the sidebar heads it: the project's (share.name, else the repo folder). */
 export const CANVAS_NAME = CONFIG.projectName ? humanize(CONFIG.projectName) : 'Marver'
 /** The browser tab: the board, then the canvas - "Start here - Acme Studio" - so a row of canvas tabs
@@ -234,16 +248,15 @@ const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const postOwner = (path: string, body: unknown) =>
   fetch(`${ROUTE}/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
 
-/** The frames a board pins, straight from its file (dev fetch / published inline) -
- *  membership only, never a load. Cross-board data-goto asks "which board shows this
- *  frame?" without touching the live board state. */
-export async function boardFrames(name: string): Promise<string[]> {
-  const board: any = DATA
-    ? DATA.boards[name]
-    : (await (await fetch(`${ROUTE}/api/boards/${name}`)).json())?.board
-  return Array.isArray(board?.nodes)
-    ? board.nodes.map((n: any) => (n && typeof n.frame === 'string' ? n.frame : '')).filter(Boolean)
-    : []
+/** Add to board (the Not on a board view): these frames appended to a board's file, as
+ *  `marver boards pin` does. The answer is said; the file change re-reads the sidebar and the view. */
+export async function addToBoard(board: string, frames: string[]): Promise<void> {
+  const { toast } = useStore.getState()
+  try {
+    const r = await postOwner('boards/pin', { board, frames })
+    const body = await r.json().catch(() => ({})) as { added?: string[]; error?: string }
+    toast(r.ok ? `${body.added?.length ? 'pinned' : 'already'} on ${boardLabel(board)}` : body.error ?? `could not pin (${r.status})`)
+  } catch { toast('could not reach the dev server') }
 }
 
 const HEADER = 28
@@ -444,7 +457,7 @@ interface State {
   play: { at: string; device: string; theme: string; focus?: boolean; deep?: boolean; slides?: boolean } | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   laser: boolean                      // laser/inspect mode: frames outline their structure
-  board: string                       // active board name; 'all-scenes' is the auto board
+  board: string                       // active board name; UNPLACED is the Not on a board view
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
   sceneRows: string[][] | null        // LEGACY scene arrangement; still round-trips through save
@@ -722,7 +735,7 @@ export const useStore = create<State>((set, get) => {
       }
       let nodes: Node[] = []
       let boardHash: string | null = null
-      let boardAuto = boardName === 'all-scenes'
+      let boardAuto = false
       let deviceView: string | null = null
       let sceneRows: string[][] | null = null
       let layout: BoardLayout | null = null
@@ -734,7 +747,12 @@ export const useStore = create<State>((set, get) => {
       // published build: boards come from the inlined data; absent = fresh (the 404 path)
       let loaded: { board: any; sha256: string } | 'fresh' | null
       if (DATA) loaded = DATA.boards[boardName] ? { board: DATA.boards[boardName], sha256: 'published' } : 'fresh'
-      else {
+      // the Not on a board view: a board of the frames no board shows, never saved - laid out
+      // fresh on every load (no hash), its keys minted like any keyless node's
+      else if (boardName === UNPLACED) {
+        const m = await fetchMembership().catch(() => null)
+        loaded = m ? { board: { nodes: m.unplaced.map((frame) => ({ frame })) }, sha256: '' } : null
+      } else {
         const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
         if (res.ok) {
           const body = await res.json()
@@ -828,11 +846,11 @@ export const useStore = create<State>((set, get) => {
       // frames not on the board yet → auto boards only (a curated board shows exactly its list).
       // Grouped newcomers land beside their siblings (like the live JOIN); ungrouped ones
       // go past the board's right edge (the live JOIN flows them below) - NEVER at (0,0)
-      // (the published all-scenes bug: frames created after the board file was last
+      // (the old published everything-board bug: frames created after the board file was last
       // saved piled up at the origin)
       if (boardAuto) {
         const placed = new Set(nodes.map((n) => n.frame))
-        // newcomers get deterministic keys too - on published auto boards (all-scenes)
+        // newcomers get deterministic keys too - on a published auto board
         // this path mints EVERY key, every visit, and comments anchor to them
         const haveKeys = new Set(nodes.map((n) => n.key))
         const mint = (frame: string) => {
@@ -896,7 +914,7 @@ export const useStore = create<State>((set, get) => {
 
   return {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
-    board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
+    board: DATA?.default ?? UNPLACED, boardAuto: false, deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
@@ -1693,6 +1711,8 @@ export const useStore = create<State>((set, get) => {
         set({ dirty: false })
         return Promise.resolve(true)
       }
+      // the Not on a board view is never saved: what is moved there lasts the visit
+      if (get().board === UNPLACED) { set({ dirty: false }); return Promise.resolve(true) }
       const p = saveChain.then(async () => {
         // recheck INSIDE the serialized chain: a save queued behind an in-flight PUT
         // may only execute after a resize gesture began - the entry guard above ran

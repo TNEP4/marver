@@ -12,7 +12,8 @@
 import { Component, useEffect, useRef, type ReactNode } from 'react'
 import { useStore, landingMode, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
-import { bootHash, parseHash, writeHash } from './hash.ts'
+import { bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
+import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
@@ -51,6 +52,7 @@ export function App() {
     if (booted) return
     booted = true
     const start = async () => {
+      if (isLegacyLink(bootHash)) retargetBoot((await landLegacy(bootHash)).hash)   // an old All Scenes link: a real board
       if (bootHash.board && bootHash.board !== useStore.getState().board)
         useStore.setState({ board: bootHash.board, boardAuto: false })
       const ok = await boot()
@@ -80,7 +82,8 @@ export function App() {
   // back/forward + pasted links, within what the lock allows
   useEffect(() => {
     const onPop = async () => {
-      const h = parseHash()
+      const raw = parseHash()
+      const h = isLegacyLink(raw) ? (await landLegacy(raw)).hash : raw
       const s = useStore.getState()
       if (h.board && h.board !== s.board) {
         await s.switchBoard(h.board)

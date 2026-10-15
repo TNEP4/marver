@@ -13,7 +13,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
-import { useComments } from './comments-store.ts'
+import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
+import { UNPLACED } from './hash.ts'
 import { isNoteAnchor } from './notes.ts'
 import { stageShown } from './marks-ui.tsx'
 import { ROUTE, slideSize } from '../const.ts'
@@ -528,7 +529,7 @@ function PlayInner() {
     if (key === 'r') { restart(); return }
     if (key === 'h') { toggleHideUI(); return }
     if (key === 'l' && SOURCE_REVEALED) { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
-    if (key === 'c') { const c = commentsStore(); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
+    if (key === 'c') { const c = commentsStore(); if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
     if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
     if (key === 'L') { const c = commentsStore(); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus
 

@@ -255,9 +255,9 @@ describe('board types and status in the sidebar (spec 20)', () => {
     // invoices (no plan); never checkout (Done, reported), pricing (In progress) or home (no status)
     expect(started).toMatch(/note: board "invoices" still reads Backlog - you are working on it, so make it In progress: a plan in context\/plans\/ that opens with front matter naming it - "---" \/ "state: proposed" \/ "capability: invoices" \/ "---"/)
     expect(started).not.toMatch(/"checkout"|"pricing"|"home"/)
-    // every board pinning app/home, and all-scenes; front shows another frame and stays still
-    await browser!.until(s, `document.querySelectorAll('.sh-boards [data-board-row] [data-live-icon]').length >= 8`, 15_000)
-    expect(await live()).toBe('all-scenes,checkout,home,invoices,pitch,pricing,refunds,scratch')
+    // every board pinning app/home; front shows another frame and stays still
+    await browser!.until(s, `document.querySelectorAll('.sh-boards [data-board-row] [data-live-icon]').length >= 7`, 15_000)
+    expect(await live()).toBe('checkout,home,invoices,pitch,pricing,refunds,scratch')
     const glint = await browser!.eval(s, `(() => { const g = document.querySelector('[data-board="checkout"] [data-live-icon] .glint'); const cs = getComputedStyle(g); return { anim: cs.animationName, svg: getComputedStyle(g.querySelector('svg')).color, base: getComputedStyle(document.querySelector('[data-board="checkout"] [data-live-icon] > svg')).color } })()`)
     expect(glint.anim).toBe('sh-live-glint')
     expect(glint.base).toBe('rgb(0, 136, 255)')                     // Marver's blue - its own token, whatever the mode
@@ -290,7 +290,7 @@ describe('board types and status in the sidebar (spec 20)', () => {
     // the frame's pin leaves scratch while the work runs: scratch goes dark, nothing else moves
     board('scratch', { order: 3, nodes: [{ frame: 'front/index' }] })
     await browser!.until(s, `!document.querySelector('[data-board="scratch"] [data-live-icon]')`, 15_000)
-    expect(await live()).toBe('all-scenes,checkout,home,invoices,pricing,refunds')     // pitch is in the closed decks folder...
+    expect(await live()).toBe('checkout,home,invoices,pricing,refunds')     // pitch is in the closed decks folder...
     expect(await browser!.eval(s, `!!document.querySelector('[data-folder-row="decks"] [data-live-icon]')`)).toBe(true)   // ...which carries it
     board('scratch', { order: 3 })
     cli('work', 'done', '--all')

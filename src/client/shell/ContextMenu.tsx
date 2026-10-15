@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, SOURCE_REVEALED } from './store.ts'
+import { UNPLACED } from './hash.ts'
 
 /** Copy text to the clipboard, toasting the outcome. Success is confirmed out loud; a
  *  blocked clipboard (no user gesture / permission) says so instead of failing silently. */
@@ -13,8 +14,10 @@ export function copyToClipboard(text: string, okMsg: string) {
  *  toolbar, and ⇧P: the board it sits on, the frame id, and its file. */
 // stripped build: the file column would only show the opaque token, so the
 // copy keeps what is still honest - the board and the frame id
-export const framePath = (board: string, f: { id: string; file: string }) =>
-  SOURCE_REVEALED ? `board: ${board} · frame: ${f.id}  (${f.file})` : `board: ${board} · frame: ${f.id}`
+export const framePath = (board: string, f: { id: string; file: string }) => {
+  const where = board === UNPLACED ? 'not on a board' : `board: ${board}`
+  return SOURCE_REVEALED ? `${where} · frame: ${f.id}  (${f.file})` : `${where} · frame: ${f.id}`
+}
 
 /** A menu row. `panel` makes it open a panel IN PLACE of the menu (a picker - the board's status),
  *  drawn by the caller and handed `close`; `onClick` then is not called. */

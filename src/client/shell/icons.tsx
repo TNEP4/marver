@@ -75,13 +75,12 @@ export function IntentGlyph({ intent, size = 14, ...rest }: IconProps & { intent
 /** The slide badge (v1.5): a 16:9 stage with the play wedge - a deck frame. */
 export const SlideFrameIcon = icon(<path d="M192,48H64A16,16,0,0,0,48,64V192a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64A16,16,0,0,0,192,48Zm0,144H64V64H192V192ZM240,56V200a8,8,0,0,1-16,0V56a8,8,0,0,1,16,0ZM32,56V200a8,8,0,0,1-16,0V56a8,8,0,0,1,16,0Z" />)
 export const PanelHollowIcon = icon(<><rect x="32" y="48" width="192" height="160" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><rect x="72" y="88" width="48" height="80" rx="24" fill="none" stroke="currentColor" strokeWidth="14" /></>)
-/** Board glyphs: CardsThree = the built-in `all-scenes` board; Cards = curated boards. */
-export const CardsThreeIcon = icon(<path d="M208,88H48a16,16,0,0,0-16,16v96a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,112H48V104H208v96ZM48,64a8,8,0,0,1,8-8H200a8,8,0,0,1,0,16H56A8,8,0,0,1,48,64ZM64,32a8,8,0,0,1,8-8H184a8,8,0,0,1,0,16H72A8,8,0,0,1,64,32Z" />)
 export const FrameCornersIcon = icon(<path d="M160 48h40a8 8 0 0 1 8 8v40M208 160v40a8 8 0 0 1-8 8h-40M96 208H56a8 8 0 0 1-8-8v-40M48 96V56a8 8 0 0 1 8-8h40" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round" />)
 export const ArrowLeftIcon = icon(<path d="M224,128a8,8,0,0,1-8,8H59.31l58.35,58.34a8,8,0,0,1-11.32,11.32l-72-72a8,8,0,0,1,0-11.32l72-72a8,8,0,0,1,11.32,11.32L59.31,120H216A8,8,0,0,1,224,128Z" />)
 export const ArrowRightIcon = icon(<path d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z" />)
 /** Variants/experimentation mark: the flask (Phosphor). */
 export const VariantsIcon = icon(<path d="M223.45,208.19,168,101.11V40h8a8,8,0,0,0,0-16H80a8,8,0,0,0,0,16h8v61.11L32.55,208.19A16,16,0,0,0,46.86,232H209.14a16,16,0,0,0,14.31-23.81ZM102.13,108.5A8,8,0,0,0,104,103.35V40h48v63.35a8,8,0,0,0,1.87,5.15L179.36,157c-11.71,2.87-26.5.66-44.16-6.64-14.08-5.82-27.34-8.53-39.66-8.16ZM46.86,216,84.36,143.6c11.68-2.9,26.47-.68,44.13,6.61,13.09,5.42,25.36,8.11,36.65,8.11a67.86,67.86,0,0,0,22.53-3.72L209.14,216Z" />)
+/** The board glyph, for a board with no type. */
 export const CardsIcon = icon(<path d="M184,72H40A16,16,0,0,0,24,88V200a16,16,0,0,0,16,16H184a16,16,0,0,0,16-16V88A16,16,0,0,0,184,72Zm0,128H40V88H184V200ZM232,56V176a8,8,0,0,1-16,0V56H64a8,8,0,0,1,0-16H216A16,16,0,0,1,232,56Z" />)
 /** Viewport-name -> device glyph; unknown custom names fall back to the generic Devices. */
 export function deviceIcon(name: string | null, size = 14) {
