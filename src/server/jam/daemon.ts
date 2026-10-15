@@ -304,7 +304,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       else if (run.asks && !early.asks) {
         const me = localProfile(root)
         appendEvents(commentsDir, b.board, [{
-          id: `jam-f-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early.commentId, asks: run.asks, board: b.board,
+          id: `jam-f-e${b.attempts}-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early.commentId, asks: run.asks, board: b.board,
           author: me, agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
         }])
       }

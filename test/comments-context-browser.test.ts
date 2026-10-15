@@ -42,6 +42,7 @@ export default () => <main style={{ padding: 24 }}>
   <h2>Account</h2>
   <p>Keep it<span style={{ display: 'none' }}>Keep it</span></p>
   <p>Visible<span style={{ opacity: 0 }}>Secret words</span></p>
+  <p>Pay <span style={{ display: 'none' }}>old wording </span>now</p>
   <button data-testid="settings.icon">*</button>
   <div className="wide">Wide only</div>
   <div className="night">Night only</div>
@@ -192,6 +193,9 @@ describe('an agent note names its element, checked in the rendered frame', () =>
     expect(anchorOf(keep.out.match(/\?c=([\w-]+)/)![1]).el.semantics.tag).toBe('p')
     // ...and transparent words are words nobody sees: refused, never their visible parent
     expect(cli('comments', 'new', 'ctx/phone', '--on', 'Secret words', '--body', 'x').code).toBe(1)
+    // words a hidden run splits still read as one, as a person reads them
+    const split = cli('comments', 'new', 'ctx/phone', '--on', 'Pay now', '--body', 'x', '--fyi')
+    expect(split.code, split.err).toBe(0)
     // any test id, punctuation included, is tried as an exact test id before it is a selector
     const dotted = cli('comments', 'new', 'ctx/phone', '--at', 'settings.icon', '--body', 'x', '--fyi')
     expect(dotted.code, dotted.err).toBe(0)
