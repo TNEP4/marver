@@ -33,7 +33,8 @@ export class CheckInputError extends Error {}
 
 export async function checkAnchor(req: CheckRequest, deadlineMs = CHECK_MS - 1_000): Promise<AnchorCheck> {
   const theme = req.theme ?? 'light'
-  if (!/^[a-z0-9-]+$/i.test(theme)) throw new CheckInputError(`invalid theme "${theme}"`)
+  // any name the canvas config may give a theme; it reaches the frame URL-encoded
+  if (!theme.trim() || theme.length > 64) throw new CheckInputError(`invalid theme "${theme}"`)
   const frame = manifestFrame(req.root, req.frameId)
   if (!frame) throw new CheckInputError(`unknown frame "${req.frameId}" - ids are in design/manifest.json`)
   if (req.viewport && !req.viewports[req.viewport]) throw new CheckInputError(`unknown viewport "${req.viewport}" - this canvas has ${Object.keys(req.viewports).join(', ')}`)

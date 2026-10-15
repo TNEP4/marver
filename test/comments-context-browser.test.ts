@@ -43,6 +43,7 @@ export default () => <main style={{ padding: 24 }}>
   <p>Keep it<span style={{ display: 'none' }}>Keep it</span></p>
   <p>Visible<span style={{ opacity: 0 }}>Secret words</span></p>
   <p>Pay <span style={{ display: 'none' }}>old wording </span>now</p>
+  <h3>Welcome<br />back</h3>
   <button data-testid="settings.icon">*</button>
   <div className="wide">Wide only</div>
   <div className="night">Night only</div>
@@ -196,6 +197,10 @@ describe('an agent note names its element, checked in the rendered frame', () =>
     // words a hidden run splits still read as one, as a person reads them
     const split = cli('comments', 'new', 'ctx/phone', '--on', 'Pay now', '--body', 'x', '--fyi')
     expect(split.code, split.err).toBe(0)
+    // a line break between words reads as the space a person sees
+    const br = cli('comments', 'new', 'ctx/phone', '--on', 'Welcome back', '--body', 'x', '--fyi')
+    expect(br.code, br.err).toBe(0)
+    expect(anchorOf(br.out.match(/\?c=([\w-]+)/)![1]).el.semantics.tag).toBe('h3')
     // any test id, punctuation included, is tried as an exact test id before it is a selector
     const dotted = cli('comments', 'new', 'ctx/phone', '--at', 'settings.icon', '--body', 'x', '--fyi')
     expect(dotted.code, dotted.err).toBe(0)

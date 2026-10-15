@@ -206,7 +206,7 @@ describe('the anchor check', () => {
       const req = { root: at, viewports: { mobile: { width: 390, height: 844 } }, origin: 'http://localhost:1', frameId: 'shop/cart', target: { on: 'Pay' } }
       await expect(checkAnchor({ ...req, frameId: 'shop/nope' })).rejects.toBeInstanceOf(CheckInputError)
       await expect(checkAnchor({ ...req, viewport: 'tv' })).rejects.toThrow(/unknown viewport "tv"/)
-      await expect(checkAnchor({ ...req, theme: 'x y' })).rejects.toThrow(/invalid theme/)
+      await expect(checkAnchor({ ...req, theme: ' ' })).rejects.toThrow(/invalid theme/)
       process.env.MARVER_CHROME = join(at, 'no-such-browser')
       expect(await checkAnchor(req)).toEqual({ ok: false, unchecked: expect.stringMatching(/no Chrome/) })
     } finally { rmSync(at, { recursive: true, force: true }) }

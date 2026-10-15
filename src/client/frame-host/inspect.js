@@ -101,8 +101,9 @@ const elBundle = (el) => {
 
 const SKIP = 'script,style,noscript,template'
 /** The visible elements showing these words (case and spacing aside): the innermost element
- *  whose SEEN text holds them - only text whose own element is shown, so "Pay <b>now</b>" is its
- *  paragraph, words split by a hidden run still read as one, and a hidden or transparent copy
+ *  whose SEEN text holds them - only text whose own element is shown, with a line break or a block
+ *  between words read as a space - so "Pay <b>now</b>" is its paragraph, "Welcome<br>back" reads
+ *  "Welcome back", words split by a hidden run still read as one, and a hidden or transparent copy
  *  never stands in for words nobody sees - once per place they appear. */
 const byWords = (words) => {
   const q = norm(words).toLowerCase()
@@ -113,7 +114,10 @@ const byWords = (words) => {
     let t = ''
     if (!el.matches(SKIP)) {
       const on = shown(el)
-      for (const n of el.childNodes) t += n.nodeType === 3 ? (on ? n.data : '') : n.nodeType === 1 ? seenText(n) : ''
+      for (const n of el.childNodes) {
+        if (n.nodeType === 3) t += on ? n.data : ''
+        else if (n.nodeType === 1) t += n.tagName === 'BR' ? ' ' : getComputedStyle(n).display.startsWith('inline') ? seenText(n) : ` ${seenText(n)} `
+      }
     }
     seen.set(el, t)
     return t
