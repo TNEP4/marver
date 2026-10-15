@@ -32,6 +32,15 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
 }
 
 let booted = false
+/** A thread a link names: opened on the stage once the comments are on its board (a board's load
+ *  closes the open thread, so never before - the effect below opens it after). */
+let pendingThread: string | null = null
+const openPending = () => {
+  const c = useComments.getState()
+  if (!pendingThread || c.board !== useStore.getState().board || !c.threads.some((t) => t.id === pendingThread)) return
+  c.setActive(pendingThread)
+  pendingThread = null
+}
 
 export function App() {
   const toasts = useStore((s) => s.toasts)
@@ -65,6 +74,7 @@ export function App() {
       else if (bootHash.play) enterPlay(bootHash.play)
       else land(bootHash.f?.[0])
       if (notice) useStore.getState().toast(notice)
+      if (bootHash.c) { pendingThread = bootHash.c; openPending() }
     }
     const boot = useStore.getState().boot
     void start()
@@ -86,15 +96,17 @@ export function App() {
   useEffect(() => {
     let popSeq = 0
     const onPop = async () => {
-      const mine = ++popSeq                              // a lookup newer navigation overtook is dropped
+      // a lookup newer navigation overtook - a link, a step on the stage - is dropped
+      const mine = ++popSeq, was = useStore.getState()
       const raw = parseHash()
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
       const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
       const h = r.hash
       const board = h.board ?? (h.focus ? undefined : await landingBoard())
-      if (mine !== popSeq) return
       const s = useStore.getState()
+      if (mine !== popSeq || s.board !== was.board || s.play?.at !== was.play?.at) return
       if (r.notice) s.toast(r.notice)
+      if (h.c) pendingThread = h.c
       if (board && board !== s.board) {
         await s.switchBoard(board)
         useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
@@ -103,6 +115,7 @@ export function App() {
         else land(h.f?.[0])
         return
       }
+      openPending()                                      // same board: its comments are here already
       if (h.f?.length && s.play) return playCtl.setAt(h.f[0])   // the stage on screen steps to the frame named
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })
       // sync only holds WITHIN a mode: same-mode restores drive the MOUNTED
@@ -120,7 +133,7 @@ export function App() {
   useEffect(() => {
     if (!board) return
     const c = useComments.getState()
-    void c.load(board)
+    void c.load(board).then(openPending)
     return c.live(board)
   }, [board])
 
