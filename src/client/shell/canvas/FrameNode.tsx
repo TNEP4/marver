@@ -198,11 +198,13 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (doc && doc !== lastDoc.current) { lastDoc.current = doc; dirty.current = false }
     if (interact) dirty.current = true
     wake(node.key, iframe)
-    if (interact || dirty.current || resizing.current || node.status !== 'ready') return
+    // a stale document waits awake for its reload (spec 26): textures are baked from the server's newest
+    // source, which it does not show - waking also cancels one being installed
+    if (interact || dirty.current || resizing.current || node.status !== 'ready' || node.stale) return
     if (node.themeOn !== undefined && node.themeOn !== node.theme) return   // the frame has not painted the new theme yet
     const t = setTimeout(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h }) }, 250)
     return () => clearTimeout(t)
-  }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, w, h, node.missing, frame?.id, node.key, resizeTick])
+  }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, node.stale, w, h, node.missing, frame?.id, node.key, resizeTick])
   useEffect(() => () => wake(node.key, iframeRef.current), [node.key])
 
   // image-LOD: once the frame is ready its content listener is live, so send the settled zoom - a static
@@ -274,7 +276,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // shift-click toggles multi-selection instead of dragging (Figma convention)
     if (e.shiftKey && mode === 'move') { select(node.key, true); return }
     if (!(selected && useStore.getState().selection.length > 1)) select(node.key)
-    else useStore.getState().markSeen([node.frame])   // a click inside a group selection still looks at this one
+    else useStore.getState().look([node.key])   // a click inside a group selection still looks at this one
     const el = e.currentTarget as HTMLElement
     const world = document.getElementById('sh-world')!
     // Law G-5: measured scale, never stored zoom state. #sh-world is 1px wide by design,

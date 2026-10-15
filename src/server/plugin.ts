@@ -51,7 +51,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const observeMarks = () => observed(observe(root, manifest.frames))
   const hooks: UpdateHooks = {
     onFrames(t: Touched, cause) {
-      const seen = observe(root, manifest.frames)
+      const seen = observe(root, manifest.frames, t.file ? { file: t.file } : {})   // this edit's frames only
       const doc = t.doc.filter((id) => !seen.doc.includes(id))
       const touched = t.touched.filter((id) => !seen.doc.includes(id) && !seen.note.includes(id) && !doc.includes(id))
       if (doc.length) recordChanged(root, manifest.frames, doc, { doc: true })

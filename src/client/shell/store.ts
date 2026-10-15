@@ -240,7 +240,12 @@ const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 /** POST to an owner-gated dev API route, echoing the CSRF cookie the gate requires. */
 /** The reload log (spec 26 Part 1): what this page saw boot or settle - best effort, dev only. */
 const TAB = Math.random().toString(36).slice(2, 8)
-export const logReload = (entry: Record<string, unknown>) => { if (!PUBLISHED) void postOwner('perf/reload', { tab: TAB, ...entry }).catch(() => {}) }
+export const logReload = (entry: Record<string, unknown>) => {
+  if (PUBLISHED) return
+  const body = { tab: TAB, ...entry }
+  // a page's very first request may go before its request cookie exists: a GET primes it, then once more
+  void postOwner('perf/reload', body).then((r) => (r.status === 403 ? fetch(`${ROUTE}/api/work`).then(() => postOwner('perf/reload', body)) : r)).catch(() => {})
+}
 const postOwner = (path: string, body: unknown) =>
   fetch(`${ROUTE}/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
 
@@ -424,9 +429,10 @@ let marksSeq = 0
 let marksTimer: ReturnType<typeof setTimeout> | undefined
 const pendingSeen: Record<string, number> = {}
 let pendingEpoch = ''
-/** frames looked at before the first marks arrived (a link, a click, focus) - acknowledged when they land */
+/** nodes (or 'stage') looked at before the first marks arrived (a link, a click, focus) - counted when they land */
 const lookedEarly = new Set<string>()
-/** frames you opened while their new version was still loading: the look completes when it is up (spec 26) */
+/** a look at a node (or 'stage') whose new version was still loading: it completes when that version is up,
+ *  within ARMED_MS of the look (spec 26) */
 const armed = new Map<string, number>()
 const ARMED_MS = 10_000
 /** The doc revision a node's document shows, in this epoch - -1 when unknown or from another one. */
@@ -568,9 +574,11 @@ interface State {
   /** Sidebar marks (spec 25): what changed since you looked - null on a published canvas. */
   marks: Marks | null
   syncMarks(): Promise<void>
-  /** You looked at these frames: clear their "new", here and on disk - only for the revision a node
-   *  (or the stage) of the frame shows; `all` (Mark all as seen) clears what the page knows. */
-  markSeen(frameIds: readonly string[], all?: boolean): void
+  /** Mark all as seen: clear these frames' "new", here and on disk, whatever is loaded. */
+  markSeen(frameIds: readonly string[]): void
+  /** You looked at these nodes (or 'stage'): each clears its frame's "new" up to the revision it shows -
+   *  one whose new version is not up yet waits for it (`rearm` false: a check, not a new look). */
+  look(keys: readonly string[], rearm?: boolean): void
   /** A node's document reported the revision it shows (sh:ready). */
   setShown(key: string, shown: string): void
   /** A stale node's turn: it reloads now, its height held until it settles (canvas/updates.ts). */
@@ -645,6 +653,7 @@ export const useStore = create<State>((set, get) => {
       const since = cameraSince ?? Date.now()
       if (canvasCtl.cameraBusy() && Date.now() - since < REFLOW_CAMERA_WAIT) { scheduleReflow(check ?? undefined, 60, since); return }
       if (check && !check()) return
+      if (holds.size) { reflowOwed = true; return }   // a batch is reloading: the rows move once, when it lets go
       // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
       if (composed(s)) { canvasCtl.holdView(); s.runTidy() }
     }, delay)
@@ -690,6 +699,24 @@ export const useStore = create<State>((set, get) => {
       return { ...n, stale: true }
     })
     if (any) { set({ nodes }); pumpUpdates() }
+    // the stage too: one that missed an update (a lost event) offers Update
+    const st = s.stageShown, f = st?.at
+    if (s.play && st && f && !s.playUpdateRevision) {
+      const [e, r] = st.shown.split(':')
+      if (e !== m.epoch || Number(r) < (m.doc[f] ?? 0)) set({ playUpdateRevision: 'missed' })
+    }
+  }
+
+  /** Acknowledge these revisions: here at once, and on disk - refused there from another epoch. */
+  const ack = (seen: Record<string, number>) => {
+    const m = get().marks
+    if (!m || !Object.keys(seen).length) return
+    Object.assign(pendingSeen, seen)
+    set({ marks: { ...m, seen: { ...m.seen, ...seen } } })
+    void postOwner('marks/seen', { epoch: m.epoch, frames: seen })
+      // kept once confirmed too (revisions only ever rise): an answer that left before this one cannot undo it
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)) })
+      .catch(() => { for (const [id, at] of Object.entries(seen)) if (pendingSeen[id] === at) delete pendingSeen[id]; void get().syncMarks() })
   }
 
   /** A note may have landed with no room (a frame note via the manifest, a scene note via
@@ -1447,7 +1474,7 @@ export const useStore = create<State>((set, get) => {
         return { selection, interact: s.interact && selection.includes(s.interact) ? s.interact : null }
       })
       // selecting a frame is looking at it, every time - even one already selected (spec 25)
-      if (key != null) { const f = get().nodes.find((n) => n.key === key)?.frame; if (f) get().markSeen([f]) }
+      if (key != null) get().look([key])
     },
     // scoped device sizing: only the selected frames change; null restores their defaults.
     // Always followed by a tidy - a preset change must never scramble the layout.
@@ -1485,7 +1512,7 @@ export const useStore = create<State>((set, get) => {
         return { selection: valid, interact: s.interact && valid.includes(s.interact) ? s.interact : null }
       })
       // a frame link, a scene's name: the frames brought in front of you are looked at (⌘A is selectAll - not a look)
-      const st = get(); st.markSeen(st.selection.map((k) => st.nodes.find((n) => n.key === k)?.frame).filter((f): f is string => !!f))
+      get().look(get().selection)
     },
     // interact is a ONE-frame mode: entering it collapses any multi-selection to the
     // interacted frame (a 4-frame selection double-clicked otherwise leaves all four
@@ -1524,7 +1551,8 @@ export const useStore = create<State>((set, get) => {
       const ids = new Set(frameIds.filter((x) => typeof x === 'string'))
       if (!ids.size) return
       const s = get()
-      const nodes = s.nodes.map((n) => (ids.has(n.frame) && n.status !== 'loading' && !n.missing ? { ...n, stale: true } : n))
+      // a node reloading already (it has shown a document) gets one more after it: one running, one waiting
+      const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing && (n.status !== 'loading' || n.shown !== undefined) ? { ...n, stale: true } : n))
       set({ nodes, ...(s.play ? { playUpdateRevision: revision } : {}) })
       pumpUpdates()
     },
@@ -1541,9 +1569,7 @@ export const useStore = create<State>((set, get) => {
     setShown(key, shown) {
       set((s) => ({ nodes: s.nodes.map((x) => (x.key === key ? { ...x, shown } : x)) }))
       reconcile()
-      const f = get().nodes.find((x) => x.key === key)?.frame
-      const until = f && armed.get(f)
-      if (until) { armed.delete(f!); if (Date.now() < until) get().markSeen([f!]) }   // the look you made while it loaded
+      if (armed.has(key)) get().look([key], false)   // a look you made while it loaded
     },
     setExternalLease(nodeKey, reason, on) {
       set((s) => {
@@ -1558,7 +1584,7 @@ export const useStore = create<State>((set, get) => {
     applyPlayUpdate() {
       if (!get().playUpdateRevision) return
       bumpManifestRev()
-      set((s) => ({ playUpdateRevision: null, playNav: s.playNav + 1 }))
+      set((s) => ({ playUpdateRevision: null, playNav: s.playNav + 1, stageShown: null }))   // counted again once the new stage commits
     },
     setScale(scale) { set({ scale }) },
     pulsePath() { set((s) => ({ pathPulse: s.pathPulse + 1 })) },
@@ -1697,47 +1723,59 @@ export const useStore = create<State>((set, get) => {
             const m = await r.json() as Marks | null
             if (seq !== marksSeq || !m) return
             // a new epoch (the marks started over): what this page held belongs to the old one
-            if (m.epoch !== pendingEpoch) { for (const id of Object.keys(pendingSeen)) delete pendingSeen[id]; pendingEpoch = m.epoch }
+            if (m.epoch !== pendingEpoch) { for (const id of Object.keys(pendingSeen)) delete pendingSeen[id]; armed.clear(); pendingEpoch = m.epoch }
             const seen = { ...m.seen }
             for (const [id, at] of Object.entries(pendingSeen)) seen[id] = Math.max(seen[id] ?? 0, at)
             set({ marks: { ...m, seen } })
             reconcile()
-            if (lookedEarly.size) { const early = [...lookedEarly]; lookedEarly.clear(); get().markSeen(early) }
-            const now = Date.now(), due = [...armed].filter(([, t]) => t > now).map(([f]) => f)
-            if (due.length) get().markSeen(due)   // a look that waited on a newer version than the page knew
+            if (lookedEarly.size) { const early = [...lookedEarly]; lookedEarly.clear(); get().look(early) }
+            if (armed.size) get().look([...armed.keys()], false)   // a look that waited on a newer version than the page knew
             return
           }
           if (r.status !== 403) return
         }
       } catch { /* the next broadcast heals it */ }
     },
-    markSeen(frameIds, all) {
+    markSeen(frameIds) {
+      const m = get().marks
+      if (!m) return
+      ack(Object.fromEntries(frameIds.filter((id) => isNew(m, id)).map((id) => [id, m.changed[id] ?? 0])))
+    },
+    look(keys, rearm = true) {
       const s = get(), m = s.marks
-      if (!m) { if (!PUBLISHED) for (const id of frameIds) lookedEarly.add(id); return }
-      // what is on screen shows a revision: a node of the frame, or the stage - a look counts up to it,
-      // never past it (an edit not loaded yet stays new until its document is up)
-      // the highest revision on screen for the frame, -1 when nothing shows its last edit
-      const showsUpTo = (f: string) => {
+      if (!m) { if (!PUBLISHED) for (const k of keys) lookedEarly.add(k); return }
+      // the revision a node (or the stage) shows of its frame: -1 while it does not show the frame's last
+      // edit (stale, loading, an older document) - a look counts up to it, never past it
+      const upTo = (k: string, f: string): number => {
         const doc = m.doc[f] ?? 0
-        let best = -1
-        if (s.play && s.stageShown?.at === f && !s.playUpdateRevision) { const [e, r] = s.stageShown.shown.split(':'); if (e === m.epoch && Number(r) >= doc) best = Number(r) }
-        for (const n of s.nodes) if (n.frame === f && n.status === 'ready' && !n.stale) { const r = shownRev(n, m); if (r >= doc) best = Math.max(best, r) }
-        return best
+        if (k === 'stage') {
+          const st = s.stageShown
+          if (!s.play || s.playUpdateRevision || !st) return -1
+          const [e, r] = st.shown.split(':')
+          return e === m.epoch && Number(r) >= doc ? Number(r) : -1
+        }
+        const n = s.nodes.find((x) => x.key === k)
+        if (!n || n.status !== 'ready' || n.stale) return -1
+        const r = shownRev(n, m)
+        return r >= doc ? r : -1
       }
-      const fresh = frameIds.filter((id) => isNew(m, id) && (all || showsUpTo(id) >= 0))
-      // a frame whose new version is not up yet: the look waits for it, never acknowledges early
-      if (!all) for (const id of frameIds) if (isNew(m, id) && !fresh.includes(id) && !armed.has(id)) armed.set(id, Date.now() + ARMED_MS)
-      for (const id of fresh) armed.delete(id)
-      if (!fresh.length) return
-      // what you saw: the frame's last change as this page knows it - or, when a document already shows a
-      // newer revision than the page has heard of, that one (everything up to it is on screen)
-      const seen = Object.fromEntries(fresh.map((id) => [id, all ? m.changed[id] ?? 0 : Math.max(m.changed[id] ?? 0, showsUpTo(id))]))
-      Object.assign(pendingSeen, seen)
-      set({ marks: { ...m, seen: { ...m.seen, ...seen } } })
-      void postOwner('marks/seen', { epoch: m.epoch, frames: seen })
-        // kept once confirmed too (revisions only ever rise): an answer that left before this one cannot undo it
-        .then((r) => { if (!r.ok) throw new Error(String(r.status)) })
-        .catch(() => { for (const [id, at] of Object.entries(seen)) if (pendingSeen[id] === at) delete pendingSeen[id]; void get().syncMarks() })
+      const now = Date.now(), seen: Record<string, number> = {}
+      for (const k of keys) {
+        const until = armed.get(k)
+        if (until !== undefined && until <= now) armed.delete(k)
+        if (!rearm && !armed.has(k)) continue
+        const f = k === 'stage' ? s.stageShown?.at : s.nodes.find((n) => n.key === k)?.frame
+        if (!f) { armed.delete(k); continue }
+        const r = upTo(k, f)
+        // what you saw: the last change as the page knows it - or the revision on screen when the document
+        // already shows one the page has not heard of yet (everything up to it is there)
+        const saw = Math.max(m.changed[f] ?? 0, r)
+        if (saw <= (m.seen[f] ?? 0)) { armed.delete(k); continue }
+        if (r < 0) { if (rearm) armed.set(k, now + ARMED_MS); continue }   // not up yet: the look waits for it
+        armed.delete(k)
+        seen[f] = Math.max(seen[f] ?? 0, saw)
+      }
+      ack(seen)
     },
     async syncWorking() {
       if (PUBLISHED) return
@@ -1868,7 +1906,7 @@ export const useStore = create<State>((set, get) => {
 // a frame shown in focus or play is looked at (spec 25): the stage reports each frame it commits,
 // with the revision it shows (Play.tsx sets stageShown) - selecting one is handled in select()
 useStore.subscribe((s, prev) => {
-  if (s.stageShown && s.stageShown !== prev.stageShown) s.markSeen([s.stageShown.at])
+  if (s.stageShown && s.stageShown !== prev.stageShown) s.look(['stage'])
   if (!s.play && prev.play) { useStore.setState({ stageShown: null }); pumpUpdates() }   // the canvas is in view again
 })
 

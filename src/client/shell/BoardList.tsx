@@ -60,7 +60,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const marks = useStore((s) => s.marks)
   const asks = useAsks()
   const framesOf = (boards: string[]) => boards.flatMap((b) => marks?.boards[b] ?? [])
-  const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(framesOf(boards), true) }] : [])                           // board slug → type and status (spec 20)
+  const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(framesOf(boards)) }] : [])                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
   const [naming, setNaming] = useState<Naming | null>(null)

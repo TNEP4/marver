@@ -121,6 +121,14 @@ class Boundary extends Component<{ resetKey: string; children?: ReactNode }, { e
   }
 }
 
+/** spec 26: a frame that committed - inside the error boundary, so a crash never counts - says which
+ *  frame the stage shows, at which revision (the stamp this document was served with: a frame imported
+ *  later never claims more than the wrappers it renders with), for which document generation. */
+function Shown({ id }: { id: string }) {
+  useEffect(() => { post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0 }) }, [id])
+  return null
+}
+
 function ErrorCard({ title, message, detail }: { title: string; message: string; detail: string }) {
   return createElement('div', { style: { fontFamily: 'ui-monospace,monospace', fontSize: 12, padding: 16, color: '#ff8a80' } },
     createElement('div', { style: { fontWeight: 700, marginBottom: 8 } }, title),
@@ -200,13 +208,6 @@ function Stage() {
       if (announce) post({ type: 'sh:stage-at', at: id })
     }
   }
-
-  // spec 26: after EVERY frame that commits - the first and each navigation - the stage says which
-  // frame it shows at which revision: the stamp this document was served with, so a frame imported
-  // later never claims more than the wrappers it renders with
-  useEffect(() => {
-    if (mounted) post({ type: 'sh:stage-shown', at: current.current, epoch: stamps?.epoch ?? '', doc: stamps?.doc[current.current] ?? 0 })
-  }, [mounted])
 
   // sh:stage-ready fires ONCE, after the first frame actually commits to the DOM (not when
   // goto is merely scheduled) - the shell re-drives the review highlight on it, which must
@@ -288,7 +289,7 @@ function Stage() {
   // that differs at depth k legitimately remounts everything below
   let tree: ReactNode = createElement(mounted.Frame)
   for (const W of [...mounted.wrappers].reverse()) tree = createElement(W, null, tree)
-  return createElement(Boundary, { resetKey: mounted.id }, tree)
+  return createElement(Boundary, { resetKey: mounted.id }, createElement(Shown, { key: mounted.id, id: mounted.id }), tree)
 }
 
 async function boot() {

@@ -145,6 +145,26 @@ describe('sidebar marks: the dev server (spec 26 - revisions, the clock at boot,
     expect(observe(root, frames())).toEqual({ doc: [], note: ['t/c'] })
   })
 
+  it('app code changed while dev was off needs a new document: nothing applied it in place', () => {
+    canvas()
+    mk('src/helper.ts', 'export const x = 1\n')
+    mk('design/scenes/t/c.tsx', "import { x } from '../../../src/helper.ts'\nexport default () => null\n")
+    boot()
+    touch('src/helper.ts')
+    boot()
+    const m = marks()
+    expect(fresh(m)).toEqual(['t/c'])
+    expect(m.doc['t/c']).toBe(m.changed['t/c'])
+  })
+
+  it("a hot update records only its own file's frames - another edit Vite has not processed waits for its turn", () => {
+    canvas()
+    boot()
+    touch('design/scenes/s/_kit.tsx'); touch('design/scenes/t/c.tsx')
+    expect(observe(root, frames(), { file: join(root, 'design/scenes/t/c.tsx') }).doc).toEqual(['t/c'])
+    expect(observe(root, frames()).doc.sort()).toEqual(['s/a', 's/b'])        // the kit's, on the next full look
+  })
+
   it('seen: the revision you saw - never lowered, never past the last, refused from another epoch', () => {
     canvas()
     boot()
@@ -197,6 +217,17 @@ describe('sidebar marks: the dev server (spec 26 - revisions, the clock at boot,
     expect(fresh(m)).toEqual(['t/c'])                                          // work done after the look; s/b was seen since
     expect(m.doc['t/c'] ?? 0).toBe(0)
     expect(local('seen.json').version).toBe(2)
+  })
+
+  it('the 0.24 conversion keeps the whole old rule: a frame under an id it had not seen, a note gone since', () => {
+    canvas()
+    mk('design/scenes/s/a.note.md', 'x')
+    for (const p of ['design/scenes/s/a.tsx', 'design/scenes/s/b.tsx', 'design/scenes/t/c.tsx', 'design/scenes/s/a.note.md']) utimesSync(join(root, p), 500, 500)
+    rmSync(join(root, 'design/scenes/s/a.note.md'))
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    writeFileSync(join(root, 'design/.local/seen.json'), JSON.stringify({ version: 1, baseline: 1_000_000, ids: ['s/a', 's/b'], notes: ['s/a'], frames: {} }))
+    boot()
+    expect(fresh(marks())).toEqual(['s/a', 't/c'])                            // a: its note went; c: an id the old reader had not seen
   })
 
   it('an invalid state starts over (all seen, a new epoch); a state the disk refuses turns marks off and resets nothing', () => {

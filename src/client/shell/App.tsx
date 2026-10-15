@@ -447,7 +447,7 @@ export function App() {
         if (s.play) s.setPlay(null)
         const keys = linkTargets(h, s.nodes)
         useStore.setState({ selection: keys })
-        s.markSeen(keys.map((k) => s.nodes.find((n) => n.key === k)?.frame).filter((f): f is string => !!f))   // a link opened is a look
+        s.look(keys)   // a link opened is a look
         if (!keys.length && h.f?.length) void revealFrame(h.f[0])   // not on this board - where it lives
         else setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
       }
@@ -524,9 +524,9 @@ export function App() {
     // after the dev server reconnects
     void useStore.getState().syncWorking()
     import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncWorking())
-    // sidebar marks (spec 25): a frame changed on disk, or an agent's work started or ended - and the
-    // reload log's line for this page load, once that first read has primed the request cookie
-    void useStore.getState().syncMarks().then(() => logReload({ kind: 'shell-boot' }))
+    // sidebar marks (spec 25): a frame changed on disk, or an agent's work started or ended
+    void useStore.getState().syncMarks()
+    logReload({ kind: 'shell-boot' })   // the reload log: every time the canvas page itself loads
     import.meta.hot.on('vite:ws:connect', () => void useStore.getState().syncMarks())
     import.meta.hot.on('sh:marks', () => void useStore.getState().syncMarks())
     import.meta.hot.on('sh:boards', () => void useStore.getState().syncMarks())   // a board's frames changed: its roll-up too
@@ -580,8 +580,9 @@ export function App() {
         s.setStatus(nodeKey, 'ready')
         // the revision this document was served with (spec 26): a look counts up to it, and one older
         // than the frame's last edit reloads
+        const before = s.nodes.find((n) => n.key === nodeKey)?.shown
         if (typeof data.doc === 'string') s.setShown(nodeKey, data.doc)
-        logReload({ kind: 'ready', node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
+        logReload({ kind: 'ready', cause: before === undefined ? 'first' : 'reload', node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
       } else if (data.type === 'sh:error') {
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
       } else if (data.type === 'sh:exit-interact') {
@@ -856,7 +857,7 @@ export function App() {
                     ? `board: ${useStore.getState().board} · scene: ${sc.name}  (design/scenes/${sc.name}/)`
                     : `board: ${useStore.getState().board} · scene: (root)`, 'path copied'),
                 }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : []),
-                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(frames.filter((f) => f.scene === sc.name).map((f) => f.id), true) }] : [])])}
+                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(frames.filter((f) => f.scene === sc.name).map((f) => f.id)) }] : [])])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   if (!keys.length) return

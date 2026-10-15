@@ -48,7 +48,7 @@ export function framesFor(root: string, manifest: Manifest, file: string, module
     if (had === false || had === inPlace) continue
     seen.set(m, inPlace)
     const f = m.file ? byFile.get(m.file) : undefined
-    if (f) { (inPlace ? touched : doc).add(f.id); continue }
+    if (f) (inPlace ? touched : doc).add(f.id)   // and on: a frame other frames import reaches them too
     if (m.file && wrapper(m.file)) add(affectedFrameIds(m.file, root, manifest) ?? [], inPlace)
     const accepts = m.isSelfAccepting === true
     for (const up of m.importers) queue.push([up, inPlace || accepts])

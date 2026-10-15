@@ -40,6 +40,13 @@ describe('calm updates: which frames an edit reaches (spec 26 Part 2)', () => {
     expect(framesFor(root, m, helper.file!, as([helper])).doc).toEqual(['t/c'])
   })
 
+  it('a frame other frames import: the walk goes on past it to them', () => {
+    const m = canvas()
+    const b = mod(at('design/scenes/s/b.tsx'))
+    const a = mod(at('design/scenes/s/a.tsx'), [b])
+    expect(framesFor(root, m, a.file!, as([a])).doc.sort()).toEqual(['s/a', 's/b'])
+  })
+
   it('an HTML frame is reached through its own module', () => {
     const m = canvas()
     const page = mod(at('design/scenes/t/page.html'))

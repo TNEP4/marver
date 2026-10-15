@@ -85,12 +85,12 @@ export function useSeenOnScreen() {
     const tick = () => {
       const s = useStore.getState(), m = s.marks
       const now = Date.now()
-      const shown = new Map<string, string>()   // clock key -> frame; a newer change or document restarts the clock
+      const shown = new Map<string, string>()   // clock key -> node key (or 'stage'); a newer change or document restarts the clock
       if (m && !document.hidden && s.play) {
         const st = s.stageShown, f = st?.at
         if (st && f && !s.playUpdateRevision && isNew(m, f)) {
           const [e, r] = st.shown.split(':')
-          if (e === m.epoch && Number(r) >= (m.doc[f] ?? 0)) shown.set(`play:${f}@${m.changed[f] ?? 0}:${st.shown}`, f)
+          if (e === m.epoch && Number(r) >= (m.doc[f] ?? 0)) shown.set(`play:${f}@${m.changed[f] ?? 0}:${st.shown}`, 'stage')
         }
       } else if (m && !document.hidden && s.scale >= 0.5) {
         // in view: some of it inside the window and not all of that under the open sidebar
@@ -103,13 +103,13 @@ export function useSeenOnScreen() {
           const x0 = Math.max(r.left, 0), x1 = Math.min(r.right, W), y0 = Math.max(r.top, 0), y1 = Math.min(r.bottom, H)
           if (x0 >= x1 || y0 >= y1) continue
           if (P && x0 >= P.left && x1 <= P.right && y0 >= P.top && y1 <= P.bottom) continue
-          shown.set(`${n.key}@${m.changed[n.frame] ?? 0}:${n.shown}`, n.frame)
+          shown.set(`${n.key}@${m.changed[n.frame] ?? 0}:${n.shown}`, n.key)
         }
       }
       for (const k of [...since.keys()]) if (!shown.has(k)) since.delete(k)
       const due: string[] = []
-      for (const [k, f] of shown) { const t = since.get(k) ?? now; since.set(k, t); if (now - t >= 2000) due.push(f) }
-      if (due.length) s.markSeen(due)
+      for (const [k, where] of shown) { const t = since.get(k) ?? now; since.set(k, t); if (now - t >= 2000) due.push(where) }
+      if (due.length) s.look(due)
     }
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)

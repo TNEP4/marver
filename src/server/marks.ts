@@ -20,10 +20,10 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { noteFileFor, type FrameEntry, type Manifest } from './manifest.ts'
 import { checkBoardsDir, checkRealDirs, listBoardFiles } from './boards.ts'
-import { fingerprints } from './deps.ts'
+import { fingerprints, frameDeps } from './deps.ts'
 import type { Marks } from '../shared/marks.ts'
 
 type Frames = readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[]
@@ -81,9 +81,15 @@ function convert(root: string, frames: Frames, c: unknown, s: Record<string, unk
   const mtime = (rel: string) => { try { return statSync(join(root, rel)).mtimeMs } catch { return 0 } }
   const baseline = typeof s.baseline === 'number' && Number.isFinite(s.baseline) ? s.baseline : Infinity
   const done = obj(c) ? c.frames : undefined
+  // the old reader also counted a frame under an id it had not seen (added, renamed) and a sticky note
+  // gone since its last read
+  const strs = (v: unknown) => (Array.isArray(v) ? new Set(v.filter((x): x is string => typeof x === 'string')) : null)
+  const ids = strs(s.ids), notes = strs(s.notes)
   for (const f of frames) {
     const changed = Math.max(mtime(f.file), mtime(noteFileFor(f.file)), num(done, f.id))
-    if (changed > Math.max(num(s.frames, f.id), baseline)) { st.changed[f.id] = 1; st.doc[f.id] = 0; st.rev = 1 }
+    const added = !!ids && !ids.has(f.id)
+    const noteGone = !!notes?.has(f.id) && !mtime(noteFileFor(f.file))
+    if (added || noteGone || changed > Math.max(num(s.frames, f.id), baseline)) { st.changed[f.id] = 1; st.doc[f.id] = 0; st.rev = 1 }
   }
   return st
 }
@@ -110,7 +116,7 @@ function state(root: string, frames: Frames): State | null {
     st = fresh()
   }
   states.set(root, st)
-  observe(root, frames)
+  observe(root, frames, { boot: true })
   return st
 }
 
@@ -129,23 +135,29 @@ export function recordChanged(root: string, frames: Frames, ids: readonly string
 
 /** Looks at the frames as they are on disk now and records what moved since the last look: a frame
  *  added (a new id - a rename too), its file or anything it reads (doc), its sticky note (note
- *  only). The first look of a canvas only remembers. Returns the frames it recorded. */
-export function observe(root: string, frames: Frames): { doc: string[]; note: string[] } {
+ *  only); app code it imports is note-only while dev runs (Fast Refresh applies it in place - the
+ *  frames it cannot reach in place are recorded from the hot update) and doc at `boot` (nothing
+ *  applied it). The first look of a canvas only remembers. `file`: look only at the frames that read
+ *  it - a hot update records its own edit, never another one Vite has not processed yet. */
+export function observe(root: string, frames: Frames, opts: { boot?: boolean; file?: string } = {}): { doc: string[]; note: string[] } {
   const st = states.get(root)
   const out = { doc: [] as string[], note: [] as string[] }
   if (!st || st === 'off') return out
-  const now = fingerprints(root, frames)
+  const deps = frameDeps(root, frames)
+  const rel = opts.file ? relative(root, opts.file).split(sep).join('/') : null
+  const look = rel ? frames.filter((f) => f.file === rel || deps.get(f.id)?.includes(rel)) : frames
+  const now = fingerprints(root, look, deps)
   const was = st.fp
-  if (was) for (const f of frames) {
+  if (was) for (const f of look) {
     const a = was[f.id], b = now[f.id]
-    if (!a || a[0] !== b[0]) out.doc.push(f.id)
-    else if (a[1] !== b[1] || a[2] !== b[2]) out.note.push(f.id)   // a note, or app code Fast Refresh applies in place
+    if (!a || a[0] !== b[0] || (opts.boot && a[2] !== b[2])) out.doc.push(f.id)
+    else if (a[1] !== b[1] || a[2] !== b[2]) out.note.push(f.id)
   }
   const known = new Set(frames.map((f) => f.id))
   const pruned = [st.changed, st.doc, st.seen].some((m) => Object.keys(m).some((id) => !known.has(id)))
   for (const m of [st.changed, st.doc, st.seen]) for (const id of Object.keys(m)) if (!known.has(id)) delete m[id]
-  const moved = !was || out.doc.length || out.note.length || Object.keys(was).length !== frames.length
-  st.fp = now
+  const moved = !was || out.doc.length || out.note.length || (!rel && Object.keys(was).length !== frames.length)
+  st.fp = rel && was ? { ...was, ...now } : now
   if (out.doc.length || out.note.length) {
     st.rev++
     for (const id of out.doc) st.changed[id] = st.doc[id] = st.rev
@@ -213,8 +225,8 @@ export function projectMarks(root: string, manifest: Manifest): Marks | null {
   if (st.fp) {
     const now = fingerprints(root, manifest.frames)
     const was = st.fp
-    const doc = manifest.frames.filter((f) => !was[f.id] || was[f.id][0] !== now[f.id][0]).map((f) => f.id)
-    const note = manifest.frames.filter((f) => was[f.id] && was[f.id][0] === now[f.id][0] && (was[f.id][1] !== now[f.id][1] || was[f.id][2] !== now[f.id][2])).map((f) => f.id)
+    const doc = manifest.frames.filter((f) => !was[f.id] || was[f.id][0] !== now[f.id][0] || was[f.id][2] !== now[f.id][2]).map((f) => f.id)   // as a boot sees it
+    const note = manifest.frames.filter((f) => was[f.id] && was[f.id][0] === now[f.id][0] && was[f.id][1] !== now[f.id][1]).map((f) => f.id)
     if (doc.length || note.length) { st.rev++; for (const id of doc) st.changed[id] = st.doc[id] = st.rev; for (const id of note) st.changed[id] = st.rev }
   }
   return snapshot(root, manifest, st)

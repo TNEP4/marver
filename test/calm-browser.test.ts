@@ -58,9 +58,10 @@ beforeAll(async () => {
   put('design/scenes/kit/_kit.tsx', 'export const Kit = () => <p>kit v1</p>\n')
   for (let n = 1; n <= 8; n++) put(`design/scenes/kit/f${n}.tsx`, kitFrame(n))
   put('design/scenes/kit/solo.tsx', `export const meta = { viewport: 'desktop' }\nexport default () => <main><h1>solo</h1></main>\n`)
-  // four on the first row, four far below it: a fit on the first row leaves the second off screen
-  const at = (n: number) => ({ frame: `kit/f${n}`, x: ((n - 1) % 4) * 1500, y: n <= 4 ? 0 : 20_000, w: 1440, h: 900 })
-  put('design/boards/main.json', { version: 1, name: 'main', auto: false, order: 0, nodes: [...[1, 2, 3, 4, 5, 6, 7, 8].map(at), { frame: 'kit/solo', x: 6000, y: 0, w: 1440, h: 900 }] })
+  // four on the first row, four very far below it: off screen at any zoom a fit on the first row takes
+  const at = (n: number) => ({ frame: `kit/f${n}`, x: ((n - 1) % 4) * 1500, y: n <= 4 ? 0 : 200_000, w: 1440, h: 900 })
+  put('design/boards/main.json', { version: 1, name: 'main', auto: false, order: 0, nodes: [...[1, 2, 3, 4, 5, 6, 7, 8].map(at), { frame: 'kit/solo', x: 6000, y: 0, w: 1440, h: 900 },
+    { key: 'dup3', frame: 'kit/f3', x: 9000, y: 200_000, w: 1440, h: 900 }] })   // f3 placed a second time, far away
   // six content frames reading one markdown file, in two rows the shell lays out (heights hold)
   put('notes.md', 'one paragraph\n')
   for (let n = 1; n <= 6; n++) put(`design/scenes/docs/d${n}.tsx`, `import { Doc, Md } from '@marver-design/marver/content'\nimport text from '../../../notes.md?raw'\nexport default () => <Doc><Md>{'# d${n}\\n\\n' + text}</Md></Doc>\n`)
@@ -102,12 +103,12 @@ describe('calm updates (spec 26)', () => {
     await until(`${[1, 2, 3, 4].map((n) => `${node(`kit/f${n}`)}?.status === 'ready'`).join(' && ')}`)
     await sleep(800)
     const boot = await ev('window.__boot')
-    const navs = await ev(`JSON.stringify(Object.fromEntries(window.__mvStore.getState().nodes.map((n) => [n.frame, n.nav ?? 0])))`)
+    const navs = await ev(`JSON.stringify(Object.fromEntries(window.__mvStore.getState().nodes.filter((n) => n.key !== 'dup3').map((n) => [n.frame, n.nav ?? 0])))`)
     await ev('window.__maxLoading = 0, 1')
     put('design/scenes/kit/_kit.tsx', 'export const Kit = () => <p>kit v2</p>\n')
     for (let n = 1; n <= 4; n++) await until(`${docText(`kit/f${n}`)}.includes('kit v2')`)
     const before = JSON.parse(navs)
-    const after = JSON.parse(await ev(`JSON.stringify(Object.fromEntries(window.__mvStore.getState().nodes.map((n) => [n.frame, n.nav ?? 0])))`))
+    const after = JSON.parse(await ev(`JSON.stringify(Object.fromEntries(window.__mvStore.getState().nodes.filter((n) => n.key !== 'dup3').map((n) => [n.frame, n.nav ?? 0])))`))
     for (let n = 1; n <= 4; n++) expect(after[`kit/f${n}`]).toBe(before[`kit/f${n}`] + 1)       // reloaded once
     for (let n = 5; n <= 8; n++) {
       expect(after[`kit/f${n}`]).toBe(before[`kit/f${n}`])                                       // off screen: not yet
@@ -152,6 +153,36 @@ describe('calm updates (spec 26)', () => {
     await ev(`window.__mvStore.getState().setInteract(null), 1`)                                 // the lease ends
     await until(`${docText('kit/f2')}.includes('edited')`)
     await until(`!${isNewExpr('kit/f2')}`)                                                        // the look completes now
+  }, 60_000)
+
+  it('a look counts only what that copy shows: a stale copy of a frame placed twice does not clear it', async () => {
+    if (!browser) return
+    await ev(`location.hash = '#/b/main?f=kit/f3', 1`)
+    await until(`${node('kit/f3')}?.status === 'ready'`)
+    await sleep(500)
+    await ev(`window.__mvStore.setState({ scale: 0.2 }), 1`)
+    put('design/scenes/kit/f3.tsx', kitFrame(3).replace('<h1>f3</h1>', '<h1>f3, edited</h1>'))
+    await until(isNewExpr('kit/f3'))
+    await until(`window.__mvStore.getState().nodes.find((n) => n.key === 'dup3')?.stale === true`)   // far away: it waits
+    await ev(`window.__mvStore.getState().select('dup3'), 1`)                                           // a look at the stale copy
+    await sleep(400)
+    expect(await ev(isNewExpr('kit/f3'))).toBe(true)
+    const near = await ev(`${node('kit/f3')}.key`)
+    await until(`window.__mvStore.getState().nodes.find((n) => n.key === ${JSON.stringify(near)})?.shown?.endsWith(':' + window.__mvStore.getState().marks.doc['kit/f3'])`)
+    await ev(`window.__mvStore.getState().select(${JSON.stringify(near)}), 1`)                         // the copy that shows it
+    await until(`!${isNewExpr('kit/f3')}`)
+  }, 60_000)
+
+  it('the stage reports the frame it shows, each step: A, B, A', async () => {
+    if (!browser) return
+    await ev(`window.__mvStore.getState().setPlay({ at: 'kit/f1', device: 'desktop', theme: 'light', focus: true }), 1`)
+    await until(`window.__mvStore.getState().stageShown?.at === 'kit/f1'`)
+    for (const at of ['kit/f4', 'kit/f1']) {
+      // a step, the way Play takes one: the stage swaps, the shell follows
+      await ev(`(document.querySelector('iframe[src*="/stage/"]').contentWindow.postMessage({ type: 'sh:stage-set', at: ${JSON.stringify(at)} }, location.origin), window.__mvStore.getState().setPlay({ ...window.__mvStore.getState().play, at: ${JSON.stringify(at)} }), 1)`)
+      await until(`window.__mvStore.getState().stageShown?.at === ${JSON.stringify(at)}`)
+    }
+    await ev(`window.__mvStore.getState().setPlay(null), 1`)
   }, 60_000)
 
   it('heights hold while a batch of content frames reloads: the second row moves at most once', async () => {

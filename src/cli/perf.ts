@@ -19,15 +19,18 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   const reloads = log.filter((e) => e.kind === 'full-reload')
   const boots = log.flatMap((e, i) => (e.kind === 'shell-boot' ? [{ ts: e.ts, before: log.slice(Math.max(0, i - 3), i).filter((x) => x.kind !== 'ready' && x.kind !== 'settled') }] : []))
   const slow = log.filter((e) => e.kind === 'settled' && typeof e.ms === 'number').sort((a, b) => b.ms - a.ms).slice(0, 5)
+  const booted = log.filter((e) => e.kind === 'ready')
+  const reloaded = booted.filter((e) => e.cause === 'reload').length
   if (opts.json) {
-    console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reload: [...v.reload], inPlace: [...v.inPlace] }])), reloads, boots, slow }, null, 2))
+    console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { reloaded, first: booted.length - reloaded }, reloads, boots, slow }, null, 2))
     return
   }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
   console.log(`last ${minutes} min - design/.local/perf/reloads.jsonl`)
   console.log(`\nedits (${files.size} files)`)
   for (const [file, f] of [...files].sort((a, b) => b[1].edits - a[1].edits))
-    console.log(`  ${file}  ${f.edits}x  reloaded ${f.reload.size} frame${f.reload.size === 1 ? '' : 's'}${f.inPlace.size ? `, ${f.inPlace.size} updated in place` : ''}`)
+    console.log(`  ${file}  ${f.edits}x  reached ${f.reload.size} frame${f.reload.size === 1 ? '' : 's'}${f.inPlace.size ? `, ${f.inPlace.size} updated in place` : ''}`)
+  console.log(`\nframe documents booted: ${reloaded} reloads after an edit, ${booted.length - reloaded} first loads (a frame off screen reloads when it comes into view)`)
   console.log(`\npage-wide reloads: ${reloads.filter((r) => r.passed).length} sent (dependency rebuilds), ${reloads.filter((r) => !r.passed).length} dropped`)
   for (const r of reloads) console.log(`  ${t(r.ts)}  ${r.passed ? 'sent   ' : 'dropped'}  ${r.triggeredBy ?? 'no file named'}`)
   console.log(`\ncanvas page loads: ${boots.length}`)

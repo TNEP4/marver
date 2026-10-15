@@ -110,4 +110,9 @@ async function boot() {
 boot()
 // Fast Refresh keeps this document alive across edits: tell the shell its source changed, so a
 // sleeping frame wakes and compiles again (a texture describes a source revision).
-if (import.meta.hot) import.meta.hot.on('vite:afterUpdate', () => post({ type: 'sh:hmr', id }))
+// an update applied in place in this document (an app component under Fast Refresh): its sleeping
+// textures describe old code. The shared registry's update reaches every frame and changes nothing in
+// it (spec 26) - the frames it concerns are reloaded by the shell - so it is not one.
+if (import.meta.hot) import.meta.hot.on('vite:afterUpdate', (p: { updates?: { acceptedPath?: string; path?: string }[] }) => {
+  if (p.updates?.some((u) => !(u.acceptedPath ?? u.path ?? '').includes('/frame-host/registry'))) post({ type: 'sh:hmr', id })
+})

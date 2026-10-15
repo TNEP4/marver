@@ -465,15 +465,20 @@ function PlayInner() {
         postStage({ type: 'sh:pick', on: commentsStore().commentMode, quiet: !commentsStore().showAnchor })
         setStageReady((n) => n + 1)            // a reload wiped the frame's lock; let PlayComments re-drive it
       } else if (data.type === 'sh:stage-shown') {
-        // spec 26: the stage committed this frame at this revision - a look on it counts up to there
-        if (typeof data.at === 'string') useStore.setState({ stageShown: { at: data.at, shown: `${String(data.epoch ?? '')}:${Number(data.doc) || 0}` } })
+        // spec 26: the stage committed this frame at this revision - a look on it counts up to there.
+        // Only from the stage document now up: one an Update replaced may still be talking
+        if (typeof data.at === 'string' && String(data.nav ?? '') === (s.playNav ? String(s.playNav) : ''))
+          useStore.setState({ stageShown: { at: data.at, shown: `${String(data.epoch ?? '')}:${Number(data.doc) || 0}` } })
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
         if (p && typeof data.at === 'string') s.setPlay({ ...p, at: data.at })
       } else if (data.type === 'sh:stage-exit') {
         exit()
       } else if (data.type === 'sh:stage-error') {
-        s.toast(`play: ${String(data.message ?? 'frame error')}`)
+        // a frame added after this stage was served is not in its registry: that is an update to take
+        // (Update serves a fresh stage), not an error
+        if (/^unknown frame id/.test(String(data.message ?? ''))) useStore.setState({ playUpdateRevision: 'new frame' })
+        else s.toast(`play: ${String(data.message ?? 'frame error')}`)
       } else if (data.type === 'sh:stage-key') {
         if (data.meta && data.key === '/') toggleCollapse()
         else handleKey(String(data.key), String(data.code))
