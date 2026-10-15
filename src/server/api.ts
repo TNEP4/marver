@@ -109,7 +109,7 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean } = {}): Connect.NextHandleFunction {
   // the frames as the dev server knows them now (its cached manifest), else as the disk says
   const devManifest = (): Manifest => {
     if (opts.manifest) return opts.manifest()
@@ -758,7 +758,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // spec 26: the compiler renders the newest source - never for a document behind its frame
         const { docRev } = await import('./marks.ts')
         const all = devManifest().frames
-        const behind = docs.map((d, i) => d !== undefined && d !== docRev(root, all, asks[i].frame))
+        // an edit in flight has not been published yet: what compiles now may already be newer than any stamp
+        const pending = opts.settled ? !opts.settled() : false
+        const behind = docs.map((d, i) => d !== undefined && (pending || d !== docRev(root, all, asks[i].frame)))
         const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
         const { ROUTE } = await import('../cli/name.ts')
         const gen = opts.bakeGen?.() ?? 0
@@ -769,8 +771,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           urlFor: (ask) => { const f = frames.get(ask.frame)!; return f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}` },
           urlBase: `${ROUTE}/bakes`,
         })
+        // and after: an edit published while it compiled means the textures may show newer code than the stamp
+        const after = docs.map((d, i) => d !== undefined && (!!opts.settled && !opts.settled() || d !== docRev(root, devManifest().frames, asks[i].frame)))
         let k = 0
-        const answers = asks.map((a, i) => ({ ...(behind[i] ? { ...a, ok: false as const, error: 'the document is behind its frame' } : baked[k++]), ...(docs[i] ? { doc: docs[i] } : {}) }))
+        const answers = asks.map((a, i) => {
+          const r = behind[i] ? null : baked[k++]
+          return { ...(r && !after[i] ? r : { ...a, ok: false as const, error: 'the document is behind its frame' }), ...(docs[i] ? { doc: docs[i] } : {}) }
+        })
         return json(res, 200, { gen, answers })
       }
 

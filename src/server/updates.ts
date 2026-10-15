@@ -65,7 +65,7 @@ export interface UpdateHooks {
 }
 
 /** The hook that runs last on every hot update of the client environment. */
-export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () => UpdateHooks | null): Plugin {
+export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () => UpdateHooks | null, landed: (file: string) => void): Plugin {
   return {
     name: 'marver:updates',
     hotUpdate: {
@@ -73,9 +73,11 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
       handler(opts) {
         if (this.environment.name !== 'client') return
         const h = hooks()
-        if (!h) return
-        const t = framesFor(root, manifest(), opts.file, opts.modules)
-        if (t.doc.length || t.touched.length) h.onFrames(t, 'update')
+        if (h) {
+          const t = framesFor(root, manifest(), opts.file, opts.modules)
+          if (t.doc.length || t.touched.length) h.onFrames(t, 'update')
+        }
+        landed(opts.file)   // Vite has invalidated what this file feeds: its revision may be published
       },
     },
   }
