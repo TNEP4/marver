@@ -376,7 +376,7 @@ export function layoutChain(fileKey) { return chains[fileKey] ?? [] }
 `
 }
 
-/** The generated registry for filtered builds: explicit imports only, same exports. */
+/** The generated registry of every build: explicit imports of the published frames only, same exports. */
 function registrySource(root: string, frameKeys: string[]): string {
   const bases = ['/design/scenes', '/design/components']
   const layouts = new Set<string>()
@@ -467,7 +467,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const shows = Object.fromEntries(publishedNames.map((n) => [n, framesOn(boards[n], live)]))
   const wanted = new Set(Object.values(shows).flat())
   const frames = manifest.frames.filter((f) => wanted.has(f.id))
-  const includeAll = frames.length === manifest.frames.length
+  const filtered = frames.length < manifest.frames.length
   // the published manifest: with the strip on, `file` goes opaque - html frames
   // keep a real (opaque) servable path, tsx frames an inert token the client's
   // shape check accepts and laser shows as-is
@@ -538,9 +538,9 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   assertProjected(data, showStatus)
 
   // ---- build overrides: real sh-data + the generated registry ----
-  // The registry is generated whenever boards are filtered (explicit imports
-  // only - excluded frames never enter the bundle) AND whenever the source
-  // strip is on (opaque keys - repo paths never enter it either).
+  // The registry is always generated: explicit imports of the published frames
+  // only - excluded frames never enter the bundle - with opaque keys when the source
+  // strip is on (repo paths never enter it either).
   const registryFile = posix(join(clientDir, 'frame-host', 'registry.ts'))
   const lockedFile = posix(join(clientDir, 'shell', 'LockedApp.tsx'))
   const tsxFrames = frames.filter((f) => f.kind === 'tsx')
@@ -558,7 +558,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
       if (id === '\0sh-data-build') return `export default ${JSON.stringify(data)}`
       if (posix(id) === registryFile) {
         if (strip) return registrySourceOpaque(root, tsxFrames.map((f) => ({ id: f.id, file: posix(f.file) })), buildSalt)
-        if (!includeAll) return registrySource(root, tsxFrames.map((f) => '/' + posix(f.file)))
+        return registrySource(root, tsxFrames.map((f) => '/' + posix(f.file)))
       }
     },
   }
@@ -792,9 +792,9 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   console.log(`\n  ${NAME} build → design/.dist`)
   console.log(`  boards: ${publishedNames.map((n) => `${n} (${rights[n]})`).join(', ')}`)
   console.log(textureLine)
-  console.log(`  frames: ${frames.length}${includeAll ? '' : ` of ${manifest.frames.length} (build-time filter)`}`)
+  console.log(`  frames: ${frames.length}${filtered ? ` of ${manifest.frames.length} (build-time filter)` : ''}`)
   if (copiedAssets) console.log(`  assets: ${copiedAssets} referenced file${copiedAssets === 1 ? '' : 's'} from design/assets/ (unreferenced assets never ship)`)
-  if (!includeAll && existsSync(join(root, 'public')))
+  if (filtered && existsSync(join(root, 'public')))
     console.log(`  note: the host public/ directory ships in full - the --boards filter covers frames, not public assets`)
   console.log(`\n  serve it:  npx ${NAME} serve   (set MARVER_PASSWORD to gate it)\n`)
 }
