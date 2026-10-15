@@ -436,9 +436,9 @@ export function App() {
   useEffect(() => {
     const onPop = async () => {
       const nav = navigated()                  // a reveal still looking up its board must not land after this
-      // a lookup below still running when newer navigation lands - a link, or a board picked - is dropped
-      const at = useStore.getState().board
-      const overtaken = () => !isLatest(nav) || useStore.getState().board !== at
+      // a lookup below still running when newer navigation lands - a link, a board picked, a step in play - is dropped
+      const at = useStore.getState().board, step = useStore.getState().play?.at
+      const overtaken = () => !isLatest(nav) || useStore.getState().board !== at || useStore.getState().play?.at !== step
       let h = parseHash()
       const legacy = isLegacyLink(h)
       if (legacy) {

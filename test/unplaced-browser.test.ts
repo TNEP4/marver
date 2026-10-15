@@ -112,6 +112,8 @@ describe('the Not on a board view', () => {
     const s = await open('#/b/~unplaced')
     const v = await settled(s, `v.frames.join() === 'loose/idea,loose/page'`)
     expect(v.board).toBe('~unplaced')
+    // laid out like a composed board - one band of their scenes - so a frame that grows reflows the rest
+    expect(await browser!.eval(s, `JSON.stringify(window.__mvStore.getState().layoutRaw)`)).toBe('{"rows":[["loose"]]}')
     await browser!.until(s, `document.querySelector('[data-unplaced]')?.textContent === 'Not on a board2' && !document.querySelector('[data-no-boards]')`)
     // as on any board: the HTML frame renders, the sticky note shows, the old thread's pin is there
     await browser!.until(s, `[...document.querySelectorAll('.sh-node iframe')].some((f) => /page\\.html/.test(f.src) && f.contentDocument?.querySelector('h1')?.textContent === 'A page')`, 20_000)

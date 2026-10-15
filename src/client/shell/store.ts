@@ -752,10 +752,11 @@ export const useStore = create<State>((set, get) => {
       let loaded: { board: any; sha256: string } | 'fresh' | null
       if (DATA) loaded = DATA.boards[boardName] ? { board: DATA.boards[boardName], sha256: 'published' } : 'fresh'
       // the Not on a board view: a board of the frames no board shows, never saved - laid out
-      // fresh on every load (no hash), its keys minted like any keyless node's
+      // fresh on every load (no hash) in one band of their scenes, its keys minted like any keyless node's
       else if (boardName === UNPLACED) {
         const m = await fetchMembership().catch(() => null)
-        loaded = m ? { board: { nodes: m.unplaced.map((frame) => ({ frame })) }, sha256: '' } : null
+        const scenes = [...new Set(manifest.frames.filter((f) => m?.unplaced.includes(f.id)).map((f) => f.scene))]
+        loaded = m ? { board: { nodes: m.unplaced.map((frame) => ({ frame })), ...(scenes.length ? { layout: { rows: [scenes] } } : {}) }, sha256: '' } : null
       } else {
         const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
         if (res.ok) {
