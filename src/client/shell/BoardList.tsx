@@ -573,9 +573,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
 
   const rows: ReactNode[] = listRows(tree, null, 0)
   // no boards yet: say what to do (a fresh `--no-demo` canvas) - once the first read has answered
-  if (read && !tree.length && !naming) rows.push(<div key="empty" className="sub dim" data-no-boards>No boards yet - ask your agent to make one</div>)
+  if (read && !boardsIn(tree).length && !naming) rows.push(<div key="empty" className="sub dim" data-no-boards>No boards yet - ask your agent to make one</div>)
   // the frames on no board (spec 26), apart from the tree - never a drop target, never dragged
-  if (unplaced.length || board === UNPLACED) {
+  if (unplaced.length) {
     const r = board === UNPLACED ? { asks: 0, fresh: 0 } : rollup(marks, asks, unplaced)
     rows.push(
       <button key="unplaced" data-unplaced className={`it board${board === UNPLACED ? ' cur' : ''}${r.asks ? ' mk-ask' : r.fresh ? ' mk-new' : ''}`} onClick={() => void pick(UNPLACED)}>

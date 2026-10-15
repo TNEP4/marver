@@ -6,16 +6,16 @@
  *   ?f= / ?s=          the board that shows most of them (the first on a tie), those selected, and a
  *                      notice naming where the others are; the Not on a board view only when none
  *                      of them is on a board
- *   ?n=<keys>          the keys turned back into frames - from a leftover all-scenes.json, or the
- *                      keys the old board minted (keys.ts) - then as above; none recovered: the
- *                      landing board, with a notice
+ *   ?n=<keys>          the keys turned back into frames - from a leftover all-scenes.json (in dev,
+ *                      or as the build shipped it), or the keys the old board minted (keys.ts) -
+ *                      then as above; none recovered: the landing board, with a notice
  *   #/p/all-scenes     plays on the first board that shows its frame; device, theme and mode kept
  *   #/b/all-scenes     the landing board
  */
 import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { stableNodeKey } from './keys.ts'
 import { UNPLACED, type HashState } from './hash.ts'
-import { boardLabel, fetchMembership, PUBLISHED } from './store.ts'
+import { ALL_SCENES_KEYS, boardLabel, fetchMembership, PUBLISHED } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { ROUTE } from '../const.ts'
 
@@ -41,7 +41,7 @@ export async function landLegacy(h: HashState): Promise<{ hash: HashState; notic
   const frames = new Set([...(f ?? []), ...live.filter((id) => s?.some((sc) => id.startsWith(`${sc}/`)))].filter((id) => live.includes(id)))
   if (n?.length) {
     // node keys: the leftover file's, else the ones the old board gave each frame (it minted them all)
-    const byKey = new Map(live.map((id) => [stableNodeKey(ALL_SCENES, id, 0), id]))
+    const byKey = new Map([...live.map((id) => [stableNodeKey(ALL_SCENES, id, 0), id] as const), ...Object.entries(ALL_SCENES_KEYS)])
     if (!PUBLISHED) {
       try {
         const leftover = (await (await fetch(`${ROUTE}/api/boards/${ALL_SCENES}`)).json())?.board as { nodes?: { key?: unknown; frame?: unknown }[] } | null

@@ -45,6 +45,9 @@ beforeAll(async () => {
     ],
   }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { main: 'comment' } }))
+  // what 0.24 left behind: its node keys travel for the frames that ship, so an old ?n= link still lands
+  writeFileSync(join(root, 'design', 'boards', 'all-scenes.json'), JSON.stringify({ version: 1, auto: true, nodes: [
+    { key: 'n_shipkey', frame: `${SECRET_DIR}/hello` }, { key: 'n_privkey', frame: 'elsewhere/private' }] }))
   // the built CLI, not the source module: packageDir() resolves the client
   // sources relative to the built file, exactly as a real `marver build` does
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
@@ -82,6 +85,12 @@ describe('reveal.source off (the default) strips every repo path from the bundle
     const shell = walk(dist).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8')).join('')
     expect(shell).toContain(`${SECRET_DIR}/hello`)              // the id survives
     expect(shell).toMatch(/__mv\/f\/mv[0-9a-f]{12}/)            // opaque file fields
+  })
+
+  it('a leftover all-scenes.json ships the node keys of shipped frames only (spec 26)', () => {
+    const shell = walk(join(root, 'design', '.dist')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8')).join('')
+    expect(shell).toContain('n_shipkey')
+    expect(shell).not.toContain('n_privkey')
   })
 
   it('meta.json names what each published board shows, by id - the old all-scenes log serves those threads (spec 26)', () => {

@@ -28,7 +28,7 @@ import { cssFixPlugin } from './css-fix.ts'
 import { ALL_SCENES, buildTree, flatten, framesOn, isBoardName, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
-import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
+import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, readRegistry } from './boards.ts'
 import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
@@ -467,6 +467,12 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const shows = Object.fromEntries(publishedNames.map((n) => [n, framesOn(boards[n], live)]))
   const wanted = new Set(Object.values(shows).flat())
   const frames = manifest.frames.filter((f) => wanted.has(f.id))
+  // an old #/b/all-scenes?n= link names node keys: a leftover all-scenes.json's, for the frames that ship
+  const leftover = join(root, 'design', 'boards', `${ALL_SCENES}.json`)
+  let oldNodes: unknown = null
+  try { if (isRegularFile(leftover)) oldNodes = JSON.parse(readFileSync(leftover, 'utf8'))?.nodes } catch { /* not JSON: the minted keys stand */ }
+  const allScenesKeys = Object.fromEntries((Array.isArray(oldNodes) ? oldNodes : [])
+    .flatMap((n) => (typeof n?.key === 'string' && wanted.has(n?.frame) ? [[n.key, n.frame as string]] : [])))
   const filtered = frames.length < manifest.frames.length
   // the published manifest: with the strip on, `file` goes opaque - html frames
   // keep a real (opaque) servable path, tsx frames an inert token the client's
@@ -488,7 +494,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   for (const n of publishedNames) {
     const pb = policy.boards[n]
     if (pb?.type !== 'slides' && pb?.open !== 'slides') continue
-    const ids = new Set((boards[n]?.nodes ?? []).map((x: { frame: string }) => x.frame))
+    const ids = new Set(shows[n])
     const on = pubManifest.frames.filter((f) => ids.has(f.id))
     const off = on.filter((f) => !(f.kind === 'tsx' && f.slide))
     if (off.length === on.length)     // zero slides - including an EMPTY board, which is a deck of nothing
@@ -530,6 +536,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     bakes: bakeGen,
     manifest: pubManifest, boards, names: publishedNames, tree, ...(Object.keys(titles).length ? { titles } : {}), ...(Object.keys(meta).length ? { meta } : {}),
     ...(Object.keys(sizes).length ? { sizes } : {}),
+    ...(Object.keys(allScenesKeys).length ? { allScenesKeys } : {}),
     // a published status is a snapshot: the tooltip says when it was read
     ...(Object.values(meta).some((m) => (m as { status?: unknown }).status) ? { statusAsOf: new Date().toISOString() } : {}),
     default: publishedNames[0],

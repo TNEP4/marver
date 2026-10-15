@@ -49,8 +49,8 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
 /** The old all-scenes comment log (spec 26, Part 7) outlives its board: a thread there is exposed
  *  when some published board shows its frame - `shows`, each published board's frames, written by
  *  builds from 0.25 on. Answers, for any event in the log or arriving with it, the published boards
- *  showing its thread's frame (none = unexposed). A reply, an edit or a reaction finds its thread
- *  through the comment it names. */
+ *  showing its thread's frame (none = unexposed). A reply finds its thread by parentId; a resolve,
+ *  an edit or a reaction through the comment it names. */
 export function legacyExposure(events: CommentEvent[], rights: Rights, shows: Record<string, string[]>): (e: CommentEvent) => string[] {
   const boards = new Map<string, string[]>()   // thread id -> the published boards showing its frame
   const rootOf = new Map<string, string>()     // comment id (a thread or a reply) -> thread id
@@ -61,7 +61,8 @@ export function legacyExposure(events: CommentEvent[], rights: Rights, shows: Re
     }
     if (e.type === 'reply' && e.commentId && e.parentId && !rootOf.has(e.commentId)) rootOf.set(e.commentId, e.parentId)
   }
-  return (e) => boards.get(e.parentId ?? rootOf.get(e.commentId ?? '') ?? '') ?? []
+  // a reply names its thread in parentId; every other event targets the comment it names
+  return (e) => boards.get(rootOf.get((e.type === 'reply' ? e.parentId : e.commentId) ?? '') ?? '') ?? []
 }
 
 const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])

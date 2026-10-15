@@ -10,7 +10,7 @@ import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
-import { humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
+import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
 import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
@@ -437,18 +437,23 @@ export function App() {
     let popSeq = 0
     const onPop = async () => {
       navigated()                              // a reveal still looking up its board must not land after this
+      const mine = ++popSeq                    // a lookup below still running when newer navigation lands is dropped
       let h = parseHash()
       const legacy = isLegacyLink(h)
       if (legacy) {
         // an old All Scenes link pasted, or walked back to: where it lands now, written over it -
         // once, though back/forward fires two events
-        const mine = ++popSeq
         const r = await landLegacy(h)
         const board = r.hash.board ?? await landingBoard()
         if (mine !== popSeq) return
         h = { ...r.hash, board }
         writeHash(h)
         if (r.notice) toast(r.notice)
+      } else if (!h.board && !h.focus && !h.invite) {
+        // the bare #/ opens the landing board
+        const board = await landingBoard()
+        if (mine !== popSeq) return
+        h = { ...h, board }
       }
       let s = useStore.getState()
       const from = s.board
@@ -1081,7 +1086,9 @@ function JamAvatar({ author }: { author: { name?: string; avatar?: string; id?: 
 async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void) {
   if (revealThread(note.threadId)) { dismiss(); return }
   const s = useStore.getState()
-  if (note.board && s.board !== note.board) await s.switchBoard(note.board)
+  // a thread in the old all-scenes log has no board of its own: its frame's board shows it (spec 26)
+  if (note.board === ALL_SCENES) { if (note.frame) await revealFrame(note.frame) }
+  else if (note.board && s.board !== note.board) await s.switchBoard(note.board)
   for (let i = 0; i < 12; i++) {
     if (revealThread(note.threadId)) { dismiss(); return }
     await new Promise((r) => setTimeout(r, 250))

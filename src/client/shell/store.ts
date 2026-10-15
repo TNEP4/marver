@@ -28,8 +28,12 @@ const DATA: {
   bakes?: number
   /** content-frame heights, `scene/frame@width` -> px (design/boards/_sizes.json, published frames only) */
   sizes?: Record<string, number>
+  /** node key -> frame, off a leftover all-scenes.json, for old links naming keys (spec 26; shipped frames only) */
+  allScenesKeys?: Record<string, string>
 } | null = shData
 
+/** An old All Scenes link's node keys a published bundle can still turn back into frames (legacy-links.ts). */
+export const ALL_SCENES_KEYS: Record<string, string> = DATA?.allScenesKeys ?? {}
 /** The published textures' generation, or 0: the static index this build shipped is at /__mv/bakes/<gen>/index.json. */
 export const BAKES = DATA?.bakes ?? 0
 /** When a published bundle's statuses were read (spec 20) - absent in dev, where they are live. */

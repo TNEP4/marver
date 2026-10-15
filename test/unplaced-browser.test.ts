@@ -48,6 +48,7 @@ beforeAll(async () => {
   put('design/scenes/loose/page.html', '<!doctype html><html><body style="background:#333;color:#fff"><h1>A page</h1></body></html>\n')
   // no board yet - and what 0.24 left behind: a leftover all-scenes.json that is not even JSON, and its comment log
   put('design/boards/all-scenes.json', '{ "version": 1, "nodes": [')
+  put('design/boards/_folders.json', { version: 1, folders: [{ name: 'features', order: 0 }] })   // init's empty folders: still no board
   put('design/comments/all-scenes.jsonl', [thread('t-idea-000', 'loose/idea'), thread('t-pay-0000', 'shop/pay')].join('\n') + '\n')
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d; const m = log.match(/→ (http:\/\/localhost:\d+)\//); if (m) ORIGIN = m[1] })
@@ -179,6 +180,11 @@ describe('every old All Scenes link lands on a real board', () => {
     expect(await browser!.eval(s, `window.__mvStore.getState().play`)).toMatchObject({ at: 'other/far', device: 'laptop', theme: 'dark' })
     await settled(await open('#/b/all-scenes'), `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
     await settled(await open('#/'), `v.board === 'archive'`)
+    // and #/ in a tab already open on another board
+    const s2 = await open('#/b/big')
+    await settled(s2, `v.board === 'big'`)
+    await browser!.eval(s2, `location.hash = '#/'`)
+    await settled(s2, `v.board === 'archive'`)
   })
 
   skippable('back and forward: a pasted old link lands, back returns, forward lands again', async () => {

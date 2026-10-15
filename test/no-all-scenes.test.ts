@@ -114,6 +114,8 @@ describe('the old all-scenes log on a republished canvas', () => {
     const firstReply = readLog(comments(), 'all-scenes').find((e) => e.type === 'reply')!
     expect((await post(p.owner, { type: 'edit', commentId: firstReply.commentId, author: { email: 'owner@x.test' }, body: 'mine now' })).status).toBe(400)
     expect((await post(p.dana, { type: 'edit', commentId: firstReply.commentId, author: { email: 'dana@x.test' }, body: 'answer, edited' })).status).toBe(200)
+    // a resolve is judged by the thread it names, never by a parentId riding along
+    expect((await post(p.dana, { type: 'resolve', commentId: 't-spec-000', parentId: 't-cart-000' })).status).toBe(403)
     // a new thread lives on a board, never in the old log
     expect((await post(p.dana, { type: 'create', commentId: id(), frame: 'shop/cart', author: { email: 'dana@x.test' }, body: 'new' })).status).toBe(403)
     expect((await drive('POST', 'comments/all-scenes', {}, { events: [ev(reply('t-cart-000', 'dana@x.test'))] })).status).toBe(401)
@@ -127,29 +129,32 @@ describe('the old all-scenes log on a republished canvas', () => {
     // the published side: a collaborator's thread, and her reply in it
     appendEvents(comments(), 'all-scenes', [thread('t-cart-000', 'shop/cart', 'dana@x.test')])
     expect((await drive('POST', 'comments/all-scenes', p.dana, { events: [ev({ type: 'reply', commentId: 'r-dana-000', parentId: 't-cart-000', author: { email: 'dana@x.test' }, body: 'from the web' })] })).status).toBe(200)
-    // the repo's side: the same thread with the owner's reply, a thread never pushed on a shipped frame, one on a frame that does not ship
     const repo = join(dir, 'repo')
     const local = join(repo, 'design', 'comments')
+    const server: Server = createServer((req, res) => {
+      void collabHandler(dir, dist())(req, res, new URL(req.url ?? '/', 'http://localhost')).then((handled) => { if (!handled) { res.statusCode = 404; res.end() } })
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+    // a checkout that never had the log pulls it all the same: the canvas names it
+    try { expect((await syncOnce(repo, { url, token: op.token }))['all-scenes']).toEqual({ pulled: 2, pushed: 0 }) }
+    finally { rmSync(local, { recursive: true, force: true }) }
+    // the repo's side: the same thread with the owner's reply, a thread never pushed on a shipped frame, one on a frame that does not ship
     appendEvents(local, 'all-scenes', [
       ...readLog(comments(), 'all-scenes').filter((e) => e.type === 'create'),
       ev({ type: 'reply', commentId: 'r-owner-00', parentId: 't-cart-000', author: { email: 'owner@x.test' }, body: 'from the repo' }),
       thread('t-local-00', 'shop/spec', 'owner@x.test'),
       thread('t-private', 'shop/secret', 'owner@x.test'),
     ])
-    const server: Server = createServer((req, res) => {
-      void collabHandler(dir, dist())(req, res, new URL(req.url ?? '/', 'http://localhost')).then((handled) => { if (!handled) { res.statusCode = 404; res.end() } })
-    })
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
     try {
-      const port = (server.address() as { port: number }).port
-      const out = await syncOnce(repo, { url: `http://127.0.0.1:${port}`, token: op.token })
+      const out = await syncOnce(repo, { url, token: op.token })
       expect(out['all-scenes']).toEqual({ pulled: 1, pushed: 2 })
       const remote = readLog(comments(), 'all-scenes').map((e) => e.commentId)
       expect(remote).toEqual(expect.arrayContaining(['r-owner-00', 't-local-00']))
       expect(remote).not.toContain('t-private')
       expect(readLog(local, 'all-scenes').map((e) => e.commentId)).toContain('r-dana-000')
       // and again: nothing new either way
-      expect((await syncOnce(repo, { url: `http://127.0.0.1:${port}`, token: op.token }))['all-scenes']).toEqual({ pulled: 0, pushed: 0 })
+      expect((await syncOnce(repo, { url, token: op.token }))['all-scenes']).toEqual({ pulled: 0, pushed: 0 })
     } finally { server.close() }
   })
 })

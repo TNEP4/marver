@@ -132,7 +132,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   // published board shows - a canvas built before 0.25 names none
   const { rights, legacy } = await bres.json() as { rights: Record<string, 'read' | 'comment'>; legacy?: { board: string; frames: string[] } }
 
-  const boards = [...new Set([...Object.keys(rights), ...listBoards(dir)])]
+  const boards = [...new Set([...Object.keys(rights), ...listBoards(dir), ...(legacy ? [legacy.board] : [])])]
   const out: Record<string, { pulled: number; pushed: number }> = {}
   const failures: string[] = []
   for (const board of boards) {
