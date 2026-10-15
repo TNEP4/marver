@@ -31,7 +31,7 @@ describe('publishedAsks', () => {
     const asks = publishedAsks({ b: { nodes: [{ frame: 's', w: 640, h: 360 }, { frame: 's' }, { frame: 'sl', w: 900, h: 300 }] } }, ['light'], slides, VP)
     expect(asks.map(indexKey).sort()).toEqual(['sl|light|1280|800', 's|light|1280|720'])
   })
-  it('a published all-scenes board asks for every frame at its default size', () => {
+  it('a published auto board asks for every frame at its default size', () => {
     const asks = publishedAsks({}, ['light'], frames, VP, true)
     expect(asks.map(indexKey).sort()).toEqual(['a|light|1280|800', 'h|light|390|844'])
   })

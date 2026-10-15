@@ -25,7 +25,7 @@ import { scanFrames, type FrameEntry, type Manifest } from './manifest.ts'
 import { Marked } from 'marked'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { cssFixPlugin } from './css-fix.ts'
-import { buildTree, flatten, isBoardName, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
+import { ALL_SCENES, buildTree, flatten, framesOn, isBoardName, type FolderRow, type TreeItem } from '../shared/board-tree.ts'
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, listBoardFiles, readRegistry } from './boards.ts'
@@ -141,23 +141,33 @@ export interface PublishPolicy {
 export function resolvePolicy(
   root: string, allBoards: Record<string, any>, boardsFlag?: string, allBoardsFlag?: boolean,
 ): PublishPolicy {
-  const known = (n: string) => n === 'all-scenes' || !!allBoards[n]
+  const known = (n: string) => !!allBoards[n]
   const reveal = { structure: true, source: false }
   const row = (max: 'read' | 'comment', _n: string): BoardPolicy => ({ max, type: 'mix' })
+  // the All Scenes board is gone (spec 26): named beside other boards it is dropped with a word;
+  // named alone, the build stops and says what to name instead
+  const withoutAllScenes = (names: string[], where: string): string[] => {
+    if (!names.includes(ALL_SCENES)) return names
+    const rest = names.filter((n) => n !== ALL_SCENES)
+    const curated = Object.keys(allBoards)
+    if (!rest.length) throw new Error(`${where} names only "${ALL_SCENES}" - the All Scenes board is gone since 0.25: name the boards to publish instead${curated.length ? ` (${curated.join(', ')})` : ''}, or --all-boards for every board`)
+    console.warn(`  warning: ${where} names "${ALL_SCENES}" - the All Scenes board is gone since 0.25; dropped, these ship: ${rest.join(', ')}`)
+    return rest
+  }
   if (boardsFlag !== undefined) {
-    const names = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
+    const named = boardsFlag.split(',').map((s) => s.trim()).filter(Boolean)
     // an empty filter fails CLOSED - `--boards "$UNSET_VAR"` must never publish everything
-    if (!names.length) throw new Error('--boards was given but named no boards')
+    if (!named.length) throw new Error('--boards was given but named no boards')
+    const names = withoutAllScenes(named, '--boards')
     const missing = names.filter((n) => !known(n))
     if (missing.length) throw new Error(`--boards names not found in design/boards/: ${missing.join(', ')}`)
     return { boards: Object.fromEntries(names.map((n) => [n, row('comment', n)])), reveal }
   }
-  if (allBoardsFlag)
-    return {
-      boards: Object.fromEntries(
-        ['all-scenes', ...Object.keys(allBoards).filter((n) => n !== 'all-scenes')].map((n) => [n, row('comment', n)])),
-      reveal,
-    }
+  // every curated board - and with none, nothing to publish
+  if (allBoardsFlag) {
+    if (!Object.keys(allBoards).length) throw new Error('--all-boards found no boards in design/boards/ - make one first (npx marver boards new <name>)')
+    return { boards: Object.fromEntries(Object.keys(allBoards).map((n) => [n, row('comment', n)])), reveal }
+  }
   const policyFile = join(root, 'design', 'publish.json')
   if (!existsSync(policyFile))
     throw new Error(
@@ -167,11 +177,12 @@ export function resolvePolicy(
   let policy: any
   try { policy = JSON.parse(readFileSync(policyFile, 'utf8')) }
   catch { throw new Error('design/publish.json is not valid JSON') }
-  const entries = Object.entries(policy?.boards ?? {})
-  if (!entries.length)
+  const rows = (policy?.boards ?? {}) as Record<string, unknown>
+  if (!Object.keys(rows).length)
     throw new Error('design/publish.json has no "boards" entries - publishing is default-closed, name what ships')
   const out: Record<string, BoardPolicy> = {}
-  for (const [n, level] of entries) {
+  for (const n of withoutAllScenes(Object.keys(rows), 'design/publish.json')) {
+    const level = rows[n]
     if (!known(n)) throw new Error(`design/publish.json names an unknown board: ${n}`)
     if (level === 'read' || level === 'comment') { out[n] = row(level, n); continue }   // v1 row
     if (typeof level !== 'object' || level === null)
@@ -240,21 +251,17 @@ export function readBoards(root: string): Record<string, any> {
 
 /** Switcher order = the sidebar's reading order: the folder tree over the PUBLISHED boards only
  *  (a folder left with no published board at any depth drops out - its name never reaches the bundle),
- *  flattened depth-first; all-scenes always LAST (it is the expensive everything-board, never
- *  the landing). `names[0]` is where `/` opens. Folder names of published boards are structure,
- *  like board names: they ship. */
+ *  flattened depth-first. `names[0]` is where `/` opens. Folder names of published boards are
+ *  structure, like board names: they ship. */
 export function publishedTree(published: string[], allBoards: Record<string, any>, folders: FolderRow[]): { tree: TreeItem[]; names: string[] } {
-  const built = buildTree(
-    published.filter((n) => n !== 'all-scenes').map((n) => ({ name: n, ...boardFields(allBoards[n], isBoardName) })),
-    folders,
-  )
+  const built = buildTree(published.map((n) => ({ name: n, ...boardFields(allBoards[n], isBoardName) })), folders)
   const prune = (items: TreeItem[]): TreeItem[] => items.flatMap((it): TreeItem[] => {
     if (it.kind === 'board') return [it]
     const kids = prune(it.items)
     return kids.length ? [{ ...it, items: kids }] : []
   })
   const tree = prune(built)
-  return { tree, names: [...flatten(tree), ...(published.includes('all-scenes') ? ['all-scenes'] : [])] }
+  return { tree, names: flatten(tree) }
 }
 
 /** The bundle's manifest: the published frames, and descriptions of published things ONLY -
@@ -450,20 +457,17 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const buildSalt = randomBytes(16).toString('hex')
   const opaquePath = (id: string, ext: string) => `__mv/f/mv${createHash('sha256').update(buildSalt).update(id).digest('hex').slice(0, 12)}${ext}`
   const { tree, names: publishedNames } = publishedTree(Object.keys(rights), allBoards, readFolders(root))
-  const includeAll = publishedNames.includes('all-scenes')
   const boards: Record<string, any> = {}
   // spec 20's projection: a published board keeps its layout and frames; its status, reason and
   // capability - the evidence trail into context/ - never ship
   for (const n of publishedNames) if (allBoards[n]) boards[n] = withoutEvidence(allBoards[n])
 
-  let frames = manifest.frames
-  if (!includeAll) {
-    const wanted = new Set<string>()
-    for (const b of Object.values(boards))
-      for (const node of Array.isArray(b?.nodes) ? b.nodes : [])
-        if (typeof node?.frame === 'string') wanted.add(node.frame)
-    frames = manifest.frames.filter((f) => wanted.has(f.id))
-  }
+  // the frames the published boards show (spec 26: an `auto` board shows every frame)
+  const live = manifest.frames.map((f) => f.id)
+  const shows = Object.fromEntries(publishedNames.map((n) => [n, framesOn(boards[n], live)]))
+  const wanted = new Set(Object.values(shows).flat())
+  const frames = manifest.frames.filter((f) => wanted.has(f.id))
+  const includeAll = frames.length === manifest.frames.length
   // the published manifest: with the strip on, `file` goes opaque - html frames
   // keep a real (opaque) servable path, tsx frames an inert token the client's
   // shape check accepts and laser shows as-is
@@ -508,7 +512,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     const p = policy.boards[n]
     return !!p?.lock && !!p.open && ['present', 'focus', 'slides'].includes(p.open)
   })
-  // names drives the published board switcher (all-scenes only when actually published);
+  // names drives the published board switcher;
   // default is where `/` opens - the first published board, never a synthesized aggregate
   // titles: what the published switcher labels boards by (folder titles ride on the tree)
   const titles = Object.fromEntries(publishedNames.flatMap((n) => { const t = boardFields(allBoards[n], isBoardName).title; return t ? [[n, t]] : [] }))
@@ -528,7 +532,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     ...(Object.keys(sizes).length ? { sizes } : {}),
     // a published status is a snapshot: the tooltip says when it was read
     ...(Object.values(meta).some((m) => (m as { status?: unknown }).status) ? { statusAsOf: new Date().toISOString() } : {}),
-    default: publishedNames.find((n) => n !== 'all-scenes') ?? publishedNames[0],
+    default: publishedNames[0],
     rights, policy: { boards: boardsMeta, reveal: policy.reveal, ...(lockedShell ? { lockedShell: true } : {}) },
   }
   assertProjected(data, showStatus)
@@ -759,9 +763,10 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     logo = `${ROUTE}/logo.${ext}`
     break
   }
-  // rights ride in meta.json so serve can enforce the policy on comment APIs without parsing the bundle - hiding UI controls is not authorization
+  // rights ride in meta.json so serve can enforce the policy on comment APIs without parsing the bundle - hiding UI controls is not authorization;
+  // `shows` (each published board's frames) lets the old all-scenes log serve the threads whose frame ships (collab.ts, spec 26)
   writeFileSync(join(outDir, 'meta.json'), JSON.stringify({
-    name, branding: config.share.branding, logo, rights,
+    name, branding: config.share.branding, logo, rights, shows,
     boards: boardsMeta, reveal: policy.reveal,
     ...(config.share.frontDoor === false ? { frontDoor: false } : {}),
     ...(config.share.notify === false ? { notify: false } : {}),
@@ -774,7 +779,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     const pubFrameFile = new Map(pubFrames.map((f) => [f.id, f]))
     const r = await bakePublished({
       root, outDir, gen: bakeGen, boards, themes: config.themes, log: (l) => console.log(l),
-      frames: pubFrames, viewports: config.viewports, allScenes: includeAll,
+      frames: pubFrames, viewports: config.viewports, autoBoard: Object.values(boards).some((b) => b?.auto === true),
       // the frame's PUBLISHED url (an html frame's opaque path when the source is stripped)
       urlFor: (id, theme) => { const f = pubFrameFile.get(id); if (!f) return null; return f.kind === 'html' ? `/${f.file}?theme=${encodeURIComponent(theme)}&r=${bakeGen}` : `/__mv/frame/?id=${encodeURIComponent(id)}&theme=${encodeURIComponent(theme)}&r=${bakeGen}` },
     })

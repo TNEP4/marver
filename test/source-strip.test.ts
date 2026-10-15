@@ -83,4 +83,10 @@ describe('reveal.source off (the default) strips every repo path from the bundle
     expect(shell).toContain(`${SECRET_DIR}/hello`)              // the id survives
     expect(shell).toMatch(/__mv\/f\/mv[0-9a-f]{12}/)            // opaque file fields
   })
+
+  it('meta.json names what each published board shows, by id - the old all-scenes log serves those threads (spec 26)', () => {
+    const meta = JSON.parse(readFileSync(join(root, 'design', '.dist', 'meta.json'), 'utf8'))
+    expect(Object.keys(meta.shows)).toEqual(['main'])
+    expect([...meta.shows.main].sort()).toEqual([`${SECRET_DIR}/hello`, `${SECRET_DIR}/static`])
+  })
 })
