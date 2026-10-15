@@ -17,7 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
+import { appendEvents, legacyExposure, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
@@ -44,25 +44,6 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
   if (!user || rights[board] !== 'comment') return false
   if (!dataDir) return true
   return commentAllowed(dataDir, user, board, ceilingsFromRights(rights))
-}
-
-/** The old all-scenes comment log (spec 26, Part 7) outlives its board: a thread there is exposed
- *  when some published board shows its frame - `shows`, each published board's frames, written by
- *  builds from 0.25 on. Answers, for any event in the log or arriving with it, the published boards
- *  showing its thread's frame (none = unexposed). A reply finds its thread by parentId; a resolve,
- *  an edit or a reaction through the comment it names. */
-export function legacyExposure(events: CommentEvent[], rights: Rights, shows: Record<string, string[]>): (e: CommentEvent) => string[] {
-  const boards = new Map<string, string[]>()   // thread id -> the published boards showing its frame
-  const rootOf = new Map<string, string>()     // comment id (a thread or a reply) -> thread id
-  for (const e of events) {
-    if (e.type === 'create' && e.commentId && !boards.has(e.commentId)) {
-      boards.set(e.commentId, Object.keys(rights).filter((b) => typeof e.frame === 'string' && !!shows[b]?.includes(e.frame)))
-      rootOf.set(e.commentId, e.commentId)
-    }
-    if (e.type === 'reply' && e.commentId && e.parentId && !rootOf.has(e.commentId)) rootOf.set(e.commentId, e.parentId)
-  }
-  // a reply names its thread in parentId; every other event targets the comment it names
-  return (e) => boards.get(rootOf.get((e.type === 'reply' ? e.parentId : e.commentId) ?? '') ?? '') ?? []
 }
 
 const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])
@@ -969,7 +950,9 @@ export function collabHandler(dataDir: string, distDir: string) {
         broadcast(m[1], fresh.map(project))   // the stream is a browser transport
         // activity mail (07-v1.1 §A/§B): a fresh reply pulls its thread back, a
         // mention pulls its person - history imports never mail (freshness gate)
-        if (fresh.length && !legacy) notifyCommentActivity(notifyCtx, m[1], fresh, threads.get(m[1])?.events ?? [], (email) => mailAllowed(m[1], email))
+        // (the old all-scenes log: its threads' readers are everyone a published board admits)
+        if (fresh.length) notifyCommentActivity(notifyCtx, m[1], fresh, legacy ? [...log, ...fresh] : threads.get(m[1])?.events ?? [],
+          (email) => (legacy ? Object.keys(rights).some((b) => mailAllowed(b, email)) : mailAllowed(m[1], email)))
         return json(res, 200, { accepted: fresh.length }), true
       }
       return false

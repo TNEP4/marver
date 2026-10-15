@@ -437,7 +437,9 @@ export function App() {
     let popSeq = 0
     const onPop = async () => {
       navigated()                              // a reveal still looking up its board must not land after this
-      const mine = ++popSeq                    // a lookup below still running when newer navigation lands is dropped
+      // a lookup below still running when newer navigation lands - a link, or a board picked - is dropped
+      const mine = ++popSeq, at = useStore.getState().board
+      const overtaken = () => mine !== popSeq || useStore.getState().board !== at
       let h = parseHash()
       const legacy = isLegacyLink(h)
       if (legacy) {
@@ -445,18 +447,17 @@ export function App() {
         // once, though back/forward fires two events
         const r = await landLegacy(h)
         const board = r.hash.board ?? await landingBoard()
-        if (mine !== popSeq) return
+        if (overtaken()) return
         h = { ...r.hash, board }
         writeHash(h)
         if (r.notice) toast(r.notice)
       } else if (!h.board && !h.focus && !h.invite) {
         // the bare #/ opens the landing board
         const board = await landingBoard()
-        if (mine !== popSeq) return
+        if (overtaken()) return
         h = { ...h, board }
       }
       let s = useStore.getState()
-      const from = s.board
       if (h.board && h.board !== s.board) {
         if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
         await s.switchBoard(h.board)
@@ -464,7 +465,7 @@ export function App() {
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
       }
       // the thread an old link names (Comments.tsx opens every other link's): now, or once the new board's comments load
-      if (legacy && h.c) { if (s.board !== from) parkThread(h.c); else revealThread(h.c) }
+      if (legacy && h.c) { if (s.board !== at) parkThread(h.c); else revealThread(h.c) }
       if (h.focus) {
         enterFocus(h.focus.at, { ...h.focus, deep: true })
       } else if (h.play) {

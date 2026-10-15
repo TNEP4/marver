@@ -29,6 +29,7 @@ import { ALL_SCENES, buildTree, flatten, framesOn, isBoardName, type FolderRow, 
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, readRegistry } from './boards.ts'
+import { appendEvents, legacyExposure, readLog } from './comments.ts'
 import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
@@ -747,6 +748,11 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
       cpSync(f, join(seedOut, `${n}.jsonl`))
       seeded++
     }
+    // the old all-scenes log (spec 26): the threads whose frame ships, and nothing else
+    const old = readLog(commentsDir, ALL_SCENES)
+    const exposed = legacyExposure(old, rights, shows)
+    const kept = old.filter((e) => exposed(e).length)
+    if (kept.length) { appendEvents(seedOut, ALL_SCENES, kept); seeded++ }
     if (seeded) console.log(`  comments: ${seeded} board log${seeded === 1 ? '' : 's'} seeded${embedSeeds ? '' : ' (design/.dist-seeds, outside the web root)'}`)
     if (seeded && embedSeeds) console.log(
       `  WARNING: --embed-seeds put comment history in the web root - every event carries\n` +

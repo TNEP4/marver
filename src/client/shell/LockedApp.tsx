@@ -10,7 +10,7 @@
  * within what the lock allows.
  */
 import { Component, useEffect, useRef, type ReactNode } from 'react'
-import { useStore, landingMode, tabTitle } from './store.ts'
+import { useStore, landingBoard, landingMode, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
 import { bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
@@ -83,11 +83,15 @@ export function App() {
   useEffect(() => {
     const onPop = async () => {
       const raw = parseHash()
+      // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
       const h = isLegacyLink(raw) ? (await landLegacy(raw)).hash : raw
+      const board = h.board ?? (h.focus ? undefined : await landingBoard())
       const s = useStore.getState()
-      if (h.board && h.board !== s.board) {
-        await s.switchBoard(h.board)
-        land()
+      if (board && board !== s.board) {
+        await s.switchBoard(board)
+        if (h.play?.slides) enterSlides(h.play)
+        else if (h.play) enterPlay(h.play)
+        else land()
         return
       }
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })

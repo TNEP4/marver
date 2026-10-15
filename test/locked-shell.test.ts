@@ -84,4 +84,14 @@ describe('the all-boards-locked bundle', () => {
     await new Promise((r) => setTimeout(r, 300))
     expect(await browser.eval(tab, `!!document.querySelector('.sh-play')`)).toBe(true)
   }, 60_000)
+
+  it('an old All Scenes link lands on the board that shows its frame, at that frame (spec 26)', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const tab = await browser.tab({ width: 1280, height: 800 })
+    await browser.go(tab, `http://localhost:${PORT}/#/p/all-scenes?at=deck/two`)
+    await browser.until(tab, `!!document.querySelector('.sh-play') && location.hash.startsWith('#/p/deck?at=deck%2Ftwo')`, 20_000)
+    await browser.eval(tab, `location.hash = '#/b/all-scenes'`)
+    await new Promise((r) => setTimeout(r, 600))
+    expect(await browser.eval(tab, `!!document.querySelector('.sh-play')`)).toBe(true)
+  }, 60_000)
 })
