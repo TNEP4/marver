@@ -22,7 +22,7 @@ import { canvasCtl } from './canvas/ctl.ts'
 import { revealFrame } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
-import { DraftComposer, hueVars, MarkerFace, ThreadCard } from './Comments.tsx'
+import { DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
 import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -209,12 +209,12 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
   const active = useComments((s) => s.active)
   const draft = useComments((s) => s.draft)
   const allThreads = useComments((s) => s.threads)
-  const { setActive } = useComments.getState()
   // a thread on a sticky note (spec 18) belongs to the canvas: the stage has no notes, and its
   // anchor must never be handed to inspect.js (a same-named frame element would match)
   const threads = allThreads.filter((t) => t.frame === frameId && !t.resolved && !isNoteAnchor(t.anchor))
   const anchored = threads.filter((t) => (t.anchor as any)?.el)
-  const [rects, setRects] = useState<Record<string, { x: number; y: number; w: number; h: number } | null>>({})
+  // each thread's attach point in the frame's px - null when its element is gone
+  const [points, setPoints] = useState<Record<string, { x: number; y: number } | null>>({})
   const sx = vp.width ? dw / vp.width : 1
   const sy = vp.height ? dh / vp.height : 1
 
@@ -222,14 +222,14 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
   // stage swaps in place, so the DOM under an anchor can change without a remount)
   useEffect(() => {
     const win = iframe.current?.contentWindow
-    if (!win || !anchored.length) { setRects({}); return }
+    if (!win || !anchored.length) { setPoints({}); return }
     const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: anchored.map((t) => ({ key: t.id, anchor: t.anchor })) }, location.origin)
     const onMsg = (e: MessageEvent) => {
       // reject a reply from a frame we already walked off (data.id is the frame that resolved)
       if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.id !== frameId) return
-      const next: typeof rects = {}
-      for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.rect
-      setRects(next)
+      const next: typeof points = {}
+      for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.point
+      setPoints((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
     }
     window.addEventListener('message', onMsg)
     ask()
@@ -240,7 +240,7 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
     const t2 = setTimeout(ask, 700)
     const iv = setInterval(ask, 3000)
     return () => { clearTimeout(t1); clearTimeout(t2); clearInterval(iv); window.removeEventListener('message', onMsg) }
-  }, [frameId, anchored.map((t) => t.id).join(','), iframe, ready])
+  }, [frameId, anchored.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), iframe, ready])
 
   // #4/#5: drive the persistent element highlight into the frame - the composing draft, or
   // the open thread's anchor. null clears it. The frame guards against a stage-swap race;
@@ -253,18 +253,19 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
     const at = !show || !showAnchor ? null : (draft?.frame === frameId && !isNoteAnchor(draft.anchor) ? draft.anchor
       : (active ? (threads.find((t) => t.id === active && (t.anchor as any)?.el)?.anchor ?? null) : null))
     win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: at ?? null }, location.origin)
-  }, [active, draft, show, showAnchor, frameId, iframe, rects, ready])
+  }, [active, draft, show, showAnchor, frameId, iframe, points, ready])
 
   if (!show) return null
 
-  const pinAt = (t: typeof threads[number]) => {
-    const a = t.anchor as any
-    const r = rects[t.id]
-    if (a?.el && r) return { x: (r.x + (a.pos?.fx ?? .5) * r.w) * sx, y: (r.y + (a.pos?.fy ?? .5) * r.h) * sy, orphan: false }
-    if (a?.el && r === null) return { x: dw - 16, y: 16, orphan: true }              // orphan parks top-right
-    const p = a?.pos                                                                 // frame-level fraction
-    return { x: (p?.fx ?? .94) * dw, y: (p?.fy ?? .06) * dh, orphan: false }
+  // the canvas's placement, in the stage's screen px: the same points, the same column
+  const stagePoints = new Map<string, { x: number; y: number } | null>()
+  const orphans = new Set<string>()
+  for (const t of anchored) {
+    const p = points[t.id]
+    if (p === null) orphans.add(t.id)
+    stagePoints.set(t.id, p ? { x: p.x * sx, y: p.y * sy } : null)
   }
+  const placed = placePins(threads, stagePoints, dw, 1)
   const activeThread = threads.find((t) => t.id === active)
   const draftAt = draft?.frame === frameId && !isNoteAnchor(draft.anchor) ? (() => {
     const a = draft.anchor as any
@@ -273,19 +274,8 @@ function PlayComments({ iframe, frameId, vp, dw, dh, ready }: {
 
   return (
     <div className="sh-play-comments">
-      {threads.map((t) => {
-        const { x, y, orphan } = pinAt(t)
-        return (
-          <div key={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}`}
-            style={{ left: x, top: y, ...hueVars((t.anchor as any)?.el?.hue) }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
-            title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
-            <MarkerFace threads={[t]} />
-          </div>
-        )
-      })}
-      {activeThread && <ThreadCard key={active!} thread={activeThread} at={pinAt(activeThread)} bounds={{ w: dw, h: dh }} stage />}
+      <Pins threads={threads} placed={placed} orphans={orphans} inv={1} active={active} />
+      {activeThread && <ThreadCard key={active!} thread={activeThread} at={placed.get(activeThread.id)!} bounds={{ w: dw, h: dh }} stage />}
       {draftAt && <DraftComposer at={draftAt} bounds={{ w: dw, h: dh }} hue={(draft?.anchor as any)?.el?.hue} />}
     </div>
   )
