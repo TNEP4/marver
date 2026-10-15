@@ -2,6 +2,49 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **Edits land calmly.** When a file changes, the canvas reloads only the frames that read it - a
+  few at a time, the ones on screen first. A frame off screen waits until you scroll near it; one
+  you are using (typing in it, a laser, a comment) waits until you are done. A content frame keeps
+  its height while it reloads, so the rows below stay still, and the board moves once if heights
+  did change. The canvas page itself never reloads for a design edit. `npx marver perf` shows what
+  each edit reached and reloaded ([Edits land calmly](docs/boards-and-folders.md#edits-land-calmly)).
+- **Comments sit on what they are about.** Every note your agent pins names an element - words it
+  shows (`--on`) or a selector (`--at`) - and is checked against the rendered frame while
+  `marver dev` runs. Markers never cover each other and stay put while you work; a follow-up goes
+  into its thread (`comments reply`, `comments new --thread`), and `npx marver comments move` re-pins
+  one ([Notes from your chat agent](docs/live-jam.md#notes-from-your-chat-agent)).
+- **`npx marver marks`** prints what you have not reviewed yet - the frames waiting on you, the
+  ones that ask first, then the frames new since you looked - for you, or for your agent at the
+  start of a session.
+- **`npx marver boards pin <board> <scene/frame ...>`** puts frames on a board. A frame on no
+  board is listed under **Not on a board** in the sidebar, and `work done` says where it belongs.
+
+### Changed
+
+- **No more All Scenes.** The built-in board that held every frame is gone - it was heavy, slow
+  to open, and always marked. Every frame lives on the board it belongs to; a fresh canvas lands on
+  a `welcome` board; old All Scenes links open a real board, and a canvas that published it keeps
+  its threads ([Every frame on a board](docs/boards-and-folders.md#every-frame-on-a-board)).
+- **Marks are exact.** They start when `marver dev` starts, so what your agent makes before you open
+  the canvas is new when you do. A file every frame reads - a kit, a spec's markdown, a layout -
+  lights every frame that reads it, even when it changed while dev was off. A look clears only the
+  version on screen, and a frame you opened while its new version loaded clears once it is up.
+  Orange now reads "waiting on you": a question comes first for `u` and keeps its own notice,
+  because the agent says when a reply asks
+  ([What is new, what needs you](docs/boards-and-folders.md#what-is-new-what-needs-you)).
+- **What agents are told.** Pin each point on its element, one thread per topic, `--ask` on a reply
+  that asks, `npx marver marks` at the start of a session, and every frame on its board.
+  Upgrading: `npx marver init` updates the instructions.
+
+### Fixed
+
+- 0.24 counted everything an agent did before you first opened the canvas as already seen.
+- Notes pinned without an element all landed on one spot of the frame, one on top of the other.
+
 ## 0.24.0 - 2026-10-14
 
 ### Added
