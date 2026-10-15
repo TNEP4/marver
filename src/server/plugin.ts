@@ -57,6 +57,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   // is in flight: a document served then could be stamped with code it does not run yet. Each event
   // counts on its own; one Vite never brings to the hooks is invalidated by us before it lands.
   const inFlight = new Map<string, { events: number; hits: number; timer: ReturnType<typeof setTimeout> }>()
+  const late = new Map<string, number>()   // hooks still owed by events that timed out: never credited to a newer one
+  const envs = () => Object.keys(devServer?.environments ?? { client: 1 }).length
   const waiting: (() => void)[] = []
   const settled = () => inFlight.size === 0
   const whenSettled = (fn: () => void) => { if (settled()) fn(); else waiting.push(fn) }
@@ -73,16 +75,21 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     const f = inFlight.get(file) ?? { events: 0, hits: 0, timer: undefined as unknown as ReturnType<typeof setTimeout> }
     f.events++
     clearTimeout(f.timer)
-    f.timer = setTimeout(() => {   // Vite never finished it: make sure no module serves its old code, then let it go
-      for (const env of Object.values(devServer?.environments ?? {})) for (const m of env.moduleGraph.getModulesByFile(file) ?? []) env.moduleGraph.invalidateModule(m)
+    f.timer = setTimeout(() => {
+      // Vite never finished it (a hook stalled): no module may serve old code - its own, a glob that
+      // lists it, anything - so every module is invalidated before it lets go. Rare, and only slower.
+      for (const env of Object.values(devServer?.environments ?? {})) env.moduleGraph.invalidateAll()
+      late.set(file, (late.get(file) ?? 0) + f.events * envs() - f.hits)
       inFlight.delete(file); drain()
     }, 10_000)
     inFlight.set(file, f)
   }
   const landed = (file: string) => {
+    const owed = late.get(file)
+    if (owed) { if (owed > 1) late.set(file, owed - 1); else late.delete(file); return }   // a timed-out event's hook
     const f = inFlight.get(file)
     if (!f) return
-    if (++f.hits < Object.keys(devServer?.environments ?? { client: 1 }).length) return   // other environments still to run
+    if (++f.hits < envs()) return   // other environments still to run
     f.hits = 0
     setTimeout(() => done(file), 0)
   }
