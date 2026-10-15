@@ -192,8 +192,11 @@ describe('an agent note names its element, checked in the rendered frame', () =>
     const keep = cli('comments', 'new', 'ctx/phone', '--on', 'Keep it', '--body', 'x', '--fyi')
     expect(keep.code, keep.err).toBe(0)
     expect(anchorOf(keep.out.match(/\?c=([\w-]+)/)![1]).el.semantics.tag).toBe('p')
-    // ...and transparent words are words nobody sees: refused, never their visible parent
-    expect(cli('comments', 'new', 'ctx/phone', '--on', 'Secret words', '--body', 'x').code).toBe(1)
+    // ...and words only a transparent element shows (a fade-in still running, a hover control) are no
+    // evidence either way: written unchecked with a warning, never refused, never their visible parent
+    const faded = cli('comments', 'new', 'ctx/phone', '--on', 'Secret words', '--body', 'x', '--fyi')
+    expect(faded.code, faded.err).toBe(0)
+    expect(faded.out + faded.err).toMatch(/unchecked|not checked|transparent/i)
     // words a hidden run splits still read as one, as a person reads them
     const split = cli('comments', 'new', 'ctx/phone', '--on', 'Pay now', '--body', 'x', '--fyi')
     expect(split.code, split.err).toBe(0)

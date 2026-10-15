@@ -60,6 +60,20 @@ const norm = (t) => (t ?? '').replace(/\s+/g, ' ').trim()
  *  transparent one fails checkVisibility. A hidden duplicate is never an anchor's element. */
 const shown = (el) => el.getClientRects().length > 0 &&
   (el.checkVisibility?.({ visibilityProperty: true, opacityProperty: true }) ?? true)
+/** Rendered but perhaps transparent - a control that shows on hover, a frame mid-fade-in. Second choice:
+ *  matched only when nothing visible does, so such a pin is never orphaned nor such a target refused. */
+const rendered = (el) => el.getClientRects().length > 0 && (el.checkVisibility?.({ visibilityProperty: true }) ?? true)
+let visible = shown
+let transparentOnly = false   // the last `matching` found only rendered-but-transparent elements
+const matching = (find) => {
+  transparentOnly = false
+  const first = find()
+  if (first.length) return first
+  visible = rendered
+  try { const second = find(); transparentOnly = second.length > 0; return second } finally { visible = shown }
+}
+/** A box too small to read - a screen-reader-only label - is not text a person sees. */
+const tiny = (el) => { const r = el.getBoundingClientRect(); return r.width < 2 || r.height < 2 }
 
 const cssPath = (el) => {
   const seg = []
@@ -113,7 +127,7 @@ const byWords = (words) => {
     if (seen.has(el)) return seen.get(el)
     let t = ''
     if (!el.matches(SKIP)) {
-      const on = shown(el)
+      const on = visible(el) && !tiny(el)
       for (const n of el.childNodes) {
         if (n.nodeType === 3) t += on ? n.data : ''
         else if (n.nodeType === 1) t += n.tagName === 'BR' ? ' ' : getComputedStyle(n).display.startsWith('inline') ? seenText(n) : ` ${seenText(n)} `
@@ -131,7 +145,7 @@ const byWords = (words) => {
 }
 /** `--at`: its exact data-testid first, else a CSS selector (throws on one that is neither). */
 const byAt = (at) => {
-  const all = (sel) => [...document.querySelectorAll(sel)].filter(shown)
+  const all = (sel) => [...document.querySelectorAll(sel)].filter((el) => visible(el))
   const ids = all(`[data-testid="${CSS.escape(at)}"]`)
   return ids.length ? ids : all(at)
 }
@@ -156,7 +170,7 @@ const anchorMatches = (anchor) => {
   const tag = typeof want.tag === 'string' && /^[a-z][a-z0-9-]*$/.test(want.tag) ? want.tag : null
   const pool = want.testId ? `[data-testid="${CSS.escape(want.testId)}"]` : tag && (want.quote || !a.cssPath) ? tag : a.cssPath
   if (!pool) return []
-  try { return [...document.querySelectorAll(pool)].filter((el) => fits(el, want) && shown(el)) } catch { return [] }
+  try { return [...document.querySelectorAll(pool)].filter((el) => fits(el, want) && visible(el)) } catch { return [] }
 }
 /** A captured bundle's exact path wins while it still fits; otherwise the `nth` of its matches. */
 const resolveAnchor = (anchor) => {
@@ -164,10 +178,10 @@ const resolveAnchor = (anchor) => {
   if (a.semantics?.tag && a.cssPath) {
     try {
       const exact = document.querySelector(a.cssPath)
-      if (exact && fits(exact, a.semantics) && shown(exact)) return exact
+      if (exact && fits(exact, a.semantics) && rendered(exact)) return exact   // a person's click: there, even transparent now
     } catch { /* stale selector */ }
   }
-  return anchorMatches(anchor)[(a.nth ?? 1) - 1] ?? null
+  return matching(() => anchorMatches(anchor))[(a.nth ?? 1) - 1] ?? null
 }
 
 /** Where a pin attaches, in this document's viewport px. A person's pin: the point they clicked.
@@ -183,7 +197,7 @@ const attachPoint = (el, anchor) => {
   const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
   let line = null
   for (let n = walk.nextNode(), i = 0; n && i < 400; n = walk.nextNode(), i++) {
-    if (!n.data.trim() || !n.parentElement || n.parentElement.closest(SKIP) || !shown(n.parentElement)) continue
+    if (!n.data.trim() || !n.parentElement || n.parentElement.closest(SKIP) || !visible(n.parentElement) || tiny(n.parentElement)) continue
     range.selectNodeContents(n)
     for (const q of range.getClientRects()) {
       if (!q.width || !q.height) continue
@@ -212,14 +226,17 @@ const describeEl = (el) => `${el.tagName.toLowerCase()} "${norm(el.textContent).
  *  finds returns the full bundle (exact on the canvas), plus the open threads already on it. */
 const checkTarget = ({ on, at, nth } = {}, others = []) => {
   let found = []
-  if (on) found = byWords(on)
-  else if (at) { try { found = byAt(at) } catch { return { bad: `"${at}" is neither a data-testid nor a CSS selector` } } }
+  if (on) found = matching(() => byWords(on))
+  else if (at) { try { found = matching(() => byAt(at)) } catch { return { bad: `"${at}" is neither a data-testid nor a CSS selector` } } }
   if (!found.length) return { none: landmarks() }
+  // only a transparent element shows it right now (a fade-in still running, a control that shows on
+  // hover): no evidence either way - the note is written unchecked, never refused
+  if (transparentOnly) return { transparent: true }
   const el = found.length === 1 && !nth ? found[0] : nth ? found[nth - 1] : null
   if (!el) return { several: found.slice(0, 20).map(describeEl) }
   const anchor = elBundle(el)
   // the fallback scan (a stale path) must land on this one of several look-alikes too
-  const i = anchorMatches({ el: { ...anchor.el, cssPath: undefined } }).indexOf(el)
+  const i = matching(() => anchorMatches({ el: { ...anchor.el, cssPath: undefined } })).indexOf(el)
   if (i > 0) anchor.el.nth = i + 1
   const holders = others.filter((o) => { try { return resolveAnchor(o.anchor) === el } catch { return false } }).map((o) => o.key)
   return { anchor, holders }

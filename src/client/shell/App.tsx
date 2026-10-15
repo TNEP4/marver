@@ -375,7 +375,7 @@ export function App() {
         writeHash(r.hash)
         notice = r.notice
       }
-      if (bootHash.board) {
+      if (bootHash.board && !(PUBLISHED && bootHash.board === UNPLACED)) {   // the Not on a board view is dev's
         if (bootHash.board !== useStore.getState().board)   // a deep link wins
           useStore.setState({ board: bootHash.board, boardAuto: false })
       } else if (!PUBLISHED) {
@@ -440,6 +440,7 @@ export function App() {
       const at = useStore.getState().board, step = useStore.getState().play?.at
       const overtaken = () => !isLatest(nav) || useStore.getState().board !== at || useStore.getState().play?.at !== step
       let h = parseHash()
+      if (PUBLISHED && h.board === UNPLACED) h = {}   // the Not on a board view is dev's: published, the default board
       const legacy = isLegacyLink(h)
       if (legacy) {
         // an old All Scenes link pasted, or walked back to: where it lands now, written over it -
@@ -494,7 +495,9 @@ export function App() {
   // page title follows the open board (and its title, when one is set)
   const board = useStore((s) => s.board)
   const titles = useStore((s) => s.boardTitles)
-  useEffect(() => { document.title = tabTitle(board) }, [board, titles])
+  // an empty Not on a board view (a canvas with no board and no frame yet) is no place to name in the tab
+  const emptyView = useStore((s) => s.board === UNPLACED && !s.nodes.length)
+  useEffect(() => { document.title = tabTitle(emptyView ? null : board) }, [board, titles, emptyView])
 
   // favicon follows the mode: blue pack in design mode, purple pack in interact.
   // The links are rebuilt (not toggled) so the set stays deterministic; the .ico is
@@ -1117,7 +1120,7 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
         {human
           ? <b className="sh-jam-frame"><span className="t">{note.author!.name ?? 'Someone'}</span> <span className="v">{note.kind === 'mention' ? 'mentioned you' : 'replied'}</span></b>
           : note.stack?.length
-            ? <b className="sh-jam-frame"><span className="t">{boardLabel(note.board)}</span> <span className="v">· {note.stack.length + 1} replies</span></b>
+            ? <b className="sh-jam-frame"><span className="t">{note.board === ALL_SCENES ? note.frameTitle ?? note.frame ?? '' : boardLabel(note.board)}</span> <span className="v">· {note.stack.length + 1} replies</span></b>
             : <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>}
         <span className="sh-jam-prev">{note.preview}</span>
       </div>

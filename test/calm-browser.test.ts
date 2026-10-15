@@ -58,6 +58,7 @@ beforeAll(async () => {
   put('design/scenes/kit/_kit.tsx', 'export const Kit = () => <p>kit v1</p>\n')
   for (let n = 1; n <= 8; n++) put(`design/scenes/kit/f${n}.tsx`, kitFrame(n))
   put('design/scenes/kit/solo.tsx', `export const meta = { viewport: 'desktop' }\nexport default () => <main><h1>solo</h1></main>\n`)
+  put('design/scenes/far/page.html', '<!doctype html><html><body><h1>page v1</h1></body></html>\n')   // an HTML frame no page loads
   // four on the first row, four very far below it: off screen at any zoom a fit on the first row takes
   const at = (n: number) => ({ frame: `kit/f${n}`, x: ((n - 1) % 4) * 1500, y: n <= 4 ? 0 : 200_000, w: 1440, h: 900 })
   put('design/boards/main.json', { version: 1, name: 'main', auto: false, order: 0, nodes: [...[1, 2, 3, 4, 5, 6, 7, 8].map(at), { frame: 'kit/solo', x: 6000, y: 0, w: 1440, h: 900 },
@@ -211,6 +212,19 @@ describe('calm updates (spec 26)', () => {
     expect(await ev(`${node('kit/late')}.key`)).toBe(key)
     expect(await ev(`document.querySelector('.sh-node[data-node="' + ${JSON.stringify(key)} + '"] iframe').contentWindow.__kept`)).toBe(1)   // not reloaded
     await ev(`location.hash = '#/b/main', 1`)
+  }, 60_000)
+
+  it('an edit to an HTML frame no page has loaded marks that frame alone, not the whole canvas', async () => {
+    if (!browser) return
+    await ev(`window.__mvStore.setState({ scale: 0.2 }), 1`)
+    await sleep(500)
+    const before = await ev(`JSON.stringify(window.__mvStore.getState().marks.changed)`)
+    put('design/scenes/far/page.html', '<!doctype html><html><body><h1>page v2</h1></body></html>\n')
+    await until(`(window.__mvStore.getState().marks.changed['far/page'] ?? 0) > (${before}['far/page'] ?? 0)`)
+    await sleep(800)
+    const was = JSON.parse(before), now = JSON.parse(await ev(`JSON.stringify(window.__mvStore.getState().marks.changed)`))
+    const moved = Object.keys(now).filter((id) => (now[id] ?? 0) !== (was[id] ?? 0))
+    expect(moved).toEqual(['far/page'])
   }, 60_000)
 
   it('the reload log says what happened, and the CLI reads it', async () => {

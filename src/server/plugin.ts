@@ -63,7 +63,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const waiting: (() => void)[] = []
   const settled = () => inFlight.size === 0
   const whenSettled = (fn: () => void) => { if (settled()) fn(); else waiting.push(fn) }
-  const drain = () => { if (settled()) for (const fn of waiting.splice(0)) fn() }
+  // one callback failing (a marks write the disk refused) never strands the others, nor stops dev
+  const drain = () => { if (settled()) for (const fn of waiting.splice(0)) try { fn() } catch (e) { console.warn(`[marver] ${(e as Error).message}`) } }
   const done = (file: string) => {
     const f = inFlight.get(file)
     if (!f) return
@@ -106,7 +107,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   }
   function record(t: Touched, cause: string) {
     const seen = observe(root, manifest.frames, t.file ? { file: t.file } : {})   // this edit's frames only
-    const doc = t.doc.filter((id) => !seen.doc.includes(id))
+    // an unattributed reload reloads what is loaded, and leaves the marks to the look at the disk above
+    const doc = t.unattributed ? [] : t.doc.filter((id) => !seen.doc.includes(id))
     const touched = t.touched.filter((id) => !seen.doc.includes(id) && !seen.note.includes(id) && !doc.includes(id))
     if (doc.length) recordChanged(root, manifest.frames, doc, { doc: true })
     if (touched.length) recordChanged(root, manifest.frames, touched, { doc: false })

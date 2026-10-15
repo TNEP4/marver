@@ -24,7 +24,9 @@ import { affectedFrameIds, type FrameEntry, type Manifest } from './manifest.ts'
 
 const safeReal = (p: string) => { try { return realpathSync(p) } catch { return p } }
 
-export interface Touched { file: string; doc: string[]; touched: string[] }
+/** `unattributed`: a page-wide reload that named no file - its frames reload, but nothing is marked
+ *  changed on its word (the marks' own look at the disk decides what is new). */
+export interface Touched { file: string; doc: string[]; touched: string[]; unattributed?: boolean }
 
 /** The frames an edit reaches: `doc` must reload to show it; `touched` saw it applied in place. */
 export function framesFor(root: string, manifest: Manifest, file: string, modules: Iterable<EnvironmentModuleNode>, skipFirst = false): Touched {
@@ -97,10 +99,12 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
         hash = now
         hooks.onReload({ triggeredBy: p.triggeredBy, path: p.path }, passed)
         if (!passed) {
-          const by = p.triggeredBy
+          // the file behind it: the one it names, else the page it reloads (an HTML frame no page has
+          // loaded yet has no module - Vite then names only its path)
+          const by = p.triggeredBy ?? (p.path && p.path !== '*' ? join(root, p.path.replace(/^\//, '')) : undefined)
           const mods = by ? env.moduleGraph.getModulesByFile(by) : undefined
           const all = manifest().frames.map((f: FrameEntry) => f.id)
-          const t = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: all, touched: [] }
+          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: all, touched: [], unattributed: true }
           if (t.doc.length || t.touched.length) hooks.onFrames(t, 'reload')   // a file no frame reads reloads nothing
           return
         }
@@ -112,9 +116,12 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
   if ((server.ws as unknown) !== (env.hot as unknown)) wrap(server.ws)
   // a component that refuses Fast Refresh while its update is applied (it also exports a value that
   // changed): Vite propagates further from the page without running the hook again - resume the walk
+  const refused = new Map<string, number>()   // module -> the update it refused: every document that imports it says so once
   env.hot.on('vite:invalidate', (payload: { path?: string }) => {
     const mod = payload?.path ? env.moduleGraph.urlToModuleMap.get(payload.path) : undefined
     if (!mod?.file) return
+    if (refused.get(mod.url) === mod.lastHMRTimestamp) return
+    refused.set(mod.url, mod.lastHMRTimestamp)
     const t = framesFor(root, manifest(), mod.file, [mod], true)
     if (t.doc.length || t.touched.length) hooks.onFrames(t, 'invalidate')
   })

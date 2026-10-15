@@ -75,6 +75,7 @@ export async function checkAnchor(req: CheckRequest, deadlineMs = CHECK_MS - 1_0
       const found = await evaluate(`window.__mvAnchorCheck ? window.__mvAnchorCheck(${JSON.stringify(req.target)}, ${JSON.stringify(req.others ?? [])}) : null`)
       if (!found) return { ok: false, unchecked: 'the frame has no Marver bridge to ask' }
       if (found.bad) throw new CheckInputError(found.bad)
+      if (found.transparent) return { ok: false, unchecked: 'only a transparent element shows that now (a fade-in, a control shown on hover)' }
       if (found.none) return { ok: false, refused: 'none', visible: found.none, viewport, theme }
       if (found.several) return { ok: false, refused: 'several', matches: found.several, viewport, theme }
       return { ok: true, anchor: found.anchor, holders: found.holders ?? [], viewport, theme }

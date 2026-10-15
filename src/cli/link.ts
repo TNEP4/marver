@@ -128,6 +128,10 @@ export async function linkCommand(root: string, targets: string[], opts: { board
 /** The hand-back other commands print after their own output - a link per board when `dev` runs,
  *  and the hint for each frame on no board. Never fails them. */
 export async function handBack(root: string, targets: string[]): Promise<{ links: string[]; hints: string[] }> {
+  // a frame finished and then deleted (merged into another, renamed) has nothing to link: the rest still do
+  const live = new Set(scanFrames(root).frames.map((f) => f.id))
+  targets = targets.filter((t) => live.has(t))
+  if (!targets.length) return { links: [], hints: [] }
   try {
     const r = resolveLink(root, targets)
     const origin = await devOrigin(root)

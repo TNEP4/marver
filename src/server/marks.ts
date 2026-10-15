@@ -96,7 +96,15 @@ function convert(root: string, frames: Frames, c: unknown, s: Record<string, unk
   return st
 }
 
+let warned = false
 function persist(root: string, st: State, deps = false) {
+  try { persistNow(root, st, deps) } catch (e) {
+    // the state stays right in memory; the disk catches up on the next write that succeeds
+    if (!warned) console.warn(`[marver] sidebar marks could not be saved to design/.local - ${(e as Error).message}`)
+    warned = true
+  }
+}
+function persistNow(root: string, st: State, deps: boolean) {
   write(root, 'changes.json', { version: 2, epoch: st.epoch, rev: st.rev, frames: Object.fromEntries(Object.keys(st.changed).map((id) => [id, [st.changed[id], st.doc[id] ?? 0]])) })
   write(root, 'seen.json', { version: 2, epoch: st.epoch, frames: st.seen })
   if (deps && st.obs) write(root, 'deps.json', { version: 3, files: st.obs.files, frames: st.obs.frames })
@@ -154,7 +162,12 @@ export function observe(root: string, frames: Frames, opts: { boot?: boolean; fi
     const now = observed(root, readers, deps)
     Object.assign(out, compare(was, now, deps, readers.map((f) => f.id), !!opts.boot, new Set([rel])))
     was.files[rel] = stat(root, rel)
-    for (const f of readers) was.frames[f.id] = { reads: now.frames[f.id].reads, note: was.frames[f.id]?.note ?? now.frames[f.id].note }
+    for (const f of readers) {
+      was.frames[f.id] = { reads: now.frames[f.id].reads, note: was.frames[f.id]?.note ?? now.frames[f.id].note }
+      // a file it reads from now on, that no frame read before: known from here, so the next full look
+      // does not count it twice (a file already known keeps its old stat - its own edit is its own update)
+      for (const p of deps.get(f.id) ?? []) if (was.files[p] === undefined) was.files[p] = now.files[p]
+    }
   } else {
     const now = observed(root, frames, deps)
     if (was) Object.assign(out, compare(was, now, deps, frames.map((f) => f.id), !!opts.boot))

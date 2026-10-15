@@ -1989,7 +1989,8 @@ export const useStore = create<State>((set, get) => {
 // with the revision it shows (Play.tsx sets stageShown) - selecting one is handled in select()
 useStore.subscribe((s, prev) => {
   if (s.stageShown && s.stageShown !== prev.stageShown) { reconcile(); s.look(['stage']) }   // a late commit of an older stage offers Update
-  if (!s.play && prev.play) { useStore.setState({ stageShown: null }); pumpUpdates() }   // the canvas is in view again
+  // the canvas is in view again; an Update the closed stage held goes with it (the next one is served fresh)
+  if (!s.play && prev.play) { useStore.setState({ stageShown: null, playUpdateRevision: null }); pumpUpdates() }
 })
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)
