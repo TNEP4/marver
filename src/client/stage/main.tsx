@@ -125,7 +125,12 @@ class Boundary extends Component<{ resetKey: string; children?: ReactNode }, { e
  *  frame the stage shows, at which revision (the stamp this document was served with: a frame imported
  *  later never claims more than the wrappers it renders with), for which document generation. */
 function Shown({ id }: { id: string }) {
-  useEffect(() => { post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0 }) }, [id])
+  // a tick later, and only if it is still mounted: a frame that throws from its own effects is replaced by
+  // the boundary's card first, which unmounts this and cancels the report
+  useEffect(() => {
+    const t = setTimeout(() => post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0 }), 0)
+    return () => clearTimeout(t)
+  }, [id])
   return null
 }
 

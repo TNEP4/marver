@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, boardLabel, boardFrames, cap, humanize, fetchBoardNames, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, boardLabel, boardFrames, cap, humanize, fetchBoardNames, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
@@ -582,7 +582,7 @@ export function App() {
         // than the frame's last edit reloads
         const before = s.nodes.find((n) => n.key === nodeKey)?.shown
         if (typeof data.doc === 'string') s.setShown(nodeKey, data.doc)
-        logReload({ kind: 'ready', cause: before === undefined ? 'first' : 'reload', node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
+        logReload({ kind: 'ready', cause: takeReloadCause(nodeKey) ?? (before === undefined ? 'first' : 'self'), node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
       } else if (data.type === 'sh:error') {
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
       } else if (data.type === 'sh:exit-interact') {

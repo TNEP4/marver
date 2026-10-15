@@ -240,6 +240,10 @@ const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 /** POST to an owner-gated dev API route, echoing the CSRF cookie the gate requires. */
 /** The reload log (spec 26 Part 1): what this page saw boot or settle - best effort, dev only. */
 const TAB = Math.random().toString(36).slice(2, 8)
+/** Why a node's next document boots - a reload job, a reload by hand, the watchdog's retry; none known
+ *  means a first load, or a document that reloaded itself (the reload log tells them apart). */
+const reloadCause = new Map<string, 'job' | 'manual' | 'retry'>()
+export const takeReloadCause = (key: string) => { const c = reloadCause.get(key); reloadCause.delete(key); return c }
 export const logReload = (entry: Record<string, unknown>) => {
   if (PUBLISHED) return
   const body = { tab: TAB, ...entry }
@@ -433,7 +437,7 @@ let pendingEpoch = ''
 const lookedEarly = new Set<string>()
 /** a look at a node (or 'stage') whose new version was still loading: it completes when that version is up,
  *  within ARMED_MS of the look (spec 26) */
-const armed = new Map<string, number>()
+const armed = new Map<string, { until: number; board: string; frame: string }>()
 const ARMED_MS = 10_000
 /** The doc revision a node's document shows, in this epoch - -1 when unknown or from another one. */
 export const shownRev = (n: Node, m: Marks): number => {
@@ -653,6 +657,7 @@ export const useStore = create<State>((set, get) => {
       const since = cameraSince ?? Date.now()
       if (canvasCtl.cameraBusy() && Date.now() - since < REFLOW_CAMERA_WAIT) { scheduleReflow(check ?? undefined, 60, since); return }
       if (check && !check()) return
+      for (const k of [...holds.keys()]) if (!s.nodes.some((n) => n.key === k && !n.missing)) letGo(k, false)   // gone: no longer in the batch
       if (holds.size) { reflowOwed = true; return }   // a batch is reloading: the rows move once, when it lets go
       // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
       if (composed(s)) { canvasCtl.holdView(); s.runTidy() }
@@ -1457,6 +1462,7 @@ export const useStore = create<State>((set, get) => {
       const n = get().nodes.find((x) => x.key === key)
       if (!n) return
       if (automatic && !canAutoReload(n)) return
+      reloadCause.set(key, automatic ? 'retry' : 'manual')
       bumpManifestRev()
       set((s) => ({ nodes: s.nodes.map((x) => (x.key === key
         ? { ...x, status: 'loading' as const, error: undefined, nav: (x.nav ?? 0) + 1, readyRetried: automatic }
@@ -1551,8 +1557,9 @@ export const useStore = create<State>((set, get) => {
       const ids = new Set(frameIds.filter((x) => typeof x === 'string'))
       if (!ids.size) return
       const s = get()
-      // a node reloading already (it has shown a document) gets one more after it: one running, one waiting
-      const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing && (n.status !== 'loading' || n.shown !== undefined) ? { ...n, stale: true } : n))
+      // every document of these frames is behind - one loading too (one running, one waiting): a document
+      // that turns out to show the edit already clears it when it is ready (setShown)
+      const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing ? { ...n, stale: true } : n))
       set({ nodes, ...(s.play ? { playUpdateRevision: revision } : {}) })
       pumpUpdates()
     },
@@ -1560,6 +1567,7 @@ export const useStore = create<State>((set, get) => {
     startReload(key) {
       const n = get().nodes.find((x) => x.key === key)
       if (!n) return
+      reloadCause.set(key, 'job')
       bumpManifestRev()
       holdHeight(key)
       set((s) => ({ nodes: s.nodes.map((x) => (x.key === key
@@ -1567,7 +1575,13 @@ export const useStore = create<State>((set, get) => {
         : x)) }))
     },
     setShown(key, shown) {
-      set((s) => ({ nodes: s.nodes.map((x) => (x.key === key ? { ...x, shown } : x)) }))
+      const m = get().marks
+      set((s) => ({ nodes: s.nodes.map((x) => {
+        if (x.key !== key) return x
+        const n = { ...x, shown }
+        if (n.stale && m && shownRev(n, m) >= (m.doc[n.frame] ?? 0)) n.stale = false   // it shows the edit already
+        return n
+      }) }))
       reconcile()
       if (armed.has(key)) get().look([key], false)   // a look you made while it loaded
     },
@@ -1761,17 +1775,18 @@ export const useStore = create<State>((set, get) => {
       }
       const now = Date.now(), seen: Record<string, number> = {}
       for (const k of keys) {
-        const until = armed.get(k)
-        if (until !== undefined && until <= now) armed.delete(k)
-        if (!rearm && !armed.has(k)) continue
         const f = k === 'stage' ? s.stageShown?.at : s.nodes.find((n) => n.key === k)?.frame
+        const a = armed.get(k)
+        // a remembered look holds for its own frame, on its own board, for ARMED_MS
+        if (a && (a.until <= now || a.board !== s.board || a.frame !== f)) armed.delete(k)
+        if (!rearm && !armed.has(k)) continue
         if (!f) { armed.delete(k); continue }
         const r = upTo(k, f)
         // what you saw: the last change as the page knows it - or the revision on screen when the document
         // already shows one the page has not heard of yet (everything up to it is there)
         const saw = Math.max(m.changed[f] ?? 0, r)
         if (saw <= (m.seen[f] ?? 0)) { armed.delete(k); continue }
-        if (r < 0) { if (rearm) armed.set(k, now + ARMED_MS); continue }   // not up yet: the look waits for it
+        if (r < 0) { if (rearm) armed.set(k, { until: now + ARMED_MS, board: s.board, frame: f }); continue }   // not up yet: the look waits for it
         armed.delete(k)
         seen[f] = Math.max(seen[f] ?? 0, saw)
       }
@@ -1906,7 +1921,7 @@ export const useStore = create<State>((set, get) => {
 // a frame shown in focus or play is looked at (spec 25): the stage reports each frame it commits,
 // with the revision it shows (Play.tsx sets stageShown) - selecting one is handled in select()
 useStore.subscribe((s, prev) => {
-  if (s.stageShown && s.stageShown !== prev.stageShown) s.look(['stage'])
+  if (s.stageShown && s.stageShown !== prev.stageShown) { reconcile(); s.look(['stage']) }   // a late commit of an older stage offers Update
   if (!s.play && prev.play) { useStore.setState({ stageShown: null }); pumpUpdates() }   // the canvas is in view again
 })
 

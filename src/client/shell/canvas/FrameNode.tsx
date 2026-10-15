@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { cap, frameUrl, useStore, CONFIG, type Node } from '../store.ts'
+import { cap, frameUrl, shownRev, useStore, CONFIG, type Node } from '../store.ts'
 import { admit, release } from './admission.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
@@ -66,6 +66,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const interact = useStore((s) => s.interact === node.key)
   const working = useStore((s) => s.working.includes(node.frame))   // Live Jam: Marver is editing this frame
   const mark = useFrameMark(node.frame)                              // spec 25: new, or a question for you
+  // spec 26: its document shows an older revision than the frame's last edit (an event not here yet)
+  const behind = useStore((s) => !!s.marks && !!node.shown && shownRev(node, s.marks) < (s.marks.doc[node.frame] ?? 0))
   // sticky notes (spec 18): the scene's note when this node is the scene's first on the board
   // (reading order), then the frame's own. Text is compared by value - a note edit re-renders
   // only its column; a pan never re-renders any node (no position subscription here).
@@ -198,13 +200,14 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (doc && doc !== lastDoc.current) { lastDoc.current = doc; dirty.current = false }
     if (interact) dirty.current = true
     wake(node.key, iframe)
-    // a stale document waits awake for its reload (spec 26): textures are baked from the server's newest
-    // source, which it does not show - waking also cancels one being installed
-    if (interact || dirty.current || resizing.current || node.status !== 'ready' || node.stale) return
+    // a stale document - or one behind the frame's last edit - waits awake for its reload (spec 26):
+    // textures are baked from the server's newest source, which it does not show; waking also cancels
+    // one being installed
+    if (interact || dirty.current || resizing.current || node.status !== 'ready' || node.stale || behind) return
     if (node.themeOn !== undefined && node.themeOn !== node.theme) return   // the frame has not painted the new theme yet
     const t = setTimeout(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h }) }, 250)
     return () => clearTimeout(t)
-  }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, node.stale, w, h, node.missing, frame?.id, node.key, resizeTick])
+  }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, node.stale, behind, w, h, node.missing, frame?.id, node.key, resizeTick])
   useEffect(() => () => wake(node.key, iframeRef.current), [node.key])
 
   // image-LOD: once the frame is ready its content listener is live, so send the settled zoom - a static

@@ -478,7 +478,10 @@ function PlayInner() {
         // a frame added after this stage was served is not in its registry: that is an update to take
         // (Update serves a fresh stage), not an error
         if (/^unknown frame id/.test(String(data.message ?? ''))) useStore.setState({ playUpdateRevision: 'new frame' })
-        else s.toast(`play: ${String(data.message ?? 'frame error')}`)
+        else {
+          s.toast(`play: ${String(data.message ?? 'frame error')}`)
+          if (s.playNav && !s.stageShown) useStore.setState({ playUpdateRevision: 'retry' })   // an Update that failed: offer it again
+        }
       } else if (data.type === 'sh:stage-key') {
         if (data.meta && data.key === '/') toggleCollapse()
         else handleKey(String(data.key), String(data.code))

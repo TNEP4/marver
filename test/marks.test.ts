@@ -165,6 +165,17 @@ describe('sidebar marks: the dev server (spec 26 - revisions, the clock at boot,
     expect(observe(root, frames()).doc.sort()).toEqual(['s/a', 's/b'])        // the kit's, on the next full look
   })
 
+  it("one frame reading two files edited at once: the first one's update does not consume the second's", () => {
+    canvas()
+    boot()
+    touch('design/scenes/s/_kit.tsx'); touch('specs/s.md')                   // b reads both
+    expect(observe(root, frames(), { file: join(root, 'design/scenes/s/_kit.tsx') }).doc.sort()).toEqual(['s/a', 's/b'])
+    const r1 = marks().doc['s/b']
+    expect(observe(root, frames(), { file: join(root, 'specs/s.md') }).doc).toEqual(['s/b'])
+    expect(marks().doc['s/b']).toBeGreaterThan(r1)                            // a revision of its own
+    expect(observe(root, frames()).doc).toEqual([])                          // nothing left over
+  })
+
   it('seen: the revision you saw - never lowered, never past the last, refused from another epoch', () => {
     canvas()
     boot()

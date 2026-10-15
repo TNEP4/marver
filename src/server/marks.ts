@@ -16,18 +16,18 @@
  *
  *   changes.json  { version: 2, epoch, rev, frames: { id: [changed, doc] } }
  *   seen.json     { version: 2, epoch, frames: { id: rev } }
- *   deps.json     { version: 2, fp: { id: [doc, note, app fingerprints] } }
+ *   deps.json     { version: 3, files: { path: "size:mtime" }, frames: { id: { reads, note } } }
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, relative, sep } from 'node:path'
 import { noteFileFor, type FrameEntry, type Manifest } from './manifest.ts'
 import { checkBoardsDir, checkRealDirs, listBoardFiles } from './boards.ts'
-import { fingerprints, frameDeps } from './deps.ts'
+import { compare, frameDeps, observed, stat, type Observed } from './deps.ts'
 import type { Marks } from '../shared/marks.ts'
 
 type Frames = readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[]
-interface State { epoch: string; rev: number; changed: Record<string, number>; doc: Record<string, number>; seen: Record<string, number>; fp: Record<string, string[]> | null }
+interface State { epoch: string; rev: number; changed: Record<string, number>; doc: Record<string, number>; seen: Record<string, number>; obs: Observed | null }
 
 const dir = (root: string) => join(root, 'design', '.local')
 /** Writes stay inside the project: a symlinked design/ or .local is refused (as boards.ts refuses). */
@@ -52,7 +52,7 @@ const readJson = (root: string, name: string): unknown => {
 const rev = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 const newEpoch = () => randomBytes(6).toString('hex')
-const fresh = (): State => ({ epoch: newEpoch(), rev: 0, changed: {}, doc: {}, seen: {}, fp: null })
+const fresh = (): State => ({ epoch: newEpoch(), rev: 0, changed: {}, doc: {}, seen: {}, obs: null })
 
 const states = new Map<string, State | 'off'>()
 
@@ -60,11 +60,12 @@ const states = new Map<string, State | 'off'>()
  *  fresh one. `null` = invalid (a reset is due). Never writes. */
 function load(root: string, frames: Frames): State | null {
   const c = readJson(root, 'changes.json'), s = readJson(root, 'seen.json'), d = readJson(root, 'deps.json')
-  const fp = obj(d) && d.version === 2 && obj(d.fp) && Object.values(d.fp).every((v) => Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'string')) ? d.fp as Record<string, string[]> : null
+  const obs = obj(d) && d.version === 3 && obj(d.files) && obj(d.frames) && Object.values(d.files).every((v) => typeof v === 'string')
+    && Object.values(d.frames).every((v) => obj(v) && typeof v.reads === 'string' && typeof v.note === 'string') ? d as unknown as Observed : null
   if (c === undefined && s === undefined) return fresh()
   if (obj(s) && s.version === 1) return convert(root, frames, c, s)
   if (!obj(c) || !obj(s) || c.version !== 2 || s.version !== 2 || typeof c.epoch !== 'string' || c.epoch !== s.epoch || !rev(c.rev) || !obj(c.frames) || !obj(s.frames)) return null
-  const st: State = { epoch: c.epoch, rev: c.rev, changed: {}, doc: {}, seen: {}, fp }
+  const st: State = { epoch: c.epoch, rev: c.rev, changed: {}, doc: {}, seen: {}, obs }
   for (const [id, v] of Object.entries(c.frames)) {
     if (!Array.isArray(v) || !rev(v[0]) || !rev(v[1]) || v[0] > c.rev || v[1] > v[0]) return null
     st.changed[id] = v[0]; st.doc[id] = v[1]
@@ -97,7 +98,7 @@ function convert(root: string, frames: Frames, c: unknown, s: Record<string, unk
 function persist(root: string, st: State, deps = false) {
   write(root, 'changes.json', { version: 2, epoch: st.epoch, rev: st.rev, frames: Object.fromEntries(Object.keys(st.changed).map((id) => [id, [st.changed[id], st.doc[id] ?? 0]])) })
   write(root, 'seen.json', { version: 2, epoch: st.epoch, frames: st.seen })
-  if (deps && st.fp) write(root, 'deps.json', { version: 2, fp: st.fp })
+  if (deps && st.obs) write(root, 'deps.json', { version: 3, files: st.obs.files, frames: st.obs.frames })
 }
 
 /** The live state, loaded on first use. A state the disk refuses to read turns marks off for this
@@ -133,37 +134,39 @@ export function recordChanged(root: string, frames: Frames, ids: readonly string
   return st.rev
 }
 
-/** Looks at the frames as they are on disk now and records what moved since the last look: a frame
- *  added (a new id - a rename too), its file or anything it reads (doc), its sticky note (note
- *  only); app code it imports is note-only while dev runs (Fast Refresh applies it in place - the
- *  frames it cannot reach in place are recorded from the hot update) and doc at `boot` (nothing
- *  applied it). The first look of a canvas only remembers. `file`: look only at the frames that read
- *  it - a hot update records its own edit, never another one Vite has not processed yet. */
+/** Looks at the frames as they are on disk now and records what moved since the last look (deps.ts
+ *  `compare`). The first look of a canvas only remembers. `file`: look at that file alone - a hot
+ *  update records its own edit, never another one Vite has not processed yet; the next full look
+ *  sees the rest. Returns the frames it recorded. */
 export function observe(root: string, frames: Frames, opts: { boot?: boolean; file?: string } = {}): { doc: string[]; note: string[] } {
   const st = states.get(root)
   const out = { doc: [] as string[], note: [] as string[] }
   if (!st || st === 'off') return out
   const deps = frameDeps(root, frames)
-  const rel = opts.file ? relative(root, opts.file).split(sep).join('/') : null
-  const look = rel ? frames.filter((f) => f.file === rel || deps.get(f.id)?.includes(rel)) : frames
-  const now = fingerprints(root, look, deps)
-  const was = st.fp
-  if (was) for (const f of look) {
-    const a = was[f.id], b = now[f.id]
-    if (!a || a[0] !== b[0] || (opts.boot && a[2] !== b[2])) out.doc.push(f.id)
-    else if (a[1] !== b[1] || a[2] !== b[2]) out.note.push(f.id)
-  }
   const known = new Set(frames.map((f) => f.id))
-  const pruned = [st.changed, st.doc, st.seen].some((m) => Object.keys(m).some((id) => !known.has(id)))
-  for (const m of [st.changed, st.doc, st.seen]) for (const id of Object.keys(m)) if (!known.has(id)) delete m[id]
-  const moved = !was || out.doc.length || out.note.length || (!rel && Object.keys(was).length !== frames.length)
-  st.fp = rel && was ? { ...was, ...now } : now
+  const was = st.obs
+  let pruned = false
+  if (opts.file) {
+    if (!was) return out
+    const rel = relative(root, opts.file).split(sep).join('/')
+    const readers = frames.filter((f) => deps.get(f.id)?.includes(rel))
+    const now = observed(root, readers, deps)
+    Object.assign(out, compare(was, now, deps, readers.map((f) => f.id), !!opts.boot, new Set([rel])))
+    was.files[rel] = stat(root, rel)
+    for (const f of readers) was.frames[f.id] = { reads: now.frames[f.id].reads, note: was.frames[f.id]?.note ?? now.frames[f.id].note }
+  } else {
+    const now = observed(root, frames, deps)
+    if (was) Object.assign(out, compare(was, now, deps, frames.map((f) => f.id), !!opts.boot))
+    pruned = !was || Object.keys(was.frames).some((id) => !known.has(id))
+    st.obs = now
+  }
+  for (const m of [st.changed, st.doc, st.seen]) for (const id of Object.keys(m)) if (!known.has(id)) { delete m[id]; pruned = true }
   if (out.doc.length || out.note.length) {
     st.rev++
     for (const id of out.doc) st.changed[id] = st.doc[id] = st.rev
     for (const id of out.note) st.changed[id] = st.rev
   }
-  if (moved || pruned) persist(root, st, true)
+  if (out.doc.length || out.note.length || pruned || opts.file) persist(root, st, true)
   return out
 }
 
@@ -222,11 +225,9 @@ export function projectMarks(root: string, manifest: Manifest): Marks | null {
   if (c === undefined && s === undefined) return null
   const st = load(root, manifest.frames)
   if (!st) return null
-  if (st.fp) {
-    const now = fingerprints(root, manifest.frames)
-    const was = st.fp
-    const doc = manifest.frames.filter((f) => !was[f.id] || was[f.id][0] !== now[f.id][0] || was[f.id][2] !== now[f.id][2]).map((f) => f.id)   // as a boot sees it
-    const note = manifest.frames.filter((f) => was[f.id] && was[f.id][0] === now[f.id][0] && was[f.id][1] !== now[f.id][1]).map((f) => f.id)
+  if (st.obs) {
+    const deps = frameDeps(root, manifest.frames)
+    const { doc, note } = compare(st.obs, observed(root, manifest.frames, deps), deps, manifest.frames.map((f) => f.id), true)   // as a boot sees it
     if (doc.length || note.length) { st.rev++; for (const id of doc) st.changed[id] = st.doc[id] = st.rev; for (const id of note) st.changed[id] = st.rev }
   }
   return snapshot(root, manifest, st)

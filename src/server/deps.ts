@@ -38,22 +38,38 @@ export function frameDeps(root: string, frames: readonly Pick<FrameEntry, 'id' |
   return out
 }
 
-const stat = (root: string, rel: string) => { try { const s = statSync(join(root, rel)); return `${s.size}:${s.mtimeMs}` } catch { return '-' } }
+export const stat = (root: string, rel: string) => { try { const s = statSync(join(root, rel)); return `${s.size}:${s.mtimeMs}` } catch { return '-' } }
 
-/** Three fingerprints per frame. `doc`: what it renders - its file and what it reads under design/
- *  or as content (a spec read with ?raw); a file changed, added, removed or renamed moves it.
- *  `note`: its sticky note. `app`: an embedded app's code it imports, which Fast Refresh updates in
- *  place - seen without a new document. Size and mtime only: a write that restores both is not seen,
- *  which a git checkout never does. */
-export function fingerprints(root: string, frames: readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[], deps = frameDeps(root, frames)): Record<string, [doc: string, note: string, app: string]> {
-  const out: Record<string, [string, string, string]> = {}
-  const fp = (paths: string[]) => hash(paths.sort().map((p) => `${p}:${stat(root, p)}`).join('\n')).slice(0, 16)
+/** What a look at the disk keeps (deps.json): every file a frame reads, by size and mtime - a file once,
+ *  however many frames read it - and per frame the set of paths it reads and its sticky note. Size and
+ *  mtime only: a write that restores both is not seen, which a git checkout never does. */
+export interface Observed { files: Record<string, string>; frames: Record<string, { reads: string; note: string }> }
+
+export function observed(root: string, frames: readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[], deps = frameDeps(root, frames)): Observed {
+  const out: Observed = { files: {}, frames: {} }
   for (const f of frames) {
     const reads = deps.get(f.id) ?? [f.file]
-    const app = reads.filter(isApp)
-    out[f.id] = [fp(reads.filter((p) => !isApp(p))), stat(root, noteFileFor(f.file)), app.length ? fp(app) : '']
+    for (const p of reads) out.files[p] ??= stat(root, p)
+    out.frames[f.id] = { reads: hash([...reads].sort().join('\n')).slice(0, 16), note: stat(root, noteFileFor(f.file)) }
   }
   return out
+}
+
+/** What moved between two looks, per frame: `doc` - added (a new id, a rename too), what it reads
+ *  changed (a file edited, added, removed or renamed), or app code it imports at `boot` (nothing
+ *  applied it); `note` - its sticky note, or app code while dev runs (Fast Refresh applies it in place).
+ *  `only`: compare these files alone (a hot update's own file). */
+export function compare(was: Observed, now: Observed, deps: Map<string, string[]>, ids: readonly string[], boot: boolean, only?: ReadonlySet<string>): { doc: string[]; note: string[] } {
+  const doc: string[] = [], note: string[] = []
+  for (const id of ids) {
+    const a = was.frames[id], b = now.frames[id]
+    if (!b) continue
+    if (!a || (!only && a.reads !== b.reads)) { doc.push(id); continue }
+    const moved = (deps.get(id) ?? []).filter((p) => (!only || only.has(p)) && was.files[p] !== now.files[p])
+    if (moved.some((p) => boot || !isApp(p))) doc.push(id)
+    else if (moved.length || (!only && a.note !== b.note)) note.push(id)
+  }
+  return { doc, note }
 }
 
 /** App code: outside design/, and code (a component, a helper) - not content like a spec's markdown. */
