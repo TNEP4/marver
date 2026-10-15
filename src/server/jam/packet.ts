@@ -171,8 +171,9 @@ export function extractReanchors(text: string): { reply: string; reanchors: Rean
     const parsed = JSON.parse(m[1].trim())
     for (const r of Array.isArray(parsed) ? parsed : []) {
       const target = r && typeof r.thread === 'string' ? readTarget(r) : 'no thread'
-      const word = (v: unknown) => (typeof v === 'string' && /^[a-z0-9-]+$/i.test(v) ? v : undefined)
-      const look = { viewport: word(r.viewport), theme: word(r.theme) }
+      // any name: the check validates it against the canvas's viewports and themes
+      const name = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 64) : undefined)
+      const look = { viewport: name(r.viewport), theme: name(r.theme) }
       if (typeof target !== 'string') reanchors.push({ thread: r.thread, target, ...(look.viewport || look.theme ? { look } : {}) })
     }
   } catch { /* malformed block - drop it, keep the reply readable */ }
