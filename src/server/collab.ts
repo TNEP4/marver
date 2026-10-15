@@ -318,7 +318,10 @@ export function collabHandler(dataDir: string, distDir: string) {
     const map = new Map<string, string>()
     const add = (email?: string) => { if (email) map.set(opaqueId(dataDir, email), normEmail(email)) }
     for (const usr of loadStore(dataDir).users) add(usr.email)
-    for (const st of threads.values()) for (const ev of st.events) {
+    // the old all-scenes log's people too, where its threads are exposed - the mention picker offers them
+    const old = shows ? readLog(commentsDir, ALL_SCENES) : []
+    const exposed = shows ? legacyExposure(old, rights, shows) : () => []
+    for (const ev of [...[...threads.values()].flatMap((st) => st.events), ...old.filter((e) => exposed(e).length)]) {
       add(ev.author?.email)
       for (const mn of ev.mentions ?? []) add(mn.email)
     }

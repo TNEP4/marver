@@ -59,12 +59,14 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
 /** Navigation supersedes any goto or reveal still on its way - its board lookup (gotoSeq) AND a board
  *  switch it already started (a switch to the board on screen cancels any pending one: store.ts) - so
  *  a slow lookup can never yank the view away from where the human has gone since. Every entry point
- *  calls it: a pasted link, back/forward, a goto, a reveal. */
+ *  calls it: a pasted link, back/forward, a goto, a reveal, a board picked in the sidebar. */
 export function navigated(): number {
   const s = useStore.getState()
   if (s.board) void s.switchBoard(s.board)
   return ++gotoSeq
 }
+/** Is this still the latest navigation - nothing newer since `navigated()` handed it out? */
+export const isLatest = (seq: number): boolean => seq === gotoSeq
 
 /** Switch to `home` and select + fit `target` there once the board commits - unless the human has
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */

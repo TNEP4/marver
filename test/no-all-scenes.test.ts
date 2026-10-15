@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claimInvite, createInvite, issueDeviceSession, provisionFromMarverId } from '../src/server/auth.ts'
+import { claimInvite, createInvite, issueDeviceSession, opaqueId, provisionFromMarverId } from '../src/server/auth.ts'
 import { collabHandler } from '../src/server/collab.ts'
 import { appendEvents, readLog, type CommentEvent } from '../src/server/comments.ts'
 import { saveShare } from '../src/server/share.ts'
@@ -114,6 +114,9 @@ describe('the old all-scenes log on a republished canvas', () => {
     const firstReply = readLog(comments(), 'all-scenes').find((e) => e.type === 'reply')!
     expect((await post(p.owner, { type: 'edit', commentId: firstReply.commentId, author: { email: 'owner@x.test' }, body: 'mine now' })).status).toBe(400)
     expect((await post(p.dana, { type: 'edit', commentId: firstReply.commentId, author: { email: 'dana@x.test' }, body: 'answer, edited' })).status).toBe(200)
+    // someone known only from the old log can be mentioned like anyone else
+    appendEvents(comments(), 'all-scenes', [thread('t-ghost-00', 'shop/cart', 'ghost@x.test')])
+    expect((await post(p.owner, { ...reply('t-ghost-00', 'owner@x.test'), mentions: [{ id: opaqueId(dir, 'ghost@x.test'), label: 'ghost' }] })).status).toBe(200)
     // a resolve is judged by the thread it names, never by a parentId riding along
     expect((await post(p.dana, { type: 'resolve', commentId: 't-spec-000', parentId: 't-cart-000' })).status).toBe(403)
     // a new thread lives on a board, never in the old log

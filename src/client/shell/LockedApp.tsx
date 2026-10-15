@@ -39,20 +39,22 @@ export function App() {
 
   /** The landing rule, enforced: the mode the lock pinned, entered on boot and
    *  re-entered if anything ever drops the overlay - there is no other surface. */
-  const land = () => {
+  const land = (at?: string) => {
     const s = useStore.getState()
     if (s.play) return
     const mode = landingMode(s.board)
-    if (mode === 'focus') enterFocus()
-    else if (mode === 'slides') enterSlides()
-    else enterPlay()
+    if (mode === 'focus') enterFocus(at)
+    else if (mode === 'slides') enterSlides(at ? { at } : undefined)
+    else enterPlay(at ? { at } : undefined)
   }
 
   useEffect(() => {
     if (booted) return
     booted = true
     const start = async () => {
-      if (isLegacyLink(bootHash)) retargetBoot((await landLegacy(bootHash)).hash)   // an old All Scenes link: a real board
+      // an old All Scenes link: a real board, at the frame it names, with what to say about it
+      let notice: string | null = null
+      if (isLegacyLink(bootHash)) { const r = await landLegacy(bootHash); retargetBoot(r.hash); notice = r.notice }
       if (bootHash.board && bootHash.board !== useStore.getState().board)
         useStore.setState({ board: bootHash.board, boardAuto: false })
       const ok = await boot()
@@ -61,7 +63,8 @@ export function App() {
       if (bootHash.focus) enterFocus(bootHash.focus.at, { ...bootHash.focus, deep: true })
       else if (bootHash.play?.slides) enterSlides(bootHash.play)
       else if (bootHash.play) enterPlay(bootHash.play)
-      else land()
+      else land(bootHash.f?.[0])
+      if (notice) useStore.getState().toast(notice)
     }
     const boot = useStore.getState().boot
     void start()
@@ -84,14 +87,17 @@ export function App() {
     const onPop = async () => {
       const raw = parseHash()
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
-      const h = isLegacyLink(raw) ? (await landLegacy(raw)).hash : raw
+      const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
+      const h = r.hash
       const board = h.board ?? (h.focus ? undefined : await landingBoard())
       const s = useStore.getState()
-      if (board && board !== s.board) {
+      if (r.notice) s.toast(r.notice)
+      if (board && (board !== s.board || h.f?.length)) {
         await s.switchBoard(board)
+        useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
         if (h.play?.slides) enterSlides(h.play)
         else if (h.play) enterPlay(h.play)
-        else land()
+        else land(h.f?.[0])
         return
       }
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })

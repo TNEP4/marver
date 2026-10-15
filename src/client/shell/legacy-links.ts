@@ -35,7 +35,7 @@ export async function landLegacy(h: HashState): Promise<{ hash: HashState; notic
   if (h.play) return { hash: { ...rest, board: h.play.at ? home(h.play.at) : undefined }, notice: null }
   if (c) {
     const t = await useComments.getState().findThread(c)
-    return { hash: { ...rest, board: t?.frame ? home(t.frame) : undefined, c }, notice: t ? null : 'that thread is not on this canvas any more' }
+    return { hash: { ...rest, board: t?.frame ? home(t.frame) : undefined, c, ...(t?.frame ? { f: [t.frame] } : {}) }, notice: t ? null : 'that thread is not on this canvas any more' }
   }
 
   const frames = new Set([...(f ?? []), ...live.filter((id) => s?.some((sc) => id.startsWith(`${sc}/`)))].filter((id) => live.includes(id)))

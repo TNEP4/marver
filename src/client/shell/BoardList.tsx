@@ -6,6 +6,7 @@ import { StatusPicker } from './StatusPicker.tsx'
 import type { StatusWord } from '../../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
+import { navigated } from './goto.ts'
 import { rollup } from '../../shared/marks.ts'
 import { Bubble, useAsks } from './marks-ui.tsx'
 import { Tip } from './Tip.tsx'
@@ -170,6 +171,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
   const pick = async (name: string) => {
     if (name === useStore.getState().board) return
+    navigated()                                                      // a link still finding its board gives way
     await useStore.getState().switchBoard(name)
     setTimeout(() => canvasCtl.fitAll(), 60)
   }

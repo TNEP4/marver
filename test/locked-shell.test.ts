@@ -93,5 +93,9 @@ describe('the all-boards-locked bundle', () => {
     await browser.eval(tab, `location.hash = '#/b/all-scenes'`)
     await new Promise((r) => setTimeout(r, 600))
     expect(await browser.eval(tab, `!!document.querySelector('.sh-play')`)).toBe(true)
+    // a link naming frames lands the stage on them
+    const t2 = await browser.tab({ width: 1280, height: 800 })
+    await browser.go(t2, `http://localhost:${PORT}/#/b/all-scenes?f=deck/two`)
+    await browser.until(t2, `!!document.querySelector('.sh-play') && location.hash.startsWith('#/p/deck?at=deck%2Ftwo')`, 20_000)
   }, 60_000)
 })

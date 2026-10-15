@@ -14,7 +14,7 @@ import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board
 import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
-import { goTo, navigated, revealFrame } from './goto.ts'
+import { goTo, isLatest, navigated, revealFrame } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
@@ -434,12 +434,11 @@ export function App() {
   // selection against the newly loaded state. writeHash skips identical hashes, so
   // restores never echo back into history.
   useEffect(() => {
-    let popSeq = 0
     const onPop = async () => {
-      navigated()                              // a reveal still looking up its board must not land after this
+      const nav = navigated()                  // a reveal still looking up its board must not land after this
       // a lookup below still running when newer navigation lands - a link, or a board picked - is dropped
-      const mine = ++popSeq, at = useStore.getState().board
-      const overtaken = () => mine !== popSeq || useStore.getState().board !== at
+      const at = useStore.getState().board
+      const overtaken = () => !isLatest(nav) || useStore.getState().board !== at
       let h = parseHash()
       const legacy = isLegacyLink(h)
       if (legacy) {
