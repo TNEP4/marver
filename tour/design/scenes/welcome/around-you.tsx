@@ -27,7 +27,6 @@ const Ico = ({ d, size = 14, className, stroke }: { d: string; size?: number; cl
 
 const P = {
   cards: 'M184,72H40A16,16,0,0,0,24,88V200a16,16,0,0,0,16,16H184a16,16,0,0,0,16-16V88A16,16,0,0,0,184,72Zm0,128H40V88H184V200ZM232,56V176a8,8,0,0,1-16,0V56H64a8,8,0,0,1,0-16H216A16,16,0,0,1,232,56Z',
-  cardsThree: 'M208,88H48a16,16,0,0,0-16,16v96a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,112H48V104H208v96ZM48,64a8,8,0,0,1,8-8H200a8,8,0,0,1,0,16H56A8,8,0,0,1,48,64ZM64,32a8,8,0,0,1,8-8H184a8,8,0,0,1,0,16H72A8,8,0,0,1,64,32Z',
   caret: 'M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z',
   frameRect: 'M60,52H196a20,20,0,0,1,20,20V184a20,20,0,0,1-20,20H60a20,20,0,0,1-20-20V72A20,20,0,0,1,60,52Z',
   comment: 'M132,24A100.11,100.11,0,0,0,32,124v84a16,16,0,0,0,16,16h84a100,100,0,0,0,0-200Zm0,184H48V124a84,84,0,1,1,84,84Z',
@@ -177,7 +176,6 @@ export default function AroundYou() {
             <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Collaborate" />
             <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Jam" />
             <Row icon={<Ico d={P.cards} className="mx-px text-glass-ink/40" />} label="Thanks" />
-            <Row icon={<Ico d={P.cardsThree} className="mx-px text-glass-ink/40" />} label="All Scenes" />
             <div className="mt-2.5 mb-[5px] px-2.5 text-[11px] font-semibold tracking-[0.02em] text-glass-ink/40">Scenes</div>
             <Row icon={<Ico d={P.caret} size={11} className="mx-[2.5px] text-glass-ink/40" />} label="Welcome" count={6} />
             <Row icon={<Ico d={P.frameRect} size={13} stroke className="opacity-[0.72]" />} label="Cover" indent />

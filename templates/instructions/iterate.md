@@ -59,8 +59,8 @@ to step 4.
    in default order). Create the board the first time (`"order"` high, so it
    sits last among the curated boards; `"auto": false`). Set the copied frames'
    `meta.title` to `"<title> · v<N>"` so the sidebar reads as history. The
-   version also shows on `all-scenes` (it holds everything) - fine; it must NOT
-   be added to any feature board or to `publish.json`.
+   archive is the version's one board: it must NOT be added to any feature board
+   or to `publish.json`.
 
    ```json
    { "version": 1, "name": "archive", "order": 90, "auto": false,
@@ -155,8 +155,7 @@ The discipline:
    button is a different task than "too cramped" on the whole frame.
 2. **Look sideways before you touch anything.** A pin marks where the human
    NOTICED the problem, not the only place it lives. Siblings are the LIVE
-   frames on the board the comment names (on `all-scenes`, the frames of the
-   pinned frame's own scene and its feature board) that share the component,
+   frames on the board the comment names that share the component,
    the pattern, the copy or the state: the other steps of the flow, the sibling
    states, the variants. Never `archive/` and never a `<scene>-v<N>` version -
    history is not a sibling. Same defect there (the same element or pattern

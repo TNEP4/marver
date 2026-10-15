@@ -16,7 +16,8 @@ vars if the host has no CLI.
    also pin threads. Boards not listed do not ship at all - their frames are not
    even in the bundle. `marver build` FAILS without this file (default-closed);
    `--boards a,b` overrides ad hoc (grants comment), `--all-boards` ships
-   everything loudly.
+   every board loudly. A frame ships only on a board that shows it - every frame
+   goes on the board it belongs to.
 
 2. **Who gets in** - pick ONE of two gates at serve time. They are alternatives,
    not layers; setting both weakens the invite list to "an account OR whoever
