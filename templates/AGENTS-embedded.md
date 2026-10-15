@@ -126,14 +126,21 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   `npx marver dev` instead - the link carries its port.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
-  the human started it posts as Marver and pings them on the frame.
-- **A question or a decision about a frame goes ON that frame**, not only in the chat:
-  `npx marver comments new <scene/frame> --body "..." [--on "<words on screen>"]` pins it where
-  it applies, so the human answers in place. Also for a judgment call you took that they should
-  check, or a change they would not spot. Nothing else - never a changelog, at most one note per
-  frame per turn; the chat keeps the summary and can say "question on the form". Never resolve
-  your own notes: the human resolves them as they review, and a reply in one comes back to you
-  (Live Jam).
+  the human started it posts as Marver and pings them on the frame. A reply that asks them
+  something says so with `--ask` - it comes first for them.
+- **A question or a decision about a frame goes ON that frame**, not only in the chat, and on
+  the element it is about: `npx marver comments new <scene/frame> --body "..." --on "<words that
+  element shows>"`, or `--at "<data-testid or css selector>"` for an element without words (an
+  icon). With `marver dev` running the frame is checked: words it does not show are refused with
+  what it does show, several matches need `--nth <n>`, and a target only another viewport or
+  theme shows needs `--viewport` / `--theme`. Also for a judgment call you took that they should
+  check, or a change they would not spot. A note asks; one that asks nothing says `--fyi`.
+- **One thread per topic, each on its element; never a changelog.** A list of decisions is one
+  note per decision, each on its own line. A follow-up is a reply (`comments reply`, or `comments
+  new --thread <id>` on your own note), never a second note on the same subject. A note in the
+  wrong place: `npx marver comments move <thread> --on "..."`, never a second copy. The chat keeps
+  the summary and can say "question on the form". Never resolve your own notes: the human
+  resolves them as they review, and a reply in one comes back to you (Live Jam).
 - A comment-born (`@marver`) job hands back through its reply block alone
   (instructions/jam.md): no link, no CLI reply to its own thread.
 

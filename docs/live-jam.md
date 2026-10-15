@@ -155,12 +155,17 @@ harness without a model rather than a guessed one.
 ## Notes from your chat agent
 
 Live Jam answers comments; the same voice works the other way. An agent you are chatting with leaves
-a note where it needs you - `npx marver comments new <scene/frame> --body "..." [--on "<words on
-screen>"]` pins it on the frame, or on the element showing those words - and answers your threads
-with `npx marver comments reply`. Both post as Marver, with the same provenance, land on your canvas
+a note where it needs you - `npx marver comments new <scene/frame> --body "..." --on "<words on
+screen>"` pins it on the element showing those words (`--at "<data-testid or selector>"` for one
+without words) - and answers your threads with `npx marver comments reply`. With `marver dev`
+running the note is checked in the rendered frame first: words the frame does not show are
+refused with what it does show, and several matches need `--nth`. A follow-up joins its thread
+(`comments new --thread <id>`), and a misplaced note moves (`comments move <thread> --on ...`).
+Notes and replies post as Marver, with the same provenance, land on your canvas
 at once, and raise the bottom-right pill with a ping - Marver's replies on one board fold into a
-single notice ("2 replies", View walks through them), a new note or a reply that asks stands on its
-own, and the frame wears the orange question
+single notice ("2 replies", View walks through them), a message that asks (a note, unless the
+agent wrote `--fyi`; a reply with `--ask`; a jam reply opened with ```` ```marver-reply ask ````)
+stands on its own, and the frame wears the orange question
 bubble in the sidebar until the thread is resolved. Reply in a note and it is a jam job like any
 reply to Marver - no tag needed; while the chat agent still has that frame lit (`marver work
 start`), the job waits for it. Notes stay on your machine for now, like jam replies; a reply to a

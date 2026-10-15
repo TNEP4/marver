@@ -15,7 +15,7 @@
  * grok injects NO env marker into processes it spawns (verified in the grok-build source),
  * so detection finds it by PATH order only - naming `jam: "grok"` in config always works.
  */
-import { extractReanchors, extractReplyBlock } from '../packet.ts'
+import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 const cleanModel = (raw: unknown): string | undefined =>
@@ -66,8 +66,7 @@ export const grokAdapter: JamAdapter = {
       } catch { /* non-JSON line (the CLI mirrors errors as prose) - skip */ }
     }
     if (!text) text = lastAssistant   // stream cut before its result event
-    const { reply: visible, reanchors } = extractReanchors(text)
-    const reply = extractReplyBlock(visible)
-    return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors } = parseAgentText(text)
+    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

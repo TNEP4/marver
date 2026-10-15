@@ -140,20 +140,20 @@ describe('sidebar marks (spec 25)', () => {
   })
 
   skippable("a question's life: filled bubble, hollow once you answer, filled at Marver's follow-up, gone when resolved", async () => {
-    cli('comments', 'new', 'spec/bravo', '--board', 'main', '--body', 'Which layout - the first or the second?')
+    cli('comments', 'new', 'spec/bravo', '--board', 'main', '--at', 'h1', '--body', 'Which layout - the first or the second?')
     await until(`window.__mark('Bravo') === 'ask:1' && window.__head('spec/bravo') === 'ask:1'`)
     expect(await browser!.eval(s, `window.__row('Bravo').classList.contains('mk-ask')`)).toBe(true)
     const id = threadOn('main', 'spec/bravo')
     await browser!.eval(s, `window.__mvComments.getState().reply(${JSON.stringify(id)}, 'The second one.').then(() => 1)`)
     await until(`window.__mark('Bravo') === 'answered:1'`)
-    cli('comments', 'reply', id, '--body', 'And the header - keep it?')
+    cli('comments', 'reply', id, '--body', 'And the header - keep it?', '--ask')
     await until(`window.__mark('Bravo') === 'ask:1'`)
     cli('comments', 'resolve', id)
     await until(`window.__mark('Bravo') === 'none' && window.__head('spec/bravo') === 'none'`)
   })
 
   skippable('a board you are not on: its question takes the status glyph\'s place; a closed folder rolls it up', async () => {
-    cli('comments', 'new', 'lofi/delta', '--board', 'other', '--body', 'Is delta still needed?')
+    cli('comments', 'new', 'lofi/delta', '--board', 'other', '--at', 'h1', '--body', 'Is delta still needed?')
     await until(`!!document.querySelector('[data-board="other"] .mk-bubble') && !document.querySelector('[data-board="other"] [data-status-icon]')`)
     expect(await browser!.eval(s, `document.querySelector('[data-board="other"]').classList.contains('mk-ask')`)).toBe(true)
     await browser!.eval(s, `document.querySelector('[data-folder-row="features"]').click(), 1`)   // close the folder
@@ -171,7 +171,7 @@ describe('sidebar marks (spec 25)', () => {
     await until(`${scene}.querySelector('small.mk-fresh')?.textContent === '3' && !window.__row('Charlie')`)
     await browser!.eval(s, `${scene}.click(), 1`)
     await until(`!!window.__row('Charlie')`)
-    cli('comments', 'new', 'spec/bravo', '--board', 'main', '--body', 'One more question')
+    cli('comments', 'new', 'spec/bravo', '--board', 'main', '--at', 'h1', '--body', 'One more question')
     await until(`window.__mark('Bravo') === 'ask:1'`)
     await browser!.press(s, 'u')
     await until(`window.__mvStore.getState().selection[0] === window.__key('spec/bravo')`)
@@ -213,8 +213,8 @@ describe('sidebar marks (spec 25)', () => {
   })
 
   skippable("Marver's replies on a board fold into one notice per round; a new question keeps its own", async () => {
-    cli('comments', 'new', 'spec/alpha', '--board', 'main', '--body', 'First note')
-    cli('comments', 'new', 'spec/charlie', '--board', 'main', '--body', 'Second note')
+    cli('comments', 'new', 'spec/alpha', '--board', 'main', '--at', 'h1', '--body', 'First note')
+    cli('comments', 'new', 'spec/charlie', '--board', 'main', '--at', 'h1', '--body', 'Second note')
     await until(`window.__mark('Alpha') === 'ask:1' && window.__mark('Charlie') === 'ask:1'`)
     await browser!.eval(s, `window.__mvStore.getState().clearJamToasts(), 1`)
     cli('comments', 'reply', threadOn('main', 'spec/alpha'), '--body', 'Done on alpha')
@@ -225,7 +225,7 @@ describe('sidebar marks (spec 25)', () => {
     await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); st.advanceToast(st.toasts.find((t) => t.jam?.round).id); return 1 })()`)
     await until(`(() => { const r = window.__mvStore.getState().toasts.filter((t) => t.jam?.round); return r.length === 1 && !r[0].jam.stack?.length && r[0].jam.frame === 'spec/alpha' })()`)
     // a reply that asks keeps its own notice, and takes its thread out of the round
-    cli('comments', 'reply', threadOn('main', 'spec/charlie'), '--body', 'Should charlie keep its header?')
+    cli('comments', 'reply', threadOn('main', 'spec/charlie'), '--body', 'Should charlie keep its header?', '--ask')
     await until(`window.__mvStore.getState().toasts.some((t) => t.jam && !t.jam.round && t.jam.frame === 'spec/charlie')`)
     expect(await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam?.round).map((t) => t.jam.frame).join()`)).toBe('spec/alpha')
   })

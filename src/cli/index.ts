@@ -109,7 +109,7 @@ cli
   })
 
 cli
-  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · new <scene/frame> · reply <thread> · resolve <thread> · invite <email> · revoke <email>')
+  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · new <scene/frame> · reply <thread> · move <thread> · resolve <thread> · invite <email> · revoke <email>')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--token <token>', 'connect: the canvas\'s MARVER_CLI_TOKEN (default $MARVER_CLI_TOKEN) - the identity-mode path')
   .option('--invite <token>', 'connect: claim this invite instead of signing in')
@@ -121,7 +121,14 @@ cli
   .option('--json', 'list: machine-readable output')
   .option('--board <board>', 'list: scope to one board · new: the board to pin on (default: the one its link opens)')
   .option('--body <text>', 'new / reply: the text')
-  .option('--on <text>', 'new: pin on the element showing this text (default: the frame, top right)')
+  .option('--on <text>', 'new / move: pin on the element showing these words')
+  .option('--at <selector>', 'new / move: pin on the element this data-testid or CSS selector names (an element without words, like an icon)')
+  .option('--nth <n>', 'new / move: which of several matching elements (1 = the first)')
+  .option('--viewport <name>', 'new / move: check the frame at this viewport (default: its own)')
+  .option('--theme <name>', 'new / move: check the frame in this theme (default: light)')
+  .option('--thread <id>', 'new: add the note to this open thread instead of pinning a new one')
+  .option('--fyi', 'new: the note asks nothing (default: it asks - it comes first for the human)')
+  .option('--ask', 'reply: the reply asks the human something')
   .option('--addressed-in <frame>', 'resolve: the variant frame that answered the feedback')
   .action(async (action: string, value: string | undefined, opts) => {
     const { commentsCommand } = await import('./comments.ts')

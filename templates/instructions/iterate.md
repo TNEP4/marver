@@ -85,8 +85,8 @@ to step 4.
    (instructions/jam.md). A change that removes an anchored element: a
    collaborator's thread is replied to and resolved FIRST, then the change
    (resolve first, restructure second); the owner's stays open - say in the
-   reply what replaced the element (its pin parks at the frame's corner, still
-   in view).
+   reply what replaced the element (its pin joins the column at the frame's
+   top-right corner, still in view) - or re-pin it with `comments move`.
 
 Never wait for the human to ask for this. They should be able to say "make the
 cards denser", "drop the sidebar", "try a warmer palette" three times in a row
@@ -143,10 +143,21 @@ the open list as a queue:
 
 ```bash
 npx marver comments list --open --json     # what needs you (anchors included)
-npx marver comments reply <thread> --body "…"
+npx marver comments reply <thread> --body "…" [--ask]
 npx marver comments resolve <thread> --addressed-in <scene/frame>
-npx marver comments new <scene/frame> --body "…" [--on "<words on screen>"]   # a note where you need them
+npx marver comments new <scene/frame> --body "…" --on "<words on screen>"   # a note on its element
+npx marver comments new <scene/frame> --body "…" --at "<testid or selector>"   # ...one without words
+npx marver comments new --thread <thread> --body "…"   # a follow-up on your own note
+npx marver comments move <thread> --on "<words on screen>"   # a note in the wrong place
 ```
+
+Your own notes: pin each point on the element it is about - `--on` with words that element
+shows, or `--at` for an element without words (`--nth`, `--viewport`, `--theme` when the check
+asks for them). One thread per topic, each on its element; never a changelog - a list of
+decisions is one note per decision, each on its own line. A follow-up is a reply (`comments
+reply`, or `comments new --thread`), never a second note on the same subject; a note in the
+wrong place is moved (`comments move`), never copied. A note asks (`--fyi` when it does not);
+a reply asks only with `--ask`.
 
 The discipline:
 
@@ -183,8 +194,8 @@ The discipline:
    completed work.
 6. **A frame with open comments is load-bearing - never delete, rename, or
    gut it.** Its threads are anchored to elements INSIDE it; restructure the
-   frame and the anchors strand (a dead anchor parks the pin at the frame
-   edge; deleting the whole frame strands the thread off-canvas entirely -
+   frame and the anchors strand (a dead anchor parks the pin in the column at
+   the frame's corner; deleting the whole frame strands the thread off-canvas entirely -
    never lost from the log, but invisible until the frame returns). So: with a
    version snapshot taken, edit the live frame and close out each thread right
    after its change - a collaborator's resolved, the owner's replied to and left

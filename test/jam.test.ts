@@ -325,7 +325,7 @@ describe('Live Jam M1: the daemon spine', () => {
       name: 'codex', supportsSubagents: false,
       spawnArgs: () => ({ cmd: process.execPath, args: ['-e', `process.stdout.write('FINAL\\n')`] }),
       earlyText: (line) => (line.includes('FINAL') ? { text: '```marver-reply\nRenamed it.\n```' } : null),
-      parse: () => ({ reply: 'Renamed it.', ok: true, reanchors: [] }),
+      parse: () => ({ reply: 'Renamed it.', asks: false, ok: true, reanchors: [] }),
     }
     const jam = createJam(root, { ...CFG, agent: 'codex' }, oneShot)
     ownerMention(root, dir, 'home', '@marver rename it')
@@ -440,7 +440,7 @@ describe('Live Jam M5: bounded parallelism + codex adapter', () => {
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done — changed the CTA.' } }),
       JSON.stringify({ type: 'turn.completed', model: 'gpt-5-codex', usage: {} }),
     ].join('\n')
-    expect(codexAdapter.parse(jsonl, 0)).toEqual({ reply: 'Done — changed the CTA.', model: 'gpt-5-codex', reanchors: [], ok: true })
+    expect(codexAdapter.parse(jsonl, 0)).toEqual({ asks: false, reply: 'Done — changed the CTA.', model: 'gpt-5-codex', reanchors: [], ok: true })
   })
   it('both adapters fan out: `codex exec` carries collaboration.spawn_agent, same as Claude Code', () => {
     expect(codexAdapter.supportsSubagents).toBe(true)
@@ -516,10 +516,11 @@ describe('Live Jam M4: activity presence', () => {
 describe('Live Jam M2: reanchor', () => {
   it('extractReanchors pulls a trailing block and strips it from the visible reply', async () => {
     const { extractReanchors } = await import('../src/server/jam/packet.ts')
-    const text = 'Renamed the button.\n```marver-reanchor\n[{"thread":"t1","anchor":{"quote":"Get Started"}}]\n```'
+    const text = 'Renamed the button.\n```marver-reanchor\n[{"thread":"t1","on":"Get Started"},{"thread":"t2","at":"cart-icon","nth":2,"theme":"dark","viewport":"iPad Pro"},{"thread":"t3","anchor":{"quote":"old shape"}}]\n```'
     const out = extractReanchors(text)
     expect(out.reply).toBe('Renamed the button.')
-    expect(out.reanchors).toEqual([{ thread: 't1', anchor: { quote: 'Get Started' } }])
+    // one format: an element named the way `comments move` names it; an entry naming none is dropped
+    expect(out.reanchors).toEqual([{ thread: 't1', target: { on: 'Get Started' } }, { thread: 't2', target: { at: 'cart-icon', nth: 2 }, look: { theme: 'dark', viewport: 'iPad Pro' } }])
   })
   it('no block → the reply passes through unchanged, no reanchors', async () => {
     const { extractReanchors } = await import('../src/server/jam/packet.ts')
@@ -532,7 +533,7 @@ describe('Live Jam M2: reanchor', () => {
   it('the daemon writes a reanchor event and replay re-pins the whole thread', async () => {
     const { root, dir, done } = setup()
     const tid = 'thread-fixed-1'
-    const envelope = JSON.stringify({ result: 'Renamed + re-pinned.\n```marver-reanchor\n[{"thread":"thread-fixed-1","anchor":{"quote":"Get Started","semantics":{"tag":"button","testId":"cta2"}}}]\n```', modelUsage: { 'claude-opus-5': {} } })
+    const envelope = JSON.stringify({ result: 'Renamed + re-pinned.\n```marver-reanchor\n[{"thread":"thread-fixed-1","on":"Get Started"}]\n```', modelUsage: { 'claude-opus-5': {} } })
     const reanchorAdapter: JamAdapter = {
       name: 'claude', supportsSubagents: true,
       spawnArgs() { return { cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(envelope)})`] } },
@@ -545,9 +546,42 @@ describe('Live Jam M2: reanchor', () => {
     const events = readLog(dir, 'home')
     expect(events.some((e) => e.type === 'reanchor' && e.commentId === tid)).toBe(true)
     const thread = replay(events).find((t) => t.id === tid)
-    expect(thread?.anchor).toEqual({ quote: 'Get Started', semantics: { tag: 'button', testId: 'cta2' } })
+    // no dev server to look in the frame here: written unchecked, in the shared format
+    expect(thread?.anchor).toEqual({ el: { semantics: { quote: 'Get Started' } } })
     // the reply itself has the block stripped
     expect(thread?.replies[0]?.body).toBe('Renamed + re-pinned.')
+    done()
+  })
+  it('with the dev server\'s check, a re-pin stores the element it found - and one the frame does not show is skipped', async () => {
+    const { root, dir, done } = setup()
+    const block = '[{"thread":"t-found","on":"Get Started"},{"thread":"t-missing","on":"Nowhere"}]'
+    const envelope = JSON.stringify({ result: 'Renamed.\n```marver-reanchor\n' + block + '\n```', modelUsage: {} })
+    const adapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(envelope)})`] } },
+      parse: claudeAdapter.parse,
+    }
+    const found = { el: { semantics: { tag: 'button', quote: 'Get Started' }, cssPath: 'main > button' } }
+    const asked: string[] = []
+    const jam = createJam(root, CFG, adapter, () => {}, {
+      anchor: async (frame, target) => {
+        asked.push(`${frame}:${target.on}`)
+        return target.on === 'Get Started'
+          ? { ok: true, anchor: found, holders: [], viewport: 'mobile', theme: 'light' }
+          : { ok: false, refused: 'none', visible: ['Get Started'], viewport: 'mobile', theme: 'light' }
+      },
+    })
+    const author = { email: 'nic@local', name: 'Nic' }
+    appendEvents(dir, 'home', [
+      { id: 't-found', ts: Date.now(), type: 'create', commentId: 't-found', frame: 'demo/hero', anchor: { el: { semantics: { quote: 'Learn more' } } }, author, body: '@marver rename this button' },
+      { id: 't-missing', ts: Date.now() + 1, type: 'create', commentId: 't-missing', frame: 'demo/hero', author, body: 'context' },
+    ])
+    record(root, 'home', 't-found')
+    await jam.tick(); jam.stop()
+    expect(asked).toEqual(['demo/hero:Get Started', 'demo/hero:Nowhere'])
+    const threads = replay(readLog(dir, 'home'))
+    expect(threads.find((t) => t.id === 't-found')?.anchor).toEqual(found)
+    expect(threads.find((t) => t.id === 't-missing')?.anchor).toBeUndefined()
     done()
   })
 })
@@ -630,7 +664,7 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     const qLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: q }] } })
     // exactly what the job prompt asks for: the question streams plain, then the run ends with
     // the SAME question inside the reply fence - the dedupe has to see through the fence
-    const resultLine = JSON.stringify({ type: 'result', result: '```marver-reply\n' + q + '\n```', modelUsage: {} })
+    const resultLine = JSON.stringify({ type: 'result', result: '```marver-reply ask\n' + q + '\n```', modelUsage: {} })
     const clarifyAdapter: JamAdapter = {
       name: 'claude', supportsSubagents: true,
       spawnArgs() { return { cmd: process.execPath, args: ['-e', streamScript([qLine, resultLine])] } },
@@ -642,7 +676,38 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
     const replies = agentReplies(dir, 'home')
     expect(replies.length).toBe(1)
     expect(replies[0].body).toBe(q)
+    expect(replies[0].asks).toBe(true)
     done()
+  })
+
+  it('a plain ack never asks, whatever its last character: only the final block says ask', async () => {
+    const { root, dir, done } = setup()
+    const text = 'Swapped the hero for the photo?'
+    // the ack streams with a trailing "?", the final plain block repeats it: one message, not asking
+    const ackLine = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+    const resultLine = JSON.stringify({ type: 'result', result: '```marver-reply\n' + text + '\n```', modelUsage: {} })
+    const adapter: JamAdapter = {
+      name: 'claude', supportsSubagents: true,
+      spawnArgs() { return { cmd: process.execPath, args: ['-e', streamScript([ackLine, resultLine])] } },
+      parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText,
+    }
+    const jam = createJam(root, CFG, adapter)
+    ownerMention(root, dir, 'home', '@marver swap the hero')
+    await jam.tick(); jam.stop()
+    const replies = agentReplies(dir, 'home')
+    expect(replies.map((r) => [r.body, r.asks])).toEqual([[text, false]])
+    expect(readLog(dir, 'home').some((e) => e.type === 'edit')).toBe(false)
+    done()
+  })
+
+  it('one parser for every adapter: the ```marver-reply ask header says the reply asks; no block falls back to a trailing "?"', async () => {
+    const { parseAgentText } = await import('../src/server/jam/packet.ts')
+    expect(parseAgentText('Looked around.\n```marver-reply ask\nCard or CVC?\n```')).toEqual({ reply: 'Card or CVC?', asks: true, reanchors: [] })
+    expect(parseAgentText('```marver-reply\nDone - the header is tighter.\n\nWant the footer too?\n```')).toEqual({ reply: 'Done - the header is tighter.\n\nWant the footer too?', asks: false, reanchors: [] })
+    expect(parseAgentText('```marver-reply asking nothing\n```').asks).toBe(false)   // "ask" is a whole word, not a prefix
+    expect(parseAgentText('Which of the two?')).toEqual({ reply: 'Which of the two?', asks: true, reanchors: [] })
+    expect(parseAgentText('Done.')).toEqual({ reply: 'Done.', asks: false, reanchors: [] })
+    for (const a of [claudeAdapter, codexAdapter]) expect(typeof a.parse('', 1).asks).toBe('boolean')
   })
 
   it('marver-reply block: ONLY the block is posted - narration around it is discarded', async () => {
@@ -680,11 +745,11 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
 describe('Live Jam M1: claude adapter parse (real envelope shape, claude 2.1.234)', () => {
   it('pulls reply from .result and a clean model from modelUsage (strips the [1m] variant tag)', () => {
     const env = JSON.stringify({ result: 'Done — CTA now reads Get Started.', modelUsage: { 'claude-opus-5[1m]': { input: 1 } } })
-    expect(claudeAdapter.parse(env, 0)).toEqual({ reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true, reanchors: [] })
+    expect(claudeAdapter.parse(env, 0)).toEqual({ asks: false, reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true, reanchors: [] })
   })
   it('non-JSON stdout falls back to raw text; exit code drives ok', () => {
-    expect(claudeAdapter.parse('plain text reply', 0)).toEqual({ reply: 'plain text reply', model: undefined, ok: true, reanchors: [] })
-    expect(claudeAdapter.parse('', 1)).toEqual({ reply: '', model: undefined, ok: false, reanchors: [] })
+    expect(claudeAdapter.parse('plain text reply', 0)).toEqual({ asks: false, reply: 'plain text reply', model: undefined, ok: true, reanchors: [] })
+    expect(claudeAdapter.parse('', 1)).toEqual({ asks: false, reply: '', model: undefined, ok: false, reanchors: [] })
   })
   it('spawn enforces the shell ban: Bash explicitly disallowed, not just omitted from the allowlist', () => {
     const { args } = claudeAdapter.spawnArgs('goal')
@@ -723,7 +788,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"On it - checking the frame."}]},"session_id":"s1"}',
       '{"type":"result","subtype":"success","is_error":false,"duration_ms":9,"result":"Done - CTA now reads Get Started.","session_id":"s1"}',
     ].join('\n')
-    expect(cursorAdapter.parse(ok, 0)).toEqual({ reply: 'Done - CTA now reads Get Started.', model: 'claude-opus-5', reanchors: [], ok: true })
+    expect(cursorAdapter.parse(ok, 0)).toEqual({ asks: false, reply: 'Done - CTA now reads Get Started.', model: 'claude-opus-5', reanchors: [], ok: true })
     // captured live from cursor-agent 2026.08.11 unauthenticated: prose on stdout, non-zero exit
     expect(cursorAdapter.parse("Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", 1).ok).toBe(false)
   })
@@ -744,7 +809,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
     const err = '{"type":"error","source":"cli","message":"Error: Authentication failed.","timestamp":1,"session_id":"s"}'
     expect(droidAdapter.parse([init, err].join('\n'), 1).ok).toBe(false)
     const done = [init, '{"type":"result","subtype":"success","is_error":false,"duration_ms":5657,"num_turns":1,"result":"Moved the badge into the header.","session_id":"s"}'].join('\n')
-    expect(droidAdapter.parse(done, 0)).toEqual({ reply: 'Moved the badge into the header.', model: 'claude-opus-5', reanchors: [], ok: true })
+    expect(droidAdapter.parse(done, 0)).toEqual({ asks: false, reply: 'Moved the badge into the header.', model: 'claude-opus-5', reanchors: [], ok: true })
     const { args } = droidAdapter.spawnArgs('g')
     expect(args[args.indexOf('--auto') + 1]).toBe('low')
     const disabled = args[args.indexOf('--disabled-tools') + 1].split(',')
@@ -764,7 +829,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"step_finish","timestamp":5,"sessionID":"ses_1","part":{"id":"prt_5","reason":"stop","type":"step-finish","tokens":{"input":1,"output":2},"cost":0}}',
     ].join('\n')
     // no model ever: opencode's stream names none, and none is invented
-    expect(opencodeAdapter.parse(jsonl, 0)).toEqual({ reply: 'Swapped the hero image.\n\nThe old asset is gone - done.', reanchors: [], ok: true })
+    expect(opencodeAdapter.parse(jsonl, 0)).toEqual({ asks: false, reply: 'Swapped the hero image.\n\nThe old asset is gone - done.', reanchors: [], ok: true })
     expect(opencodeAdapter.parse('{"type":"error","timestamp":1,"sessionID":"s","error":{"name":"ProviderAuthError","data":{"message":"no auth"}}}', 1).ok).toBe(false)
   })
   it('opencode: the jail is a DEFAULT-DENY env grant, not the dangerous --auto flag', () => {
@@ -786,7 +851,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"assistant","message":{"role":"assistant","model":"grok-build","content":[{"type":"text","text":"Tightened the spacing."}]},"session_id":"s"}',
       '{"type":"result","subtype":"success","is_error":false,"result":"Tightened the spacing.","session_id":"s"}',
     ].join('\n')
-    expect(grokAdapter.parse(done, 0)).toEqual({ reply: 'Tightened the spacing.', model: 'grok-build', reanchors: [], ok: true })
+    expect(grokAdapter.parse(done, 0)).toEqual({ asks: false, reply: 'Tightened the spacing.', model: 'grok-build', reanchors: [], ok: true })
     // "unknown" is grok's literal placeholder, never provenance
     expect(grokAdapter.parse([init, '{"type":"result","subtype":"success","is_error":false,"result":"Hi.","session_id":"s"}'].join('\n'), 0).model).toBeUndefined()
     const { args } = grokAdapter.spawnArgs('g')
@@ -808,7 +873,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"message_end","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Working on it."}]}}',
       '{"type":"agent_end","messages":[{"role":"user","content":[{"type":"text","text":"goal"}]},{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Renamed the section - take a look."}]}]}',
     ].join('\n')
-    expect(piAdapter.parse(done, 0)).toEqual({ reply: 'Renamed the section - take a look.', model: 'claude-sonnet-5', reanchors: [], ok: true })
+    expect(piAdapter.parse(done, 0)).toEqual({ asks: false, reply: 'Renamed the section - take a look.', model: 'claude-sonnet-5', reanchors: [], ok: true })
     // stream cut before agent_end: the last message_end still answers
     const cut = [header, '{"type":"message_end","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Done early."}]}}'].join('\n')
     expect(piAdapter.parse(cut, 0).reply).toBe('Done early.')

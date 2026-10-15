@@ -30,7 +30,8 @@ import { localProfile } from '../profile.ts'
 import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, baseline, releaseLock, write } from './journal.ts'
-import { buildMember, buildPacket, extractReanchors, extractReplyBlock, goalText, threadId } from './packet.ts'
+import { buildMember, buildPacket, goalText, parseAgentText, threadId } from './packet.ts'
+import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
 import { scanPending, triggers, engagedThreads, allEventIds } from './watch.ts'
 import { has } from './ledger.ts'
 import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
@@ -55,6 +56,9 @@ export interface JamHooks {
   /** Is a CHAT-driven agent working on this frame right now (`marver work start`)? Then a job
    *  on it waits - two agents never edit one file at once - and runs once the frame is free. */
   held?(frame: string): boolean
+  /** Find a re-pin's element in the rendered frame (the dev server's anchor check, as the CLI's
+   *  `comments move`). Absent = the anchor is written unchecked. */
+  anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[], look?: AnchorLook): Promise<AnchorCheck>
 }
 
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
@@ -116,9 +120,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let stopped = false
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
 
-  type AgentRun = { reply: string; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
+  type AgentRun = { reply: string; asks: boolean; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
   type Env = NodeJS.ProcessEnv
-  const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, model?: string) => void): Promise<AgentRun> =>
+  const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, asks: boolean, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const { cmd, args, env } = adapter.spawnArgs(goal)
       let child: ChildProcess
@@ -127,7 +131,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // some CLIs (opencode, verified) trust PWD over getcwd - without this, a dev server whose
       // own cwd differs from the repo root would have the agent editing the WRONG directory.
       try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), ...env, PWD: root } }) }
-      catch { return resolve({ reply: '', ok: false, reanchors: [] }) }
+      catch { return resolve({ reply: '', asks: false, ok: false, reanchors: [] }) }
       activeChildren.add(child)
       try { onSpawn(child.pid) } catch { /* pgid persist failed; the run still proceeds, fencing degrades */ }
       let out = ''
@@ -140,7 +144,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (settled) return
         settled = true; clearTimeout(to); activeChildren.delete(child); resolve(r)
       }
-      const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', ok: false, reanchors: [] }) }, JOB_TIMEOUT_MS)
+      const to = setTimeout(() => { fenceGroup(child.pid); settle({ reply: '', asks: false, ok: false, reanchors: [] }) }, JOB_TIMEOUT_MS)
       child.stdout?.on('data', (chunk: Buffer) => {
         const d = decoder.write(chunk)
         out += d; if (out.length > MAX_OUT) out = out.slice(-MAX_OUT)
@@ -155,22 +159,24 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           // ack: codex streams a single message at the very end, and a fast claude run can do the
           // same. Post what is INSIDE the block - never the raw fence - and since that equals what
           // parse() will return, the final reply dedupes itself instead of doubling up.
-          const visible = extractReanchors(hit.text).reply
-          const block = extractReplyBlock(visible)
           // A fenceless first message is a plain ACK, and models append plan narration to it
           // ("On it.\n\nNow let me gather context..."). The ack is ONE line to the owner, so keep
           // only the first paragraph - the narration after the blank line never reaches the thread.
           // A fenced first message is the real completion; leave its (possibly multi-paragraph) body.
-          const hasFence = block !== visible.trim()
-          const text = hasFence ? block : block.split(/\n\s*\n/)[0].trim()
+          // One parser either way (packet.ts). A plain ack asks nothing: only the final block can
+          // say `ask`, and when its words match the ack the daemon re-flags it - so a flag only
+          // ever turns on, the way a question's notice can follow.
+          const parsed = parseAgentText(hit.text)
+          const fenced = /```marver-reply/.test(hit.text)
+          const text = fenced ? parsed.reply : parsed.reply.split(/\n\s*\n/)[0].trim()
           if (!text || metaNarration(text)) continue
           earlyFired = true
-          try { onEarly!(text, hit.model) } catch { /* early delivery is best-effort */ }
+          try { onEarly!(text, fenced && parsed.asks, hit.model) } catch { /* early delivery is best-effort */ }
           break
         }
       })
       child.on('close', (code) => settle({ ...adapter.parse(out, code ?? 1), raw: out }))
-      child.on('error', () => settle({ reply: '', ok: false, reanchors: [] }))
+      child.on('error', () => settle({ reply: '', asks: false, ok: false, reanchors: [] }))
     })
 
   /** Persist each run's raw stream to design/.local/jam-logs/ (gitignored, last 10 kept) - so
@@ -190,7 +196,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** House style: never an em/en dash in a reply - a plain dash reads human. */
   const plainDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ' - ')
 
-  const writeReply = (b: Batch, p: Pending, body: string, model?: string, kind: 'reply' | 'early' = 'reply') => {
+  const writeReply = (b: Batch, p: Pending, body: string, asks: boolean, model?: string, kind: 'reply' | 'early' = 'reply') => {
     const me = localProfile(root)
     // Deterministic ids: a re-run produces the SAME reply, so appendEvents dedups it (crash-safe).
     // The early ack gets its own id, so ack + final coexist as two thread messages.
@@ -200,23 +206,39 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const reply: CommentEvent = {
       id: `jam-${suffix}`, ts: Date.now(), type: 'reply',
       commentId: `jam-c-${suffix}`, parentId: threadId(p.event),
-      board: b.board, author: me, body: plainDashes(body),
+      board: b.board, author: me, body: plainDashes(body), asks,
       agent: true, agentMeta: { devUser: me.name, harness: adapter.name, model },
     }
     appendEvents(commentsDir, b.board, [reply])
+    return reply.commentId!
   }
 
-  /** Emit reanchor events for threads the agent re-pinned. Owner-authored + agent:true
-   *  (attributable, never re-triggers), deterministic ids so a re-run dedups. */
-  const emitReanchors = (b: Batch, reanchors: Reanchor[]) => {
-    if (!reanchors.length) return
+  /** Emit reanchor events for threads the agent re-pinned, in the shared anchor format: each
+   *  element found in the rendered frame the way `comments move` finds it, unchecked when the
+   *  check cannot run, skipped when the frame shows no such element or several. Owner-authored +
+   *  agent:true (attributable, never re-triggers), deterministic ids so a re-run dedups. Returns
+   *  how many it wrote. */
+  const emitReanchors = async (b: Batch, reanchors: Reanchor[]): Promise<number> => {
+    if (!reanchors.length) return 0
     const me = localProfile(root)
-    const events: CommentEvent[] = reanchors.map((r, i) => ({
-      id: `jam-ra-${b.batchId}-${i}`, ts: Date.now(), type: 'reanchor',
-      commentId: r.thread, anchor: r.anchor, board: b.board, author: me,
-      agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
-    }))
-    appendEvents(commentsDir, b.board, events)
+    const threads = replay(readLog(commentsDir, b.board))
+    const events: CommentEvent[] = []
+    for (const [i, r] of reanchors.entries()) {
+      const t = threads.find((t) => t.id === r.thread)
+      if (!t?.frame) { log(`  jam: re-pin skipped - no thread ${r.thread} on ${b.board}`); continue }
+      const others = threads.filter((o) => !o.resolved && o.frame === t.frame && o.id !== t.id).map((o) => ({ key: o.id, anchor: o.anchor }))
+      const check: AnchorCheck = hooks.anchor
+        ? await hooks.anchor(t.frame, r.target, others, r.look).catch((err) => ({ ok: false as const, unchecked: (err as Error).message }))
+        : { ok: false, unchecked: 'no anchor check here' }
+      if (!check.ok && 'refused' in check) { log(`  jam: re-pin skipped - ${t.frame} shows ${check.refused === 'none' ? 'no' : 'several'} matching elements`); continue }
+      events.push({
+        id: `jam-ra-${b.batchId}-${i}`, ts: Date.now(), type: 'reanchor',
+        commentId: t.id, anchor: check.ok ? check.anchor : uncheckedAnchor(r.target), board: b.board, author: me,
+        agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
+      })
+    }
+    if (events.length) appendEvents(commentsDir, b.board, events)
+    return events.length
   }
 
   const finish = (b: Batch) => { journal.batches = journal.batches.filter((x) => x.batchId !== b.batchId); persist() }
@@ -261,14 +283,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     beat.unref?.()
     // The agent's FIRST line streams out within seconds - post it live (its own ack, or its
     // clarifying question). Real output, not a canned placeholder.
-    let earlyBody: string | undefined
+    let early: { body: string; asks: boolean; commentId: string } | undefined
     let run: Awaited<ReturnType<typeof runAgent>>
     try {
-      run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; persist() }, (text, model) => {
+      run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; persist() }, (text, asks, model) => {
         // write FIRST, remember after: if the append throws, the final must not be suppressed
         // as a "duplicate" of an ack that never actually posted
-        writeReply(b, p, text, model, 'early')
-        earlyBody = text
+        early = { body: text, asks, commentId: writeReply(b, p, text, asks, model, 'early') }
         hooks.changed?.(b.board)
       })
     } finally { clearInterval(beat) }
@@ -276,15 +297,24 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) { clearGlow(); return }
     if (run.ok) {
       // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
-      // one, so don't post it twice.
-      if (run.reply !== earlyBody) writeReply(b, p, run.reply, run.model)
-      emitReanchors(b, run.reanchors)
+      // one, so don't post it twice. The dedup compares the words and the flag: same words, and
+      // the final asks where the ack did not (the `ask` header only the final block carries) -
+      // the early message is re-flagged, and its question gets its own notice.
+      if (run.reply !== early?.body) writeReply(b, p, run.reply, run.asks, run.model)
+      else if (run.asks && !early.asks) {
+        const me = localProfile(root)
+        appendEvents(commentsDir, b.board, [{
+          id: `jam-f-e${b.attempts}-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early.commentId, asks: run.asks, board: b.board,
+          author: me, agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
+        }])
+      }
+      const repinned = await emitReanchors(b, run.reanchors)
       hooks.changed?.(b.board)
       clearGlow()
       finish(b)
-      log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${run.reanchors.length ? ` · re-pinned ${run.reanchors.length}` : ''}`)
+      log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${repinned ? ` · re-pinned ${repinned}` : ''}`)
     } else if (b.attempts >= MAX_ATTEMPTS) {
-      writeReply(b, p, "I couldn't finish that one. The raw run log is in design/.local/jam-logs - the troubleshooting drill in design/instructions/jam.md reads it. Or just rephrase and try again.", run.model)
+      writeReply(b, p, "I couldn't finish that one. The raw run log is in design/.local/jam-logs - the troubleshooting drill in design/instructions/jam.md reads it. Or just rephrase and try again.", false, run.model)
       hooks.changed?.(b.board)
       clearGlow()
       finish(b)
@@ -434,7 +464,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
  *  activity set (work.ts) - the `marver work` CLI writes the same set, so the canvas shows
  *  one merged glow. Returns null when the adapter is unavailable or another dev server
  *  already holds the repo lock (that one runs the loop; this one watches without it). */
-export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}): JamDaemon | null {
+export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor']): JamDaemon | null {
   const adapter: JamAdapter | null = adapters[cfg.agent] ?? null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
@@ -448,6 +478,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
     work: (f, on) => (on ? activity.mark(f ?? '', undefined, 'jam') : activity.clear(f ?? '', 'jam')),
     changed: onChanged,
     held: (f) => activity.has(f, 'cli'),
+    anchor,
   })
   let stopped = false
   let scheduled: ReturnType<typeof setTimeout> | null = null

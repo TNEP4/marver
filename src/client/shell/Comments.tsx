@@ -2,7 +2,8 @@
  * Comment surfaces on the canvas. Canvas-first: pins live ON the frame
  * at their anchored elements; an inactive frame collapses its open threads into a
  * top-right stack; the thread card opens beside its pin. Pins keep a screen-space
- * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away.
+ * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away, and never
+ * overlap (pin-layout.ts places them).
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -11,6 +12,7 @@ import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
 import { canvasCtl } from './canvas/ctl.ts'
+import { MARKER, placeMarkers, type Placed } from './pin-layout.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
@@ -115,6 +117,44 @@ export function MarkerFace({ threads, max = 3 }: { threads: Thread[]; max?: numb
   )
 }
 
+type Point = { x: number; y: number }
+
+/** Open threads in creation order - the order markers are placed in, so a newer one moves, never
+ *  an older one. */
+export const byCreation = (threads: Thread[]): Thread[] => [...threads].sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
+
+/** Place one surface's markers - a canvas frame (node px) or the stage (screen px, inv 1): fixed
+ *  points, a fixed marker size, the column for threads with no point. It reads nothing a selection
+ *  or an open card changes, so neither ever moves a marker. */
+export const placePins = (threads: Thread[], points: Map<string, Point | null>, frameW: number, inv: number) =>
+  placeMarkers(byCreation(threads).map((t) => ({ id: t.id, point: points.get(t.id) ?? null })), frameW, inv)
+
+/** The placed markers, with a thin line from each one that had to move to its point. */
+export function Pins({ threads, placed, orphans, inv, active, alertIds }: {
+  threads: Thread[]; placed: Map<string, Placed>; orphans: Set<string>
+  inv: number; active: string | null; alertIds?: Set<string>
+}) {
+  const { setActive } = useComments.getState()
+  return (
+    <>
+      {threads.map((t) => {
+        const p = placed.get(t.id)!
+        const orphan = orphans.has(t.id)
+        return [
+          p.lead && <i key={`${t.id}-lead`} data-lead={t.id} className="cm-lead" aria-hidden style={{ left: p.lead.x, top: p.lead.y, height: p.y - MARKER.h * inv - p.lead.y }} />,
+          <div key={t.id} data-thread={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}${alertIds?.has(t.id) ? ' mention' : ''}`}
+            style={{ left: p.x, top: p.y, ...hueVars(anchorHue(t.anchor)) }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
+            title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
+            <MarkerFace threads={[t]} max={2} />
+          </div>,
+        ]
+      })}
+    </>
+  )
+}
+
 /** Lives inside FrameNode's body, over the iframe. Owns anchor resolution for its frame. */
 export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: string; iframe: React.RefObject<HTMLIFrameElement | null> }) {
   const show = useComments((s) => s.show)
@@ -131,7 +171,11 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   const threads = allThreads.filter((t) => t.frame === frameId && threadHostKey(t, allNodes) === node.key)
   const selected = useStore((s) => s.selection.includes(node.key))
   const { setActive } = useComments.getState()
-  const [rects, setRects] = useState<Record<string, { x: number; y: number; w: number; h: number } | null>>({})
+  // each in-frame thread's attach point, in the frame's px - null when its element is gone
+  const [framePoints, setFramePoints] = useState<Record<string, Point | null>>({})
+  // the zoom markers are placed at: the store commits it once a zoom settles, never mid-gesture,
+  // so markers hold still while you zoom and land once
+  const scale = useStore((s) => s.scale)
   // a slide renders at its stage and the node scales it (FrameNode): rects the frame reports are
   // in stage px, so they map through the same fit into the node's coordinates
   const frameEntry = useStore((s) => s.frameFor(node))
@@ -139,6 +183,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   const fit = stage ? stageFit(stage, { w: node.w, h: node.h }) : null
   const inNode = <R extends { x: number; y: number; w: number; h: number }>(r: R): R =>
     fit ? { ...r, x: fit.ox + r.x * fit.k, y: fit.oy + r.y * fit.k, w: r.w * fit.k, h: r.h * fit.k } : r
+  const pointInNode = (p: Point): Point => (fit ? { x: fit.ox + p.x * fit.k, y: fit.oy + p.y * fit.k } : p)
 
   const open = threads.filter((t) => !t.resolved)
   const anchored = open.filter((t) => (t.anchor as any)?.el)
@@ -150,28 +195,29 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // postMessage) or on a sticky note (spec 18: shell DOM, resolved right here)
   const inFrame = anchored.filter((t) => !isNoteAnchor(t.anchor))
   const onNote = anchored.filter((t) => isNoteAnchor(t.anchor))
-  // resolve anchors against the live frame whenever threads or the document change
+  // resolve anchors against the live frame whenever threads, their anchors (a re-pin) or the
+  // document change
   useEffect(() => {
     const win = iframe.current?.contentWindow
     if (!win || node.status !== 'ready' || !inFrame.length) return
     const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: inFrame.map((t) => ({ key: t.id, anchor: t.anchor })) }, location.origin)
     const onMsg = (e: MessageEvent) => {
       if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects') return
-      const next: typeof rects = {}
-      for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.rect
-      setRects(next)
+      const next: typeof framePoints = {}
+      for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.point
+      setFramePoints((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
     }
     window.addEventListener('message', onMsg)
     ask()
     const iv = setInterval(ask, 4000)          // re-renders, scroll, hot reloads - cheap to re-ask
     return () => { clearInterval(iv); window.removeEventListener('message', onMsg) }
-  }, [node.status, inFrame.map((t) => t.id).join(','), iframe])
+  }, [node.status, inFrame.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), iframe])
   // note anchors: their own map, measured in the shell, in node-body coordinates (negative x -
   // the note is left of the frame). The composing draft is measured too (key 'draft'), so it
   // follows a fold like a saved pin. A folded column parks pins on the fold; a note whose file
   // is gone, or whose element the markdown no longer has, parks like an orphan. Re-measured on
   // every fold/unfold (twice: at once and past the transition) and on the same 4 s beat.
-  const [noteRects, setNoteRects] = useState<typeof rects>({})
+  const [noteRects, setNoteRects] = useState<Record<string, { x: number; y: number; w: number; h: number } | null>>({})
   const notesState = useNotes()
   const draftOnNote = draft?.nodeKey === node.key && isNoteAnchor(draft.anchor) ? draft.anchor : null
   useEffect(() => {
@@ -191,7 +237,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         const el = resolveNoteAnchor(a, body)
         return el ? toBody(el.getBoundingClientRect()) : null
       }
-      const next: typeof rects = {}
+      const next: typeof noteRects = {}
       for (const t of onNote) next[t.id] = place(t.anchor)
       if (draftOnNote) next.draft = place(draftOnNote)
       setNoteRects(next)
@@ -226,8 +272,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
       const el = body && resolveNoteAnchor(anchor, body)
       if (el) el.setAttribute('data-sh-lock', '')
     }
-    // active/draft/show/showAnchor/activeShown are the triggers; `open` is read fresh from the closure
-  }, [active, draft, show, showAnchor, activeShown, node.status, node.key, frameId, iframe])
+    // active/draft/show/showAnchor/activeShown and the active anchor (a re-pin) are the triggers;
+    // `open` is read fresh from the closure
+  }, [active, draft, show, showAnchor, activeShown, JSON.stringify(open.find((t) => t.id === active)?.anchor ?? null), node.status, node.key, frameId, iframe])
 
   // the open card's frozen side (D3) - a HOOK, so it must live above the early returns; and the
   // reset must too: a card can close via the inactive-frame early return (clicking another frame),
@@ -254,15 +301,22 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     )
   }
 
-  const pinPos = (t: Thread) => {
+  // each open thread's attach point in node px: a note's where it was clicked on the note, a
+  // frame's where the frame says; none (the column) for a legacy frame-level pin, an orphan, or
+  // an anchor not resolved yet
+  const points = new Map<string, Point | null>()
+  const orphans = new Set<string>()
+  for (const t of open) {
     const a = t.anchor as any
-    const fr = rects[t.id]
-    const r = isNoteAnchor(a) ? noteRects[t.id] : fr && inNode(fr)
-    if (a?.el && r) return { x: r.x + (a.pos?.fx ?? 0.5) * r.w, y: r.y + (a.pos?.fy ?? 0.5) * r.h, orphan: false }
-    if (a?.el && r === null) return { x: node.w - 16, y: 16, orphan: true }         // orphan parks top-right
-    const p = a?.pos                                                                // frame-level: stored fraction of the frame
-    return { x: (p?.fx ?? 0.94) * node.w, y: (p?.fy ?? 0.06) * node.h, orphan: false }
+    if (!a?.el) continue
+    const r = isNoteAnchor(a) ? noteRects[t.id] : undefined
+    const p = isNoteAnchor(a) ? (r ? { x: r.x + (a.pos?.fx ?? 0.5) * r.w, y: r.y + (a.pos?.fy ?? 0.5) * r.h } : r) : framePoints[t.id] && pointInNode(framePoints[t.id]!)
+    if (p === null) orphans.add(t.id)
+    points.set(t.id, p ?? null)
   }
+  const inv = 1 / Math.max(0.01, scale)
+  const placed = placePins(open, points, node.w, inv)
+  const pinAt = (t: Thread): Placed => placed.get(t.id)!
 
   // The card's SIDE, chosen ONCE per open and frozen (D3 - never switches mid-read): the pin's
   // side of the frame first, skipping a side another frame's screen rect occupies, then wherever
@@ -290,7 +344,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
       // panel is a card nobody can read (a note's gutter makes that reach likelier)
       const panelRight = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect().right ?? 0
       const room = (s: 'l' | 'r') => (s === 'r' ? window.innerWidth - rect.right : rect.left - gutter - panelRight) >= W + GAP
-      const prefer: ('l' | 'r')[] = pinPos(activeThread2).x < node.w / 2 ? ['l', 'r'] : ['r', 'l']
+      const prefer: ('l' | 'r')[] = pinAt(activeThread2).x < node.w / 2 ? ['l', 'r'] : ['r', 'l']
       return prefer.find((s) => room(s) && !occupied(s)) ?? prefer.find(room) ?? prefer[0]
     }
     sideRef.current = { id: activeThread2.id, side: compute() }
@@ -299,21 +353,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
   return (
     <>
-      {open.map((t) => {
-        const { x, y, orphan } = pinPos(t)
-        const isActive = t.id === active
-        return (
-          <div key={t.id} className={`cm-pin sh-no-pan${isActive ? ' on' : ''}${isActive && cardSide === 'r' ? ' tail-r' : ''}${orphan ? ' orphan' : ''}${alertIds.has(t.id) ? ' mention' : ''}`}
-            style={{ left: x, top: y, ...hueVars(anchorHue(t.anchor)) }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
-            title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
-            <MarkerFace threads={[t]} />
-          </div>
-        )
-      })}
+      <Pins threads={open} placed={placed} orphans={orphans} inv={inv} active={active} alertIds={alertIds} />
       {activeThread2 && (
-        <ThreadCard key={active} thread={activeThread2} at={pinPos(activeThread2)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} side={cardSide}
+        <ThreadCard key={active} thread={activeThread2} at={pinAt(activeThread2)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} side={cardSide}
           flank={cardSide === 'l' ? (noteColumn() ? 'note' : flankBadge ? 'badge' : flankShim ? 'shim' : null) : null} />
       )}
       {draft?.nodeKey === node.key && (() => {

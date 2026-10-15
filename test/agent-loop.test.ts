@@ -116,21 +116,45 @@ describe('marver comments new / reply - Marver\'s voice', () => {
     expect(ev).toMatchObject({
       type: 'create', board: 'flow', frame: 'shop/pay', nodeKey: 'f-pay', agent: true,
       author: { name: 'Nic', email: 'nic@example.com' }, agentMeta: { devUser: 'Nic', harness: 'claude' },
-      anchor: { el: { semantics: { quote: 'Pay now with card' } }, pos: { fx: 1, fy: 0.5 } },
+      // dev is not running here: written unchecked, the words alone, in the shared anchor format
+      anchor: { el: { semantics: { quote: 'Pay now with card' } } },
       body: 'Kept the card first - the wallet moved below. Right call?',   // the house dash
+      asks: true,                                                          // a note asks
     })
     expect(ev.commentId).toBeTruthy()
   })
 
-  it('new without --on is a frame-level pin; a scene or a folder is refused', async () => {
+  it('a note always has an element: --at for one without words, --fyi when it asks nothing; frame-level notes, scenes and folders are refused', async () => {
     for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_THREAD_ID', 'CURSOR_AGENT', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT', 'PI_SESSION_ID']) delete process.env[k]
-    await commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', board: 'flow' })
+    await commentsCommand(root, 'new', 'shop/cart', { body: 'Swapped the icon', board: 'flow', at: 'cart-icon', nth: 2, fyi: true })
     const ev = log('flow').find((e) => e.frame === 'shop/cart')!
-    expect(ev.anchor).toBeUndefined()
+    expect(ev.anchor).toEqual({ el: { semantics: {}, at: 'cart-icon', nth: 2 } })
+    expect(ev.asks).toBe(false)
     expect(ev.agentMeta).toEqual({ devUser: 'Nic' })                     // no marker in the env: no harness claimed
-    await expect(commentsCommand(root, 'new', 'shop', { body: 'x' })).rejects.toThrow(/folder of frames/)
-    await expect(commentsCommand(root, 'new', 'shop/wallet', { body: 'Which wallet?' })).rejects.toThrow(/folder of frames/)   // never silently its first frame
+    await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here' })).rejects.toThrow(/a note goes on an element/)
+    await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', on: 'Pay', at: 'button' })).rejects.toThrow(/one of them/)
+    await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', on: 'Pay', nth: 0 })).rejects.toThrow(/--nth/)
+    await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here', on: 'word '.repeat(50) })).rejects.toThrow(/at most 200 characters/)   // never cut short
+    await expect(commentsCommand(root, 'new', 'shop', { body: 'x', on: 'Pay' })).rejects.toThrow(/folder of frames/)
+    await expect(commentsCommand(root, 'new', 'shop/wallet', { body: 'Which wallet?', on: 'Pay' })).rejects.toThrow(/folder of frames/)   // never silently its first frame
     await expect(commentsCommand(root, 'new', 'shop/cart', {})).rejects.toThrow(/usage/)
+  })
+
+  it('one thread per topic: a second note on the same element is written and says which thread to add to; --thread adds to it as Marver', async () => {
+    const out: string[] = []
+    const was = console.log
+    console.log = (...a: unknown[]) => { out.push(a.join(' ')) }
+    try { await commentsCommand(root, 'new', 'shop/pay', { body: 'And the wallet copy?', on: 'pay now WITH card' }) }
+    finally { console.log = was }
+    const first = replay(log('flow')).find((t) => t.agent && t.body?.startsWith('Kept the card first'))!
+    expect(out.join('\n')).toContain(`already holds thread ${first.id}`)
+    expect(out.join('\n')).toContain(`comments new --thread ${first.id}`)
+    await commentsCommand(root, 'new', undefined, { thread: first.id, body: 'Also: the wallet row is 48px now.', fyi: true })
+    await commentsCommand(root, 'new', undefined, { thread: first.id, body: 'Keep the badge?' })
+    const t = replay(log('flow')).find((t) => t.id === first.id)!
+    expect(t.replies.map((r) => [r.body, r.agent, r.asks])).toEqual([['Also: the wallet row is 48px now.', true, false], ['Keep the badge?', true, true]])
+    await expect(commentsCommand(root, 'new', undefined, { thread: first.id, body: 'x', on: 'Pay' })).rejects.toThrow(/leave out --on/)
+    await expect(commentsCommand(root, 'new', undefined, { thread: 'nope', body: 'x' })).rejects.toThrow(/no thread nope/)
   })
 
   it('reply answers the owner\'s thread as Marver, and a collaborator\'s in the owner\'s voice', async () => {
@@ -140,17 +164,52 @@ describe('marver comments new / reply - Marver\'s voice', () => {
       { id: 'o2', ts: 2, type: 'create', commentId: 'sams', board: 'flow', frame: 'shop/cart', author: { email: 'sam@example.com', name: 'Sam' }, body: 'bigger CTA' },
     ])
     await commentsCommand(root, 'reply', 'mine', { body: 'Tightened the rows.' })
-    await commentsCommand(root, 'reply', 'sams', { body: 'CTA is 48px now.' })
+    await commentsCommand(root, 'reply', 'sams', { body: 'CTA is 48px now. Bigger still?', ask: true })
     const threads = replay(log('flow'))
     const mine = threads.find((t) => t.id === 'mine')!.replies[0]
     const sams = threads.find((t) => t.id === 'sams')!.replies[0]
-    expect(mine).toMatchObject({ agent: true, body: 'Tightened the rows.' })
+    expect(mine).toMatchObject({ agent: true, body: 'Tightened the rows.', asks: false })   // a reply asks only with --ask
     expect(sams.agent).toBeFalsy()
+    expect(sams.asks).toBe(true)
     expect(sams.author).toEqual({ email: 'nic@example.com', name: 'Nic' })
+    // a collaborator's thread is answered with reply, never added to as Marver
+    await expect(commentsCommand(root, 'new', undefined, { thread: 'sams', body: 'x' })).rejects.toThrow(/comments reply sams/)
     // a reply in Marver's own note is Marver's too
     const note = threads.find((t) => t.agent && t.frame === 'shop/pay')!
     await commentsCommand(root, 'reply', note.id, { body: 'Moved it.' })
-    expect(replay(log('flow')).find((t) => t.id === note.id)!.replies[0].agent).toBe(true)
+    expect(replay(log('flow')).find((t) => t.id === note.id)!.replies.at(-1)!.agent).toBe(true)
+  })
+
+  it('move re-pins a thread its author started, on an element named the same way; a collaborator\'s is not ours to move', async () => {
+    const note = replay(log('flow')).find((t) => t.agent && t.frame === 'shop/cart')!
+    await commentsCommand(root, 'move', note.id, { on: 'Checkout total' })
+    const ev = log('flow').filter((e) => e.type === 'reanchor').at(-1)!
+    expect(ev).toMatchObject({ commentId: note.id, agent: true, anchor: { el: { semantics: { quote: 'Checkout total' } } } })
+    expect(replay(log('flow')).find((t) => t.id === note.id)!.anchor).toEqual({ el: { semantics: { quote: 'Checkout total' } } })
+    await commentsCommand(root, 'move', 'mine', { at: 'h1' })   // the owner's own thread: in the owner's voice
+    expect(log('flow').filter((e) => e.type === 'reanchor').at(-1)).toMatchObject({ commentId: 'mine', author: { email: 'nic@example.com' } })
+    await expect(commentsCommand(root, 'move', 'sams', { on: 'x' })).rejects.toThrow(/only its author/)
+    await expect(commentsCommand(root, 'move', note.id, {})).rejects.toThrow(/--on/)
+  })
+})
+
+describe('the anchor check', () => {
+  const chrome = process.env.MARVER_CHROME
+  afterEach(() => { if (chrome === undefined) delete process.env.MARVER_CHROME; else process.env.MARVER_CHROME = chrome })
+
+  it('refuses only what it cannot start on; anything that stops it - no Chrome here - is unchecked, never refused', async () => {
+    const { checkAnchor, CheckInputError } = await import('../src/server/anchor-check.ts')
+    const at = mkdtempSync(join(tmpdir(), 'mv-check-'))
+    try {
+      mkdirSync(join(at, 'design'), { recursive: true })
+      writeFileSync(join(at, 'design', 'manifest.json'), JSON.stringify({ frames: [{ id: 'shop/cart', file: 'scenes/shop/cart.tsx', kind: 'tsx', scene: 'shop' }] }))
+      const req = { root: at, viewports: { mobile: { width: 390, height: 844 } }, origin: 'http://localhost:1', frameId: 'shop/cart', target: { on: 'Pay' } }
+      await expect(checkAnchor({ ...req, frameId: 'shop/nope' })).rejects.toBeInstanceOf(CheckInputError)
+      await expect(checkAnchor({ ...req, viewport: 'tv' })).rejects.toThrow(/unknown viewport "tv"/)
+      await expect(checkAnchor({ ...req, theme: ' ' })).rejects.toThrow(/invalid theme/)
+      process.env.MARVER_CHROME = join(at, 'no-such-browser')
+      expect(await checkAnchor(req)).toEqual({ ok: false, unchecked: expect.stringMatching(/no Chrome/) })
+    } finally { rmSync(at, { recursive: true, force: true }) }
   })
 })
 

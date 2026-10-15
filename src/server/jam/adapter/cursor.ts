@@ -14,7 +14,7 @@
  * command approval. The packet carries untrusted text (synced collaborators' comments);
  * the sandbox is what stands between it and the machine.
  */
-import { extractReanchors, extractReplyBlock } from '../packet.ts'
+import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 const assistantText = (o: Record<string, any>): string | undefined => {
@@ -63,8 +63,7 @@ export const cursorAdapter: JamAdapter = {
     // a stream cut before its result event: the last assistant message is the best truth
     if (!text) text = lastAssistant
     // NO fallback to raw stdout: an error banner must never become a bogus reply.
-    const { reply: visible, reanchors } = extractReanchors(text)
-    const reply = extractReplyBlock(visible)
-    return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors } = parseAgentText(text)
+    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

@@ -219,10 +219,11 @@ describe('a note from the agent', () => {
     const out = cli('comments', 'new', 'shop/cart', '--on', 'Pay now', '--body', 'Card first, wallet below - right call?')
     const thread = out.match(/\?c=([\w-]+)/)?.[1]
     expect(out).toContain(`pinned a note on shop/cart (board flow): ${ORIGIN}/#/b/flow?c=`)
+    expect(out).toContain('found it on shop/cart at mobile, light theme')   // checked against the rendered frame
     // well inside the 30s poll: the dev server's watch on design/comments/ pokes the page
     const pill = await browser.until(s, `(() => { const t = document.querySelector('.sh-toast.jam'); return t && t.textContent })()`, 8000)
     expect(pill).toContain('Card first, wallet below - right call?')
-    // View: the frame selected, the thread open, the pin on the paragraph that reads "Pay now..."
+    // View: the frame selected, the thread open, the pin at the end of the paragraph that reads "Pay now..."
     await browser.eval(s, `document.querySelector('.sh-toast.jam .sh-jam-view').click()`)
     await browser.until(s, `!!document.querySelector('[data-node="f-cart"].sel') && !!document.querySelector('[data-node="f-cart"] .cm-card')`, 10_000)
     const pin = await browser.until(s, `(() => {
@@ -230,14 +231,15 @@ describe('a note from the agent', () => {
       const pin = node.querySelector('.cm-pin'); const ifr = node.querySelector('iframe')
       const p = ifr?.contentDocument?.querySelector('p')
       if (!pin || !p || pin.classList.contains('orphan')) return null
-      const ir = ifr.getBoundingClientRect(), k = ir.width / ifr.contentWindow.innerWidth, pr = p.getBoundingClientRect(), r = pin.getBoundingClientRect()
-      const top = ir.top + pr.top * k, bottom = ir.top + pr.bottom * k
-      return { onRow: r.bottom >= top - 6 && r.top <= bottom + 6, rightHalf: r.left > ir.left + ir.width / 2 }
+      const range = ifr.contentDocument.createRange(); range.selectNodeContents(p.firstChild)
+      const line = range.getClientRects()[0]
+      const ir = ifr.getBoundingClientRect(), k = ir.width / ifr.contentWindow.innerWidth, r = pin.getBoundingClientRect()
+      return { onRow: Math.abs(r.bottom - (ir.top + (line.top + line.bottom) / 2 * k)) < 3, atLineEnd: Math.abs(r.left - (ir.left + line.right * k)) < 6 }
     })()`, 15_000)
-    expect(pin).toEqual({ onRow: true, rightHalf: true })
+    expect(pin).toEqual({ onRow: true, atLineEnd: true })
     expect(await browser.eval(s, `document.querySelector('[data-node="f-cart"] .cm-card .cm-marver-name')?.textContent`)).toBe('Marver')
     expect(thread).toBeTruthy()
-  })
+  }, 30_000)   // the note is checked in a headless browser first
 })
 
 describe('a focus link in dev', () => {

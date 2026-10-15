@@ -133,6 +133,7 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     // comment is not a comment (the UI already refuses to send one)
     if ((ev.type === 'create' || ev.type === 'reply') && !ev.body?.trim()) return 'a comment needs a body'
     if (badMentions(ev, !!opts.operator)) return 'invalid mentions'
+    if (ev.asks !== undefined && (typeof ev.asks !== 'boolean' || !['create', 'reply', 'edit'].includes(ev.type))) return 'asks is a flag on a comment'
     // `profile` is in this set deliberately: an unbound author on a profile event let a
     // browser submit arbitrary emails and read their opaque ids off the projection
     const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile'

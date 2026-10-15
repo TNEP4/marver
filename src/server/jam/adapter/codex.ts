@@ -7,7 +7,7 @@
  * so a multi-frame job fans out the same way Claude Code's does. The job prompt only ever says
  * "you MAY", so an older codex without those tools simply works serially instead of failing.
  */
-import { extractReanchors, extractReplyBlock } from '../packet.ts'
+import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 export const codexAdapter: JamAdapter = {
@@ -39,8 +39,7 @@ export const codexAdapter: JamAdapter = {
       } catch { /* non-JSON line (banner) - skip */ }
     }
     // NO fallback to raw stdout: a status-only or error stream must not become a bogus reply.
-    const { reply: visible, reanchors } = extractReanchors(text)
-    const reply = extractReplyBlock(visible)
-    return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors } = parseAgentText(text)
+    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

@@ -10,7 +10,7 @@
  * the packet carries untrusted text, and both are exfiltration channels. Tool names come
  * from droid's own `--list-tools` (v0.200.0). Claude-parity: edits yes, shell no.
  */
-import { extractReanchors, extractReplyBlock } from '../packet.ts'
+import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 export const droidAdapter: JamAdapter = {
@@ -61,8 +61,7 @@ export const droidAdapter: JamAdapter = {
         if (j.is_error) failed = true
       } catch { /* raw prose (no auth, crash banner) - never a reply */ }
     }
-    const { reply: visible, reanchors } = extractReanchors(text)
-    const reply = extractReplyBlock(visible)
-    return { reply, model, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors } = parseAgentText(text)
+    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
   },
 }

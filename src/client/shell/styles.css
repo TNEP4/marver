@@ -962,7 +962,8 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* the canvas writes --sh-inv (1/zoom) for screen-constant pins; the prototype has no
    zoom, so neutralise it or the leaked value scales every comment pin by ~12x at overview */
 .sh-play { --sh-inv: 1 }
-.sh-play-comments { position: absolute; inset: 0; z-index: 31; overflow: visible; pointer-events: none }
+.sh-play-comments { position: absolute; inset: 0; z-index: 31; overflow: visible; pointer-events: none;
+  --sh-inv: 1 }   /* the stage does not zoom: its markers are placed in screen px */
 .sh-play-comments > * { pointer-events: auto }
 
 /* the current variant's name trails the chips at natural width - the chips anchor,
@@ -1016,9 +1017,12 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-pin .cm-avatar + .cm-avatar, .cm-stack .cm-avatar + .cm-avatar { margin-left: -8px }
 .cm-pin b, .cm-stack b { padding: 0 8px 0 6px }
 
-/* pin: the teardrop. Bottom-left tail points at the anchored element. */
+/* pin: the teardrop. Bottom-left tail points at the anchored element. Its face draws inside ONE
+   fixed box (pin-layout.ts MARKER: 80 x 34 screen px), the box markers are placed by - so a reply
+   or a new participant never moves a marker, and two never overlap. */
 .cm-pin { position: absolute; z-index: 30; transform: translate(-2px, -100%) scale(var(--sh-inv, 1));
   transform-origin: bottom left; border-radius: 18px 18px 18px 4px;
+  height: 34px; max-width: 80px; overflow: hidden; white-space: nowrap;
   box-shadow: 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35);
   transition: box-shadow .15s, transform .15s }
 .cm-pin:hover { box-shadow: 0 1px 3px rgba(24,24,27,.22), 0 10px 24px -6px rgba(24,24,27,.45) }
@@ -1030,12 +1034,10 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   outline: 2px solid var(--cm-line, var(--comment)); outline-offset: -1px;
   box-shadow: 0 0 0 4px var(--cm-line-ring, var(--comment-ring)), 0 1px 2px rgba(24,24,27,.18), 0 6px 16px -6px rgba(24,24,27,.35) }
 .cm-pin.orphan { border-style: dashed; opacity: .75 }
-/* the open pin's tail leans TOWARD its card. Default (sharp bottom-left) already reads "left";
-   card on the RIGHT mirrors the pin around its anchor - sharp corner bottom-right, box extending
-   left+up, so the tail points right at the conversation. */
-.cm-pin.tail-r { border-radius: 18px 18px 4px 18px;
-  transform: translate(calc(-100% + 2px), -100%) scale(var(--sh-inv, 1));
-  transform-origin: bottom right }
+/* a marker moved off its point (another sat there first) keeps a thin line up to it - under the
+   markers, never in the way of a click */
+.cm-lead { position: absolute; z-index: 29; pointer-events: none !important; width: calc(1.5px * var(--sh-inv, 1));
+  transform: translateX(-50%); background: rgba(24,24,27,.45); border-radius: 1px }
 
 /* stack: the frame-corner cluster - everyone across the frame's threads */
 .cm-stack { position: absolute; top: 10px; right: 10px; z-index: 30;

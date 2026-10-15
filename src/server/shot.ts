@@ -89,9 +89,7 @@ export async function shootFrame(opts: {
   const { root, viewports, frameId, theme, origin, scale = 2, size, browser } = opts
   if (!/^[a-z0-9-]+$/i.test(theme)) return { ok: false, error: 'invalid theme' }
   if (!Number.isInteger(scale) || scale < 1 || scale > 4) return { ok: false, error: 'invalid scale' }
-  let manifest: { frames?: { id: string; file: string; kind: string; viewport?: string; contentWidth?: number; slide?: boolean }[] } = {}
-  try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
-  const frame = (manifest.frames ?? []).find((f) => f.id === frameId)
+  const frame = manifestFrame(root, frameId)
   if (!frame) return { ok: false, error: `unknown frame "${frameId}" - ids are in design/manifest.json` }
   const plan = planShot(frame, viewports, size)
   // the frame's own posterless clips first, so the first shot of a never-seen frame already
@@ -118,10 +116,7 @@ export async function shootFrame(opts: {
     return `design/.local/shots/${slug(frameId)}--${theme}${tag}.png`
   }
   const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${randomBytes(6).toString('hex')}.tmp.png`)
-  const target = frame.kind === 'html'
-    ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
-    : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frameId)}&theme=${encodeURIComponent(theme)}`
-  const req: ShotRequest = { url: target, width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }
+  const req: ShotRequest = { url: frameUrl(origin, frame, theme), width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }
   const result = browser ? await captureIn(req, browser) : await capture(req)
   if (!result.ok) { rmSync(tmp, { force: true }); return result }
   const rel = relFor(result.scale)
@@ -136,6 +131,22 @@ export async function shootFrame(opts: {
   finally { rmSync(tmp, { force: true }) }
   return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.unsettled ? { unsettled: true } : {}), ...(result.note ? { note: result.note } : {}) }
 }
+
+/** A frame as design/manifest.json lists it, or null. */
+export type ManifestFrame = { id: string; file: string; kind: string; viewport?: string; contentWidth?: number; slide?: boolean }
+export function manifestFrame(root: string, frameId: string): ManifestFrame | null {
+  let manifest: { frames?: ManifestFrame[] } = {}
+  try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
+  return (manifest.frames ?? []).find((f) => f.id === frameId) ?? null
+}
+
+/** The URL a frame renders at on its own: an HTML frame is its file, a TSX frame the frame host. */
+export const frameUrl = (origin: string, frame: ManifestFrame, theme: string) => frame.kind === 'html'
+  ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
+  : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${encodeURIComponent(theme)}`
+
+/** True once the frame has mounted: #root (or the body, for an HTML frame) has children. */
+export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`
 
 export type FrameShot =
   | { ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string }
@@ -279,10 +290,11 @@ function sweepTemps(dir: string) {
  *  or left idle. Operations on a lane queue as shots always did, so two operations never
  *  write the same output at the same time. Posters have their own lane - a frame being shot
  *  may ask for its poster mid-render, and on the shot's lane that request would wait for the
- *  very shot that is waiting for it. */
+ *  very shot that is waiting for it - and so do anchor checks, which have a deadline of their
+ *  own and must not wait out a batch of shots. */
 const chains = new Map<string, Promise<unknown>>()
 
-export function withBrowser<T>(lane: 'shot' | 'poster', fn: (b: Browser) => Promise<T>): Promise<T> {
+export function withBrowser<T>(lane: 'shot' | 'poster' | 'check', fn: (b: Browser) => Promise<T>): Promise<T> {
   const run = async () => {
     const b = await Browser.launch()
     try { return await fn(b) } finally { await b.close() }
@@ -389,7 +401,7 @@ export async function captureIn({ url, width, height, out, fullHeight = false, t
     let ready = false
     while (Date.now() - t0 < timeoutMs) {
       const r = await send('Runtime.evaluate', {
-        expression: `(() => { const el = document.getElementById('root') ?? document.body; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`,
+        expression: MOUNTED,
         returnByValue: true,
       }, sessionId).catch(() => null)
       if (r?.result?.value) { ready = true; break }

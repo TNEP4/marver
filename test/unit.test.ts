@@ -996,6 +996,26 @@ describe('comment event store (set-union merge, deterministic replay)', async ()
     expect(threads[0].anchor).toEqual(newA)            // thread (and all its comments) now on the new element
     expect(threads[0].replies).toHaveLength(1)         // reanchor doesn't disturb replies
   })
+  it('asks: the writer\'s flag rides replay and edits; a message without one reads by the old rule', async () => {
+    const { asks } = await import('../src/shared/events.ts')
+    const threads = replay([
+      ev('e1', 'create', { commentId: 'c1', body: 'Done - for the record', asks: false }),
+      ev('e2', 'reply', { commentId: 'c2', parentId: 'c1', body: 'Which one?', agent: true, asks: true }),
+      ev('e3', 'edit', { commentId: 'c2', body: 'Which of the two?' }),            // the words change, the flag stays
+      ev('e4', 'create', { commentId: 'c3', body: 'an old note' }),
+      ev('e5', 'reply', { commentId: 'c4', parentId: 'c3', body: 'Done.' }),
+      ev('e6', 'reply', { commentId: 'c5', parentId: 'c3', body: 'Which?' }),
+      ev('e7', 'edit', { commentId: 'c5', asks: false }),                          // the flag changes, the words stay
+    ])
+    const [t1, t2] = threads
+    expect([t1.asks, t1.replies[0].asks, t1.replies[0].body]).toEqual([false, true, 'Which of the two?'])
+    expect(asks(t1, true)).toBe(false)
+    expect(asks(t1.replies[0], false)).toBe(true)
+    // written before 0.25: a note asks, a reply asks when it ends in "?"
+    expect([asks(t2, true), asks(t2.replies[0], false)]).toEqual([true, false])
+    expect([t2.replies[1].body, asks(t2.replies[1], false)]).toEqual(['Which?', false])
+    expect(asks({ body: 'Which?' }, false)).toBe(true)
+  })
   it('Live Jam: a null-anchor reanchor is ignored (never un-pins)', () => {
     const a0 = { el: { cssPath: 'button#a' } }
     const threads = replay([
@@ -1172,6 +1192,11 @@ describe('validateEvents (acceptance is forever, validate hard)', async () => {
     expect(validateEvents([
       { id: 'e-aaaaaaaa', ts: now(), type: 'edit', commentId: 'c-mine0001', author: mine, body: 'v2' },
     ], ownLog, me, 'review')).toBeNull()
+  })
+  it('takes the asks flag as a boolean on a comment, nothing else', () => {
+    expect(validateEvents([{ id: 'e-aaaaaaaa', ts: now(), type: 'create', commentId: 'c-new00001', author: mine, body: 'x', asks: false }], log, me, 'review')).toBeNull()
+    expect(validateEvents([{ id: 'e-aaaaaaaa', ts: now(), type: 'create', commentId: 'c-new00001', author: mine, body: 'x', asks: 'yes' as any }], log, me, 'review')).toMatch(/asks/)
+    expect(validateEvents([{ id: 'e-aaaaaaaa', ts: now(), type: 'resolve', commentId: 'c-exists', asks: true }], log, me, 'review')).toMatch(/asks/)
   })
   it('rejects replies to ghosts and cross-board events', () => {
     expect(validateEvents([
@@ -1581,5 +1606,42 @@ describe('parseBoard (#6)', () => {
     expect(parseBoard('{ "a": 1 }\\n').error).toMatch(/line 1 column 11/)
     expect(parseBoard('{\n  "nodes": [').error).toMatch(/end of JSON input.*\(line 2 column 13\)/)
     expect(parseBoard('x\n\n\n').error).not.toMatch(/line 4/)          // no location made up for an early error
+  })
+})
+
+describe('comment markers never overlap, and stay put (pin-layout)', async () => {
+  const { MARKER, placeMarkers } = await import('../src/client/shell/pin-layout.ts')
+  const box = (p: { x: number; y: number }, inv: number) => ({ l: p.x - 2 * inv, r: p.x - 2 * inv + MARKER.w * inv, t: p.y - MARKER.h * inv, b: p.y })
+  const apart = (a: ReturnType<typeof box>, b: ReturnType<typeof box>, gap: number) => a.r + gap <= b.l || b.r + gap <= a.l || a.b + gap <= b.t || b.b + gap <= a.t
+
+  it('five notes on five lines of one frame: five boxes, none touching, at three zoom levels', () => {
+    for (const inv of [0.5, 1, 2.5]) {
+      const items = [0, 1, 2, 3, 4].map((i) => ({ id: `t${i}`, point: { x: 300 + (i % 2) * 20, y: 100 + i * 22 } }))
+      const placed = placeMarkers(items, 600, inv)
+      const boxes = items.map((it) => box(placed.get(it.id)!, inv))
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) expect(apart(boxes[i], boxes[j], MARKER.gap * inv - 1e-9)).toBe(true)
+      expect(placed.get('t0')).toEqual({ x: 300, y: 100, column: false })                 // the first keeps its point
+      if (inv < 1) continue                                                                 // zoomed in, 22 px lines hold 17 px markers
+      const moved = placed.get('t1')!
+      expect(moved.y).toBeGreaterThan(122)                                                  // moved DOWN, never sideways
+      expect(moved.x).toBe(320)
+      expect(moved.lead).toEqual({ x: 320, y: 122 })                                        // the line back to its point
+    }
+  })
+  it('creation order decides: a newer thread moves, an older one keeps its place - whatever the input order', () => {
+    const a = placeMarkers([{ id: 'old', point: { x: 10, y: 50 } }, { id: 'new', point: { x: 12, y: 52 } }], 400, 1)
+    expect(a.get('old')).toEqual({ x: 10, y: 50, column: false })
+    expect(a.get('new')!.y).toBe(52 + MARKER.h + MARKER.gap)
+  })
+  it('threads with no point - legacy frame-level, orphans - form a column down from the top-right corner', () => {
+    const placed = placeMarkers(['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, point: null })), 500, 1)
+    const xs = new Set([...placed.values()].map((p) => p.x))
+    expect(xs.size).toBe(1)
+    const right = [...xs][0] - 2 + MARKER.w
+    expect(right).toBeLessThanOrEqual(500)
+    expect(right).toBeGreaterThan(480)
+    const ys = [...placed.values()].map((p) => p.y)
+    expect(ys).toEqual(ys.map((_, i) => 8 + MARKER.h + i * (MARKER.h + MARKER.gap)))
+    expect([...placed.values()].every((p) => p.column && !p.lead)).toBe(true)
   })
 })
