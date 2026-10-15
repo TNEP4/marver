@@ -272,8 +272,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
       const el = body && resolveNoteAnchor(anchor, body)
       if (el) el.setAttribute('data-sh-lock', '')
     }
-    // active/draft/show/showAnchor/activeShown are the triggers; `open` is read fresh from the closure
-  }, [active, draft, show, showAnchor, activeShown, node.status, node.key, frameId, iframe])
+    // active/draft/show/showAnchor/activeShown and the active anchor (a re-pin) are the triggers;
+    // `open` is read fresh from the closure
+  }, [active, draft, show, showAnchor, activeShown, JSON.stringify(open.find((t) => t.id === active)?.anchor ?? null), node.status, node.key, frameId, iframe])
 
   // the open card's frozen side (D3) - a HOOK, so it must live above the early returns; and the
   // reset must too: a card can close via the inactive-frame early return (clicking another frame),

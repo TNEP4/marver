@@ -68,8 +68,9 @@ export async function checkAnchor(req: CheckRequest, deadlineMs = CHECK_MS - 1_0
       }
       // fonts and two frames of layout: the words are where a person would see them
       await evaluate('document.fonts.ready.then(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true)))))')
-      const error = await evaluate('window.__mvFrameError || ""')
-      if (error) return { ok: false, unchecked: `the frame rendered an error - ${error}` }
+      // a frame that threw - its error card, or a page left half-built - is no evidence either way
+      const error = await evaluate('window.__mvFrameError || ""') || thrown
+      if (error) return { ok: false, unchecked: `the frame threw - ${error}` }
       const found = await evaluate(`window.__mvAnchorCheck ? window.__mvAnchorCheck(${JSON.stringify(req.target)}, ${JSON.stringify(req.others ?? [])}) : null`)
       if (!found) return { ok: false, unchecked: 'the frame has no Marver bridge to ask' }
       if (found.bad) throw new CheckInputError(found.bad)

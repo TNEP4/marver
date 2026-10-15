@@ -40,6 +40,7 @@ const PHONE = `export const meta = { title: 'Phone', viewport: 'mobile' }
 export default () => <main style={{ padding: 24 }}>
   <style>{'.wide { display: none } @media (min-width: 700px) { .wide { display: block } } .night { display: none } [data-theme=dark] .night { display: block }'}</style>
   <h2>Account</h2>
+  <p>Keep it<span style={{ display: 'none' }}>Keep it</span></p>
   <div className="wide">Wide only</div>
   <div className="night">Night only</div>
 </main>
@@ -84,6 +85,13 @@ beforeAll(async () => {
     await new Promise((r) => setTimeout(r, 200))
   }
   browser = await Browser.launch()
+  // a dev server that has served its frames once, as one in use has: a cold first compile is not
+  // what the 20 s check deadline is about
+  if (browser) {
+    const s = await browser.tab({ width: 1600, height: 1000 })
+    await browser.go(s, `${ORIGIN}/#/b/ctx`)
+    await browser.until(s, `[...document.querySelectorAll('.sh-node iframe')].filter((f) => f.contentDocument?.querySelector('h1, h2, .mv-frame-error, button')).length >= 3`, 60_000).catch(() => {})
+  }
 }, 120_000)
 
 afterAll(async () => {
@@ -176,6 +184,10 @@ describe('an agent note names its element, checked in the rendered frame', () =>
     if (!browser) return
     ids.twin = note('ctx/decide', 'Hidden twin')
     expect(anchorOf(ids.twin).el.cssPath).toMatch(/main > span:nth-of-type\(2\)$/)   // the visible one
+    // a hidden copy INSIDE the visible words never hides them
+    const keep = cli('comments', 'new', 'ctx/phone', '--on', 'Keep it', '--body', 'x', '--fyi')
+    expect(keep.code, keep.err).toBe(0)
+    expect(anchorOf(keep.out.match(/\?c=([\w-]+)/)![1]).el.semantics.tag).toBe('p')
     const r = cli('comments', 'new', 'ctx/decide', '--at', 'gear', '--body', 'The gear is new')
     expect(r.code, r.err).toBe(0)
     ids.gear = r.out.match(/\?c=([\w-]+)/)![1]
@@ -198,7 +210,7 @@ describe('an agent note names its element, checked in the rendered frame', () =>
     if (!browser) return
     const r = cli('comments', 'new', 'ctx/broken', '--on', 'Anything', '--body', 'It throws')
     expect(r.code, r.err).toBe(0)
-    expect(r.err).toMatch(/not checked - the frame (rendered an error|never rendered)/)
+    expect(r.err).toMatch(/not checked - the frame (threw|never rendered)/)
     expect(r.out).toContain('pinned a note on ctx/broken')
   }, 60_000)
 })

@@ -239,7 +239,7 @@ describe('a note from the agent', () => {
     expect(pin).toEqual({ onRow: true, atLineEnd: true })
     expect(await browser.eval(s, `document.querySelector('[data-node="f-cart"] .cm-card .cm-marver-name')?.textContent`)).toBe('Marver')
     expect(thread).toBeTruthy()
-  })
+  }, 30_000)   // the note is checked in a headless browser first
 })
 
 describe('a focus link in dev', () => {

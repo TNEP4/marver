@@ -101,19 +101,24 @@ const elBundle = (el) => {
 
 const SKIP = 'script,style,noscript,template'
 /** The visible elements showing these words (case and spacing aside): the innermost element
- *  holding them - "Pay <b>now</b>" is its paragraph - once per place they appear. */
+ *  whose RENDERED text holds them - "Pay <b>now</b>" is its paragraph, and a hidden copy inside
+ *  never hides the visible one around it - once per place they appear. */
 const byWords = (words) => {
-  const q = norm(words).slice(0, 80).toLowerCase()
+  const q = norm(words).toLowerCase()
   if (!q) return []
-  const holds = (el) => !el.matches(SKIP) && norm(el.textContent).toLowerCase().includes(q)
-  const out = []
+  const has = (t) => norm(t).toLowerCase().includes(q)
+  // textContent prunes the walk cheaply; innerText (what is rendered) decides
   const walk = (el) => {
-    const inner = [...el.children].filter(holds)
-    if (!inner.length) { if (el !== document.body) out.push(el); return }
-    inner.forEach(walk)
+    const inner = [...el.children].filter((c) => !c.matches(SKIP) && has(c.textContent)).flatMap(walk)
+    return inner.length || el === document.body || !shown(el) || !has(el.innerText) ? inner : [el]
   }
-  if (document.body && holds(document.body)) walk(document.body)
-  return out.filter(shown)
+  return document.body && has(document.body.textContent) ? walk(document.body) : []
+}
+/** `--at`: its data-testid first, else a CSS selector (throws on one that is neither). */
+const byAt = (at) => {
+  const all = (sel) => [...document.querySelectorAll(sel)].filter(shown)
+  const ids = /^[\w-]+$/.test(at) ? all(`[data-testid="${CSS.escape(at)}"]`) : []
+  return ids.length ? ids : all(at)
 }
 
 /** Does this element still fit what an anchor says about it? */
@@ -132,6 +137,7 @@ const anchorMatches = (anchor) => {
   const a = anchor?.el ?? {}
   const want = a.semantics ?? {}
   if (want.quote && !want.tag && !a.cssPath) return byWords(want.quote)
+  if (a.at) { try { return byAt(a.at) } catch { return [] } }
   const tag = typeof want.tag === 'string' && /^[a-z][a-z0-9-]*$/.test(want.tag) ? want.tag : null
   const pool = want.testId ? `[data-testid="${CSS.escape(want.testId)}"]` : tag && (want.quote || !a.cssPath) ? tag : a.cssPath
   if (!pool) return []
@@ -192,10 +198,7 @@ const describeEl = (el) => `${el.tagName.toLowerCase()} "${norm(el.textContent).
 const checkTarget = ({ on, at, nth } = {}, others = []) => {
   let found = []
   if (on) found = byWords(on)
-  else if (at) {
-    try { if (/^[\w-]+$/.test(at)) found = [...document.querySelectorAll(`[data-testid="${CSS.escape(at)}"]`)].filter(shown) } catch { /* not a test id */ }
-    try { if (!found.length) found = [...document.querySelectorAll(at)].filter(shown) } catch { return { bad: `"${at}" is neither a data-testid nor a CSS selector` } }
-  }
+  else if (at) { try { found = byAt(at) } catch { return { bad: `"${at}" is neither a data-testid nor a CSS selector` } } }
   if (!found.length) return { none: landmarks() }
   const el = found.length === 1 && !nth ? found[0] : nth ? found[nth - 1] : null
   if (!el) return { several: found.slice(0, 20).map(describeEl) }

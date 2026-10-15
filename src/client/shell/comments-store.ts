@@ -109,25 +109,31 @@ export const useComments = create<CommentsState>((set, get) => {
   // log), keyed on the event id via `union`'s fresh filter so it fires exactly once. The pill's
   // board is the THREAD's origin board, so View can navigate there. One ping per batch, like a
   // person's - except for a jam job's opening "On it" line (ids `jam-e<attempt>-…`, daemon.ts): the pill
-  // shows it, the ping waits for the answer.
+  // shows it, the ping waits for the answer. A jam job whose final block asks what its opening
+  // line already said re-flags that line (an edit carrying `asks`): the question gets its notice.
   const notifyAgent = (fresh: CommentEvent[]) => {
-    const replies = fresh.filter((e) => e.agent && (e.type === 'reply' || e.type === 'create'))
-    if (!replies.length) return
-    if (replies.some((e) => !/^jam-e\d+-/.test(e.id))) playPing()
+    const news = fresh.flatMap((e) => {
+      if (!e.agent) return []
+      if (e.type === 'reply' || e.type === 'create') return [{ e, threadId: e.parentId ?? e.commentId ?? '', body: e.body, ask: asks(e, e.type === 'create') }]
+      if (e.type !== 'edit' || e.asks !== true) return []
+      const t = get().threads.find((t) => t.id === e.commentId || t.replies.some((r) => r.id === e.commentId))
+      return t ? [{ e, threadId: t.id, body: (t.id === e.commentId ? t : t.replies.find((r) => r.id === e.commentId))?.body, ask: true }] : []
+    })
+    if (!news.length) return
+    if (news.some(({ e }) => !/^jam-e\d+-/.test(e.id))) playPing()
     void import('./store.ts').then(({ useStore }) => {
       const s = useStore.getState()
-      for (const e of replies) {
-        const threadId = e.parentId ?? e.commentId ?? ''
+      for (const { e, threadId, body, ask } of news) {
         // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
         const t = get().threads.find((t) => t.id === threadId)
         const entry = t?.frame ? s.manifest?.frames.find((f) => f.id === t.frame) : undefined
         s.jamToast({
           threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts,
-          preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
+          preview: (body ?? '').replace(/\s+/g, ' ').slice(0, 90),
           frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
           // a message that asks stands alone; the rest fold into the board's round (the writer's
           // `asks`, else the old rule: a note asks, a reply asks when it ends in "?")
-          round: !asks(e, e.type === 'create'),
+          round: !ask,
         })
       }
     })

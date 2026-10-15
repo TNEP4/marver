@@ -241,7 +241,7 @@ const pinOn = async (root: string, frame: string, target: AnchorTarget, opts: an
   console.error(`  (not checked - ${check.unchecked}. Pinned as named; if it does not resolve on the canvas it shows in the frame's column, and \`${NAME} comments move\` fixes it)`)
   // without the frame, the best guess at "already holds a thread": the same words or selector
   const anchor = uncheckedAnchor(target)
-  const sameKey = (a: unknown) => (a as Anchor | undefined)?.el?.semantics?.quote?.toLowerCase() ?? (a as Anchor | undefined)?.el?.cssPath
+  const sameKey = (a: unknown) => (a as Anchor | undefined)?.el?.semantics?.quote?.toLowerCase() ?? (a as Anchor | undefined)?.el?.at
   return { anchor, holders: open.filter((t) => sameKey(t.anchor) === sameKey(anchor)).map((t) => t.id) }
 }
 

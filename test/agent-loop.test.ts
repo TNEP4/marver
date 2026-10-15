@@ -128,7 +128,7 @@ describe('marver comments new / reply - Marver\'s voice', () => {
     for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_THREAD_ID', 'CURSOR_AGENT', 'OPENCODE', 'OPENCODE_PID', 'PI_CODING_AGENT', 'PI_SESSION_ID']) delete process.env[k]
     await commentsCommand(root, 'new', 'shop/cart', { body: 'Swapped the icon', board: 'flow', at: 'cart-icon', nth: 2, fyi: true })
     const ev = log('flow').find((e) => e.frame === 'shop/cart')!
-    expect(ev.anchor).toEqual({ el: { semantics: {}, cssPath: '[data-testid="cart-icon"], cart-icon', nth: 2 } })
+    expect(ev.anchor).toEqual({ el: { semantics: {}, at: 'cart-icon', nth: 2 } })
     expect(ev.asks).toBe(false)
     expect(ev.agentMeta).toEqual({ devUser: 'Nic' })                     // no marker in the env: no harness claimed
     await expect(commentsCommand(root, 'new', 'shop/cart', { body: 'Look here' })).rejects.toThrow(/a note goes on an element/)

@@ -16,6 +16,8 @@ export interface Anchor {
     hue?: number
     /** which of several look-alikes (1-based), when the path goes stale */
     nth?: number
+    /** an unchecked `--at` target, resolved as the check resolves it: its test id, else selector */
+    at?: string
   }
   /** where a person clicked, as a fraction of the element - an agent's anchor has none */
   pos?: { fx: number; fy: number }
@@ -29,10 +31,6 @@ export type AnchorCheck =
   | { ok: false; refused: 'several'; matches: string[]; viewport: string; theme: string }
   | { ok: false; unchecked: string }
 
-/** `--at` takes a data-testid or a CSS selector. One plain token (`cart-icon`, `svg`) can be
- *  either: the test id is tried first. */
-export const testIdLike = (s: string) => /^[\w-]+$/.test(s)
-
 /** Read a target from untrusted input - CLI flags, a Live Jam block: exactly one of `on` / `at`, an
  *  optional whole `nth` from 1. A string is the reason it is not one. */
 export function readTarget(raw: { on?: unknown; at?: unknown; nth?: unknown }): AnchorTarget | string {
@@ -45,11 +43,10 @@ export function readTarget(raw: { on?: unknown; at?: unknown; nth?: unknown }): 
 }
 
 /** The anchor written when the frame cannot be checked (dev off, no Chrome, a frame that throws):
- *  the target alone, which the canvas resolves by its words or by its selector (a plain token: its
- *  test id, else the tag). One that does not resolve shows as an orphan; `comments move` fixes it. */
+ *  the target alone, which the canvas resolves exactly as the check would - by its words, or by
+ *  `at` (its test id, else its selector). One that does not resolve shows as an orphan;
+ *  `comments move` fixes it. */
 export function uncheckedAnchor(t: AnchorTarget): Anchor {
   const nth = t.nth ? { nth: t.nth } : {}
-  if (t.on) return { el: { semantics: { quote: t.on }, ...nth } }
-  const at = t.at ?? ''
-  return { el: { semantics: {}, cssPath: testIdLike(at) ? `[data-testid="${at}"], ${at}` : at, ...nth } }
+  return t.on ? { el: { semantics: { quote: t.on }, ...nth } } : { el: { semantics: {}, at: t.at, ...nth } }
 }
