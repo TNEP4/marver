@@ -4,8 +4,7 @@
  * board file - one slug, the folder it sits in directly), ranked among its siblings by
  * `order`, and `design/boards/_folders.json` says which folders exist, where they rank, and
  * which folder holds which (`parent`). Two levels: a folder holds boards and folders, a
- * folder inside a folder (a sub-folder) holds boards only. `all-scenes` never enters the
- * tree - callers pin it last.
+ * folder inside a folder (a sub-folder) holds boards only.
  */
 
 import { readType } from './board-types.ts'
@@ -17,9 +16,28 @@ export const isBoardName = (n: unknown): n is string => typeof n === 'string' &&
 
 /** The folder registry beside the boards - underscore = infrastructure, never a board. */
 export const FOLDERS_FILE = '_folders.json'
-/** Is this basename in design/boards/ a board file? `_folders.json`, temp files and any
- *  off-grammar name are not - every lister (dev API, build, watcher) shares this rule. */
-export const isBoardFile = (f: string): boolean => f.endsWith('.json') && isBoardName(f.slice(0, -5))
+/** The built-in board every frame sat on until 0.25 (spec 26, Part 7). A reserved name: never
+ *  created, renamed to or saved, and a leftover file is set aside - but its comment log keeps
+ *  its name, and old links naming it still land. */
+export const ALL_SCENES = 'all-scenes'
+/** Is this basename in design/boards/ a board file? `_folders.json`, temp files, any
+ *  off-grammar name and a leftover `all-scenes.json` are not - every lister (dev API, build,
+ *  watcher) shares this rule. */
+export const isBoardFile = (f: string): boolean => f.endsWith('.json') && f !== `${ALL_SCENES}.json` && isBoardName(f.slice(0, -5))
+
+/** One meaning of "on a board": the live frames a board shows - those its nodes hold, or every
+ *  live frame when it says `"auto": true`. Every check, hint, link, mark and the Not on a board
+ *  list asks here. */
+export function framesOn(board: unknown, live: readonly string[]): string[] {
+  const b = board as { auto?: unknown; nodes?: unknown } | null
+  if (b?.auto === true) return [...live]
+  const held = new Set(Array.isArray(b?.nodes) ? b.nodes.map((n) => (n as { frame?: unknown } | null)?.frame) : [])
+  return live.filter((f) => held.has(f))
+}
+
+/** Sidebar order with archive boards last - history is not where a change is reviewed. */
+export const archiveLast = (order: readonly string[], isArchive: (n: string) => boolean): string[] =>
+  [...order.filter((n) => !isArchive(n)), ...order.filter(isArchive)]
 
 /** A folder and what it holds, in order: boards, and - in a top-level folder only - sub-folders. */
 export type Folder = { kind: 'folder'; name: string; items: TreeItem[]; title?: string; description?: string; type?: string }
@@ -126,7 +144,7 @@ export function buildTree(boards: BoardRow[], folders: FolderRow[]): TreeItem[] 
   const implied: string[] = []
   const rootBoards: BoardRow[] = []
   for (const b of boards) {
-    if (!isBoardName(b.name) || b.name === 'all-scenes') continue
+    if (!isBoardName(b.name) || b.name === ALL_SCENES) continue
     const folder = isBoardName(b.folder) ? b.folder : undefined
     if (!folder) { rootBoards.push(b); continue }
     if (!reg.has(folder) && !implied.includes(folder)) implied.push(folder)   // implied by the board alone: always top-level
@@ -180,7 +198,7 @@ export function validateWire(wire: unknown): string | null {
   if (!Array.isArray(wire)) return 'invalid tree'
   const boards = new Set<string>(), folders = new Set<string>()
   const board = (n: unknown): string | null => {
-    if (!isBoardName(n) || n === 'all-scenes') return 'invalid board name in tree'
+    if (!isBoardName(n) || n === ALL_SCENES) return 'invalid board name in tree'
     if (boards.has(n)) return `board "${n}" appears twice`
     boards.add(n)
     return null
@@ -286,8 +304,8 @@ export function takeBoard(t: TreeItem[], board: string): { list: string | null; 
 export type Drag = { kind: TreeItem['kind']; name: string }
 export type Drop = { list: string | null; index: number } | { into: string }
 
-/** A row the sidebar rendered, measured - the list as the human sees it, top to bottom,
- *  the pinned `all-scenes` row included (it is the root's end). `parent` is the folder the
+/** A row the sidebar rendered, measured - the list as the human sees it, top to bottom.
+ *  `parent` is the folder the
  *  row sits in (null = the root) and `depth` that list's depth (0 root, 1 a top-level
  *  folder's items, 2 a sub-folder's). `open` is a folder's disclosure; `left` is the row's
  *  left edge, from which the indent of each level is measured. */
@@ -341,7 +359,6 @@ export function resolveDrop(t: TreeItem[], d: Drag, rows: Row[], x: number, y: n
   for (const r of rs) if (y >= mid(r)) g++
   const above = rs[g - 1], below = rs[g]
   if (!above) return { list: null, index: 0 }
-  if (above.name === 'all-scenes') return { list: null, index: t.length }
   type Slot = { list: string | null; index: number; depth: number }
   // the deepest slot the gap can mean: inside an open folder, under its header - or right after the row above, in its own list
   let first: Slot

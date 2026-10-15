@@ -22,6 +22,27 @@ Archive
 Everything below works the same way at both levels, and the same from the sidebar as from the files
 - so a person arranging boards by hand and an agent arranging them by writing files always agree.
 
+## Every frame on a board
+
+There is no board that holds everything (0.25 retired All Scenes). One rule instead: **every frame
+goes on the board it belongs to - its feature, its spec, its flow - and a frame that belongs to two
+goes on both.** A board shows the frames its nodes hold, or every frame when it says `"auto": true`.
+
+- `npx marver boards pin <board> <scene/frame | scene ...>` puts frames on a board (appended as
+  nodes, the ones it already shows skipped).
+- A frame on no board is never lost: the sidebar shows **Not on a board** when there are some - a
+  temporary view of just those frames, never saved, where right-click a frame's row, **Add to
+  board…**, puts it on one. Comments need a board to live on, so new ones are off there. The dev log
+  and `npx marver boards` list them too.
+- `work done` still clears the glow for a frame on no board, and warns with where its scene's other
+  frames live; `comments new` refuses it until it is pinned.
+- A fresh `marver init` puts its demo on a `welcome` board. A canvas with no board shows "No boards
+  yet - ask your agent to make one".
+- Old `#/b/all-scenes` links still land: on the board that shows their frame (or most of their
+  frames, with a notice naming where the rest are). A leftover `design/boards/all-scenes.json` is set
+  aside - the dev log says once that it can go - and its threads keep working, published too, where
+  some published board shows their frame. `all-scenes` in `publish.json` is dropped with a warning.
+
 ## In the sidebar
 
 - **New folder** - right-click the Boards header, or its `+`. Name it inline: what you type is its
@@ -235,11 +256,12 @@ person's drag never silently erase each other.
 
 `npx marver link <scene/frame | scene ...>` prints the canvas link that lands on those frames: the
 board they sit on, in canvas mode, with them selected and the camera fitted to them - not the
-full-screen focus view. The board is the first in sidebar order that shows them all, else
-`all-scenes`; `--board` picks one. The link reads `#/b/<board>?f=<scene/frame>,...` (or
+full-screen focus view. The board is the first in sidebar order that shows them all (archive boards
+last); frames that sit on several boards get one link per board, and a frame on no board gets a hint
+instead of a link. `--board` picks one. The link reads `#/b/<board>?f=<scene/frame>,...` (or
 `?s=<scene>` for a whole scene), and a link naming a frame its board does not show follows the
-frame to where it lives. `npx marver work done` prints the same link for the frames it clears, so an
-agent's reply ends with it. A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
+frame to where it lives. `npx marver work done` prints the same links for the frames it clears, so an
+agent's reply ends with them. A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
 back to the canvas (the grid button, or Esc); on a published canvas a focus link stays a page of
 its own.
 

@@ -47,7 +47,7 @@ export interface Manifest {
   scenes: { name: string; frames: number; title?: string; description?: string; brief?: string; note?: string }[]
   project?: { name?: string; description?: string }
   folders?: { name: string; parent?: string; title?: string; description?: string; type?: string }[]
-  /** curated boards in sidebar order (folders flattened); never all-scenes. `type` is resolved
+  /** boards in sidebar order (folders flattened). `type` is resolved
    *  (spec 20: its own, else its folder's); `status` is read from context/ for feature and
    *  project boards - the evidence lines stay out of this committed file (`marver boards` and
    *  the sidebar's tooltip carry them) */

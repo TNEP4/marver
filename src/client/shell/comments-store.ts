@@ -9,6 +9,11 @@ import { asks, replay, type CommentEvent, type Thread } from '../../shared/event
 import { mentionPeople, mentionsIn } from './mentions.ts'
 import { playPing } from './sound.ts'
 import { ROUTE } from '../const.ts'
+import { ALL_SCENES } from '../../shared/board-tree.ts'
+import { UNPLACED } from './hash.ts'
+
+/** What the Not on a board view says when asked for a comment: a note needs a board to live on. */
+export const NO_COMMENTS_HERE = 'pin it on a board to comment'
 
 export interface Me {
   email: string
@@ -53,6 +58,8 @@ interface CommentsState {
    *  path as the poll, so dedup + the reply notification behave identically. ANY board:
    *  notifications must reach the user wherever they are on the canvas. */
   poke(board?: string): void
+  /** A thread by id, from any board's log - one sweep first when it is not loaded yet. */
+  findThread(id: string): Promise<Thread | null>
   /** `board` routes the write to a thread's ORIGIN log; default = the active board. */
   send(events: CommentEvent[], board?: string): Promise<boolean>
   create(body: string): Promise<void>
@@ -195,16 +202,18 @@ export const useComments = create<CommentsState>((set, get) => {
   const stamped = (events: CommentEvent[] | undefined, board: string): CommentEvent[] =>
     (events ?? []).map((e) => (e.board ? e : { ...e, board }))
   /** Every board that could hold a log: the switcher list plus the active board -
-   *  the sum of what this client can navigate to. Transport failure = just the
-   *  active board; the next sweep widens again. */
+   *  the sum of what this client can navigate to - and the old all-scenes log, whose threads
+   *  outlive their board (spec 26) until a published canvas says it has none. Transport
+   *  failure = just the active board; the next sweep widens again. */
+  let allScenesOff = false
   const watchNames = async (): Promise<string[]> => {
-    const names = new Set<string>()
+    const names = new Set<string>(allScenesOff ? [] : [ALL_SCENES])
     try {
       const { fetchBoardNames } = await import('./store.ts')
       for (const n of await fetchBoardNames()) names.add(n)
     } catch { /* keep what we have */ }
     const b = get().board
-    if (b) names.add(b)
+    if (b && b !== UNPLACED) names.add(b)
     return [...names]
   }
   /** One sweep across every board's log - the notification feed and the frame-scoped
@@ -213,7 +222,10 @@ export const useComments = create<CommentsState>((set, get) => {
     if (apiOff) return
     const names = await watchNames()
     const results = await Promise.all(names.map((n) =>
-      api(`comments/${n}`).then((r) => (r.ok ? stamped(r.data.events as CommentEvent[] | undefined, n) : null))))
+      api(`comments/${n}`).then((r) => {
+        if (n === ALL_SCENES && r.status === 404) allScenesOff = true   // a canvas published before 0.25 serves none
+        return r.ok ? stamped(r.data.events as CommentEvent[] | undefined, n) : null
+      })))
     union(results.flatMap((evs) => evs ?? []))
     names.forEach((n, i) => { if (results[i] !== null) baselinedBoards.add(n) })
   }
@@ -225,7 +237,7 @@ export const useComments = create<CommentsState>((set, get) => {
 
     poke(board) {
       const b = board ?? get().board
-      if (!b || apiOff) return
+      if (!b || apiOff || b === UNPLACED) return
       void api(`comments/${b}`).then((r) => {
         if (!r.ok) return
         union(stamped(r.data.events, b))   // brand-new events still notify via the bootTs rule
@@ -236,7 +248,7 @@ export const useComments = create<CommentsState>((set, get) => {
     async load(board) {
       // threads are frame-scoped and global - a board switch keeps them all (the same
       // frame on another board keeps its pins); only the open card and a draft reset
-      if (get().board !== board) set({ board, active: null, draft: null })
+      if (get().board !== board) set({ board, active: null, draft: null, ...(board === UNPLACED ? { commentMode: false } : {}) })
       else set({ board })
       const me = await api('me')
       if (me.status === 404) { apiOff = true; return }   // static serve: no comments API at all
@@ -335,7 +347,13 @@ export const useComments = create<CommentsState>((set, get) => {
       await get().send([{ id: uuid(), ts: Date.now(), type: reopen ? 'reopen' : 'resolve', commentId: threadId }], origin)
     },
 
-    setMode(on) { set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
+    async findThread(id) {
+      if (!get().threads.some((t) => t.id === id)) await fetchAll()
+      return get().threads.find((t) => t.id === id) ?? null
+    },
+
+    // the Not on a board view shows threads but takes no new ones (spec 26): a note needs a board
+    setMode(on) { if (on && get().board === UNPLACED) return; set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
     setShow(show) { set({ show }) },
     setShowAnchor(showAnchor) { set({ showAnchor }) },
     setActive(active) {
@@ -346,7 +364,11 @@ export const useComments = create<CommentsState>((set, get) => {
         set({ active, mentionSeen })
       } else set({ active })
     },
-    setDraft(draft) { set({ draft: draft ? { ...draft, board: draft.board ?? get().board ?? undefined } : null }) },
+    setDraft(draft) {
+      const board = draft ? draft.board ?? get().board ?? undefined : undefined
+      if (board === UNPLACED) return
+      set({ draft: draft ? { ...draft, board } : null })
+    },
     dismissIdentity() { set({ needsIdentity: false }) },   // inviteToken survives dismissal - commenting later reopens the claim
 
     async signIn(email, password) {

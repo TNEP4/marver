@@ -903,10 +903,28 @@ describe('resolvePublish (default-closed)', async () => {
     withPolicy(undefined, (root) => {
       expect(() => resolvePublish(root, boards, 'review,ghost')).toThrow(/ghost/)
     }))
-  it('--all-boards publishes everything, all-scenes first', () =>
+  it('all-scenes named alone stops and says what to name instead; named beside others it is dropped with a warning (spec 26)', () => {
+    const warned: string[] = []
+    const orig = console.warn; console.warn = (s: string) => { warned.push(String(s)) }
+    try {
+      withPolicy({ boards: { 'all-scenes': 'comment' } }, (root) => {
+        expect(() => resolvePublish(root, boards)).toThrow(/design\/publish\.json names only "all-scenes" - the All Scenes board is gone since 0\.25: name the boards to publish instead \(review, archive\), or --all-boards/)
+        expect(() => resolvePublish(root, boards, 'all-scenes')).toThrow(/--boards names only "all-scenes"/)
+      })
+      withPolicy({ boards: { 'all-scenes': 'comment', review: 'read' } }, (root) => {
+        expect(resolvePublish(root, boards)).toEqual({ review: 'read' })
+        expect(resolvePublish(root, boards, 'all-scenes,archive')).toEqual({ archive: 'comment' })
+      })
+      expect(warned).toEqual([
+        expect.stringMatching(/design\/publish\.json names "all-scenes" - the All Scenes board is gone since 0\.25; dropped, these ship: review$/),
+        expect.stringMatching(/--boards names "all-scenes" .* these ship: archive$/),
+      ])
+    } finally { console.warn = orig }
+  })
+  it('--all-boards publishes every board - and with none, nothing', () =>
     withPolicy(undefined, (root) => {
-      expect(resolvePublish(root, boards, undefined, true)).toEqual(
-        { 'all-scenes': 'comment', review: 'comment', archive: 'comment' })
+      expect(resolvePublish(root, boards, undefined, true)).toEqual({ review: 'comment', archive: 'comment' })
+      expect(() => resolvePublish(root, {}, undefined, true)).toThrow(/found no boards/)
     }))
 })
 
@@ -1410,7 +1428,7 @@ describe('stableNodeKey (comment-anchor stability)', async () => {
   })
   it('a whole board of frames yields unique keys', () => {
     const frames = Array.from({ length: 60 }, (_, i) => `scene/frame-${i}`)
-    const keys = new Set(frames.map((f) => stableNodeKey('all-scenes', f, 0)))
+    const keys = new Set(frames.map((f) => stableNodeKey('flow', f, 0)))
     expect(keys.size).toBe(frames.length)
   })
 })

@@ -14,6 +14,7 @@ import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { MARKER, placeMarkers, type Placed } from './pin-layout.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
+import { isLegacyLink } from './legacy-links.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
@@ -985,6 +986,8 @@ export function revealThread(c: string): boolean {
 /** Board-level comment wiring: load + liveness + mode broadcast, one instance in App. */
 let bootThreadConsumed = false
 let pendingThread: string | null = null   // cross-board deep link awaiting its board's comments
+/** Open this thread once the board just switched to has loaded its comments (an old link, App.tsx). */
+export const parkThread = (id: string) => { pendingThread = id }
 export function CommentsController() {
   const ctlShowAnchor = useComments((s) => s.showAnchor)
   const board = useStore((s) => s.board)
@@ -1041,7 +1044,7 @@ export function CommentsController() {
         if (!s.local && !s.me) useComments.setState({ inviteToken: h.invite, needsIdentity: true })
         return
       }
-      if (!h.c) return
+      if (!h.c || isLegacyLink(h)) return   // an old All Scenes link: App.tsx finds its board first
       if (!revealThread(h.c)) pendingThread = h.c
     }
     window.addEventListener('hashchange', onHash)

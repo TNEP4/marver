@@ -45,6 +45,12 @@ beforeAll(async () => {
     ],
   }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { main: 'comment' } }))
+  // what 0.24 left behind: its node keys travel for the frames that ship, so an old ?n= link still lands
+  writeFileSync(join(root, 'design', 'boards', 'all-scenes.json'), JSON.stringify({ version: 1, auto: true, nodes: [
+    { key: 'n_shipkey', frame: `${SECRET_DIR}/hello` }, { key: 'n_privkey', frame: 'elsewhere/private' }] }))
+  mkdirSync(join(root, 'design', 'comments'), { recursive: true })
+  writeFileSync(join(root, 'design', 'comments', 'all-scenes.jsonl'), [`${SECRET_DIR}/hello`, 'elsewhere/private'].map((frame, i) =>
+    JSON.stringify({ id: `ev-seed-0${i}`, ts: 1_700_000_000_000, type: 'create', commentId: `t-seed-0${i}`, board: 'all-scenes', frame, body: 'old' })).join('\n') + '\n')
   // the built CLI, not the source module: packageDir() resolves the client
   // sources relative to the built file, exactly as a real `marver build` does
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
@@ -82,5 +88,23 @@ describe('reveal.source off (the default) strips every repo path from the bundle
     const shell = walk(dist).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8')).join('')
     expect(shell).toContain(`${SECRET_DIR}/hello`)              // the id survives
     expect(shell).toMatch(/__mv\/f\/mv[0-9a-f]{12}/)            // opaque file fields
+  })
+
+  it('a leftover all-scenes.json ships the node keys of shipped frames only (spec 26)', () => {
+    const shell = walk(join(root, 'design', '.dist')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8')).join('')
+    expect(shell).toContain('n_shipkey')
+    expect(shell).not.toContain('n_privkey')
+  })
+
+  it('the old all-scenes log seeds the threads whose frame ships, and no other (spec 26)', () => {
+    const seed = readFileSync(join(root, 'design', '.dist-seeds', 'all-scenes.jsonl'), 'utf8')
+    expect(seed).toContain('t-seed-00')
+    expect(seed).not.toContain('t-seed-01')
+  })
+
+  it('meta.json names what each published board shows, by id - the old all-scenes log serves those threads (spec 26)', () => {
+    const meta = JSON.parse(readFileSync(join(root, 'design', '.dist', 'meta.json'), 'utf8'))
+    expect(Object.keys(meta.shows)).toEqual(['main'])
+    expect([...meta.shows.main].sort()).toEqual([`${SECRET_DIR}/hello`, `${SECRET_DIR}/static`])
   })
 })

@@ -30,10 +30,10 @@ export interface PublishedFrame { id: string; kind: 'tsx' | 'html'; file: string
 type Node = { frame?: string; w?: number; h?: number }
 
 /** Every (frame, theme, size) a visitor can rest on: each published board's nodes, sized the way
- *  the shell sizes them (the node's own size, else the frame's default), each theme; the published
- *  `all-scenes` board shows every frame at its default size. Sizes are rounded first, then held to
+ *  the shell sizes them (the node's own size, else the frame's default), each theme; a published
+ *  `auto` board shows every frame - each at its default size. Sizes are rounded first, then held to
  *  the compiler's limits: an oversize node is skipped, never clamped to a document of another size. */
-export function publishedAsks(boards: Record<string, { nodes?: Node[] }>, themes: string[], frames: PublishedFrame[], viewports: Record<string, { width: number; height: number }>, allScenes = false): BakeAsk[] {
+export function publishedAsks(boards: Record<string, { nodes?: Node[] }>, themes: string[], frames: PublishedFrame[], viewports: Record<string, { width: number; height: number }>, autoBoard = false): BakeAsk[] {
   const byId = new Map(frames.map((f) => [f.id, f]))
   const seen = new Map<string, BakeAsk>()
   const add = (frame: string, w: number, h: number) => {
@@ -58,7 +58,7 @@ export function publishedAsks(boards: Record<string, { nodes?: Node[] }>, themes
     const s = f && size(f, n)
     if (s) add(f!.id, s.w, s.h)
   }
-  if (allScenes) for (const f of frames) { const s = size(f); if (s) add(f.id, s.w, s.h) }
+  if (autoBoard) for (const f of frames) { const s = size(f); if (s) add(f.id, s.w, s.h) }
   return [...seen.values()]
 }
 
@@ -95,13 +95,13 @@ export interface PublishedBakes { asked: number; asleep: number; live: number; p
  *  Returns null when there is no Chrome to compile with. */
 export async function bakePublished(opts: {
   root: string; outDir: string; gen: number
-  boards: Record<string, { nodes?: Node[] }>; themes: string[]; frames: PublishedFrame[]; viewports: Record<string, { width: number; height: number }>; allScenes?: boolean
+  boards: Record<string, { nodes?: Node[] }>; themes: string[]; frames: PublishedFrame[]; viewports: Record<string, { width: number; height: number }>; autoBoard?: boolean
   urlFor: (frame: string, theme: string) => string | null; log?: (line: string) => void
 }): Promise<PublishedBakes | null> {
-  const { root, outDir, gen, boards, themes, frames, viewports, allScenes, urlFor, log } = opts
+  const { root, outDir, gen, boards, themes, frames, viewports, autoBoard, urlFor, log } = opts
   if (!findChrome()) return null
   const t0 = Date.now()
-  const asks = publishedAsks(boards, themes, frames, viewports, allScenes).filter((a) => urlFor(a.frame, a.theme))
+  const asks = publishedAsks(boards, themes, frames, viewports, autoBoard).filter((a) => urlFor(a.frame, a.theme))
   const stats: PublishedBakes = { asked: asks.length, asleep: 0, live: 0, plain: 0, bytes: 0, ms: 0 }
   if (!asks.length) return stats
   const cache = join(root, 'design', '.local', 'bakes', String(gen))

@@ -8,7 +8,8 @@ import { join } from 'node:path'
 import { scanFrames } from '../server/manifest.ts'
 import { projectMarks } from '../server/marks.ts'
 import { listBoards, readLog, replay } from '../server/comments.ts'
-import { asksOf, isNew } from '../shared/marks.ts'
+import { isNew } from '../shared/marks.ts'
+import { asks } from '../shared/events.ts'
 
 export function marksCommand(root: string, opts: { json?: boolean }): void {
   const manifest = scanFrames(root)
@@ -18,7 +19,7 @@ export function marksCommand(root: string, opts: { json?: boolean }): void {
     if (t.resolved || !t.frame || !(t.agent || t.replies.some((r) => r.agent))) return []
     const last = t.replies.length ? t.replies[t.replies.length - 1] : t
     if (!last.agent) return []
-    return [{ frame: t.frame, thread: t.id, board: b, asks: asksOf(last, last === t), body: (last.body ?? '').replace(/\s+/g, ' ').trim() }]
+    return [{ frame: t.frame, thread: t.id, board: b, asks: asks(last, last === t), body: (last.body ?? '').replace(/\s+/g, ' ').trim() }]
   })).sort((a, b) => Number(b.asks) - Number(a.asks))
   const fresh = m ? manifest.frames.map((f) => f.id).filter((id) => isNew(m, id)) : []
   if (opts.json) { console.log(JSON.stringify({ started: !!m, waiting, new: fresh }, null, 2)); return }

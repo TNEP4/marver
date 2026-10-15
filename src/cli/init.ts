@@ -7,7 +7,7 @@ import { detectAgent } from '../server/jam/agent.ts'
 import { scanFrames, writeManifest } from '../server/manifest.ts'
 import { MANAGED_PREFIX, LEGACY_PREFIX, hashBody, managedFile, pkgDir, enumerateInstructionTemplates } from '../server/managed.ts'
 import { writeManaged as writeManagedFile } from './managed-write.ts'
-import { addFolders } from '../server/boards.ts'
+import { addFolders, listBoardFiles } from '../server/boards.ts'
 import { FOLDERS_FILE } from '../shared/board-tree.ts'
 import { FOLDER_MODULES, KIND_FOLDERS, type Kind } from '../shared/board-types.ts'
 
@@ -305,6 +305,18 @@ export function init(root: string, opts: InitOpts) {
   if (opts.demo && sceneDirs === 0 && !existsSync(join(design, 'scenes', 'demo'))) {
     cpSync(join(templates, 'demo'), join(design, 'scenes', 'demo'), { recursive: true })
     created.push('design/scenes/demo/ (3 frames)')
+    // a fresh canvas lands on a real board (spec 26): the demo on `welcome` - never added beside
+    // boards a canvas already has
+    if (!listBoardFiles(join(design, 'boards')).boards.length) {
+      const frames = ['welcome', 'form', 'dark']
+      writeFileSync(join(design, 'boards', 'welcome.json'), JSON.stringify({
+        version: 1, name: 'welcome', order: 0, auto: false,
+        description: 'The demo scene - the file shapes of a frame; delete both once your own frames are in',
+        layout: { rows: [['demo']], scenes: { demo: { rows: [frames] } } },
+        nodes: frames.map((f) => ({ frame: `demo/${f}` })),
+      }, null, 2) + '\n', { flag: 'wx' })
+      created.push('design/boards/welcome.json (the demo, the landing board)')
+    }
   }
 
   // The one conditional host patch: tsconfig exclude (printed diff, reversible).
@@ -529,7 +541,7 @@ references when you can search (craft.md "Real assets"). Reveal it EARLY with
 the board deep link and iterate together: what belongs on each screen, what
 stays out, what the intent of each step is. Wireframes and the hi-fi draft
 come after the story is agreed - and by then the brief writes itself. Delete
-the generic demo scene once your frames are in.
+the generic demo scene and its \`welcome\` board once your frames are in.
 
 **Chose "build me something"?** The impressive first draft, below.
 
@@ -553,8 +565,9 @@ product - it sets the direction. Take the time to do it well:
   specific, confident, witty where the brand allows, never placeholder. This
   first draft is the product's first impression AND ${NAME}'s - go above and
   beyond.
-- Delete the generic demo scene (design/scenes/demo/) once your frames are in -
-  it exists to show YOU the file shapes, not to impress anyone.
+- Delete the generic demo scene (design/scenes/demo/) and its \`welcome\` board
+  once your frames are in - they exist to show YOU the file shapes, not to
+  impress anyone.
 - Create a curated board for them (instructions/boards.md) containing every
   frame the flow visits.
 - Offer a divergence: "want a variant of <frame> exploring a different

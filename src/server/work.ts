@@ -72,7 +72,7 @@ function indexOf(root: string): BoardsIndex {
         set.add(b.name)
       }
     }
-  } catch { /* a missing or unreadable boards dir lights all-scenes alone */ }
+  } catch { /* a missing or unreadable boards dir lights no board */ }
   indexes.set(root, ix)
   return ix
 }
@@ -87,12 +87,12 @@ export function onBoardsChanged(fn: (root: string) => void): () => void {
 }
 
 /** The boards that show any of these frames - what the sidebar lights while an agent works (the
- *  board's type icon shimmers): every board pinning one, every auto board, and all-scenes, which
- *  holds every frame. Sorted, so an unchanged answer compares equal. */
+ *  board's type icon shimmers): every board pinning one, and every auto board, which holds every
+ *  frame. Sorted, so an unchanged answer compares equal. */
 export function boardsShowing(root: string, frames: string[]): string[] {
   if (!frames.length) return []
   const ix = indexOf(root)
-  const out = new Set<string>(['all-scenes', ...ix.auto])
+  const out = new Set<string>(ix.auto)
   for (const f of frames) for (const b of ix.byFrame.get(f) ?? []) out.add(b)
   return [...out].sort()
 }

@@ -85,9 +85,11 @@ planning. The human should see the request land on the canvas within the first m
 
 1. **Create the frame files immediately** - right name, right scene, `meta` (title,
    viewport), and a minimal skeleton (a heading and a few placeholder blocks - enough
-   to give it shape) - and pin them on the target board (APPEND a node to the board
-   JSON - adding is always yours, only rearranging belongs to the shell; auto boards pick
-   new frames up on their own). Changing existing frames only? Skip this step.
+   to give it shape) - and pin them on the board they belong to: `npx marver boards pin
+   <board> <scene/frame ...>` (or APPEND a node to the board JSON - adding is always yours,
+   only rearranging belongs to the shell). **Every frame goes on the board it belongs to -
+   its feature, its spec, its flow - and a frame that belongs to two goes on both.** A frame
+   on no board is listed apart (Not on a board). Changing existing frames only? Skip this step.
 2. **Light them up**: `npx marver work start <scene/frame ...>` - each frame wears the
    live working shimmer, and its board's icon in the sidebar. Only now do research,
    discovery, and planning begin - under a lit frame, never before one.
@@ -108,8 +110,9 @@ planning. The human should see the request land on the canvas within the first m
    the PNGs. No shell? instructions/jam.md has the file-drop way (`{"scene":"..."}`).
 6. **Clear as you finish**: `npx marver work done <scene/frame ...>` (or `--all`). Marks
    self-expire (default 10 min; `--ttl <min>` up to 30) - re-run `start` on long jobs,
-   and never lean on expiry instead of `done`. `done` prints the canvas link to the
-   frames it cleared (`on the canvas: ...`).
+   and never lean on expiry instead of `done`. `done` prints the canvas links to the
+   frames it cleared (`on the canvas: ...`, one per board), and a warning for a frame on no
+   board, with where its scene's other frames live - pin it, then hand it back.
    An edit to a file several frames read (a kit, a spec read with `?raw`) already marks each of
    them as changed for the human; name a frame in `done` for a change no import shows - data
    fetched at run time, the app behind an embedded frame.
@@ -120,7 +123,8 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 
 - **Every reply in which you created or changed frames ends with their canvas link**, on its
   own line: the `on the canvas:` line `work done` printed, or `npx marver link <scene/frame |
-  scene ...>` for any set. It opens the board they sit on with them selected and in view -
+  scene ...>` for any set. Each opens a board they sit on (one link per board when they sit
+  on several) with them selected and in view -
   the human finds the work at once on a board of fifty frames. Never a full-screen focus link
   (`#/f/...`) unless they ask for full screen. No `marver dev` running? End with
   `npx marver dev` instead - the link carries its port.
@@ -251,7 +255,8 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 ## Boards (curated canvases)
 
 A board is a saved canvas: `design/boards/<name>.json` - you create and manage them
-by writing files; `all-scenes` is auto-managed, never write it. Compose a board
+by writing files (`npx marver boards pin` puts frames on one). Every frame goes on the
+board it belongs to; a frame that belongs to two goes on both. Compose a board
 deliberately with `"layout"`: rows/columns lanes of scenes plus `{ "space": n }`
 whitespace tokens, and the same grammar per scene for frames (columns align left
 edges; a variant-group name is one indivisible atom). **The default composition is

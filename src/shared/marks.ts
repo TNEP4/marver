@@ -6,7 +6,7 @@
  * a frame (orange). A row keeps ONE slot at its right edge; what fills it, first match wins: a
  * question (the bubble with how many), then the row's own count or status, then a frame's dot.
  */
-import type { Thread } from './events.ts'
+import { asks, type Thread } from './events.ts'
 
 /** What the dev server says (spec 26): revisions, never clock times. `changed` = the last revision
  *  that touched a frame; `doc` = the last one that needs a new document to be seen; `seen` = the
@@ -23,11 +23,6 @@ export interface Marks {
 export const isNew = (m: Marks | null, id: string): boolean =>
   !!m && (m.changed[id] ?? 0) > (m.seen[id] ?? 0)
 
-/** Does Marver's word ask you something (spec 26)? The agent says so (`asks`); one written before
- *  0.25 falls back to the old rule - a note asks, a reply asks when it ends in "?". */
-export const asksOf = (e: { body?: string }, isNote: boolean): boolean =>
-  (e as { asks?: unknown }).asks === true || ((e as { asks?: unknown }).asks === undefined && (isNote || /\?\s*$/.test(e.body ?? '')))
-
 /** A question's state is read from its thread - nobody sets it. Open with Marver's word last:
  *  waiting on you (`ask`), `asking` when that word asks something. Open with yours last, after
  *  Marver spoke: answered, waiting on the agent. */
@@ -40,7 +35,7 @@ export function questions(threads: readonly Thread[]): Map<string, Ask> {
     const marver = !!t.agent || t.replies.some((r) => r.agent)
     if (!marver) continue
     const q = out.get(t.frame) ?? { ask: 0, asking: 0, answered: 0 }
-    if (last.agent) { q.ask++; if (asksOf(last, last === t)) q.asking++ }
+    if (last.agent) { q.ask++; if (asks(last, last === t)) q.asking++ }   // the agent says when it asks (spec 26)
     else q.answered++
     out.set(t.frame, q)
   }

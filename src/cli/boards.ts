@@ -7,9 +7,11 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
-import { addFolders, checkBoardsDir, checkRealDirs, boardFields, listBoardFiles, readRegistry } from '../server/boards.ts'
+import { addFolders, checkBoardsDir, checkRealDirs, boardFields, listBoardFiles, pinFrames, readMembership, readRegistry } from '../server/boards.ts'
 import { annotateBoards } from '../server/board-status.ts'
-import { buildTree, flatten, folderMap, humanize, isBoardName, type Folder, type TreeItem } from '../shared/board-tree.ts'
+import { scanFrames } from '../server/manifest.ts'
+import { resolveTargets } from './link.ts'
+import { ALL_SCENES, buildTree, flatten, folderMap, humanize, isBoardName, type Folder, type TreeItem } from '../shared/board-tree.ts'
 import { BOARD_TYPES, FOLDER_MODULES, knownType, readCapability, resolveType, type BoardType } from '../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../shared/status.ts'
 
@@ -22,17 +24,19 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
   if (reg.state === 'malformed') throw new Error(reg.error)
   const rows = boards.map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName), ...(b.error ? { error: b.error } : {}) }))
   const tree = buildTree(rows, reg.folders)
-  const hasAll = boards.some((b) => b.name === 'all-scenes')
   // spec 20: each board's resolved type, and its status with the evidence that decided it
   const fm = folderMap(tree)
-  const notes = annotateBoards(root, boards.filter((b) => b.name !== 'all-scenes'), reg.folders, (n) => fm.get(n) ?? null)
+  const notes = annotateBoards(root, boards, reg.folders, (n) => fm.get(n) ?? null)
+  // spec 26: every frame goes on the board it belongs to - the ones on none are listed apart
+  const { unplaced } = readMembership(root, scanFrames(root).frames.map((f) => f.id))
   if (opts.json) {
-    const out = rows.filter((r) => r.name !== 'all-scenes').map((r) => ({ ...r, ...(notes.get(r.name) ?? {}) }))
+    const out = rows.map((r) => ({ ...r, ...(notes.get(r.name) ?? {}) }))
     const invalid = Object.fromEntries(boards.flatMap((b) => (b.error ? [[b.name, b.error]] : [])))
-    console.log(JSON.stringify({ tree, boards: out, landing: flatten(tree)[0] ?? (hasAll ? 'all-scenes' : null), registry: reg.state === 'ok' ? 'design/boards/_folders.json' : null, ...(Object.keys(invalid).length ? { invalid } : {}) }, null, 2))
+    console.log(JSON.stringify({ tree, boards: out, landing: flatten(tree)[0] ?? null, unplaced, registry: reg.state === 'ok' ? 'design/boards/_folders.json' : null, ...(Object.keys(invalid).length ? { invalid } : {}) }, null, 2))
     return
   }
-  if (!tree.length && !hasAll) { console.log('no boards yet - design/boards/ is empty'); return }
+  const notOnABoard = () => { if (unplaced.length) console.log(`\nnot on a board (${unplaced.length}): ${unplaced.join(', ')}\n  every frame goes on the board it belongs to: npx ${NAME} boards pin <board> <scene/frame ...>`) }
+  if (!tree.length) { console.log('no boards yet - design/boards/ is empty'); notOnABoard(); return }
   const order = (n: string) => { const o = rows.find((r) => r.name === n)?.order; return o === undefined ? '' : `  order ${o}` }
   const title = (t?: string) => (t ? `  "${t}"` : '')
   const desc = (d?: string) => (d ? `  - ${d}` : '')
@@ -59,11 +63,11 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
     }
   }
   print(tree, '', null)
-  if (hasAll) console.log(`all-scenes${bad('all-scenes')}  (auto, always last)`)
   const landing = flatten(tree)[0]
   if (landing) console.log(`\nlanding board: ${landing}`)
   console.log(`registry: ${reg.state === 'ok' ? 'design/boards/_folders.json' : 'none (no empty or ranked folders yet)'}`)
   if (skipped.length) console.log(`skipped (not regular files): ${skipped.join(', ')}`)
+  notOnABoard()
   // the listing is where an agent looks: a feature board reading Backlog says why, and what to offer
   const withStatus = [...notes.values()].filter((n) => n.status).length
   if (withStatus && !existsSync(join(root, 'context')))
@@ -75,7 +79,7 @@ export function boardsCommand(root: string, opts: { json?: boolean }): void {
  *  context/shipped.md, a deck's title slide. The type is `--type`, else the folder's. Never
  *  overwrites a board, a scene brief or a frame that exists. */
 export function boardsNew(root: string, name: string, opts: { type?: string; folder?: string; title?: string; description?: string; capability?: string }): string[] {
-  if (!isBoardName(name) || name === 'all-scenes') throw new Error(`"${name}" is not a board name - lowercase letters, numbers and dashes`)
+  if (!isBoardName(name) || name === ALL_SCENES) throw new Error(`"${name}" is not a board name - lowercase letters, numbers and dashes`)
   const dir = join(root, 'design', 'boards')
   const de = checkBoardsDir(root, dir)
   if (de) throw new Error(de)
@@ -144,6 +148,14 @@ export function boardsNew(root: string, name: string, opts: { type?: string; fol
   catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`design/boards/${name}.json exists - a board is never overwritten`); throw e }
   created.unshift(`design/boards/${name}.json (${type}${opts.type ? '' : type === 'plain' ? '' : `, from ${opts.folder}`})`)
   return created
+}
+
+/** `marver boards pin <board> <scene/frame | scene ...>` - put frames on a board without hand-editing
+ *  its JSON (spec 26, Part 7): appended as nodes, the ones it already shows skipped. */
+export function boardsPin(root: string, board: string, targets: string[]): { added: string[]; already: string[] } {
+  if (!targets.length) throw new Error('name the frames: boards pin <board> <scene/frame | scene ...>')
+  const live = scanFrames(root).frames.map((f) => f.id)
+  return pinFrames(root, board, resolveTargets(live, targets).all, live)
 }
 
 /** `marver folders add <module...>` - the shared sidebar's typed folders (spec 20): start, features,

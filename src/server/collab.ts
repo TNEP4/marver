@@ -17,12 +17,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { appendEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
+import { appendEvents, legacyExposure, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
 import { notifyCommentActivity, relayNotify, transitionId, type NotifyCtx } from './notify.ts'
 import type { Mention } from '../shared/events.ts'
+import { ALL_SCENES } from '../shared/board-tree.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
 const MONTH = 30 * 24 * 3600
@@ -192,6 +193,10 @@ export function collabHandler(dataDir: string, distDir: string) {
     rights = (meta as any).rights ?? {}
   } catch { /* no policy = no boards */ }
   const commentsDir = join(dataDir, 'comments')
+  // the old all-scenes log, served for the threads whose frame ships (legacyExposure) - a canvas
+  // built before 0.25 carries no `shows`, and its log stays as it was until it is published again
+  const shows = (meta as { shows?: Record<string, string[]> }).shows ?? null
+  const isLegacy = (board: string) => board === ALL_SCENES && !!shows
 
   // ---- the front door's summary machinery (04-solution §9.1-9.2) ----
   // On only when the canvas already trusts an identity issuer, and not opted
@@ -314,7 +319,10 @@ export function collabHandler(dataDir: string, distDir: string) {
     const map = new Map<string, string>()
     const add = (email?: string) => { if (email) map.set(opaqueId(dataDir, email), normEmail(email)) }
     for (const usr of loadStore(dataDir).users) add(usr.email)
-    for (const st of threads.values()) for (const ev of st.events) {
+    // the old all-scenes log's people too, where its threads are exposed - the mention picker offers them
+    const old = shows ? readLog(commentsDir, ALL_SCENES) : []
+    const exposed = shows ? legacyExposure(old, rights, shows) : () => []
+    for (const ev of [...[...threads.values()].flatMap((st) => st.events), ...old.filter((e) => exposed(e).length)]) {
       add(ev.author?.email)
       for (const mn of ev.mentions ?? []) add(mn.email)
     }
@@ -763,12 +771,16 @@ export function collabHandler(dataDir: string, distDir: string) {
         }
         if (path === 'boards') {
           const name = ownerName(dataDir)
-          return json(res, 200, { rights, stored: listBoards(commentsDir), ...(name ? { owner: { name } } : {}) }), true
+          // sync's map of the old all-scenes log: the frames whose threads it may push - those a commentable board shows
+          const legacy = shows ? { board: ALL_SCENES, frames: [...new Set(Object.keys(rights).filter((b) => rights[b] === 'comment').flatMap((b) => shows[b] ?? []))] } : null
+          return json(res, 200, { rights, stored: listBoards(commentsDir), ...(legacy ? { legacy } : {}), ...(name ? { owner: { name } } : {}) }), true
         }
         const m = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
         if (m) {
-          if (!can(currentUser(req), rights, m[1], 'read')) return json(res, 404, { error: 'no such board' }), true
-          const events = readLog(commentsDir, m[1])
+          const legacy = isLegacy(m[1])
+          if (!legacy && !can(currentUser(req), rights, m[1], 'read')) return json(res, 404, { error: 'no such board' }), true
+          let events = readLog(commentsDir, m[1])
+          if (legacy) { const exposed = legacyExposure(events, rights, shows!); events = events.filter((e) => exposed(e).length) }
           return json(res, 200, { events: rawTransport(req) ? events : events.map(project) }), true
         }
         if (path === 'invite-info') {
@@ -888,7 +900,8 @@ export function collabHandler(dataDir: string, distDir: string) {
       const m = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
       if (m) {
         const u = currentUser(req)
-        if (!can(u, rights, m[1], 'comment', dataDir))
+        const legacy = isLegacy(m[1])
+        if (legacy ? !u : !can(u, rights, m[1], 'comment', dataDir))
           return json(res, u ? 403 : 401, { error: u ? `this board is read-only - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` : 'sign in to comment' }), true
         const b = await readBody(req)
         const incoming: CommentEvent[] = Array.isArray(b.events) ? b.events : []
@@ -901,6 +914,17 @@ export function collabHandler(dataDir: string, distDir: string) {
         // projecting the stored form returns byte-for-value what the browser sent.
         const operator = rawTransport(req)
         const log = readLog(commentsDir, m[1])
+        // the old all-scenes log: every event needs comment rights on a published board showing its
+        // thread's frame; a new thread arrives only by sync (the owner's repo carried it all along)
+        if (legacy) {
+          const events = incoming.filter((e) => !!e && typeof e === 'object')   // the validator below refuses the rest
+          const exposed = legacyExposure([...log, ...events], rights, shows!)
+          for (const ev of events) {
+            if (ev.type === 'create' && !operator) return json(res, 403, { error: 'pin it on a board to comment - this is the old All Scenes log' }), true
+            if (!exposed(ev).some((board) => can(u, rights, board, 'comment', dataDir)))
+              return json(res, 403, { error: `this thread is on no board you may comment on - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` }), true
+          }
+        }
         const bad = validateEvents(incoming, log, u!, m[1], { operator })
         if (bad) return json(res, 400, { error: bad }), true
         // the inverse projection (07-v1.1 §B): browser mentions arrive as opaque ids
@@ -922,15 +946,17 @@ export function collabHandler(dataDir: string, distDir: string) {
           }
         }
         const fresh = appendEvents(commentsDir, m[1], incoming)
-        // the maintained thread counters follow every append (02-home §3)
-        if (fresh.length) {
+        // the maintained thread counters follow every append (02-home §3) - a published board's only
+        if (fresh.length && !legacy) {
           const st = threads.get(m[1])
           threads.set(m[1], deriveThreads([...(st?.events ?? []), ...fresh]))
         }
         broadcast(m[1], fresh.map(project))   // the stream is a browser transport
         // activity mail (07-v1.1 §A/§B): a fresh reply pulls its thread back, a
         // mention pulls its person - history imports never mail (freshness gate)
-        if (fresh.length) notifyCommentActivity(notifyCtx, m[1], fresh, threads.get(m[1])?.events ?? [], (email) => mailAllowed(m[1], email))
+        // (the old all-scenes log: its threads' readers are everyone a published board admits)
+        if (fresh.length) notifyCommentActivity(notifyCtx, m[1], fresh, legacy ? [...log, ...fresh] : threads.get(m[1])?.events ?? [],
+          (email) => (legacy ? Object.keys(rights).some((b) => mailAllowed(b, email)) : mailAllowed(m[1], email)))
         return json(res, 200, { accepted: fresh.length }), true
       }
       return false

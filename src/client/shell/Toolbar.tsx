@@ -9,7 +9,8 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useStore, CONFIG, SOURCE_REVEALED, cap } from './store.ts'
-import { useComments } from './comments-store.ts'
+import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
+import { UNPLACED } from './hash.ts'
 import { Tip } from './Tip.tsx'
 import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SlideFrameIcon, SunIcon, deviceIcon } from './icons.tsx'
 
@@ -131,6 +132,7 @@ export function CommentButton() {
     <Tip side="bottom" label={<TipRows rows={[['Comment', 'C'], [show ? 'Hide pins' : 'Show pins', '⇧C']]} />}>
       <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
         const c = commentsStore()
+        if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE)
         if (!c.commentMode) useStore.getState().setLaser(false)
         c.setMode(!c.commentMode)
         useStore.getState().toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')

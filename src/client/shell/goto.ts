@@ -3,7 +3,8 @@
  * and a sticky note's link (shell DOM, spec 18). On this board: select and fit. Elsewhere: follow
  * the frame home (below). Never edits a board unless no board pins the target.
  */
-import { boardFrames, fetchBoardNames, useStore } from './store.ts'
+import { fetchMembership, useStore } from './store.ts'
+import { UNPLACED } from './hash.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 
 /** Navigate to a frame id. `carry` keeps interact mode across the hop (a link inside an
@@ -35,10 +36,7 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
   const seq = navigated()
   let home: string | null = null
   try {
-    const names = (await fetchBoardNames()).filter((n) => n !== s.board && n !== 'all-scenes')
-    for (const name of names) {
-      if ((await boardFrames(name)).includes(target)) { home = name; break }
-    }
+    home = (await fetchMembership()).boards.find((b) => b.name !== s.board && b.frames.includes(target))?.name ?? null
   } catch {
     // a transport failure is NOT proof the frame is unpinned - spawning here would
     // recreate the board mutation this function exists to prevent
@@ -61,12 +59,14 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
 /** Navigation supersedes any goto or reveal still on its way - its board lookup (gotoSeq) AND a board
  *  switch it already started (a switch to the board on screen cancels any pending one: store.ts) - so
  *  a slow lookup can never yank the view away from where the human has gone since. Every entry point
- *  calls it: a pasted link, back/forward, a goto, a reveal. */
+ *  calls it: a pasted link, back/forward, a goto, a reveal, a board picked in the sidebar. */
 export function navigated(): number {
   const s = useStore.getState()
   if (s.board) void s.switchBoard(s.board)
   return ++gotoSeq
 }
+/** Is this still the latest navigation - nothing newer since `navigated()` handed it out? */
+export const isLatest = (seq: number): boolean => seq === gotoSeq
 
 /** Switch to `home` and select + fit `target` there once the board commits - unless the human has
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
@@ -90,9 +90,9 @@ async function landOn(home: string, target: string, carry: boolean, seq: number,
 }
 
 /** Show a frame where it lives, for a LINK (a pasted canvas link naming a frame the board does
- *  not show, the way back from a focus link): this board, else the first curated board that pins
- *  it, else the auto board that holds every frame. Unlike a goto it never spawns - opening a link
- *  must not edit a board. */
+ *  not show, the way back from a focus link): this board, else the first board that shows it
+ *  (archive boards last), else - a frame on no board - the Not on a board view. Unlike a goto it
+ *  never spawns - opening a link must not edit a board. */
 export async function revealFrame(target: string): Promise<void> {
   const s = useStore.getState()
   const here = s.nodes.find((n) => n.frame === target && !n.missing)
@@ -107,11 +107,8 @@ export async function revealFrame(target: string): Promise<void> {
   const from = s.board
   let home: string | null = null
   try {
-    const all = await fetchBoardNames()
-    for (const name of all.filter((n) => n !== s.board && n !== 'all-scenes')) {
-      if ((await boardFrames(name)).includes(target)) { home = name; break }
-    }
-    if (!home && all.includes('all-scenes')) home = 'all-scenes'
+    const m = await fetchMembership()
+    home = m.boards.find((b) => b.name !== s.board && b.frames.includes(target))?.name ?? (m.unplaced.includes(target) && s.board !== UNPLACED ? UNPLACED : null)
   } catch {
     return useStore.getState().toast(`could not read the boards - try again`)
   }

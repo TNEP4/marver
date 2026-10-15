@@ -173,7 +173,7 @@ cli
 cli
   .command('link [...targets]', 'The canvas link that lands on frames: link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted')
   .option('--root <dir>', 'Host repo root', { default: '.' })
-  .option('--board <board>', 'The board to open (default: the first board that shows them all, else all-scenes)')
+  .option('--board <board>', 'The board to open (default: the first board that shows them all, else one link per board)')
   .action(async (targets: string[], opts) => {
     const { linkCommand } = await import('./link.ts')
     try { await linkCommand(resolve(opts.root), targets ?? [], opts) }
@@ -184,19 +184,25 @@ cli
   })
 
 cli
-  .command('boards [action] [name]', 'The sidebar as files: every folder and board in reading order, with types and statuses · new <name>: a board in its type\'s starting layout')
+  .command('boards [action] [...args]', 'The sidebar as files: every folder and board in reading order, with types and statuses, and the frames on no board · new <name>: a board in its type\'s starting layout · pin <board> <scene/frame ...>: put frames on a board')
   .option('--root <dir>', 'Host repo root', { default: '.' })
-  .option('--json', 'The tree as JSON ({ tree, boards, landing, registry })')
+  .option('--json', 'The tree as JSON ({ tree, boards, landing, unplaced, registry })')
   .option('--type <type>', 'new: start | feature | surface | project | feedback | context | deck | archive (default: the folder\'s)')
   .option('--folder <folder>', 'new: the folder it sits in')
   .option('--title <title>', 'new: what humans see')
   .option('--description <sentence>', 'new: what agents read')
   .option('--capability <slug>', 'new: the capability it shows, when not its own name')
-  .action(async (action: string | undefined, name: string | undefined, opts) => {
-    const { boardsCommand, boardsNew } = await import('./boards.ts')
+  .action(async (action: string | undefined, args: string[] | undefined, opts) => {
+    const { boardsCommand, boardsNew, boardsPin } = await import('./boards.ts')
+    const [name, ...frames] = args ?? []
     try {
       if (action === undefined) boardsCommand(resolve(opts.root), opts)
-      else if (action === 'new') {
+      else if (action === 'pin') {
+        if (!name) throw new Error('name the board: `boards pin <board> <scene/frame ...>`')
+        const { added, already } = boardsPin(resolve(opts.root), name, frames)
+        for (const f of added) console.log(`  + ${f} on ${name}`)
+        if (already.length) console.log(`  already on ${name}: ${already.join(', ')}`)
+      } else if (action === 'new') {
         if (!name) throw new Error('name the board: `boards new <name>`')
         const made = boardsNew(resolve(opts.root), name, opts)
         for (const c of made) console.log(`  + ${c}`)
@@ -205,7 +211,7 @@ cli
           console.log(`\n  note: no context/ yet - this board's status reads Backlog until there is one. Agent: end your reply with the context line in design/AGENTS.md ("Before the method").`)
         if (made.some((c) => c.endsWith('/_brief.md')) && !made.some((c) => /\.(tsx|jsx|html)$/.test(c)))
           console.log(`\n  next: a frame you make in these scenes shows on the board once it is pinned - a node in\n  design/boards/${name}.json (an agent does this as it works: design/AGENTS.md)`)
-      } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates`)
+      } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates, \`boards pin <board> <scene/frame ...>\` puts frames on a board`)
     } catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)

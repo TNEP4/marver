@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { useStore, HAS_ALL_SCENES, PUBLISHED, STATUS_AS_OF, fetchBoardTree, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
+import { useStore, PUBLISHED, STATUS_AS_OF, addToBoard, boardLabel, fetchBoardNames, fetchBoardTree, fetchMembership, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
+import { UNPLACED } from './hash.ts'
 import { LiveIcon, StatusIcon, TypeIcon } from './board-icons.tsx'
 import { StatusPicker } from './StatusPicker.tsx'
 import type { StatusWord } from '../../shared/board-types.ts'
 import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
+import { navigated } from './goto.ts'
 import { rollup } from '../../shared/marks.ts'
 import { Bubble, useAsks } from './marks-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
-import { ArrowLineUpIcon, CardsIcon, CheckIcon, CardsThreeIcon, FolderIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
+import { ArrowLineUpIcon, CardsIcon, CheckIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
   applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
   resolveDrop, retitleFolder, rootIndex, slugFor,
@@ -47,6 +49,16 @@ function StatusTipLabel({ m }: { m: BoardMeta }) {
   return <div className="sh-tip-lines"><b>{head}</b>{rest.map((l, i) => <small key={i}>{l}</small>)}</div>
 }
 
+/** Add to board… - a frame's menu in the Not on a board view (spec 26): every board, in sidebar
+ *  order; one click pins the frame there, as `marver boards pin` does. */
+export function AddToBoard({ frame, close }: { frame: string; close: () => void }) {
+  const [names, setNames] = useState<string[] | null>(null)
+  useEffect(() => { fetchBoardNames().then(setNames, () => setNames([])) }, [])
+  if (!names) return null
+  if (!names.length) return <div className="sub dim">No boards yet - ask your agent to make one</div>
+  return <>{names.map((n) => <button key={n} data-add-to={n} onClick={() => { close(); void addToBoard(n, [frame]) }}><CardsIcon size={15} /><span>{boardLabel(n)}</span></button>)}</>
+}
+
 type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string; parent: string | null }
 /** A mutation as intent: applied to whichever tree is current, so a 409 can replay it. */
 type Intent = (tree: TreeItem[]) => TreeItem[] | null
@@ -63,6 +75,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(framesOf(boards)) }] : [])                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
+  const [read, setRead] = useState(false)                             // the first tree read has answered
   const [naming, setNaming] = useState<Naming | null>(null)
   const [closed, setClosed] = useState<Record<string, true>>(readClosed)
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -105,6 +118,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       rememberMeta(snap.meta)                                        // ...and so do types and statuses (spec 20)
       lastErr.current = ''
       show()
+      setRead(true)
       return true
     } catch (e) {
       // a server-side error (a malformed registry, a symlinked boards dir) is worth saying
@@ -129,6 +143,24 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // spec 26: the frames on no board - the Not on a board entry, there only when some exist (dev). Read
+  // again whenever the boards or the frames change; the open view follows what it lists
+  const [unplaced, setUnplaced] = useState<string[]>([])
+  const listed = useRef<string | null>(null)                          // the list last read (null = not yet)
+  const manifest = useStore((s) => s.manifest)
+  useEffect(() => {
+    if (PUBLISHED) return
+    let current = true
+    fetchMembership().then((m) => {
+      const key = m.unplaced.join()
+      if (!current || key === listed.current) return
+      if (listed.current !== null && useStore.getState().board === UNPLACED) void useStore.getState().boot()
+      listed.current = key
+      setUnplaced(m.unplaced)
+    }).catch(() => { /* keep the last list */ })
+    return () => { current = false }
+  }, [tree, manifest])
+
   const setOpen = (folder: string, open: boolean) => {
     setClosed((c) => {
       const next = { ...c }
@@ -139,6 +171,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
   const pick = async (name: string) => {
     if (name === useStore.getState().board) return
+    navigated()                                                      // a link still finding its board gives way
     await useStore.getState().switchBoard(name)
     setTimeout(() => canvasCtl.fitAll(), 60)
   }
@@ -208,7 +241,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       const stored = (slug: string) => (title === humanize(slug) ? '' : title)
       if (n.kind === 'board') {
         if (title === label(n.name)) { setNaming(null); return }
-        if (boardsIn(tree).some((b) => b !== n.name && label(b) === title) || (HAS_ALL_SCENES && label('all-scenes') === title)) { taken('board'); return }
+        if (boardsIn(tree).some((b) => b !== n.name && label(b) === title)) { taken('board'); return }
         let r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])
         if (!r.ok && r.stale && await load()) r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])   // the file moved on (a drag just before, an agent): re-read, once more
         if (!r.ok) { useStore.getState().toast(r.error ?? 'rename failed'); return }   // stay editing
@@ -337,7 +370,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
   const boardMenu = (n: string, parent: string | null): MenuItem[] => {
     const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') }, ...seeAll([n])]
-    if (PUBLISHED || n === 'all-scenes') return items
+    if (PUBLISHED) return items
     // a feature or project board: its status first, as Linear puts it - the picker opens in place
     const m = useStore.getState().boardMeta[n]
     if (m?.status && m.settable?.length) items.unshift({
@@ -425,7 +458,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   // ONE seam per gap, overlaid (::after, no layout shift) on the row the gap touches: before the
   // first row of the item AT the index, or after the last row of a list's last item at its end.
   // Its left edge follows the indent of the list it lands in, so "inside" and "outside" never
-  // draw alike. The root end draws before the pinned all-scenes row. An open EMPTY folder has no
+  // draw alike. The root end draws after the last row. An open EMPTY folder has no
   // row to draw on: its header draws the indented seam under itself (drop-in).
   const seam = ((): { row: string; where: 'before' | 'after'; depth: number } | null => {
     if (!drag || !drop || 'into' in drop) return null
@@ -433,7 +466,6 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (!items) return null
     const depth = depthOf(tree, drop.list)
     if (drop.index < items.length) return { row: key(items[drop.index]!), where: 'before', depth }
-    if (drop.list === null && HAS_ALL_SCENES) return { row: 'b:all-scenes', where: 'before', depth: 0 }
     return items.length ? { row: lastRow(items[items.length - 1]!), where: 'after', depth } : null
   })()
   // a nested seam starts where that list's rows start: the row's own 8px padding plus its indent
@@ -449,7 +481,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (naming?.kind === 'board' && naming.name === n) return (
       <div key={`b:${n}`} data-board-row data-board={n} data-folder={parent ?? undefined} data-depth={depth} className={`it board editing${indent(depth)}${s.cls}`} style={s.style}><CardsIcon size={14} />{input(label(n))}</div>
     )
-    const canDrag = !PUBLISHED && n !== 'all-scenes'
+    const canDrag = !PUBLISHED
     const item: Drag = { kind: 'board', name: n }
     // the board you are on shows nothing: its rows below speak for themselves
     const r = n === board ? { asks: 0, fresh: 0 } : rollup(marks, asks, framesOf([n]))
@@ -458,7 +490,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         className={`it board${indent(depth)}${n === board ? ' cur' : ''}${r.asks ? ' mk-ask' : r.fresh ? ' mk-new' : ''}${dragging ? ' dragging' : ''}${s.cls}`} style={s.style}
         // draggable rows switch on the pointer tap (onPointerUp), so their trailing mouse
         // click (detail >= 1) must be ignored to avoid a double switch; keyboard clicks
-        // (detail === 0) and non-draggable rows (all-scenes, published) switch here as normal
+        // (detail === 0) and non-draggable rows (published) switch here as normal
         onClick={(e) => { if (!canDrag || e.detail === 0) void pick(n) }}
         onContextMenu={(e) => onMenu(e, boardMenu(n, parent))}
         onPointerDown={canDrag ? (e) => onPointerDown(e, item) : undefined}
@@ -466,7 +498,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         onPointerUp={canDrag ? onPointerUp : undefined}
         onPointerCancel={canDrag ? () => resetPointer() : undefined}
         onLostPointerCapture={canDrag ? (e) => { if (gestureRef.current?.pointerId === e.pointerId) resetPointer() } : undefined}>
-        <LiveIcon live={working.includes(n)}>{n === 'all-scenes' ? <CardsThreeIcon size={14} /> : meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}</LiveIcon>
+        <LiveIcon live={working.includes(n)}>{meta[n]?.type ? <TypeIcon type={meta[n].type!} /> : <CardsIcon size={14} />}</LiveIcon>
         <span>{label(n)}</span>
         {/* the status for a screen reader, part of the board button's own name: the glyph is the eye's */}
         {meta[n]?.status && <span className="sh-sr" data-status-text>{`, ${statusTip(meta[n]).replace(/\n/g, '; ')}`}</span>}
@@ -542,7 +574,18 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
 
   const rows: ReactNode[] = listRows(tree, null, 0)
-  if (HAS_ALL_SCENES) rows.push(boardRow('all-scenes', null, 0))   // a published bundle without it shows none
+  // no boards yet: say what to do (a fresh `--no-demo` canvas) - once the first read has answered
+  if (read && !boardsIn(tree).length && !naming) rows.push(<div key="empty" className="sub dim" data-no-boards>No boards yet - ask your agent to make one</div>)
+  // the frames on no board (spec 26), apart from the tree - never a drop target, never dragged
+  if (unplaced.length) {
+    const r = board === UNPLACED ? { asks: 0, fresh: 0 } : rollup(marks, asks, unplaced)
+    rows.push(
+      <button key="unplaced" data-unplaced className={`it board${board === UNPLACED ? ' cur' : ''}${r.asks ? ' mk-ask' : r.fresh ? ' mk-new' : ''}`} onClick={() => void pick(UNPLACED)}>
+        <FrameCornersIcon size={14} /><span>Not on a board</span>
+        {r.asks ? <i className="st"><Bubble n={r.asks} /></i> : <small>{unplaced.length}</small>}
+      </button>,
+    )
+  }
   return (
     <div className="sh-boards" ref={rootRef} onContextMenu={(e: ReactMouseEvent) => blankMenu(e)}>
       <div className="hd">

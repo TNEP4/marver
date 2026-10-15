@@ -6,10 +6,11 @@
  * malformed = an error the human must fix, never a silently empty registry.
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { join, sep } from 'node:path'
 import { hash } from './hash.ts'   // not manifest.ts: manifest imports this module
-import { FOLDERS_FILE, isBoardFile, parseFolders, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, type FolderRow } from '../shared/board-tree.ts'
-import { readCapability, readReason, readStatusWord, readType } from '../shared/board-types.ts'
+import { ALL_SCENES, archiveLast, buildTree, flatten, folderMap, FOLDERS_FILE, framesOn, isBoardFile, isBoardName, parseFolders, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, type FolderRow } from '../shared/board-tree.ts'
+import { readCapability, readReason, readStatusWord, readType, resolveType } from '../shared/board-types.ts'
 
 /** Does realpath(dir) stay inside realpath(root)? A symlinked design/boards can't escape. */
 export function underRoot(root: string, dir: string): boolean {
@@ -186,4 +187,64 @@ function appendFolders(dir: string, file: string, folders: { name: string; title
     return { added, existing }
   }
   throw new Error(`design/boards/${FOLDERS_FILE} kept changing while folders were added - try again`)
+}
+
+/** Which board shows which frame (spec 26, Part 7): every board in sidebar order with archive boards
+ *  last, the live frames each shows (shared/board-tree `framesOn`), and the frames on none. */
+export interface Membership { boards: { name: string; frames: string[] }[]; unplaced: string[] }
+export function readMembership(root: string, live: readonly string[]): Membership {
+  const dir = join(root, 'design', 'boards')
+  const files = checkBoardsDir(root, dir) ? [] : listBoardFiles(dir).boards
+  const reg = readRegistry(dir)
+  const folders = reg.state === 'ok' ? reg.folders : []
+  const rows = files.map((b) => ({ name: b.name, ...boardFields(b.json, isBoardName) }))
+  const tree = buildTree(rows, folders)
+  // a board's type is its own, else its folder's, else that folder's parent's (spec 20)
+  const fm = folderMap(tree)
+  const byName = new Map(folders.map((f) => [f.name, f]))
+  const isArchive = (n: string) => {
+    const folder = byName.get(fm.get(n) ?? '')
+    return n === 'archive' || resolveType(rows.find((r) => r.name === n)?.type, folder?.type, folder?.parent ? byName.get(folder.parent)?.type : undefined) === 'archive'
+  }
+  const boards = archiveLast(flatten(tree), isArchive).map((name) => ({ name, frames: framesOn(files.find((b) => b.name === name)?.json, live) }))
+  const on = new Set(boards.flatMap((b) => b.frames))
+  return { boards, unplaced: live.filter((f) => !on.has(f)) }
+}
+
+/** What to say about frames on no board, one line each: the boards holding its scene's other frames,
+ *  and the command that pins it - what `work done`, `marver link` and `comments new` print. */
+export function unplacedHint(m: Membership, frames: readonly string[]): string[] {
+  return frames.map((f) => {
+    const scene = f.split('/')[0]
+    const homes = m.boards.filter((b) => b.frames.some((x) => x !== f && x.split('/')[0] === scene)).map((b) => b.name)
+    return `${f} is on no board${homes.length ? ` (its scene's other frames are on ${homes.join(', ')})` : ''} - pin it where it belongs: npx marver boards pin ${homes[0] ?? '<board>'} ${f}`
+  })
+}
+
+/** `boards pin`: append frames to a board as nodes - the shell sizes and lays them out, as for any
+ *  node an agent appends. A frame the board already shows is skipped (every frame, on an `auto`
+ *  board). Never creates a board; a malformed one is the human's to fix. */
+export function pinFrames(root: string, board: string, frames: readonly string[], live: readonly string[]): { added: string[]; already: string[] } {
+  if (!isBoardName(board) || board === ALL_SCENES) throw new Error(`"${board}" is not a board name - lowercase letters, numbers and dashes`)
+  const dir = join(root, 'design', 'boards')
+  const de = checkBoardsDir(root, dir)
+  if (de) throw new Error(de)
+  const file = join(dir, `${board}.json`)
+  if (!isRegularFile(file)) throw new Error(`no board "${board}" in design/boards/ - make it first (npx marver boards new ${board})`)
+  const content = readFileSync(file, 'utf8')
+  const { json, error } = parseBoard(content)
+  if (error || !json || typeof json !== 'object' || Array.isArray(json)) throw new Error(`design/boards/${board}.json is not a board object - fix the file${error ? ` (${error})` : ''}`)
+  const shown = new Set(framesOn(json, live))
+  const already = frames.filter((f) => shown.has(f))
+  const added = [...new Set(frames.filter((f) => !shown.has(f)))]
+  if (!added.length) return { added, already }
+  const obj = json as { nodes?: unknown }
+  obj.nodes = [...(Array.isArray(obj.nodes) ? obj.nodes : []), ...added.map((frame) => ({ frame }))]
+  // a temp file renamed over the board, and only over the file as read: a write that landed
+  // meanwhile (the shell's autosave, another agent) is never overwritten
+  const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+  writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n', { flag: 'wx' })
+  if (readFileSync(file, 'utf8') !== content) { rmSync(tmp, { force: true }); throw new Error(`design/boards/${board}.json changed while pinning - try again`) }
+  renameSync(tmp, file)
+  return { added, already }
 }

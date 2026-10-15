@@ -80,11 +80,34 @@ describe('marver link - which board', () => {
     expect(resolveLink(root, ['design/scenes/shop/pay.tsx']).frames).toEqual(['shop/pay'])
   })
 
-  it('ranks archive boards last - by their own type or their folder\'s - and falls back to all-scenes', () => {
+  it('ranks archive boards last - by their own type or their folder\'s', () => {
     expect(resolveLink(root, ['old/cart']).board).toBe('archive')          // only there - history is where it lives
     expect(resolveLink(root, ['other/far']).board).toBe('far-live')        // old-flow ranks first, but its folder is an archive
+  })
+
+  it('frames that sit on several boards get one link per board, each on the first board that shows it (spec 26)', () => {
     const both = resolveLink(root, ['other/far', 'shop/cart'])
-    expect(both).toMatchObject({ board: 'all-scenes', fellBack: true, hash: '#/b/all-scenes?f=other/far,shop/cart' })
+    expect(both.links).toEqual([{ board: 'cart-only', hash: '#/b/cart-only?f=shop/cart' }, { board: 'far-live', hash: '#/b/far-live?f=other/far' }])
+    expect(both).toMatchObject({ board: 'cart-only', hash: '#/b/cart-only?f=shop/cart', unplaced: [], hints: [] })
+  })
+
+  it('a frame on no board gets a hint instead of a link: the boards holding its scene\'s other frames, and boards pin', async () => {
+    const add = (rel: string) => writeFileSync(join(root, 'design', 'scenes', rel), frame('new'))
+    mkdirSync(join(root, 'design', 'scenes', 'loose'), { recursive: true })
+    add('shop/extra.tsx'); add('loose/idea.tsx')
+    try {
+      const r = resolveLink(root, ['shop/extra', 'loose/idea', 'shop/pay'])
+      expect(r.links).toEqual([{ board: 'flow', hash: '#/b/flow?f=shop/pay' }])
+      expect(r.unplaced).toEqual(['shop/extra', 'loose/idea'])
+      expect(r.hints).toEqual([
+        'shop/extra is on no board (its scene\'s other frames are on cart-only, flow, archive) - pin it where it belongs: npx marver boards pin cart-only shop/extra',
+        'loose/idea is on no board - pin it where it belongs: npx marver boards pin <board> loose/idea',
+      ])
+      expect(resolveLink(root, ['loose/idea'])).toMatchObject({ links: [], board: undefined, hash: undefined })
+      // a note needs a board to live on
+      await expect(commentsCommand(root, 'new', 'loose/idea', { body: 'Here?' })).rejects.toThrow(/a note needs a board to live on - loose\/idea is on no board/)
+      expect(readLog(join(root, 'design', 'comments'), 'flow').filter((e) => e.frame === 'loose/idea')).toEqual([])
+    } finally { rmSync(join(root, 'design', 'scenes', 'shop', 'extra.tsx')); rmSync(join(root, 'design', 'scenes', 'loose'), { recursive: true }) }
   })
 
   it('a folder inside a scene travels as its frames - the link grammar names scenes, not paths', () => {
@@ -94,7 +117,7 @@ describe('marver link - which board', () => {
 
   it('honours --board, and refuses one that does not show the frames', () => {
     expect(resolveLink(root, ['shop/cart'], 'flow').hash).toBe('#/b/flow?f=shop/cart')
-    expect(() => resolveLink(root, ['shop/pay'], 'cart-only')).toThrow(/does not show shop\/pay/)
+    expect(() => resolveLink(root, ['shop/pay'], 'cart-only')).toThrow(/does not show shop\/pay - pin it there first \(npx marver boards pin cart-only shop\/pay\)/)
     expect(() => resolveLink(root, ['shop/cart'], 'nope')).toThrow(/no board "nope"/)
   })
 
@@ -272,7 +295,7 @@ describe('engagement starts when Marver engaged', () => {
 })
 
 describe('the live signal: which boards show the working frames', () => {
-  it('pins, auto boards and all-scenes - read once, until a board changes', async () => {
+  it('pins and auto boards - read once, until a board changes', async () => {
     const { boardsShowing, boardsChanged, onBoardsChanged } = await import('../src/server/work.ts')
     const r = mkdtempSync(join(tmpdir(), 'mv-live-'))
     const b = (name: string, json: object) => { mkdirSync(join(r, 'design', 'boards'), { recursive: true }); writeFileSync(join(r, 'design', 'boards', `${name}.json`), JSON.stringify({ version: 1, name, ...json })) }
@@ -280,16 +303,19 @@ describe('the live signal: which boards show the working frames', () => {
     b('other', { nodes: [{ frame: 'x/y' }] })
     b('everything', { auto: true, nodes: [] })
     expect(boardsShowing(r, [])).toEqual([])
-    expect(boardsShowing(r, ['shop/pay'])).toEqual(['all-scenes', 'everything', 'flow'])
+    expect(boardsShowing(r, ['shop/pay'])).toEqual(['everything', 'flow'])
     // the index is kept: a board edit is not seen until the watcher says boards changed
     b('other', { nodes: [{ frame: 'shop/pay' }] })
-    expect(boardsShowing(r, ['shop/pay'])).toEqual(['all-scenes', 'everything', 'flow'])
+    expect(boardsShowing(r, ['shop/pay'])).toEqual(['everything', 'flow'])
     const heard: string[] = []
     const off = onBoardsChanged((root) => heard.push(root))
     boardsChanged(r)
     off()
     expect(heard).toEqual([r])
-    expect(boardsShowing(r, ['shop/pay'])).toEqual(['all-scenes', 'everything', 'flow', 'other'])
+    expect(boardsShowing(r, ['shop/pay'])).toEqual(['everything', 'flow', 'other'])
+    b('all-scenes', { auto: true, nodes: [] })                           // a leftover file lights nothing
+    boardsChanged(r)
+    expect(boardsShowing(r, ['x/y'])).toEqual(['everything'])
     rmSync(r, { recursive: true, force: true })
   })
 })

@@ -1,19 +1,20 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, boardLabel, boardFrames, cap, humanize, fetchBoardNames, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
-import { BoardList } from './BoardList.tsx'
+import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
+import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
-import { bootHash, linkTargets, parseHash, writeHash } from './hash.ts'
-import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
-import { humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
-import { CommentsController, revealThread } from './Comments.tsx'
+import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
+import { isLegacyLink, landLegacy } from './legacy-links.ts'
+import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
+import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
-import { avatarFallback, useComments } from './comments-store.ts'
-import { goTo, navigated, revealFrame } from './goto.ts'
+import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
+import { goTo, isLatest, navigated, revealFrame } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
@@ -366,16 +367,24 @@ export function App() {
           if (r.ok) hydrateBoardPolicy(((await r.json()) as { boards?: Record<string, never> }).boards ?? {})
         } catch { /* dev server without the route - fine */ }
       }
+      // a link from before 0.25 names the All Scenes board: it lands on a real one (legacy-links.ts)
+      let notice: string | null = null
+      if (isLegacyLink(bootHash)) {
+        const r = await landLegacy(bootHash)
+        retargetBoot(r.hash)
+        writeHash(r.hash)
+        notice = r.notice
+      }
       if (bootHash.board) {
         if (bootHash.board !== useStore.getState().board)   // a deep link wins
-          useStore.setState({ board: bootHash.board, boardAuto: bootHash.board === 'all-scenes' })
+          useStore.setState({ board: bootHash.board, boardAuto: false })
       } else if (!PUBLISHED) {
-        // fresh open, no deep link: LAND on the first curated board (a tight, fast board = a good first
-        // impression) instead of the auto all-scenes everything-board, which renders every frame at once.
-        const first = (await fetchBoardNames().catch(() => [] as string[])).find((n) => n !== 'all-scenes')
-        if (first && first !== useStore.getState().board) useStore.setState({ board: first, boardAuto: false })
+        // fresh open, no deep link: LAND on the first board - with none yet, the Not on a board view
+        const first = await landingBoard()
+        if (first !== useStore.getState().board) useStore.setState({ board: first, boardAuto: false })
       }
       const ok = await boot()
+      if (notice) toast(notice)
       urlReady.current = true
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here
@@ -426,8 +435,27 @@ export function App() {
   // restores never echo back into history.
   useEffect(() => {
     const onPop = async () => {
-      navigated()                              // a reveal still looking up its board must not land after this
-      const h = parseHash()
+      const nav = navigated()                  // a reveal still looking up its board must not land after this
+      // a lookup below still running when newer navigation lands - a link, a board picked, a step in play - is dropped
+      const at = useStore.getState().board, step = useStore.getState().play?.at
+      const overtaken = () => !isLatest(nav) || useStore.getState().board !== at || useStore.getState().play?.at !== step
+      let h = parseHash()
+      const legacy = isLegacyLink(h)
+      if (legacy) {
+        // an old All Scenes link pasted, or walked back to: where it lands now, written over it -
+        // once, though back/forward fires two events
+        const r = await landLegacy(h)
+        const board = r.hash.board ?? await landingBoard()
+        if (overtaken()) return
+        h = { ...r.hash, board }
+        writeHash(h)
+        if (r.notice) toast(r.notice)
+      } else if (!h.board && !h.focus && !h.invite) {
+        // the bare #/ opens the landing board
+        const board = await landingBoard()
+        if (overtaken()) return
+        h = { ...h, board }
+      }
       let s = useStore.getState()
       if (h.board && h.board !== s.board) {
         if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
@@ -435,6 +463,8 @@ export function App() {
         s = useStore.getState()
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
       }
+      // the thread an old link names (Comments.tsx opens every other link's): now, or once the new board's comments load
+      if (legacy && h.c) { if (s.board !== at) parkThread(h.c); else revealThread(h.c) }
       if (h.focus) {
         enterFocus(h.focus.at, { ...h.focus, deep: true })
       } else if (h.play) {
@@ -698,6 +728,7 @@ export function App() {
       // pins · Shift+P = copy file path(s) (P alone is play; D6, changelog 0.4.0)
       if (e.key === 'c' && !e.shiftKey) {
         const c = commentsStore()
+        if (!c.commentMode && s.board === UNPLACED) return void toast(NO_COMMENTS_HERE)
         if (!c.commentMode) s.setLaser(false)
         c.setMode(!c.commentMode)
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
@@ -892,6 +923,8 @@ export function App() {
                   }
                   const frameMenu = (fr: FrameEntry): MenuItem[] => [
                     { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(framePath(useStore.getState().board, fr), 'path copied') },
+                    // the Not on a board view (spec 26): put the frame where it belongs
+                    ...(useStore.getState().board === UNPLACED ? [{ label: 'Add to board…', icon: <PlusIcon size={15} />, panel: (close: () => void) => <AddToBoard frame={fr.id} close={close} /> }] : []),
                   ]
                   const seen = new Set<string>()
                   const rows: ReactNode[] = []
@@ -1059,7 +1092,9 @@ function JamAvatar({ author }: { author: { name?: string; avatar?: string; id?: 
 async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void) {
   if (revealThread(note.threadId)) { dismiss(); return }
   const s = useStore.getState()
-  if (note.board && s.board !== note.board) await s.switchBoard(note.board)
+  // a thread in the old all-scenes log has no board of its own: its frame's board shows it (spec 26)
+  if (note.board === ALL_SCENES) { if (note.frame) await revealFrame(note.frame) }
+  else if (note.board && s.board !== note.board) await s.switchBoard(note.board)
   for (let i = 0; i < 12; i++) {
     if (revealThread(note.threadId)) { dismiss(); return }
     await new Promise((r) => setTimeout(r, 250))

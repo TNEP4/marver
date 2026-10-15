@@ -128,19 +128,22 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   const bres = await fetch(`${base}/__mv/api/boards`, { headers: auth })
   if (bres.status === 401) throw new Error('the connect token was rejected - run `comments connect` again')
   if (!bres.ok) throw new Error(`published canvas answered ${bres.status} - is it up?`)
-  const { rights } = await bres.json() as { rights: Record<string, 'read' | 'comment'> }
+  // `legacy`: the old all-scenes log (spec 26), served for the threads on frames a commentable
+  // published board shows - a canvas built before 0.25 names none
+  const { rights, legacy } = await bres.json() as { rights: Record<string, 'read' | 'comment'>; legacy?: { board: string; frames: string[] } }
 
-  const boards = [...new Set([...Object.keys(rights), ...listBoards(dir)])]
+  const boards = [...new Set([...Object.keys(rights), ...listBoards(dir), ...(legacy ? [legacy.board] : [])])]
   const out: Record<string, { pulled: number; pushed: number }> = {}
   const failures: string[] = []
   for (const board of boards) {
-    if (!(board in rights)) continue          // local-only board: nothing published to sync with
+    const old = legacy?.board === board
+    if (!(board in rights) && !old) continue  // local-only board: nothing published to sync with
     const res = await fetch(`${base}/__mv/api/comments/${board}`, { headers: auth })
     if (!res.ok) { failures.push(`${board}: pull ${res.status}`); continue }
     const { events: remote } = await res.json() as { events: CommentEvent[] }
     const pulled = appendEvents(dir, board, remote).length
     let pushed = 0
-    if (rights[board] === 'comment') {
+    if (rights[board] === 'comment' || old) {
       // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
       // (the published client validator rejects agent provenance; publishing them is a P3 feature
       // needing a trusted path). Filter them out of the push set - and with them every event in a
@@ -148,7 +151,8 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
       // resolve, a reaction would reach a server that never saw the thread, which rejects the batch.
       const local = readLog(dir, board)
       const marverThreads = localOnlyThreads(local)
-      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)))
+      const shipped = old ? threadIds(local, (e) => legacy!.frames.includes(e.frame ?? '')) : null
+      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))))
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
@@ -303,7 +307,12 @@ const threadOf = (e: CommentEvent): string => e.parentId ?? e.commentId ?? ''
  *  that resolves to one - the thread, and each reply in it (an edit or reaction names the reply) - is
  *  in the set, so `threadOf` of any event in such a thread hits it. */
 export function localOnlyThreads(events: CommentEvent[]): Set<string> {
-  const roots = new Set(events.filter((e) => e.agent && e.type === 'create' && e.commentId).map((e) => e.commentId!))
+  return threadIds(events, (e) => !!e.agent)
+}
+
+/** Every id that resolves to a thread whose root passes `root` - the thread, and each reply in it. */
+function threadIds(events: CommentEvent[], root: (create: CommentEvent) => boolean): Set<string> {
+  const roots = new Set(events.filter((e) => e.type === 'create' && e.commentId && root(e)).map((e) => e.commentId!))
   const out = new Set(roots)
   for (const e of events) if (e.type === 'reply' && e.parentId && roots.has(e.parentId) && e.commentId) out.add(e.commentId)
   return out

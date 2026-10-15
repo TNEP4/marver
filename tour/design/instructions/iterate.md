@@ -1,4 +1,4 @@
-<!-- marver:managed d69d05419ecc4cf320ae4a62afca295d6adb788c1e6ffc28b7300a63d02f5c39 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 7696fd1b7d5042d5a67863590e535918dc456c34cd9c3560a7db2f5bf6e151cd - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Iterate - versions are nearly free, so keep them
 
 Read this when you are about to CHANGE a frame the human has already seen, when
@@ -60,8 +60,8 @@ to step 4.
    in default order). Create the board the first time (`"order"` high, so it
    sits last among the curated boards; `"auto": false`). Set the copied frames'
    `meta.title` to `"<title> · v<N>"` so the sidebar reads as history. The
-   version also shows on `all-scenes` (it holds everything) - fine; it must NOT
-   be added to any feature board or to `publish.json`.
+   archive is the version's one board: it must NOT be added to any feature board
+   or to `publish.json`.
 
    ```json
    { "version": 1, "name": "archive", "order": 90, "auto": false,
@@ -156,8 +156,7 @@ The discipline:
    button is a different task than "too cramped" on the whole frame.
 2. **Look sideways before you touch anything.** A pin marks where the human
    NOTICED the problem, not the only place it lives. Siblings are the LIVE
-   frames on the board the comment names (on `all-scenes`, the frames of the
-   pinned frame's own scene and its feature board) that share the component,
+   frames on the board the comment names that share the component,
    the pattern, the copy or the state: the other steps of the flow, the sibling
    states, the variants. Never `archive/` and never a `<scene>-v<N>` version -
    history is not a sibling. Same defect there (the same element or pattern

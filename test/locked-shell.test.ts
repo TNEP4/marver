@@ -84,4 +84,23 @@ describe('the all-boards-locked bundle', () => {
     await new Promise((r) => setTimeout(r, 300))
     expect(await browser.eval(tab, `!!document.querySelector('.sh-play')`)).toBe(true)
   }, 60_000)
+
+  it('an old All Scenes link lands on the board that shows its frame, at that frame (spec 26)', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const tab = await browser.tab({ width: 1280, height: 800 })
+    await browser.go(tab, `http://localhost:${PORT}/#/p/all-scenes?at=deck/two`)
+    await browser.until(tab, `!!document.querySelector('.sh-play') && location.hash.startsWith('#/p/deck?at=deck%2Ftwo')`, 20_000)
+    await browser.eval(tab, `location.hash = '#/b/all-scenes'`)
+    await new Promise((r) => setTimeout(r, 600))
+    expect(await browser.eval(tab, `!!document.querySelector('.sh-play')`)).toBe(true)
+    // a link naming frames lands the stage on them
+    const t2 = await browser.tab({ width: 1280, height: 800 })
+    await browser.go(t2, `http://localhost:${PORT}/#/b/all-scenes?f=deck/two`)
+    await browser.until(t2, `!!document.querySelector('.sh-play') && location.hash.startsWith('#/p/deck?at=deck%2Ftwo')`, 20_000)
+    const shows = (text: string) => `[...document.querySelectorAll('.sh-play iframe')].some((f) => f.contentDocument?.body?.textContent?.includes('${text}'))`
+    await browser.until(t2, shows('slide two'), 20_000)
+    // and on the same board, the stage on screen steps to the frame an old link names
+    await browser.eval(t2, `location.hash = '#/b/all-scenes?f=deck/one'`)
+    await browser.until(t2, `location.hash.startsWith('#/p/deck?at=deck%2Fone') && ${shows('slide one')}`, 20_000)
+  }, 60_000)
 })

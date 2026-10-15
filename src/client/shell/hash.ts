@@ -4,8 +4,10 @@
  * shell writes it as board/selection/play change and parses it once on boot; camera
  * intent is always fit semantics (fit-all / fit-selection), never raw coordinates.
  *
- *   #/                     default board, fit all
+ *   #/                     the landing board, fit all
  *   #/b/<board>            board, fit all
+ *   #/b/~unplaced          the Not on a board view (UNPLACED)
+ *   #/b/all-scenes...      a link from before 0.25: lands on a real board (legacy-links.ts)
  *   #/b/<board>?n=k1,k2    board with nodes selected, camera fit to selection
  *   #/b/<board>?f=<scene/frame>,...   the same, by FRAME id - the link an agent can write
  *                                   (node keys are the shell's; `marver link` prints these)
@@ -33,6 +35,9 @@ export interface HashState {
 }
 
 const BOARD_RE = /^[a-z0-9][a-z0-9-]*$/
+/** The Not on a board view (spec 26, Part 7): a temporary board of the frames no board shows,
+ *  never saved. Off the board-name grammar, so no board file can ever be called this. */
+export const UNPLACED = '~unplaced'
 const isFrameId = (at: string) => /^[\w./-]{1,200}$/.test(at) && !at.includes('..')
 
 /** The node keys a link names on the loaded board: its keys (`n`), the nodes showing its frames
@@ -64,7 +69,7 @@ export function parseHash(hash: string = location.hash): HashState {
     const m = path.match(/^\/(b|p)\/([^/?]+)$/)
     if (!m) return {}
     const board = decodeURIComponent(m[2])
-    if (!BOARD_RE.test(board)) return {}
+    if (!BOARD_RE.test(board) && board !== UNPLACED) return {}
     if (m[1] === 'b') {
       const list = (k: string) => (params.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
       const n = list('n')
@@ -100,7 +105,7 @@ export function buildHash(s: HashState): string {
     if (s.play.slides) p.set('slides', '1')
     return `#/p/${s.board}?${p}`
   }
-  if (!s.board || (s.board === 'all-scenes' && !s.n?.length && !s.c)) return '#/'
+  if (!s.board) return '#/'
   const p = new URLSearchParams()
   if (s.n?.length) p.set('n', s.n.join(','))
   if (s.c) p.set('c', s.c)
@@ -116,5 +121,7 @@ export function writeHash(s: HashState, push = false) {
   else history.replaceState(null, '', h)
 }
 
-/** The hash as it stood when the app loaded - boot intent, captured once. */
-export const bootHash = parseHash()
+/** The hash as it stood when the app loaded - boot intent, captured once; re-aimed only when an old
+ *  link resolves to where it lands now (legacy-links.ts), before the board boots. */
+export let bootHash = parseHash()
+export function retargetBoot(h: HashState) { bootHash = h }

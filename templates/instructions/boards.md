@@ -47,9 +47,14 @@ is safe to resolve either way.
   in the sidebar (which rewrites `order`), retitle one from its right-click menu (which
   writes `title`), and file boards into folders (below) - so your ranking is a starting
   point they may adjust.
-- `auto: false` boards show exactly their list. `all-scenes` is auto-managed (it holds
-  EVERY frame, so it is the heavy one) and always sinks to the BOTTOM of the switcher -
-  never the landing board, and never write its file.
+- **Every frame goes on the board it belongs to - its feature, its spec, its flow - and a
+  frame that belongs to two goes on both.** `npx marver boards pin <board> <scene/frame ...>`
+  appends them as nodes (or append a `{ "frame": ... }` node yourself). No board holds
+  everything: a frame on no board is listed apart - `npx marver boards`, the dev log, the
+  sidebar's Not on a board - and `work done` and `marver link` say where it belongs.
+  `all-scenes` is a reserved name, never a board.
+- `auto: false` boards show exactly their list; `"auto": true` makes a board hold every frame
+  (a heavy board - keep it for a canvas of a few frames).
 - Do not edit board files while the canvas is open unless asked; the shell owns
   their layout fields (`x`/`y`/`w`/`h`, node keys). What is always yours, canvas
   open or not: creating a board, appending nodes, and writing the `layout` recipe
@@ -77,8 +82,7 @@ folder, or in a sub-folder. Files are the truth, and two files carry it:
   sub-folder names the sub-folder, never a path). `order` then ranks it among its
   siblings: at every level, the boards and folders there share one sequence (the root's
   boards and top-level folders; a folder's boards and sub-folders; a sub-folder's boards). Same grammar as board names
-  (`^[a-z0-9][a-z0-9-]*$`); an invalid value means top level. `all-scenes` never
-  lives in a folder.
+  (`^[a-z0-9][a-z0-9-]*$`); an invalid value means top level.
 - **Folders live in `design/boards/_folders.json`** - the underscore marks it as
   infrastructure, never a board:
 

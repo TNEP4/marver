@@ -25,6 +25,7 @@ import { noteFileFor, type FrameEntry, type Manifest } from './manifest.ts'
 import { checkBoardsDir, checkRealDirs, listBoardFiles } from './boards.ts'
 import { compare, frameDeps, observed, stat, type Observed } from './deps.ts'
 import type { Marks } from '../shared/marks.ts'
+import { framesOn } from '../shared/board-tree.ts'
 
 type Frames = readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[]
 interface State { epoch: string; rev: number; changed: Record<string, number>; doc: Record<string, number>; seen: Record<string, number>; obs: Observed | null }
@@ -200,16 +201,10 @@ const snapshot = (root: string, manifest: Manifest, st: State): Marks => {
   const all = manifest.frames.map((f) => f.id)
   const known = new Set(all)
   const pick = (m: Record<string, number>) => Object.fromEntries(all.filter((id) => m[id]).map((id) => [id, m[id]]))
-  // each board's live frames: an auto board (All Scenes) holds them all; a curated one, the frames
-  // it pins that still exist
-  const boards: Record<string, string[]> = { 'all-scenes': all }
+  // each board's live frames, by the one meaning of "on a board" (board-tree.ts framesOn)
+  const boards: Record<string, string[]> = {}
   const boardsDir = join(root, 'design', 'boards')
-  if (existsSync(boardsDir) && !checkBoardsDir(root, boardsDir)) for (const b of listBoardFiles(boardsDir).boards) {
-    const j = b.json as { auto?: unknown; nodes?: unknown } | null
-    if (!j || b.name === 'all-scenes') continue
-    boards[b.name] = j.auto === true ? all
-      : Array.isArray(j.nodes) ? j.nodes.map((n) => (n as { frame?: unknown })?.frame).filter((f): f is string => typeof f === 'string' && known.has(f)) : []
-  }
+  if (existsSync(boardsDir) && !checkBoardsDir(root, boardsDir)) for (const b of listBoardFiles(boardsDir).boards) if (b.json) boards[b.name] = framesOn(b.json, all)
   return { epoch: st.epoch, changed: pick(st.changed), doc: pick(st.doc), seen: pick(st.seen), boards }
 }
 
