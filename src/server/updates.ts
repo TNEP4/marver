@@ -71,13 +71,12 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
     hotUpdate: {
       order: 'post',
       handler(opts) {
+        landed(opts.file)   // this environment is done with the file; the last one releases it
         if (this.environment.name !== 'client') return
         const h = hooks()
-        if (h) {
-          const t = framesFor(root, manifest(), opts.file, opts.modules)
-          if (t.doc.length || t.touched.length) h.onFrames(t, 'update')
-        }
-        landed(opts.file)   // Vite has invalidated what this file feeds: its revision may be published
+        if (!h) return
+        const t = framesFor(root, manifest(), opts.file, opts.modules)
+        if (t.doc.length || t.touched.length) h.onFrames(t, 'update')
       },
     },
   }

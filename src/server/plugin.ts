@@ -50,22 +50,41 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   // Calm updates (spec 26): an edit reached these frames. The marks look first (the static index
   // and fingerprints record every frame that reads the file, loaded or not), then the frames Vite's
   // graph found that the index missed; the frames that must reload get a queued, lease-aware reload.
-  // The publication barrier (spec 26: stamps may lag the code, never lead it). A file is in flight from
-  // the moment Vite's watcher hands it to the plugins (watchChange) until Vite reaches our last
-  // hot-update hook - after it has invalidated the modules that file feeds. Nothing records a revision
-  // while a file is in flight: a document served then could be stamped with code it does not run yet.
-  const inFlight = new Map<string, ReturnType<typeof setTimeout>>()
+  // The publication barrier (spec 26: stamps may lag the code, never lead it). A change is in flight from
+  // the moment Vite's watcher hands it to the plugins (watchChange) until Vite has run our last
+  // hot-update hook in every environment - then one more tick, past the invalidation Vite does after
+  // its hooks (a create or delete is invalidated only there). Nothing records a revision while a change
+  // is in flight: a document served then could be stamped with code it does not run yet. Each event
+  // counts on its own; one Vite never brings to the hooks is invalidated by us before it lands.
+  const inFlight = new Map<string, { events: number; hits: number; timer: ReturnType<typeof setTimeout> }>()
   const waiting: (() => void)[] = []
   const settled = () => inFlight.size === 0
   const whenSettled = (fn: () => void) => { if (settled()) fn(); else waiting.push(fn) }
-  const landed = (file: string) => {
-    clearTimeout(inFlight.get(file))
-    if (!inFlight.delete(file) || !settled()) return
-    for (const fn of waiting.splice(0)) fn()
+  const drain = () => { if (settled()) for (const fn of waiting.splice(0)) fn() }
+  const done = (file: string) => {
+    const f = inFlight.get(file)
+    if (!f) return
+    if (--f.events > 0) return
+    clearTimeout(f.timer)
+    inFlight.delete(file)
+    drain()
   }
   const flying = (file: string) => {
-    clearTimeout(inFlight.get(file))
-    inFlight.set(file, setTimeout(() => landed(file), 3000))   // a file Vite never brings to the hooks lands anyway
+    const f = inFlight.get(file) ?? { events: 0, hits: 0, timer: undefined as unknown as ReturnType<typeof setTimeout> }
+    f.events++
+    clearTimeout(f.timer)
+    f.timer = setTimeout(() => {   // Vite never finished it: make sure no module serves its old code, then let it go
+      for (const env of Object.values(devServer?.environments ?? {})) for (const m of env.moduleGraph.getModulesByFile(file) ?? []) env.moduleGraph.invalidateModule(m)
+      inFlight.delete(file); drain()
+    }, 10_000)
+    inFlight.set(file, f)
+  }
+  const landed = (file: string) => {
+    const f = inFlight.get(file)
+    if (!f) return
+    if (++f.hits < Object.keys(devServer?.environments ?? { client: 1 }).length) return   // other environments still to run
+    f.hits = 0
+    setTimeout(() => done(file), 0)
   }
   const observeMarks = () => observed(observe(root, manifest.frames))
   const observeLater = () => whenSettled(() => { if (observeMarks()) devServer?.ws.send('sh:marks', {}) })
