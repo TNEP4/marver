@@ -15,7 +15,6 @@ import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, b
 import { deckOrder } from './play-order.ts'
 import { useComments } from './comments-store.ts'
 import { isNoteAnchor } from './notes.ts'
-import { stageShown } from './marks-ui.tsx'
 import { ROUTE, slideSize } from '../const.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
@@ -465,7 +464,9 @@ function PlayInner() {
         postStage({ type: 'sh:laser', on: s.laser })
         postStage({ type: 'sh:pick', on: commentsStore().commentMode, quiet: !commentsStore().showAnchor })
         setStageReady((n) => n + 1)            // a reload wiped the frame's lock; let PlayComments re-drive it
-        stageShown()                            // spec 25: what the stage shows now counts toward seen
+      } else if (data.type === 'sh:stage-shown') {
+        // spec 26: the stage committed this frame at this revision - a look on it counts up to there
+        if (typeof data.at === 'string') useStore.setState({ stageShown: { at: data.at, shown: `${String(data.epoch ?? '')}:${Number(data.doc) || 0}` } })
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
         if (p && typeof data.at === 'string') s.setPlay({ ...p, at: data.at })

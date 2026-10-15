@@ -1,9 +1,9 @@
 /**
  * The glob registry - a JSX-free module so plugin-react never touches it.
- * It is the HMR boundary for glob-map invalidation (frame files added/removed):
- * accepting here reloads THIS iframe only, instead of Vite broadcasting a full
- * page reload to every client including the shell.
- * Component edits never reach this module - they stop at Fast Refresh in the frame itself.
+ * Every design update reaches it (Fast Refresh is off under design/), and it is the one HMR
+ * boundary of a frame document: it accepts the update and does nothing with it. The dev server
+ * names the frames an edit touched and the shell reloads exactly those, queued and lease-aware
+ * (spec 26) - a document never reloads itself, and its map refreshes so a new frame can open.
  */
 export const frames = import.meta.glob(['/design/scenes/**/*.{tsx,jsx}', '/design/components/**/*.{tsx,jsx}'])
 export const layouts = import.meta.glob(['/design/scenes/**/_layout.{tsx,jsx}', '/design/components/**/_layout.{tsx,jsx}'])
@@ -37,4 +37,4 @@ export function layoutChain(fileKey: string): string[] {
   return chain
 }
 
-if (import.meta.hot) import.meta.hot.accept(() => location.reload())
+if (import.meta.hot) import.meta.hot.accept(() => { /* the shell reloads what changed */ })

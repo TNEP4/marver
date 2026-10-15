@@ -153,7 +153,12 @@ export async function dev(root: string, portFlag?: number) {
   const desiredPort = explicitPort ?? projectPort(root)
   const picked = await pickPort(root, desiredPort)
 
-  const plugins: any[] = [denyLocalSecrets(root), react()]
+  // spec 26: Marver alone updates frame documents - no Fast Refresh under design/ (JSX still compiles),
+  // so a design edit always reaches the frame host's registry, whose update Marver turns into a calm,
+  // queued reload of exactly the frames it touched. An embedded app's own src/** keeps Fast Refresh.
+  const esc = (p: string) => join(p, 'design').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const designDir = new RegExp(`^(${[...new Set([root, safeReal(root)])].map(esc).join('|')})[/\\\\]`)   // ids are real paths
+  const plugins: any[] = [denyLocalSecrets(root), react({ exclude: [/\/node_modules\//, designDir] })]
   if (host.tailwind === 4) {
     const tw = await tailwind4Plugin(root)
     if (tw) plugins.push(...tw)
@@ -162,7 +167,7 @@ export async function dev(root: string, portFlag?: number) {
   let css: Record<string, unknown> | undefined
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
 
-  plugins.push(marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }), iconsPlugin(root))
+  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }), iconsPlugin(root))
 
   // ~35 lines of "Sourcemap for react-zoom-pan-pinch points to missing sources" per boot
   // (their published map is broken, not actionable here) were burying the warnings that
@@ -182,6 +187,9 @@ export async function dev(root: string, portFlag?: number) {
     plugins,
     server: {
       port: picked.port,
+      // with an overlay up, Vite's client reloads the whole page on the next update; a frame's error
+      // shows on its own card (sh:error) and its fix arrives as a queued reload like any other edit
+      hmr: { overlay: false },
       strictPort: false,
       // keep Vite's workspace-root allowance: monorepo hosts import sibling packages.
       // Vite checks the REAL path of each file, so a root reached through a symlink

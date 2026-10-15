@@ -8,18 +8,20 @@
  */
 import type { Thread } from './events.ts'
 
-/** What the dev server says: when each frame last changed, when you last looked, and the line
- *  before which everything counts as seen (the day marks first ran). */
+/** What the dev server says (spec 26): revisions, never clock times. `changed` = the last revision
+ *  that touched a frame; `doc` = the last one that needs a new document to be seen; `seen` = the
+ *  revision you acknowledged. `epoch` names the state: it changes only when the state starts over. */
 export interface Marks {
+  epoch: string
   changed: Record<string, number>
+  doc: Record<string, number>
   seen: Record<string, number>
-  baseline: number
   /** each board's frames - a board you are not on rolls up over these */
   boards: Record<string, string[]>
 }
 
 export const isNew = (m: Marks | null, id: string): boolean =>
-  !!m && (m.changed[id] ?? 0) > Math.max(m.seen[id] ?? 0, m.baseline)
+  !!m && (m.changed[id] ?? 0) > (m.seen[id] ?? 0)
 
 /** A question's state is read from its thread - nobody sets it. Open with Marver's word last:
  *  needs you. Open with yours last, after Marver spoke: answered, waiting on the agent. */

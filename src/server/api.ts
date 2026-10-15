@@ -109,7 +109,13 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest } = {}): Connect.NextHandleFunction {
+  // the frames as the dev server knows them now (its cached manifest), else as the disk says
+  const devManifest = (): Manifest => {
+    if (opts.manifest) return opts.manifest()
+    try { return JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { return scanFrames(root) }
+  }
+  const devFrames = () => devManifest().frames
   const boardsDir = join(root, 'design', 'boards')
   const foldersPath = join(boardsDir, FOLDERS_FILE)
 
@@ -338,6 +344,18 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const m = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8'))
           return Array.isArray(m?.frames) ? m.frames : null
         } catch { return null }
+      }
+      // the reload log (spec 26 Part 1): a document the page saw boot, or a height that settled
+      if (path === 'perf/reload' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 200) : undefined)
+        const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined)
+        if (!str(b?.kind)) return json(res, 400, { error: 'kind required' })
+        ;(await import('./perf.ts')).logReload(root, { kind: str(b.kind), tab: str(b.tab), node: str(b.node), frame: str(b.frame), cause: str(b.cause), shown: str(b.shown), ms: num(b.ms) })
+        return json(res, 200, { ok: true })
       }
       if (path === 'sizes' && req.method === 'GET') {
         const frames = readManifestFrames()
@@ -796,16 +814,15 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       if (path === 'marks' || path === 'marks/seen') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const { readMarks, markSeen } = await import('./marks.ts')
-        let manifest: Manifest
-        try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { manifest = scanFrames(root) }
+        const manifest = devManifest()
         if (path === 'marks' && req.method === 'GET') return json(res, 200, readMarks(root, manifest))
         if (path === 'marks/seen' && req.method === 'POST') {
           const raw = await readBody(req)
           if (raw == null) return json(res, 400, { error: 'body too large' })
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
-          // { frames: { id: the change stamp the page displayed } } - never a clock (spec 25)
-          if (!b?.frames || typeof b.frames !== 'object' || Array.isArray(b.frames)) return json(res, 400, { error: 'frames: { id: stamp } required' })
-          markSeen(root, b.frames, new Set(manifest.frames.map((f) => f.id)))
+          // { epoch, frames: { id: the revision you saw } } - refused from another epoch (spec 26)
+          if (!b?.frames || typeof b.frames !== 'object' || Array.isArray(b.frames)) return json(res, 400, { error: 'frames: { id: revision } required' })
+          if (!markSeen(root, manifest.frames, b.epoch, b.frames)) return json(res, 409, { error: 'the marks started over - read them again' })
           opts.notify?.('sh:marks')                                  // every other open tab clears it too
           return json(res, 200, { ok: true })
         }
@@ -840,14 +857,14 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (!on && b.all === true) {
             // the frames an agent finishes all at once changed too (spec 25) - an edit to a shared kit included
             const done = workActivity.active().filter((f) => workActivity.has(f, 'cli'))
-            if (done.length) { (await import('./marks.ts')).recordChanged(root, done); opts.notify?.('sh:marks') }
+            if (done.length) { (await import('./marks.ts')).recordChanged(root, devFrames(), done, { doc: false }); opts.notify?.('sh:marks') }
             workActivity.clearAll('cli'); return json(res, 200, { frames: workActivity.active() })
           }
           if (!frames.length) return json(res, 400, { error: 'frames required' })
           const ttl = Math.min(Math.max(Number(b.ttlMs) || WORK_TTL_DEFAULT, 10_000), WORK_TTL_MAX)
           for (const f of frames) on ? workActivity.mark(f, ttl, 'cli') : workActivity.clear(f, 'cli')
           // the agent says it changed these: a mark for whoever has not looked yet (spec 25)
-          if (!on) { (await import('./marks.ts')).recordChanged(root, frames); opts.notify?.('sh:marks'); return json(res, 200, { frames: workActivity.active() }) }
+          if (!on) { (await import('./marks.ts')).recordChanged(root, devFrames(), frames, { doc: false }); opts.notify?.('sh:marks'); return json(res, 200, { frames: workActivity.active() }) }
           // the other half of showing the work: the boards these frames sit on that still read Backlog or To
           // do - a feature being worked on is In progress, and its evidence says so (the CLI prints how)
           let behind: { board: string; status: string; capability: string }[] = []

@@ -1,14 +1,16 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
-import { basename, join, sep } from 'node:path'
+import { basename, join, relative, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
 import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, noteFileFor, type Manifest } from './manifest.ts'
 import { checkBoardsDir, isRegularFile, listBoardFiles, parseBoard } from './boards.ts'
 import { contentOnly } from '../shared/frames.ts'
-import { recordChanged } from './marks.ts'
+import { docRev, docRevs, initMarks, observe, recordChanged } from './marks.ts'
+import { guardUpdates, updatesPlugin, type Touched, type UpdateHooks } from './updates.ts'
+import { logReload } from './perf.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
@@ -25,13 +27,9 @@ export interface PluginCtx {
   detectedThemeCss: string | null
 }
 
-export function marverPlugin(ctx: PluginCtx): Plugin {
+export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const { root, clientDir, config } = ctx
 
-  // A7 controlled HMR: a design/** frame EDIT is applied by the SHELL (a rev-stamped iframe
-  // reload gated on interaction leases), not by Vite's default React Fast Refresh which fires
-  // immediately regardless of what the user is doing. handleHotUpdate suppresses the default
-  // and queues sh:frame-invalidated; the shell decides when to reload each affected frame.
   // the project's line in the manifest; re-read from design/config.ts when that file changes
   // (the rest of the config still needs a restart - only the two orientation fields are live)
   let project = { name: config.share.name || basename(root), description: config.description }
@@ -47,6 +45,28 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
     devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}` })
   }, 120)
 
+  // Calm updates (spec 26): an edit reached these frames. The marks look first (the static index
+  // and fingerprints record every frame that reads the file, loaded or not), then the frames Vite's
+  // graph found that the index missed; the frames that must reload get a queued, lease-aware reload.
+  const observeMarks = () => observed(observe(root, manifest.frames))
+  const hooks: UpdateHooks = {
+    onFrames(t: Touched, cause) {
+      const seen = observe(root, manifest.frames)
+      const doc = t.doc.filter((id) => !seen.doc.includes(id))
+      const touched = t.touched.filter((id) => !seen.doc.includes(id) && !seen.note.includes(id) && !doc.includes(id))
+      if (doc.length) recordChanged(root, manifest.frames, doc, { doc: true })
+      if (touched.length) recordChanged(root, manifest.frames, touched, { doc: false })
+      const reload = [...new Set([...seen.doc, ...t.doc])]
+      for (const id of reload) pendingInv.add(id)
+      flushInv()
+      if (reload.length || touched.length || seen.note.length) devServer?.ws.send('sh:marks', {})
+      logReload(root, { kind: 'update', cause, file: t.file ? relative(root, t.file).split(sep).join('/') : null, reload, inPlace: t.touched })
+    },
+    onReload(p, passed) {
+      logReload(root, { kind: 'full-reload', passed, triggeredBy: p.triggeredBy ?? null, path: p.path ?? null })
+    },
+  }
+
   /** No theme is only a problem for app frames: a canvas made of content frames alone (Doc, Md,
    *  Diagram ship their own styling) needs none (#4). The shell decides its banner from the live
    *  manifest; the config carries only whether a theme exists. */
@@ -61,7 +81,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
     return null
   }
 
-  return {
+  const main: Plugin = {
     name: 'marver',
     // A7: run our handleHotUpdate BEFORE @vitejs/plugin-react's. A marver frame exports `meta`
     // (a non-component) alongside its component, so React Fast Refresh refuses to hot-update it
@@ -113,6 +133,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
         const path = (hctx.originalUrl ?? hctx.path ?? '').split('?')[0]
         if (!path.startsWith('/design/')) return
         const bridge = '/@fs/' + join(clientDir, 'frame-host', 'bridge.js').split('\\').join('/') + '?html=1'
+        // the revision this document is served with (spec 26), echoed in its sh:ready
+        const frame = manifest.frames.find((f) => '/' + f.file === path)
+        const stamp = frame ? docRev(root, manifest.frames, frame.id) : ''
         // head-prepend: module scripts run in DOM order, so the bridge's error listener
         // and theme init beat any authored script in the frame.
         return {
@@ -120,30 +143,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
           tags: [
             { tag: 'script', attrs: { type: 'module' }, children: `import '${VIRTUAL_THEME}'`, injectTo: 'head-prepend' },
             { tag: 'script', attrs: { type: 'module', src: bridge }, injectTo: 'head-prepend' },
+            ...(stamp ? [{ tag: 'meta', attrs: { name: 'mv-doc', content: stamp }, injectTo: 'head-prepend' as const }] : []),
           ],
         }
       },
-    },
-
-    /**
-     * Frame add/unlink is OUR event (sh:manifest → shell appends/flags nodes); Vite's default for
-     * an out-of-graph file is a full-reload broadcast to every client, shell included. Suppress it.
-     * Edits to loaded frames keep normal HMR (modules present + file exists → pass through).
-     */
-    handleHotUpdate(hctx) {
-      const affected = affectedFrameIds(hctx.file, root, manifest)
-      if (affected === null) {
-        // uncontrolled (src/** deps, theme.css, config, a helper we don't map): default HMR.
-        // A frame ADD/UNLINK is topology - the sh:manifest path handles it; suppress the default
-        // full-reload for an in-scope unlink so an open canvas doesn't hard-refresh.
-        const inScope = [join(root, 'design', 'scenes'), join(root, 'design', 'components')].some((w) => hctx.file.startsWith(w))
-        if (inScope && !existsSync(hctx.file)) return []
-        return
-      }
-      // controlled edit (or a layout/provider/fixture fanout): the shell drives a lease-aware,
-      // rev-stamped reload of exactly these frames. Suppress Vite's default React update.
-      if (affected.length) { for (const id of affected) pendingInv.add(id); flushInv() }
-      return []
     },
 
     configureServer(server: ViteDevServer) {
@@ -197,10 +200,16 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       }
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any) }))
-      server.middlewares.use(routesMiddleware(server, clientDir))
+      // the marks start with the dev server, before any page asks (spec 26)
+      initMarks(root, manifest.frames)
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest }))
+      server.middlewares.use(routesMiddleware(server, clientDir, {
+        doc: (id) => docRev(root, manifest.frames, id),
+        docs: () => docRevs(root, manifest.frames),
+      }))
 
-      devServer = server   // A7: handleHotUpdate needs ws.send to emit sh:frame-invalidated
+      devServer = server   // the update hooks send sh:frame-invalidated through it
+      guardUpdates(server, root, () => manifest, hooks)
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       // Broadcast only when the FRAMES changed - plain content edits ride HMR alone (spec
       // §5.6), and a board/folder/description edit (the manifest carries those now) must
@@ -210,6 +219,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       const regen = debounce(() => {
         manifest = scanFrames(root, projectInfo())   // keep the cached manifest fresh for affectedFrameIds
         const changed = writeManifest(root, manifest)
+        if (observeMarks()) server.ws.send('sh:marks', {})   // a frame added (a new id, a rename) or gone
         const key = JSON.stringify(manifest.frames), sKey = JSON.stringify(manifest.scenes)
         if (changed && key !== framesKey) server.ws.send('sh:manifest', manifest as any)
         // a scene's title or description changed (its brief) with the frames intact: the shell
@@ -280,17 +290,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       // change: only meta edits matter; scanFrames re-extracts and writeManifest de-dupes writes.
       // a brief's first line is its scene's description; a note file IS its sticky (spec 18)
       server.watcher.on('change', (f) => inScope(f) && (/\.(tsx|jsx)$/.test(f) || f.endsWith('_brief.md') || isNoteFile(f)) && regen())
-      // sidebar marks (spec 25): a frame or its sticky note changed on disk - an edit, an agent, a
-      // git pull. The shell re-reads /api/marks; what changed is the file's own clock.
-      const marksChanged = debounce(() => server.ws.send('sh:marks', {}), 300)
-      for (const ev of ['add', 'change', 'unlink'] as const)
-        server.watcher.on(ev, (f) => { if (inScope(f) && (/\.(tsx|jsx|html)$/.test(f) || isNoteFile(f))) marksChanged() })
-      // a deleted sticky note leaves no file to date it: its frame changed now
-      server.watcher.on('unlink', (f) => {
-        if (!inScope(f) || !isNoteFile(f)) return
-        const fr = manifest.frames.find((x) => noteFileFor(join(root, x.file)) === f)
-        if (fr) recordChanged(root, [fr.id])   // before the debounced sh:marks lands
-      })
+      // sidebar marks (spec 26): anything a frame reads changed on disk - an edit no hot update
+      // carried (a sticky note, a file no page has loaded), an agent, a git pull. The fingerprints
+      // say which frames; a hot update has already recorded its own, so nothing counts twice.
+      const marksChanged = debounce(() => { if (observeMarks()) server.ws.send('sh:marks', {}) }, 300)
+      for (const ev of ['add', 'change', 'unlink'] as const) server.watcher.on(ev, (f) => { if (!f.startsWith(localDir) && !f.startsWith(boardsDirGen)) marksChanged() })
       const configFile = join(root, 'design', 'config.ts')
       server.watcher.on('change', (f) => {
         if (f !== configFile) return
@@ -422,7 +426,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin {
       } catch { /* no inbox watcher - the HTTP/CLI transport still serves shell-ful agents */ }
     },
   }
+  return [main, updatesPlugin(root, () => manifest, () => devServer && hooks)]
 }
+
+/** The marks look at the frames on disk; true when they recorded something. */
+function observed(r: { doc: string[]; note: string[] }) { return r.doc.length + r.note.length > 0 }
 
 function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): T {
   let t: ReturnType<typeof setTimeout>

@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, boardLabel, boardFrames, cap, humanize, fetchBoardNames, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, boardLabel, boardFrames, cap, humanize, fetchBoardNames, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
@@ -514,6 +514,7 @@ export function App() {
   // live updates from the dev server (source-served shell has import.meta.hot)
   useEffect(() => {
     if (!import.meta.hot) return
+    logReload({ kind: 'shell-boot' })   // the reload log: every time the canvas page itself loads
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
     // a brief's title or description changed with the frames intact: relabel, never re-key
     import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
@@ -577,6 +578,10 @@ export function App() {
         // sleeping override of the previous document must not be trusted for this one
         if (s.nodes.find((n) => n.key === nodeKey)?.status === 'ready') s.bumpRev(nodeKey)
         s.setStatus(nodeKey, 'ready')
+        // the revision this document was served with (spec 26): a look counts up to it, and one older
+        // than the frame's last edit reloads
+        if (typeof data.doc === 'string') s.setShown(nodeKey, data.doc)
+        logReload({ kind: 'ready', node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
       } else if (data.type === 'sh:error') {
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
       } else if (data.type === 'sh:exit-interact') {

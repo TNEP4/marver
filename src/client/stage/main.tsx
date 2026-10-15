@@ -6,7 +6,7 @@
  * agents opt into shared-element morphs with plain view-transition-name CSS.
  *
  * The shell owns chrome, device sizing, walk order, and the URL; the stage owns data-goto:
- *   stage -> shell:  sh:stage-ready · sh:stage-at {at} · sh:stage-exit · sh:stage-error
+ *   stage -> shell:  sh:stage-ready · sh:stage-shown {at, epoch, doc} · sh:stage-at {at} · sh:stage-exit · sh:stage-error
  *                    sh:stage-key {key, code} (forwarded shortcuts)
  *   shell -> stage:  sh:stage-set {at} (history / walk / restart) · sh:set-theme
  */
@@ -22,6 +22,10 @@ const params = new URLSearchParams(location.search)
 // token systems, .dark for class-keyed ones (Tailwind/shadcn). Missing the class made
 // play render class-keyed apps light while the canvas showed them dark.
 const bootTheme = params.get('theme') ?? 'light'
+/** The revisions this stage document was served with (spec 26): { epoch, doc: { frame: rev } }. */
+const stamps: { epoch: string; doc: Record<string, number> } | null = (() => {
+  try { return JSON.parse(document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? 'null') } catch { return null }
+})()
 // slides mode: the shell says so in the URL; the stage stamps the attributes every slide
 // can key its own motion off - data-sl-play (the deck is playing) on <html> for the whole
 // show, data-sl-entered once each swap settles, data-mv-slide while the mounted frame is a
@@ -196,6 +200,13 @@ function Stage() {
       if (announce) post({ type: 'sh:stage-at', at: id })
     }
   }
+
+  // spec 26: after EVERY frame that commits - the first and each navigation - the stage says which
+  // frame it shows at which revision: the stamp this document was served with, so a frame imported
+  // later never claims more than the wrappers it renders with
+  useEffect(() => {
+    if (mounted) post({ type: 'sh:stage-shown', at: current.current, epoch: stamps?.epoch ?? '', doc: stamps?.doc[current.current] ?? 0 })
+  }, [mounted])
 
   // sh:stage-ready fires ONCE, after the first frame actually commits to the DOM (not when
   // goto is merely scheduled) - the shell re-drives the review highlight on it, which must

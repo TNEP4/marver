@@ -100,7 +100,7 @@ async function boot() {
     // sh:ready on the first COMMIT, stamped with the URL revision so the shell can drop a ready queued
     // by a superseded document (one it auto-renavigated past) - a WindowProxy survives navigation, so
     // a stale ready could otherwise mark a reloading frame ready. Mirrors the sh:measure generation guard.
-    const ready = () => { phases.commit = Math.round(performance.now()); post({ type: 'sh:ready', id, gen: params.get('r') ?? '', meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined, phases }) }
+    const ready = () => { phases.commit = Math.round(performance.now()); post({ type: 'sh:ready', id, gen: params.get('r') ?? '', doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '', meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined, phases }) }
     createRoot(document.getElementById('root')!).render(createElement(Boundary, null, createElement(Committed, { onCommit: ready }, tree)))
   } catch (err) {
     fail((err as Error).message)

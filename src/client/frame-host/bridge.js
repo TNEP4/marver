@@ -75,7 +75,8 @@ window.addEventListener('message', (e) => {
 if (isHtmlFrame) {
   // stamp the URL revision (see main.tsx) so the shell can drop a ready from a superseded document
   const gen = new URLSearchParams(location.search).get('r') ?? ''
-  const ready = () => post({ type: 'sh:ready', id, gen })
+  // and echo the revision the server stamped this document with (spec 26): what it shows
+  const ready = () => post({ type: 'sh:ready', id, gen, doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '' })
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
 }
 

@@ -92,6 +92,12 @@ export interface Node {
    *  as a failed frame; see canvas/ready-watch.ts). Transient - cleared on any real ready/error and
    *  on every fresh navigation. */
   readyRetried?: boolean
+  /** spec 26: an update waits for this node - it reloads through the boot queue once the frame is on
+   *  screen and not in use (canvas/updates.ts). Transient. */
+  stale?: boolean
+  /** spec 26: the revision of the document it shows - "epoch:doc", stamped by the dev server when it
+   *  served the document, echoed by its sh:ready. A look counts only up to it. Transient. */
+  shown?: string
 }
 /** A comment notification: a persistent bottom-right glass pill. Three kinds
  *  share it - a Marver (agent) reply renders frame-first with the mark; a
@@ -151,6 +157,7 @@ export const modeAllowed = (board: string, mode: 'present' | 'focus' | 'slides')
 export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
+import { pumpUpdates } from './canvas/updates.ts'
 import { buildTree, flatten, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
@@ -231,6 +238,9 @@ export const sceneLabel = (n: string) => labelOf(n, useStore.getState().manifest
 /** The double-submit CSRF token the owner gate wants echoed (same read as comments-store). */
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 /** POST to an owner-gated dev API route, echoing the CSRF cookie the gate requires. */
+/** The reload log (spec 26 Part 1): what this page saw boot or settle - best effort, dev only. */
+const TAB = Math.random().toString(36).slice(2, 8)
+export const logReload = (entry: Record<string, unknown>) => { if (!PUBLISHED) void postOwner('perf/reload', { tab: TAB, ...entry }).catch(() => {}) }
 const postOwner = (path: string, body: unknown) =>
   fetch(`${ROUTE}/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
 
@@ -406,12 +416,24 @@ function defaultSize(frame: FrameEntry) {
 }
 
 let resizedInGesture = false
+// set inside the store (they need it): a reload's height hold, and the marks-vs-documents check
+let holdHeight: (key: string) => void = () => {}
+let reconcile: () => void = () => {}
 // sidebar marks: the fetch in flight, and acknowledgements the server has not confirmed yet
 let marksSeq = 0
 let marksTimer: ReturnType<typeof setTimeout> | undefined
 const pendingSeen: Record<string, number> = {}
+let pendingEpoch = ''
 /** frames looked at before the first marks arrived (a link, a click, focus) - acknowledged when they land */
 const lookedEarly = new Set<string>()
+/** frames you opened while their new version was still loading: the look completes when it is up (spec 26) */
+const armed = new Map<string, number>()
+const ARMED_MS = 10_000
+/** The doc revision a node's document shows, in this epoch - -1 when unknown or from another one. */
+export const shownRev = (n: Node, m: Marks): number => {
+  const [epoch, rev] = (n.shown ?? '').split(':')
+  return epoch === m.epoch && rev !== undefined && /^\d+$/.test(rev) ? Number(rev) : -1
+}
 /** Why a board's last load failed, from the server (a parse error names its line) - for its toast. */
 const loadErrors = new Map<string, string>()
 const whyNot = (name: string) => { const e = loadErrors.get(name); return e ? ` - ${e}` : '' }
@@ -458,13 +480,13 @@ interface State {
   toasts: Toast[]
   boardHash: string | null            // sha256 of the board file on disk, when materialized
   dirty: boolean
-  // A6/A7 controlled HMR (transient, never persisted): a frame the user is actively using
-  // (interact/play target, mid-gesture, laser/comment engaged) is "leased" - a hot update to
-  // it is DEFERRED (coalesced to the latest revision) until a safe point, so an agent edit
-  // never yanks the user out of their flow.
-  pendingFrameRevisions: Record<string, string>            // frameId -> latest deferred revision
+  // Calm updates (spec 26, transient): an edit marks its frames' nodes stale; a stale node reloads
+  // through the boot queue once it is on screen and not in use - a frame the user is actively using
+  // (interact/play target, mid-gesture, laser/comment engaged) is "leased" and waits for a safe point.
   externalLeases: Record<string, { laser?: true; comment?: true }>   // nodeKey -> transient engagement
   playUpdateRevision: string | null                        // a revision arrived while play is open
+  /** the frame the play/focus stage committed last, and the revision it shows (sh:stage-shown) */
+  stageShown: { at: string; shown: string } | null
   playNav: number                                          // bumps to reload the play stage on demand
   pathPulse: number                                        // bumps on each successful path copy - flashes the toolbar icon into a check
   imagePulse: number                                       // bumps on each successful image copy - same flash, the images-square icon
@@ -496,7 +518,8 @@ interface State {
   setLaser(on: boolean): void
   invalidateFrames(frameIds: string[], revision: string): void
   setExternalLease(nodeKey: string, reason: 'laser' | 'comment', on: boolean): void
-  flushFrameUpdates(frameIds?: string[]): void
+  /** A safe point (a lease ended, a gesture ended): stale nodes may reload now. */
+  flushFrameUpdates(): void
   applyPlayUpdate(): void
   moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
   setSelectedTheme(theme: string): void
@@ -545,9 +568,13 @@ interface State {
   /** Sidebar marks (spec 25): what changed since you looked - null on a published canvas. */
   marks: Marks | null
   syncMarks(): Promise<void>
-  /** You looked at these frames: clear their "new", here and on disk - skipping one still holding a
-   *  deferred update, unless `shown` (the dwell and the play stage know what is on screen; Mark all as seen) */
-  markSeen(frameIds: readonly string[], shown?: boolean): void
+  /** You looked at these frames: clear their "new", here and on disk - only for the revision a node
+   *  (or the stage) of the frame shows; `all` (Mark all as seen) clears what the page knows. */
+  markSeen(frameIds: readonly string[], all?: boolean): void
+  /** A node's document reported the revision it shows (sh:ready). */
+  setShown(key: string, shown: string): void
+  /** A stale node's turn: it reloads now, its height held until it settles (canvas/updates.ts). */
+  startReload(key: string): void
   /** Boards showing a working frame - their sidebar icon shimmers while an agent works. */
   workingBoards: string[]
   /** The place in the server's order of the activity last applied - an older answer is dropped. */
@@ -558,7 +585,7 @@ interface State {
 
 /** A6: is any node of this frame in active use, so a hot update must DEFER? Frame-scoped -
  *  if the same frame is placed twice and one copy is active, both stay on the same revision. */
-function frameIsLeased(frameId: string, s: State): boolean {
+export function frameIsLeased(frameId: string, s: State): boolean {
   return s.nodes.some((n) =>
     n.frame === frameId && n.status !== 'error' && (
       s.interact === n.key ||
@@ -626,6 +653,45 @@ export const useStore = create<State>((set, get) => {
    *  note is made here; a board the human placed by hand is never moved (spec 18, 0.19.1). */
   const composed = (s: { layout: BoardLayout | null; sceneRows: string[][] | null; boardAuto: boolean }) => !!(s.layout || s.sceneRows?.length || s.boardAuto)
   const cramped = () => { const s = get(); return !!s.manifest && notesCramped(s.nodes, s.manifest) }
+  // Calm updates (spec 26): a node reloading keeps its height until its frame says it has settled
+  // (or HOLD_MS pass); a provisional measure in either direction waits, the last one is kept. The
+  // board reflows once, when the last held node lets go - never once per frame of a burst.
+  const HOLD_MS = 4000
+  const holds = new Map<string, { timer: ReturnType<typeof setTimeout>; at: number; last?: Parameters<State['measureNode']> }>()
+  let reflowOwed = false
+  holdHeight = (key) => {
+    const was = holds.get(key)
+    if (was) clearTimeout(was.timer)
+    holds.set(key, { timer: setTimeout(() => letGo(key, true), HOLD_MS), at: performance.now() })
+  }
+  const letGo = (key: string, apply: boolean) => {
+    const h = holds.get(key)
+    if (!h) return
+    clearTimeout(h.timer)
+    holds.delete(key)
+    if (apply && h.last) get().measureNode(...h.last)
+    if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow() }
+  }
+  const dropHolds = () => { for (const h of holds.values()) clearTimeout(h.timer); holds.clear(); reflowOwed = false }
+  /** A content measure moved the rows: once, after the last held node lets go. */
+  const reflowAfterHolds = () => { if (holds.size) reflowOwed = true; else scheduleReflow() }
+
+  // Marks (spec 26): a node that shows an older revision than its frame's `doc` has missed an update
+  // (an event lost while disconnected, an edit that landed while it loaded): it goes stale. The
+  // snapshot is the truth; events only make it faster.
+  reconcile = () => {
+    const s = get(), m = s.marks
+    if (!m) return
+    let any = false
+    const nodes = s.nodes.map((n) => {
+      if (n.stale || n.status !== 'ready' || n.missing || !n.shown) return n
+      if (shownRev(n, m) >= (m.doc[n.frame] ?? 0)) return n
+      any = true
+      return { ...n, stale: true }
+    })
+    if (any) { set({ nodes }); pumpUpdates() }
+  }
+
   /** A note may have landed with no room (a frame note via the manifest, a scene note via
    *  sh:scenes, either merged late by boot/switch): a composed board re-applies its layout. */
   const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow(cramped) }
@@ -898,7 +964,7 @@ export const useStore = create<State>((set, get) => {
     manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
     board: DATA?.default ?? 'all-scenes', boardAuto: (DATA?.default ?? 'all-scenes') === 'all-scenes', deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
-    pendingFrameRevisions: {}, externalLeases: {}, playUpdateRevision: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
+    externalLeases: {}, playUpdateRevision: null, stageShown: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
     async boot(mayCommit) {
       const seq = ++loadSeq
@@ -911,7 +977,7 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       set(next)
-      cancelReflow()
+      cancelReflow(); dropHolds()
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read
@@ -948,7 +1014,7 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
       set({ board: name, interact: null, ...next })
-      cancelReflow()
+      cancelReflow(); dropHolds()
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })
@@ -1259,6 +1325,14 @@ export const useStore = create<State>((set, get) => {
       // a Doc that reports IS one, whatever the last load's scan said (it arrived since): its heights
       // count until the next load re-reads the sources
       measuring?.add(f.id)
+      // held while it reloads (spec 26): only a settled measure lands now; the last other one waits
+      const held = holds.get(key)
+      if (held) {
+        if (settled !== true) { held.last = [key, frameId, ownWidth, measuredWidth, height, settled]; return }
+        holds.delete(key); clearTimeout(held.timer)
+        logReload({ kind: 'settled', node: key, frame: frameId, ms: performance.now() - held.at })
+        if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow() }
+      }
       // Generous cap: a reference doc with many screenshots is legitimately very tall and must fit in
       // FULL (this was 2.5x a viewport ~= 2700px, which clipped image-heavy docs). Still bounded so a
       // broken measurement can't mint an infinite frame.
@@ -1282,7 +1356,7 @@ export const useStore = create<State>((set, get) => {
           // Doc layout changed (document<->wide): adopt the new own width first; the
           // iframe resizes, remeasures, and the height commits on the next message
           set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, w: W } : n)) }))
-          scheduleReflow()
+          reflowAfterHolds()
           return
         }
       }
@@ -1292,7 +1366,7 @@ export const useStore = create<State>((set, get) => {
       if (settled === true && node.sizeMode !== 'manual') persistHeight(mKey, H)
       if (Math.round(node.h) === H) return
       set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) }))
-      scheduleReflow()
+      reflowAfterHolds()
     },
     noteMeasured(key, height) {
       // the column's height is its content's - the layout learns it here, and a composed board
@@ -1342,6 +1416,8 @@ export const useStore = create<State>((set, get) => {
       // any real ready/error resets the one-shot retry allowance, so a later manual reload or a
       // fresh manifest earns its own auto-retry again
       set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, status, error, readyRetried: false } : n)) }))
+      if (status === 'error') letGo(key, false)                        // an error holds no batch
+      if (status !== 'loading') pumpUpdates()                           // a slot, or a lease, may be free
     },
     // Reload a frame on a fresh rev-stamped URL (dodges a poisoned-cache document, #20). The
     // watchdog calls this with automatic=true after a silent deadline: it fires at most once per
@@ -1438,32 +1514,33 @@ export const useStore = create<State>((set, get) => {
       }
       if (!gesture) get().flushFrameUpdates()   // A6: gesture end is a safe point for deferred updates
     },
-    // A6/A7: apply a controlled hot update. A leased frame's revision is deferred (coalesced to
-    // the latest) and applied at the next safe point; an idle frame reloads now via its nav nonce.
+    // Calm updates (spec 26): an edit reached these frames. Their nodes that show a document go
+    // stale and reload through the boot queue - on screen first, never while in use; one still loading
+    // its first document is checked against the marks when it is ready (setShown).
     invalidateFrames(frameIds, revision) {
       const ids = new Set(frameIds.filter((x) => typeof x === 'string'))
       if (!ids.size) return
-      bumpManifestRev()
       const s = get()
-      const pending = { ...s.pendingFrameRevisions }
-      const nodes = s.nodes.map((n) => {
-        if (!ids.has(n.frame)) return n
-        if (frameIsLeased(n.frame, s)) { pending[n.frame] = revision; return n }
-        return { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1, readyRetried: false }
-      })
-      set({ nodes, pendingFrameRevisions: pending, ...(s.play ? { playUpdateRevision: revision } : {}) })
+      const nodes = s.nodes.map((n) => (ids.has(n.frame) && n.status !== 'loading' && !n.missing ? { ...n, stale: true } : n))
+      set({ nodes, ...(s.play ? { playUpdateRevision: revision } : {}) })
+      pumpUpdates()
     },
-    flushFrameUpdates(frameIds) {
-      const s = get()
-      const ids = (frameIds ?? Object.keys(s.pendingFrameRevisions)).filter((id) => s.pendingFrameRevisions[id] && !frameIsLeased(id, s))
-      if (!ids.length) return
+    flushFrameUpdates() { pumpUpdates() },
+    startReload(key) {
+      const n = get().nodes.find((x) => x.key === key)
+      if (!n) return
       bumpManifestRev()
-      const apply = new Set(ids)
-      const pending = { ...s.pendingFrameRevisions }
-      for (const id of ids) delete pending[id]
-      const nodes = s.nodes.map((n) => apply.has(n.frame)
-        ? { ...n, status: 'loading' as const, error: undefined, nav: (n.nav ?? 0) + 1, readyRetried: false } : n)
-      set({ nodes, pendingFrameRevisions: pending })
+      holdHeight(key)
+      set((s) => ({ nodes: s.nodes.map((x) => (x.key === key
+        ? { ...x, stale: false, status: 'loading' as const, error: undefined, nav: (x.nav ?? 0) + 1, readyRetried: false }
+        : x)) }))
+    },
+    setShown(key, shown) {
+      set((s) => ({ nodes: s.nodes.map((x) => (x.key === key ? { ...x, shown } : x)) }))
+      reconcile()
+      const f = get().nodes.find((x) => x.key === key)?.frame
+      const until = f && armed.get(f)
+      if (until) { armed.delete(f!); if (Date.now() < until) get().markSeen([f!]) }   // the look you made while it loaded
     },
     setExternalLease(nodeKey, reason, on) {
       set((s) => {
@@ -1614,29 +1691,48 @@ export const useStore = create<State>((set, get) => {
           const r = await fetch(`${ROUTE}/api/marks`, { headers: { 'x-mv-c': csrf() } })
           if (seq !== marksSeq) return
           if (r.ok) {
-            const m = await r.json() as Marks
-            if (seq !== marksSeq) return
+            const m = await r.json() as Marks | null
+            if (seq !== marksSeq || !m) return
+            // a new epoch (the marks started over): what this page held belongs to the old one
+            if (m.epoch !== pendingEpoch) { for (const id of Object.keys(pendingSeen)) delete pendingSeen[id]; pendingEpoch = m.epoch }
             const seen = { ...m.seen }
             for (const [id, at] of Object.entries(pendingSeen)) seen[id] = Math.max(seen[id] ?? 0, at)
             set({ marks: { ...m, seen } })
+            reconcile()
             if (lookedEarly.size) { const early = [...lookedEarly]; lookedEarly.clear(); get().markSeen(early) }
+            const now = Date.now(), due = [...armed].filter(([, t]) => t > now).map(([f]) => f)
+            if (due.length) get().markSeen(due)   // a look that waited on a newer version than the page knew
             return
           }
           if (r.status !== 403) return
         }
       } catch { /* the next broadcast heals it */ }
     },
-    markSeen(frameIds, shown) {
-      const m = get().marks, held = get().pendingFrameRevisions
+    markSeen(frameIds, all) {
+      const s = get(), m = s.marks
       if (!m) { if (!PUBLISHED) for (const id of frameIds) lookedEarly.add(id); return }
-      const fresh = frameIds.filter((id) => isNew(m, id) && (shown || !held[id]))
-      if (!m || !fresh.length) return
-      // you saw the change the page shows - its stamp, never a clock: an edit landing after this is new
-      const seen = Object.fromEntries(fresh.map((id) => [id, m.changed[id] ?? 0]))
+      // what is on screen shows a revision: a node of the frame, or the stage - a look counts up to it,
+      // never past it (an edit not loaded yet stays new until its document is up)
+      // the highest revision on screen for the frame, -1 when nothing shows its last edit
+      const showsUpTo = (f: string) => {
+        const doc = m.doc[f] ?? 0
+        let best = -1
+        if (s.play && s.stageShown?.at === f && !s.playUpdateRevision) { const [e, r] = s.stageShown.shown.split(':'); if (e === m.epoch && Number(r) >= doc) best = Number(r) }
+        for (const n of s.nodes) if (n.frame === f && n.status === 'ready' && !n.stale) { const r = shownRev(n, m); if (r >= doc) best = Math.max(best, r) }
+        return best
+      }
+      const fresh = frameIds.filter((id) => isNew(m, id) && (all || showsUpTo(id) >= 0))
+      // a frame whose new version is not up yet: the look waits for it, never acknowledges early
+      if (!all) for (const id of frameIds) if (isNew(m, id) && !fresh.includes(id) && !armed.has(id)) armed.set(id, Date.now() + ARMED_MS)
+      for (const id of fresh) armed.delete(id)
+      if (!fresh.length) return
+      // what you saw: the frame's last change as this page knows it - or, when a document already shows a
+      // newer revision than the page has heard of, that one (everything up to it is on screen)
+      const seen = Object.fromEntries(fresh.map((id) => [id, all ? m.changed[id] ?? 0 : Math.max(m.changed[id] ?? 0, showsUpTo(id))]))
       Object.assign(pendingSeen, seen)
       set({ marks: { ...m, seen: { ...m.seen, ...seen } } })
-      void postOwner('marks/seen', { frames: seen })
-        // kept once confirmed too (stamps only ever rise): an answer that left before this one cannot undo it
+      void postOwner('marks/seen', { epoch: m.epoch, frames: seen })
+        // kept once confirmed too (revisions only ever rise): an answer that left before this one cannot undo it
         .then((r) => { if (!r.ok) throw new Error(String(r.status)) })
         .catch(() => { for (const [id, at] of Object.entries(seen)) if (pendingSeen[id] === at) delete pendingSeen[id]; void get().syncMarks() })
     },
@@ -1766,11 +1862,11 @@ export const useStore = create<State>((set, get) => {
   }
 })
 
-// a frame opened in focus or play is looked at (spec 25); selecting one is handled in select()
+// a frame shown in focus or play is looked at (spec 25): the stage reports each frame it commits,
+// with the revision it shows (Play.tsx sets stageShown) - selecting one is handled in select()
 useStore.subscribe((s, prev) => {
-  // a frame opened in focus or play is in front of you too - stepping within play while an edit is
-  // held behind Update shows the old version, so that waits for the dwell after Update
-  if (s.play?.at && s.play.at !== prev.play?.at && (!prev.play || !s.playUpdateRevision)) { const f = s.nodes.find((n) => n.key === s.play!.at)?.frame ?? s.play.at; s.markSeen([f], true) }
+  if (s.stageShown && s.stageShown !== prev.stageShown) s.markSeen([s.stageShown.at])
+  if (!s.play && prev.play) { useStore.setState({ stageShown: null }); pumpUpdates() }   // the canvas is in view again
 })
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)

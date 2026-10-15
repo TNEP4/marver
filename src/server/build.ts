@@ -566,7 +566,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
   let css: Record<string, unknown> | undefined
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
-  plugins.push(marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }), cssFixPlugin())
+  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss }), cssFixPlugin())
 
   // Production mode, EXPLICITLY - never inherited from the shell. A build run
   // with NODE_ENV=development/test makes plugin-react emit jsxDEV calls whose

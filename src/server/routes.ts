@@ -8,7 +8,11 @@ import { ROUTE } from '../cli/name.ts'
  * Entry html files carry an {{ENTRY}} placeholder replaced with an /@fs/ absolute path,
  * because a relative ./main.tsx would resolve against the URL, not the package dir.
  */
-export function routesMiddleware(server: ViteDevServer, clientDir: string): Connect.NextHandleFunction {
+/** The revision a document is served with (spec 26): a frame's `doc` revision, and for the stage
+ *  every frame's - stamps may lag the code a document runs, never lead it. */
+export interface Stamps { doc(id: string): string; docs(): { epoch: string; doc: Record<string, number> } | null }
+
+export function routesMiddleware(server: ViteDevServer, clientDir: string, stamps?: Stamps): Connect.NextHandleFunction {
   const page = (dir: string) => {
     const html = readFileSync(join(clientDir, dir, 'index.html'), 'utf8')
     const entry = '/@fs/' + join(clientDir, dir, 'main.tsx').split('\\').join('/')
@@ -60,7 +64,10 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string): Conn
     if (!dir) return next()
 
     try {
-      const html = await server.transformIndexHtml(req.url ?? '/', page(dir))
+      // stamped before the transform: any module the page fetches after this is at least as new
+      const stamp = dir === 'frame-host' ? stamps?.doc(url.searchParams.get('id') ?? '') : dir === 'stage' ? JSON.stringify(stamps?.docs() ?? null) : undefined
+      let html = await server.transformIndexHtml(req.url ?? '/', page(dir))
+      if (stamp) html = html.replace('<head>', `<head><meta name="mv-doc" content="${stamp.replace(/[&"<>]/g, (c) => `&#${c.charCodeAt(0)};`)}">`)
       res.setHeader('content-type', 'text/html')
       // never cache the host pages: a stale frame-host document pins an outdated module
       // graph inside an iframe, which no reload of the PARENT can flush (friction log #20)

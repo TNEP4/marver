@@ -5,7 +5,7 @@
  */
 import { useEffect, type HTMLAttributes, type ReactNode } from 'react'
 import { create } from 'zustand'
-import { useStore, PUBLISHED } from './store.ts'
+import { useStore, PUBLISHED, shownRev } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { frameMark, isNew, questions, type Ask, type FrameMark } from '../../shared/marks.ts'
 
@@ -27,12 +27,6 @@ const derive = () => {
 }
 useStore.subscribe((s, p) => { if (s.marks !== p.marks || s.manifest !== p.manifest) derive() })
 useComments.subscribe((s, p) => { if (s.threads !== p.threads) derive() })
-
-/** The playNav at which the focus/play stage last finished loading (Play reports it); -1 while none
- *  has. An applied Update reloads the stage: the change is on screen once that reload lands. */
-let stageNav = -1
-export const stageShown = () => { stageNav = useStore.getState().playNav }
-useStore.subscribe((s, p) => { if (!s.play && p.play) stageNav = -1 })
 
 export const asksNow = (): Map<string, Ask> => useMarkView.getState().q
 /** Open Marver questions per frame - for the board list, a light component that rolls up per board. */
@@ -63,7 +57,7 @@ export const toneOf = (m: FrameMark): string => (!m ? '' : m.kind === 'new' ? ' 
 
 export const Bubble = ({ n, hollow }: { n: number; hollow?: boolean }) => (
   <i className={`mk-bubble${hollow ? ' hollow' : ''}`} data-mark={hollow ? 'answered' : 'ask'}
-    aria-label={hollow ? `${n} answered, waiting on the agent` : `${n} question${n > 1 ? 's' : ''} for you`}>{n}</i>
+    aria-label={hollow ? `${n} answered, waiting on the agent` : `${n} waiting on you`}>{n}</i>
 )
 
 /** A frame row's slot: the bubble, or the blue dot. */
@@ -80,38 +74,42 @@ export function MarkedRow({ frame, className, children, ...rest }: { frame: stri
 }
 
 /** Looking at a frame counts as seeing it (spec 25): any part of it in the window for two seconds,
- *  at a readable zoom (scale 0.5 or more), showing the change - a frame still loading, or holding a
- *  deferred update, is not showing it yet. In focus or play the frame on stage fills the window, once
- *  an update it holds is applied and the stage has reloaded with it. Polls once a second, and only frames that are new. */
+ *  at a readable zoom (scale 0.5 or more) - for the revision its document shows (spec 26): a frame
+ *  still loading, stale, or showing an older revision than its last edit is not showing that edit, and
+ *  the clock starts again when a new revision is up. In focus or play the stage counts the same way,
+ *  once an Update it holds is applied. Polls once a second, and only frames that are new. */
 export function useSeenOnScreen() {
   useEffect(() => {
     if (PUBLISHED) return
-    const since = new Map<string, number>()   // "key@changed" -> when it came into view
+    const since = new Map<string, number>()   // "where@changed:shown" -> when it came into view
     const tick = () => {
       const s = useStore.getState(), m = s.marks
       const now = Date.now()
-      const shown = new Map<string, string>()   // clock key -> frame; a newer change restarts the clock
+      const shown = new Map<string, string>()   // clock key -> frame; a newer change or document restarts the clock
       if (m && !document.hidden && s.play) {
-        const f = s.nodes.find((n) => n.key === s.play!.at)?.frame ?? s.play.at
-        if (!s.playUpdateRevision && stageNav === s.playNav && isNew(m, f)) shown.set(`play:${f}@${m.changed[f] ?? 0}`, f)
+        const st = s.stageShown, f = st?.at
+        if (st && f && !s.playUpdateRevision && isNew(m, f)) {
+          const [e, r] = st.shown.split(':')
+          if (e === m.epoch && Number(r) >= (m.doc[f] ?? 0)) shown.set(`play:${f}@${m.changed[f] ?? 0}:${st.shown}`, f)
+        }
       } else if (m && !document.hidden && s.scale >= 0.5) {
         // in view: some of it inside the window and not all of that under the open sidebar
         const P = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
         const W = window.innerWidth, H = window.innerHeight
         for (const n of s.nodes) {
-          if (n.status !== 'ready' || s.pendingFrameRevisions[n.frame] || !isNew(m, n.frame)) continue
+          if (n.status !== 'ready' || n.stale || !isNew(m, n.frame) || shownRev(n, m) < (m.doc[n.frame] ?? 0)) continue
           const r = document.querySelector<HTMLElement>(`.sh-node[data-node="${CSS.escape(n.key)}"]`)?.getBoundingClientRect()
           if (!r) continue
           const x0 = Math.max(r.left, 0), x1 = Math.min(r.right, W), y0 = Math.max(r.top, 0), y1 = Math.min(r.bottom, H)
           if (x0 >= x1 || y0 >= y1) continue
           if (P && x0 >= P.left && x1 <= P.right && y0 >= P.top && y1 <= P.bottom) continue
-          shown.set(`${n.key}@${m.changed[n.frame] ?? 0}`, n.frame)
+          shown.set(`${n.key}@${m.changed[n.frame] ?? 0}:${n.shown}`, n.frame)
         }
       }
       for (const k of [...since.keys()]) if (!shown.has(k)) since.delete(k)
       const due: string[] = []
       for (const [k, f] of shown) { const t = since.get(k) ?? now; since.set(k, t); if (now - t >= 2000) due.push(f) }
-      if (due.length) s.markSeen(due, true)
+      if (due.length) s.markSeen(due)
     }
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
