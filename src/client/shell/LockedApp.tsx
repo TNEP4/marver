@@ -84,15 +84,18 @@ export function App() {
 
   // back/forward + pasted links, within what the lock allows
   useEffect(() => {
+    let popSeq = 0
     const onPop = async () => {
+      const mine = ++popSeq                              // a lookup newer navigation overtook is dropped
       const raw = parseHash()
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
       const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
       const h = r.hash
       const board = h.board ?? (h.focus ? undefined : await landingBoard())
+      if (mine !== popSeq) return
       const s = useStore.getState()
       if (r.notice) s.toast(r.notice)
-      if (board && (board !== s.board || h.f?.length)) {
+      if (board && board !== s.board) {
         await s.switchBoard(board)
         useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
         if (h.play?.slides) enterSlides(h.play)
@@ -100,6 +103,7 @@ export function App() {
         else land(h.f?.[0])
         return
       }
+      if (h.f?.length && s.play) return playCtl.setAt(h.f[0])   // the stage on screen steps to the frame named
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })
       // sync only holds WITHIN a mode: same-mode restores drive the MOUNTED
       // stage (sh:stage-set); crossing present↔slides re-enters and remounts
