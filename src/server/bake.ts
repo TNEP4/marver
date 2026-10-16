@@ -303,7 +303,13 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
       if (!pending || Date.now() - t > 6000) r(pending); else setTimeout(tick, 60) }; tick() })`, true)
     if (unsettled) return { ok: false, error: `the frame did not settle (${unsettled} image(s) or chart(s) still loading)` }
     await ev(`Promise.all(Array.from(document.querySelectorAll('image')).map((el) => { const href = el.getAttribute('href') || el.getAttribute('xlink:href'); if (!href) return 1; const im = new Image(); im.src = new URL(href, location.href).href; return im.decode().catch(() => 1) })).then(() => true)`, true)
-    await ev(`Promise.race([Promise.all(document.getAnimations().map((a) => a.finished.catch(() => 1))), new Promise((r) => setTimeout(r, 5000))]).then(() => true)`, true)
+    // a looping animation (a spinner, a pulsing dot) never finishes and keeps every capture
+    // different, so the frame could never be certified - and it would be asked again on every rest.
+    // The live sleep pauses all animations (sleep.ts PAUSE), so the compiler measures them paused too:
+    // finite ones are let run to their end first, infinite ones are held where they are.
+    await ev(`(document.getAnimations().forEach((a) => { const t = a.effect && a.effect.getComputedTiming(); if (t && t.iterations === Infinity) a.pause() }), true)`)
+    await ev(`Promise.race([Promise.all(document.getAnimations().filter((a) => a.playState !== 'paused').map((a) => a.finished.catch(() => 1))), new Promise((r) => setTimeout(r, 5000))]).then(() => true)`, true)
+    await ev(`(document.getAnimations().forEach((a) => a.pause()), true)`)
     await ev(`new Promise((resolve) => { let timer = 0; const done = () => { mo.disconnect(); resolve(true) }; const mo = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, 250) }); mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); timer = setTimeout(done, 250); setTimeout(done, 3000) })`, true)
     await ev(PAINTED, true)
     const err = await ev(`window.__mvFrameError || ''`)
@@ -483,13 +489,29 @@ export function pruneBakes(root: string, keep: number): void {
  *  concurrent ones - share one compile. */
 const inflight = new Map<string, Promise<BakeAnswer>>()
 
+/** Compiles that FAILED, by generation and key, so a frame that cannot be certified (it never stops
+ *  changing, it timed out, too many effects) is answered at once from memory instead of being
+ *  compiled again on every rest. The generation is in the key: an edit retries it. A failure that
+ *  says nothing about the frame (the source moved mid-compile, the browser died) is not kept. */
+const failed = new Map<string, string>()
+const FAILED_MAX = 2000
+const transient = (error: string) => /source changed|browser|Target closed|ECONN|could not load the frame/i.test(error)
+
+/** The answer for a compile still running when a request stops waiting (`waitMs`): the frame stays
+ *  live for now, and its next ask finds the result in the cache. */
+export const COMPILING = 'compiling - ask again'
+
 /** Compile many frames as ONE operation (one browser, `shotConcurrency()` at a time), the cache
  *  first. `urlFor(ask)` gives the frame's own URL; `urlBase` is where textures are served from;
  *  `live()` is the source generation NOW - a compile the source outran is not published. */
-export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk[]; urlFor: (ask: BakeAsk) => string; urlBase: string; live?: () => number; log?: (a: BakeAnswer) => void }): Promise<BakeAnswer[]> {
-  const { root, gen, asks, urlFor, urlBase, live, log } = opts
+export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk[]; urlFor: (ask: BakeAsk) => string; urlBase: string; live?: () => number; log?: (a: BakeAnswer) => void; waitMs?: number }): Promise<BakeAnswer[]> {
+  const { root, gen, asks, urlFor, urlBase, live, log, waitMs } = opts
   if (!cacheInside(root)) return asks.map((ask) => ({ ...ask, ok: false as const, error: 'design/.local/bakes resolves outside the project' }))
-  const answers: (BakeAnswer | null)[] = asks.map((ask) => readCached(root, gen, ask, urlBase))
+  const failedKey = (ask: BakeAsk) => `${root}|${gen}|${bakeKey(ask)}`
+  const answers: (BakeAnswer | null)[] = asks.map((ask) => {
+    const error = failed.get(failedKey(ask))
+    return error !== undefined ? { ...ask, ok: false as const, error } : readCached(root, gen, ask, urlBase)
+  })
   const protect = new Set(asks.map(bakeKey))   // keys this response names: never evicted under it
   const misses = new Map<string, { ask: BakeAsk; at: number[] }>()
   asks.forEach((ask, i) => { if (answers[i]) return; const k = `${root}|${gen}|${bakeKey(ask)}`; const m = misses.get(k); if (m) m.at.push(i); else misses.set(k, { ask, at: [i] }) })
@@ -503,7 +525,7 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
     }
     return p.then((a) => { for (const i of m.at) answers[i] = { ...a, ...m.ask } })
   })
-  if (mine.length) {
+  async function compile(): Promise<void> {
     const settle = (job: typeof mine[number], a: BakeAnswer) => { job.done = true; job.resolve(a) }
     try {
       await withBrowser('shot', (b) => pool(shotConcurrency(), mine, async (job) => {
@@ -513,6 +535,10 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
         if (live && live() !== gen) return settle(job, { ...job.ask, ok: false, error: 'the source changed during the compile' })
         let a: BakeAnswer
         try { a = r.ok ? writeCached(root, gen, job.ask, r, urlBase, protect) : { ...job.ask, ...r } } catch (e) { a = { ...job.ask, ok: false, error: (e as Error).message } }
+        if (!a.ok && !transient(a.error)) {
+          if (failed.size >= FAILED_MAX) failed.clear()
+          failed.set(failedKey(job.ask), a.error)
+        }
         log?.(a)
         settle(job, a)
       }))
@@ -520,6 +546,13 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
       for (const job of mine) if (!job.done) settle(job, { ...job.ask, ok: false, error: (e as Error).message })
     }
   }
-  await Promise.all(waits)
-  return answers as BakeAnswer[]
+  // The compile runs on its own; a caller with `waitMs` (the page, whose few connections must never
+  // be held for minutes - issue #23) gets what is ready by then and COMPILING for the rest.
+  const work = mine.length ? compile() : Promise.resolve()
+  const all = work.then(() => Promise.all(waits))
+  if (waitMs === undefined) { await all; return answers as BakeAnswer[] }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([all, new Promise((r) => { timer = setTimeout(r, waitMs) })])
+  clearTimeout(timer)
+  return answers.map((a, i) => a ?? { ...asks[i], ok: false as const, error: COMPILING })
 }

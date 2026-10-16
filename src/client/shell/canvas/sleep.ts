@@ -54,6 +54,11 @@ let seq = 0
 /** Nodes with one retry of a failed compile in flight. */
 const retried = new Set<string>()
 const RETRY_MS = 4000
+/** The server's answer for a compile still running (src/server/bake.ts COMPILING), and how many times a
+ *  node looks again for it before settling for the pause alone. */
+const COMPILING = 'compiling - ask again'
+const COMPILING_TRIES = 15
+const compiling = new Map<string, number>()
 
 /** Does this document have anything to compile? Cheap: one computed style per element. */
 export function hasEffects(doc: Document): boolean {
@@ -138,7 +143,14 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
   if (!install(doc, targets)) return 'live'
   // a certified sleep is remembered; the pause-only fallback is not, so the next lifecycle event
   // asks again (a compile the source outran, a server hiccup), and one retry is scheduled now
-  if (targets.length) asleep.set(nodeKey, { key: k, doc })
+  if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey) }
+  else if (!PUBLISHED && !answer.ok && answer.error === COMPILING) {
+    // the server answers in seconds and keeps compiling on its own (issue #23): look again until the
+    // compile lands, a bounded number of times
+    const n = (compiling.get(nodeKey) ?? 0) + 1
+    compiling.set(nodeKey, n)
+    if (n <= COMPILING_TRIES) setTimeout(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS)
+  }
   else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); setTimeout(() => { retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }

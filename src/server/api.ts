@@ -821,6 +821,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           log: (a) => { if (a.ok) console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - ${a.targets.length} effects, ${a.rejected} stay live, ${a.ms} ms`); else console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - stays live: ${a.error}`) },
           urlFor: (ask) => { const f = frames.get(ask.frame)!; return f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}` },
           urlBase: `${ROUTE}/bakes`,
+          // never hold the page's connection for a compile: the browser has six per host, and a
+          // comment or a board save must not queue behind a frame compiling (issue #23)
+          waitMs: 2500,
         })
         // and after: an edit published while it compiled means the textures may show newer code than the stamp
         const after = docs.map((d, i) => d !== undefined && (!!opts.settled && !opts.settled() || d !== docRev(root, devManifest().frames, asks[i].frame)))
