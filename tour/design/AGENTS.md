@@ -1,4 +1,4 @@
-<!-- marver:managed c450707170c6871cf270ecce02d44e93782e011336ada72966bab112b7dddf8b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 2a5b7a68e6fde877f7087316b32eff797218c9858e2e71f2da3b2aeef662c4d3 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -114,6 +114,9 @@ planning. The human should see the request land on the canvas within the first m
    and never lean on expiry instead of `done`. `done` prints the canvas links to the
    frames it cleared (`on the canvas: ...`, one per board), and a warning for a frame on no
    board, with where its scene's other frames live - pin it, then hand it back.
+   An edit to a file several frames read (a kit, a spec read with `?raw`) already marks each of
+   them as changed for the human; name a frame in `done` for a change no import shows - data
+   fetched at run time, the app behind an embedded frame.
 
 ## Hand it back on the canvas
 
@@ -128,14 +131,21 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   `npx marver dev` instead - the link carries its port.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
-  the human started it posts as Marver and pings them on the frame.
-- **A question or a decision about a frame goes ON that frame**, not only in the chat:
-  `npx marver comments new <scene/frame> --body "..." [--on "<words on screen>"]` pins it where
-  it applies, so the human answers in place. Also for a judgment call you took that they should
-  check, or a change they would not spot. Nothing else - never a changelog, at most one note per
-  frame per turn; the chat keeps the summary and can say "question on the form". Never resolve
-  your own notes: the human resolves them as they review, and a reply in one comes back to you
-  (Live Jam).
+  the human started it posts as Marver and pings them on the frame. A reply that asks them
+  something says so with `--ask` - it comes first for them.
+- **A question or a decision about a frame goes ON that frame**, not only in the chat, and on
+  the element it is about: `npx marver comments new <scene/frame> --body "..." --on "<words that
+  element shows>"`, or `--at "<data-testid or css selector>"` for an element without words (an
+  icon). With `marver dev` running the frame is checked: words it does not show are refused with
+  what it does show, several matches need `--nth <n>`, and a target only another viewport or
+  theme shows needs `--viewport` / `--theme`. Also for a judgment call you took that they should
+  check, or a change they would not spot. A note asks; one that asks nothing says `--fyi`.
+- **One thread per topic, each on its element; never a changelog.** A list of decisions is one
+  note per decision, each on its own line. A follow-up is a reply (`comments reply`, or `comments
+  new --thread <id>` on your own note), never a second note on the same subject. A note in the
+  wrong place: `npx marver comments move <thread> --on "..."`, never a second copy. The chat keeps
+  the summary and can say "question on the form". Never resolve your own notes: the human
+  resolves them as they review, and a reply in one comes back to you (Live Jam).
 - A comment-born (`@marver`) job hands back through its reply block alone
   (instructions/jam.md): no link, no CLI reply to its own thread.
 
@@ -204,6 +214,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   `description` when one was written, and its `title` when the human (or you) named it.
   Read it before exploring; `marver dev` keeps it fresh. `npx marver boards` prints the
   boards part as a tree.
+- **What the human has not reviewed.** At the start of a session, `npx marver marks`: the frames
+  waiting on them (your notes and replies they have not resolved - the ones that ask first) and
+  the frames new since they last looked. When it bears on the work, say so in your first message
+  ("you have not looked at the checkout frames since I changed them").
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,

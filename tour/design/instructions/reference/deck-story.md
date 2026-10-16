@@ -1,4 +1,4 @@
-<!-- marver:managed dc45941f4cfb7f5924690c8132185132667fddb6e7707e2581e037988a7cc800 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed c81ff6d7a67164309496c090fa684c1d9e91cbd2b89f79dc451cd4364469d0eb - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Deck story - the argument before the slides
 
 The slides guide (instructions/slides.md) gives the method. This file is the
@@ -83,8 +83,8 @@ one-sentence slides on the canvas) a missing fact is a visible `[PLACEHOLDER:
 what belongs here]`. In the build, a factual placeholder BLOCKS its slide -
 answered, or the slide is cut - never filled with plausible prose. Editorial
 gaps (a tagline, a caption, a transition line) you DO draft, labelled as
-proposed in a note on the frame (`npx marver comments new <scene/frame>`) - that
-is writing, not invention.
+proposed in a note on what you drafted (`npx marver comments new <scene/frame> --on "<the
+words you drafted>" --body "Proposed: ..."`) - that is writing, not invention.
 
 ## Writing that carries
 

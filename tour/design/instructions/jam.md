@@ -1,4 +1,4 @@
-<!-- marver:managed a86b711fef43eed41ec4ecfd16baa5bead37d3e63cb5ab1397e82006fd4ee835 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed fd4367b5ab91d9b16dc755d97e0cbb64266e4cee0b7a90ad69b6bf9bd1514a23 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Live Jam - acting on @marver comments
 
 The owner leaves a comment on the canvas and tags `@marver`. While `npx marver dev` runs,
@@ -132,13 +132,18 @@ did not.
 
 ## Re-pin if you moved the target
 If your edit renamed or moved the commented element so its old anchor no longer matches, re-pin
-the thread so it does not dangle. End your reply with a fenced block (nothing after it):
+the thread so it does not dangle. End your reply with a fenced block (nothing after it) naming
+the element the way `comments move` does: `"on"` = words it shows, or `"at"` = its data-testid
+or a CSS selector (an element without words); `"nth"` picks one of several matches, and
+`"viewport"` / `"theme"` name where to look when only another viewport or theme shows it:
 ```
 ```marver-reanchor
-[{"thread":"<threadId from the packet>","anchor":{"selector":"...","quote":"visible text","semantics":{"tag":"button","testId":"..."}}}]
+[{"thread":"<threadId from the packet>","on":"Get started"}]
 ```
 ```
-Omit it when the element's identity is unchanged. The daemon writes the reanchor for you.
+Omit it when the element's identity is unchanged. The daemon finds the element in the rendered
+frame and writes the reanchor for you, in the same anchor format as a click; a target the frame
+does not show (or shows several times, with no `nth`) is skipped.
 
 ## Reply
 Your FIRST message is ONE short line to the owner, posted the moment you write it - the owner
@@ -149,7 +154,8 @@ own run, never the thread. Just the ack, then go quiet and work.
 - Unclear? LOOK AROUND FIRST, like a human would: the packet's `thread` and `nearby`, then Read
   `design/comments/<board>.jsonl` (every thread on the board - recent pins on this frame often
   explain a terse ask). If that unlocks it, ack and proceed.
-- STILL unclear after looking around -> ONE clarifying question, then stop without editing.
+- STILL unclear after looking around -> ONE clarifying question, then stop without editing
+  (the same question goes in a `marver-reply ask` block, below).
 
 Your completion reply goes in a fenced block at the end of your run - the daemon posts ONLY what
 is inside it and discards everything else you say (narration never reaches the thread):
@@ -158,6 +164,9 @@ is inside it and discards everything else you say (narration never reaches the t
 <your reply>
 ```
 ```
+A reply that ASKS the owner something they must answer - a question, a decision - opens its
+block with ```` ```marver-reply ask ```` instead: it comes first for them, with a notice of its own.
+A done reply stays plain, even with an optional follow-up line.
 Rules (first line and the marver-reply block):
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.
