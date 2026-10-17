@@ -55,6 +55,8 @@ const DSF = 2
  *  (29 px > 8 of 5.18 M, none > 32) at a quarter of the memory; 0.5x fails on 30 px pills. */
 const TEXTURE_DSF = 1
 const DEADLINE_MS = 45_000
+/** The refusal for a frame with a looping animation: it rests paused, never compiled. */
+export const LOOPING = 'a looping animation - the frame rests paused, uncompiled'
 /** The largest frame an ask may name, in CSS px: the shot pipeline's bitmap budget at DPR 2. */
 export const ASK_MAX = { side: Math.floor(SURFACE / DSF), area: Math.floor(AREA / (DSF * DSF)) }
 const MAX_TARGETS = 200
@@ -303,13 +305,12 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
       if (!pending || Date.now() - t > 6000) r(pending); else setTimeout(tick, 60) }; tick() })`, true)
     if (unsettled) return { ok: false, error: `the frame did not settle (${unsettled} image(s) or chart(s) still loading)` }
     await ev(`Promise.all(Array.from(document.querySelectorAll('image')).map((el) => { const href = el.getAttribute('href') || el.getAttribute('xlink:href'); if (!href) return 1; const im = new Image(); im.src = new URL(href, location.href).href; return im.decode().catch(() => 1) })).then(() => true)`, true)
-    // a looping animation (a spinner, a pulsing dot) never finishes and keeps every capture
-    // different, so the frame could never be certified - and it would be asked again on every rest.
-    // The live sleep pauses all animations (sleep.ts PAUSE), so the compiler measures them paused too:
-    // finite ones are let run to their end first, infinite ones are held where they are.
-    await ev(`(document.getAnimations().forEach((a) => { const t = a.effect && a.effect.getComputedTiming(); if (t && t.iterations === Infinity) a.pause() }), true)`)
-    await ev(`Promise.race([Promise.all(document.getAnimations().filter((a) => a.playState !== 'paused').map((a) => a.finished.catch(() => 1))), new Promise((r) => setTimeout(r, 5000))]).then(() => true)`, true)
-    await ev(`(document.getAnimations().forEach((a) => a.pause()), true)`)
+    // a looping animation (a spinner, a pulsing dot) never finishes: the live sleep freezes it at
+    // whatever phase it reached in the canvas, which no texture made here can promise to match, so
+    // the frame is refused at once and rests paused, uncompiled (issue #23: it used to be compiled
+    // for seconds, refused as "never stopped changing", and asked again on every rest)
+    if (await ev(`document.getAnimations().some((a) => { const t = a.effect && a.effect.getComputedTiming(); return !!t && t.iterations === Infinity && a.playState === 'running' })`)) return { ok: false, error: LOOPING }
+    await ev(`Promise.race([Promise.all(document.getAnimations().map((a) => a.finished.catch(() => 1))), new Promise((r) => setTimeout(r, 5000))]).then(() => true)`, true)
     await ev(`new Promise((resolve) => { let timer = 0; const done = () => { mo.disconnect(); resolve(true) }; const mo = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, 250) }); mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true }); timer = setTimeout(done, 250); setTimeout(done, 3000) })`, true)
     await ev(PAINTED, true)
     const err = await ev(`window.__mvFrameError || ''`)
@@ -489,13 +490,14 @@ export function pruneBakes(root: string, keep: number): void {
  *  concurrent ones - share one compile. */
 const inflight = new Map<string, Promise<BakeAnswer>>()
 
-/** Compiles that FAILED, by generation and key, so a frame that cannot be certified (it never stops
- *  changing, it timed out, too many effects) is answered at once from memory instead of being
- *  compiled again on every rest. The generation is in the key: an edit retries it. A failure that
- *  says nothing about the frame (the source moved mid-compile, the browser died) is not kept. */
+/** Compiles that FAILED for the frame's own reasons (it loops, never stops changing, never settles,
+ *  timed out, has too many effects), by generation and key, so it is answered at once from memory
+ *  instead of being compiled again on every rest. The generation is in the key: an edit retries it.
+ *  Only these are kept - anything else (the source moved mid-compile, the browser or its pipe died,
+ *  a cache write failed) says nothing about the frame and is tried again. */
 const failed = new Map<string, string>()
 const FAILED_MAX = 2000
-const transient = (error: string) => /source changed|browser|Target closed|ECONN|could not load the frame/i.test(error)
+export const ofTheFrame = (error: string): boolean => error === LOOPING || /^the frame (never stopped changing|did not settle|never rendered|rendered an error)|^the bake timed out$|^too many effects|^an effect larger than/.test(error)
 
 /** The answer for a compile still running when a request stops waiting (`waitMs`): the frame stays
  *  live for now, and its next ask finds the result in the cache. */
@@ -535,7 +537,7 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
         if (live && live() !== gen) return settle(job, { ...job.ask, ok: false, error: 'the source changed during the compile' })
         let a: BakeAnswer
         try { a = r.ok ? writeCached(root, gen, job.ask, r, urlBase, protect) : { ...job.ask, ...r } } catch (e) { a = { ...job.ask, ok: false, error: (e as Error).message } }
-        if (!a.ok && !transient(a.error)) {
+        if (!a.ok && ofTheFrame(a.error)) {
           if (failed.size >= FAILED_MAX) failed.clear()
           failed.set(failedKey(job.ask), a.error)
         }

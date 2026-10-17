@@ -207,8 +207,11 @@ describe('sleep in place, on a real dev canvas', () => {
     const post = (body: unknown) => ev(`fetch('/__mv/api/bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': document.cookie.match(/(?:^|; )mv_c=([^;]+)/)?.[1] ?? '' }, body: ${JSON.stringify(JSON.stringify(body))} }).then(async (r) => ({ status: r.status, body: await r.json() }))`)
     const a = { frame: 'app/glass', theme: 'light', w: 640, h: 400 }
     const [r1, r2] = await Promise.all([post({ asks: [a, a] }), post({ asks: [a] })])
-    for (const r of [r1, r2]) { expect(r.status).toBe(200); for (const x of r.body.answers) expect(x.ok).toBe(true) }
+    // the server answers within 2.5 s either way (issue #23): ready, or COMPILING while it carries on
+    for (const r of [r1, r2]) { expect(r.status).toBe(200); for (const x of r.body.answers) expect(x.ok || x.error === 'compiling - ask again').toBe(true) }
     expect(r1.body.answers).toHaveLength(2)
+    for (let i = 0; i < 60; i++) { const r = await post({ asks: [a] }); if (r.body.answers[0].ok) break; await wait(500) }
+    expect((await post({ asks: [a] })).body.answers[0].ok, 'the compile landed').toBe(true)
     expect(bakeLines().filter((l) => l.includes('app/glass light 640x400'))).toHaveLength(1)
   })
 

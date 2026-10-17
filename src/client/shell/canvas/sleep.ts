@@ -58,7 +58,9 @@ const RETRY_MS = 4000
  *  node looks again for it before settling for the pause alone. */
 const COMPILING = 'compiling - ask again'
 const COMPILING_TRIES = 15
-const compiling = new Map<string, number>()
+/** Looks so far, per node, for the sleep key they were for: a new key (an edit, a theme, a size)
+ *  or a wake starts the count again. */
+const compiling = new Map<string, { key: string; n: number }>()
 
 /** Does this document have anything to compile? Cheap: one computed style per element. */
 export function hasEffects(doc: Document): boolean {
@@ -147,8 +149,9 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
   else if (!PUBLISHED && !answer.ok && answer.error === COMPILING) {
     // the server answers in seconds and keeps compiling on its own (issue #23): look again until the
     // compile lands, a bounded number of times
-    const n = (compiling.get(nodeKey) ?? 0) + 1
-    compiling.set(nodeKey, n)
+    const was = compiling.get(nodeKey)
+    const n = (was && was.key === k ? was.n : 0) + 1
+    compiling.set(nodeKey, { key: k, n })
     if (n <= COMPILING_TRIES) setTimeout(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS)
   }
   else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); setTimeout(() => { retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
@@ -159,6 +162,7 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
 export function wake(nodeKey: string, iframe: HTMLIFrameElement | null): void {
   pending.delete(nodeKey)
   asleep.delete(nodeKey)
+  compiling.delete(nodeKey)
   const doc = iframe?.contentDocument
   const st = doc?.getElementById(STYLE_ID)
   if (!doc || !st) return

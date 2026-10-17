@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { Browser as Cdp, findChrome } from '../src/server/cdp.ts'
-import { COMPILING, bakeBatch, bakeIn, bakeKey } from '../src/server/bake.ts'
+import { COMPILING, LOOPING, bakeBatch, bakeIn, bakeKey, ofTheFrame } from '../src/server/bake.ts'
 import { PAGES } from './fixtures/glass-pages.ts'
 
 /**
@@ -143,11 +143,18 @@ describe('the compiler (bake.ts)', () => {
     expect(r.targets[0].verified).toBe(true)
   })
 
-  skippable('a looping animation under the glass is held paused, and the frame certifies', async () => {
+  skippable('a looping animation is refused at once: the live sleep freezes it at a phase no texture can promise', async () => {
+    const t = Date.now()
     const r = await bake('spinner')
-    if (!r.ok) throw new Error(r.error)
-    expect(r.targets).toHaveLength(1)
-    expect(r.targets[0].verified).toBe(true)
+    expect(r).toMatchObject({ ok: false, error: LOOPING })
+    expect(Date.now() - t, 'no settle checks, no captures').toBeLessThan(5000)
+  })
+
+  it('only a failure of the frame itself is remembered - never one of the browser, the cache or the source', () => {
+    for (const e of [LOOPING, 'the frame never stopped changing - nothing to certify against', 'the frame did not settle (2 image(s) or chart(s) still loading)', 'the bake timed out', 'too many effects to compile (90)'])
+      expect(ofTheFrame(e), e).toBe(true)
+    for (const e of ['devtools pipe error', 'Target closed', 'the source changed during the compile', 'could not load the frame (net::ERR_CONNECTION_REFUSED)', 'ENOSPC: no space left on device, write'])
+      expect(ofTheFrame(e), e).toBe(false)
   })
 
   it('a bake key names the frame, theme and rounded size - nothing else', () => {
@@ -193,8 +200,10 @@ describe('the batch (bakeBatch)', () => {
 
   skippable('a request that stops waiting gets COMPILING, the compile carries on, and the next ask finds it', async () => {
     const before = hits.later ?? 0
+    const t = Date.now()
     const quick = await batch('later', 20, { waitMs: 1 })
     expect(quick).toMatchObject({ ok: false, error: COMPILING })
+    expect(Date.now() - t, 'the caller is answered without waiting for the compile').toBeLessThan(500)
     const done = await batch('later', 20)
     expect(done.ok).toBe(true)
     expect(hits.later, 'one compile served both asks').toBe(before + 1)
