@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { Browser as Cdp, findChrome } from '../src/server/cdp.ts'
-import { bakeIn, bakeKey } from '../src/server/bake.ts'
+import { COMPILING, bakeBatch, bakeIn, bakeKey } from '../src/server/bake.ts'
 import { PAGES } from './fixtures/glass-pages.ts'
 
 /**
@@ -13,11 +13,14 @@ import { PAGES } from './fixtures/glass-pages.ts'
 
 let http: Server | null = null
 let origin = ''
+/** How many times each page was loaded - one load is one compile. */
+const hits: Record<string, number> = {}
 let b: Cdp | null = null
 
 beforeAll(async () => {
   http = createServer((req, res) => {
     const name = (req.url ?? '/').slice(1).split('?')[0]
+    hits[name] = (hits[name] ?? 0) + 1
     const html = PAGES[name]
     if (!html) { res.statusCode = 404; return res.end() }
     res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(html)
@@ -140,11 +143,62 @@ describe('the compiler (bake.ts)', () => {
     expect(r.targets[0].verified).toBe(true)
   })
 
+  skippable('a looping animation under the glass is held paused, and the frame certifies', async () => {
+    const r = await bake('spinner')
+    if (!r.ok) throw new Error(r.error)
+    expect(r.targets).toHaveLength(1)
+    expect(r.targets[0].verified).toBe(true)
+  })
+
   it('a bake key names the frame, theme and rounded size - nothing else', () => {
     const k = bakeKey({ frame: 'app/home', theme: 'light', w: 390.4, h: 844 })
     expect(k).toMatch(/^[0-9a-f]{16}$/)
     expect(bakeKey({ frame: 'app/home', theme: 'light', w: 390, h: 844.2 })).toBe(k)
     expect(bakeKey({ frame: 'app/home', theme: 'dark', w: 390, h: 844 })).not.toBe(k)
     expect(bakeKey({ frame: 'app/home', theme: 'light', w: 391, h: 844 })).not.toBe(k)
+  })
+})
+
+/** bakeBatch as the dev server calls it (issue #23): the page's request must never be held by a
+ *  compile, and a frame that cannot be certified must not be compiled again on every rest. */
+describe('the batch (bakeBatch)', () => {
+  let root = ''
+  beforeAll(async () => {
+    const { mkdtempSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+    root = mkdtempSync(join(tmpdir(), 'mv-batch-'))
+  })
+  const ask = (frame: string) => ({ frame, theme: 'light', w: 600, h: 400 })
+  const batch = (frame: string, gen: number, more: { waitMs?: number; live?: () => number } = {}) =>
+    bakeBatch({ root, gen, asks: [ask(frame)], urlFor: (a) => `${origin}/${a.frame}`, urlBase: '/bakes', ...more }).then((r) => r[0])
+
+  skippable('a failed compile is answered from memory for its generation, and compiled again in the next', async () => {
+    const first = await batch('restless', 1)
+    expect(first.ok).toBe(false)
+    const loads = hits.restless
+    const again = await batch('restless', 1)
+    expect(again).toMatchObject({ ok: false, error: (first as { error: string }).error })
+    expect(hits.restless, 'no second compile in the same generation').toBe(loads)
+    await batch('restless', 2)
+    expect(hits.restless, 'an edit (a new generation) tries again').toBe(loads + 1)
+  })
+
+  skippable('a failure that says nothing about the frame is not remembered', async () => {
+    const outrun = await batch('glass', 10, { live: () => 11 })
+    expect(outrun).toMatchObject({ ok: false, error: expect.stringMatching(/source changed/) })
+    const r = await batch('glass', 10)
+    expect(r.ok).toBe(true)
+  })
+
+  skippable('a request that stops waiting gets COMPILING, the compile carries on, and the next ask finds it', async () => {
+    const before = hits.later ?? 0
+    const quick = await batch('later', 20, { waitMs: 1 })
+    expect(quick).toMatchObject({ ok: false, error: COMPILING })
+    const done = await batch('later', 20)
+    expect(done.ok).toBe(true)
+    expect(hits.later, 'one compile served both asks').toBe(before + 1)
+    const cached = await batch('later', 20, { waitMs: 1 })
+    expect(cached.ok, 'from the cache, at once').toBe(true)
   })
 })

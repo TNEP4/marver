@@ -24,5 +24,8 @@ export const PAGES: Record<string, string> = {
   // the override changes paint OUTSIDE every glass box (a rule keyed on the compiler's own style
   // element carrying rules): the pill certifies, the frame does not, nothing ships
   outside: page(`<div id="pill" class="glass" style="${PILL}">a fine pill</div><div id="other" style="position:absolute;left:400px;top:300px;width:60px;height:40px;background:#123">other</div>`, 'head:has(#mv-bake-style:not(:empty)) + body #other{background:#f00 !important}'),
+  // a looping animation under the glass (a spinner): it never finishes, so the compiler holds it
+  // paused - as the live sleep does - and the frame certifies instead of failing forever (issue #23)
+  spinner: page(`<div id="spin" style="position:absolute;left:150px;top:90px;width:80px;height:80px;border-radius:50%;border:10px solid #fff;border-top-color:#123;animation:spin .8s linear infinite"></div><div id="pill" class="glass" style="${PILL}">loading</div>`, '@keyframes spin{to{transform:rotate(360deg)}}'),
   clip: page(`<div id="pill" class="glass" style="${PILL};border:4px solid transparent;background-clip:padding-box">clipped tint</div>`),
 }
