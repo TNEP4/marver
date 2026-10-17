@@ -2,6 +2,19 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.25.1 - 2026-10-17
+
+### Fixed
+
+- **Comments send at once again on canvases full of glass and animation** ([#23](https://github.com/TNEP4/marver/issues/23)).
+  While you work, `marver dev` prepares a still copy of each frame with blur effects so resting
+  frames cost nothing. A frame with a looping animation (a spinner, a pulsing dot) never held
+  still, so its copy failed every time, was asked for again on every rest, and each ask kept a
+  connection open. The browser only opens six per site, so comment sends and board saves waited
+  behind them, sometimes for minutes. Now a frame with a looping animation simply rests paused
+  with no copy, a copy that cannot be made is not tried again until the frame changes, and the
+  canvas never waits more than 2.5 s for one.
+
 ## 0.25.0 - 2026-10-15
 
 ### Added
