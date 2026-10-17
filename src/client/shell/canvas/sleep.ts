@@ -132,6 +132,15 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
   }
   const answer = await ask(key)
   if (!current()) return 'live'
+  // still compiling (issue #23): the server answered in seconds and carries on by itself. The frame
+  // stays LIVE meanwhile - pausing now would freeze a finite animation midway, under a texture of its
+  // end - and looks again, a bounded number of times; past that, the pause alone below
+  if (!PUBLISHED && !answer.ok && answer.error === COMPILING) {
+    const was = compiling.get(nodeKey)
+    const n = (was && was.key === k ? was.n : 0) + 1
+    compiling.set(nodeKey, { key: k, n })
+    if (n <= COMPILING_TRIES) { setTimeout(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS); return 'live' }
+  }
   // no compiler (a published canvas, a compile that failed): the pause alone, the glass live -
   // never an effect layer without its texture
   let targets = answer.ok ? answer.targets.filter((t) => t.verified && t.texture) : []
@@ -146,14 +155,7 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
   // a certified sleep is remembered; the pause-only fallback is not, so the next lifecycle event
   // asks again (a compile the source outran, a server hiccup), and one retry is scheduled now
   if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey) }
-  else if (!PUBLISHED && !answer.ok && answer.error === COMPILING) {
-    // the server answers in seconds and keeps compiling on its own (issue #23): look again until the
-    // compile lands, a bounded number of times
-    const was = compiling.get(nodeKey)
-    const n = (was && was.key === k ? was.n : 0) + 1
-    compiling.set(nodeKey, { key: k, n })
-    if (n <= COMPILING_TRIES) setTimeout(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS)
-  }
+  else if (answer.ok === false && answer.error === COMPILING) { /* out of looks: the pause alone, final */ }
   else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); setTimeout(() => { retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }

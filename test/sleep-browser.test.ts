@@ -215,6 +215,25 @@ describe('sleep in place, on a real dev canvas', () => {
     expect(bakeLines().filter((l) => l.includes('app/glass light 640x400'))).toHaveLength(1)
   })
 
+  skippable('while the server is still compiling the frame stays live - never paused ahead of a texture of a later moment', async () => {
+    await onBoard()
+    // the next two asks are answered "still compiling" (issue #23), whatever the server would say
+    await ev(`(() => { const real = window.__mvRealFetch ?? window.fetch; window.__mvRealFetch = real; window.__mvCompiling = 2
+      window.fetch = async (u, o) => {
+        if (!String(u).includes('/api/bakes') || !(window.__mvCompiling > 0)) return real(u, o)
+        window.__mvCompiling--
+        const { asks } = JSON.parse(o.body)
+        return new Response(JSON.stringify({ gen: 0, answers: asks.map((a) => ({ ...a, ok: false, error: 'compiling - ask again' })) }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }; return 1 })()`)
+    try {
+      await reloadGlass()
+      await until(`window.__mvCompiling === 0`, 30_000)
+      await wait(300)
+      expect(await ev(ASLEEP('app/glass')), 'a frame told "compiling" is not paused').toBe(false)
+      await until(`${ASLEEP('app/glass')} && ${TEXTURES('app/glass')} === 5`, 30_000)   // the next look finds the compile
+    } finally { await ev(`(window.fetch = window.__mvRealFetch, 1)`) }
+  })
+
   skippable('neither the sleep nor the wake starts an authored transition, and inline transition longhands survive both', async () => {
     await onBoard()
     await reloadGlass()
