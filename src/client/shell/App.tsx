@@ -1,3 +1,5 @@
+import { frameReady, onFrameMessage, recordCopy } from './jam-capture.ts'
+import { jamKey } from './jam-keys.ts'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
@@ -189,6 +191,7 @@ function SelectionBar() {
           onClick={() => {
             const brd = useStore.getState().board
             const text = selectedFrames().map((f) => framePath(brd, f)).join('\n')
+            for (const f of selectedFrames()) recordCopy('path', f.id)
             navigator.clipboard.writeText(text).then(
               () => { toast(multi ? `${selection.length} paths copied` : 'path copied'); useStore.getState().pulsePath() },
               () => toast('copy blocked - click the canvas first'))
@@ -603,6 +606,9 @@ export function App() {
       if (!reg) return
       const { key: nodeKey, iframe: el } = reg
       const s = useStore.getState()
+      // Jam (spec 27): a capture's trail, handshake, probes and flushes; a key the shell owns
+      if (onFrameMessage(nodeKey, data)) return
+      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }); return }
 
       if (data.type === 'sh:ready') {
         // a WindowProxy survives navigation, so a ready queued by a SUPERSEDED document (one the
@@ -614,6 +620,7 @@ export function App() {
         // sleeping override of the previous document must not be trusted for this one
         if (s.nodes.find((n) => n.key === nodeKey)?.status === 'ready') s.bumpRev(nodeKey)
         s.setStatus(nodeKey, 'ready')
+        frameReady(nodeKey)
         // the revision this document was served with (spec 26): a look counts up to it, and one older
         // than the frame's last edit reloads
         const before = s.nodes.find((n) => n.key === nodeKey)?.shown
@@ -707,6 +714,8 @@ export function App() {
       if (e.isComposing) return
       const s = useStore.getState()
       if (s.play) return                       // play mode owns the keyboard (Play.tsx)
+      // Jam's keys first (spec 27): the first state that takes the key; the rest falls through
+      if (!e.repeat && jamKey({ key: e.key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setPillOpen((o) => !o); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
@@ -767,6 +776,7 @@ export function App() {
           .filter((p): p is string => !!p)
         if (paths.length) {
           // pulse the toolbar icon into a check ONLY on a real copy success
+          for (const k of s.selection) { const f = s.frameFor(s.nodes.find((x) => x.key === k)!); if (f) recordCopy('path', f.id) }
           navigator.clipboard.writeText(paths.join('\n')).then(
             () => { toast(paths.length > 1 ? `${paths.length} paths copied` : 'path copied'); s.pulsePath() },
             () => toast('copy blocked - click the canvas first'))
@@ -928,7 +938,7 @@ export function App() {
                     if (!shift) canvasCtl.fitNode(n.key)
                   }
                   const frameMenu = (fr: FrameEntry): MenuItem[] => [
-                    { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(framePath(useStore.getState().board, fr), 'path copied') },
+                    { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => { recordCopy('path', fr.id); copyToClipboard(framePath(useStore.getState().board, fr), 'path copied') } },
                     // the Not on a board view (spec 26): put the frame where it belongs
                     ...(useStore.getState().board === UNPLACED ? [{ label: 'Add to board…', icon: <PlusIcon size={15} />, panel: (close: () => void) => <AddToBoard frame={fr.id} close={close} /> }] : []),
                   ]

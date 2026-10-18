@@ -1666,6 +1666,7 @@ export const useStore = create<State>((set, get) => {
       const CI = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
       if (!CI || !navigator.clipboard?.write || (CI.supports && !CI.supports('image/png'))) { s.toast("this browser can't put images on the clipboard - use Chrome, Edge or Safari"); return }
       set({ imageBusy: true })
+      void import('./jam-capture.ts').then(({ recordCopy }) => recordCopy('image', frame.id))   // a capture notes that it happened
       const done = () => set({ imageBusy: false })
       const qs = new URLSearchParams({ frame: frame.id, theme: node.theme, scale: String(scale), w: String(Math.round(node.w)), h: String(Math.round(node.h)), format: 'png' })
       // the render is serialized server-side behind any CLI/jam shots; a minute is the ceiling

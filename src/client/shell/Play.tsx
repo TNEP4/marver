@@ -10,6 +10,8 @@
  * on - no auto-fade, no hover magic. The bottom-left navigator (restart · prev · i/N ·
  * next) stays prototype-only.
  */
+import { frameLoaded, frameReady, onFrameMessage } from './jam-capture.ts'
+import { jamKey } from './jam-keys.ts'
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
@@ -445,7 +447,11 @@ function PlayInner() {
       const data = e.data
       if (!data || typeof data.type !== 'string') return
       const s = useStore.getState()
+      // Jam (spec 27): the stage records like a frame; a key the shell owns comes back as sh:key
+      if (onFrameMessage('stage', data)) return
+      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }); return }
       if (data.type === 'sh:stage-ready') {
+        frameReady('stage')
         // an iframe reload (registry HMR invalidation) boots at the frozen initial src -
         // resync it to the shell's current truth: navigation, theme, AND review modes
         const p = s.play
@@ -550,6 +556,8 @@ function PlayInner() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!keyAllowed(e)) return   // the one key guard (frame-host/keys.js): never from a field, an editable, an IME composition
+      // Jam's keys first - a review open takes the arrows before they step screens
+      if (!e.repeat && jamKey({ key: e.key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); toggleCollapse(); return }
       if (e.metaKey || e.ctrlKey) return
       handleKey(e.key, e.code)
@@ -612,6 +620,7 @@ function PlayInner() {
           <iframe
             ref={iframeRef}
             src={src.current}
+            onLoad={() => frameLoaded('stage', iframeRef.current)}
             title="play"
             style={{ width: vp.width, height: vp.height, transform: `scale(${dw / vp.width}, ${dh / vp.height})` }}
           />

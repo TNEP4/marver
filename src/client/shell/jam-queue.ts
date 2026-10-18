@@ -8,19 +8,25 @@ import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { PUBLISHED } from './store.ts'
 
+export type JamAction = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later'
 export type JamCardState = 'draft' | 'confirming' | 'queued' | 'working' | 'asks' | 'review' | 'done' | 'kept' | 'failed' | 'dropped'
 export interface JamCard {
   id: string; kind: 'comment' | 'capture' | 'wrapup'; board: string; thread?: string; frames: string[]; events: string[]
   state: JamCardState; note?: string; rev: number; made: number; order: number; at: number
   follows?: string; reply?: string; position?: number; waiting?: string; exclusive?: boolean; batch?: string
+  // captures: the lane and the review
+  title?: string; inRun?: boolean; shots?: { frame: string; before?: string; after?: string }[]
+  reviewing?: { card: string; batch: string; rev: number }; edited?: string; notes?: number; capture?: string
 }
 interface QueueState {
   /** null: no queue here (published, jam off, or not loaded yet) - no icon anywhere */
   cards: JamCard[] | null
   agent: string | null
+  /** the lane's run, while one lasts */
+  run: { since: number } | null
   load(): Promise<void>
   apply(view: unknown): void
-  act(card: JamCard, action: 'drop' | 'retry'): Promise<boolean>
+  act(card: JamCard, action: JamAction, body?: string): Promise<boolean>
 }
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -30,6 +36,9 @@ const PENDING: JamCardState[] = ['queued', 'working', 'asks', 'failed', 'draft',
  *  icon (joined tags carry one), and only while there is something to wait for or act on. */
 export function cardForEvent(cards: JamCard[] | null, board: string | undefined, eventId: string | undefined): JamCard | undefined {
   if (!cards || !eventId) return undefined
+  // a capture's comment (`cap-<id>-e`) wears its capture card's state
+  const cap = /^cap-(.+)-e$/.exec(eventId)?.[1]
+  if (cap) return cards.find((c) => c.id === cap && PENDING.includes(c.state) && c.state !== 'draft')
   return cards.find((c) => c.kind === 'comment' && (!board || c.board === board) && c.events[c.events.length - 1] === eventId && PENDING.includes(c.state))
 }
 
@@ -38,6 +47,7 @@ export const useJamQueue = create<QueueState>((set, get) => {
   return {
     cards: null,
     agent: null,
+    run: null,
     async load() {
       if (PUBLISHED) return
       try {
@@ -52,7 +62,8 @@ export const useJamQueue = create<QueueState>((set, get) => {
       const before = new Map((get().cards ?? []).map((c) => [c.id, c]))
       const first = !loaded
       loaded = true
-      set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null })
+      const run = (v as { run?: { since?: unknown } }).run
+      set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null, run: run && typeof run.since === 'number' ? { since: run.since } : null })
       if (first) return
       // a failure interrupts once per batch: the cards that turned failed since the last look, by batch
       const failed = next.filter((c) => c.state === 'failed' && before.get(c.id)?.state !== 'failed')
@@ -62,10 +73,10 @@ export const useJamQueue = create<QueueState>((set, get) => {
         for (const cards of byBatch.values()) useStore.getState().jamFailed(cards)
       })
     },
-    async act(card, action) {
+    async act(card, action, body) {
       const res = await fetch(`${ROUTE}/api/jam/card`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
-        body: JSON.stringify({ id: card.id, rev: card.rev, action }),
+        body: JSON.stringify({ id: card.id, rev: card.rev, action, ...(body !== undefined ? { body } : {}) }),
       }).catch(() => null)
       void get().load()
       return !!res?.ok

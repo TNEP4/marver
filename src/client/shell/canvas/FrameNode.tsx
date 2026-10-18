@@ -6,6 +6,7 @@ import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { threadHostKey } from '../keys.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
+import { canvasClick, canvasPointer, frameGone, frameLoaded, useJamCapture } from '../jam-capture.ts'
 import { primeCameraFor } from './camera-broadcast.ts'
 import { sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
@@ -138,6 +139,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // as an unknown source (misleading 10s timeout). The WindowProxy is stable across
   // navigations; onLoad re-asserts it (idempotent) after each navigation.
   const regWin = useRef<WindowProxy | null>(null)
+  const downAt = useRef<{ x: number; y: number } | null>(null)
+  const capturing = useJamCapture((s) => !!s.current)
+  useEffect(() => () => frameGone(node.key), [node.key])
   const registerWin = () => {
     const iframe = iframeRef.current
     const win = iframe?.contentWindow
@@ -441,7 +445,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           className="sh-live"
           src={src}
           title={frame.id}
-          onLoad={registerWin}
+          onLoad={() => { registerWin(); frameLoaded(node.key, iframeRef.current) }}
           style={{ ...iframeBox(stage, node), display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
@@ -450,8 +454,13 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         {!interact && !commentMode && !laser && (
           <div
             className="sh-overlay sh-no-pan"
-            onPointerDown={(e) => drag(e, 'move')}
+            onPointerDown={(e) => { downAt.current = { x: e.clientX, y: e.clientY }; drag(e, 'move') }}
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
+            // a capture records canvas-mode clicks and hovers: the overlay keeps the click (drag and
+            // select are unchanged) and asks the frame what is under it
+            onClick={(e) => { const d = downAt.current; if (capturing && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) canvasClick(node.key, e.clientX, e.clientY) }}
+            onPointerMove={capturing ? (e) => canvasPointer(node.key, e.clientX, e.clientY) : undefined}
+            onPointerLeave={capturing ? () => canvasPointer(null) : undefined}
           />
         )}
         {working && <div className="sh-work-wave" />}
