@@ -73,6 +73,31 @@ describe('init: Live Jam scaffolding', () => {
     expect(read('instructions/jam.md')).toContain('marver-reanchor')
     expect(read('AGENTS.md')).toContain('instructions/jam.md')
   })
+  it('Jam V2 (spec 27): the managed jam.md, iterate.md and both AGENTS templates ask no jam job for a scene snapshot', () => {
+    init(root, OPTS)
+    const tpl = (rel: string) => readFileSync(join(__dirname, '..', 'templates', rel), 'utf8')
+    const jam = read('instructions/jam.md')
+    expect(jam).toContain('No scene snapshots in a jam job')
+    expect(jam).not.toMatch(/snapshot the scene onto/i)
+    expect(jam).not.toMatch(/round starts with a snapshot/i)
+    // the packet is the whole context: no nearby threads, no reading the comment logs
+    expect(jam).not.toContain('nearby')
+    expect(jam).not.toMatch(/Read\s+`?design\/comments\/<board>\.jsonl/)
+    // the M1 protocol: the packet file, a block per member, the shared stop
+    expect(jam).toContain('design/.local/jam/packets/<batch>.json')
+    expect(jam).toContain('marver-reply m1 shared')
+    expect(jam).toMatch(/one per member/)
+    for (const rel of ['instructions/iterate.md', 'AGENTS-embedded.md', 'AGENTS-studio.md']) {
+      expect(tpl(rel), rel).toMatch(/jam\s+job\s+(\(a\s+spawned\s+`@marver`\s+job\)\s+)?never\s+snapshots/)
+    }
+    // tag-only: a plain reply starts nothing, and "go through my replies" is marver marks
+    for (const rel of ['AGENTS-embedded.md', 'AGENTS-studio.md']) {
+      expect(tpl(rel), rel).toContain('A plain reply in a Marver thread starts no job')
+      expect(tpl(rel), rel).toContain('answered by you')
+      expect(tpl(rel), rel).not.toContain('a reply in one comes back to you')
+    }
+    expect(read('AGENTS.md')).toContain('A plain reply in a Marver thread starts no job')
+  })
   it('creates a root CLAUDE.md that @-imports design/AGENTS.md (Claude reads CLAUDE.md)', () => {
     init(root, OPTS)
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toContain('@design/AGENTS.md')
