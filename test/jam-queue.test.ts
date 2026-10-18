@@ -1267,7 +1267,9 @@ describe('Jam V2: review round 9 fixes', () => {
     const { root, dir, done } = setup()
     const a = say(root, dir, '@marver one'), b = say(root, dir, '@marver two')
     appendEvents(dir, 'home', [
-      { id: 'jam-e1-va', ts: tick(), type: 'reply', commentId: 'jam-c-e1-va', parentId: a.commentId, board: 'home', author: OWNER, body: 'Card or CVC?', asks: true, agent: true },
+      // as v1 wrote it: the early line not asking, then an edit that flags it a question
+      { id: 'jam-e1-va', ts: tick(), type: 'reply', commentId: 'jam-c-e1-va', parentId: a.commentId, board: 'home', author: OWNER, body: 'Card or CVC?', asks: false, agent: true },
+      { id: 'jam-f-e1-va', ts: tick(), type: 'edit', commentId: 'jam-c-e1-va', asks: true, board: 'home', author: OWNER, agent: true },
       { id: 'jam-vb', ts: tick(), type: 'reply', commentId: 'jam-c-vb', parentId: b.commentId, board: 'home', author: OWNER, body: 'Which one?', asks: true, agent: true },
     ])
     const ans = say(root, dir, 'the first', { thread: b.commentId })

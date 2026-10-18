@@ -512,7 +512,9 @@ export function upgrade(v1: JournalV1, ctx: Ctx, now = Date.now()): { j: Journal
       if (final) {
         // a question the owner already answered (a ledgered reply after it) is done, not asking
         const answered = events.some((e) => e.type === 'reply' && e.parentId === thread && !e.agent && e.ts > final.ts && isOwned(ctx, board, e.id))
-        const asks = !answered && (final.asks ?? /\?\s*$/.test(final.body ?? ''))
+        // the message as it stands: v1 flags an early question by a later edit (`asks: true`)
+        const shown = replay(events).find((x) => x.id === thread)?.replies.find((r) => r.id === final.commentId)
+        const asks = !answered && (shown?.asks ?? final.asks ?? /\?\s*$/.test(final.body ?? ''))
         j.cards.push({ ...card(asks ? 'asks' : 'done', asks ? 'asks you' : answered ? 'answered' : 'replied'), reply: final.commentId, ...(asks ? { asked: final.ts } : {}) })
         j.batches.push({ batchId: b.batchId, members: [{ id: 'm1', card: `c-${id}`, board }], frames: frame ? [frame] : [], state: 'done', leaseUntil: 0,
           attempts: b.attempts, results: { m1: { body: final.body ?? '', asks, reanchors: [] } }, posted: true, at: now })
