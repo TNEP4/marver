@@ -72,11 +72,14 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   }, [cap.current, cap.sealed, cards])
 
   const list = laneCards(cards, run)
-  const tiles = list.map((c) => ({ id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) }))
-  // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send
+  const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
+  const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean } }))
+  // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
+  // each in its place by when it started, so one sealing late never swaps with a newer one
   const known = new Set(list.map((c) => c.id))
-  for (const c of Object.values(cap.caps)) if (c.state === 'draining' && !known.has(c.id)) tiles.push({ id: c.id, state: 'confirming', title: 'Capture', line: 'Finishing' })
-  for (const id of cap.unsent) if (!known.has(id) && !cap.caps[id]) tiles.push({ id, state: 'confirming', title: 'Capture', line: 'Waiting to send' })
+  for (const c of Object.values(cap.caps)) if (c.state === 'draining' && !known.has(c.id)) withMade.push({ made: made(c.id), tile: { id: c.id, state: 'confirming', title: 'Capture', line: 'Finishing' } })
+  for (const id of cap.unsent) if (!known.has(id) && !cap.caps[id]) withMade.push({ made: made(id), tile: { id, state: 'confirming', title: 'Capture', line: 'Waiting to send' } })
+  const tiles = withMade.sort((a, b) => a.made - b.made).map((x) => x.tile)
   const recording = cap.current ? (() => {
     const c = cap.caps[cap.current!]
     const counts = captureCounts(c)

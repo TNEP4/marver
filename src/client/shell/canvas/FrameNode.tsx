@@ -466,7 +466,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             // a capture records canvas-mode clicks and hovers: the overlay keeps the click (drag and
             // select are unchanged) and asks the frame what is under it
             onClick={(e) => { const d = downAt.current; if (capturing && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) canvasClick(node.key, e.clientX, e.clientY, d.t) }}
-            onPointerMove={capturing ? (e) => canvasPointer(node.key, e.clientX, e.clientY) : undefined}
+            onPointerMove={capturing ? (e) => (e.buttons ? canvasPointer(null) : canvasPointer(node.key, e.clientX, e.clientY)) : undefined}   // no hover while a button is held (a drag)
             onPointerLeave={capturing ? () => canvasPointer(null) : undefined}
           />
         )}
