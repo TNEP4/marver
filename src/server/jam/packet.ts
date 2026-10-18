@@ -61,7 +61,7 @@ export function goalText(packet: JobPacket, subagents = true): string {
       '`record.timeline` merges their words, the NOTES they wrote (`note` steps - their words to you, often naming',
       'what the words point at), their picks and clicks (element bundles with `source` = file:line:col), and every UI',
       'step (frames selected, device, theme, copies, interactive mode) - those steps are context, not asks. `edited`',
-      'is their own edit of the words and wins over the transcript. A capture has NO category: read each distinct ask',
+      'is their own edit of the words and notes and wins over them - an empty `edited` means they deleted everything they said. A capture has NO category: read each distinct ask',
       'for what it is (a fix, a change, a question, an idea to note), do them in order, and report per item in that',
       'member\'s reply; one that is only a note gets a reply and no edit. `capture.note` "kept - not an ask" or',
       '"dropped - not an ask" means the capture is context for the tag that is the ask. `reviewed` is the run they',

@@ -63,11 +63,12 @@ describe('the read-back: a capture\'s merged timeline', () => {
     ])
   })
 
-  it('your edit stands in for the words; every step stays', () => {
+  it('your edit stands in for the words and the notes; every other step stays; an empty edit says so', () => {
     const lines = timelineLines(rec, 'make the badge the outline style')
     expect(lines[0]).toEqual({ t: '0:00', kind: 'words', text: '"make the badge the outline style"' })
     expect(lines.filter((l) => l.kind === 'words')).toHaveLength(1)
-    expect(lines.filter((l) => l.kind === 'note')).toHaveLength(1)
+    expect(lines.filter((l) => l.kind === 'note')).toHaveLength(0)
+    expect(timelineLines(rec, '')[0].text).toMatch(/no words/)
     expect(lines.find((l) => l.kind === 'pick')?.source).toBe('design/scenes/pricing/checkout.tsx:48')
   })
 })

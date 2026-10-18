@@ -585,3 +585,22 @@ describe('captures: review round 3 fixes', () => {
     done()
   })
 })
+
+describe('captures: review round 6 fixes', () => {
+  it('an empty edit means you deleted everything: the comment says so, the brief carries the empty edit - also after a restart', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'edit', '')
+    await jam.act(r.id, card(jam, r.id).rev, 'confirm')
+    jam.stop()
+    expect(readLog(dir, 'home').find((e) => e.id === `cap-${r.id}-e`)!.body).toBe('(a capture with no words)')
+    const again = createJam(root, CFG, agent())
+    await again.tick(); again.stop()
+    const p = packets(root)[0].members[0]
+    expect(p.brief.capture.edited).toBe('')
+    expect(card(again, r.id).state).toBe('review')
+    done()
+  })
+})

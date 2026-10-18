@@ -146,7 +146,15 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   useEffect(() => { if (!open) setText(pending ?? edited ?? words) }, [edited, words, pending])
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (open) { const el = field.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } } }, [open])
-  const save = () => { setOpen(false); if (text !== (edited ?? words)) onEdit?.(text) }
+  // compared with what is meant now - a pending save included: going back to the saved words while a
+  // newer save is out is a save of its own, queued after it
+  const lastSent = useRef<string | undefined>(undefined)
+  const save = () => {
+    setOpen(false)
+    if (text !== (lastSent.current ?? pending ?? edited ?? words)) { lastSent.current = text; onEdit?.(text) }
+  }
+  // once the saved edit is what was last sent, the intent is settled
+  useEffect(() => { if (lastSent.current !== undefined && edited === lastSent.current && pending === undefined) lastSent.current = undefined }, [edited, pending])
   return (
     <div className="jm-panel jm-readback" data-jam-readback="" style={style}>
       <div className="top">
@@ -166,7 +174,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
             onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { setText(edited ?? words); setOpen(false) } }} />
         ) : (
           <div className={readOnly ? undefined : 'jm-editable'} title={readOnly ? undefined : 'Click to edit the words'} onClick={readOnly ? undefined : () => setOpen(true)}>
-            {edited && !readOnly && <div className="jm-edited"><PencilSimpleIcon size={12} />Your edit</div>}
+            {edited !== undefined && !readOnly && <div className="jm-edited"><PencilSimpleIcon size={12} />Your edit</div>}
             <Lines lines={lines} />
           </div>
         )}

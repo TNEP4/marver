@@ -277,7 +277,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
-      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited ? { edited: capCard.payload.edited } : {}),
+      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited } : {}),
         ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
     }
   }
@@ -616,7 +616,7 @@ export function answers(root: string): { answered: Answer[]; earlier: Answer[] }
 // ---- captures --------------------------------------------------------------------------------------
 
 /** The ledger key that binds a confirmed capture's payload: its record hash and your edit. */
-export const payloadKey = (c: Card): string => `cap:${c.id}:${hashOf({ recordHash: c.payload?.recordHash ?? '', edited: c.payload?.edited ?? '' })}`
+export const payloadKey = (c: Card): string => `cap:${c.id}:${hashOf({ recordHash: c.payload?.recordHash ?? '', edited: c.payload?.edited ?? null })}`   // no edit and an empty edit differ
 
 /** A sealed capture becomes a draft card (once - a second post finds it). A capture made during a
  *  review follows the reviewed card and keeps the run it saw (`reviewing`). */
@@ -657,7 +657,7 @@ export function beginStep(j: Journal, c: Card, op: 'confirm' | 'more', event: Co
     const r = c.reviewing && j.batches.find((b) => b.batchId === c.reviewing!.batch)
     const m = r && r.members.find((x) => x.card === c.reviewing!.card)
     if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], result: resultText(j, r!.batchId, m.card, r!.note ?? ''),
-      ...(m.brief?.capture ? { capture: { record: m.brief.capture.record, recordHash: m.brief.capture.recordHash, ...(m.brief.capture.edited ? { edited: m.brief.capture.edited } : {}) } } : {}) } }
+      ...(m.brief?.capture ? { capture: { record: m.brief.capture.record, recordHash: m.brief.capture.recordHash, ...(m.brief.capture.edited !== undefined ? { edited: m.brief.capture.edited } : {}) } } : {}) } }
   }
   c.rev += 1; c.at = now
 }

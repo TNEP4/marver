@@ -357,7 +357,7 @@ describe('captures in the browser', () => {
   }, 30_000)
 
   skippable('a sealed capture that cannot be sent is kept and sent again with the same id once the dev server answers', async () => {
-    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch1 = f; window.__fail = 1; window.fetch = (u, o) => (String(u).includes('/api/jam/capture') && o && o.method === 'POST' && window.__fail) ? (window.__fail === 1 ? Promise.reject(new TypeError('offline')) : Promise.resolve(new Response('{"ok":false,"error":"jam is not running here"}', { status: 409 }))) : f(u, o); return 1 })()`)
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch1 = f; window.__fail = 1; window.fetch = (u, o) => (String(u).includes('/api/jam/capture') && o && o.method === 'POST' && window.__fail) ? (window.__fail === 1 ? Promise.reject(new TypeError('offline')) : window.__fail === 3 ? Promise.resolve(new Response('<html>not json</html>', { status: 200 })) : Promise.resolve(new Response('{"ok":false,"error":"jam is not running here"}', { status: 409 }))) : f(u, o); return 1 })()`)
     const kept = (expr: string) => `(() => { const k = Object.keys(localStorage).find((x) => x.startsWith('mv-jam-sealed:')); const all = k ? JSON.parse(localStorage.getItem(k) || '{}') : {}; return ${expr} })()`
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
@@ -367,6 +367,10 @@ describe('captures in the browser', () => {
     await until(kept(`!!all[${JSON.stringify(id)}]?.timeline.some((x) => x.text === 'do not lose me')`), 15_000)
     // the server answers but jam is not running yet (409): still kept, still retried
     await browser!.eval(s, `(window.__fail = 2), 1`)
+    await sleep(6000)
+    expect(await browser!.eval(s, kept(`!!all[${JSON.stringify(id)}]`))).toBe(true)
+    // an answer that cannot be read (a 200 with an HTML fallback) is no acknowledgement either
+    await browser!.eval(s, `(window.__fail = 3), 1`)
     await sleep(6000)
     expect(await browser!.eval(s, kept(`!!all[${JSON.stringify(id)}]`))).toBe(true)
     expect(await browser!.eval(s, `(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)})`)).toBe(false)
@@ -443,5 +447,32 @@ describe('captures in the browser', () => {
     await browser!.eval(s, `(window.fetch = window.__fetch3), 1`)
     await browser!.eval(s, `window.__mvJamUi.getState().setLaneKeys(false), 1`)
     await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
+  }, 90_000)
+
+  skippable('a capture from another workspace is refused by this one; going back to the saved words while a save is out still wins', async () => {
+    const st = await browser!.eval(s, `fetch('/__mv/api/jam/capture', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' }, body: JSON.stringify({ workspace: 'someone-else', record: { format: 'marver.jam.capture', v: 1, id: 'cap-1700000000000-abcdef', context: { canvas: 'x', board: 'main' }, view: {}, timeline: [], pictures: [] } }) }).then((r) => r.status)`)
+    expect(st).toBe(409)
+    // revert during a pending save
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('original'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 15_000)
+    const typeAndBlur = async (text: string) => {
+      await click('.jm-focus .jm-editable')
+      await sleep(300)
+      await until(`!!document.querySelector('.jm-focus textarea')`, 3000)
+      await browser!.eval(s, `(() => { const t = document.querySelector('.jm-focus textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, ${JSON.stringify(text)}); t.dispatchEvent(new Event('input', { bubbles: true })); t.blur(); return 1 })()`)
+      await until(`!document.querySelector('.jm-focus textarea')`, 3000)
+    }
+    await typeAndBlur('saved words')
+    await until(`window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)})?.edited === 'saved words'`, 5000)
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch4 = f; window.fetch = (u, o) => { const b = o && o.body ? String(o.body) : ''; return b.includes('"action":"edit"') && b.includes('"body":"A"') ? new Promise((r) => setTimeout(() => r(f(u, o)), 900)) : f(u, o) }; return 1 })()`)
+    await typeAndBlur('A')
+    await typeAndBlur('saved words')                                                  // back, while A is still out
+    await click('.jm-focus .jm-btn.primary')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state !== 'draft')`, 10_000)
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)}).edited`)).toBe('saved words')
+    await browser!.eval(s, `(window.fetch = window.__fetch4), 1`)
   }, 90_000)
 })

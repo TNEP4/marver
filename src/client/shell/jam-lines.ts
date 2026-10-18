@@ -68,15 +68,16 @@ const frameName = (f?: string): string => {
 export function timelineLines(r: CaptureRecord, edited?: string): TimelineLine[] {
   const t0 = r.timeline[0]?.at ?? 0
   const at = (ms: number) => clock(ms - t0)
-  const ed = edited?.trim()
-  const out: TimelineLine[] = ed ? [{ t: at(t0), kind: 'words', text: `"${ed}"` }] : []
+  // your edit stands in for the words and the notes - an empty one too (you deleted them)
+  const ed = edited === undefined ? undefined : edited.trim()
+  const out: TimelineLine[] = ed !== undefined ? [{ t: at(t0), kind: 'words', text: ed ? `"${ed}"` : '(no words - your edit removed them)' }] : []
   let pictures = 0
   for (const s of r.timeline) {
     const t = at(s.at)
     const from = (b: Bundle) => (src(b) ? { source: src(b) } : {})
     switch (s.event) {
-      case 'words': if (!ed) out.push({ t, kind: 'words', text: `"${s.text}"` }); break
-      case 'note': out.push({ t, kind: 'note', text: `"${s.text}"` }); break
+      case 'words': if (ed === undefined) out.push({ t, kind: 'words', text: `"${s.text}"` }); break
+      case 'note': if (ed === undefined) out.push({ t, kind: 'note', text: `"${s.text}"` }); break
       case 'pick': case 'click':
         out.push({ t, kind: s.event, text: `${el(s.bundle)}${s.mode !== 'canvas' ? ` · ${s.mode}` : ''}`, ...from(s.bundle), ...(s.point != null ? { point: s.point } : {}) }); break
       case 'hover': out.push({ t, kind: 'hover', text: `held over ${el(s.bundle)}`, ...from(s.bundle) }); break

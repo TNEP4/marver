@@ -995,6 +995,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const raw = await readBody(req, 4_000_000)
         if (raw == null) return json(res, 400, { error: 'body too large' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        // a capture made in another workspace (a tab left open across a port reuse) is not this one's
+        const { createHash } = await import('node:crypto')
+        if (b?.workspace !== undefined && b.workspace !== createHash('sha256').update(root).digest('hex').slice(0, 16)) return json(res, 409, { error: 'this capture was made in another workspace' })
         const { jamLive } = await import('./jam/live.ts')
         if (!jamLive.capture) return json(res, 409, { error: 'jam is not running here' })
         const r = await jamLive.capture(b?.record)

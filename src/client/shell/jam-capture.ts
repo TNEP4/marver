@@ -486,13 +486,17 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
  *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
 async function upload(record: CaptureRecord): Promise<void> {
-  let r: { ok?: boolean; card?: { id: string; rev: number }; error?: string } | null = null
+  type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string }
+  let r: Verdict | null = null
   try {
-    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ record }) })
-    r = await res.json().catch(() => ({ ok: false, error: `the dev server answered ${res.status}` }))
-    // only a verdict on the record itself is final: taken (200) or refused as a record (400). Anything
-    // else - jam not running yet (409), a server error, a gate - is the server being away: keep it
-    if (!res.ok && res.status !== 400) r = null
+    // the workspace it was made in travels with it: another project served on this port refuses it
+    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ record, workspace: CONFIG.workspace }) })
+    const body = (await res.json().catch(() => null)) as Verdict | null
+    // only an explicit verdict on THIS record is final: taken (200, naming its card) or refused as a
+    // record (400, saying why). Anything else - jam not running yet, another workspace, an unreadable
+    // answer, a gate, a server error - is the server being away: keep it and try again
+    r = res.ok && body?.ok === true && body.card?.id === record.id ? body
+      : res.status === 400 && body && typeof body.error === 'string' ? body : null
   } catch { r = null }
   if (!r) {
     if (!retryTimer) useStore.getState().toast('the capture is kept here and will be sent when marver dev answers')

@@ -781,10 +781,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     }
     const b = q.j.batches.find((x) => x.batchId === c.batch)
     return {
-      title: c.payload?.edited?.trim() ? c.payload.edited.trim().slice(0, 80) : t.title, notes: t.notes,
+      title: c.payload?.edited !== undefined ? (c.payload.edited.trim().slice(0, 80) || '(no words)') : t.title, notes: t.notes,
       inRun: !!q.j.run && c.made >= q.j.run.since,
       ...(b?.shots ? { shots: b.shots } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}),
-      ...(c.payload?.edited ? { edited: c.payload.edited } : {}),
+      ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
     }
   }
   const view = (): QueueView => {

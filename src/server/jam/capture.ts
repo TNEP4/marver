@@ -152,7 +152,8 @@ export function captureFrames(r: CaptureRecord): string[] {
 
 /** What you said and wrote, in time order: the words and the notes merged - or your edit. */
 export function captureWords(r: CaptureRecord, edited?: string): string {
-  if (edited && edited.trim()) return edited.trim()
+  // an edit - even an empty one, which deleted everything - stands in for the words and the notes
+  if (edited !== undefined) return edited.trim()
   return r.timeline.flatMap((s) => (s.event === 'words' ? [s.text] : s.event === 'note' ? [`(note) ${s.text}`] : [])).join(' ').replace(/\s+/g, ' ').trim()
 }
 
