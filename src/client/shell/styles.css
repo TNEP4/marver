@@ -1447,3 +1447,380 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .sh-panel .it.board.mk-ask > .sh-live-ic svg, .sh-panel .it.board.mk-ask > svg { color: var(--mk-ask) }
 .sh-panel .it small.mk-fresh { color: var(--mk-new); font-weight: 700 }
 .sh-node-head.mk-new .id { color: var(--mk-new) }
+
+/* ============================== Jam V2 (spec 27): captures, the lane, the focus panel ==============================
+   Ported from the approved hi-fi (platform canvas design/scenes/jam/_jam.css), in the shell's tokens. Recording is
+   teal (--jm-rec); red is for failures only; colour lives in the state glyph. */
+.sh-app {
+  /* recording (round 3): Apple's system teal - red stays for errors and failures. `strong` is the
+     increased-contrast teal, for fills that carry white text (the numbered points) */
+  --jm-rec: #00c3d0;
+  --jm-rec-strong: #008198;
+  --jm-rec-on: #fff;
+  --jm-rec-ring: rgba(0, 195, 208, .26);
+  --jm-rec-wash: rgba(0, 195, 208, .12);
+  --jm-err: #e5484d;
+  /* the lane: 44px tiles + 12px air. The lane runs the full width, so everything else on the bottom edge
+     (the Update pill, toasts, notices) rises by this much while it shows */
+  --jm-lane: 56px;
+}
+.sh-app.dark, .jm-stage {
+  --jm-rec: #00d2e0; --jm-rec-strong: #00d2e0; --jm-rec-on: #04252a;
+  --jm-rec-ring: rgba(0, 210, 224, .28); --jm-rec-wash: rgba(0, 210, 224, .14) }
+
+
+/* ---- shared: the glass recipe + edge light, for Jam's PANELS (read-back, review, sheets, caption) ---- */
+.jm-panel {
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); position: relative;
+  color: var(--glass-ink); user-select: none; -webkit-user-select: none;
+  font-family: -apple-system, system-ui, sans-serif }
+.jm-panel::after {
+  content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
+  background: var(--edge-light); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude }
+/* floating panels lift a little further off the canvas than the tiles (the comment card's drop) */
+.jm-panel { box-shadow: var(--shadow-glass), 0 16px 40px -14px rgba(24, 24, 27, .3) }
+.sh-app.dark .jm-panel { box-shadow: var(--shadow-glass), 0 18px 44px -14px rgba(0, 0, 0, .6) }
+
+
+/* ---- the TILE: Jam's one bottom-edge material (v2). No bar holds the items: each one floats on its own -
+   much more transparent than the shell's glass, a strong backdrop blur so text reads over any frame, a
+   glaze (top highlight + a thin light rim) and a teeny shadow. Colour lives in the state glyph only. ---- */
+.sh-app {
+  --jm-tile: rgba(255, 255, 255, .36);
+  --jm-tile-hover: rgba(255, 255, 255, .58);
+  --jm-tile-glaze: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 255, 255, .08) 55%, rgba(255, 255, 255, 0));
+  --jm-tile-blur: blur(18px) saturate(180%);
+  --jm-tile-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .75), inset 0 1px 0 rgba(255, 255, 255, .9),
+    0 0 0 .5px rgba(24, 24, 27, .09), 0 1px 1.5px rgba(24, 24, 27, .06), 0 3px 8px -4px rgba(24, 24, 27, .14);
+  --jm-r: 11px }
+.sh-app.dark, .jm-stage {
+  --jm-tile: rgba(34, 34, 42, .42);
+  --jm-tile-hover: rgba(52, 52, 62, .6);
+  --jm-tile-glaze: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .015) 55%, rgba(255, 255, 255, 0));
+  --jm-tile-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .1),
+    0 0 0 .5px rgba(0, 0, 0, .4), 0 1px 1.5px rgba(0, 0, 0, .25), 0 3px 8px -4px rgba(0, 0, 0, .45) }
+.jm-card, .jm-chip {
+  background: var(--jm-tile-glaze), var(--jm-tile); backdrop-filter: var(--jm-tile-blur); -webkit-backdrop-filter: var(--jm-tile-blur);
+  box-shadow: var(--jm-tile-shadow); border: 0; border-radius: var(--jm-r); position: relative;
+  user-select: none; -webkit-user-select: none; font-family: -apple-system, system-ui, sans-serif }
+.jm-card:hover { background: var(--jm-tile-glaze), var(--jm-tile-hover) }
+
+
+/* ---- the lane: full width from the bottom-left corner, items left to right, scrolls sideways - the
+   run's captures in the order made, the one recording now last at the right end (never cut) ---- */
+.jm-lane { position: absolute; left: var(--edge); right: var(--edge); bottom: var(--edge); z-index: 31; display: flex; pointer-events: none; min-width: 0 }
+.jm-lane-in { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; pointer-events: auto;
+  padding: 6px 4px; margin: -6px -4px; scrollbar-width: none; overscroll-behavior-x: contain }   /* room for the tiles' shadow inside the scroller */
+.jm-lane-in::-webkit-scrollbar { display: none }
+.jm-lane-in.fade-r { -webkit-mask: linear-gradient(90deg, #000 calc(100% - 56px), transparent); mask: linear-gradient(90deg, #000 calc(100% - 56px), transparent) }
+.jm-lane-in.fade-l { -webkit-mask: linear-gradient(90deg, transparent, #000 56px); mask: linear-gradient(90deg, transparent, #000 56px) }
+.jm-lane-in.fade-l.fade-r { -webkit-mask: linear-gradient(90deg, transparent, #000 56px calc(100% - 56px), transparent); mask: linear-gradient(90deg, transparent, #000 56px calc(100% - 56px), transparent) }
+.jm-lane .jm-chip { flex: none }                           /* the recording tile: last, whole */
+
+/* ---- the toolbar's Jam button (between Laser and Tidy). No blue while a session runs: blue is hover and
+   press only (the shell's own pill states). The session reads as the waveform + minutes, in ink; while a
+   capture records, a teal dot pulses in the waveform's place. ---- */
+.sh-pill-btn.jm-hover { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-pill-btn.jm-jam.live, .sh-pill-btn.jm-jam.rec { gap: 7px; padding: 0 12px 0 11px; color: var(--glass-ink-2); background: none }
+.sh-pill-btn.jm-jam.live.jm-hover, .sh-pill-btn.jm-jam.rec.jm-hover { background: var(--glass-hover); color: var(--glass-ink) }
+.sh-pill-btn.jm-jam.press { background: var(--glass-accent-bg); color: var(--glass-accent) }
+.sh-pill-btn.jm-jam.rec .jm-clock { color: var(--glass-ink) }
+/* in play: the dark pill's own ink */
+.sh-play-pill .sh-pill-btn.jm-jam.live, .sh-play-pill .sh-pill-btn.jm-jam.rec { background: none; color: rgba(245, 245, 247, .82) }
+/* the collapsed toolbar keeps the recording dot on its corner (only while a capture records) */
+.sh-pill-fab .jm-fab-dot { position: absolute; right: 8px; top: 8px; width: 6px; height: 6px }
+.jm-live-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--jm-rec); flex: none }
+.jm-live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: var(--jm-rec);
+  animation: jm-pulse 1.6s cubic-bezier(.2, .6, .3, 1) infinite }
+@keyframes jm-pulse { 0% { transform: scale(1); opacity: .55 } 80%, 100% { transform: scale(2.6); opacity: 0 } }
+.jm-clock { font: 600 12px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
+.sh-pill-btn.jm-jam .jm-nomic { color: var(--glass-ink-2) }
+
+/* ---- a capture's tile (round 3): two lines, a little squarer - glyph | title over a status line
+   ("Ready to review", "Agent working · 0:41", "Done · 1 frame changed"). Colour only in the glyph. ---- */
+.jm-card { display: inline-flex; align-items: center; gap: 10px; height: 44px; min-width: 136px; max-width: 216px; flex: none;
+  padding: 0 14px 0 12px; border-radius: 10px; color: var(--glass-ink); text-align: left; cursor: pointer }
+.jm-card .jm-st { flex: none }
+.jm-card .tx { display: flex; flex-direction: column; gap: 1px; min-width: 0 }
+.jm-card .t { min-width: 0; font: 500 12.5px/16px -apple-system, system-ui, sans-serif; letter-spacing: -.005em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.jm-card .m { min-width: 0; font: 500 11px/14px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums }
+.jm-card .x { flex: none; display: inline-flex; color: var(--glass-ink-3); margin-left: auto }
+.jm-card.review .m { color: var(--glass-ink-2) }
+.jm-card.queued .t, .jm-card.confirming .t { color: var(--glass-ink-2) }
+.jm-card.done .t, .jm-card.kept .t { color: var(--glass-ink-3) }
+.jm-card.held { color: var(--glass-ink-3) }
+.jm-card.held .jm-st { opacity: .55 }
+.jm-card.ghost { opacity: .35 }
+/* selected (clicked, or Q's focus): the ONE place blue shows on the lane - a 2px accent ring round the tile */
+.jm-card.focus { color: var(--glass-ink); max-width: 260px; border-radius: 10px;
+  box-shadow: var(--jm-tile-shadow), 0 0 0 2px var(--accent), 0 0 0 5px var(--accent-ring) }
+
+/* ---- the capture: an edge ring round the window, the chip, the caption, points ---- */
+.jm-edge { position: absolute; inset: 0; pointer-events: none; z-index: 40;
+  box-shadow: inset 0 0 0 2px var(--jm-rec), inset 0 0 0 6px var(--jm-rec-ring) }
+/* the capture recording NOW (round 3): the last tile of the lane, two lines like the others - a pulsing
+   teal dot, "Capturing" and the timer over what it holds so far - then Stop. A little wider, never cut. */
+.jm-chip { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 6px 0 12px; flex: none; border-radius: 10px;
+  font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); white-space: nowrap }
+.jm-chip .tx { display: flex; flex-direction: column; gap: 1px; min-width: 0 }
+.jm-chip .lead { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px/16px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-chip .time { font-weight: 600; color: var(--glass-ink-2); font-variant-numeric: tabular-nums }
+.jm-chip .stats { display: inline-flex; align-items: center; gap: 9px; font: 500 11px/14px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.jm-chip .sep { width: 1px; height: 24px; background: color-mix(in srgb, var(--glass-ink) 10%, transparent); margin: 0 2px; flex: none }
+.jm-chip .stat { display: inline-flex; align-items: center; gap: 3px; color: var(--glass-ink-3); font-variant-numeric: tabular-nums }
+.jm-chip .stat svg { color: var(--glass-ink-3) }
+.jm-chip .stat.warn { color: var(--glass-warn) }
+.jm-chip .stat.warn svg { color: var(--glass-warn) }
+.jm-chip .tag { display: inline-flex; align-items: center; gap: 4px; color: var(--glass-ink-2) }
+.jm-chip .tag svg { color: var(--glass-ink-3) }
+.jm-chip .stop { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 30px; padding: 0 9px; flex: none; border: 0;
+  border-radius: 7px; background: none; color: var(--glass-ink-2); cursor: pointer; font: 500 11px -apple-system, system-ui, sans-serif }
+.jm-chip .stop svg { color: var(--jm-rec) }
+.jm-chip .stop kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; padding: 0 }
+.jm-chip .stop:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.jm-chip .stop:disabled svg { color: var(--glass-ink-3) }
+.jm-chip.finishing .time { color: var(--glass-ink-2) }
+
+/* points: screen-constant markers (scale by --sh-inv inside a World) */
+.jm-pt { position: absolute; transform: translate(-50%, -50%) scale(var(--sh-inv, 1)); display: inline-flex; align-items: center;
+  justify-content: center; width: 20px; height: 20px; border-radius: 50%; z-index: 6; pointer-events: none;
+  font: 700 11px/1 -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
+.jm-pt.pick { background: var(--jm-rec-strong); color: var(--jm-rec-on); box-shadow: 0 0 0 2px var(--solid), 0 2px 6px rgba(24, 24, 27, .3) }
+.jm-pt.click { background: var(--solid); color: var(--jm-rec-strong); box-shadow: inset 0 0 0 2px var(--jm-rec), 0 0 0 1.5px var(--solid), 0 2px 6px rgba(24, 24, 27, .25) }
+.jm-pt.hover { width: 16px; height: 16px; background: none; border: 1.5px dashed color-mix(in srgb, var(--jm-rec) 70%, transparent) }
+/* the dwell's centre: a solid red dot, so the ring never reads as a spinner or a status glyph */
+.jm-pt.hover::after { content: ''; width: 4px; height: 4px; border-radius: 50%; background: var(--jm-rec) }
+/* the element a pick landed on (world box, screen-constant line) */
+.jm-pickbox { position: absolute; border-radius: 6px; pointer-events: none; z-index: 5;
+  box-shadow: 0 0 0 calc(1.5px * var(--sh-inv, 1)) var(--jm-rec), 0 0 0 calc(5px * var(--sh-inv, 1)) var(--jm-rec-ring) }
+
+
+/* ---- panels: read-back, review card, sheets ---- */
+.jm-panel { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 20px;
+  font: 400 13px -apple-system, system-ui, sans-serif; letter-spacing: -.005em; white-space: normal }
+.jm-panel h3 { margin: 0; font: 600 14px -apple-system, system-ui, sans-serif; letter-spacing: -.01em; color: var(--glass-ink) }
+.jm-panel .hd { font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3) }
+.jm-panel .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
+.jm-panel p { margin: 0; line-height: 1.5; color: var(--glass-ink-2) }
+.jm-panel .top { display: flex; align-items: center; gap: 8px; min-height: 24px }
+.jm-panel .top h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.jm-panel .meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: -6px;
+  font: 500 11.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); font-variant-numeric: tabular-nums }
+.jm-panel .meta i { width: 2px; height: 2px; border-radius: 1px; background: currentColor; opacity: .7 }
+.jm-panel .row { display: flex; align-items: center; gap: 9px; min-height: 30px; padding: 0 8px; border-radius: 8px;
+  font: 500 13px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-panel .row > svg { flex: none; color: var(--glass-ink-3) }
+.jm-panel .row .v { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--glass-ink-2); font-weight: 500; font-size: 12px }
+.jm-panel .row small { color: var(--glass-ink-3); font: 500 11.5px -apple-system, system-ui, sans-serif }
+.jm-panel .rows { display: flex; flex-direction: column; margin: 0 -8px }
+.jm-panel .actions { display: flex; align-items: center; gap: 6px }
+.jm-panel .actions .sp { flex: 1 }
+.jm-panel kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; padding: 0 }
+.jm-panel .rule { height: 1px; background: var(--glass-brd); margin: 0 -16px }
+.jm-panel code, .jm-code { font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--glass-ink-3) }
+.jm-panel .note-line { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px;
+  font: 500 12px/1.45 -apple-system, system-ui, sans-serif }
+.jm-panel .note-line svg { flex: none; margin-top: 1px }
+.jm-panel .note-line.warn { background: var(--card-warn-bg); color: var(--card-warn-ink) }
+.jm-panel .note-line.err { background: var(--card-err-bg); color: var(--card-err-ink) }
+.jm-panel .note-line.info { background: var(--glass-hover); color: var(--glass-ink-2) }
+.jm-panel .note-line.info svg { color: var(--glass-ink-3) }
+.jm-ic { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 999px; flex: none;
+  background: var(--glass-hover); color: var(--glass-ink-2) }
+.jm-ic.blue { background: color-mix(in srgb, var(--mv-blue) 13%, transparent); color: var(--mv-blue) }
+.jm-ic.err { background: var(--card-err-bg); color: var(--card-err-ink) }
+.jm-ic.warn { background: var(--card-warn-bg); color: var(--card-warn-ink) }
+.jm-iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: 8px;
+  background: none; color: var(--glass-ink-3); cursor: pointer; flex: none }
+.jm-iconbtn:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.jm-iconbtn:disabled { opacity: .4 }
+
+/* the transcript: time | glyph | line */
+.jm-lines { display: flex; flex-direction: column; gap: 3px; font: 400 12px/1.5 -apple-system, system-ui, sans-serif; color: var(--glass-ink-2) }
+.jm-lines > div { display: grid; grid-template-columns: 30px 16px 1fr; gap: 6px; align-items: baseline }
+.jm-lines .ts { font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); font-variant-numeric: tabular-nums }
+.jm-lines .g { color: var(--glass-ink-3); display: inline-flex; transform: translateY(2px) }
+.jm-lines .words { color: var(--glass-ink); font-size: 13px }
+.jm-lines .pt { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; margin-right: 5px;
+  font: 700 9.5px/1 -apple-system, system-ui, sans-serif; vertical-align: 1px }
+.jm-lines .pt.pick { background: var(--jm-rec-strong); color: var(--jm-rec-on) }
+.jm-lines .pt.click { box-shadow: inset 0 0 0 1.5px var(--jm-rec); color: var(--jm-rec-strong) }
+.jm-lines code { margin-left: 4px }
+.jm-lines .secret { letter-spacing: .1em; color: var(--glass-ink-3) }
+/* the editable words: the comment field's surface and the accent focus ring */
+.jm-edit { padding: 8px 10px; margin: -4px -6px; border-radius: 10px; background: var(--cm-field); color: var(--glass-ink);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring); font: 400 13px/1.5 -apple-system, system-ui, sans-serif }
+.jm-edit .caret { display: inline-block; width: 1px; height: 15px; background: var(--accent); vertical-align: -3px; margin-left: 1px }
+
+/* pictures: before/after pairs and capture thumbs */
+.jm-shots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.jm-shot { display: flex; flex-direction: column; gap: 5px; min-width: 0 }
+.jm-shot .pic { position: relative; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; border: 1px solid var(--glass-brd); background: var(--node-bg) }
+.jm-shot .pic.none { background: none; border: 1px dashed var(--glass-ink-3); display: flex; align-items: center; justify-content: center;
+  color: var(--glass-ink-3); font: 500 11px -apple-system, system-ui, sans-serif; gap: 5px }
+.jm-shot .cap { font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.jm-shot .cap b { color: var(--glass-ink-2); font-weight: 600 }
+.jm-thumbs { display: flex; gap: 8px }
+.jm-thumbs .jm-shot { width: 112px }
+.jm-framehd { display: flex; align-items: center; gap: 6px; font: 600 11.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2) }
+.jm-framehd svg { color: var(--glass-ink-3) }
+
+/* the agent's reply in a panel */
+.jm-reply { display: grid; grid-template-columns: 20px 1fr; gap: 9px; align-items: start }
+.jm-reply p { font-size: 13px; line-height: 1.5; color: var(--glass-ink); display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden }
+.jm-reply .cm-avatar { margin-top: 1px }
+.jm-link { color: var(--glass-accent); font: 600 12px -apple-system, system-ui, sans-serif; cursor: pointer; white-space: nowrap }
+.jm-flink { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px 0 6px; border-radius: 6px;
+  background: var(--glass-hover); color: var(--glass-ink-2); font: 600 11px -apple-system, system-ui, sans-serif }
+.jm-flink svg { color: var(--glass-ink-3) }
+.jm-file { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; background: var(--glass-hover);
+  font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2) }
+.jm-file svg { flex: none; color: var(--glass-ink-3) }
+.jm-file code { color: var(--glass-ink) }
+.jm-file .dim { margin-left: auto }
+
+/* More work: the composer with a fixed @marver */
+.jm-more { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 5px 0 13px; border-radius: 19px; background: var(--cm-field);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring); font: 400 13px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-more .at { color: var(--mv-blue); font-weight: 700 }
+.jm-more .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.jm-more .ph { color: var(--glass-ink-3) }
+.jm-more { padding-right: 13px }
+.jm-more kbd { font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; flex: none }
+
+/* the capture's detail view: wide enough to read - pictures large, then the timeline */
+.jm-readback { width: 520px }
+.jm-readback .jm-thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px }
+.jm-readback .jm-thumbs .jm-shot { width: auto }
+.jm-capglyph { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; flex: none;
+  background: var(--glass-hover); color: var(--glass-ink-2) }
+.jm-lines b.ui { font-weight: 600; color: var(--glass-ink) }
+.jm-sheet { width: 320px; border-radius: var(--r-panel) }
+.jm-sheet code { white-space: nowrap }                  /* a path or package name never breaks mid-token */
+.jm-wrapup { width: 440px; border-radius: var(--r-panel) }
+.jm-review { width: 480px }
+
+
+/* buttons inside panels: 34px pills; primary is Marver's blue (the Jam pill's View) */
+.jm-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 13px;
+  border-radius: 999px; border: 1px solid var(--glass-brd); background: none; color: var(--glass-ink); cursor: pointer;
+  font: 600 12px -apple-system, system-ui, sans-serif; white-space: nowrap }
+.jm-btn:hover { background: var(--glass-hover) }
+.jm-btn.primary { background: var(--mv-blue); border-color: transparent; color: #fff }
+.jm-btn.primary:hover { filter: brightness(1.08) }
+.jm-btn.ghost { border-color: transparent; color: var(--glass-ink-2) }
+.jm-btn.ghost:hover { color: var(--glass-ink) }
+.jm-btn kbd { color: inherit; opacity: .55; font: 500 11px -apple-system, system-ui, sans-serif }
+.jm-btn:disabled { opacity: .45 }
+
+
+/* ---- round 2 refinements of the capture tile (folded in from 06-capture / 08-capture-in-play) ----
+   Stop is a small filled red square; the count that just moved gets a brief wash (wrap the lane in
+   .jm-tick); the live words wear the tile material; in play the tile matches the navigator. */
+.jm-chip .stop { gap: 6px; padding: 0 9px }
+.jm-chip .stop svg { display: none }
+.jm-chip .stop::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--jm-rec); flex: none }
+.jm-chip .stop:disabled::before { background: var(--glass-ink-3) }
+.jm-stage .jm-chip { height: 40px; padding: 0 5px 0 14px; border-radius: 999px; background: rgba(18, 18, 24, .82);
+  border: 1px solid rgba(255, 255, 255, .12); box-shadow: none; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px) }
+.jm-stage .jm-chip .note, .jm-stage .jm-chip .stop { height: 30px; border-radius: 999px }
+.jm-stage .jm-chip .note { padding: 0 11px }
+.jm-stage .jm-chip .stop { padding: 0 11px }
+
+/* ---- a capture in a thread (round 3): the comment a confirmed capture leaves, labelled as one ---- */
+.jm-capcm { display: flex; flex-direction: column; gap: 6px }
+.jm-capcm .hd { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; row-gap: 1px; font: 600 11.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2) }
+.jm-capcm .hd > span { white-space: nowrap }
+.jm-capcm .hd svg { color: var(--jm-rec) }
+.jm-capcm .hd .dim { font-weight: 500; color: var(--glass-ink-3) }
+.jm-capcm .w { font: 400 13px/1.45 -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-capcm .jm-tchip { margin-top: 2px }
+
+/* "Finishing" after E is still the capture's own moment: its turning arc is teal, not the agent's blue */
+.jm-chip.finishing .jm-st circle, .jm-chip.finishing .jm-st path { stroke: var(--jm-rec) }
+
+
+/* the capture tile's Note button */
+.jm-chip .notebtn { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px; border: 0; border-radius: 7px; background: none;
+  color: var(--glass-ink-2); font: 500 12px -apple-system, system-ui, sans-serif; cursor: pointer; flex: none }
+.jm-chip .notebtn svg { color: var(--glass-ink-3) }
+.jm-chip .notebtn b { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--glass-hover); color: var(--glass-ink); font: 700 10.5px -apple-system, system-ui, sans-serif }
+.jm-chip .notebtn kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; padding: 0 }
+.jm-chip .notebtn:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.jm-chip .notebtn.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
+.jm-chip .notebtn.on svg { color: var(--glass-accent) }
+/* the notes card */
+.jm-notes { width: 340px; gap: 10px; padding: 14px }
+.jm-notes .top h3 { flex: none }
+.jm-notelist { display: flex; flex-direction: column; gap: 6px; font: 400 12.5px/1.45 -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-notelist > div { display: grid; grid-template-columns: 32px 1fr; gap: 6px }
+.jm-notelist .ts { font: 500 11px/18px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); font-variant-numeric: tabular-nums }
+.jm-notefield { min-height: 58px; padding: 9px 11px; border-radius: 10px; background: var(--cm-field); color: var(--glass-ink);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring); font: 400 13px/1.45 -apple-system, system-ui, sans-serif }
+.jm-notefield .ph { color: var(--glass-ink-3) }
+.jm-notefield .caret { display: inline-block; width: 1px; height: 15px; background: var(--accent); vertical-align: -3px; margin-left: 1px }
+.jm-notes .foot { display: flex; gap: 12px; justify-content: flex-end; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+/* the focus panel: top edge to just above the lane; the panel inside fills it and its middle scrolls */
+.jm-focus { position: absolute; top: var(--edge); bottom: calc(var(--edge) + var(--jm-lane) + 2px); z-index: 31; display: flex }
+.jm-focus > .jm-panel { width: 100%; height: 100%; min-height: 0 }
+/* one big picture at a time: the frame tabs and a Before | After switch above it (B flips) */
+.jm-fbar { display: flex; align-items: center; gap: 8px }
+.jm-fbar .sp { flex: 1 }
+.jm-fbar kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; padding: 0 4px 0 2px; align-self: center }
+.jm-big { flex: 1; min-height: 0; display: flex }
+.jm-big .jm-shot { width: 100% }
+.jm-big .jm-shot .pic { aspect-ratio: 16 / 10 }
+.jm-ftabs { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--glass-hover); width: fit-content }
+.jm-ftabs button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: none;
+  color: var(--glass-ink-2); font: 500 12px -apple-system, system-ui, sans-serif; cursor: pointer }
+.jm-ftabs button svg { color: var(--glass-ink-3) }
+.jm-ftabs button small { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.jm-ftabs button.on { background: var(--solid); color: var(--glass-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(24, 24, 27, .12), 0 0 0 .5px var(--glass-brd) }
+.jm-focus > .jm-readback .jm-thumbs { gap: 12px }
+/* the review's big picture sits centred in a quiet well that takes the panel's spare height */
+.jm-focus .jm-big { align-items: center; padding: 10px; border-radius: 14px; background: var(--glass-hover) }
+/* in play the Note button is a pill like Stop beside it (the navigator material) */
+.jm-stage .jm-chip .notebtn { height: 30px; border-radius: 999px; padding: 0 11px }
+
+/* ---- the shell's own additions to the kit (real controls where the hi-fi drew pictures of them) ---- */
+.jm-focus { flex-direction: column }
+.jm-focus > .jm-panel { overflow: hidden }
+.jm-focus-x { position: absolute; top: 14px; right: 14px; z-index: 1 }
+/* the panel's middle scrolls; its head and its footer stay in view */
+.jm-panel .jm-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; margin: 0 -16px; padding: 0 16px }
+.jm-focus .jm-panel .jm-body { flex: 1 }
+.jm-review .jm-big { min-height: 160px }
+.jm-shot .pic img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center }
+/* the review's one big picture: the shot at its own proportions, centred in the well, never cropped */
+.jm-big .jm-shot { height: 100% }
+.jm-big .jm-shot .pic { aspect-ratio: auto; height: 100%; min-height: 140px; display: flex; align-items: center; justify-content: center;
+  background: none; border: 0; border-radius: 0 }
+.jm-big .jm-shot .pic img { width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--glass-brd), 0 2px 10px -4px rgba(24, 24, 27, .18) }
+.jm-big .jm-shot .pic.none { border: 1px dashed var(--glass-ink-3); border-radius: 8px }
+/* the editable words: a quiet hover says "click to edit" */
+.jm-editable { margin: -6px -8px; padding: 6px 8px; border-radius: 10px; cursor: text }
+.jm-editable:hover { background: var(--glass-hover) }
+.jm-edited { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px; font: 600 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+textarea.jm-edit { display: block; width: 100%; box-sizing: border-box; margin: 0; border: 0; outline: 0; resize: vertical }
+textarea.jm-notefield { display: block; width: 100%; box-sizing: border-box; border: 0; outline: 0; resize: none }
+textarea.jm-notefield::placeholder, .jm-more textarea.txt::placeholder { color: var(--glass-ink-3) }
+.jm-more { height: auto; min-height: 38px; padding: 4px 5px 4px 13px }
+.jm-more textarea.txt { flex: 1; min-width: 0; border: 0; outline: 0; resize: none; background: none; padding: 7px 0; color: inherit;
+  font: 400 13px/1.4 -apple-system, system-ui, sans-serif; white-space: pre-wrap; overflow: hidden }
+.jm-send { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 11px; border: 0; border-radius: 999px; flex: none;
+  background: var(--mv-blue); color: #fff; font: 600 12px -apple-system, system-ui, sans-serif; cursor: pointer }
+.jm-send kbd { color: inherit; opacity: .6; font: 500 11px -apple-system, system-ui, sans-serif; background: none; border: 0; padding: 0 }
+.jm-send:disabled { opacity: .45; cursor: default }
+button.jm-link { padding: 0; border: 0; background: none; text-align: left; width: fit-content }
+.jm-lines .miss { color: var(--glass-ink-3); font-style: italic }
+.jm-chip .notebtn:disabled { opacity: .45; cursor: default }
+@media (prefers-reduced-motion: reduce) { .jm-live-dot::after { animation: none } }
