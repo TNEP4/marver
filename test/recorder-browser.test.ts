@@ -37,6 +37,8 @@ const F1 = `export default () => (
     <input id="name" type="text" defaultValue="" />
     <input id="pw" type="password" defaultValue="" />
     <label htmlFor="cc">Card number</label><input id="cc" type="text" defaultValue="" />
+    <label htmlFor="otp1">One time code</label><input id="otp1" type="text" defaultValue="" />
+    <input id="otp2" type="text" aria-label="One\u2011time code" defaultValue="" />
     <div id="parent" style={{ padding: 10 }}>Parent words
       <textarea defaultValue="SECRET-TEXTAREA" />
       <div id="ed" contentEditable suppressContentEditableWarning>SECRET-EDITABLE<span id="inner">SECRET-SPAN</span></div>
@@ -273,6 +275,24 @@ describe('the capture recorder (trail.js)', () => {
     const flushed = (await of('sh:capture-flushed'))[0]
     expect(flushed.seq).toBe(Math.max(...(await of('sh:trail')).map((t: any) => t.seq)))
     expect(JSON.stringify(await ev('window.__msgs'))).not.toContain('SECRET')
+  })
+
+  skippable('one-time codes stay in the frame however they are spelled: "One time code", "One\u2011time code" (a Unicode hyphen)', async () => {
+    await loadFrame()
+    await send({ type: 'sh:capture', id: 'cap-3b', on: true })
+    await sleep(50)
+    await focusIn('#otp1')
+    await browser!.send('Input.insertText', { text: '123456' }, s)
+    await focusIn('#otp2')
+    await browser!.send('Input.insertText', { text: '654321' }, s)
+    await focusIn('#name')
+    await send({ type: 'sh:capture', id: 'cap-3b', on: false })
+    await until(`window.__of('sh:capture-flushed').length === 1`)
+    const fields = (await of('sh:trail')).filter((t: any) => t.event === 'field')
+    expect(fields.map((f: any) => f.value)).toEqual(['changed (6 characters)', 'changed (6 characters)'])
+    const all = JSON.stringify(await ev('window.__msgs'))
+    expect(all).not.toContain('123456')
+    expect(all).not.toContain('654321')
   })
 
   skippable('a hover: held still 0.8 s is one hover; at most one per 2 s', async () => {

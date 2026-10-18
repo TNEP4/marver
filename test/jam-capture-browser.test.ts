@@ -511,4 +511,23 @@ describe('captures in the browser', () => {
     await until(`!document.querySelector('.jm-lane [data-tile="${a}"]') && !!document.querySelector('.jm-lane [data-tile="${b}"]')`, 5000)
     await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(b)}), 'drop')`)
   }, 120_000)
+
+  skippable('a canvas dwell belongs to its capture: S -> S inside the 0.8 s leaves the next capture without that hover', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const first = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/bravo').key`)
+    const at = await browser!.eval(s, `(() => { const r = document.querySelector('.sh-node[data-node="${k}"] .sh-overlay').getBoundingClientRect(); return { x: r.x + 40, y: r.y + 60 } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y }, s)
+    await sleep(300)
+    await key('s')                                                             // the next capture, before the dwell completes
+    await until(`window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(first)}`, 3000)
+    const second = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await sleep(1200)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(second)}].steps.filter((x) => x.event === 'hover').length`)).toBe(0)
+    const esc = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...esc }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...esc }, s)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(first)})`, 15_000)
+    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(first)}), 'drop')`)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+  }, 60_000)
 })

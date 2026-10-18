@@ -119,7 +119,10 @@ const elBundle = (el) => {
 
 const FIELD = 'input, textarea, select'
 const EDITABLE = '[contenteditable]:not([contenteditable="false"])'
-const SECRET = /pass|secret|token|card|cc-|cvv|cvc|one-?time|otp/i
+// matched on the words normalised: separators of every kind (spaces, underscores, dots, any Unicode dash)
+// become one hyphen, so "One time code", "one_time", "One‑time code" (U+2011) and "onetime" all read alike
+const SECRET = /pass|secret|token|card|cc-|cvv|cvc|one-?time|otp|security-?code|pin-?code/i
+const secretWords = (s) => SECRET.test(String(s).toLowerCase().replace(/[\s_.\u2010-\u2015\u2212\uFE58\uFE63\uFF0D-]+/g, '-'))
 const MASK = '•••'
 
 /** The words a field is known by: its type, name, id, autocomplete, aria-label, labels. */
@@ -130,7 +133,7 @@ const fieldWords = (f) => {
   return out.filter(Boolean).join(' ')
 }
 /** A field that holds a secret: a password, or one whose words say secret, token, card, cvv, one-time code. */
-export const sensitiveField = (f) => f instanceof Element && f.matches(FIELD) && (f.getAttribute('type') === 'password' || SECRET.test(fieldWords(f)))
+export const sensitiveField = (f) => f instanceof Element && f.matches(FIELD) && (f.getAttribute('type') === 'password' || secretWords(fieldWords(f)))
 
 /** A sensitive context: the element is, contains, or sits inside a field or an editable region, or
  *  relates to a secret field (a label for it, an element naming it). Such a bundle keeps only its

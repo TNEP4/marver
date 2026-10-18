@@ -348,17 +348,20 @@ export function canvasClick(key: string, clientX: number, clientY: number, press
 /** When the press began, on the capture clock - the overlay calls this on pointerdown. */
 export const pressNow = (): number => now()
 
-let dwell: { key: string; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null
+let dwell: { key: string; cap: string; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null
+/** A capture ending (or dropped) takes its pending hover with it: a dwell belongs to one capture. */
+const cancelDwell = () => { if (dwell) { clearTimeout(dwell.timer); dwell = null } }
 let lastHover = 0
 /** The pointer moved over a node in canvas mode: a hold of 0.8 s without moving past 4 px is a hover
  *  (at most one every 2 s); moving or leaving cancels it. */
 export function canvasPointer(key: string | null, clientX = 0, clientY = 0) {
   if (dwell && (!key || key !== dwell.key || Math.hypot(clientX - dwell.x, clientY - dwell.y) > 4)) { clearTimeout(dwell.timer); dwell = null }
-  if (!key || dwell || !useJamCapture.getState().current) return
-  dwell = { key, x: clientX, y: clientY, timer: setTimeout(() => {
+  const cur = useJamCapture.getState().current
+  if (!key || dwell || !cur) return
+  dwell = { key, cap: cur, x: clientX, y: clientY, timer: setTimeout(() => {
     const d = dwell
     dwell = null
-    if (!d || performance.now() - lastHover < 2_000) return
+    if (!d || d.cap !== useJamCapture.getState().current || performance.now() - lastHover < 2_000) return
     lastHover = performance.now()
     probe(d.key, 'hover', d.x, d.y)
   }, 800) }
@@ -532,6 +535,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     const id = get().current
     if (!id) return
     set({ current: null })
+    cancelDwell()
     drain(id)
     if (next) begin(reviewing)
     else { unwatch?.(); unwatch = null }
@@ -540,6 +544,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     const id = get().current
     if (!id) return
     broadcast({ type: 'sh:capture', id, on: false })
+    cancelDwell()
     set((s) => { const caps = { ...s.caps }; delete caps[id]; return { current: null, caps, noteOpen: false, noteDraft: '', tick: s.tick + 1 } })
     unwatch?.(); unwatch = null
   },
