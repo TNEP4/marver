@@ -1136,6 +1136,7 @@ describe('Jam V2: review round 7 fixes', () => {
     await run.catch(() => {})
     await wait(300)
     expect(JSON.stringify(readJournal(root).cards.map((c) => [c.id, c.state]))).toBe(want)
+    expect(readLog(dir, 'home').some((e) => e.type === 'reanchor')).toBe(false)   // nor the comment log
     next.stop()
     expect(q.id).toBeTruthy()
     done()
@@ -1205,6 +1206,58 @@ describe('Jam V2: review round 7 fixes', () => {
     await run; jam.stop()
     expect([cardOf(jam, t)!.state, cardOf(jam, t)!.note]).toEqual(['done', 'answered'])
     expect(agentReplies(dir).map((r) => !!r.asks)).toEqual([false, false])
+    done()
+  })
+})
+
+describe('Jam V2: review round 8 fixes', () => {
+  it('the upgrade keeps finished and failed v1 batches: a logged question still asks, a failed tag keeps Retry', async () => {
+    const { root, dir, done } = setup()
+    const a = say(root, dir, '@marver one'), b = say(root, dir, '@marver two')
+    appendEvents(dir, 'home', [{ id: 'jam-vd', ts: tick(), type: 'reply', commentId: 'jam-c-vd', parentId: a.commentId, board: 'home', author: OWNER, body: 'Which?', asks: true, agent: true }])
+    writeFileSync(join(root, 'design', '.local', 'jam-jobs.json'), JSON.stringify({ version: 1, device: deviceId(), baselined: true, seen: [a.id, b.id], batches: [
+      { batchId: 'vd', board: 'home', memberEventIds: [a.id], state: 'done', leaseUntil: 0, attempts: 1 },
+      { batchId: 'vf', board: 'home', memberEventIds: [b.id], state: 'failed', leaseUntil: 0, attempts: 2 },
+    ] }))
+    const jam = createJam(root, CFG, agent('ok', { touch: 'ran.marker' }))
+    await jam.tick(); jam.stop()
+    expect(cardOf(jam, a)!.state).toBe('asks')
+    expect([cardOf(jam, b)!.state, cardOf(jam, b)!.note]).toEqual(['failed', 'the agent could not finish - Retry'])
+    expect(existsSync(join(root, 'ran.marker'))).toBe(false)
+    done()
+  })
+
+  it('Retry on a follow-up reads its own failed run, not the card it follows', () => {
+    const { root, dir, done } = setup()
+    const t = say(root, dir, 'root')
+    const qa = say(root, dir, '@marver first', { thread: t.commentId })
+    const qb = say(root, dir, '@marver second', { thread: t.commentId })
+    const j = readJournal(root)
+    const now = Date.now()
+    j.batches.push({ batchId: 'bA', members: [{ id: 'm1', card: 'cA', board: 'home', brief: { asks: [{ id: qa.id, rev: qa.id, body: 'first', ts: 1 }], history: [] } }], frames: [], state: 'done', leaseUntil: 0, attempts: 1, at: now, results: { m1: { body: 'A says', asks: false, reanchors: [] } } })
+    j.batches.push({ batchId: 'bB', members: [{ id: 'm1', card: 'cB', board: 'home', brief: { asks: [{ id: qb.id, rev: qb.id, body: 'second', ts: 2 }], history: [] } }], frames: [], state: 'failed', leaseUntil: 0, attempts: 2, at: now, note: 'boom' })
+    j.cards.push({ id: 'cA', kind: 'comment', board: 'home', frames: [], thread: t.commentId, events: [qa.id], state: 'done', batch: 'bA', made: 1, order: 1, rev: 1, at: now, brief: { asks: [{ id: qa.id, rev: qa.id, body: 'first', ts: 1 }], history: [] } })
+    j.cards.push({ id: 'cB', kind: 'comment', board: 'home', frames: [], thread: t.commentId, events: [qb.id], follows: 'cA', state: 'failed', batch: 'bB', made: 2, order: 2, rev: 1, at: now })
+    act(j, 'cB', 1, 'retry')
+    const brief = freezeBrief(j, ctxFor(root), j.cards.find((c) => c.id === 'cB')!, readLog(dir, 'home'))
+    expect(brief.follows).toEqual({ asks: [{ id: qb.id, rev: qb.id, body: 'second', ts: 2 }], result: 'boom' })
+    done()
+  })
+
+  it('a tag that joins a queued follow-up still answers the card that asks (and retries one that failed)', () => {
+    const { root, dir, done } = setup()
+    const t = say(root, dir, 'root')
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    j.cards.push({ id: 'cA', kind: 'comment', board: 'home', frames: ['demo/hero'], thread: t.commentId, events: ['x'], state: 'asks', batch: 'b', made: 1, order: 1, rev: 1, at: now })
+    j.cards.push({ id: 'cB', kind: 'comment', board: 'home', frames: ['demo/hero'], thread: t.commentId, events: ['y'], follows: 'cA', state: 'queued', made: 2, order: 2, rev: 1, at: now })
+    const c = say(root, dir, '@marver the pill', { thread: t.commentId })
+    ingest(j, ctxFor(root))
+    expect([j.cards[0].state, j.cards[0].note]).toEqual(['done', 'answered'])
+    expect(j.cards[1].events).toEqual(['y', c.id])
+    expect(j.cards.length).toBe(2)
     done()
   })
 })

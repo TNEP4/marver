@@ -292,6 +292,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const check: AnchorCheck = hooks.anchor
         ? await hooks.anchor(t.frame, r.target, others, r.look).catch((err) => ({ ok: false as const, unchecked: (err as Error).message }))
         : { ok: false, unchecked: 'no anchor check here' }
+      if (stopped) return n   // stopped while the check ran: a successor owns the log now
       if (!check.ok && 'refused' in check) { log(`  jam: re-pin skipped - ${t.frame} shows ${check.refused === 'none' ? 'no' : 'several'} matching elements`); continue }
       const who = me()
       appendEvents(commentsDir, board, [{
@@ -365,6 +366,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       }
     }
     const repinned = await emitReanchors(b, cards, b.reanchors ?? [])
+    if (stopped) return
     changedBoards(b)
     await q.lock((j) => {
       // answered while the reply was being posted, or before a restart: look again, under the lock

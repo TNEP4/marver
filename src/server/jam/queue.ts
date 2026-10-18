@@ -86,14 +86,22 @@ function tagged(j: Journal, board: string, ev: CommentEvent, frame: string | und
   const thread = threadId(ev)
   const on = onThread(j, board, thread)
   const queued = on.find((c) => c.state === 'queued')
-  if (queued) { queued.events.push(ev.id); queued.when = { ...queued.when, [ev.id]: ev.ts }; queued.rev += 1; queued.at = now; return }
-  let follows: string | undefined
   const working = on.find((c) => c.state === 'working')
   const asking = on.find((c) => c.state === 'asks')
   const failed = on.filter((c) => c.state === 'failed').sort((a, b) => b.at - a.at)[0]
+  // a tag answers a card that asks and retries one that failed - also when it joins a queued card
+  if (asking) set(asking, 'done', now, 'answered')
+  if (failed && !asking) set(failed, 'done', now, 'retried by a new tag')
+  if (queued) {
+    queued.events.push(ev.id); queued.when = { ...queued.when, [ev.id]: ev.ts }
+    if (asking || failed) queued.follows ??= (asking ?? failed)!.id
+    queued.rev += 1; queued.at = now
+    return
+  }
+  let follows: string | undefined
   if (working) follows = working.id
-  else if (asking) { set(asking, 'done', now, 'answered'); follows = asking.id }
-  else if (failed) { set(failed, 'done', now, 'retried by a new tag'); follows = failed.id }
+  else if (asking) follows = asking.id
+  else if (failed) follows = failed.id
   const capture = on.find((c) => c.capture)?.capture
   j.cards.push({
     id: `c-${ev.id}`, kind: 'comment', board, frames: frame ? [frame] : [], thread,
@@ -255,7 +263,8 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
   // the earlier asks a follow-up copies are checked again, now: a ledger that lost one, or a revision
   // that is not that message's, never reaches the agent through `follows`
   const keep = (asks: Msg[] | undefined) => (asks ?? []).filter((a) => stillOwned(ctx, c.board, events, a))
-  if (followed) {
+  // a card run again (Retry, More work) reads its OWN previous run first; a first run reads what it follows
+  if (followed && !c.ran?.length) {
     const b = lastRun(followed)
     brief.follows = { asks: keep(followed.brief?.asks), result: resultText(j, b, followed.id, j.batches.find((x) => x.batchId === b)?.note ?? followed.note ?? '') }
   }
@@ -485,11 +494,11 @@ export function upgrade(v1: JournalV1, ctx: Ctx, now = Date.now()): { j: Journal
     const events = readLog(ctx.dir, board)
     const frames = framesOf(events)
     for (const ev of events) if (v1seen.has(ev.id)) j.seen.push(seenKey(board, ev.id))
-    for (const b of v1.batches.filter((x) => x.board === board && (x.state === 'pending' || x.state === 'claimed'))) {
+    for (const b of v1.batches.filter((x) => x.board === board)) {
       const id = b.memberEventIds[0]
       const ev = events.find((e) => e.id === id)
       if (!ev) continue
-      unfinished.add(id)
+      if (b.state === 'pending' || b.state === 'claimed') unfinished.add(id)
       const thread = threadId(ev)
       const frame = ev.frame ?? frames.get(thread)
       const final = events.find((e) => e.id === `jam-${b.batchId}`)
@@ -505,9 +514,10 @@ export function upgrade(v1: JournalV1, ctx: Ctx, now = Date.now()): { j: Journal
           attempts: b.attempts, results: { m1: { body: final.body ?? '', asks, reanchors: [] } }, posted: true, at: now })
         continue
       }
+      if (b.state === 'done') continue   // finished with no final in the log: nothing left to show
       if (b.state === 'claimed' && b.pgid) fence.push(b.pgid)
       if (!tag) continue
-      j.cards.push(card('failed', 'interrupted by the upgrade - Retry'))
+      j.cards.push(card('failed', b.state === 'failed' ? 'the agent could not finish - Retry' : 'interrupted by the upgrade - Retry'))
       j.batches.push({ batchId: b.batchId, members: [{ id: 'm1', card: `c-${id}`, board }], frames: frame ? [frame] : [], state: 'failed', leaseUntil: 0,
         attempts: b.attempts, ...(b.pgid ? { pgid: b.pgid } : {}), at: now })
     }
