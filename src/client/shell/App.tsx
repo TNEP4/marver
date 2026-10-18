@@ -1,5 +1,6 @@
 import { frameReady, onFrameMessage, recordCopy } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
+import { JamSurface, useLaneLift } from './JamSurface.tsx'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
@@ -341,6 +342,7 @@ export function App() {
   const manifest = useStore((s) => s.manifest)
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
+  useLaneLift()
   const toasts = useStore((s) => s.toasts)
   const selection = useStore((s) => s.selection)
   const laser = useStore((s) => s.laser)
@@ -1050,6 +1052,8 @@ export function App() {
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
       <UpdatePill />
 
+      {/* Jam V2 (spec 27): the lane, the focus panel, the notes card, the recording ring */}
+      {!PUBLISHED && <JamSurface sidebarRight={panelOpen ? 236 + 2 * 10 : 10} />}
       <JamToasts toasts={toasts} />
     </div>
   )

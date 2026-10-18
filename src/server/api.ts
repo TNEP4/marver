@@ -1030,8 +1030,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return json(res, 200, { id: addPicture(root, r.path, { frame: b.frame, capture: b.capture }) })
       }
       if (path === 'jam/picture' && req.method === 'GET') {
-        // one picture by its opaque id; the file must stay inside design/.local/jam/ - owner only
-        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        // one picture by its opaque id; the file must stay inside design/.local/jam/ - owner only. An
+        // <img> cannot send x-mv-c, so a GET here proves the owner by its cookie plus a same-origin fetch
+        // (the browser's Sec-Fetch-Site, which a page cannot forge); a cross-site request never passes
+        const site = String(req.headers['sec-fetch-site'] ?? '')
+        if (!ownerGated(req) && !(cookie(req, 'mv_c') && (site === 'same-origin' || site === 'none'))) return json(res, 403, { error: 'forbidden' })
         const { picturePath } = await import('./jam/capture.ts')
         const p = picturePath(root, url.searchParams.get('id') ?? '')
         if (!p) return json(res, 404, { error: 'no such picture' })

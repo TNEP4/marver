@@ -1824,3 +1824,10 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .jm-lines .miss { color: var(--glass-ink-3); font-style: italic }
 .jm-chip .notebtn:disabled { opacity: .45; cursor: default }
 @media (prefers-reduced-motion: reduce) { .jm-live-dot::after { animation: none } }
+
+/* Jam V2: while the lane shows, the sidebar stops above it and the bottom edge rises one lane - the
+   Update pill, toasts and notices (LANE_H, jam-lane.tsx) */
+.sh-app.jm-lane-on .sh-panel { max-height: calc(100% - 2 * var(--edge) - 56px); bottom: auto }
+.sh-app.jm-lane-on .sh-update { bottom: calc(var(--edge) + 56px) }
+.sh-app.jm-lane-on .sh-toasts { bottom: calc(var(--edge) + 56px) }
+.sh-app.jm-lane-on .sh-banner { bottom: calc(var(--edge) + 56px) }

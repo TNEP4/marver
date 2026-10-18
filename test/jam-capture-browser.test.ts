@@ -60,6 +60,7 @@ setTimeout(() => process.stdout.write(JSON.stringify({ type: 'result', result: o
 
 // page-side helpers
 const HELPERS = `(() => {
+  window.__errs = []; window.addEventListener('error', (e) => window.__errs.push(String(e.message))); const ce = console.error; console.error = (...a) => { window.__errs.push(a.map(String).join(' ').slice(0, 300)); ce(...a) }
   window.__tag = async (frame, body, thread) => {
     const id = crypto.randomUUID()
     const ev = thread
@@ -133,6 +134,17 @@ const hover = async (selector: string) => {
 
 
 const key = (k: string, shift = false) => browser!.press(s, k, { shift })
+const enter = async () => {
+  const base = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }
+  await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base }, s)
+  await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, s)
+}
+const pic = async (name: string, clip?: { x: number; y: number; width: number; height: number }) => {
+  if (!process.env.MARVER_SHOT_DIR) return
+  await sleep(300)
+  const out = await browser!.send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) }, s)
+  writeFileSync(join(process.env.MARVER_SHOT_DIR, `cap-${name}.png`), Buffer.from(out.data, 'base64'))
+}
 const cardsNow = () => browser!.eval(s, `window.__mvJamQueue.getState().cards ?? []`)
 
 describe('captures in the browser', () => {
@@ -148,6 +160,9 @@ describe('captures in the browser', () => {
     await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.steps ?? []).some((x) => x.event === 'click' && x.bundle?.quote === 'Save 20%')`)
     expect(await browser!.eval(s, `(() => { const n = window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/clicky'); return document.querySelector('.sh-node[data-node="' + n.key + '"] iframe').contentWindow.__clicked ?? 0 })()`)).toBe(0)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('the outline one'), 1`)
+    // the lane shows the capture recording as its last tile; the edge ring is teal
+    await until(`!!document.querySelector('.jm-lane') && !!document.querySelector('[data-jam-edge]')`, 5000)
+    await pic('recording')
     await key('e')
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 15_000)
     const rec = await browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
@@ -156,16 +171,23 @@ describe('captures in the browser', () => {
     expect(events.indexOf('click')).toBeLessThan(events.indexOf('note'))
     expect(rec.record.timeline.find((x: any) => x.event === 'click').frame).toBe('spec/clicky')
     expect(JSON.stringify(rec.record)).not.toContain('"kind"')
+    // its read-back opens in the focus panel when capturing stops, its tile selected
+    await until(`!!document.querySelector('.jm-focus') && /the outline one/.test(document.querySelector('.jm-focus')?.textContent ?? '')`, 10_000)
+    await pic('readback')
   }, 120_000)
 
   skippable('confirm writes the capture\'s comment and queues it; the agent\'s run turns it to review; Looks good resolves its thread', async () => {
     agentMode({})
     const draft = (await cardsNow()).find((c: any) => c.kind === 'capture' && c.state === 'draft')
     expect(draft).toBeTruthy()
-    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(draft.id)}), 'confirm')`)
+    await enter()
     await until(`window.__mvComments.getState().threads.some((t) => t.id === 'cap-${draft.id}' && t.capture === ${JSON.stringify(draft.id)})`, 15_000)
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(draft.id)} && c.state === 'review')`, 30_000)
-    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(draft.id)}), 'good')`)
+    await pic('lane-review')
+    await key('v')                                                             // the oldest capture to review
+    await until(`window.__mvJamUi.getState().panel?.kind === 'review' && !!document.querySelector('.jm-focus')`, 5000)
+    await pic('review')
+    await enter()                                                  // Looks good
     await until(`window.__mvComments.getState().threads.find((t) => t.id === 'cap-${draft.id}')?.resolved === true`, 15_000)
   }, 120_000)
 

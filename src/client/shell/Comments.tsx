@@ -18,6 +18,7 @@ import { isLegacyLink } from './legacy-links.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { TagStatus } from './jam-ui.tsx'
+import { CaptureBlock } from './jam-panel.tsx'
 import { useJamQueue } from './jam-queue.ts'
 import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
 import { ROUTE, slideSize, stageFit } from '../const.ts'
@@ -805,7 +806,10 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
           of the text itself, not a paint layer over the glass */}
       <div className={`cm-scroll${shadows.top ? ' fade-top' : ''}${shadows.bot ? ' fade-bot' : ''}`} ref={scrollRef} onScroll={syncShadows}>
         <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} board={thread.board} eventId={eventOf(thread.id)} />
-        <CommentBody body={thread.body} owner={isOwner(thread.author)} />
+        {/* a capture's comment reads as a capture: a labelled block, never a typed comment (spec 27) */}
+        {thread.capture
+          ? <CaptureBlock id={thread.capture} facts={thread.facts} words={thread.body ?? ''} />
+          : <CommentBody body={thread.body} owner={isOwner(thread.author)} />}
         {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
         {thread.replies.map((r) => (
           <div key={r.id} className="cm-msg">
