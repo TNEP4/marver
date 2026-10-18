@@ -35,11 +35,16 @@ function insets(el: HTMLElement) {
   const rect = (q: string) => document.querySelector(q)?.getBoundingClientRect()
   const side = rect('.sh-panel:not(.closed)') ?? rect('.sh-fab')
   const pill = rect('.sh-pill')
+  // Jam (spec 27): the focus panel sits right of the sidebar and the lane along the bottom - a card's
+  // frames fit in the space left of neither
+  const focus = rect('.jm-focus')
+  const lane = rect('.jm-lane')
+  const leftEdge = Math.max(side ? side.right : 0, focus ? focus.right : 0)
   return {
-    left: (side ? Math.max(0, side.right - c.left) : 0) + GAP,
+    left: (leftEdge ? Math.max(0, leftEdge - c.left) : 0) + GAP,
     right: GAP + 16,
     top: (pill ? Math.max(0, pill.bottom - c.top) : 0) + 12 + BAR,
-    bottom: GAP + 16,
+    bottom: (lane ? Math.max(0, c.bottom - lane.top) : 0) + GAP + 16,
   }
 }
 

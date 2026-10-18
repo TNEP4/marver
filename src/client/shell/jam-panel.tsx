@@ -139,7 +139,9 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   // the words and the notes, in time order - what the capture says (server captureWords)
   const words = lines.filter((l) => l.kind === 'words' || l.kind === 'note').map((l) => (l.kind === 'note' ? `(note) ${unquote(l.text)}` : unquote(l.text))).join(' ')
   const [text, setText] = useState(edited ?? words)
-  useEffect(() => { if (!open) setText(edited ?? words) }, [edited, words, open])
+  // the field follows the saved edit when it changes - and keeps what you wrote otherwise (a save that
+  // failed never throws your words away)
+  useEffect(() => { setText(edited ?? words) }, [edited, words])
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (open) { const el = field.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } } }, [open])
   const save = () => { setOpen(false); if (text !== (edited ?? words)) onEdit?.(text) }

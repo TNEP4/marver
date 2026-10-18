@@ -139,8 +139,13 @@ export function captureFrames(r: CaptureRecord): string[] {
   const add = (f?: string) => { if (f && !out.includes(f)) out.push(f) }
   const firstSelect = r.timeline.find((s) => s.event === 'select') as Extract<Step, { event: 'select' }> | undefined
   if (firstSelect && firstSelect.at <= (r.timeline[0]?.at ?? 0) + 50) firstSelect.frames.forEach(add)
-  for (const s of r.timeline) if (['pick', 'click', 'hover', 'field', 'device'].includes(s.event)) add(s.frame ?? (s as { frame?: string }).frame)
-  for (const s of r.timeline) if (s.event === 'select') s.frames.forEach(add)
+  for (const s of r.timeline) if (['pick', 'click', 'hover', 'field', 'device', 'picture'].includes(s.event)) add(s.frame ?? (s as { frame?: string }).frame)
+  // every screen visited and every view after the first: a note about B, reached without a click, names B
+  for (const s of r.timeline) {
+    if (s.event === 'select') s.frames.forEach(add)
+    else if (s.event === 'screen') add(s.to)
+    else if (s.event === 'view') (s.view.frames ?? []).forEach(add)
+  }
   ;(r.view.frames ?? []).forEach(add)
   return out
 }

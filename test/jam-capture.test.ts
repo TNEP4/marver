@@ -9,7 +9,8 @@ import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { has, record } from '../src/server/jam/ledger.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
 import { addPicture, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
-import { merge, payloadKey, touchRun } from '../src/server/jam/queue.ts'
+import { merge, payloadKey, prune, sameComment, touchRun } from '../src/server/jam/queue.ts'
+import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
@@ -471,4 +472,85 @@ describe('captures: review round 1 fixes', () => {
     busy.stop()
     done()
   }, 20_000)
+})
+
+describe('captures: review round 2 fixes', () => {
+  it('a step\'s comment must match in every field - another node, origin or mention is a conflict', () => {
+    const a: CommentEvent = { id: 'cap-x-e', ts: 1, type: 'create', commentId: 'cap-x', board: 'home', author: OWNER, body: 'b', capture: 'x', frame: 'demo/a' }
+    expect(sameComment(a, { ...a, ts: 99 })).toBe(true)
+    expect(sameComment(a, { ...a, nodeKey: 'other-node' })).toBe(false)
+    expect(sameComment(a, { ...a, origin: 'local' })).toBe(false)
+    expect(sameComment(a, { ...a, mentions: [{ label: 'Sam', email: 's@x' }] })).toBe(false)
+  })
+
+  it('frames visited without a click are the capture\'s frames: a screen reached in play, a later view, a picture', () => {
+    const r = rec({ timeline: [
+      { at: 1, event: 'view', view: { frames: ['demo/a'] } },
+      { at: 2, event: 'screen', to: 'demo/b' },
+      { at: 3, event: 'note', text: 'this one' },
+      { at: 4, frame: 'demo/c', event: 'picture', id: 'p-0000000000000001', why: 'key' },
+      { at: 5, event: 'view', view: { frames: ['demo/d'] } },
+    ] })
+    expect(captureFrames(r).sort()).toEqual(['demo/a', 'demo/b', 'demo/c', 'demo/d'])
+  })
+
+  it('pruning keeps the capture a waiting follow-up carries', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-p-')))
+    const long = Date.now() - 30 * 24 * 3600_000
+    j.cards.push({ id: 'cap-old', kind: 'capture', board: 'home', frames: [], events: [], state: 'kept', made: long, order: long, rev: 1, at: long } as any)
+    j.cards.push({ id: 'c-f', kind: 'comment', board: 'home', frames: [], events: ['f'], capture: 'cap-old', state: 'queued', made: Date.now(), order: Date.now(), rev: 1, at: Date.now() } as any)
+    prune(j)
+    expect(j.cards.map((c) => c.id).sort()).toEqual(['c-f', 'cap-old'])
+  })
+
+  it('a revoked More work ask is dropped from a capture card at recovery - the capture still runs on its payload', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    const rev = card(jam, r.id).rev
+    await jam.act(r.id, rev, 'more', 'and the hover')
+    jam.stop()
+    // simulate the job claimed and the device's ledger losing the mw- line before a restart
+    const j = readJournal(root)
+    const c = j.cards.find((x) => x.id === r.id)!
+    const mw = `mw-${r.id}-${rev}`
+    const ledger = join(root, 'design', '.local', 'jam-ledger')
+    writeFileSync(ledger, readFileSync(ledger, 'utf8').split('\n').filter((l) => !l.endsWith(`\t${mw}`)).join('\n'))
+    c.state = 'working'; c.batch = 'b-mw'
+    c.brief = { asks: [{ id: mw, owner: true, rev: mw, body: '@marver and the hover', ts: 1 }], history: [] }
+    j.batches.push({ batchId: 'b-mw', members: [{ id: 'm1', card: r.id, board: 'home', brief: c.brief }], frames: c.frames, state: 'claimed', leaseUntil: 0, attempts: 1, at: Date.now() })
+    mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
+    writeFileSync(join(root, 'design', '.local', 'jam', 'packets', 'b-mw.json'), JSON.stringify({ v: 2, kind: 'marver.jam.job', batchId: 'b-mw', frames: c.frames, members: [{ id: 'm1', card: r.id, kind: 'capture', board: 'home', thread: c.thread, frames: c.frames, brief: c.brief }] }))
+    writeJournal(root, j)
+    const again = createJam(root, CFG, agent())
+    await again.tick(); again.stop()
+    const seen = packets(root).at(-1)
+    expect(seen.batchId).toBe('b-mw')
+    expect(seen.members[0].brief.asks).toEqual([])
+    expect(card(again, r.id).events).not.toContain(mw)
+    done()
+  })
+
+  it('Looks good resolves after a message was edited twice before the claim - the brief copied its latest revision', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    jam.stop()
+    // an owner reply in the capture's thread, edited twice, all before the claim
+    const id = `rp-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id, ts: tick(), type: 'reply', commentId: `c-${id}`, parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: 'one' }])
+    record(root, 'home', id)
+    for (const body of ['two', 'three']) { const e = `ed-${Math.random().toString(36).slice(2)}`; appendEvents(dir, 'home', [{ id: e, ts: tick(), type: 'edit', commentId: `c-${id}`, author: OWNER, body }]); record(root, 'home', e) }
+    const again = createJam(root, CFG, agent())
+    await again.tick()
+    await again.act(r.id, card(again, r.id).rev, 'good')
+    again.stop()
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)!.resolved).toBe(true)
+    done()
+  })
 })

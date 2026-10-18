@@ -162,6 +162,8 @@ function watchUi() {
       if (s.play.theme !== p.play.theme && (s.play.theme === 'light' || s.play.theme === 'dark')) addStep(id, { at, frame: s.play.at, event: 'theme', theme: s.play.theme })
       if (s.play.device !== p.play.device) { const vp = CONFIG.viewports[s.play.device]; addStep(id, { at, frame: s.play.at, event: 'device', viewport: s.play.device, width: vp?.width ?? 0, height: vp?.height ?? 0 }) }
     }
+    // a screen change in play, whatever moved it (arrows, the walker, a goto inside the stage): one line
+    if (s.play && p.play && s.play.at !== p.play.at) screenStep(id, at, s.play.at)
     if (!!s.play !== !!p.play) addStep(id, { at, event: 'view', view: viewNow() })
     if (!!s.interact !== !!p.interact) addStep(id, { at, ...(s.interact || p.interact ? { frame: frameIdOf((s.interact ?? p.interact)!) } : {}), event: 'interact', on: !!s.interact })
   })
@@ -220,7 +222,7 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
       return true
     }
     case 'field': addStep(cap.id, { ...base, event: 'field', bundle: cleanBundle(data.bundle), value: String(data.value ?? '') }); return true
-    case 'screen': addStep(cap.id, { ...base, event: 'screen', to: String(data.to ?? '') }); return true
+    case 'screen': screenStep(cap.id, at, String(data.to ?? ''), base.seq); return true
     case 'scroll': if (Number.isFinite(Number(data.y))) addStep(cap.id, { ...base, event: 'scroll', y: Number(data.y) }); return true
     default: return true
   }
@@ -228,6 +230,15 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
 
 /** A frame's bundle (`{ el: { semantics: { tag, quote, testId, ariaLabel, role }, cssPath, source } }`,
  *  safeBundle) as the record keeps it: flat, strings only - a masked one keeps its '•••'. */
+/** One screen change, recorded once: the stage reports its own navigation, and the shell sees the same
+ *  change in its play state - whichever comes second is the same step. */
+function screenStep(id: string, at: number, to: string, seq?: number) {
+  const c = capOf(id)
+  if (!c || !to) return
+  const dup = c.steps.some((x) => x.event === 'screen' && x.to === to && Math.abs(x.at - at) < 1_500)
+  if (!dup) addStep(id, { at, frame: to, event: 'screen', to, ...(seq !== undefined ? { seq } : {}) })
+}
+
 const cleanBundle = (b: unknown): Bundle => {
   const o = (b && typeof b === 'object' ? b : {}) as Record<string, any>
   const el = (o.el && typeof o.el === 'object' ? o.el : o) as Record<string, any>
@@ -249,7 +260,7 @@ const local = (iframe: HTMLIFrameElement, clientX: number, clientY: number) => {
   return { x: (clientX - r.left) / sx, y: (clientY - r.top) / sy }
 }
 
-function probe(key: string, event: 'click' | 'hover', clientX: number, clientY: number) {
+function probe(key: string, event: 'click' | 'hover', clientX: number, clientY: number, pressAt?: number) {
   const id = useJamCapture.getState().current
   const inst = instances.get(key)
   if (!id || !inst || !current(inst)) return
@@ -260,7 +271,9 @@ function probe(key: string, event: 'click' | 'hover', clientX: number, clientY: 
   // into it when it answers - found now, by reference, whatever lands in the timeline meanwhile
   const frameNow = frameIdOf(key)
   const capNow = capOf(id)
-  const selectStep = event === 'click' && capNow ? [...capNow.steps].reverse().find((x) => x.event === 'select' && at - x.at < 400 && x.frames.length === 1 && x.frames[0] === frameNow) : undefined
+  // the select made between this press and its release (the overlay selects on pointerdown) - however
+  // long the press; a selection made before the press is its own line
+  const selectStep = event === 'click' && capNow && pressAt !== undefined ? [...capNow.steps].reverse().find((x) => x.event === 'select' && x.at >= pressAt - 5 && x.at <= at && x.frames.length === 1 && x.frames[0] === frameNow) : undefined
   const timer = setTimeout(() => {
     probes.delete(req)
     mutate((s) => { const c = s.caps[id]; if (c) { c.probes -= 1; c.steps.push({ at, frame: frameIdOf(key), event: 'missing', what: `the ${event} at ${Math.round(x)},${Math.round(y)} never answered` }) } })
@@ -294,7 +307,9 @@ function probeAnswered(key: string, data: Record<string, any>) {
 }
 
 /** The canvas overlay saw a click (not a drag) on a node while a capture records. */
-export function canvasClick(key: string, clientX: number, clientY: number) { probe(key, 'click', clientX, clientY) }
+export function canvasClick(key: string, clientX: number, clientY: number, pressAt?: number) { probe(key, 'click', clientX, clientY, pressAt) }
+/** When the press began, on the capture clock - the overlay calls this on pointerdown. */
+export const pressNow = (): number => now()
 
 let dwell: { key: string; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null
 let lastHover = 0
@@ -358,8 +373,8 @@ function begin(reviewing?: Cap['reviewing']) {
     probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}),
   }
   cap.steps.push({ at: cap.t0, event: 'view', view: viewNow() })
-  // starting with frames selected makes them its focus
-  if (s.selection.length) cap.steps.push({ at: cap.t0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
+  // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
+  if (!s.play && s.selection.length) cap.steps.push({ at: cap.t0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1 }))
   broadcast({ type: 'sh:capture', id, on: true })
   watchUi()
@@ -381,8 +396,13 @@ function drain(id: string) {
     for (const inst of instances.values()) if (inst.captureDoc && current(inst)) x.flushWait.set(inst.key, inst.captureDoc)
   })
   useJamCapture.setState({ noteDraft: '', noteOpen: false })
-  // the frames in view, shot at E
-  for (const f of (viewNow().frames ?? []).slice(0, 3)) shoot(id, f, 'end')
+  // the frames in view, shot at E - each as the instance shows it (a narrow, dark second copy as itself)
+  const st = useStore.getState()
+  if (st.play) shoot(id, st.play.at, 'end')
+  else {
+    const sel = st.selection.map((k) => st.nodes.find((n) => n.key === k)).filter((n): n is Node => !!n)
+    for (const n of (sel.length ? sel : st.nodes.filter((x) => !x.missing)).slice(0, 3)) shoot(id, n.frame, 'end', n.key)
+  }
   broadcast({ type: 'sh:capture', id, on: false })
   setTimeout(() => {
     mutate((st) => {
@@ -455,6 +475,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     const id = get().current
     if (!id) return
     const s = useStore.getState()
+    if (s.play) { shoot(id, frame ?? s.play.at, 'key'); return }   // in play: the screen on stage
     const key = pointerAt && performance.now() - pointerAt.at < 5_000 ? pointerAt.key : s.selection[s.selection.length - 1]
     const f = frame ?? (key ? frameIdOf(key) : undefined)
     if (f) shoot(id, f, 'key', key)

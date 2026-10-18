@@ -504,7 +504,8 @@ export function redelivering(j: Journal, b: Batch, now = Date.now()) {
 
 /** Forget finished cards and batches after a week, unless a live card follows one. */
 export function prune(j: Journal, now = Date.now()) {
-  const needed = new Set(j.cards.filter(pending).flatMap((c) => [c.follows, ...(c.ran ?? []), c.batch]).filter(Boolean) as string[])
+  // a live card keeps what it reads: the card it follows, its runs - and the capture it carries
+  const needed = new Set(j.cards.filter(pending).flatMap((c) => [c.follows, ...(c.ran ?? []), c.batch, c.capture]).filter(Boolean) as string[])
   j.cards = j.cards.filter((c) => pending(c) || c.at > now - KEEP_MS || needed.has(c.id))
   const cardIds = new Set(j.cards.map((c) => c.id))
   j.batches = j.batches.filter((b) => b.state === 'claimed' || needed.has(b.batchId) || b.members.some((m) => cardIds.has(m.card)))
@@ -660,8 +661,13 @@ export function beginStep(j: Journal, c: Card, op: 'confirm' | 'more', event: Co
 }
 
 /** Did a comment already in the log under the step's id say exactly what the step would write? */
-const canon = (e: CommentEvent) => JSON.stringify({ type: e.type, commentId: e.commentId, parentId: e.parentId ?? null, board: e.board ?? null, frame: e.frame ?? null,
-  anchor: e.anchor ?? null, body: e.body ?? '', author: e.author ?? null, capture: e.capture ?? null, facts: e.facts ?? null, agent: !!e.agent })
+/** An event as stable text: every field, keys sorted at every depth - except `ts`, when it was written. */
+const canon = (e: CommentEvent): string => {
+  const sort = (v: unknown): unknown => (Array.isArray(v) ? v.map(sort) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])])) : v)
+  const { ts: _ts, ...rest } = e
+  return JSON.stringify(sort(rest))
+}
 /** Did a comment already in the log under the step's id say EXACTLY what the step would write - every
  *  field that matters, not just its words? Anything else fails closed. (`ts` is when it was written.) */
 export const sameComment = (a: CommentEvent, b: CommentEvent): boolean => canon(a) === canon(b)
@@ -702,11 +708,16 @@ export function conflictStep(j: Journal, c: Card, now = Date.now()) {
 export function looksGood(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[], now = Date.now()): { resolve: boolean } {
   const newer = j.cards.some((x) => x !== c && x.board === c.board && x.thread === c.thread && pending(x) && x.made > c.made)
   // what the frozen brief copied: those messages, at those revisions
-  const frozen = [...(c.brief?.asks ?? []), ...(c.brief?.history ?? [])]
-  const copied = new Set(frozen.flatMap((m) => [m.id, m.rev ?? m.id]))
-  const inThread = (msgId?: string) => events.some((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msgId && (e.commentId === c.thread || e.parentId === c.thread))
-  const after = events.some((e) => !e.agent && isOwned(ctx, c.board, e.id) && !copied.has(e.id) && !e.id.startsWith('mw-')
-    && ((e.type === 'reply' && e.parentId === c.thread) || (e.type === 'edit' && inThread(e.commentId))))
+  const frozen = new Map([...(c.brief?.asks ?? []), ...(c.brief?.history ?? [])].map((m) => [m.id, m.rev ?? m.id]))
+  // an owner message in this thread the brief never copied, or one whose latest ledgered revision is
+  // not the one it copied (edited since - however many times before)
+  const after = events.some((e) => {
+    if (e.agent || !isOwned(ctx, c.board, e.id) || e.id.startsWith('mw-')) return false
+    const inThread = (e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread)
+    if (!inThread) return false
+    if (!frozen.has(e.id)) return e.type === 'reply'
+    return textOf(ctx, c.board, events, e, true).rev !== frozen.get(e.id)
+  })
   set(c, 'done', now, 'looks good')
   touchRun(j, now)
   return { resolve: !!c.thread && !newer && !after }

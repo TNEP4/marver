@@ -34,6 +34,23 @@ export function laneCards(cards: JamCard[] | null, run: { since: number } | null
 const toReview = () => laneCards(useJamQueue.getState().cards, useJamQueue.getState().run).filter((c) => c.state === 'review')
 const cardById = (id: string | null | undefined) => (id ? useJamQueue.getState().cards?.find((c) => c.id === id) : undefined)
 
+// ---- deciding a draft: one path for the buttons and the keys ---------------------------------------
+
+let saving: Promise<boolean> = Promise.resolve(true)
+/** Save the read-back's edit (the text stays where it is if the save fails - see `decideDraft`). */
+export function saveEdit(c: JamCard, text: string) { saving = useJamQueue.getState().act(c, 'edit', text) }
+/** Confirm or keep a draft AFTER the edit still saving - only if it saved, at the card's new rev; the
+ *  panel closes once the decision took, and a refusal says why. */
+export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop') {
+  const saved = await saving
+  saving = Promise.resolve(true)
+  if (!saved && action !== 'drop') { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
+  const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
+  if (!fresh) return
+  if (await useJamQueue.getState().act(fresh, action)) useJamUi.getState().close()
+  else useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : action === 'keep' ? 'kept' : 'dropped'} - look again`)
+}
+
 /** What clicking a tile (or ⏎ on it) does: a review opens the review detail, a card that asks opens
  *  its thread, any other capture its detail - the read-back for a draft. */
 export function openTile(id: string) {
@@ -55,7 +72,8 @@ export function reveal(c: JamCard) {
   if (!c.frames.length) return
   if (c.board !== s.board) { location.hash = `#/b/${encodeURIComponent(c.board)}?f=${c.frames.map(encodeURIComponent).join(',')}`; return }
   const keys = s.nodes.filter((n) => c.frames.includes(n.frame)).map((n) => n.key)
-  if (keys.length) void import('./canvas/ctl.ts').then(({ canvasCtl }) => canvasCtl.fitNodes(keys))
+  // after the panel has drawn, so the fit measures it and lands the frames in the space right of it
+  if (keys.length) void import('./canvas/ctl.ts').then(({ canvasCtl }) => requestAnimationFrame(() => requestAnimationFrame(() => canvasCtl.fitNodes(keys))))
 }
 
 /** The next capture to review after `from` (or the oldest), walking the lane left to right. */
@@ -86,9 +104,9 @@ const rows = (): Row[] => {
     { // a read-back open
       on: () => ui.panel?.kind === 'capture' && panelCard?.state === 'draft',
       keys: {
-        Enter: () => { void act(panelCard, 'confirm'); ui.close() },
-        k: () => { void act(panelCard, 'keep'); ui.close() },
-        Escape: () => { void act(panelCard, 'drop'); ui.close() },
+        Enter: () => void decideDraft(panelCard!.id, 'confirm'),
+        k: () => void decideDraft(panelCard!.id, 'keep'),
+        Escape: () => void decideDraft(panelCard!.id, 'drop'),
       },
     },
     { // the notes card open (in its field, the field handles its own keys)
@@ -113,10 +131,10 @@ const rows = (): Row[] => {
     { // a review open
       on: () => ui.panel?.kind === 'review' && !!panelCard,
       keys: {
-        Enter: () => { if (ui.moreOpen) return; void act(panelCard, 'good'); const n = nextReview(panelCard!.id); n && n.id !== panelCard!.id ? ui.open({ kind: 'review', id: n.id }) : ui.close() },
+        Enter: () => { if (ui.moreOpen) return; void act(panelCard, 'good'); const n = nextReview(panelCard!.id); if (n && n.id !== panelCard!.id) { ui.open({ kind: 'review', id: n.id }); reveal(n) } else ui.close() },
         'Shift+Enter': () => ui.setMoreOpen(true),
-        ArrowRight: () => { void act(panelCard, 'later'); const n = nextReview(panelCard!.id); if (n) { ui.open({ kind: 'review', id: n.id }); ui.follow() } },
-        ArrowLeft: () => { const n = nextReview(panelCard!.id, -1); if (n) ui.open({ kind: 'review', id: n.id }) },
+        ArrowRight: () => { void act(panelCard, 'later'); const n = nextReview(panelCard!.id); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } },
+        ArrowLeft: () => { const n = nextReview(panelCard!.id, -1); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n) } },
         b: () => ui.flip(),
         'Alt+ArrowLeft': () => ui.setTab(Math.max(0, ui.tab - 1)),
         'Alt+ArrowRight': () => ui.setTab(Math.min((panelCard?.shots?.length ?? 1) - 1, ui.tab + 1)),

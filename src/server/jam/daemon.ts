@@ -697,11 +697,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           if (!c) continue
           // a capture changed since it was confirmed never runs again, whoever carries it
           if (c.capture && !captureIntact(j, ctx, c.capture)) { c.state = 'failed'; c.note = 'the capture changed after it was confirmed - capture it again'; c.rev += 1; c.at = Date.now(); continue }
+          // every kind's asks are checked (a capture's More work and merged tags are events too); only
+          // a tag's card has nothing left to do without them - a capture still has its payload
           const comment = c.kind === 'comment'
           const had = c.brief?.asks.length ?? 0
-          c.brief = clean(c.board, c.brief, comment)
-          m.brief = clean(m.board, m.brief, comment)
-          const events = comment ? c.events.filter((id) => owned(c.board, id)) : c.events
+          c.brief = clean(c.board, c.brief, true)
+          m.brief = clean(m.board, m.brief, true)
+          const events = c.events.filter((id) => owned(c.board, id))
+          // a surviving card keeps only its authorized asks; a dropped one keeps what it was, for the record
+          if (events.length !== c.events.length && (events.length || !comment)) c.events = events
           // dropped when none of its asks is the owner's any more - by its events, or by the frozen brief
           if (comment && (!events.length || (had > 0 && !c.brief?.asks.length))) { c.state = 'dropped'; c.note = 'no longer authorized'; c.rev += 1; c.at = Date.now() }
         }
@@ -714,7 +718,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const file = join(root, packetPath(b.batchId))
         try {
           const packet = JSON.parse(readFileSync(file, 'utf8')) as JobPacket
-          const members = packet.members.filter((m) => ids.has(m.card)).map((m) => ({ ...m, id: ids.get(m.card)!, brief: clean(m.board, m.brief, m.kind === 'comment')! }))
+          const members = packet.members.filter((m) => ids.has(m.card)).map((m) => ({ ...m, id: ids.get(m.card)!, brief: clean(m.board, m.brief, true)! }))
           const next = { ...packet, members }
           if (renumbered || JSON.stringify(next) !== JSON.stringify(packet)) writeFileSync(file, JSON.stringify(next, null, 1), { mode: 0o600 })
         } catch { b.state = 'failed'; b.note = 'its packet is gone'; for (const m of b.members) { const c = j.cards.find((x) => x.id === m.card); if (c) { c.state = 'failed'; c.note = 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } continue }

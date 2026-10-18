@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
-import { laneCards, openTile } from './jam-keys.ts'
+import { decideDraft, laneCards, openTile, saveEdit } from './jam-keys.ts'
 import { laneLine, timelineLines } from './jam-lines.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
@@ -19,7 +19,6 @@ import { HARNESS } from './Comments.tsx'
 import { PUBLISHED, useStore } from './store.ts'
 import type { CaptureRecord } from '../../server/jam/types.ts'
 
-let saving: Promise<unknown> = Promise.resolve()
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const picture = (id?: string) => (id ? `${ROUTE}/api/jam/picture?id=${encodeURIComponent(id)}` : undefined)
 
@@ -85,16 +84,6 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
   const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) => (c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false))
   const openThread = (c?: JamCard) => { if (c?.thread) useComments.getState().setActive(c.thread) }
-  /** Confirm or keep a draft AFTER any edit still saving: at the card's new rev, closing only once it
-   *  took - a refusal says why. */
-  const decide = async (id: string, action: 'confirm' | 'keep') => {
-    await saving
-    const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
-    if (!fresh) return
-    if (await useJamQueue.getState().act(fresh, action)) ui.close()
-    else useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : 'kept'} - look again`)
-  }
-
   const detail = useMemo(() => {
     if (!ui.panel || !panelCard) return null
     const of = list.filter((c) => (ui.panel!.kind === 'review' ? c.state === 'review' : true))
@@ -131,10 +120,10 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
           onTab={(i) => ui.setTab(i)} onFlip={() => ui.flip()} onMoreOpen={(on) => ui.setMoreOpen(on)}
           onClose={() => ui.close()}
-          onEdit={(text) => { saving = act(panelCard, 'edit', text) }}
-          onConfirm={() => void decide(panelCard.id, 'confirm')}
-          onKeep={() => void decide(panelCard.id, 'keep')}
-          onDrop={() => { void act(panelCard, 'drop'); ui.close() }}
+          onEdit={(text) => saveEdit(panelCard, text)}
+          onConfirm={() => void decideDraft(panelCard.id, 'confirm')}
+          onKeep={() => void decideDraft(panelCard.id, 'keep')}
+          onDrop={() => void decideDraft(panelCard.id, 'drop')}
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
           onMore={(text) => { void act(panelCard, 'more', text); ui.close() }}
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
