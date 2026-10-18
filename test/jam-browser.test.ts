@@ -223,5 +223,9 @@ describe('Jam V2 in the browser: a tag\'s card in its thread', () => {
     await browser!.eval(s, `window.__mvStore.getState().jamToast({ threadId: ${JSON.stringify(t2)}, board: 'main', ts: Date.now(), preview: 'And this?', batch: 'b-split' }), 1`)
     const notes = await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam?.batch === 'b-split').map((t) => [t.jam.preview, t.jam.stack?.length ?? 0])`)
     expect(notes).toEqual([['And this?', 1]])
+    // View steps to the next question; a third question of the batch still folds into the same notice
+    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); st.advanceToast(st.toasts.find((t) => t.jam?.batch === 'b-split').id); return 1 })()`)
+    await browser!.eval(s, `window.__mvStore.getState().jamToast({ threadId: ${JSON.stringify(t2)}, board: 'main', ts: Date.now(), preview: 'One more?', batch: 'b-split' }), 1`)
+    expect(await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam?.batch === 'b-split').length`)).toBe(1)
   })
 })

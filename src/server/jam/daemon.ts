@@ -18,7 +18,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { toFrameId } from '../manifest.ts'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
@@ -29,7 +29,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, answeredSince, createQueue, ctxFor, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { act, answeredSince, createQueue, ctxFor, stillOwned, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -148,7 +148,9 @@ export function canonicalShared(root: string, f: string): string | null {
     const design = realpathSync(join(root, 'design'))
     let at = join(root, f)
     const tail: string[] = []
-    while (!existsSync(at)) { tail.unshift(basename(at)); at = dirname(at) }
+    // walk up to the nearest path that EXISTS AS AN ENTRY (lstat: a dangling symlink is one) - and
+    // realpath it, which throws on a dangling link, so a link to nowhere is refused
+    for (;;) { try { lstatSync(at); break } catch { tail.unshift(basename(at)); at = dirname(at) } }
     const rel = relative(design, join(realpathSync(at), ...tail))
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
     return sharedFile(`design/${rel.split(sep).join('/')}`.toLowerCase()) ? f : null
@@ -488,7 +490,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  reconciles it otherwise (it stays claimed, with its results). */
   const redeliver = (b: Batch, n: number) => {
     if (n > 5 || stopped) return
-    const t = setTimeout(() => { deliver(b).catch((err) => { log(`  jam: posting failed again - ${(err as Error).message}`); redeliver(b, n + 1) }) }, 5_000 * n)
+    const t = setTimeout(() => {
+      // posted: what it held is free and what it moved (a `shared` requeue) may run - refresh and dispatch
+      deliver(b).then(() => { reserve(); void pump() }, (err) => { log(`  jam: posting failed again - ${(err as Error).message}`); redeliver(b, n + 1) })
+    }, 5_000 * n)
     t.unref?.()
   }
 
@@ -532,7 +537,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const logs = new Map<string, CommentEvent[]>()
         const logOf = (board: string) => { let l = logs.get(board); if (!l) logs.set(board, (l = readLog(commentsDir, board))); return l }
         const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`) && logOf(board).some((e) => e.id === id)
-        const askOk = (board: string, a: Msg) => owned(board, a.id) && (!a.rev || a.rev === a.id || owned(board, a.rev))
+        const askOk = (board: string, a: Msg) => stillOwned(ctx, board, logOf(board), a)
         const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? brief : {
           ...brief,
           asks: brief.asks.filter((a) => askOk(board, a)),
@@ -572,7 +577,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     reserve()
     // reconcile first (post what is left, move the cards), then re-arm the rest
     for (const { b } of leftover.filter((x) => x.results)) {
-      try { await deliver(b) } catch (err) { log(`  jam: could not post a recovered batch - ${(err as Error).message}`) }
+      try { await deliver(b) } catch (err) { log(`  jam: could not post a recovered batch - ${(err as Error).message}; trying again`); redeliver(b, 1) }
       runningBatches.delete(b.batchId)
     }
     ready = true

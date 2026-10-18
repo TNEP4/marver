@@ -149,7 +149,7 @@ export const useComments = create<CommentsState>((set, get) => {
         }
       }
       // a batch's other questions ride under its notice - View walks through them
-      for (const n of asking) s.jamToast({ ...noteOf(n), batch: n.batch, ...(n.rest.length ? { stack: n.rest.map(noteOf) } : {}) })
+      for (const n of asking) s.jamToast({ ...noteOf(n), batch: n.batch, ...(n.rest.length ? { stack: n.rest.map((r) => ({ ...noteOf(r), batch: n.batch })) } : {}) })
     })
   }
   // A HUMAN's fresh comment that concerns me raises the same pill the agent

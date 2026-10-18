@@ -1745,7 +1745,7 @@ export const useStore = create<State>((set, get) => {
           if (t === prev) return []
           const rest = (t.jam?.stack ?? []).filter((n) => n.threadId !== note.threadId)
           if (t.jam?.threadId !== note.threadId) return [t.jam?.stack ? { ...t, jam: { ...t.jam, stack: rest } } : t]
-          return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], stack: rest.slice(0, -1) } }] : []
+          return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], ...(t.jam?.batch ? { batch: t.jam.batch } : {}), stack: rest.slice(0, -1) } }] : []
         })
         return { toasts: [...others, { id, text, jam }].slice(-8) }
       })
@@ -1765,11 +1765,12 @@ export const useStore = create<State>((set, get) => {
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
     advanceToast(id) {
-      // a merged round notice steps to its next reply; any other notice goes
+      // a folded notice steps to its next question; any other notice goes
       set((s) => ({ toasts: s.toasts.flatMap((t) => {
         if (t.id !== id) return [t]
         const rest = t.jam?.stack ?? []
-        return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], stack: rest.slice(0, -1) } }] : []
+        // the next one keeps the notice's batch, so a later question of that batch still folds in
+        return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], ...(t.jam?.batch ? { batch: t.jam.batch } : {}), stack: rest.slice(0, -1) } }] : []
       }) }))
     },
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },

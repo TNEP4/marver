@@ -205,6 +205,16 @@ function textOf(ctx: Ctx, board: string, events: CommentEvent[], ev: CommentEven
   return { body, rev }
 }
 
+/** Is a copied ask still the owner's? Its event is in the log and ledgered, and its frozen revision is
+ *  the event itself or a ledgered edit OF THAT MESSAGE (never another message's edit). */
+export function stillOwned(ctx: Ctx, board: string, events: CommentEvent[], m: Pick<Msg, 'id' | 'rev'>): boolean {
+  const ev = events.find((e) => e.id === m.id)
+  if (!ev || ev.agent || !isOwned(ctx, board, m.id)) return false
+  if (!m.rev || m.rev === m.id) return true
+  const edit = events.find((e) => e.id === m.rev)
+  return !!edit && edit.type === 'edit' && !edit.agent && edit.commentId === ev.commentId && isOwned(ctx, board, m.rev)
+}
+
 const resultText = (j: Journal, batchId: string | undefined, card: string, fallback = ''): string => {
   const b = j.batches.find((x) => x.batchId === batchId)
   const m = b?.members.find((x) => x.card === card)
@@ -237,14 +247,17 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
   const followed = c.follows ? j.cards.find((x) => x.id === c.follows) : undefined
   // a run is named by its batch: the card's current one, or - requeued or merged since - its last in `ran`
   const lastRun = (x: Card) => x.batch ?? x.ran?.[x.ran.length - 1]
+  // the earlier asks a follow-up copies are checked again, now: a ledger that lost one, or a revision
+  // that is not that message's, never reaches the agent through `follows`
+  const keep = (asks: Msg[] | undefined) => (asks ?? []).filter((a) => stillOwned(ctx, c.board, events, a))
   if (followed) {
     const b = lastRun(followed)
-    brief.follows = { asks: followed.brief?.asks ?? [], result: resultText(j, b, followed.id, j.batches.find((x) => x.batchId === b)?.note ?? followed.note ?? '') }
+    brief.follows = { asks: keep(followed.brief?.asks), result: resultText(j, b, followed.id, j.batches.find((x) => x.batchId === b)?.note ?? followed.note ?? '') }
   }
   else if (c.ran?.length) {
     const last = c.ran[c.ran.length - 1]
     const m = j.batches.find((b) => b.batchId === last)?.members.find((x) => x.card === c.id)
-    brief.follows = { asks: m?.brief?.asks ?? [], result: resultText(j, last, c.id, j.batches.find((b) => b.batchId === last)?.note ?? 'the run failed') }
+    brief.follows = { asks: keep(m?.brief?.asks), result: resultText(j, last, c.id, j.batches.find((b) => b.batchId === last)?.note ?? 'the run failed') }
   }
   return brief
 }

@@ -908,3 +908,50 @@ describe('Jam V2: review round 2 fixes', () => {
     done()
   })
 })
+
+describe('Jam V2: review round 3 fixes', () => {
+  it('a follow-up copies only earlier asks that are still the owner\'s - a lost ledger line, or a revision from another message, never comes through', () => {
+    const { root, dir, done } = setup()
+    const t = say(root, dir, 'root')
+    const good = say(root, dir, '@marver keep me', { thread: t.commentId })
+    const other = say(root, dir, 'another message', { thread: t.commentId })
+    const otherEdit = edit(root, dir, other, 'its edit')
+    const lost = say(root, dir, '@marver lost', { thread: t.commentId, ledger: false })
+    const j = readJournal(root)
+    const now = Date.now()
+    j.cards.push({ id: 'c-old', kind: 'comment', board: 'home', frames: ['demo/hero'], thread: t.commentId, events: [good.id], state: 'done', made: now, order: now, rev: 1, at: now,
+      brief: { asks: [{ id: good.id, rev: good.id, body: 'keep', ts: 1 }, { id: good.id, rev: otherEdit, body: 'stolen rev', ts: 1 }, { id: lost.id, rev: lost.id, body: 'lost', ts: 1 }], history: [] } })
+    const next: Card = { id: 'c-new', kind: 'comment', board: 'home', frames: ['demo/hero'], thread: t.commentId, events: [], follows: 'c-old', state: 'queued', made: now, order: now, rev: 1, at: now }
+    const brief = freezeBrief(j, ctxFor(root), next, readLog(dir, 'home'))
+    expect(brief.follows!.asks.map((a) => a.body)).toEqual(['keep'])
+    done()
+  })
+
+  it('a dangling symlink is never a shared file', () => {
+    const { root, done } = setup()
+    mkdirSync(join(root, 'design'), { recursive: true })
+    symlinkSync(join(root, '.env.local'), join(root, 'design', '_kit.tsx'))
+    expect(canonicalShared(root, 'design/_kit.tsx')).toBeNull()
+    done()
+  })
+
+  it('a recovered batch whose posting fails at boot is posted again, and what it requeued (a `shared` rerun) then runs', async () => {
+    const { root, dir, done } = setup()
+    const t = say(root, dir, '@marver kit change', { frame: 'demo/a' })
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-s', made: t.ts, order: t.ts, rev: 2, at: now })
+    j.batches.push({ batchId: 'b-s', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { shared: ['design/scenes/demo/_kit.tsx'] } } })
+    writeJournal(root, j)
+    let broke = false
+    const jam = createJam(root, CFG, agent(), undefined, { changed: () => { if (!broke) { broke = true; throw new Error('push failed') } } })
+    await jam.tick()
+    for (let i = 0; i < 100 && packets(root).length === 0; i++) await wait(100)
+    await jam.tick(); jam.stop()
+    expect(packets(root).map((p) => p.exclusive)).toEqual([{ files: ['design/scenes/demo/_kit.tsx'] }])
+    expect(cardOf(jam, t)!.state).toBe('done')
+    done()
+  }, 20_000)
+})
