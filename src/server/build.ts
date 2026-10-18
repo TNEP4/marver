@@ -657,7 +657,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   cpSync(join(clientDir, 'shell', 'favicon'), join(outDir, ROUTE.slice(1), 'favicon'), { recursive: true })
   // the bridge and the module it imports: without inspect.js beside it the bridge never ran in a
   // published html frame (no ready, no sleep, no laser, no comments there)
-  for (const f of ['bridge.js', 'inspect.js']) cpSync(join(clientDir, 'frame-host', f), join(outDir, 'assets', f))
+  // (0.26: keys.js and trail.js too - the bridge imports them, and a missing one stops every HTML frame)
+  for (const f of ['bridge.js', 'inspect.js', 'keys.js', 'trail.js']) cpSync(join(clientDir, 'frame-host', f), join(outDir, 'assets', f))
 
   // html frames: copied with the theme stylesheet + bridge statically injected
   const frameCss = cssFor('frame').map((f) => `<link rel="stylesheet" href="/${f}" />`).join('\n')
