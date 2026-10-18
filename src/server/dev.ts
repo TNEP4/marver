@@ -9,6 +9,7 @@ import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { iconModules, iconsPlugin } from './icons.ts'
+import { locPlugin } from './loc.ts'
 
 /** packageDir = the installed marver package root (dist/cli.js lives one level down). */
 function packageDir(): string {
@@ -183,6 +184,9 @@ async function boot(root: string, portFlag: number | undefined, instance: string
   const esc = (p: string) => join(p, 'design').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const designDir = new RegExp(`^(${[...new Set([root, safeReal(root)])].map(esc).join('|')})[/\\\\]`)   // ids are real paths
   const plugins: any[] = [denyLocalSecrets(root), react({ exclude: [/\/node_modules\//, designDir] })]
+  // spec 27 Part 6: every host element in a design file names its source (data-mv-loc) - dev only,
+  // never the published build; `jam: { loc: false }` turns it off
+  if (config.jam?.loc !== false) plugins.unshift(locPlugin(root))
   if (host.tailwind === 4) {
     const tw = await tailwind4Plugin(root)
     if (tw) plugins.push(...tw)

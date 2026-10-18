@@ -50,6 +50,7 @@
     "cac": "^7.0.0",
     "echarts": "^6.1.0",
     "html-to-image": "^1.11.13",
+    "magic-string": "^0.30.21",
     "marked": "^16.0.0",
     "mermaid": "^11.6.0",
     "react-zoom-pan-pinch": "^3.6.1",
