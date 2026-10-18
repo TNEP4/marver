@@ -115,9 +115,9 @@ export interface JamNote {
   frame?: string; frameTitle?: string; intent?: string
   kind?: 'mention' | 'reply'                      // absent = the agent pill
   author?: { name?: string; avatar?: string; id?: string; email?: string }
-  /** an agent REPLY (not a new question): a board's replies fold into one notice per round (spec 25) */
-  round?: boolean
-  /** the earlier replies of the round, under this one - View walks through them */
+  /** a jam card that failed (spec 27): the notice carries Retry */
+  failed?: { card: string; rev: number }
+  /** earlier notices folded under this one - View walks through them */
   stack?: JamNote[]
 }
 export interface Toast { id: number; text: string; jam?: JamNote }
@@ -588,6 +588,8 @@ interface State {
   runTidy(): void
   toast(text: string): void
   jamToast(note: JamNote): void
+  /** a jam card failed - one notice, with Retry (spec 27: only a question or a failure interrupts) */
+  jamFailed(card: { id: string; rev: number; board: string; thread?: string; frames: string[]; note?: string }): void
   dismissToast(id: number): void
   /** View on a notice: a round's notice moves to its next reply, any other one goes. */
   advanceToast(id: number): void
@@ -1731,20 +1733,26 @@ export const useStore = create<State>((set, get) => {
      *  supersedes), capped so the stack stays small. */
     jamToast(note) {
       const id = ++toastSeq
-      const text = note.kind === 'mention' ? 'You were mentioned' : note.kind === 'reply' ? 'New reply' : 'Marver replied'
+      const text = note.kind === 'mention' ? 'You were mentioned' : note.kind === 'reply' ? 'New reply' : note.failed ? 'Marver failed' : 'Marver asks'
       set((s) => {
-        // one notice per board per round: an agent reply folds into that board's open notice (spec 25)
-        // a round ends after ten quiet minutes: a later reply opens a fresh notice
-        const prev = note.round ? s.toasts.find((t) => t.jam?.round && t.jam.board === note.board && note.ts - t.jam.ts < 600_000) : undefined
-        const jam = prev ? { ...note, stack: [...(prev.jam!.stack ?? []), { ...prev.jam!, stack: undefined }].filter((n) => n.threadId !== note.threadId) } : note
+        const jam = note
         // a notice whose top reply is this thread steps down to the replies under it, never loses them
         const others = s.toasts.flatMap((t) => {
-          if (t === prev) return []
           const rest = (t.jam?.stack ?? []).filter((n) => n.threadId !== note.threadId)
           if (t.jam?.threadId !== note.threadId) return [t.jam?.stack ? { ...t, jam: { ...t.jam, stack: rest } } : t]
           return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], stack: rest.slice(0, -1) } }] : []
         })
         return { toasts: [...others, { id, text, jam }].slice(-8) }
+      })
+    },
+    jamFailed(card) {
+      const frame = card.frames[0]
+      const entry = frame ? get().manifest?.frames.find((f) => f.id === frame) : undefined
+      get().jamToast({
+        threadId: card.thread ?? '', board: card.board, ts: Date.now(),
+        preview: card.note ?? 'the agent could not finish',
+        frame, frameTitle: entry?.title ?? frame, intent: entry?.intent,
+        failed: { card: card.id, rev: card.rev },
       })
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },

@@ -41,6 +41,9 @@ export interface CommentEvent {
   // --- Live Jam additions ---
   agent?: boolean                 // true = written by the Marver agent (never trusted for execution; render + guard only)
   agentMeta?: AgentMeta           // provenance for the Marver avatar tooltip (agent events only)
+  /** A jam reply (0.26): shared files the job changed though it was not given them - drawn as one
+   *  line under the reply ("Also changed _kit.tsx"). */
+  alsoChanged?: string[]
   origin?: string                 // server-stamped 'local' on dev-owner writes; the daemon's owner-trigger key
 }
 
@@ -57,7 +60,7 @@ export interface Thread {
   agentMeta?: AgentMeta
   mentions?: Mention[]
   asks?: boolean
-  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[]; asks?: boolean }[]
+  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[]; asks?: boolean; alsoChanged?: string[] }[]
   reactions: Record<string, string[]>   // emoji -> author emails (toggle semantics)
 }
 
@@ -94,7 +97,7 @@ export function replay(events: CommentEvent[]): Thread[] {
       case 'reply': {
         const t = ev.parentId ? threads.get(ev.parentId) : undefined
         if (!t || !ev.commentId || t.replies.some((r) => r.id === ev.commentId)) break
-        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, asks: ev.asks })
+        t.replies.push({ id: ev.commentId, author: ev.author, body: ev.body, ts: ev.ts, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, asks: ev.asks, ...(ev.alsoChanged?.length ? { alsoChanged: ev.alsoChanged } : {}) })
         break
       }
       case 'edit': {

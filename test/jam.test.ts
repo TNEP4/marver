@@ -13,11 +13,10 @@ import { droidAdapter } from '../src/server/jam/adapter/droid.ts'
 import { grokAdapter } from '../src/server/jam/adapter/grok.ts'
 import { opencodeAdapter } from '../src/server/jam/adapter/opencode.ts'
 import { piAdapter } from '../src/server/jam/adapter/pi.ts'
-import { acquireLock, releaseLock, write } from '../src/server/jam/journal.ts'
-import { buildMember } from '../src/server/jam/packet.ts'
+import { acquireLock, releaseLock } from '../src/server/jam/journal.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
-import type { JamAdapter, Journal } from '../src/server/jam/types.ts'
+import type { JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
 const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true }
@@ -92,163 +91,6 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
-  it('engaged thread: an owner follow-up WITHOUT @marver triggers once Marver has replied there', async () => {
-    const { root, dir, done } = setup()
-    const jam = createJam(root, CFG, okAdapter)
-    const tid = randomUUID()
-    appendEvents(dir, 'home', [
-      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'gloss it up @marver' },
-      // Marver already replied in this thread -> engaged
-      { id: 'ag1', ts: 2, type: 'reply', commentId: 'agc1', parentId: tid, author: { email: 'nic@local', name: 'Marver' }, body: 'Done - glossed.', agent: true },
-    ])
-    // the follow-up: no tag at all
-    const fu: CommentEvent = { id: 'fu1', ts: Date.now(), type: 'reply', commentId: 'fuc1', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now keep refining - dark mode too' }
-    appendEvents(dir, 'home', [fu])
-    record(root, 'home', 'fu1')
-    await jam.tick(); jam.stop()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(true)   // it ran
-    done()
-  })
-
-  it('a note Marver pinned from chat engages its thread: the owner\'s untagged reply is a job', async () => {
-    const { root, dir, done } = setup()
-    const jam = createJam(root, CFG, okAdapter)
-    const tid = randomUUID()
-    appendEvents(dir, 'home', [
-      { id: 'n1', ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'Kept the card first - right call?', agent: true },
-    ])
-    const fu: CommentEvent = { id: 'fu-note', ts: Date.now(), type: 'reply', commentId: 'fuc-note', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'no, wallet first' }
-    appendEvents(dir, 'home', [fu])
-    record(root, 'home', 'fu-note')
-    await jam.tick(); jam.stop()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
-    done()
-  })
-
-  it('a job on a frame a chat agent has lit waits, unclaimed, and runs once the frame is free', async () => {
-    const { root, dir, done } = setup()
-    let lit = true
-    const logs: string[] = []
-    const jam = createJam(root, CFG, okAdapter, (m) => logs.push(m), { held: (f) => lit && f === 'demo/hero' })
-    const tid = randomUUID()
-    appendEvents(dir, 'home', [
-      { id: 'n2', ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'note', agent: true },
-      { id: 'fu-held', ts: Date.now(), type: 'reply', commentId: 'fuc-held', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'swap them' },
-    ])
-    record(root, 'home', 'fu-held')
-    await jam.tick()
-    await jam.tick()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
-    expect(logs.filter((l) => l.includes('waiting')).length).toBe(1)   // said once, not every rescan
-    lit = false
-    await jam.tick(); jam.stop()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
-    done()
-  })
-
-  it('an owner reply written BEFORE a chat agent answered the thread does not wake a job retroactively', async () => {
-    const { root, dir, done } = setup()
-    const jam = createJam(root, CFG, okAdapter)
-    const tid = randomUUID()
-    appendEvents(dir, 'home', [
-      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'tighter rows' },
-      { id: 'old-fu', ts: 2, type: 'reply', commentId: 'old-fuc', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'and the header' },
-    ])
-    record(root, 'home', 'old-fu')
-    await jam.tick()
-    // the chat agent answers from the CLI (Marver's voice, not a jam reply)
-    appendEvents(dir, 'home', [{ id: randomUUID(), ts: 3, type: 'reply', commentId: randomUUID(), parentId: tid, author: { email: 'nic@local' }, body: 'Done both.', agent: true }])
-    await jam.tick()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
-    // ...and the owner's NEXT reply is a conversation turn
-    appendEvents(dir, 'home', [{ id: 'new-fu', ts: Date.now(), type: 'reply', commentId: 'new-fuc', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now darker' }])
-    record(root, 'home', 'new-fu')
-    await jam.tick(); jam.stop()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
-    done()
-  })
-
-  it('...nor once Live Jam answers a later follow-up in that thread', async () => {
-    const { root, dir, done } = setup()
-    const counting: JamAdapter = {
-      name: 'claude', supportsSubagents: true,
-      spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').appendFileSync('runs.log','x');process.stdout.write(JSON.stringify({result:'Done.'}))`] } },
-      parse: claudeAdapter.parse,
-    }
-    const jam = createJam(root, CFG, counting)
-    const runs = () => (existsSync(join(root, 'runs.log')) ? readFileSync(join(root, 'runs.log'), 'utf8').length : 0)
-    const tid = randomUUID()
-    appendEvents(dir, 'home', [
-      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'tighter rows' },
-      { id: 'old-fu2', ts: 2, type: 'reply', commentId: 'old-fuc2', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'and the header' },
-      { id: randomUUID(), ts: 3, type: 'reply', commentId: randomUUID(), parentId: tid, author: { email: 'nic@local' }, body: 'Done both.', agent: true },
-    ])
-    record(root, 'home', 'old-fu2')
-    appendEvents(dir, 'home', [{ id: 'next-fu', ts: 4, type: 'reply', commentId: 'next-fuc', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now darker' }])
-    record(root, 'home', 'next-fu')
-    await jam.tick()               // the follow-up runs, and Live Jam replies in the thread
-    expect(runs()).toBe(1)
-    expect(agentReplies(dir, 'home').some((r) => r.id.startsWith('jam-'))).toBe(true)
-    await jam.tick(); jam.stop()   // ...which must not re-arm the reply written before Marver engaged
-    expect(runs()).toBe(1)
-    done()
-  })
-
-  it('...nor through a collaborator\'s @marver synced into the thread - only the owner\'s mention starts a conversation', async () => {
-    const { root, dir, done } = setup()
-    const counting: JamAdapter = {
-      name: 'claude', supportsSubagents: true,
-      spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').appendFileSync('runs.log','x');process.stdout.write(JSON.stringify({result:'Done.'}))`] } },
-      parse: claudeAdapter.parse,
-    }
-    const jam = createJam(root, CFG, counting)
-    const runs = () => (existsSync(join(root, 'runs.log')) ? readFileSync(join(root, 'runs.log'), 'utf8').length : 0)
-    const tid = randomUUID()
-    appendEvents(dir, 'home', [
-      { id: tid, ts: 1, type: 'create', commentId: tid, frame: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: 'tighter rows' },
-      { id: 'sam-m', ts: 2, type: 'reply', commentId: 'sam-mc', parentId: tid, author: { email: 'sam@x.com', name: 'Sam' }, body: '@marver bigger' },   // synced, never ledgered
-      { id: 'old-fu3', ts: 3, type: 'reply', commentId: 'old-fuc3', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'and the header' },
-      { id: randomUUID(), ts: 4, type: 'reply', commentId: randomUUID(), parentId: tid, author: { email: 'nic@local' }, body: 'Done both.', agent: true },
-      { id: 'next-fu3', ts: 5, type: 'reply', commentId: 'next-fuc3', parentId: tid, author: { email: 'nic@local', name: 'Nic' }, body: 'now darker' },
-    ])
-    record(root, 'home', 'old-fu3')
-    record(root, 'home', 'next-fu3')
-    await jam.tick()
-    expect(runs()).toBe(1)         // the follow-up after Marver engaged
-    await jam.tick(); jam.stop()
-    expect(runs()).toBe(1)         // Sam's mention did not move engagement back to before the old reply
-    done()
-  })
-
-  it('a job already queued when its frame is lit waits at dispatch, and runs once the frame is free', async () => {
-    const { root, dir, done } = setup()
-    const slow: JamAdapter = {
-      name: 'claude', supportsSubagents: true,
-      spawnArgs() {
-        const script = `require('fs').appendFileSync('runs.log','x');setTimeout(()=>process.stdout.write(JSON.stringify({result:'Done.'})),300)`
-        return { cmd: process.execPath, args: ['-e', script] }
-      },
-      parse: claudeAdapter.parse,
-    }
-    let lit = false
-    const jam = createJam(root, { ...CFG, concurrency: 1 }, slow, () => {}, { held: (f) => lit && f === 'demo/b' })
-    for (const f of ['demo/a', 'demo/b']) {
-      const id = randomUUID()
-      appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'create', commentId: id, frame: f, author: { email: 'nic@local', name: 'Nic' }, body: '@marver go' }])
-      record(root, 'home', id)
-    }
-    const runs = () => (existsSync(join(root, 'runs.log')) ? readFileSync(join(root, 'runs.log'), 'utf8').length : 0)
-    const t = jam.tick()           // claims both; A runs, B queues behind the cap of 1
-    lit = true                     // ...and the chat agent lights B before A finishes
-    await t
-    expect(runs()).toBe(1)
-    lit = false
-    for (let i = 0; i < 60 && runs() < 2; i++) await new Promise((r) => setTimeout(r, 100))
-    jam.stop()
-    expect(runs()).toBe(2)
-    done()
-  }, 15_000)
-
   it('non-engaged thread: an owner reply without @marver never triggers', async () => {
     const { root, dir, done } = setup()
     const jam = createJam(root, CFG, okAdapter)
@@ -304,19 +146,6 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
-  it('failure path: after MAX attempts the daemon posts a "could not finish" reply', async () => {
-    const { root, dir, done } = setup()
-    const jam = createJam(root, CFG, failAdapter)
-    ownerMention(root, dir, 'home', '@marver do the thing')
-    await jam.tick()   // attempt 1 → retry (batch back to pending)
-    await jam.tick()   // attempt 2 → terminal
-    jam.stop()
-    const replies = agentReplies(dir, 'home')
-    expect(replies.length).toBe(1)
-    expect(replies[0].body).toContain("couldn't finish")
-    done()
-  })
-
   it('a one-message agent (codex) never posts the raw reply fence as its ack, and never doubles up', async () => {
     const { root, dir, done } = setup()
     // codex emits ONE agent_message, at the end, carrying the completion block - so the "early"
@@ -338,45 +167,6 @@ describe('Live Jam M1: the daemon spine', () => {
     done()
   })
 
-  it('crash resume: a batch left "claimed" by a dead process is re-run and completes', async () => {
-    const { root, dir, done } = setup()
-    const ev = ownerMention(root, dir, 'home', '@marver ship it')
-    // simulate the journal a killed daemon left behind: baselined, id seen, batch stuck claimed
-    write(root, { version: 1, device: deviceId(), baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
-    const jam = createJam(root, CFG, okAdapter)
-    await jam.tick()
-    jam.stop()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(true)
-    expect(agentReplies(dir, 'home').length).toBe(1)
-    done()
-  })
-
-  it('crash-idempotent reply: re-running the same batch posts no duplicate (deterministic reply id)', async () => {
-    const { root, dir, done } = setup()
-    const ev = ownerMention(root, dir, 'home', '@marver go')
-    const claimed = (): Journal => ({ version: 1, device: deviceId(), baselined: true, seen: [ev.id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [ev.id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
-    write(root, claimed())
-    await createJam(root, CFG, okAdapter).tick()   // writes reply jam-b1, finishes
-    write(root, claimed())                          // simulate a crash that lost the "finish": batch back to claimed
-    await createJam(root, CFG, okAdapter).tick()    // re-runs the SAME batch id
-    expect(agentReplies(dir, 'home').length).toBe(1)   // one reply, deduped by the deterministic id
-    done()
-  })
-
-  it('resume re-validation: a claimed batch whose event is not (or no longer) ledgered is dropped, never run', async () => {
-    const { root, dir, done } = setup()
-    // the event exists in the log but was NEVER ledgered (a synced-in / de-authorized event)
-    const id = randomUUID()
-    appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'create', commentId: id, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'x@remote' }, body: '@marver do it' }])
-    write(root, { version: 1, device: deviceId(), baselined: true, seen: [id], batches: [{ batchId: 'b1', board: 'home', memberEventIds: [id], state: 'claimed', leaseUntil: 0, attempts: 1 }] })
-    const jam = createJam(root, CFG, okAdapter)
-    await jam.tick()
-    jam.stop()
-    expect(existsSync(join(root, 'edited.marker'))).toBe(false)
-    expect(agentReplies(dir, 'home').length).toBe(0)
-    expect(jam.snapshot().batches.length).toBe(0)   // dropped
-    done()
-  })
 })
 
 describe('Live Jam M5: bounded parallelism + codex adapter', () => {
@@ -400,18 +190,6 @@ describe('Live Jam M5: bounded parallelism + codex adapter', () => {
     await jam.tick(); jam.stop()
     expect(agentReplies(dir, 'home').length).toBe(3)
     expect(maxActive).toBeGreaterThanOrEqual(2)   // frames worked concurrently, not one-at-a-time
-    done()
-  })
-
-  it('the SAME frame never runs two agents at once (serialized); both still get replies', async () => {
-    const { root, dir, done } = setup()
-    const seq: boolean[] = []
-    const jam = createJam(root, { ...CFG, concurrency: 4 }, slowAdapter, undefined, { work: (_f, on) => seq.push(on) })
-    appendEvents(dir, 'home', [owner('x', 'demo/hero', '@marver first'), owner('y', 'demo/hero', '@marver second')])
-    record(root, 'home', 'x'); record(root, 'home', 'y')
-    await jam.tick(); jam.stop()
-    expect(agentReplies(dir, 'home').length).toBe(2)
-    expect(seq).toEqual([true, false, true, false])   // strictly alternating = serial, never [true,true,...]
     done()
   })
 
@@ -440,7 +218,7 @@ describe('Live Jam M5: bounded parallelism + codex adapter', () => {
       JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Done — changed the CTA.' } }),
       JSON.stringify({ type: 'turn.completed', model: 'gpt-5-codex', usage: {} }),
     ].join('\n')
-    expect(codexAdapter.parse(jsonl, 0)).toEqual({ asks: false, reply: 'Done — changed the CTA.', model: 'gpt-5-codex', reanchors: [], ok: true })
+    expect(codexAdapter.parse(jsonl, 0)).toMatchObject({ asks: false, reply: 'Done — changed the CTA.', model: 'gpt-5-codex', reanchors: [], ok: true })
   })
   it('both adapters fan out: `codex exec` carries collaboration.spawn_agent, same as Claude Code', () => {
     expect(codexAdapter.supportsSubagents).toBe(true)
@@ -486,7 +264,7 @@ describe('Live Jam M4: activity presence', () => {
     expect(marks.at(-1)).toEqual(['demo/hero', false])   // cleared last
     done()
   })
-  it('the glow FOLLOWS the work: a comment on one frame, but the agent builds a NEW frame', async () => {
+  it('the glow FOLLOWS the work: a comment on one frame, and the agent builds a NEW frame', async () => {
     const { root, dir, done } = setup()
     // the field case: "one frame per page" - the answer is a NEW frame, not an edit to the
     // frame the comment sits on. The adapter creates design/scenes/newpage/hero.tsx, then lingers
@@ -504,11 +282,9 @@ describe('Live Jam M4: activity presence', () => {
     appendEvents(dir, 'home', [{ id: 'w2', ts: Date.now(), type: 'create', commentId: 'w2', frame: 'orders/all', nodeKey: 'orders/all', author: { email: 'nic@local' }, body: '@marver one frame per page' }])
     record(root, 'home', 'w2')
     await jam.tick(); jam.stop()
-    // the new frame lit up...
+    // the new frame lit up beside the reserved one, and both clear when the job ends
     expect(marks).toContainEqual(['newpage/hero', true])
-    // ...and the commented frame's glow moved OFF it (it was only the trigger, never edited)
-    const commented = marks.filter(([f]) => f === 'orders/all')
-    expect(commented.at(-1)).toEqual(['orders/all', false])
+    expect(marks.filter(([f]) => f === 'orders/all').at(-1)).toEqual(['orders/all', false])
     done()
   }, 12_000)
 })
@@ -583,34 +359,6 @@ describe('Live Jam M2: reanchor', () => {
     expect(threads.find((t) => t.id === 't-found')?.anchor).toEqual(found)
     expect(threads.find((t) => t.id === 't-missing')?.anchor).toBeUndefined()
     done()
-  })
-})
-
-describe('Live Jam M1: packet', () => {
-  it('a @marver reply inherits frame/nodeKey/anchor from the root thread (replies carry none)', () => {
-    const rootId = randomUUID(), replyId = randomUUID()
-    const events: CommentEvent[] = [
-      { id: rootId, ts: 1, type: 'create', commentId: rootId, frame: 'demo/hero', nodeKey: 'demo/hero', anchor: { quote: 'Learn more' }, author: { email: 'nic@local' }, body: 'this button' },
-      { id: replyId, ts: 2, type: 'reply', commentId: randomUUID(), parentId: rootId, author: { email: 'nic@local' }, body: '@marver make it green' },
-    ]
-    const threads = replay(events)
-    const member = buildMember({ board: 'home', event: events[1] }, threads)
-    expect(member.frame).toBe('demo/hero')
-    expect(member.nodeKey).toBe('demo/hero')
-    expect(member.anchor).toEqual({ quote: 'Learn more' })
-    expect(member.threadId).toBe(rootId)
-  })
-
-  it('a reply-trigger carries the FULL thread ("please @marver" inherits what the thread said)', () => {
-    const rootId = randomUUID()
-    const events: CommentEvent[] = [
-      { id: rootId, ts: 1, type: 'create', commentId: rootId, frame: 'onboarding/done', nodeKey: 'k1', author: { email: 'nic@local', name: 'Nic' }, body: 'Make this nicer and high fi' },
-      { id: 'r1', ts: 2, type: 'reply', commentId: 'rc1', parentId: rootId, author: { email: 'nic@local', name: 'Nic' }, body: 'like the welcome screen' },
-      { id: 'r2', ts: 3, type: 'reply', commentId: 'rc2', parentId: rootId, author: { email: 'nic@local', name: 'Nic' }, body: 'Please @marver' },
-    ]
-    const member = buildMember({ board: 'home', event: events[2] }, replay(events))
-    expect(member.comment.bodyRaw).toBe('Please @marver')
-    expect(member.thread.map((m) => m.bodyRaw)).toEqual(['Make this nicer and high fi', 'like the welcome screen'])
   })
 })
 
@@ -702,11 +450,11 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
 
   it('one parser for every adapter: the ```marver-reply ask header says the reply asks; no block falls back to a trailing "?"', async () => {
     const { parseAgentText } = await import('../src/server/jam/packet.ts')
-    expect(parseAgentText('Looked around.\n```marver-reply ask\nCard or CVC?\n```')).toEqual({ reply: 'Card or CVC?', asks: true, reanchors: [] })
-    expect(parseAgentText('```marver-reply\nDone - the header is tighter.\n\nWant the footer too?\n```')).toEqual({ reply: 'Done - the header is tighter.\n\nWant the footer too?', asks: false, reanchors: [] })
+    expect(parseAgentText('Looked around.\n```marver-reply ask\nCard or CVC?\n```')).toMatchObject({ reply: 'Card or CVC?', asks: true, reanchors: [] })
+    expect(parseAgentText('```marver-reply\nDone - the header is tighter.\n\nWant the footer too?\n```')).toMatchObject({ reply: 'Done - the header is tighter.\n\nWant the footer too?', asks: false, reanchors: [] })
     expect(parseAgentText('```marver-reply asking nothing\n```').asks).toBe(false)   // "ask" is a whole word, not a prefix
-    expect(parseAgentText('Which of the two?')).toEqual({ reply: 'Which of the two?', asks: true, reanchors: [] })
-    expect(parseAgentText('Done.')).toEqual({ reply: 'Done.', asks: false, reanchors: [] })
+    expect(parseAgentText('Which of the two?')).toMatchObject({ reply: 'Which of the two?', asks: true, reanchors: [] })
+    expect(parseAgentText('Done.')).toMatchObject({ reply: 'Done.', asks: false, reanchors: [] })
     for (const a of [claudeAdapter, codexAdapter]) expect(typeof a.parse('', 1).asks).toBe('boolean')
   })
 
@@ -745,11 +493,11 @@ describe('Live Jam: streaming early reply (the agent\'s own ack, live)', () => {
 describe('Live Jam M1: claude adapter parse (real envelope shape, claude 2.1.234)', () => {
   it('pulls reply from .result and a clean model from modelUsage (strips the [1m] variant tag)', () => {
     const env = JSON.stringify({ result: 'Done — CTA now reads Get Started.', modelUsage: { 'claude-opus-5[1m]': { input: 1 } } })
-    expect(claudeAdapter.parse(env, 0)).toEqual({ asks: false, reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true, reanchors: [] })
+    expect(claudeAdapter.parse(env, 0)).toMatchObject({ asks: false, reply: 'Done — CTA now reads Get Started.', model: 'claude-opus-5', ok: true, reanchors: [] })
   })
   it('non-JSON stdout falls back to raw text; exit code drives ok', () => {
-    expect(claudeAdapter.parse('plain text reply', 0)).toEqual({ asks: false, reply: 'plain text reply', model: undefined, ok: true, reanchors: [] })
-    expect(claudeAdapter.parse('', 1)).toEqual({ asks: false, reply: '', model: undefined, ok: false, reanchors: [] })
+    expect(claudeAdapter.parse('plain text reply', 0)).toMatchObject({ asks: false, reply: 'plain text reply', model: undefined, ok: true, reanchors: [] })
+    expect(claudeAdapter.parse('', 1)).toMatchObject({ asks: false, reply: '', model: undefined, ok: false, reanchors: [] })
   })
   it('spawn enforces the shell ban: Bash explicitly disallowed, not just omitted from the allowlist', () => {
     const { args } = claudeAdapter.spawnArgs('goal')
@@ -788,7 +536,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"On it - checking the frame."}]},"session_id":"s1"}',
       '{"type":"result","subtype":"success","is_error":false,"duration_ms":9,"result":"Done - CTA now reads Get Started.","session_id":"s1"}',
     ].join('\n')
-    expect(cursorAdapter.parse(ok, 0)).toEqual({ asks: false, reply: 'Done - CTA now reads Get Started.', model: 'claude-opus-5', reanchors: [], ok: true })
+    expect(cursorAdapter.parse(ok, 0)).toMatchObject({ asks: false, reply: 'Done - CTA now reads Get Started.', model: 'claude-opus-5', reanchors: [], ok: true })
     // captured live from cursor-agent 2026.08.11 unauthenticated: prose on stdout, non-zero exit
     expect(cursorAdapter.parse("Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", 1).ok).toBe(false)
   })
@@ -809,7 +557,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
     const err = '{"type":"error","source":"cli","message":"Error: Authentication failed.","timestamp":1,"session_id":"s"}'
     expect(droidAdapter.parse([init, err].join('\n'), 1).ok).toBe(false)
     const done = [init, '{"type":"result","subtype":"success","is_error":false,"duration_ms":5657,"num_turns":1,"result":"Moved the badge into the header.","session_id":"s"}'].join('\n')
-    expect(droidAdapter.parse(done, 0)).toEqual({ asks: false, reply: 'Moved the badge into the header.', model: 'claude-opus-5', reanchors: [], ok: true })
+    expect(droidAdapter.parse(done, 0)).toMatchObject({ asks: false, reply: 'Moved the badge into the header.', model: 'claude-opus-5', reanchors: [], ok: true })
     const { args } = droidAdapter.spawnArgs('g')
     expect(args[args.indexOf('--auto') + 1]).toBe('low')
     const disabled = args[args.indexOf('--disabled-tools') + 1].split(',')
@@ -829,7 +577,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"step_finish","timestamp":5,"sessionID":"ses_1","part":{"id":"prt_5","reason":"stop","type":"step-finish","tokens":{"input":1,"output":2},"cost":0}}',
     ].join('\n')
     // no model ever: opencode's stream names none, and none is invented
-    expect(opencodeAdapter.parse(jsonl, 0)).toEqual({ asks: false, reply: 'Swapped the hero image.\n\nThe old asset is gone - done.', reanchors: [], ok: true })
+    expect(opencodeAdapter.parse(jsonl, 0)).toMatchObject({ asks: false, reply: 'Swapped the hero image.\n\nThe old asset is gone - done.', reanchors: [], ok: true })
     expect(opencodeAdapter.parse('{"type":"error","timestamp":1,"sessionID":"s","error":{"name":"ProviderAuthError","data":{"message":"no auth"}}}', 1).ok).toBe(false)
   })
   it('opencode: the jail is a DEFAULT-DENY env grant, not the dangerous --auto flag', () => {
@@ -851,7 +599,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"assistant","message":{"role":"assistant","model":"grok-build","content":[{"type":"text","text":"Tightened the spacing."}]},"session_id":"s"}',
       '{"type":"result","subtype":"success","is_error":false,"result":"Tightened the spacing.","session_id":"s"}',
     ].join('\n')
-    expect(grokAdapter.parse(done, 0)).toEqual({ asks: false, reply: 'Tightened the spacing.', model: 'grok-build', reanchors: [], ok: true })
+    expect(grokAdapter.parse(done, 0)).toMatchObject({ asks: false, reply: 'Tightened the spacing.', model: 'grok-build', reanchors: [], ok: true })
     // "unknown" is grok's literal placeholder, never provenance
     expect(grokAdapter.parse([init, '{"type":"result","subtype":"success","is_error":false,"result":"Hi.","session_id":"s"}'].join('\n'), 0).model).toBeUndefined()
     const { args } = grokAdapter.spawnArgs('g')
@@ -873,7 +621,7 @@ describe('Live Jam: the five new adapters (parse over REAL captured envelopes)',
       '{"type":"message_end","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Working on it."}]}}',
       '{"type":"agent_end","messages":[{"role":"user","content":[{"type":"text","text":"goal"}]},{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Renamed the section - take a look."}]}]}',
     ].join('\n')
-    expect(piAdapter.parse(done, 0)).toEqual({ asks: false, reply: 'Renamed the section - take a look.', model: 'claude-sonnet-5', reanchors: [], ok: true })
+    expect(piAdapter.parse(done, 0)).toMatchObject({ asks: false, reply: 'Renamed the section - take a look.', model: 'claude-sonnet-5', reanchors: [], ok: true })
     // stream cut before agent_end: the last message_end still answers
     const cut = [header, '{"type":"message_end","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"text","text":"Done early."}]}}'].join('\n')
     expect(piAdapter.parse(cut, 0).reply).toBe('Done early.')

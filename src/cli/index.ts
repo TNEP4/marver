@@ -278,9 +278,10 @@ cli
   })
 
 cli
-  .command('marks', 'What the human has not reviewed: frames waiting on them (the ones that ask first) and frames new since they looked')
+  .command('marks', 'What the human has not reviewed: frames waiting on them (the ones that ask first), their answers nothing has acted on yet, and frames new since they looked')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--json', 'Machine-readable output')
+  .option('--all', 'Also list the answers from before 0.26 that may already be handled')
   .action(async (opts) => {
     const { marksCommand } = await import('./marks.ts')
     marksCommand(resolve(opts.root), opts)

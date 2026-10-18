@@ -9,7 +9,7 @@ import { Browser } from './browser.ts'
  * Sidebar marks (spec 25, variant B), proven where a person sees them: a REAL dev server, a REAL
  * browser, files and comments changing underneath. New is blue with a dot; a question is the
  * orange numbered bubble, hollow once answered; one slot per row; roll-ups on folded rows and on
- * boards you are not on; U; the two-second rule; one notice per round. Skips without Chrome.
+ * boards you are not on; U; the two-second rule; only a question raises a notice. Skips without Chrome.
  */
 
 const PORT = 6500 + Math.floor(Math.random() * 400)
@@ -212,21 +212,21 @@ describe('sidebar marks (spec 25)', () => {
     await sleep(300); await farAway()
   })
 
-  skippable("Marver's replies on a board fold into one notice per round; a new question keeps its own", async () => {
+  skippable("Marver's done replies raise no notice (spec 27); a reply that asks raises one", async () => {
     cli('comments', 'new', 'spec/alpha', '--board', 'main', '--at', 'h1', '--body', 'First note')
     cli('comments', 'new', 'spec/charlie', '--board', 'main', '--at', 'h1', '--body', 'Second note')
     await until(`window.__mark('Alpha') === 'ask:1' && window.__mark('Charlie') === 'ask:1'`)
     await browser!.eval(s, `window.__mvStore.getState().clearJamToasts(), 1`)
     cli('comments', 'reply', threadOn('main', 'spec/alpha'), '--body', 'Done on alpha')
     cli('comments', 'reply', threadOn('main', 'spec/charlie'), '--body', 'Done on charlie')
-    await until(`(() => { const r = window.__mvStore.getState().toasts.filter((t) => t.jam?.round); return r.length === 1 && r[0].jam.stack?.length === 1 })()`)
-    expect(await browser!.eval(s, `document.querySelector('.sh-jam-frame')?.textContent`)).toMatch(/2 replies/)
-    // View on the round's notice walks to its earlier reply instead of dropping it
-    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); st.advanceToast(st.toasts.find((t) => t.jam?.round).id); return 1 })()`)
-    await until(`(() => { const r = window.__mvStore.getState().toasts.filter((t) => t.jam?.round); return r.length === 1 && !r[0].jam.stack?.length && r[0].jam.frame === 'spec/alpha' })()`)
-    // a reply that asks keeps its own notice, and takes its thread out of the round
+    // the replies land (the frames are marked) and nothing interrupts
+    await until(`window.__mvComments.getState().threads.filter((t) => t.replies.some((r) => /^Done on/.test(r.body ?? ''))).length === 2`)
+    await sleep(600)
+    expect(await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam).length`)).toBe(0)
+    // a reply that asks is the one that does
     cli('comments', 'reply', threadOn('main', 'spec/charlie'), '--body', 'Should charlie keep its header?', '--ask')
-    await until(`window.__mvStore.getState().toasts.some((t) => t.jam && !t.jam.round && t.jam.frame === 'spec/charlie')`)
-    expect(await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam?.round).map((t) => t.jam.frame).join()`)).toBe('spec/alpha')
+    await until(`window.__mvStore.getState().toasts.some((t) => t.jam && t.jam.frame === 'spec/charlie')`)
+    expect(await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam).length`)).toBe(1)
   })
+
 })

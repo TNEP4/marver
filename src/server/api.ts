@@ -928,11 +928,19 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             // the frames an agent finishes all at once changed too (spec 25) - an edit to a shared kit included
             const done = workActivity.active().filter((f) => workActivity.has(f, 'cli'))
             if (done.length) { (await import('./marks.ts')).recordChanged(root, devFrames(), done, { doc: false }); opts.notify?.('sh:marks') }
-            workActivity.clearAll('cli'); return json(res, 200, { frames: workActivity.active() })
+            workActivity.clearAll('cli'); (await import('./jam/reserve.ts')).saveHolds(root, workActivity); return json(res, 200, { frames: workActivity.active() })
           }
           if (!frames.length) return json(res, 400, { error: 'frames required' })
           const ttl = Math.min(Math.max(Number(b.ttlMs) || WORK_TTL_DEFAULT, 10_000), WORK_TTL_MAX)
+          // one reservation table (spec 27): a frame a jam batch holds, or any new hold while a job that
+          // changes a shared file waits or runs, is refused - a hold the agent already has may renew
+          const { refuseHold, saveHolds } = await import('./jam/reserve.ts')
+          if (on) {
+            const refused = frames.map((f) => refuseHold(f, workActivity.has(f, 'cli'))).find(Boolean)
+            if (refused) return json(res, 409, { error: refused, frames: workActivity.active() })
+          }
           for (const f of frames) on ? workActivity.mark(f, ttl, 'cli') : workActivity.clear(f, 'cli')
+          saveHolds(root, workActivity)
           // the agent says it changed these: a mark for whoever has not looked yet (spec 25)
           if (!on) { (await import('./marks.ts')).recordChanged(root, devFrames(), frames, { doc: false }); opts.notify?.('sh:marks'); return json(res, 200, { frames: workActivity.active() }) }
           // the other half of showing the work: the boards these frames sit on that still read Backlog or To
@@ -959,6 +967,26 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           } catch { /* advisory - the work is lit either way */ }
           return json(res, 200, { frames: workActivity.active(), behind, context: contextPresent })
         }
+      }
+      if (path === 'jam/queue' && req.method === 'GET') {
+        // the cards, for the status icons by a tag's time (and, with captures, the lane) - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { jamLive } = await import('./jam/live.ts')
+        return json(res, 200, jamLive.view?.() ?? { agent: null, cards: [] })
+      }
+      if (path === 'jam/card' && req.method === 'POST') {
+        // one move on one card: { id, rev, action } - applied only at that rev; anything else is refused
+        // with the current card
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const { ACTIONS } = await import('./jam/queue.ts')
+        if (!b || typeof b.id !== 'string' || !Number.isInteger(b.rev) || !ACTIONS.includes(b.action)) return json(res, 400, { error: 'expected { id, rev, action }' })
+        const { jamLive } = await import('./jam/live.ts')
+        if (!jamLive.act) return json(res, 409, { error: 'jam is not running here' })
+        const r = await jamLive.act(b.id, b.rev, b.action)
+        return json(res, r.ok ? 200 : 409, r)
       }
       if (path === 'boards.rights' && req.method === 'GET') {
         // every board is commentable in dev; the published policy applies out there
@@ -1001,8 +1029,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // between leaves the event present-but-unauthorized (won't trigger), the safe direction.
           // Agent events never reach here (they go through the daemon's in-process writer), so the
           // ledger only ever holds owner input - the fail-closed direction of atomicity.
+          // Edits are ledgered too (0.26): an event's text is its body or its latest LEDGERED edit, so an
+          // edit that arrived by sync is never the owner's words. An edit never starts work.
           const { record } = await import('./jam/ledger.ts')
-          for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply') record(root, cm[1], ev.id)
+          for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply' || ev.type === 'edit') record(root, cm[1], ev.id)
+          // the queue ingests at once - a tag is a card before the watcher wakes
+          ;(await import('./jam/live.ts')).jamLive.poke?.()
           // push in the background - the periodic sync catches anything this drops
           void backgroundPush(root)
           return json(res, 200, { accepted: fresh.length })

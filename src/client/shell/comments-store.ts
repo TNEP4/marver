@@ -111,13 +111,13 @@ export const useComments = create<CommentsState>((set, get) => {
   // the boot instant: an event younger than the page can never be "history", so it may
   // notify even before its board's baseline sweep lands (the poke/SSE-beats-load race)
   const bootTs = Date.now()
-  // Marver - a Live Jam reply, or a note or reply an agent left from the CLI - arriving AFTER
-  // the baseline raises a persistent bottom-right pill - from ANY board (the store holds every
-  // log), keyed on the event id via `union`'s fresh filter so it fires exactly once. The pill's
-  // board is the THREAD's origin board, so View can navigate there. One ping per batch, like a
-  // person's - except for a jam job's opening "On it" line (ids `jam-e<attempt>-…`, daemon.ts): the pill
-  // shows it, the ping waits for the answer. A jam job whose final block asks what its opening
-  // line already said re-flags that line (an edit carrying `asks`): the question gets its notice.
+  // Marver - a Live Jam reply, or a note or reply an agent left from the CLI - that ASKS, arriving
+  // AFTER the baseline, raises a persistent bottom-right pill - from ANY board (the store holds
+  // every log), keyed on the event id via `union`'s fresh filter so it fires exactly once. The
+  // pill's board is the THREAD's origin board, so View can navigate there. One ping per batch. A
+  // reply that does not ask raises nothing (spec 27): it is read in its thread. A jam job whose
+  // final block asks what its opening line already said re-flags that line (an edit carrying
+  // `asks`): the question gets its notice.
   const notifyAgent = (fresh: CommentEvent[]) => {
     const news = fresh.flatMap((e) => {
       if (!e.agent) return []
@@ -126,11 +126,14 @@ export const useComments = create<CommentsState>((set, get) => {
       const t = get().threads.find((t) => t.id === e.commentId || t.replies.some((r) => r.id === e.commentId))
       return t ? [{ e, threadId: t.id, body: (t.id === e.commentId ? t : t.replies.find((r) => r.id === e.commentId))?.body, ask: true }] : []
     })
-    if (!news.length) return
-    if (news.some(({ e }) => !/^jam-e\d+-/.test(e.id))) playPing()
+    // only a question interrupts (spec 27): a reply that says it is done is read in its thread, and
+    // the sidebar marks its frame - no notice, no ping
+    const asking = news.filter((n) => n.ask)
+    if (!asking.length) return
+    playPing()
     void import('./store.ts').then(({ useStore }) => {
       const s = useStore.getState()
-      for (const { e, threadId, body, ask } of news) {
+      for (const { e, threadId, body } of asking) {
         // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
         const t = get().threads.find((t) => t.id === threadId)
         const entry = t?.frame ? s.manifest?.frames.find((f) => f.id === t.frame) : undefined
@@ -138,9 +141,6 @@ export const useComments = create<CommentsState>((set, get) => {
           threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts,
           preview: (body ?? '').replace(/\s+/g, ' ').slice(0, 90),
           frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
-          // a message that asks stands alone; the rest fold into the board's round (the writer's
-          // `asks`, else the old rule: a note asks, a reply asks when it ends in "?")
-          round: !ask,
         })
       }
     })

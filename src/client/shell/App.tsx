@@ -566,6 +566,9 @@ export function App() {
     // Live Jam reply delivery: the daemon just wrote to a board's log - fetch it NOW instead of
     // waiting out the 30s comment poll, so the reply + notification land within a second.
     import.meta.hot.on('sh:jam-comment', (m: any) => { if (typeof m?.board === 'string') useComments.getState().poke(m.board) })
+    // the jam queue (spec 27): the status icon by each tag's time, and a failure's one notice
+    import.meta.hot.on('sh:jam-queue', (m: any) => { void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().apply(m)) })
+    void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
     // A7 controlled HMR: a frame file changed. Reload exactly the affected frames through the
     // lease-aware path (idle frames now, leased ones deferred to a safe point) - never a shell
     // reload, never a React Fast Refresh yanking a frame the user is in.
@@ -1104,6 +1107,13 @@ async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void)
   }
 }
 
+/** Retry a failed jam card from its notice, at the rev the notice saw (a newer change wins). */
+async function retryNote(f: { card: string; rev: number }) {
+  const { useJamQueue } = await import('./jam-queue.ts')
+  const card = useJamQueue.getState().cards?.find((c) => c.id === f.card)
+  if (card && card.state === 'failed') await useJamQueue.getState().act(card, 'retry')
+}
+
 /** One jam pill, frame-first: row 1 = intent icon + FRAME TITLE (blue) · age; row 2 = Marver · preview.
  *  `badge` shows the +N deck count (replacing View); `inert` disables inner clicks (the deck handles it). */
 function JamToast({ id, note, badge, inert }: { id: number; note: import('./store.ts').JamNote; badge?: number; inert?: boolean }) {
@@ -1121,13 +1131,14 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
           ? <b className="sh-jam-frame"><span className="t">{note.author!.name ?? 'Someone'}</span> <span className="v">{note.kind === 'mention' ? 'mentioned you' : 'replied'}</span></b>
           : note.stack?.length
             ? <b className="sh-jam-frame"><span className="t">{note.board === ALL_SCENES ? note.frameTitle ?? note.frame ?? '' : boardLabel(note.board)}</span> <span className="v">· {note.stack.length + 1} replies</span></b>
-            : <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span></b>}
+            : <b className="sh-jam-frame"><span className="t">{note.frameTitle ?? note.board}</span>{note.failed && <span className="v"> · failed</span>}</b>}
         <span className="sh-jam-prev">{note.preview}</span>
       </div>
       {badge != null
         ? <span className="sh-jam-badge">+{badge}</span>
         : !inert && <>
-            <button className="sh-jam-view" onClick={() => void viewNote(note, () => useStore.getState().advanceToast(id))}>View</button>
+            {note.failed && <button className="sh-jam-view" onClick={() => { void retryNote(note.failed!); dismiss() }}>Retry</button>}
+            {note.threadId && <button className="sh-jam-view" onClick={() => void viewNote(note, () => useStore.getState().advanceToast(id))}>View</button>}
             <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
           </>}
     </div>

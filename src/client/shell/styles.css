@@ -1105,6 +1105,28 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .cm-scroll.fade-top.fade-bot { -webkit-mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent); mask-image: linear-gradient(180deg, transparent, #000 30px, #000 calc(100% - 30px), transparent) }
 .cm-card header { display: flex; align-items: center; gap: 9px }
 .cm-card header b { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
+/* Jam V2 (spec 27): where a tag's work stands - one icon right of the message's time, only while
+   there is something to wait for or act on. Click keeps its detail open with the card's one move. */
+.cm-tstat { position: relative; display: inline-flex; align-items: center; margin-left: -4px }
+.cm-tstat-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 6px;
+  background: none; cursor: pointer }
+.cm-tstat-btn:hover, .cm-tstat.on .cm-tstat-btn { background: var(--glass-hover) }
+.cm-tstat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+.cm-tstat-pop { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 50; display: flex; align-items: center; gap: 10px;
+  padding: 6px 6px 6px 10px; border-radius: 8px; background: var(--tip-bg); color: var(--tip-ink); white-space: nowrap;
+  font: 500 12px -apple-system, system-ui, sans-serif; box-shadow: 0 8px 22px -8px rgba(0, 0, 0, .45); animation: sh-tip-pop-r .12s ease }
+.cm-tstat-pop .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; white-space: normal; max-width: 300px }
+.cm-tstat-pop .sh-tip-lines b { font-weight: 600; font-size: 12px; letter-spacing: 0 }
+.cm-tstat-pop .sh-tip-lines small { opacity: .62; font-size: 11px; line-height: 1.35 }
+.cm-tstat-act { flex: none; height: 24px; padding: 0 10px; border: 0; border-radius: 6px; cursor: pointer;
+  background: color-mix(in srgb, var(--tip-ink) 14%, transparent); color: var(--tip-ink); font: 600 12px -apple-system, system-ui, sans-serif }
+.cm-tstat-act:hover { background: color-mix(in srgb, var(--tip-ink) 22%, transparent) }
+.cm-card .cm-scroll:has(.cm-tstat.on) { overflow: visible }
+/* a jam reply that changed a shared file it was not given says so in one line */
+.cm-also { margin-top: 4px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.jm-spin { transform-origin: 7px 7px; animation: jm-spin 1.1s linear infinite }
+@keyframes jm-spin { to { transform: rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) { .jm-spin { animation: none } }
 .cm-card .dim { color: var(--glass-ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums }
 /* pinned above the scroller so the close button always wins the click - bare buttons on the
    card's own glass, no chip: the custom scrollbar lives at the card's far edge, right of the
@@ -1292,6 +1314,7 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 /* v1.1: an unseen mention of YOU pulses the pin - accent lights until the
    thread is opened (opening marks it seen). Motion-reduced readers keep a
    steady accent ring instead of the pulse. */
+.cm-pin.working { box-shadow: 0 0 0 1.5px var(--mv-blue), 0 2px 8px -2px rgba(0, 0, 0, .25) }
 .cm-pin.mention, .cm-stack.mention { outline: 2px solid var(--accent); outline-offset: 1px;
   animation: cm-mention-pulse 1.7s ease-out infinite }
 @keyframes cm-mention-pulse {

@@ -1,51 +1,57 @@
 /**
  * The Live Jam daemon - a module inside the long-lived dev server.
  *
- * The loop: watch design/comments/ (dir-watch + ~5s rescan) → find owner-ledgered @marver
- * mentions (watch.ts, the trust boundary) → claim each as a durable single-member batch
- * (journal.ts) → spawn one headless agent (adapter) with a goal-phrased untrusted packet
- * (packet.ts) → capture its reply → write it in-process as an owner-authored `agent:true`
- * event (comments.appendEvents) → mark the batch done.
+ * The loop (spec 27): watch design/comments/ (dir-watch + ~5s rescan) → the queue ingests owner
+ * events (queue.ts: only a ledgered tag makes a card) → when a slot frees, claim what can run - the
+ * queued cards of one board on one frame make one batch, up to 8, with every brief frozen as text
+ * and the packet written to its file → spawn one headless agent (adapter) on a goal-phrased prompt
+ * that names the file → split its final message into one reply per member → write every result
+ * into the journal BEFORE posting anything → post each reply with a deterministic id → move the
+ * cards. A tag's card ends done ("replied") - its reply is in its thread; nothing raises a notice
+ * but a question or a failure.
  *
- * M1 = single-member batches, one at a time; M4 promotes to real multi-member batches.
- *
- * Crash safety: the reply event id is DETERMINISTIC per batch (`jam-<batchId>`), so a re-run
- * after a crash between "reply written" and "batch removed" dedups to one reply. A batch left
- * `claimed` by a dead process is re-run, but only after its members are re-validated through the
- * SAME trust gate (a synced event that reused a ledgered id on another board can never replace
- * the authorized job), and after best-effort fencing the orphan's process group.
+ * Startup is a barrier: nothing is scheduled until every orphan is fenced (`pgid`), the CLI holds
+ * are restored, batches with results are reconciled (posted, never rerun) and the rest re-armed.
  *
  * `createJam` is the loop with no timers or lock (a test drives `tick()` directly with an
  * injected adapter); `startJam` wraps it with the repo lock, dir-watch, and rescan interval.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
-import { randomUUID } from 'node:crypto'
-import { mkdirSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
+import { join, relative } from 'node:path'
 import { toFrameId } from '../manifest.ts'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
 import { localProfile } from '../profile.ts'
 import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
-import { acquireLock, baseline, releaseLock, write } from './journal.ts'
-import { buildMember, buildPacket, goalText, parseAgentText, threadId } from './packet.ts'
+import { acquireLock, releaseLock } from './journal.ts'
+import { goalText, packetPath, parseAgentText, parseMembers } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { scanPending, triggers, engagedThreads, allEventIds } from './watch.ts'
-import { has } from './ledger.ts'
-import type { Batch, JamAdapter, Journal, Pending, Reanchor } from './types.ts'
+import { act, answeredSince, createQueue, ctxFor, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { jamReservations, restoreHolds } from './reserve.ts'
+import { jamLive, type QueueView } from './live.ts'
+import type { Batch, Card, JamAdapter, JobPacket, Journal, Reanchor, Result } from './types.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
 const MAX_ATTEMPTS = 2
 const MAX_OUT = 2_000_000
 const RESCAN_MS = 5_000
-/** How often a chain held by a chat agent's `work start` looks again. */
+/** How often a card held by a chat agent's `work start` looks again. */
 const HOLD_RECHECK_MS = 2_000
 
 export interface JamDaemon { stop(): void }
-export interface JamCore { tick(): Promise<void>; stop(): void; snapshot(): Journal }
+export interface JamCore {
+  tick(): Promise<void>
+  stop(): void
+  snapshot(): Journal
+  view(): QueueView
+  act(id: string, rev: number, action: string): Promise<{ ok: boolean; card?: Card; error?: string }>
+  /** ingest now (the page's comment route, right after it appends) */
+  poke(): Promise<void>
+}
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
 export interface JamHooks {
@@ -56,6 +62,10 @@ export interface JamHooks {
   /** Is a CHAT-driven agent working on this frame right now (`marver work start`)? Then a job
    *  on it waits - two agents never edit one file at once - and runs once the frame is free. */
   held?(frame: string): boolean
+  /** Any `work start` hold at all - an exclusive job waits for every one to end. */
+  anyHold?(): boolean
+  /** The queue changed - push it to pages (sh:jam-queue). */
+  queue?(): void
   /** Find a re-pin's element in the rendered frame (the dev server's anchor check, as the CLI's
    *  `comments move`). Absent = the anchor is written unchecked. */
   anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[], look?: AnchorLook): Promise<AnchorCheck>
@@ -110,17 +120,41 @@ const sceneFrameMtimes = (root: string): Map<string, number> => {
 export const metaNarration = (text: string): boolean =>
   /acknowledg/i.test(text) || /^(let me |i'?ll start|i will start|first,? i |my plan|i'?m going to start|i am going to start)/i.test(text.trim())
 
-/** The loop, without timers/watch/lock. Baselines on creation, then each `tick()` resumes any
- *  leftover batches (re-validate + fence + re-run) and claims new owner-ledgered mentions. */
+/** Every file under design/ that is not a frame - the shared design source and assets a job may
+ *  not edit - as `path -> mtimeMs`. The comment logs, the journal and pictures (.local), the board
+ *  files, the build and the generated manifest are not design source. */
+const sharedMtimes = (root: string): Map<string, number> => {
+  const design = join(root, 'design')
+  const out = new Map<string, number>()
+  let entries: string[]
+  try { entries = readdirSync(design, { recursive: true }) as string[] } catch { return out }
+  for (const rel of entries) {
+    const parts = rel.split(/[\\/]/)
+    if (parts[0] === 'comments' || parts[0] === 'boards' || parts[0].startsWith('.') || rel === 'manifest.json') continue
+    const base = parts[parts.length - 1]
+    const frame = parts[0] === 'scenes' && FRAME_FILE.test(base) && !base.startsWith('_') && !parts.slice(1, -1).some((x) => x.startsWith('_'))
+    if (frame) continue
+    try { const st = statSync(join(design, rel)); if (st.isFile()) out.set(`design/${rel.split(/[\\/]/).join('/')}`, st.mtimeMs) } catch { /* vanished */ }
+  }
+  return out
+}
+
+/** The loop, without timers/watch/lock. Loads the queue (upgrading a v1 journal, baselining a
+ *  fresh one); the first `tick()` recovers what a dead process left (the startup barrier), and
+ *  every tick ingests, claims what can run and waits until the work is idle. */
 export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log: (m: string) => void = () => {}, hooks: JamHooks = {}): JamCore {
   const commentsDir = join(root, 'design', 'comments')
-  let journal: Journal = baseline(root, allEventIds(commentsDir))
-  const persist = () => write(root, (journal = { ...journal }))
+  const q: Queue = createQueue(root, (fence) => {
+    for (const pid of fence) fenceGroup(pid)
+    log(`  jam: only comments that tag @marver start work now - plain replies are listed in \`npx marver marks\` for your agent`)
+  })
 
   let stopped = false
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
+  const running = new Map<string, Promise<void>>()   // batchId -> its run
+  const runningBatches = new Map<string, Batch>()
 
-  type AgentRun = { reply: string; asks: boolean; model?: string; ok: boolean; reanchors: Reanchor[]; raw?: string }
+  type AgentRun = { reply: string; asks: boolean; model?: string; ok: boolean; reanchors: Reanchor[]; said?: string; raw?: string }
   type Env = NodeJS.ProcessEnv
   const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, asks: boolean, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
@@ -196,275 +230,321 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** House style: never an em/en dash in a reply - a plain dash reads human. */
   const plainDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ' - ')
 
-  const writeReply = (b: Batch, p: Pending, body: string, asks: boolean, model?: string, kind: 'reply' | 'early' = 'reply') => {
-    const me = localProfile(root)
-    // Deterministic ids: a re-run produces the SAME reply, so appendEvents dedups it (crash-safe).
-    // The early ack gets its own id, so ack + final coexist as two thread messages.
-    // early ids are per-ATTEMPT: attempt 2's ack must not dedup against attempt 1's (which said
-    // something else) - a suppressed ack also poisoned the final's clarify-dedup
-    const suffix = kind === 'early' ? `e${b.attempts}-${b.batchId}` : b.batchId
+  const me = () => localProfile(root)
+  /** Post one reply in a card's thread. Deterministic ids - `jam-<batch>-<member>` for the reply,
+   *  `jam-e<attempt>-<batch>` for a one-member job's early ack - so posting twice is a no-op. */
+  const postReply = (b: Batch, c: Card, member: string, body: string, asks: boolean, model?: string, kind: 'reply' | 'early' = 'reply', alsoChanged?: string[]): { commentId: string; ts: number } => {
+    const suffix = kind === 'early' ? `e${b.attempts}-${b.batchId}` : `${b.batchId}-${member}`
+    const who = me()
     const reply: CommentEvent = {
       id: `jam-${suffix}`, ts: Date.now(), type: 'reply',
-      commentId: `jam-c-${suffix}`, parentId: threadId(p.event),
-      board: b.board, author: me, body: plainDashes(body), asks,
-      agent: true, agentMeta: { devUser: me.name, harness: adapter.name, model },
+      commentId: `jam-c-${suffix}`, parentId: c.thread,
+      board: c.board, author: who, body: plainDashes(body), asks,
+      ...(alsoChanged?.length ? { alsoChanged } : {}),
+      agent: true, agentMeta: { devUser: who.name, harness: adapter.name, model },
     }
-    appendEvents(commentsDir, b.board, [reply])
-    return reply.commentId!
+    appendEvents(commentsDir, c.board, [reply])
+    return { commentId: reply.commentId!, ts: reply.ts }
   }
 
   /** Emit reanchor events for threads the agent re-pinned, in the shared anchor format: each
    *  element found in the rendered frame the way `comments move` finds it, unchecked when the
    *  check cannot run, skipped when the frame shows no such element or several. Owner-authored +
-   *  agent:true (attributable, never re-triggers), deterministic ids so a re-run dedups. Returns
-   *  how many it wrote. */
-  const emitReanchors = async (b: Batch, reanchors: Reanchor[]): Promise<number> => {
-    if (!reanchors.length) return 0
-    const me = localProfile(root)
-    const threads = replay(readLog(commentsDir, b.board))
-    const events: CommentEvent[] = []
-    for (const [i, r] of reanchors.entries()) {
+   *  agent:true (attributable, never a trigger), deterministic ids so a re-run dedups. */
+  const emitReanchors = async (b: Batch, cards: Card[], reanchors: Reanchor[]): Promise<number> => {
+    let n = 0
+    for (const [k, r] of reanchors.entries()) {
+      const m = b.members.find((x) => cards.find((c) => c.id === x.card)?.thread === r.thread) ?? b.members[0]
+      const board = m.board
+      const threads = replay(readLog(commentsDir, board))
       const t = threads.find((t) => t.id === r.thread)
-      if (!t?.frame) { log(`  jam: re-pin skipped - no thread ${r.thread} on ${b.board}`); continue }
+      if (!t?.frame) { log(`  jam: re-pin skipped - no thread ${r.thread} on ${board}`); continue }
       const others = threads.filter((o) => !o.resolved && o.frame === t.frame && o.id !== t.id).map((o) => ({ key: o.id, anchor: o.anchor }))
       const check: AnchorCheck = hooks.anchor
         ? await hooks.anchor(t.frame, r.target, others, r.look).catch((err) => ({ ok: false as const, unchecked: (err as Error).message }))
         : { ok: false, unchecked: 'no anchor check here' }
       if (!check.ok && 'refused' in check) { log(`  jam: re-pin skipped - ${t.frame} shows ${check.refused === 'none' ? 'no' : 'several'} matching elements`); continue }
-      events.push({
-        id: `jam-ra-${b.batchId}-${i}`, ts: Date.now(), type: 'reanchor',
-        commentId: t.id, anchor: check.ok ? check.anchor : uncheckedAnchor(r.target), board: b.board, author: me,
-        agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
-      })
+      const who = me()
+      appendEvents(commentsDir, board, [{
+        id: `jam-${b.batchId}-${m.id}-r${k}`, ts: Date.now(), type: 'reanchor',
+        commentId: t.id, anchor: check.ok ? check.anchor : uncheckedAnchor(r.target), board, author: who,
+        agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
+      }])
+      n++
     }
-    if (events.length) appendEvents(commentsDir, b.board, events)
-    return events.length
+    return n
   }
 
-  const finish = (b: Batch) => { journal.batches = journal.batches.filter((x) => x.batchId !== b.batchId); persist() }
-
-  /** Resolve a batch member from ITS board only, re-checking the trust gate. readLog dedups by id
-   *  keeping the first occurrence (the owner's, written first), so a colliding synced id cannot win,
-   *  and `triggers` re-confirms ledger/agent/type/mention - the job can never drift to other content. */
-  const resolveMember = (board: string, id: string): Pending | null => {
-    const events = readLog(commentsDir, board)
-    const engaged = engagedThreads(events, (id) => has(root, board, id))
-    for (const ev of events) if (ev.id === id) return triggers(root, board, ev, engaged) ? { board, event: ev } : null
-    return null
+  const changedBoards = (b: Batch) => { for (const board of new Set(b.members.map((m) => m.board))) hooks.changed?.(board) }
+  const reserve = (exclusiveWaiting?: boolean) => {
+    jamReservations.frames = new Map([...runningBatches.values()].flatMap((b) => b.frames.map((f) => [f, b.batchId] as [string, string])))
+    const exclusiveRunning = [...runningBatches.values()].some((b) => b.exclusive)
+    jamReservations.exclusive = exclusiveRunning ? 'running'
+      : (exclusiveWaiting ?? q.j.cards.some((c) => c.state === 'queued' && (c.exclusive || !c.frames.length))) ? 'waiting' : null
+  }
+  const queueChanged = () => { try { hooks.queue?.() } catch { /* a push is advisory */ } }
+  const settled = (out: Settled[]) => {
+    for (const s of out) if (s.notice === 'failed') log(`  jam: ${s.card.id} failed - ${s.card.note}`)
   }
 
-  const runBatch = async (b: Batch, p: Pending) => {
-    b.attempts += 1; b.state = 'claimed'; b.leaseUntil = Date.now() + LEASE_MS; persist()
-    const threads = replay(readLog(commentsDir, b.board))
-    const member = buildMember(p, threads)
-    const packet = buildPacket(b.batchId, [member])
+  /** Post a batch's results (each append a no-op if it already landed) and move its cards. Never
+   *  runs the agent: a batch with results is reconciled, not rerun. */
+  const deliver = async (b: Batch, early?: { body: string; asks: boolean; commentId: string; ts: number }, reanchors: Reanchor[] = []) => {
+    const cards = b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
+    const posted: Record<string, { reply?: string; answered?: boolean; asked?: number }> = {}
+    for (const m of b.members) {
+      const c = cards.find((x) => x.id === m.card)
+      const r: Result | undefined = b.results?.[m.id]
+      if (!c || !r || !('body' in r) || !c.thread) continue
+      const sameAsEarly = !!early && b.members.length === 1 && r.body === early.body
+      const asked = sameAsEarly ? early!.ts : Date.now()
+      // a question you answered before it was asked: done, no notice - so it is posted as not asking
+      const answered = r.asks && sameAsEarly && answeredSince(ctxFor(root), c.board, c.thread, asked)
+      if (sameAsEarly) {
+        if (r.asks && !early!.asks && !answered) {
+          const who = me()
+          appendEvents(commentsDir, c.board, [{
+            id: `jam-f-e${b.attempts}-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early!.commentId, asks: true, board: c.board,
+            author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
+          }])
+        }
+        posted[m.id] = { reply: early!.commentId, answered, asked }
+      } else {
+        const p = postReply(b, c, m.id, r.body, r.asks && !answered, r.model, 'reply', r.alsoChanged)
+        posted[m.id] = { reply: p.commentId, answered, asked: p.ts }
+      }
+    }
+    const repinned = await emitReanchors(b, cards, reanchors)
+    changedBoards(b)
+    await q.lock((j) => {
+      b.posted = true
+      settled(settle(j, b, posted))
+      q.persist()
+    })
+    queueChanged()
+    const replies = Object.keys(posted).length
+    log(`  jam: replied ${replies} of ${b.members.length}${b.model ? ` (${b.model})` : ''}${repinned ? ` · re-pinned ${repinned}` : ''}`)
+  }
+
+  const runBatch = async (b: Batch) => {
+    const packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket
+    const cards = () => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     // Presence glow that FOLLOWS the work. Jam agents have no shell to run `marver work`, so the
-    // daemon moves the glow itself: the commented frame lights up instantly ("I heard you"), then
-    // as the agent CREATES or EDITS frames the glow moves to those - and off the commented frame
-    // once the agent is clearly building elsewhere (it was only the trigger, not the target). A
-    // common ask is "one frame per page", where the answer is five NEW frames, not an edit to the
-    // one the comment sits on. The tick also re-marks every lit frame to keep its lease alive.
+    // daemon moves the glow itself: the reserved frames light up at once ("I heard you"), then as
+    // the agent CREATES or EDITS frames the glow moves to those. The tick also re-marks every lit
+    // frame to keep its lease alive.
     const lit = new Set<string>()
     const light = (f?: string) => { if (f && !lit.has(f)) { hooks.work?.(f, true); lit.add(f) } }
     const clearGlow = () => { for (const f of lit) hooks.work?.(f, false); lit.clear() }
     const startMtimes = sceneFrameMtimes(root)
+    const sharedBefore = b.exclusive ? null : sharedMtimes(root)
     const touched = new Set<string>()
-    light(member.frame)
+    for (const f of b.frames) light(f)
     const followWork = () => {
       for (const [id, mt] of sceneFrameMtimes(root)) if (startMtimes.get(id) !== mt) touched.add(id)   // created or edited
       for (const id of touched) light(id)
-      // the commented frame was only the trigger if the agent built elsewhere and never touched it
-      if (member.frame && lit.has(member.frame) && !touched.has(member.frame) && touched.size > 0) {
-        hooks.work?.(member.frame, false); lit.delete(member.frame)
-      }
       for (const f of lit) hooks.work?.(f, true)   // heartbeat: keep every lit frame's lease alive
     }
-    const beat = setInterval(followWork, 2_000)
-    beat.unref?.()
-    // The agent's FIRST line streams out within seconds - post it live (its own ack, or its
-    // clarifying question). Real output, not a canned placeholder.
-    let early: { body: string; asks: boolean; commentId: string } | undefined
-    let run: Awaited<ReturnType<typeof runAgent>>
+    let early: { body: string; asks: boolean; commentId: string; ts: number } | undefined
+    let run: Awaited<ReturnType<typeof runAgent>> = { reply: '', asks: false, ok: false, reanchors: [] }
     try {
-      run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; persist() }, (text, asks, model) => {
-        // write FIRST, remember after: if the append throws, the final must not be suppressed
-        // as a "duplicate" of an ack that never actually posted
-        early = { body: text, asks, commentId: writeReply(b, p, text, asks, model, 'early') }
-        hooks.changed?.(b.board)
-      })
-    } finally { clearInterval(beat) }
-    logRun(b.batchId, run.raw)
-    if (stopped) { clearGlow(); return }
-    if (run.ok) {
-      // Clarify-and-stop: the agent asked a question and ended - its final message IS the early
-      // one, so don't post it twice. The dedup compares the words and the flag: same words, and
-      // the final asks where the ack did not (the `ask` header only the final block carries) -
-      // the early message is re-flagged, and its question gets its own notice.
-      if (run.reply !== early?.body) writeReply(b, p, run.reply, run.asks, run.model)
-      else if (run.asks && !early.asks) {
-        const me = localProfile(root)
-        appendEvents(commentsDir, b.board, [{
-          id: `jam-f-e${b.attempts}-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early.commentId, asks: run.asks, board: b.board,
-          author: me, agent: true, agentMeta: { devUser: me.name, harness: adapter.name },
-        }])
+      while (!stopped && b.attempts < MAX_ATTEMPTS) {
+        await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
+        const beat = setInterval(followWork, 2_000)
+        beat.unref?.()
+        try {
+          const one = b.members.length === 1 ? cards()[0] : undefined
+          run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; q.persist() },
+            one?.thread ? (text, asks, model) => {
+              // write FIRST, remember after: if the append throws, the final must not be suppressed
+              // as a "duplicate" of an ack that never actually posted
+              const p = postReply(b, one, 'm1', text, asks, model, 'early')
+              early = { body: text, asks, commentId: p.commentId, ts: p.ts }
+              hooks.changed?.(one.board)
+            } : undefined)
+        } finally { clearInterval(beat) }
+        logRun(b.batchId, run.raw)
+        if (run.ok) break
       }
-      const repinned = await emitReanchors(b, run.reanchors)
-      hooks.changed?.(b.board)
+      if (stopped) return
+      if (!run.ok) {
+        await q.lock((j) => { settled(fail(j, b, 'the agent could not finish - its run log is in design/.local/jam-logs')); q.persist() })
+        queueChanged()
+        log(`  jam: gave up on a batch of ${b.members.length} after ${b.attempts} attempts`)
+        return
+      }
+      // results first: every member's result in ONE journal write, before anything is posted
+      const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
+      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt).map(([f]) => f) : []
+      const results: Record<string, Result> = {}
+      for (const [id, r] of Object.entries(split)) {
+        results[id] = 'body' in r ? { body: r.body, asks: r.asks, ...(run.model ? { model: run.model } : {}), reanchors: [], ...(changedShared.length ? { alsoChanged: changedShared } : {}) } : r
+      }
+      await q.lock(() => { b.results = results; if (run.model) b.model = run.model; q.persist() })
+      if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
+      await deliver(b, early, run.reanchors)
+    } finally {
       clearGlow()
-      finish(b)
-      log(`  jam: replied on ${b.board}${run.model ? ` (${run.model})` : ''}${repinned ? ` · re-pinned ${repinned}` : ''}`)
-    } else if (b.attempts >= MAX_ATTEMPTS) {
-      writeReply(b, p, "I couldn't finish that one. The raw run log is in design/.local/jam-logs - the troubleshooting drill in design/instructions/jam.md reads it. Or just rephrase and try again.", false, run.model)
-      hooks.changed?.(b.board)
-      clearGlow()
-      finish(b)
-      log(`  jam: gave up on ${b.board} after ${b.attempts} attempts`)
-    } else {
-      b.state = 'pending'; persist()   // retried by the chain; keep the glow (still in progress)
     }
   }
 
-  const claim = (p: Pending): Batch => {
-    const b: Batch = { batchId: randomUUID(), board: p.board, memberEventIds: [p.event.id], state: 'claimed', leaseUntil: 0, attempts: 0 }
-    journal.seen = [...journal.seen, p.event.id]
-    journal.batches = [...journal.batches, b]
-    persist()
-    return b
-  }
-
-  // ---- the continuous scheduler --------------------------------------------------
-  // Claim-on-sight, per-FRAME serial chains, a GLOBAL concurrency cap, and a pump that starts a
-  // new chain the moment a mention lands - even while other agents are mid-run. (The old
-  // single-flight tick made a new ask wait for the ENTIRE current run to finish - a second
-  // comment fired during a long job could stall for minutes.) The same frame file never has
-  // two agents (per-key queue = strict serial); different frames run concurrently up to
-  // jam.concurrency. Claiming is SYNCHRONOUS (scan -> claim -> enqueue with no await between),
-  // so overlapping wakes can never double-claim an event.
-  const chains = new Map<string, { items: { b: Batch; p: Pending }[]; running: boolean }>()
-  let activeChains = 0
-
-  const frameKey = (p: Pending): string => {
-    // the EFFECTIVE frame: a reply inherits the root thread's frame, and a frame file is global
-    // across boards - so replies on one thread and the same file on two boards both serialize
-    if (p.event.frame) return `f:${p.event.frame}`
-    const rt = replay(readLog(commentsDir, p.board)).find((t) => t.id === threadId(p.event))
-    return rt?.frame ? `f:${rt.frame}` : `t:${threadId(p.event) || p.event.id}`
-  }
-
-  // A chain whose frame a chat agent has lit (`marver work start`) waits - checked at DISPATCH, so a
-  // job queued (or resumed, or retried) before the frame was lit still never starts while it is.
-  // Held chains do not take a concurrency slot; a recheck pumps them once the frame is free.
-  const heldKey = (key: string) => key.startsWith('f:') && !!hooks.held?.(key.slice(2))
+  // ---- the scheduler --------------------------------------------------------------------------
   let recheck: ReturnType<typeof setTimeout> | null = null
   const holdLater = () => {
     if (recheck || stopped) return
-    recheck = setTimeout(() => { recheck = null; pump() }, HOLD_RECHECK_MS)
+    recheck = setTimeout(() => { recheck = null; void pump() }, HOLD_RECHECK_MS)
     recheck.unref?.()
   }
+  const waitingSaid = new Set<string>()
 
-  const pump = () => {
-    if (stopped) return
-    for (const [key, q] of chains) {
-      if (activeChains >= Math.max(1, cfg.concurrency)) break
-      if (q.running || !q.items.length) continue
-      if (heldKey(key)) { holdLater(); continue }
-      q.running = true
-      activeChains += 1
-      void (async () => {
-        try {
-          while (!stopped && q.items.length) {
-            if (heldKey(key)) { holdLater(); break }   // lit between two jobs of the chain: the rest waits
-            const job = q.items.shift()!
-            try { await runBatch(job.b, job.p) } catch (err) {
-              // a THROW must not strand the batch as `claimed` outside every queue (rescans skip
-              // seen ids; resume runs once) - mark pending so the re-push below retries it, still
-              // bounded by MAX_ATTEMPTS
-              log(`  jam: batch error - ${(err as Error).message}`)
-              if (job.b.attempts < MAX_ATTEMPTS) { job.b.state = 'pending'; try { persist() } catch { /* retried in-memory regardless */ } }
-              else finish(job.b)
-            }
-            if (job.b.state === 'pending') q.items.push(job)   // failed attempt - retry after the rest of the chain
-          }
-        } finally {
-          q.running = false
-          activeChains -= 1
-          if (!q.items.length) chains.delete(key)
-          pump()
-        }
-      })()
-    }
-  }
-
-  const enqueue = (b: Batch, p: Pending) => {
-    const key = frameKey(p)
-    const q = chains.get(key) ?? { items: [], running: false }
-    q.items.push({ b, p })
-    chains.set(key, q)
-    pump()
-  }
-
-  /** All work idle - every chain drained. Lets `tick()` stay awaitable (tests, orderly shutdown).
-   *  ONE shared waiter: overlapping ticks (the 5s rescan during a 10-min job) join the same
-   *  promise instead of each spinning its own poll loop. */
-  let idleP: Promise<void> | null = null
-  // a held chain is idle work: it waits on a human's agent, not on this loop
-  const quiet = () => activeChains === 0 && [...chains].every(([key, q]) => !q.items.length || heldKey(key))
-  const idle = () => {
-    if (quiet()) return Promise.resolve()
-    idleP ??= new Promise<void>((res) => {
-      const check = () => {
-        if (stopped || quiet()) { idleP = null; res() }
-        else setTimeout(check, 50)
+  /** Claim what can run now and start it. Under the lock, after the ingest. */
+  const pump = async (): Promise<void> => {
+    if (stopped || !ready) return
+    const started = await q.lock((j, ctx) => {
+      const frames = new Set([...runningBatches.values()].flatMap((b) => b.frames))
+      const { batches, exclusiveWaiting } = form(j, ctx, {
+        free: Math.max(1, cfg.concurrency) - runningBatches.size,
+        running: frames,
+        exclusiveRunning: [...runningBatches.values()].some((b) => b.exclusive),
+        held: (f) => !!hooks.held?.(f),
+        anyHold: () => !!hooks.anyHold?.(),
+      })
+      prune(j)
+      q.persist()
+      for (const b of batches) runningBatches.set(b.batchId, b)
+      reserve(exclusiveWaiting)
+      // a queued card that waits on a chat agent's hold: say so once, look again soon
+      for (const c of j.cards) {
+        if (c.state !== 'queued') continue
+        const held = c.frames.find((f) => hooks.held?.(f))
+        if (held || (exclusiveWaiting && (c.exclusive || !c.frames.length))) {
+          holdLater()
+          if (held && !waitingSaid.has(c.id)) { waitingSaid.add(c.id); log(`  jam: waiting - ${held} is being worked on in chat; the comment runs once it is done`) }
+        } else waitingSaid.delete(c.id)
       }
-      check()
+      return batches
     })
-    return idleP
+    if (started.length) queueChanged()
+    for (const b of started) launch(b)
   }
 
-  let resumed = false
-  const waiting = new Set<string>()   // held event ids, so the wait is logged once, not every rescan
+  const launch = (b: Batch) => {
+    runningBatches.set(b.batchId, b)
+    const p = (async () => {
+      try { await runBatch(b) } catch (err) {
+        log(`  jam: batch error - ${(err as Error).message}`)
+        try { await q.lock((j) => { settled(fail(j, b, `the job broke: ${(err as Error).message}`)); q.persist() }) } catch { /* the journal keeps it claimed; boot recovers it */ }
+        queueChanged()
+      } finally {
+        runningBatches.delete(b.batchId)
+        running.delete(b.batchId)
+        reserve()
+        // what this batch held is free: start what waited on it BEFORE this run counts as over, so
+        // `tick()` (and an orderly stop) sees the next batch in `running`
+        try { await pump() } catch (err) { log(`  jam: pump error - ${(err as Error).message}`) }
+      }
+    })()
+    running.set(b.batchId, p)
+  }
+
+  // ---- the startup barrier ----------------------------------------------------------------------
+  let ready = false
+  let recovering: Promise<void> | null = null
+  const recover = () => recovering ??= (async () => {
+    const leftover = await q.lock((j) => {
+      const out: { b: Batch; results: boolean }[] = []
+      for (const b of j.batches) {
+        if (b.state !== 'claimed') continue
+        if (b.results) { out.push({ b, results: true }); continue }
+        fenceGroup(b.pgid)   // an orphan may still be editing
+        // a member whose ask is no longer ledgered never runs
+        const ctx = q.ctx()
+        for (const m of b.members) {
+          const c = j.cards.find((x) => x.id === m.card)
+          if (!c || c.kind !== 'comment') continue
+          const okIds = c.events.filter((id) => ctx.owned.has(`${c.board}\t${id}`) && readLog(commentsDir, c.board).some((e) => e.id === id))
+          if (!okIds.length) { c.state = 'dropped'; c.note = 'no longer authorized'; c.rev += 1; c.at = Date.now() }
+        }
+        b.members = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
+        if (!b.members.length) { b.state = 'done'; continue }
+        out.push({ b, results: false })
+      }
+      q.persist()
+      return out
+    })
+    for (const { b } of leftover) runningBatches.set(b.batchId, b)
+    reserve()
+    // reconcile first (post what is left, move the cards), then re-arm the rest
+    for (const { b } of leftover.filter((x) => x.results)) {
+      try { await deliver(b) } catch (err) { log(`  jam: could not post a recovered batch - ${(err as Error).message}`) }
+      runningBatches.delete(b.batchId)
+    }
+    ready = true
+    for (const { b } of leftover.filter((x) => !x.results)) launch(b)
+  })()
+
+  const idle = async () => { while (running.size && !stopped) await Promise.race([...running.values()]) }
+
   const tick = async () => {
     if (stopped) return
     try {
-      // 1. once per daemon life: resume batches a dead process left behind (fence + re-validate, §3.2)
-      if (!resumed) {
-        resumed = true
-        for (const b of [...journal.batches]) {
-          if (b.state !== 'claimed' && b.state !== 'pending') continue
-          if (b.state === 'claimed') fenceGroup(b.pgid)   // an orphan may still be editing
-          const p = resolveMember(b.board, b.memberEventIds[0])
-          if (p) enqueue(b, p)
-          else finish(b)   // no longer authorized/present → drop, never run stale/foreign content
-        }
-      }
-      // 2. claim new owner-ledgered mentions IMMEDIATELY (sync) and pump - except one on a frame a
-      //    chat agent is working on: it stays unclaimed, and the next rescan picks it up once free
-      for (const p of scanPending(root, commentsDir, journal)) {
-        if (p.frame && hooks.held?.(p.frame)) {
-          if (!waiting.has(p.event.id)) { waiting.add(p.event.id); log(`  jam: waiting - ${p.frame} is being worked on in chat; the comment runs once it is done`) }
-          continue
-        }
-        waiting.delete(p.event.id)
-        enqueue(claim(p), p)
-      }
+      await recover()
+      await pump()
     } catch (err) {
       log(`  jam: tick error - ${(err as Error).message}`)
     }
     await idle()
   }
 
+  const view = (): QueueView => {
+    const j = q.j
+    const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
+    const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000)
+    const exclusiveAhead = jamReservations.exclusive
+    return {
+      agent: adapter.name,
+      cards: shown.map((c) => {
+        const position = c.state === 'queued' ? queued.indexOf(c) + 1 : undefined
+        const held = c.state === 'queued' ? c.frames.find((f) => hooks.held?.(f)) : undefined
+        const waiting = held ? `waiting - ${held} is held by your agent`
+          : c.state === 'queued' && (c.exclusive || !c.frames.length) && exclusiveAhead === 'waiting' ? 'waiting - runs alone once the other work is done'
+          : c.state === 'queued' && exclusiveAhead ? 'waiting - a job changing a shared file runs first' : undefined
+        return {
+          id: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames, events: c.events,
+          state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,
+          ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}),
+          ...(position ? { position } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
+        }
+      }),
+    }
+  }
+
   return {
     tick,
     stop() { stopped = true; if (recheck) clearTimeout(recheck); for (const c of activeChildren) fenceGroup(c.pid) },
-    snapshot() { return journal },
+    snapshot() { return q.j },
+    view,
+    async act(id, rev, action) {
+      // the card as this action left it - a copy, so the next claim cannot change the answer under the caller
+      const r = await q.lock((j) => { const out = act(j, id, rev, action); if (out.ok) q.persist(); return { ...out, ...(out.card ? { card: structuredClone(out.card) } : {}) } })
+      if (r.ok) { reserve(); queueChanged(); void pump() }
+      return r
+    },
+    async poke() {
+      const sig = () => q.j.cards.map((c) => `${c.id}:${c.rev}`).join()
+      const before = sig()
+      await q.lock(() => {})
+      if (sig() !== before) { queueChanged(); void pump() }
+    },
   }
 }
 
 /** Start the daemon inside the dev server. Presence goes through the process-wide shared
  *  activity set (work.ts) - the `marver work` CLI writes the same set, so the canvas shows
- *  one merged glow. Returns null when the adapter is unavailable or another dev server
+ *  one merged glow, and its holds are also reservations (reserve.ts), restored here before
+ *  anything is scheduled. Returns null when the adapter is unavailable or another dev server
  *  already holds the repo lock (that one runs the loop; this one watches without it). */
-export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor']): JamDaemon | null {
+export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor'], onQueue?: () => void): JamDaemon | null {
   const adapter: JamAdapter | null = adapters[cfg.agent] ?? null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
@@ -472,24 +552,30 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   const commentsDir = join(root, 'design', 'comments')
   mkdirSync(commentsDir, { recursive: true })   // so the watcher always attaches (not just after the first comment)
   const activity = workActivity
+  restoreHolds(root, activity)
   const core = createJam(root, cfg, adapter, log, {
     // jam-scoped leases: a `marver work done --all` from a chat agent must never
     // extinguish a running jam job's glow (and vice versa)
     work: (f, on) => (on ? activity.mark(f ?? '', undefined, 'jam') : activity.clear(f ?? '', 'jam')),
     changed: onChanged,
     held: (f) => activity.has(f, 'cli'),
+    anyHold: () => activity.leases('cli').length > 0,
+    queue: onQueue,
     anchor,
   })
   let stopped = false
   let scheduled: ReturnType<typeof setTimeout> | null = null
-  const schedule = () => { if (!scheduled && !stopped) scheduled = setTimeout(() => { scheduled = null; void core.tick() }, 150) }
+  const schedule = () => { if (!scheduled && !stopped) scheduled = setTimeout(() => { scheduled = null; void core.poke() }, 150) }
 
   let watcher: FSWatcher | null = null
   try { watcher = fsWatch(commentsDir, { persistent: false }, schedule) } catch { /* rescan is the backstop */ }
-  const interval = setInterval(() => void core.tick(), RESCAN_MS)
+  const interval = setInterval(() => void core.poke(), RESCAN_MS)
   interval.unref?.()
   // stale-glow expiry (a dead job's lease) is swept by the dev server, which owns the shared set
   void core.tick()
+  jamLive.poke = () => void core.poke()
+  jamLive.view = () => core.view()
+  jamLive.act = (id, rev, action) => core.act(id, rev, action)
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.
@@ -501,6 +587,8 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       clearInterval(interval)
       watcher?.close()
       core.stop()
+      delete jamLive.poke; delete jamLive.view; delete jamLive.act
+      jamReservations.frames.clear(); jamReservations.exclusive = null
       releaseLock(root)
     },
   }

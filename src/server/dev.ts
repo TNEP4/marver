@@ -381,7 +381,12 @@ async function boot(root: string, portFlag: number | undefined, instance: string
     const jam = startJam(root, config.jam, (m) => console.log(m),
       (board) => server.ws.send('sh:jam-comment', { board } as any),   // reply landed - fetch now, don't wait the 30s poll
       // a re-pin is found in the rendered frame, as `comments move` finds it
-      (frameId, target, others, look) => checkAnchor({ root, viewports: config.viewports, origin: `http://localhost:${port}`, frameId, target, others, ...look }))
+      (frameId, target, others, look) => checkAnchor({ root, viewports: config.viewports, origin: `http://localhost:${port}`, frameId, target, others, ...look }),
+      // the queue changed - pages redraw the status icons by each tag's time (coalesced: one push per tick)
+      (() => {
+        let due: ReturnType<typeof setTimeout> | null = null
+        return () => { due ??= setTimeout(async () => { due = null; const { jamLive } = await import('./jam/live.ts'); server.ws.send('sh:jam-queue', (jamLive.view?.() ?? { cards: [] }) as any) }, 60) }
+      })())
     if (jam) {
       const close = server.close.bind(server)
       server.close = (async () => { jam.stop(); return close() }) as typeof server.close

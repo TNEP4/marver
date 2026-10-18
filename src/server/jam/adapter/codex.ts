@@ -39,7 +39,7 @@ export const codexAdapter: JamAdapter = {
       } catch { /* non-JSON line (banner) - skip */ }
     }
     // NO fallback to raw stdout: a status-only or error stream must not become a bogus reply.
-    const { reply, asks, reanchors } = parseAgentText(text)
-    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(text)
+    return { reply, model, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

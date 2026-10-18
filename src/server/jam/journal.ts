@@ -7,35 +7,45 @@
  * a corrupt or absent file is treated as a fresh journal, which the activation baseline then
  * seeds so enabling Live Jam never replays every old @marver.
  *
- * A single daemon per repo is enforced by an advisory pid lock; a second dev server on the
- * same root runs without the jam loop.
+ * Version 2 (0.26) holds cards and batches; a v1 journal is upgraded once by the queue
+ * (queue.ts `createQueue`). A single daemon per repo is enforced by an advisory pid lock; a second dev
+ * server on the same root runs without the jam loop.
  */
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { deviceId } from './device.ts'
 import { createExclusive, pidRuns } from '../dev-lock.ts'
-import type { Journal } from './types.ts'
+import type { Journal, JournalV1 } from './types.ts'
 
 const localDir = (root: string) => join(root, 'design', '.local')
 const journalFile = (root: string) => join(localDir(root), 'jam-jobs.json')
 const lockFile = (root: string) => join(localDir(root), 'jam.lock')
 
-const fresh = (): Journal => ({ version: 1, device: deviceId(), baselined: false, seen: [], batches: [] })
+export const fresh = (): Journal => ({ version: 2, device: deviceId(), baselined: false, seen: [], cards: [], batches: [], covered: {}, legacy: [] })
 
-/** Load the journal, tolerating a missing or corrupt file (→ a fresh, unbaselined journal).
- *  A journal stamped by ANOTHER machine is treated as absent: a repo that ships its own
- *  design/.local/ would otherwise hand a clone a pre-baselined journal whose `seen` omits the
- *  attacker's own comments, and the daemon would run them. Rebaselining is the safe read -
- *  every event already on disk becomes seen, so nothing pre-existing executes. */
-export function read(root: string): Journal {
+/** What is on disk: this machine's v2 journal, this machine's v1 journal (the upgrade reads it
+ *  once, queue.ts), or nothing usable. A journal stamped by ANOTHER machine is treated as absent:
+ *  a repo that ships its own design/.local/ would otherwise hand a clone a pre-baselined journal
+ *  whose `seen` omits the attacker's own comments, and the daemon would run them. Rebaselining is
+ *  the safe read - every event already on disk becomes seen, so nothing pre-existing executes. */
+export function readRaw(root: string): { v2?: Journal; v1?: JournalV1 } {
   const file = journalFile(root)
-  if (!existsSync(file)) return fresh()
+  if (!existsSync(file)) return {}
   try {
-    const j = JSON.parse(readFileSync(file, 'utf8')) as Journal
-    if (j?.version !== 1 || j.device !== deviceId() || !Array.isArray(j.seen) || !Array.isArray(j.batches)) return fresh()
-    return { version: 1, device: j.device, baselined: !!j.baselined, seen: j.seen, batches: j.batches }
-  } catch { return fresh() }
+    const j = JSON.parse(readFileSync(file, 'utf8'))
+    if (!j || j.device !== deviceId() || !Array.isArray(j.seen) || !Array.isArray(j.batches)) return {}
+    if (j.version === 1) return { v1: { version: 1, device: j.device, baselined: !!j.baselined, seen: j.seen, batches: j.batches } }
+    if (j.version !== 2 || !Array.isArray(j.cards)) return {}
+    return { v2: { version: 2, device: j.device, baselined: !!j.baselined, seen: j.seen, cards: j.cards, batches: j.batches,
+      covered: j.covered && typeof j.covered === 'object' ? j.covered : {}, legacy: Array.isArray(j.legacy) ? j.legacy : [],
+      ...(typeof j.upgraded === 'number' ? { upgraded: j.upgraded } : {}) } }
+  } catch { return {} }
+}
+
+/** Load the v2 journal, tolerating a missing, corrupt, foreign or v1 file (→ a fresh one). */
+export function read(root: string): Journal {
+  return readRaw(root).v2 ?? fresh()
 }
 
 /** Persist atomically and durably. */
@@ -49,18 +59,6 @@ export function write(root: string, j: Journal): void {
   renameSync(tmp, file)
   // fsync the directory so the rename (the durable step) survives a power loss, not just the bytes.
   try { const dfd = openSync(dir, 'r'); try { fsyncSync(dfd) } finally { closeSync(dfd) } } catch { /* dir fsync unsupported */ }
-}
-
-/** First-enable safety: mark every pre-existing event id seen WITHOUT executing, so only events
- *  appended after activation ever become jobs. Idempotent - a baselined journal is returned as-is. */
-export function baseline(root: string, existingIds: string[]): Journal {
-  const j = read(root)
-  if (j.baselined) return j
-  const seen = new Set(j.seen)
-  for (const id of existingIds) seen.add(id)
-  const next = { ...j, baselined: true, seen: [...seen] }
-  write(root, next)
-  return next
 }
 
 // ---- advisory single-daemon lock (pid file with stale reclaim) --------------------------------

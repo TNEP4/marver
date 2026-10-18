@@ -66,7 +66,7 @@ export const claudeAdapter: JamAdapter = {
         model ??= cleanModel((typeof j.model === 'string' ? j.model : undefined) ?? j.canonicalModel ?? firstKey(j.modelUsage))
       } catch { if (!sawEvents) text = stdout.trim() }
     }
-    const { reply, asks, reanchors } = parseAgentText(text)
-    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(text)
+    return { reply, model, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

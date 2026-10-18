@@ -66,7 +66,7 @@ export const grokAdapter: JamAdapter = {
       } catch { /* non-JSON line (the CLI mirrors errors as prose) - skip */ }
     }
     if (!text) text = lastAssistant   // stream cut before its result event
-    const { reply, asks, reanchors } = parseAgentText(text)
-    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(text)
+    return { reply, model, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

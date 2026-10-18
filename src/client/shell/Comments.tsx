@@ -17,6 +17,8 @@ import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { isLegacyLink } from './legacy-links.ts'
 import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
+import { TagStatus } from './jam-ui.tsx'
+import { useJamQueue } from './jam-queue.ts'
 import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
 import { ROUTE, slideSize, stageFit } from '../const.ts'
 import type { AgentMeta, Thread } from '../../shared/events.ts'
@@ -136,6 +138,8 @@ export function Pins({ threads, placed, orphans, inv, active, alertIds }: {
   inv: number; active: string | null; alertIds?: Set<string>
 }) {
   const { setActive } = useComments.getState()
+  // a pin wears the thin Marver-blue working ring while the agent works on its thread (spec 27)
+  const working = useJamQueue((s) => s.cards)?.filter((c) => c.state === 'working').map((c) => c.thread) ?? []
   return (
     <>
       {threads.map((t) => {
@@ -143,7 +147,7 @@ export function Pins({ threads, placed, orphans, inv, active, alertIds }: {
         const orphan = orphans.has(t.id)
         return [
           p.lead && <i key={`${t.id}-lead`} data-lead={t.id} className="cm-lead" aria-hidden style={{ left: p.lead.x, top: p.lead.y, height: p.y - MARKER.h * inv - p.lead.y }} />,
-          <div key={t.id} data-thread={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}${alertIds?.has(t.id) ? ' mention' : ''}`}
+          <div key={t.id} data-thread={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}${alertIds?.has(t.id) ? ' mention' : ''}${working.includes(t.id) ? ' working' : ''}`}
             style={{ left: p.x, top: p.y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
@@ -423,7 +427,7 @@ function CommentBody({ body, owner }: { body?: string; owner: boolean }) {
   )
 }
 
-const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', opencode: 'opencode', droid: 'Factory Droid', grok: 'Grok', pi: 'pi' }
+export const HARNESS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', opencode: 'opencode', droid: 'Factory Droid', grok: 'Grok', pi: 'pi' }
 /** claude-opus-5 → Opus 5; gpt-5.1-codex → Gpt 5.1 Codex; unknown → as-is. */
 function prettyModel(m: string): string {
   const cleaned = m.replace(/^claude-/, '').replace(/-/g, ' ')
@@ -453,7 +457,7 @@ function AgentMetaTip({ meta }: { meta?: AgentMeta }) {
  *  human messages keep their avatar + name. While the dev profile is still UNSET, every own
  *  message avatar invites editing on hover (discoverability); once set, only the composer's
  *  avatar is the door. */
-function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author']; agent?: boolean; agentMeta?: AgentMeta; ts: number }) {
+function MessageHead({ author, agent, agentMeta, ts, board, eventId }: { author?: Thread['author']; agent?: boolean; agentMeta?: AgentMeta; ts: number; board?: string; eventId?: string }) {
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
   const connected = useComments((s) => s.connected)
@@ -476,6 +480,7 @@ function MessageHead({ author, agent, agentMeta, ts }: { author?: Thread['author
       {unset && own ? <EditableAvatar author={author} size={24} /> : <Avatar author={author} size={24} />}
       <b>{shown?.name ?? 'Someone'}</b>
       <span className="dim">{rel(ts)}</span>
+      <TagStatus board={board} eventId={eventId} harness={HARNESS} />
     </header>
   )
 }
@@ -662,6 +667,9 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   // without a profile, local writes are the owner.
   const isOwner = (a?: { email?: string; id?: string }) =>
     me?.id && a?.id ? a.id === me.id : me?.email ? a?.email === me.email : local
+  // the event behind each message - a tag's card names its events, the status icon finds it by them
+  const events = useComments((s) => s.events)
+  const eventOf = (msg: string) => events.find((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msg && (!e.board || !thread.board || e.board === thread.board))?.id
   const [text, setText] = useState('')
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -796,13 +804,15 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       {/* "there is more": the scroller MASKS its own content at the overflowing edge - a soft fade
           of the text itself, not a paint layer over the glass */}
       <div className={`cm-scroll${shadows.top ? ' fade-top' : ''}${shadows.bot ? ' fade-bot' : ''}`} ref={scrollRef} onScroll={syncShadows}>
-        <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} />
+        <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} board={thread.board} eventId={eventOf(thread.id)} />
         <CommentBody body={thread.body} owner={isOwner(thread.author)} />
         {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
         {thread.replies.map((r) => (
           <div key={r.id} className="cm-msg">
-            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} />
+            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} board={thread.board} eventId={eventOf(r.id)} />
             <CommentBody body={r.body} owner={isOwner(r.author)} />
+            {/* a jam job changed a shared file it was not given: one line, so the reply says it (spec 27) */}
+            {r.agent && r.alsoChanged?.length ? <div className="cm-also">Also changed {r.alsoChanged.map((f) => f.split('/').pop()).join(', ')}</div> : null}
           </div>
         ))}
       </div>

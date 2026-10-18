@@ -57,7 +57,7 @@ export const opencodeAdapter: JamAdapter = {
       } catch { /* non-JSON line (banner) - skip */ }
     }
     // NO fallback to raw stdout: a status-only or error stream must not become a bogus reply.
-    const { reply, asks, reanchors } = parseAgentText(parts.join('\n\n'))
-    return { reply, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(parts.join('\n\n'))
+    return { reply, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

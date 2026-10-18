@@ -66,7 +66,7 @@ export const piAdapter: JamAdapter = {
     }
     if (last?.error) failed = true
     // NO fallback to raw stdout: pi prints auth errors as prose; prose is never a reply.
-    const { reply, asks, reanchors } = parseAgentText(last?.text ?? '')
-    return { reply, model: last?.model, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(last?.text ?? '')
+    return { reply, model: last?.model, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

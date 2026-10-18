@@ -47,3 +47,14 @@ export function record(root: string, board: string, id: string): void {
   const fd = openSync(file, 'a', 0o600)
   try { writeSync(fd, line(board, id) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
 }
+
+/** Every (board, id) this device authorized, as `board\tid` - one read for a whole ingest, so
+ *  an event that is not ledgered (yet, or ever) costs a set lookup each time it is looked at. */
+export function owned(root: string): Set<string> {
+  const out = new Set<string>()
+  const file = ledgerFile(root)
+  if (!existsSync(file)) return out
+  const mine = deviceId() + '\t'
+  for (const l of readFileSync(file, 'utf8').split('\n')) if (l.startsWith(mine)) out.add(l.slice(mine.length))
+  return out
+}

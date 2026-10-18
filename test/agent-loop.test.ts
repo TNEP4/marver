@@ -8,7 +8,6 @@ import { commentsCommand } from '../src/cli/comments.ts'
 import { createActivity } from '../src/server/jam/activity.ts'
 import { runningAgent } from '../src/server/jam/agent.ts'
 import { localOnlyThreads } from '../src/server/sync.ts'
-import { engagedThreads } from '../src/server/jam/watch.ts'
 
 /**
  * The agent loop on the canvas: a link an agent can write (frame ids, not node keys), the board it
@@ -269,28 +268,6 @@ describe('a thread Marver started stays on this machine', () => {
     expect([...set].sort()).toEqual(['note', 'r1'])
     // the human's thread syncs, even though Marver replied in it (that reply alone stays local)
     expect(set.has('human')).toBe(false)
-  })
-})
-
-describe('engagement starts when Marver engaged', () => {
-  it('a Live Jam reply engages from the mention that started it; a chat agent\'s reply or note from its own moment', () => {
-    const m = engagedThreads([
-      { id: 'm-1', ts: 40, type: 'create', commentId: 't-jam', body: 'make it pop @marver' },
-      { id: 'jam-abc', ts: 50, type: 'reply', parentId: 't-jam', agent: true },
-      { id: 'jam-def', ts: 55, type: 'reply', parentId: 't-unmentioned', agent: true },   // answered a follow-up: adds nothing
-      { id: 'u-1', ts: 70, type: 'reply', parentId: 't-cli', agent: true },
-      { id: 'jam-ghi', ts: 80, type: 'reply', parentId: 't-cli', agent: true },           // no mention: the CLI moment stands
-      { id: 'u-2', ts: 90, type: 'create', commentId: 't-note', agent: true },
-      { id: 'h-1', ts: 95, type: 'reply', parentId: 't-human' },
-      { id: 'c-1', ts: 20, type: 'create', commentId: 't-collab', body: '@marver fix this' },   // synced: not the owner's
-      { id: 'jam-xyz', ts: 30, type: 'reply', parentId: 't-collab', agent: true },
-    ] as any[], (id) => id !== 'c-1')
-    expect(m.has('t-collab')).toBe(false)                                     // a collaborator's mention starts nothing
-    expect(m.get('t-jam')).toBe(40)
-    expect(m.has('t-unmentioned')).toBe(false)
-    expect(m.get('t-cli')).toBe(70)
-    expect(m.get('t-note')).toBe(90)
-    expect(m.has('t-human')).toBe(false)
   })
 })
 

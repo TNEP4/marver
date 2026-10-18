@@ -61,7 +61,7 @@ export const droidAdapter: JamAdapter = {
         if (j.is_error) failed = true
       } catch { /* raw prose (no auth, crash banner) - never a reply */ }
     }
-    const { reply, asks, reanchors } = parseAgentText(text)
-    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(text)
+    return { reply, model, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

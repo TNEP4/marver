@@ -63,7 +63,7 @@ export const cursorAdapter: JamAdapter = {
     // a stream cut before its result event: the last assistant message is the best truth
     if (!text) text = lastAssistant
     // NO fallback to raw stdout: an error banner must never become a bogus reply.
-    const { reply, asks, reanchors } = parseAgentText(text)
-    return { reply, model, asks, reanchors, ok: code === 0 && !failed && !!reply }
+    const { reply, asks, reanchors, said } = parseAgentText(text)
+    return { reply, model, asks, reanchors, said, ok: code === 0 && !failed && !!reply }
   },
 }

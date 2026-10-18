@@ -1,5 +1,7 @@
 /**
- * In-memory frame-activity presence. NEVER on disk (session/presence state).
+ * In-memory frame-activity presence. The glow never touches disk; the CLI's holds are also
+ * reservations (0.26), so reserve.ts writes those - frame and expiry, nothing else - to survive a
+ * dev-server restart.
  * Two writers share one canvas glow but hold SEPARATE leases: the jam daemon marks frames while
  * its agent edits them (heartbeat refreshes the short lease), and the `marver work` CLI marks
  * frames the CHAT-driven agent is building (longer per-mark lease - a terminal agent will not
@@ -21,6 +23,10 @@ export interface Activity {
   /** Is `frame` marked by `src` right now (an unexpired lease)? */
   has(frame: string, src: WorkSource): boolean
   sweep(): void
+  /** A source's unexpired leases, as [frame, expiry] - what reserve.ts persists. */
+  leases(src: WorkSource): [string, number][]
+  /** Mark with an absolute expiry (restoring a persisted hold). */
+  restore(frame: string, until: number, src: WorkSource): void
   /** Returns an unsubscribe - a closing server must stop receiving broadcasts. */
   onChange(cb: (frames: string[]) => void): () => void
 }
@@ -46,6 +52,11 @@ export function createActivity(ttlMs = 90_000): Activity {
       for (const [k, until] of m) if (until <= now) { m.delete(k); changed = true }
       if (changed) emit()
     },
+    leases(src) {
+      const now = Date.now()
+      return [...m].filter(([k, until]) => k.startsWith(`${src}|`) && until > now).map(([k, until]) => [k.slice(src.length + 1), until] as [string, number])
+    },
+    restore(frame, until, src) { if (frame && until > Date.now()) { m.set(`${src}|${frame}`, until); emit() } },
     onChange(fn) {
       cbs.push(fn)
       return () => { const i = cbs.indexOf(fn); if (i !== -1) cbs.splice(i, 1) }
