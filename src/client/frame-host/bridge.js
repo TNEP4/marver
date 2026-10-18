@@ -3,8 +3,11 @@
 //
 // The laser / comment-pick / anchor / highlight machinery lives in ./inspect.js and is
 // shared with the prototype stage; this bridge owns the canvas-frame concerns around it:
-// theme, wheel ownership, the interaction lease, data-goto, and error reporting.
+// theme, wheel ownership, the interaction lease, data-goto, and error reporting - and, for Jam
+// captures, the keys the shell owns (keys.js) and the recorder (trail.js).
 import { createInspect } from './inspect.js'
+import { createKeys } from './keys.js'
+import { createRecorder } from './trail.js'
 
 const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 // same-origin parent (the shell): a fixed target origin keeps posts (incl. picked anchor
@@ -34,9 +37,19 @@ let pointerInside = false
 let interactiveOn = false            // B0.2: set by sh:interactive - the play/interact target owns its own wheel
 const reportInteraction = () => post({ type: 'sh:interaction', id, laser: pointerInside && inspect.isLaser(), comment: pointerInside && inspect.isPick() })
 
+// commands come from the SHELL (parent) only - embedded app content must not drive them, and a
+// navigated frame must not spoof them
+const trusted = (e) => e.source === window.parent && window.parent !== window && (!e.origin || e.origin === location.origin)
+
+// the capture recorder (trail.js): passive, and silent while no capture is open
+const recorder = createRecorder({ post, getFrame: () => id, mode: 'interact', trusted })
+// the keys the shell owns right now are consumed here and forwarded (keys.js) - ahead of the app
+const keys = createKeys({ post, trusted })
+
 // laser / pick / anchor / highlight - one shared controller (see inspect.js). The id is
 // static here (one iframe per frame); onModeChange re-reports the lease when a mode flips.
-const inspect = createInspect({ post, getId: () => id, onModeChange: () => reportInteraction() })
+// Inside a capture a laser click is the capture's pick, not a path copy.
+const inspect = createInspect({ post, getId: () => id, onModeChange: () => reportInteraction(), onLaserPick: (el, e) => recorder.pick(el, e) })
 
 document.addEventListener('mouseover', () => { if (!pointerInside) { pointerInside = true; reportInteraction() } })
 document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) { pointerInside = false; reportInteraction() } })
@@ -53,6 +66,8 @@ document.addEventListener('click', (e) => {
   if (target) post({ type: 'sh:go', target })
 }, true)
 
+// Escape leaves interact mode - unless the shell owns it right now (a capture, a review): keys.js
+// consumed and forwarded it already, so this never sees it
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') post({ type: 'sh:exit-interact' }) })
 
 window.addEventListener('error', (e) => post({ type: 'sh:error', id, message: String(e.message || e.error) }))

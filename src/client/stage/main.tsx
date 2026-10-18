@@ -9,6 +9,8 @@
  *   stage -> shell:  sh:stage-ready · sh:stage-shown {at, epoch, doc} · sh:stage-at {at} · sh:stage-exit · sh:stage-error
  *                    sh:stage-key {key, code} (forwarded shortcuts)
  *   shell -> stage:  sh:stage-set {at} (history / walk / restart) · sh:set-theme
+ * Jam captures (spec 27) speak the same messages here as in a canvas frame: the keys the shell owns
+ * (`sh:keys` -> `sh:key`, frame-host/keys.js) and the recorder (frame-host/trail.js, mode 'play').
  */
 import { Component, createElement, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
@@ -16,6 +18,8 @@ import { createRoot } from 'react-dom/client'
 import { frameFile, frames, layoutChain, layouts, providers } from '../frame-host/registry.ts'
 import { SLIDE_DOC_CSS } from '../const.ts'
 import { createInspect } from '../frame-host/inspect.js'
+import { createKeys, keyAllowed } from '../frame-host/keys.js'
+import { createRecorder } from '../frame-host/trail.js'
 
 const params = new URLSearchParams(location.search)
 // Both signals, always - same pair as the frame host: [data-theme] for attribute-keyed
@@ -148,6 +152,7 @@ function Stage() {
   const current = useRef(startId)
   const swapSeq = useRef(0)
   const readySent = useRef(false)
+  const recorder = useRef<ReturnType<typeof createRecorder> | null>(null)
 
   /** Swap to a frame. `announce` posts sh:stage-at (user-driven); history restores stay silent. */
   const goto = async (id: string, announce: boolean) => {
@@ -205,6 +210,7 @@ function Stage() {
         if (tempo > 0) document.getElementById('root')?.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: tempo, easing: 'ease-out' })
       }
       if (announce) post({ type: 'sh:stage-at', at: id })
+      if (announce) recorder.current?.screen(id)
     } catch (e) {
       if (seq !== swapSeq.current) return
       current.current = id
@@ -228,7 +234,12 @@ function Stage() {
     // frames run, so review works identically in the prototype. getId reports the
     // CURRENT frame (the stage swaps in place). It self-installs its own listeners;
     // we only borrow modeActive() to keep a review click from ALSO navigating.
-    const inspect = createInspect({ post, getId: () => current.current })
+    const trusted = (e: MessageEvent) => e.source === window.parent && window.parent !== window && (!e.origin || e.origin === location.origin)
+    // the capture recorder records against the screen showing when a thing happens
+    recorder.current = createRecorder({ post, getFrame: () => current.current, mode: 'play', trusted })
+    // the keys the shell owns right now: consumed here, ahead of the frame, and forwarded as sh:key
+    const keys = createKeys({ post, trusted })
+    const inspect = createInspect({ post, getId: () => current.current, onLaserPick: (el, e) => recorder.current?.pick(el, e) ?? false })
 
     // data-goto is handled HERE, in place - never posted up as sh:go (capture phase
     // beats any frame handler; preventDefault stops real <a href> navigations). A
@@ -256,7 +267,7 @@ function Stage() {
       // Escape always reaches the shell, even mid-typing: it decides (cancel a
       // comment/laser first, else exit) - the stage can't see review mode
       if (e.key === 'Escape') { post({ type: 'sh:stage-key', key: 'Escape', code: e.code }); return }
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (!keyAllowed(e)) return   // the one guard: never from a field, an editable, an IME composition
       // every play shortcut belongs to the shell (it owns walk order + chrome) - forward.
       // l/c toggle laser/comment, C (shift+c) hides pins; the shell acts and broadcasts back.
       if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'l', 'c', 'C', '[', ']', 'ArrowRight', 'ArrowLeft'].includes(e.key))
@@ -285,6 +296,9 @@ function Stage() {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('message', onMsg)
       inspect.dispose()
+      keys.dispose()
+      recorder.current?.dispose()
+      recorder.current = null
     }
   }, [])
 

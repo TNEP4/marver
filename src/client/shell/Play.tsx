@@ -21,6 +21,7 @@ import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { revealFrame } from './goto.ts'
 import { Tip } from './Tip.tsx'
+import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
 import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
@@ -548,7 +549,7 @@ function PlayInner() {
   const toggleCollapse = () => setPillOpen((o) => !o)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (!keyAllowed(e)) return   // the one key guard (frame-host/keys.js): never from a field, an editable, an IME composition
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); toggleCollapse(); return }
       if (e.metaKey || e.ctrlKey) return
       handleKey(e.key, e.code)
