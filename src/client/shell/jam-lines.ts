@@ -1,7 +1,9 @@
 /**
- * What a jam card's status icon says (spec 27) - pure, so it is tested without a page.
+ * What jam cards say in words (spec 27) - the status icon's tooltip, a lane tile's status line, a
+ * capture's merged timeline. Pure, so it is tested without a page.
  */
 import type { JamCard } from './jam-queue.ts'
+import type { Bundle, CaptureRecord } from '../../server/jam/types.ts'
 
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 const clock = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` }
@@ -20,3 +22,93 @@ export function statusLines(c: JamCard, agent: string | null, harness: Record<st
   return { head: c.state }
 }
 
+// ---- the lane --------------------------------------------------------------------------------------
+
+/** A card as the lane reads it: the queue's card, with its last run's shots when the view has them. */
+export type LaneCard = JamCard & { shots?: { frame: string; before?: string; after?: string }[] }
+
+/** A tile's status line (spec 27 Part 1): "To confirm", "Queued · 2nd", "Queued · next", "Agent
+ *  working · 0:41", "Asks you", "Ready to review", "Done · 2 frames", "Kept, not sent", "Failed ·
+ *  Retry". A queue position counts every queued card, tags included - they share one queue. */
+export function laneLine(c: LaneCard, now = Date.now()): string {
+  switch (c.state) {
+    case 'draft': return 'To confirm'
+    case 'confirming': return 'Confirming'
+    case 'queued': { const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}` }
+    case 'working': return `Agent working · ${clock(now - c.at)}`
+    case 'asks': return 'Asks you'
+    case 'review': return 'Ready to review'
+    case 'done': { const n = c.shots?.length ?? 0; return n ? `Done · ${n} frame${n === 1 ? '' : 's'}` : 'Done' }
+    case 'kept': return 'Kept, not sent'
+    case 'failed': return 'Failed · Retry'
+    case 'dropped': return 'Dropped'
+  }
+}
+
+// ---- the read-back ---------------------------------------------------------------------------------
+
+/** One line of a capture's detail: its time in the capture, the kind of step, the words, the element's
+ *  source (file:line) and point number when it has them. */
+export interface TimelineLine { t: string; kind: string; text: string; source?: string; point?: number }
+
+/** `<span> "Save 20%"` - an element as a line names it; a secret stays "•••". */
+const el = (b: Bundle): string =>
+  [b.tag ? `<${b.tag}>` : '', b.quote ? `"${b.quote}"` : b.ariaLabel ? `"${b.ariaLabel}"` : b.testId ? `#${b.testId}` : ''].filter(Boolean).join(' ') || 'an element'
+/** The source without its column: file:line is what a reader follows. */
+const src = (b: Bundle): string | undefined => (b.source ? b.source.replace(/:\d+:\d+$/, (m) => m.slice(0, m.lastIndexOf(':'))) : undefined)
+/** A frame as a reader says it: its last segment, capitalised. */
+const frameName = (f?: string): string => {
+  const last = (f ?? '').split('/').pop() ?? ''
+  return last ? last[0].toUpperCase() + last.slice(1).replace(/-/g, ' ') : 'the frame'
+}
+
+/** The read-back's merged timeline (spec 27 Part 3): words and notes interleaved with every pick,
+ *  click, hover, field, screen and UI step at the moment it happened, timed from the capture's first
+ *  step. With `edited`, your edit stands in for the words (one line at 0:00); every step stays. */
+export function timelineLines(r: CaptureRecord, edited?: string): TimelineLine[] {
+  const t0 = r.timeline[0]?.at ?? 0
+  const at = (ms: number) => clock(ms - t0)
+  const ed = edited?.trim()
+  const out: TimelineLine[] = ed ? [{ t: at(t0), kind: 'words', text: `"${ed}"` }] : []
+  let pictures = 0
+  for (const s of r.timeline) {
+    const t = at(s.at)
+    const from = (b: Bundle) => (src(b) ? { source: src(b) } : {})
+    switch (s.event) {
+      case 'words': if (!ed) out.push({ t, kind: 'words', text: `"${s.text}"` }); break
+      case 'note': out.push({ t, kind: 'note', text: `"${s.text}"` }); break
+      case 'pick': case 'click':
+        out.push({ t, kind: s.event, text: `${el(s.bundle)}${s.mode !== 'canvas' ? ` · ${s.mode}` : ''}`, ...from(s.bundle), ...(s.point != null ? { point: s.point } : {}) }); break
+      case 'hover': out.push({ t, kind: 'hover', text: `held over ${el(s.bundle)}`, ...from(s.bundle) }); break
+      case 'field': out.push({ t, kind: 'field', text: `${el(s.bundle)} → ${s.value}`, ...from(s.bundle) }); break
+      case 'screen': out.push({ t, kind: 'screen', text: `moved to ${s.to}` }); break
+      case 'scroll': out.push({ t, kind: 'scroll', text: `scrolled to ${Math.round(s.y)}` }); break
+      case 'view': {
+        const v = s.view
+        const where = v.board ? (v.frames?.length ? `${v.board} / ${v.frames.map(frameName).join(', ')}` : v.board) : v.frames?.map(frameName).join(', ')
+        const size = v.viewport ? `${v.viewport}${v.width ? ` ${v.width}×${v.height}` : ''}` : ''
+        out.push({ t, kind: 'view', text: [where, size, v.theme].filter(Boolean).join(' · ') || 'the canvas' }); break
+      }
+      case 'select': out.push({ t, kind: 'select', text: s.frames.map(frameName).join(', ') || 'nothing' }); break
+      case 'device': out.push({ t, kind: 'device', text: `${frameName(s.frame)} · ${s.viewport}${s.width ? ` ${s.width}` : ''}` }); break
+      case 'theme': out.push({ t, kind: 'theme', text: s.theme }); break
+      case 'copied': out.push({ t, kind: 'copied', text: `${s.what} of ${frameName(s.frame)}` }); break
+      case 'interact': out.push({ t, kind: 'interact', text: s.on ? 'on' : 'off' }); break
+      case 'picture':
+        pictures++
+        out.push({ t, kind: 'picture', text: `${frameName(s.frame).toLowerCase()}${s.why === 'end' ? ' at E' : s.why === 'pick' ? ' at a pick' : ''}`, point: pictures }); break
+      case 'missing': out.push({ t, kind: 'missing', text: s.what }); break
+    }
+  }
+  return out
+}
+
+/** A line as plain text, the spec's format: `[0:05] (pick 1) <span> "Save 20%" · file.tsx:48`,
+ *  `[0:04] "this badge"`, `[0:13] (interact on)`. */
+export function lineText(l: TimelineLine): string {
+  if (l.kind === 'words') return `[${l.t}] ${l.text}`
+  if (l.kind === 'interact') return `[${l.t}] (interact ${l.text})`
+  if (l.kind === 'copied') return `[${l.t}] (copied) ${l.text}`
+  const head = l.point != null ? `${l.kind} ${l.point}` : l.kind
+  return `[${l.t}] (${head}) ${l.text}${l.source ? ` · ${l.source}` : ''}`
+}
