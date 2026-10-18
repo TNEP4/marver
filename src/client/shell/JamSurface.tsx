@@ -19,6 +19,7 @@ import { HARNESS } from './Comments.tsx'
 import { PUBLISHED, useStore } from './store.ts'
 import type { CaptureRecord } from '../../server/jam/types.ts'
 
+let saving: Promise<unknown> = Promise.resolve()
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const picture = (id?: string) => (id ? `${ROUTE}/api/jam/picture?id=${encodeURIComponent(id)}` : undefined)
 
@@ -55,14 +56,19 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t) }, [])
   // a new capture or a new draft brings the lane back to its right end
   useEffect(() => { ui.follow() }, [cap.current, cards?.filter((c) => c.kind === 'capture').length])
-  // the oldest draft's read-back opens when capturing stops
+  // the oldest draft's read-back opens when capturing stops - over a review too (a capture made during a
+  // review is confirmed in its read-back; the review it follows stays bound in its record)
+  const [shownSeal, setShownSeal] = useState(0)
   useEffect(() => {
-    if (cap.current || ui.panel) return
+    if (cap.current || cap.sealed.length <= shownSeal) return
     const sealed = cap.sealed[cap.sealed.length - 1]
-    if (!sealed) return
+    if (!sealed?.card) return
     const draft = laneCards(cards, run).find((c) => c.state === 'draft')
-    if (draft) ui.open({ kind: 'capture', id: draft.id })
-  }, [cap.current, cap.sealed.length, cards])
+    if (!draft) return
+    setShownSeal(cap.sealed.length)
+    if (ui.panel?.kind === 'capture' && ui.panel.id === draft.id) return
+    ui.open({ kind: 'capture', id: draft.id })
+  }, [cap.current, cap.sealed, cards])
 
   const list = laneCards(cards, run)
   const tiles = list.map((c) => ({ id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) }))
@@ -79,6 +85,15 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
   const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) => (c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false))
   const openThread = (c?: JamCard) => { if (c?.thread) useComments.getState().setActive(c.thread) }
+  /** Confirm or keep a draft AFTER any edit still saving: at the card's new rev, closing only once it
+   *  took - a refusal says why. */
+  const decide = async (id: string, action: 'confirm' | 'keep') => {
+    await saving
+    const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
+    if (!fresh) return
+    if (await useJamQueue.getState().act(fresh, action)) ui.close()
+    else useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : 'kept'} - look again`)
+  }
 
   const detail = useMemo(() => {
     if (!ui.panel || !panelCard) return null
@@ -108,6 +123,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           card={panelCard}
           of={detail?.of}
           agent={agentName}
+          reviewedTitle={panelCard.reviewing ? cards?.find((c) => c.id === panelCard.reviewing!.card)?.title : undefined}
           lines={rec ? timelineLines(rec.record, panelCard.edited ?? rec.edited) : []}
           pictures={(rec?.record.pictures ?? []).map((id, i) => ({ id, url: picture(id)!, caption: `picture ${i + 1}` }))}
           shots={(panelCard.shots ?? []).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after) }))}
@@ -115,9 +131,9 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
           onTab={(i) => ui.setTab(i)} onFlip={() => ui.flip()} onMoreOpen={(on) => ui.setMoreOpen(on)}
           onClose={() => ui.close()}
-          onEdit={(text) => void act(panelCard, 'edit', text)}
-          onConfirm={() => { void act(panelCard, 'confirm'); ui.close() }}
-          onKeep={() => { void act(panelCard, 'keep'); ui.close() }}
+          onEdit={(text) => { saving = act(panelCard, 'edit', text) }}
+          onConfirm={() => void decide(panelCard.id, 'confirm')}
+          onKeep={() => void decide(panelCard.id, 'keep')}
           onDrop={() => { void act(panelCard, 'drop'); ui.close() }}
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
           onMore={(text) => { void act(panelCard, 'more', text); ui.close() }}

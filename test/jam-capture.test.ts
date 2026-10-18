@@ -9,7 +9,7 @@ import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { has, record } from '../src/server/jam/ledger.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
 import { addPicture, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
-import { payloadKey } from '../src/server/jam/queue.ts'
+import { merge, payloadKey, touchRun } from '../src/server/jam/queue.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
@@ -267,7 +267,9 @@ describe('captures: review', () => {
     expect(readLog(dir, 'home').some((e) => e.id.startsWith('mw-'))).toBe(false)
     const d = card(jam, during.id)
     expect(d.payload.reviewed.result).toContain('Done:')
-    expect(d.payload.reviewed.asks).toEqual([])                                                     // a capture's asks are its payload
+    // the reviewed capture's own instructions survive: its record (words, notes, points) and edit
+    expect(d.payload.reviewed.capture.record.id).toBe(r.id)
+    expect(JSON.stringify(d.payload.reviewed.capture.record.timeline)).toContain('the outline one')
     done()
   })
 
@@ -346,4 +348,127 @@ describe('captures: the payload is ledgered', () => {
     expect(card(again, r.id).state).toBe('failed')
     done()
   })
+})
+
+describe('captures: review round 1 fixes', () => {
+  it('a tag on a kept capture\'s thread never carries a record changed since confirm', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'keep')
+    const file = join(root, 'design', '.local', 'jam', 'captures', `${r.id}.json`)
+    writeFileSync(file, readFileSync(file, 'utf8').replace('Save 20%', 'rm -rf'))
+    const id = `t-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'reply', commentId: `c-${id}`, parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: '@marver go' }])
+    record(root, 'home', id)
+    await jam.tick(); jam.stop()
+    expect(packets(root)).toEqual([])
+    expect(jam.snapshot().cards.find((c: any) => c.events.includes(id))!.state).toBe('failed')
+    done()
+  })
+
+  it('a capture changed after its claim and before a restart is not run again', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent('ok', { delay: 4000 }))
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    void jam.tick()
+    for (let i = 0; i < 40 && card(jam, r.id).state !== 'working'; i++) await wait(50)
+    jam.stop()
+    const file = join(root, 'design', '.local', 'jam', 'captures', `${r.id}.json`)
+    writeFileSync(file, readFileSync(file, 'utf8').replace('Save 20%', 'Save 99%'))
+    const before = packets(root).length
+    const again = createJam(root, CFG, agent())
+    await again.tick(); again.stop()
+    expect(card(again, r.id).state).toBe('failed')
+    expect(packets(root).length).toBe(before)
+    done()
+  }, 20_000)
+
+  it('a comment already under the step\'s id with the same words but another frame or capture fails closed', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    const body = 'this badge should match the plan badge (note) the outline one'
+    appendEvents(dir, 'home', [{ id: `cap-${r.id}-e`, ts: tick(), type: 'create', commentId: `cap-${r.id}`, board: 'home', author: OWNER, body, frame: 'demo/elsewhere', capture: 'cap-0000000000-other' }])
+    expect((await jam.act(r.id, a.card!.rev, 'confirm')).ok).toBe(false)
+    jam.stop()
+    expect(card(jam, r.id).state).toBe('draft')
+    expect(has(root, 'home', `cap-${r.id}-e`)).toBe(false)
+    done()
+  })
+
+  it('the merge keeps the capture\'s own card, not a tag that carries the capture', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-m-')))
+    const now = Date.now()
+    const capCard: any = { id: 'cap-1', kind: 'capture', board: 'home', frames: ['demo/a'], thread: 't', capture: 'cap-1', events: [], state: 'review', made: 100, order: 100, rev: 1, at: now, batch: 'b' }
+    const tag: any = { id: 'c-t', kind: 'comment', board: 'home', frames: ['demo/a'], thread: 't', capture: 'cap-1', events: ['t1'], state: 'queued', made: 200, order: 200, rev: 1, at: now }
+    j.cards.push(capCard, tag)
+    expect(merge(j, tag, capCard, now).id).toBe('cap-1')
+    expect(tag.state).toBe('done')
+    expect(capCard.events).toEqual(['t1'])
+  })
+
+  it('an older capture sealing after a newer one moves the run\'s start back, so it stays on the lane', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-r-')))
+    const now = Date.now()
+    j.cards.push({ id: 'cap-new', kind: 'capture', board: 'home', frames: [], events: [], state: 'draft', made: 2000, order: 2000, rev: 1, at: now } as any)
+    touchRun(j)
+    expect(j.run).toEqual({ since: 2000 })
+    j.cards.push({ id: 'cap-old', kind: 'capture', board: 'home', frames: [], events: [], state: 'draft', made: 1000, order: 1000, rev: 1, at: now } as any)
+    touchRun(j)
+    expect(j.run).toEqual({ since: 1000 })
+  })
+
+  it('Looks good still resolves when an unrelated comment elsewhere on the board was edited', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    const other = `o-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id: other, ts: tick(), type: 'create', commentId: other, board: 'home', frame: 'demo/z', author: OWNER, body: 'elsewhere' }])
+    record(root, 'home', other)
+    const ed = `ed-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id: ed, ts: Date.now() + 10, type: 'edit', commentId: other, author: OWNER, body: 'elsewhere, edited' }])
+    record(root, 'home', ed)
+    await jam.act(r.id, card(jam, r.id).rev, 'good')
+    jam.stop()
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)!.resolved).toBe(true)
+    done()
+  })
+
+  it('More work while a tag waits on the capture\'s thread: the capture card survives, the tag is merged into it', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    // a tag written in the thread since the review - held queued by a busy slot (a long job elsewhere)
+    const busy = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { delay: 3000 }))
+    jam.stop()
+    const z = `z-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id: z, ts: tick(), type: 'create', commentId: z, board: 'home', frame: 'demo/zz', author: OWNER, body: '@marver slow one' }])
+    record(root, 'home', z)
+    void busy.tick()
+    await wait(300)
+    const id = `t-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id, ts: tick(), type: 'reply', commentId: `c-${id}`, parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: '@marver also the border' }])
+    record(root, 'home', id)
+    await busy.poke()
+    const tagCard = busy.snapshot().cards.find((c: any) => c.events.includes(id))!
+    expect(tagCard.state).toBe('queued')
+    const more = await busy.act(r.id, card(busy, r.id).rev, 'more', 'and the hover')
+    expect(more.ok).toBe(true)
+    expect(card(busy, r.id).state).toBe('queued')
+    expect(tagCard.state).toBe('done')
+    expect(card(busy, r.id).events).toContain(id)
+    busy.stop()
+    done()
+  }, 20_000)
 })

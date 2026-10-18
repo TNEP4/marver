@@ -35,7 +35,7 @@ export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd
 }
 
 export function FocusPanelView(p: {
-  left: number; kind: 'capture' | 'review' | 'wrapup'; card: JamCard; of: [number, number] | undefined; agent: string
+  left: number; kind: 'capture' | 'review' | 'wrapup'; card: JamCard; of: [number, number] | undefined; agent: string; reviewedTitle?: string
   lines: TimelineLine[]; pictures: { id: string; url: string; caption: string }[]
   shots: { frame: string; before?: string; after?: string }[]; reply: string
   view: 'after' | 'before'; tab: number; moreOpen: boolean
@@ -59,7 +59,7 @@ export function FocusPanelView(p: {
       ) : (
         <ReadBack title={title} of={p.of} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited}
           readOnly={c.state !== 'draft'} agent={p.agent}
-          follows={c.reviewing ? 'Follows the review on screen - confirming sends that review back as more work' : undefined}
+          follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
           onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onOpenThread={c.thread ? p.onOpenThread : undefined} />
       )}
     </FocusPanel>

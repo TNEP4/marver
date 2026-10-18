@@ -29,7 +29,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, addCapture, answeredSince, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { act, addCapture, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -695,6 +695,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         for (const m of b.members) {
           const c = j.cards.find((x) => x.id === m.card)
           if (!c) continue
+          // a capture changed since it was confirmed never runs again, whoever carries it
+          if (c.capture && !captureIntact(j, ctx, c.capture)) { c.state = 'failed'; c.note = 'the capture changed after it was confirmed - capture it again'; c.rev += 1; c.at = Date.now(); continue }
           const comment = c.kind === 'comment'
           const had = c.brief?.asks.length ?? 0
           c.brief = clean(c.board, c.brief, comment)

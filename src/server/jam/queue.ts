@@ -155,7 +155,8 @@ function resolved(j: Journal, board: string, thread: string, now: number): boole
  *  its tile, its scope and its review; with no capture card involved, `queued` (the card already
  *  waiting) survives. */
 export function merge(j: Journal, queued: Card, other: Card, now: number): Card {
-  const [keep, gone] = other.capture && !queued.capture ? [other, queued] : [queued, other]
+  // the capture's OWN card survives (a tag on its thread carries `capture` too, but is not it)
+  const [keep, gone] = other.kind === 'capture' && queued.kind !== 'capture' ? [other, queued] : [queued, other]
   // asks stay in the order they were made - each by its own time (a card's `made` for one that never
   // recorded it), the id breaking a tie - so the newest tag carries the icon, however many merges
   const when = { ...gone.when, ...keep.when }
@@ -301,14 +302,23 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
 
 /** Are a card's asks still the owner's? Each must be in its board's log and ledgered; the ones that
  *  are not are dropped, and a card with none left is dropped ("no longer authorized"). */
-function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number): boolean {
+/** Is a capture still what was ledgered at confirm - its sealed record's hash and the confirmed edit?
+ *  Checked for EVERY card that carries the capture (a tag on its thread included), at claim and at
+ *  resume: a record or an edit changed afterwards never reaches the agent. */
+export function captureIntact(j: Journal, ctx: Ctx, capId: string): boolean {
+  const capCard = j.cards.find((x) => x.id === capId && x.kind === 'capture')
+  const cap = readCapture(ctx.root, capId)
+  return !!capCard?.payload && !!cap && cap.hash === capCard.payload.recordHash && isOwned(ctx, capCard.board, payloadKey(capCard))
+}
+
+function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j?: Journal): boolean {
+  if (c.capture && j && !captureIntact(j, ctx, c.capture)) {
+    set(c, 'failed', now, 'the capture changed after it was confirmed - capture it again')
+    return false
+  }
   if (c.kind === 'capture') {
-    // the sealed record and the confirmed edit must be what was ledgered at confirm: a capture file
-    // edited after the seal, or an edit changed after confirm, stops the job
-    const cap = readCapture(ctx.root, c.id)
-    const ok = !!cap && !!c.payload && cap.hash === c.payload.recordHash && isOwned(ctx, c.board, payloadKey(c))
-      && c.events.every((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))
-    if (!ok) set(c, 'failed', now, 'the capture changed after it was confirmed - capture it again')
+    const ok = c.events.every((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))
+    if (!ok) set(c, 'failed', now, 'an ask on this capture is no longer the owner\'s')
     return ok
   }
   if (c.kind !== 'comment') return true   // wrap-ups are checked by their own seal (M4)
@@ -340,7 +350,7 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
   const logs = new Map<string, CommentEvent[]>()
   const log = (board: string) => { let l = logs.get(board); if (!l) logs.set(board, (l = readLog(ctx.dir, board))); return l }
   // an exclusive card that is no longer the owner's is dropped first - it must not hold the queue back
-  for (const c of j.cards) if (c.state === 'queued' && (c.exclusive || !c.frames.length)) validate(ctx, c, log(c.board), now)
+  for (const c of j.cards) if (c.state === 'queued' && (c.exclusive || !c.frames.length)) validate(ctx, c, log(c.board), now, j)
   const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
   const exclusive = queued.filter((c) => c.exclusive || !c.frames.length)
   type Forming = { board: string; frames: string[]; cards: Card[]; exclusive?: boolean; single: boolean }
@@ -355,14 +365,14 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
       if (c.frames.length === 1) {
         const f = c.frames[0]
         const join = forming.find((b) => b.single && b.board === c.board && b.frames[0] === f && b.cards.length < MAX_MEMBERS)
-        if (join) { if (validate(ctx, c, log(c.board), now)) join.cards.push(c); continue }
+        if (join) { if (validate(ctx, c, log(c.board), now, j)) join.cards.push(c); continue }
         if (reserved.has(f) || o.held(f) || forming.length >= o.free) continue
-        if (!validate(ctx, c, log(c.board), now)) continue
+        if (!validate(ctx, c, log(c.board), now, j)) continue
         forming.push({ board: c.board, frames: [f], cards: [c], single: true })
         reserved.add(f)
       } else {
         if (c.frames.some((f) => reserved.has(f) || o.held(f)) || forming.length >= o.free) continue
-        if (!validate(ctx, c, log(c.board), now)) continue
+        if (!validate(ctx, c, log(c.board), now, j)) continue
         forming.push({ board: c.board, frames: [...c.frames], cards: [c], single: false })
         for (const f of c.frames) reserved.add(f)
       }
@@ -643,14 +653,18 @@ export function beginStep(j: Journal, c: Card, op: 'confirm' | 'more', event: Co
     // the run this capture reviewed, frozen once into its payload (`payload.reviewed`)
     const r = c.reviewing && j.batches.find((b) => b.batchId === c.reviewing!.batch)
     const m = r && r.members.find((x) => x.card === c.reviewing!.card)
-    if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], result: resultText(j, r!.batchId, m.card, r!.note ?? '') } }
+    if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], result: resultText(j, r!.batchId, m.card, r!.note ?? ''),
+      ...(m.brief?.capture ? { capture: { record: m.brief.capture.record, recordHash: m.brief.capture.recordHash, ...(m.brief.capture.edited ? { edited: m.brief.capture.edited } : {}) } } : {}) } }
   }
   c.rev += 1; c.at = now
 }
 
 /** Did a comment already in the log under the step's id say exactly what the step would write? */
-export const sameComment = (a: CommentEvent, b: CommentEvent): boolean =>
-  a.type === b.type && a.commentId === b.commentId && (a.parentId ?? '') === (b.parentId ?? '') && (a.body ?? '') === (b.body ?? '') && (a.author?.email ?? a.author?.name ?? '') === (b.author?.email ?? b.author?.name ?? '')
+const canon = (e: CommentEvent) => JSON.stringify({ type: e.type, commentId: e.commentId, parentId: e.parentId ?? null, board: e.board ?? null, frame: e.frame ?? null,
+  anchor: e.anchor ?? null, body: e.body ?? '', author: e.author ?? null, capture: e.capture ?? null, facts: e.facts ?? null, agent: !!e.agent })
+/** Did a comment already in the log under the step's id say EXACTLY what the step would write - every
+ *  field that matters, not just its words? Anything else fails closed. (`ts` is when it was written.) */
+export const sameComment = (a: CommentEvent, b: CommentEvent): boolean => canon(a) === canon(b)
 
 /** A step whose comment is written and ledgered ends: a confirm leaves the card queued (or kept), on
  *  its thread - and a capture made during a review sends that review back as More work, if the card
@@ -687,8 +701,12 @@ export function conflictStep(j: Journal, c: Card, now = Date.now()) {
  *  reply or edit arrived after its frozen brief (that answer stays open, on the answered list). */
 export function looksGood(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[], now = Date.now()): { resolve: boolean } {
   const newer = j.cards.some((x) => x !== c && x.board === c.board && x.thread === c.thread && pending(x) && x.made > c.made)
-  const seenUpTo = Math.max(0, ...[...(c.brief?.asks ?? []), ...(c.brief?.history ?? [])].map((m) => m.ts))
-  const after = events.some((e) => !e.agent && e.ts > seenUpTo && isOwned(ctx, c.board, e.id) && (e.type === 'edit' || (e.type === 'reply' && e.parentId === c.thread)) && !e.id.startsWith('mw-'))
+  // what the frozen brief copied: those messages, at those revisions
+  const frozen = [...(c.brief?.asks ?? []), ...(c.brief?.history ?? [])]
+  const copied = new Set(frozen.flatMap((m) => [m.id, m.rev ?? m.id]))
+  const inThread = (msgId?: string) => events.some((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msgId && (e.commentId === c.thread || e.parentId === c.thread))
+  const after = events.some((e) => !e.agent && isOwned(ctx, c.board, e.id) && !copied.has(e.id) && !e.id.startsWith('mw-')
+    && ((e.type === 'reply' && e.parentId === c.thread) || (e.type === 'edit' && inThread(e.commentId))))
   set(c, 'done', now, 'looks good')
   touchRun(j, now)
   return { resolve: !!c.thread && !newer && !after }
@@ -701,6 +719,8 @@ export function touchRun(j: Journal, now = Date.now()) {
   const live = lane.filter((c) => pending(c))
   if (!j.run && live.length) j.run = { since: Math.min(...live.map((c) => c.made)) }
   else if (j.run && !live.length) j.run = undefined
+  // an older capture that sealed later (S -> S, its pictures slower) is still in the run
+  else if (j.run && live.length) j.run = { since: Math.min(j.run.since, ...live.map((c) => c.made)) }
   void now
 }
 

@@ -136,7 +136,8 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
 }) {
   const [open, setOpen] = useState(!!editing)
   useEffect(() => { if (editing) setOpen(true) }, [editing])
-  const words = lines.filter((l) => l.kind === 'words').map((l) => unquote(l.text)).join(' ')
+  // the words and the notes, in time order - what the capture says (server captureWords)
+  const words = lines.filter((l) => l.kind === 'words' || l.kind === 'note').map((l) => (l.kind === 'note' ? `(note) ${unquote(l.text)}` : unquote(l.text))).join(' ')
   const [text, setText] = useState(edited ?? words)
   useEffect(() => { if (!open) setText(edited ?? words) }, [edited, words, open])
   const field = useRef<HTMLTextAreaElement>(null)

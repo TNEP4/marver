@@ -108,12 +108,22 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
   on(document, 'mouseleave', cancelHover)
 
   // ---- the final scroll ---------------------------------------------------------------------
+  // the settle wait keeps the capture, frame, time and position it began with: `E` (or `S` -> `S`)
+  // inside the wait sends it with the capture's flush, before `sh:capture-flushed` - never lost
   let scrollTimer = 0
+  let pendingScroll = null
+  const sendScroll = (id) => {
+    if (!pendingScroll || (id && pendingScroll.id !== id)) return
+    const p = pendingScroll
+    pendingScroll = null
+    clearTimeout(scrollTimer)
+    send(p.id, 'scroll', { y: p.y }, p.frame, p.at)
+  }
   on(window, 'scroll', () => {
     if (!captureId) return
-    const frame = getFrame()
     clearTimeout(scrollTimer)
-    scrollTimer = setTimeout(() => record('scroll', { y: Math.round(window.scrollY) }, frame), SCROLL_SETTLE_MS)
+    pendingScroll = { id: captureId, frame: getFrame(), at: performance.timeOrigin + performance.now(), y: Math.round(window.scrollY) }
+    scrollTimer = setTimeout(() => sendScroll(), SCROLL_SETTLE_MS)
   }, { capture: true, passive: true })
 
   // ---- the shell ------------------------------------------------------------------------------
@@ -124,12 +134,13 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
     if (m.type === 'sh:capture-hello' && typeof m.nonce === 'string') post({ type: 'sh:capture-hello', nonce: m.nonce, captureDoc })
     else if (m.type === 'sh:capture' && typeof m.id === 'string') {
       if (m.on) {
-        if (captureId && captureId !== m.id) flushFields(captureId)   // `S` -> `S`: the first keeps its own
+        if (captureId && captureId !== m.id) { flushFields(captureId); sendScroll(captureId) }   // `S` -> `S`: the first keeps its own
         captureId = m.id
       } else {
         // `E`: what this capture holds goes first, then the last seq - the shell seals after
         flushFields(m.id)
-        if (captureId === m.id) { captureId = null; cancelHover(); clearTimeout(scrollTimer) }
+        sendScroll(m.id)
+        if (captureId === m.id) { captureId = null; cancelHover() }
         post({ type: 'sh:capture-flushed', id: m.id, captureDoc, seq })
       }
     }

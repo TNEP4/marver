@@ -46,6 +46,16 @@ export function openTile(id: string) {
     return
   }
   ui.open({ kind: c.state === 'review' ? 'review' : c.kind === 'wrapup' ? 'wrapup' : 'capture', id })
+  reveal(c)
+}
+
+/** Bring a card's frames into view beside the panel - on its own board (a frame link lands there). */
+export function reveal(c: JamCard) {
+  const s = useStore.getState()
+  if (!c.frames.length) return
+  if (c.board !== s.board) { location.hash = `#/b/${encodeURIComponent(c.board)}?f=${c.frames.map(encodeURIComponent).join(',')}`; return }
+  const keys = s.nodes.filter((n) => c.frames.includes(n.frame)).map((n) => n.key)
+  if (keys.length) void import('./canvas/ctl.ts').then(({ canvasCtl }) => canvasCtl.fitNodes(keys))
 }
 
 /** The next capture to review after `from` (or the oldest), walking the lane left to right. */
@@ -60,6 +70,13 @@ const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJam
   c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false)
 
 interface Row { on(): boolean; keys: Record<string, () => void> }
+
+/** The run on screen, when a review is open: a capture started now binds it (and S -> S does again). */
+function reviewNow(): { card: string; batch: string; rev: number } | undefined {
+  const ui = useJamUi.getState()
+  const c = cardById(ui.panel?.id)
+  return ui.panel?.kind === 'review' && c?.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
+}
 
 const rows = (): Row[] => {
   const cap = useJamCapture.getState()
@@ -85,7 +102,9 @@ const rows = (): Row[] => {
       on: () => !!cap.current,
       keys: {
         e: () => cap.end(),
-        s: () => cap.end(true),
+        s: () => cap.end(true, reviewNow()),
+        // L: laser picks - a pick inside a capture is its pick (frames forward it while interacting)
+        l: () => { const st = useStore.getState(); if (!st.laser) void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); st.setLaser(!st.laser) },
         n: () => { cap.setNoteOpen(true); window.dispatchEvent(new CustomEvent('mv-jam-note-focus')) },
         i: () => cap.picture(),
         Escape: () => cap.drop(),
@@ -124,9 +143,9 @@ const rows = (): Row[] => {
     { // always (no field focused)
       on: () => !PUBLISHED,
       keys: {
-        s: () => { const r = ui.panel?.kind === 'review' && panelCard?.batch ? { card: panelCard.id, batch: panelCard.batch, rev: panelCard.rev } : undefined; cap.start(r) },
+        s: () => cap.start(reviewNow()),
         q: () => { const list = laneCards(useJamQueue.getState().cards, useJamQueue.getState().run); if (!list.length) return; ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) },
-        v: () => { const n = nextReview(); if (n) { ui.open({ kind: 'review', id: n.id }); ui.follow() } else useStore.getState().toast('nothing to review') },
+        v: () => { const n = nextReview(); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } else useStore.getState().toast('nothing to review') },
       },
     },
   ]

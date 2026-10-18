@@ -94,7 +94,8 @@ interface CaptureState {
   /** a number that changes on every capture change - for components to redraw (timer, counts) */
   tick: number
   start(reviewing?: Cap['reviewing']): void
-  end(next?: boolean): void
+  /** `next`: S with one open - the next starts at once, bound to the review on screen (`reviewing`) */
+  end(next?: boolean, reviewing?: Cap['reviewing']): void
   drop(): void
   note(text: string): void
   setNoteOpen(open: boolean): void
@@ -115,13 +116,18 @@ function addStep(id: string, step: Step & { seq?: number; src?: string }) {
 const frameIdOf = (key: string): string | undefined => useStore.getState().nodes.find((n) => n.key === key)?.frame
 const viewNow = (): View => {
   const s = useStore.getState()
+  // in play or slides the surface is the stage: its screen, its device, its theme
+  if (s.play) {
+    const vp = CONFIG.viewports[s.play.device]
+    return { board: s.board, frames: [s.play.at], theme: s.play.theme, viewport: s.play.device, ...(vp ? { width: vp.width, height: vp.height } : {}), mode: s.play.slides ? 'slides' : 'play' }
+  }
   const sel = s.selection.map((k) => s.nodes.find((n) => n.key === k)).filter((n): n is Node => !!n)
   const shown = (sel.length ? sel : s.nodes.filter((n) => !n.missing)).slice(0, 20)
   const first = shown[0]
   return {
     board: s.board, frames: [...new Set(shown.map((n) => n.frame))], theme: first?.theme ?? s.viewTheme,
     ...(first ? { width: Math.round(first.w), height: Math.round(first.h) } : {}),
-    zoom: Math.round((s.scale ?? 1) * 100) / 100, mode: s.play ? (s.play.slides ? 'slides' : 'play') : s.interact ? 'interact' : 'canvas',
+    zoom: Math.round((s.scale ?? 1) * 100) / 100, mode: s.interact ? 'interact' : 'canvas',
   }
 }
 
@@ -151,6 +157,12 @@ function watchUi() {
       if (o.theme !== n.theme && s.viewTheme === p.viewTheme && (n.theme === 'light' || n.theme === 'dark')) addStep(id, { at, frame: n.frame, event: 'theme', theme: n.theme })
     }
     if (s.viewTheme !== p.viewTheme && (s.viewTheme === 'light' || s.viewTheme === 'dark')) addStep(id, { at, event: 'theme', theme: s.viewTheme })
+    // play: the stage's device and theme through the shell's controls (its screen comes from the stage)
+    if (s.play && p.play) {
+      if (s.play.theme !== p.play.theme && (s.play.theme === 'light' || s.play.theme === 'dark')) addStep(id, { at, frame: s.play.at, event: 'theme', theme: s.play.theme })
+      if (s.play.device !== p.play.device) { const vp = CONFIG.viewports[s.play.device]; addStep(id, { at, frame: s.play.at, event: 'device', viewport: s.play.device, width: vp?.width ?? 0, height: vp?.height ?? 0 }) }
+    }
+    if (!!s.play !== !!p.play) addStep(id, { at, event: 'view', view: viewNow() })
     if (!!s.interact !== !!p.interact) addStep(id, { at, ...(s.interact || p.interact ? { frame: frameIdOf((s.interact ?? p.interact)!) } : {}), event: 'interact', on: !!s.interact })
   })
 }
@@ -171,7 +183,11 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
   const inst = instances.get(key)
   if (!inst || !current(inst)) return true
   if (t === 'sh:capture-hello') {
-    if (inst.nonce && data.nonce === inst.nonce && typeof data.captureDoc === 'string') { inst.captureDoc = data.captureDoc; inst.nonce = undefined }
+    if (inst.nonce && data.nonce === inst.nonce && typeof data.captureDoc === 'string') {
+      inst.captureDoc = data.captureDoc; inst.nonce = undefined
+      // bound: tell this document what it may have missed (a frame can be ready before its load fires)
+      frameReady(key)
+    }
     return true
   }
   if (!inst.captureDoc || data.captureDoc !== inst.captureDoc) return true
@@ -200,7 +216,7 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
         if (n && pt) c.points.push({ n, key, x: pt.x, y: pt.y })
         c.steps.push({ ...base, event: data.event, bundle: cleanBundle(data.bundle), mode, ...(n ? { point: n } : {}) })
       })
-      if (data.event === 'pick' && frame) shoot(cap.id, frame, 'pick')
+      if (data.event === 'pick' && frame) shoot(cap.id, frame, 'pick', key === 'stage' ? undefined : key)
       return true
     }
     case 'field': addStep(cap.id, { ...base, event: 'field', bundle: cleanBundle(data.bundle), value: String(data.value ?? '') }); return true
@@ -224,7 +240,7 @@ const cleanBundle = (b: unknown): Bundle => {
 
 // ---- canvas-mode clicks and hovers: the overlay keeps the click and asks the frame ------------------
 
-const probes = new Map<string, { cap: string; key: string; at: number; event: 'click' | 'hover'; x: number; y: number; timer: ReturnType<typeof setTimeout> }>()
+const probes = new Map<string, { cap: string; key: string; at: number; event: 'click' | 'hover'; x: number; y: number; timer: ReturnType<typeof setTimeout>; selectStep?: Step }>()
 
 const local = (iframe: HTMLIFrameElement, clientX: number, clientY: number) => {
   const r = iframe.getBoundingClientRect()
@@ -240,12 +256,17 @@ function probe(key: string, event: 'click' | 'hover', clientX: number, clientY: 
   const at = now()
   const { x, y } = local(inst.iframe, clientX, clientY)
   const req = `r-${rand(8)}`
+  // one act, one line: the select this very click made (the overlay selects on pointerdown) is folded
+  // into it when it answers - found now, by reference, whatever lands in the timeline meanwhile
+  const frameNow = frameIdOf(key)
+  const capNow = capOf(id)
+  const selectStep = event === 'click' && capNow ? [...capNow.steps].reverse().find((x) => x.event === 'select' && at - x.at < 400 && x.frames.length === 1 && x.frames[0] === frameNow) : undefined
   const timer = setTimeout(() => {
     probes.delete(req)
     mutate((s) => { const c = s.caps[id]; if (c) { c.probes -= 1; c.steps.push({ at, frame: frameIdOf(key), event: 'missing', what: `the ${event} at ${Math.round(x)},${Math.round(y)} never answered` }) } })
     trySeal(id)
   }, PROBE_MS)
-  probes.set(req, { cap: id, key, at, event, x, y, timer })
+  probes.set(req, { cap: id, key, at, event, x, y, timer, selectStep })
   mutate((s) => { const c = s.caps[id]; if (c) c.probes += 1 })
   post(inst, { type: 'sh:probe', id, req, x, y })
 }
@@ -264,9 +285,9 @@ function probeAnswered(key: string, data: Record<string, any>) {
     const n = p.event === 'click' ? c.points.length + 1 : undefined
     if (n) c.points.push({ n, key, x: p.x, y: p.y })
     // one act, one line: a click that also selected its frame is one click that names the selection
-    const last = c.steps[c.steps.length - 1]
-    const selects = p.event === 'click' && !!last && last.event === 'select' && p.at - last.at < 400 && last.frames.length === 1 && last.frames[0] === frame
-    if (selects) c.steps.pop()
+    const i = p.selectStep ? c.steps.indexOf(p.selectStep as (typeof c.steps)[number]) : -1
+    const selects = i >= 0
+    if (selects) c.steps.splice(i, 1)
     c.steps.push({ at: p.at, ...(frame ? { frame } : {}), event: p.event, bundle: cleanBundle(data.bundle), mode: 'canvas', ...(n ? { point: n } : {}), ...(selects ? { selects: true } : {}) })
   })
   trySeal(p.cap)
@@ -296,11 +317,15 @@ let pointerAt: { key: string; at: number } | null = null
 
 // ---- pictures ------------------------------------------------------------------------------------------
 
-function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end') {
+function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: string) {
   const c = capOf(id)
   if (!c || c.pictures.length + c.shots >= MAX_PICTURES) return
   const at = now()
-  const n = useStore.getState().nodes.find((x) => x.frame === frame)
+  // the instance it was seen in: its size (a responsive defect is shot as seen) and its theme
+  const st = useStore.getState()
+  const n = (key ? st.nodes.find((x) => x.key === key && x.frame === frame) : undefined) ?? st.nodes.find((x) => x.frame === frame)
+  const size = st.play && st.play.at === frame ? CONFIG.viewports[st.play.device] : n ? { width: n.w, height: n.h } : undefined
+  const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
   const done = (pid: string | null) => {
     mutate((s) => {
@@ -316,7 +341,7 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end') {
   const timer = setTimeout(() => ctl.abort(), PICTURE_MS)
   fetch(`${ROUTE}/api/jam/picture`, {
     method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
-    body: JSON.stringify({ capture: id, frame, theme: n?.theme ?? useStore.getState().viewTheme }),
+    body: JSON.stringify({ capture: id, frame, theme, ...(size ? { w: Math.round(size.width), h: Math.round(size.height) } : {}) }),
   }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id ?? null : null), () => null)
     .then((pid) => { clearTimeout(timer); done(pid) })
 }
@@ -399,15 +424,15 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   tick: 0,
   sealed: [],
   start(reviewing) {
-    if (get().current) get().end(true)
+    if (get().current) return get().end(true, reviewing)
     begin(reviewing)
   },
-  end(next) {
+  end(next, reviewing) {
     const id = get().current
     if (!id) return
     set({ current: null })
     drain(id)
-    if (next) begin()
+    if (next) begin(reviewing)
     else { unwatch?.(); unwatch = null }
   },
   drop() {
@@ -432,7 +457,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     const s = useStore.getState()
     const key = pointerAt && performance.now() - pointerAt.at < 5_000 ? pointerAt.key : s.selection[s.selection.length - 1]
     const f = frame ?? (key ? frameIdOf(key) : undefined)
-    if (f) shoot(id, f, 'key')
+    if (f) shoot(id, f, 'key', key)
   },
 }))
 

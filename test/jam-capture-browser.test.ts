@@ -245,5 +245,56 @@ describe('captures in the browser', () => {
     const b = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }
     await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...b }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...b }, s)
     await until(`!window.__mvJamCapture.getState().current`, 3000)
+    // leave nothing behind: the first one's draft is dropped
+    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(first)}), 'drop')`)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
   }, 60_000)
+
+  skippable('during a review: S, a note, S again, a note, E - both drafts bind the review; the newest draft\'s read-back opens over it and ⏎ confirms that draft, not the review', async () => {
+    agentMode({})
+    // a capture to review first
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const r0 = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('first ask'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r0)}`, 15_000)
+    await enter()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r0)} && c.state === 'review')`, 30_000)
+    await key('v')
+    await until(`window.__mvJamUi.getState().panel?.kind === 'review' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r0)}`, 5000)
+    // S during the review, S -> S, E
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('use your second idea'), 1`)
+    await key('s'); await until(`window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 3000)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('and the border'), 1`)
+    await key('e')
+    await until(`[${JSON.stringify(a)}, ${JSON.stringify(b)}].every((id) => (window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === id && c.state === 'draft' && c.reviewing?.card === ${JSON.stringify(r0)}))`, 15_000)
+    await until(`window.__mvJamUi.getState().panel?.kind === 'capture'`, 5000)
+    const opened = await browser!.eval(s, `window.__mvJamUi.getState().panel.id`)
+    await enter()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(opened)} && c.state !== 'draft')`, 10_000)
+    // the review was not approved by that ⏎: confirming the capture sent it back as more work instead
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(r0)})?.note`)).toBe('more work')
+    // clean up the other draft
+    await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.state === 'draft'); return c ? q.act(c, 'drop') : 1 })()`)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+  }, 120_000)
+
+  skippable('an edit then Add to queue: the edit saves first and the capture queues with it', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('raw words'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 15_000)
+    // open the editor, type, then click Add to queue (the blur saves the edit)
+    await click('.jm-focus .jm-editable')
+    await until(`!!document.querySelector('.jm-focus textarea')`, 3000)
+    await browser!.eval(s, `(() => { const t = document.querySelector('.jm-focus textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'make the badge outlined'); t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await click('.jm-focus .jm-btn.primary')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state !== 'draft')`, 10_000)
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)})?.edited`)).toBe('make the badge outlined')
+    await until(`window.__mvComments.getState().threads.find((t) => t.capture === ${JSON.stringify(id)})?.body === 'make the badge outlined'`, 10_000)
+  }, 120_000)
 })

@@ -85,7 +85,7 @@ export const useJamQueue = create<QueueState>((set, get) => {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
         body: JSON.stringify({ id: card.id, rev: card.rev, action, ...(body !== undefined ? { body } : {}) }),
       }).catch(() => null)
-      void get().load()
+      await get().load()   // the card as it is now (its new rev) before the caller acts again
       return !!res?.ok
     },
   }

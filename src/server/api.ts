@@ -1023,8 +1023,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const theme = typeof b.theme === 'string' && /^[a-z0-9-]+$/i.test(b.theme) ? b.theme : 'light'
         const { shootFrame } = await import('./shot.ts')
         const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
+        // the size the instance shows (a responsive defect is shot at the size it was seen at), else a named viewport
         const vp = typeof b.viewport === 'string' ? opts.viewports?.[b.viewport] : undefined
-        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId: b.frame, theme, origin, ...(vp ? { size: { w: vp.width, h: vp.height } } : {}) })
+        const dim = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined)
+        const size = dim(b.w) ? { w: dim(b.w), h: dim(b.h) } : vp ? { w: vp.width, h: vp.height } : undefined
+        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId: b.frame, theme, origin, ...(size ? { size } : {}) })
         if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : 503, { error: r.error })
         sweepPictures(root)
         return json(res, 200, { id: addPicture(root, r.path, { frame: b.frame, capture: b.capture }) })
