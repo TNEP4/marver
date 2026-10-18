@@ -415,6 +415,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const one = b.members.length === 1 ? cards()[0] : undefined
           run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; q.persist() },
             one?.thread ? (text, asks, model) => {
+              if (stopped) return   // output buffered past stop(): a successor owns the log
               // write FIRST, remember after: if the append throws, the final must not be suppressed
               // as a "duplicate" of an ack that never actually posted
               const p = postReply(b, one, 'm1', text, asks, model, 'early')

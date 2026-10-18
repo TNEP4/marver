@@ -1261,3 +1261,39 @@ describe('Jam V2: review round 8 fixes', () => {
     done()
   })
 })
+
+describe('Jam V2: review round 9 fixes', () => {
+  it('the upgrade reads an early reply as the final of a finished v1 batch, and a question already answered is done', async () => {
+    const { root, dir, done } = setup()
+    const a = say(root, dir, '@marver one'), b = say(root, dir, '@marver two')
+    appendEvents(dir, 'home', [
+      { id: 'jam-e1-va', ts: tick(), type: 'reply', commentId: 'jam-c-e1-va', parentId: a.commentId, board: 'home', author: OWNER, body: 'Card or CVC?', asks: true, agent: true },
+      { id: 'jam-vb', ts: tick(), type: 'reply', commentId: 'jam-c-vb', parentId: b.commentId, board: 'home', author: OWNER, body: 'Which one?', asks: true, agent: true },
+    ])
+    const ans = say(root, dir, 'the first', { thread: b.commentId })
+    writeFileSync(join(root, 'design', '.local', 'jam-jobs.json'), JSON.stringify({ version: 1, device: deviceId(), baselined: true, seen: [a.id, b.id, ans.id], batches: [
+      { batchId: 'va', board: 'home', memberEventIds: [a.id], state: 'done', leaseUntil: 0, attempts: 1 },
+      { batchId: 'vb', board: 'home', memberEventIds: [b.id], state: 'done', leaseUntil: 0, attempts: 1 },
+    ] }))
+    const jam = createJam(root, CFG, agent())
+    await jam.tick(); jam.stop()
+    expect(cardOf(jam, a)!.state).toBe('asks')
+    expect([cardOf(jam, b)!.state, cardOf(jam, b)!.note]).toEqual(['done', 'answered'])
+    done()
+  })
+
+  it('an early line streamed after stop() is never posted', async () => {
+    const { root, dir, done } = setup()
+    const line = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'On it.' }] } })
+    const script = `setTimeout(()=>process.stdout.write(${JSON.stringify(line)}+'\\n'),400);setTimeout(()=>{},2000)`
+    const a: JamAdapter = { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: process.execPath, args: ['-e', script] }), parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText }
+    const jam = createJam(root, CFG, a)
+    say(root, dir, '@marver go')
+    void jam.tick()
+    await wait(150)
+    jam.stop()
+    await wait(800)
+    expect(agentReplies(dir)).toEqual([])
+    done()
+  })
+})

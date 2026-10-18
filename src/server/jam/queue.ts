@@ -501,15 +501,19 @@ export function upgrade(v1: JournalV1, ctx: Ctx, now = Date.now()): { j: Journal
       if (b.state === 'pending' || b.state === 'claimed') unfinished.add(id)
       const thread = threadId(ev)
       const frame = ev.frame ?? frames.get(thread)
+      // v1 skipped its final reply when it matched the early one: then the early line IS the final
       const final = events.find((e) => e.id === `jam-${b.batchId}`)
+        ?? (b.state === 'done' ? [...events].reverse().find((e) => new RegExp(`^jam-e\\d+-${b.batchId}$`).test(e.id)) : undefined)
       const tag = MENTION.test(ev.body ?? '') && isOwned(ctx, board, id)
       const card = (state: CardState, note: string): Card => ({
         id: `c-${id}`, kind: 'comment', board, frames: frame ? [frame] : [], thread, events: [id], state, note,
         batch: b.batchId, made: ev.ts, order: ev.ts, rev: 1, at: now,
       })
       if (final) {
-        const asks = final.asks ?? /\?\s*$/.test(final.body ?? '')
-        j.cards.push({ ...card(asks ? 'asks' : 'done', asks ? 'asks you' : 'replied'), reply: final.commentId, ...(asks ? { asked: final.ts } : {}) })
+        // a question the owner already answered (a ledgered reply after it) is done, not asking
+        const answered = events.some((e) => e.type === 'reply' && e.parentId === thread && !e.agent && e.ts > final.ts && isOwned(ctx, board, e.id))
+        const asks = !answered && (final.asks ?? /\?\s*$/.test(final.body ?? ''))
+        j.cards.push({ ...card(asks ? 'asks' : 'done', asks ? 'asks you' : answered ? 'answered' : 'replied'), reply: final.commentId, ...(asks ? { asked: final.ts } : {}) })
         j.batches.push({ batchId: b.batchId, members: [{ id: 'm1', card: `c-${id}`, board }], frames: frame ? [frame] : [], state: 'done', leaseUntil: 0,
           attempts: b.attempts, results: { m1: { body: final.body ?? '', asks, reanchors: [] } }, posted: true, at: now })
         continue
