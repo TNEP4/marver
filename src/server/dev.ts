@@ -140,7 +140,31 @@ function denyLocalSecrets(root: string): any {
   }
 }
 
+/** A canvas already runs in this folder (or one is starting): the line says where, or what to do. */
+export class DevLockError extends Error {}
+
 export async function dev(root: string, portFlag?: number) {
+  // one canvas per folder (#19): the lock comes first, so a second `marver dev` never starts a server
+  const { takeDevLock } = await import('./dev-lock.ts')
+  const lock = await takeDevLock(root)
+  if (!lock.ok) throw new DevLockError(lock.message)
+  // every way out releases it - a close, an exit, Ctrl-C or a kill (the signal is raised again
+  // once released, so the process still ends the way it was told to)
+  const { removeDevInfo } = await import('./work.ts')
+  const onExit = () => { removeDevInfo(root, lock.instance); lock.release() }
+  const onSignal = (sig: NodeJS.Signals) => { onExit(); process.kill(process.pid, sig) }
+  process.once('exit', onExit)
+  process.once('SIGINT', onSignal)
+  process.once('SIGTERM', onSignal)
+  process.once('SIGHUP', onSignal)
+  const unhook = () => {
+    process.off('exit', onExit); process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); process.off('SIGHUP', onSignal)
+    lock.release()
+  }
+  try { return await boot(root, portFlag, lock.instance, unhook) } catch (err) { unhook(); throw err }
+}
+
+async function boot(root: string, portFlag: number | undefined, instance: string, unhook: () => void) {
   const config = await loadConfig(root)
   const host = detectHost(root)
   const pkgDir = packageDir()
@@ -324,10 +348,10 @@ export async function dev(root: string, portFlag?: number) {
   const offBoards = onBoardsChanged((r) => { if (r === root) broadcast(workActivity.active()) })
   const sweep = setInterval(() => workActivity.sweep(), 15_000)
   sweep.unref?.()
-  writeDevInfo(root, port)
+  writeDevInfo(root, port, instance)
   {
     const close = server.close.bind(server)
-    server.close = (async () => { unsubscribe(); offBoards(); clearInterval(sweep); removeDevInfo(root); return close() }) as typeof server.close
+    server.close = (async () => { unsubscribe(); offBoards(); clearInterval(sweep); removeDevInfo(root, instance); unhook(); return close() }) as typeof server.close
   }
 
   // Comments written OUTSIDE the shell - an agent's `comments new` / `reply` / `resolve`, a sync

@@ -10,10 +10,11 @@
  * A single daemon per repo is enforced by an advisory pid lock; a second dev server on the
  * same root runs without the jam loop.
  */
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { deviceId } from './device.ts'
+import { createExclusive, pidRuns } from '../dev-lock.ts'
 import type { Journal } from './types.ts'
 
 const localDir = (root: string) => join(root, 'design', '.local')
@@ -64,30 +65,36 @@ export function baseline(root: string, existingIds: string[]): Journal {
 
 // ---- advisory single-daemon lock (pid file with stale reclaim) --------------------------------
 
-const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch { return false } }
+const holderOf = (file: string): number => { try { return parseInt(readFileSync(file, 'utf8').trim(), 10) || 0 } catch { return 0 } }
+const exists = (err: unknown) => (err as NodeJS.ErrnoException).code === 'EEXIST'
 
-/** Acquire the repo's jam lock. Returns true if this process now holds it. A lock left by a dead
- *  process is reclaimed; a lock held by a live process is respected (that daemon runs the loop). */
+/** Acquire the repo's jam lock. Returns true if this process now holds it. A lock held by a live
+ *  process is respected (that daemon runs the loop). A lock left by a dead process is reclaimed the
+ *  way dev.lock is (spec 27 Part 7): under `jam.lock.reclaim`, created exclusively, re-reading the
+ *  lock and replacing it only if it still names the same dead pid - so two daemons starting at once
+ *  can never both reclaim it. Another start mid-reclaim (or a crashed one) means no loop here. */
 export function acquireLock(root: string): boolean {
   const dir = localDir(root)
   mkdirSync(dir, { recursive: true })
   const file = lockFile(root)
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(file, 'wx', 0o600)   // O_EXCL: fails if the lock exists
-      try { writeSync(fd, String(process.pid)) } finally { closeSync(fd) }
-      return true
-    } catch {
-      // Lock exists. Read the holder and decide - never steal a lock we cannot prove is dead.
-      let holder = 0
-      try { holder = parseInt(readFileSync(file, 'utf8').trim(), 10) || 0 } catch { /* unreadable */ }
-      if (!holder) return false               // empty/unreadable: mid-creation or foreign - back off
-      if (holder === process.pid) return true  // we already hold it (idempotent)
-      if (alive(holder)) return false          // a live foreign daemon owns it
-      try { rmSync(file, { force: true }) } catch { return false }   // dead holder: reclaim + retry
-    }
+  const take = (): boolean => {
+    try { createExclusive(file, String(process.pid)); return true } catch (err) { if (exists(err)) return false; throw err }
   }
-  return false
+  try {
+    if (take()) return true
+    // Lock exists. Read the holder and decide - never steal a lock we cannot prove is dead.
+    const holder = holderOf(file)
+    if (!holder) return false                // unreadable or foreign - back off
+    if (holder === process.pid) return true   // we already hold it (idempotent)
+    if (pidRuns(holder)) return false         // a live foreign daemon owns it
+    const reclaim = `${file}.reclaim`
+    try { createExclusive(reclaim, String(process.pid)) } catch (err) { if (exists(err)) return false; throw err }
+    try {
+      if (holderOf(file) !== holder) return false   // someone else took it in between
+      unlinkSync(file)
+      return take()
+    } finally { try { unlinkSync(reclaim) } catch { /* gone */ } }
+  } catch { return false }
 }
 
 /** Release the lock if we own it (best-effort). */

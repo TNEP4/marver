@@ -63,14 +63,18 @@ for (const [name, desc] of [
     .option('--root <dir>', 'Host repo root', { default: '.' })
     .option('--port <port>', 'Port (default 5199)')
     .action(async (opts) => {
-      const { dev } = await import('../server/dev.ts')
+      const { dev, DevLockError } = await import('../server/dev.ts')
       let port: number | undefined
       if (opts.port !== undefined) {
         const n = Number(opts.port)
         if (Number.isInteger(n) && n > 0 && n < 65536) port = n
         else console.warn(`[${NAME}] ignoring invalid --port "${opts.port}"`)
       }
-      await dev(resolve(opts.root), port)
+      try { await dev(resolve(opts.root), port) } catch (err) {
+        if (!(err instanceof DevLockError)) throw err
+        console.error(`\n  ${err.message}\n`)
+        process.exit(1)
+      }
     })
 }
 

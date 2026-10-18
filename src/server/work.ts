@@ -10,10 +10,11 @@
  * process that can read the repo - the owner's own tools - is trusted by definition.
  * Presence itself NEVER touches disk (activity.ts).
  */
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createActivity, type Activity } from './jam/activity.ts'
+import { pidRuns } from './dev-lock.ts'
 import { listBoardFiles } from './boards.ts'
 
 /** One per process - the dev server, the jam daemon, and the API all share it. */
@@ -31,21 +32,35 @@ export const WORK_TTL_DEFAULT = 10 * 60_000
 
 const infoPath = (root: string) => join(root, 'design', '.local', 'dev.json')
 
-/** Written once per boot (dev.ts), removed on close - the CLI's discovery + credential. */
-export function writeDevInfo(root: string, port: number): string {
+/** The instance each root's dev.json was last written with by THIS process - what `removeDevInfo`
+ *  compares by default, so a server that stops never deletes the file of the canvas that still runs. */
+const written = new Map<string, string>()
+
+/** Written once per boot (dev.ts), removed on close - the CLI's discovery + credential. It names its
+ *  server (`pid`, `instance`): a file whose pid is gone is ignored, and only its own server removes it. */
+export function writeDevInfo(root: string, port: number, instance: string = randomUUID()): string {
   const token = randomBytes(24).toString('base64url')
   mkdirSync(join(root, 'design', '.local'), { recursive: true })
-  writeFileSync(infoPath(root), JSON.stringify({ port, token, ts: Date.now() }, null, 2) + '\n')
+  writeFileSync(infoPath(root), JSON.stringify({ port, token, pid: process.pid, instance, ts: Date.now() }, null, 2) + '\n')
+  written.set(root, instance)
   return token
 }
 
-export function removeDevInfo(root: string): void {
-  try { rmSync(infoPath(root), { force: true }) } catch { /* best effort */ }
+/** Remove dev.json if it is still this server's (`instance`, by default the one this process wrote). */
+export function removeDevInfo(root: string, instance: string | undefined = written.get(root)): void {
+  try {
+    const v = JSON.parse(readFileSync(infoPath(root), 'utf8'))
+    if (!instance || v?.instance !== instance) return
+    rmSync(infoPath(root), { force: true })
+    if (written.get(root) === instance) written.delete(root)
+  } catch { /* gone or unreadable - not ours to touch */ }
 }
 
 export function readDevInfo(root: string): { port: number; token: string } | null {
   try {
     const v = JSON.parse(readFileSync(infoPath(root), 'utf8'))
+    // a server that died without cleaning up (kill -9, a crash) left its file behind: not a canvas
+    if (v?.pid !== undefined && !pidRuns(v.pid)) return null
     return typeof v?.port === 'number' && typeof v?.token === 'string' ? { port: v.port, token: v.token } : null
   } catch { return null }
 }
