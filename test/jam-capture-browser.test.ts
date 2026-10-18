@@ -201,4 +201,49 @@ describe('captures in the browser', () => {
     await browser!.eval(s, `(() => { const f = document.querySelector('.sh-node[data-node="${k}"] iframe'); f.contentWindow.dispatchEvent(new f.contentWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return 1 })()`)
     await until(`!window.__mvJamCapture.getState().current`, 5000)
   }, 60_000)
+
+  skippable('the notes card: N opens it, E and S typed in it are letters, ⏎ adds a note and keeps it open, Esc closes it - only a second Esc drops the capture', async () => {
+    await key('s')
+    await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await key('n')
+    await until(`!!document.querySelector('.jm-notes textarea, .jm-notes input')`, 3000)
+    await browser!.eval(s, `document.querySelector('.jm-notes textarea, .jm-notes input').focus(), 1`)
+    for (const ch of 'see E S') await browser!.send('Input.insertText', { text: ch }, s)
+    await enter()
+    await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.steps ?? []).some((x) => x.event === 'note' && x.text === 'see E S')`, 3000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(id)            // E and S never fired
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().noteOpen`)).toBe(true)
+    await browser!.send('Input.insertText', { text: 'left in the field' }, s)
+    const esc = async () => { const b = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }; await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...b }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...b }, s) }
+    await esc()
+    await until(`!window.__mvJamCapture.getState().noteOpen`, 3000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(id)            // closing the card never drops
+    await key('e')                                                                           // text never added is the last note
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 15_000)
+    const rec = await browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
+    expect(rec.record.timeline.filter((x: any) => x.event === 'note').map((x: any) => x.text)).toEqual(['see E S', 'left in the field'])
+    // its read-back is open; closed, a click on its tile opens it again, the tile selected
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 5000)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await click(`.jm-lane [data-tile="${id}"]`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)} && window.__mvJamUi.getState().selected === ${JSON.stringify(id)}`, 5000)
+    // K keeps it - its comment posts, it is never queued, and with nothing else pending the lane leaves
+    await key('k')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'kept')`, 10_000)
+    await until(`window.__mvComments.getState().threads.some((t) => t.capture === ${JSON.stringify(id)})`, 10_000)
+    await until(`!document.querySelector('.jm-lane')`, 5000)
+  }, 120_000)
+
+  skippable('Esc with no notes card open drops the capture; S with one open seals it and starts the next', async () => {
+    await key('s')
+    await until(`!!window.__mvJamCapture.getState().current`)
+    const first = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await key('s')
+    await until(`window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(first)}`, 3000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(first)} && c.state === 'draft')`, 15_000)
+    const b = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...b }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...b }, s)
+    await until(`!window.__mvJamCapture.getState().current`, 3000)
+  }, 60_000)
 })
