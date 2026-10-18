@@ -56,6 +56,18 @@ export function goalText(packet: JobPacket, subagents = true): string {
     packet.exclusive
       ? `THIS JOB RUNS ALONE. It may edit the frames in \`frames\` and these shared files, for this ask only: ${packet.exclusive.files.join(', ')}.`
       : 'EDIT ONLY THE FRAMES THE PACKET RESERVES (`frames`). If the same fix belongs on a sibling frame, name it in your reply as a frame link instead - the owner tags there if they want it. NEVER edit a shared file (a file under design/ that is not one of those frames: a _kit, providers, a layout): if the ask needs one, edit nothing and answer that member with `shared` (below) - the job comes back to you alone, allowed to edit it.',
+    ...(packet.members.some((m) => m.brief.capture) ? [
+      'A member with `brief.capture` is a CAPTURE: what the owner said and did, recorded as they worked. Its',
+      '`record.timeline` merges their words, the NOTES they wrote (`note` steps - their words to you, often naming',
+      'what the words point at), their picks and clicks (element bundles with `source` = file:line:col), and every UI',
+      'step (frames selected, device, theme, copies, interactive mode) - those steps are context, not asks. `edited`',
+      'is their own edit of the words and wins over the transcript. A capture has NO category: read each distinct ask',
+      'for what it is (a fix, a change, a question, an idea to note), do them in order, and report per item in that',
+      'member\'s reply; one that is only a note gets a reply and no edit. `capture.note` "kept - not an ask" or',
+      '"dropped - not an ask" means the capture is context for the tag that is the ask. `reviewed` is the run they',
+      'were reviewing when they captured: its ask and your result, so "use your second suggestion" can be done.',
+      '',
+    ] : []),
     'Locate the element in the source by `data-mv-loc` (file:line) when the brief has one, else by its visible',
     'text / testid / selector, make the change, and keep the edit atomic.',
     '',
