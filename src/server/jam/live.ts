@@ -12,11 +12,21 @@ export interface QueueView {
     waiting?: string     // why a queued card is held
     exclusive?: boolean
     batch?: string       // the batch that ran it last - a page folds one batch's failures into one notice
+    // captures (the lane, the review): its first words, the run it is in, the run's shots, its reply
+    title?: string
+    inRun?: boolean
+    shots?: { frame: string; before?: string; after?: string }[]
+    reviewing?: { card: string; batch: string; rev: number }
+    edited?: string
+    notes?: number
   })[]
+  /** the lane's run, while one lasts (captures made since then) */
+  run?: { since: number }
 }
 
 export const jamLive: {
   poke?: () => void
   view?: () => QueueView
-  act?: (id: string, rev: number, action: string) => Promise<{ ok: boolean; card?: unknown; error?: string }>
+  act?: (id: string, rev: number, action: string, body?: string) => Promise<{ ok: boolean; card?: unknown; error?: string }>
+  capture?: (record: unknown) => Promise<{ ok: boolean; card?: unknown; error?: string }>
 } = {}

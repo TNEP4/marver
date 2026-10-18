@@ -39,7 +39,7 @@ export function readRaw(root: string): { v2?: Journal; v1?: JournalV1 } {
     if (j.version !== 2 || !Array.isArray(j.cards)) return {}
     return { v2: { version: 2, device: j.device, baselined: !!j.baselined, seen: j.seen, cards: j.cards, batches: j.batches,
       covered: j.covered && typeof j.covered === 'object' ? j.covered : {}, legacy: Array.isArray(j.legacy) ? j.legacy : [],
-      ...(typeof j.upgraded === 'number' ? { upgraded: j.upgraded } : {}) } }
+      ...(typeof j.upgraded === 'number' ? { upgraded: j.upgraded } : {}), ...(j.run && typeof j.run.since === 'number' ? { run: { since: j.run.since } } : {}) } }
   } catch { return {} }
 }
 

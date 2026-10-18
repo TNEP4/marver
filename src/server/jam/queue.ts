@@ -17,7 +17,8 @@ import { listBoards, readLog, replay, type CommentEvent } from '../comments.ts'
 import { owned as ownedSet } from './ledger.ts'
 import { fresh, readRaw, write } from './journal.ts'
 import { buildPacket, packetPath, sanitize, threadId } from './packet.ts'
-import type { Batch, Brief, Card, CardState, Journal, JournalV1, Member, Msg, PacketMember, Result } from './types.ts'
+import type { Batch, Brief, Card, CardState, CaptureRecord, Journal, JournalV1, Member, Msg, PacketMember, Payload, Result } from './types.ts'
+import { captureFrames, captureWords, factsOf, hashOf, madeOf, readCapture } from './capture.ts'
 
 export const MENTION = /@marver\b/i
 /** A batch holds at most this many cards; the next waits for the next batch. */
@@ -68,6 +69,9 @@ export function ingest(j: Journal, ctx: Ctx, now = Date.now()): boolean {
       if (ev.type !== 'create' && ev.type !== 'reply' && ev.type !== 'edit') { seen.add(k); continue }
       if (!isOwned(ctx, board, ev.id)) continue
       seen.add(k)
+      // a capture's comment and a More work reply are written by their own recoverable steps (the
+      // card is already theirs): never a card of their own, whatever the words say
+      if (ev.capture || ev.id.startsWith('mw-') || ev.id.startsWith('cap-')) continue
       if (ev.type === 'edit') { changed = edited(j, board, events, ev, now) || changed; continue }
       const thread = threadId(ev)
       if (MENTION.test(ev.body ?? '')) {
@@ -102,9 +106,12 @@ function tagged(j: Journal, board: string, ev: CommentEvent, frame: string | und
   if (working) follows = working.id
   else if (asking) follows = asking.id
   else if (failed) follows = failed.id
-  const capture = on.find((c) => c.capture)?.capture
+  // every card on a capture's thread carries the capture - and all of its frames, reserved together
+  const capCard = on.find((c) => c.capture)
+  const capture = capCard?.capture
+  const frames = capCard ? [...capCard.frames] : frame ? [frame] : []
   j.cards.push({
-    id: `c-${ev.id}`, kind: 'comment', board, frames: frame ? [frame] : [], thread,
+    id: `c-${ev.id}`, kind: 'comment', board, frames, thread,
     ...(capture ? { capture } : {}), events: [ev.id], when: { [ev.id]: ev.ts }, state: 'queued', ...(follows ? { follows } : {}),
     made: ev.ts, order: ev.ts, rev: 1, at: now,
   })
@@ -184,7 +191,7 @@ export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', '
 
 /** One card action from the page (POST /jam/card). It applies only if the card is still at `rev`
  *  (two tabs cannot both decide); anything not allowed answers with the current card. */
-export function act(j: Journal, id: string, rev: number, action: string, now = Date.now()): { ok: boolean; card?: Card; error?: string } {
+export function act(j: Journal, id: string, rev: number, action: string, now = Date.now(), body?: string): { ok: boolean; card?: Card; error?: string } {
   const c = j.cards.find((x) => x.id === id)
   if (!c) return { ok: false, error: 'no such card' }
   if (c.rev !== rev) return { ok: false, card: c, error: 'the card changed - look again' }
@@ -199,7 +206,12 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
     c.rev += 1; c.at = now
     return { ok: true, card: c }
   }
-  // confirm, edit and the verdicts arrive with captures (M2)
+  if (action === 'edit' && capture && c.state === 'draft' && typeof body === 'string') {
+    c.payload = { ...c.payload!, edited: body.slice(0, 20_000) }; c.rev += 1; c.at = now
+    return { ok: true, card: c }
+  }
+  if (action === 'later' && c.state === 'review') return { ok: true, card: c }
+  // confirm, keep from the read-back, good and more are recoverable steps the daemon runs (daemon.ts)
   return { ok: false, card: c, error: `${action} is not allowed on this card` }
 }
 
@@ -257,6 +269,17 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     asks: c.events.map((id) => msgs.find((e) => e.id === id) ?? events.find((e) => e.id === id)).filter((e): e is CommentEvent => !!e).map(toMsg),
     history: msgs.filter((e) => !asks.has(e.id)).map(toMsg),
   }
+  // every card on a capture's thread carries the capture: its record, your edit, the run it reviewed -
+  // as context ("kept - not an ask") once the capture itself was kept or dropped
+  if (c.capture) {
+    const capCard = j.cards.find((x) => x.id === c.capture)
+    const cap = readCapture(ctx.root, c.capture)
+    if (cap && capCard?.payload) {
+      const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
+      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited ? { edited: capCard.payload.edited } : {}),
+        ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
+    }
+  }
   const followed = c.follows ? j.cards.find((x) => x.id === c.follows) : undefined
   // a run is named by its batch: the card's current one, or - requeued or merged since - its last in `ran`
   const lastRun = (x: Card) => x.batch ?? x.ran?.[x.ran.length - 1]
@@ -279,7 +302,16 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
 /** Are a card's asks still the owner's? Each must be in its board's log and ledgered; the ones that
  *  are not are dropped, and a card with none left is dropped ("no longer authorized"). */
 function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number): boolean {
-  if (c.kind !== 'comment') return true   // captures and wrap-ups are checked by their own seal (M2)
+  if (c.kind === 'capture') {
+    // the sealed record and the confirmed edit must be what was ledgered at confirm: a capture file
+    // edited after the seal, or an edit changed after confirm, stops the job
+    const cap = readCapture(ctx.root, c.id)
+    const ok = !!cap && !!c.payload && cap.hash === c.payload.recordHash && isOwned(ctx, c.board, payloadKey(c))
+      && c.events.every((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))
+    if (!ok) set(c, 'failed', now, 'the capture changed after it was confirmed - capture it again')
+    return ok
+  }
+  if (c.kind !== 'comment') return true   // wrap-ups are checked by their own seal (M4)
   const ok = c.events.filter((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))
   if (ok.length !== c.events.length) { c.events = ok; c.rev += 1; c.at = now }
   if (!ok.length) { set(c, 'dropped', now, 'no longer authorized'); return false }
@@ -568,6 +600,110 @@ export function answers(root: string): { answered: Answer[]; earlier: Answer[] }
   return out
 }
 
+// ---- captures --------------------------------------------------------------------------------------
+
+/** The ledger key that binds a confirmed capture's payload: its record hash and your edit. */
+export const payloadKey = (c: Card): string => `cap:${c.id}:${hashOf({ recordHash: c.payload?.recordHash ?? '', edited: c.payload?.edited ?? '' })}`
+
+/** A sealed capture becomes a draft card (once - a second post finds it). A capture made during a
+ *  review follows the reviewed card and keeps the run it saw (`reviewing`). */
+export function addCapture(j: Journal, record: CaptureRecord, hash: string, now = Date.now()): Card {
+  const have = j.cards.find((c) => c.id === record.id)
+  if (have) return have
+  const made = madeOf(record.id) || now
+  const r = record.context.reviewing
+  const c: Card = {
+    id: record.id, kind: 'capture', board: record.context.board, frames: captureFrames(record), capture: record.id, events: [],
+    state: 'draft', made, order: made, rev: 1, at: now, payload: { recordHash: hash },
+    ...(r ? { reviewing: r, follows: r.card } : {}),
+  }
+  j.cards.push(c)
+  touchRun(j, now)
+  return c
+}
+
+/** The comment a capture writes at confirm: its words as confirmed (cut at 600 characters - the full
+ *  text stays in the record), its facts, the capture it stands for; pinned on the first point, else
+ *  its first frame, else the board. Deterministic ids, so a resumed confirm writes it once. */
+export function captureComment(c: Card, record: CaptureRecord, at: { frame?: string; anchor?: unknown }, author: CommentEvent['author'], now = Date.now()): CommentEvent {
+  const words = captureWords(record, c.payload?.edited)
+  return {
+    id: `cap-${c.id}-e`, ts: now, type: 'create', commentId: `cap-${c.id}`, board: c.board, author,
+    body: (words.length > 600 ? words.slice(0, 599) + '…' : words) || '(a capture with no words)',
+    capture: c.id, facts: factsOf(record),
+    ...(at.frame ? { frame: at.frame } : {}), ...(at.anchor !== undefined ? { anchor: at.anchor } : {}),
+  }
+}
+
+/** Begin a recoverable step on a card: the exact comment it will write is in the journal first. */
+export function beginStep(j: Journal, c: Card, op: 'confirm' | 'more', event: CommentEvent, now = Date.now(), end?: 'queued' | 'kept') {
+  c.pending = { op, event, ...(end ? { end } : {}) }
+  if (op === 'confirm') {
+    c.state = 'confirming'
+    // the run this capture reviewed, frozen once into its payload (`payload.reviewed`)
+    const r = c.reviewing && j.batches.find((b) => b.batchId === c.reviewing!.batch)
+    const m = r && r.members.find((x) => x.card === c.reviewing!.card)
+    if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], result: resultText(j, r!.batchId, m.card, r!.note ?? '') } }
+  }
+  c.rev += 1; c.at = now
+}
+
+/** Did a comment already in the log under the step's id say exactly what the step would write? */
+export const sameComment = (a: CommentEvent, b: CommentEvent): boolean =>
+  a.type === b.type && a.commentId === b.commentId && (a.parentId ?? '') === (b.parentId ?? '') && (a.body ?? '') === (b.body ?? '') && (a.author?.email ?? a.author?.name ?? '') === (b.author?.email ?? b.author?.name ?? '')
+
+/** A step whose comment is written and ledgered ends: a confirm leaves the card queued (or kept), on
+ *  its thread - and a capture made during a review sends that review back as More work, if the card
+ *  is still in review from the run the capture saw, at the rev it saw (no @marver reply: this card is
+ *  the one job). More work puts the SAME card back, first, with your words as its follow-up ask. */
+export function endStep(j: Journal, c: Card, now = Date.now()): Settled[] {
+  const p = c.pending
+  if (!p) return []
+  c.pending = undefined
+  if (p.op === 'confirm') {
+    c.thread = p.event.commentId
+    set(c, p.end ?? 'queued', now, p.end === 'kept' ? 'kept, not sent' : undefined)
+    if (p.end !== 'kept' && c.reviewing) {
+      const r = j.cards.find((x) => x.id === c.reviewing!.card)
+      if (r && r.state === 'review' && r.batch === c.reviewing.batch && r.rev === c.reviewing.rev) set(r, 'done', now, 'more work')
+    }
+    touchRun(j, now)
+    return [{ card: c }]
+  }
+  c.events = [...c.events, p.event.id]
+  c.when = { ...c.when, [p.event.id]: p.event.ts }
+  return [{ card: requeue(j, c, now, true) }]
+}
+
+/** A step that found another comment in its place fails closed: nothing is ledgered, the card goes
+ *  back to where it was, and says so. */
+export function conflictStep(j: Journal, c: Card, now = Date.now()) {
+  const p = c.pending
+  c.pending = undefined
+  set(c, p?.op === 'confirm' ? 'draft' : 'review', now, 'a conflicting comment took this one\'s place - write it again')
+}
+
+/** Looks good: done, and its thread resolved - unless a newer card on the thread is open, or an owner
+ *  reply or edit arrived after its frozen brief (that answer stays open, on the answered list). */
+export function looksGood(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[], now = Date.now()): { resolve: boolean } {
+  const newer = j.cards.some((x) => x !== c && x.board === c.board && x.thread === c.thread && pending(x) && x.made > c.made)
+  const seenUpTo = Math.max(0, ...[...(c.brief?.asks ?? []), ...(c.brief?.history ?? [])].map((m) => m.ts))
+  const after = events.some((e) => !e.agent && e.ts > seenUpTo && isOwned(ctx, c.board, e.id) && (e.type === 'edit' || (e.type === 'reply' && e.parentId === c.thread)) && !e.id.startsWith('mw-'))
+  set(c, 'done', now, 'looks good')
+  touchRun(j, now)
+  return { resolve: !!c.thread && !newer && !after }
+}
+
+/** The lane's run: the captures made since the lane last appeared. It lasts while any of them is
+ *  pending (or a session runs - M4) and ends when every one is done, kept or dropped. */
+export function touchRun(j: Journal, now = Date.now()) {
+  const lane = j.cards.filter((c) => c.kind === 'capture' || c.kind === 'wrapup')
+  const live = lane.filter((c) => pending(c))
+  if (!j.run && live.length) j.run = { since: Math.min(...live.map((c) => c.made)) }
+  else if (j.run && !live.length) j.run = undefined
+  void now
+}
+
 // ---- the queue: one lock, one writer -----------------------------------------------------------
 
 export interface Queue {
@@ -600,7 +736,9 @@ export function createQueue(root: string, onUpgrade?: (fence: number[]) => void,
         if (!alive()) throw new Error('jam stopped')
         ctx = ctxFor(root)
         if (ingest(j, ctx)) write(root, j)
-        return fn(j, ctx)
+        const out = await fn(j, ctx)
+        touchRun(j)   // the lane's run follows every change
+        return out
       })
       tail = run.catch(() => {})
       return run

@@ -53,9 +53,37 @@ export interface Msg {
 export interface Brief {
   asks: Msg[]
   history: Msg[]
-  capture?: unknown          // a capture's frozen payload (M2)
+  capture?: Payload          // a capture's frozen payload: the record, your edit, the reviewed run
   follows?: { asks: Msg[]; result: string }
 }
+
+// ---- captures (Part 3) ---------------------------------------------------------------------------
+
+/** An element as a frame describes it (safeBundle): never a field's value or a secret's words. */
+export interface Bundle { tag?: string; quote?: string; testId?: string; ariaLabel?: string; role?: string; cssPath?: string; source?: string }
+export interface View { board?: string; frames?: string[]; theme?: string; viewport?: string; width?: number; height?: number; variant?: string; zoom?: number; mode?: string }
+export type Step = { at: number; frame?: string } & (
+  | { event: 'words'; text: string; words?: { w: string; at: number }[] }
+  | { event: 'note'; text: string }
+  | { event: 'pick' | 'click' | 'hover'; point?: number; bundle: Bundle; mode: 'canvas' | 'interact' | 'play'; selects?: boolean }
+  | { event: 'field'; bundle: Bundle; value: string }
+  | { event: 'screen'; to: string } | { event: 'scroll'; y: number }
+  | { event: 'view'; view: View }
+  | { event: 'select'; frames: string[] }
+  | { event: 'device'; frame: string; viewport: string; width: number; height: number }
+  | { event: 'theme'; theme: 'light' | 'dark' }
+  | { event: 'copied'; what: 'path' | 'image'; frame: string }
+  | { event: 'interact'; on: boolean }
+  | { event: 'picture'; id: string; why: 'key' | 'pick' | 'end' }
+  | { event: 'missing'; what: string })
+/** The sealed capture (design/.local/jam/captures/<id>.json). No category: a capture is what you said and did. */
+export interface CaptureRecord {
+  format: 'marver.jam.capture'; v: 1; id: string
+  context: { canvas: string; board: string; session?: string; reviewing?: { card: string; batch: string; rev: number } }
+  view: View; timeline: Step[]; pictures: string[]
+}
+/** What a capture card's brief carries, frozen at confirm. `note` marks a capture that is context, not an ask. */
+export interface Payload { record: CaptureRecord; recordHash: string; edited?: string; reviewed?: { asks: Msg[]; result: string }; note?: string }
 
 export interface Card {
   id: string                 // 'c-' + the first event id, or the capture / wrap-up id
@@ -76,6 +104,14 @@ export interface Card {
   note?: string              // why it is where it is
   resolved?: boolean         // the thread was resolved while the card was working
   exclusive?: string[]       // runs alone and may edit these shared files (a `shared` answer)
+  /** a capture card: the sealed record's hash, your edit (with its hash, ledgered at confirm) and the
+   *  reviewed run it followed - what every brief on its thread carries */
+  payload?: { recordHash: string; edited?: string; editedHash?: string; reviewed?: { asks: Msg[]; result: string } }
+  /** the run on screen when this capture started (a capture made during a review) */
+  reviewing?: { card: string; batch: string; rev: number }
+  /** a recoverable step in flight - confirm (or keep from the read-back) and More work: the exact
+   *  comment it writes, so a crash resumes it and a retried request finds it done */
+  pending?: { op: 'confirm' | 'more'; end?: 'queued' | 'kept'; event: import('../../shared/events.ts').CommentEvent }
   shared?: number            // how many times it answered `shared` (a second one fails it)
   made: number               // when it was made - the lane's order
   order: number              // run position: `made`, unless Do next put it first
@@ -109,6 +145,8 @@ export interface Batch {
   note?: string              // why it failed (two failed attempts) - what a card that follows it reads
   undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns
   posted?: boolean           // every reply and reanchor of `results` is in the log
+  /** before and after pictures of every reserved frame, for a batch that holds a capture (picture ids) */
+  shots?: { frame: string; before?: string; after?: string }[]
   model?: string
   at: number
 }
@@ -128,6 +166,7 @@ export interface Journal {
   covered: Record<string, string>
   legacy: string[]
   upgraded?: number          // when a v1 journal became this one (the boot line says what changed)
+  run?: { since: number }    // the lane's run: captures made since then (queue.ts touchRun)
 }
 
 /** The 0.25 journal, read once by the upgrade. */

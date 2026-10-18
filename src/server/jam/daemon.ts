@@ -29,10 +29,12 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, answeredSince, createQueue, ctxFor, redelivering, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { act, addCapture, answeredSince, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
+import { captureFrames, checkRecord, firstPoint, readCapture, storeCapture } from './capture.ts'
+import { record as ledgerRecord } from './ledger.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -48,7 +50,9 @@ export interface JamCore {
   stop(): void
   snapshot(): Journal
   view(): QueueView
-  act(id: string, rev: number, action: string): Promise<{ ok: boolean; card?: Card; error?: string }>
+  act(id: string, rev: number, action: string, body?: string): Promise<{ ok: boolean; card?: Card; error?: string }>
+  /** A sealed capture from the page (POST /jam/capture): stored once, a draft card (or queued at once). */
+  capture(record: unknown): Promise<{ ok: boolean; card?: Card; error?: string }>
   /** ingest now (the page's comment route, right after it appends) */
   poke(): Promise<void>
 }
@@ -66,6 +70,9 @@ export interface JamHooks {
   anyHold?(): boolean
   /** The queue changed - push it to pages (sh:jam-queue). */
   queue?(): void
+  /** Shoot one frame into a jam picture (the dev server's shootFrame); null when it fails - a
+   *  missing picture, never a failed job. */
+  shoot?(frame: string, theme: string, entry: { capture?: string; batch?: string }): Promise<string | null>
   /** Find a re-pin's element in the rendered frame (the dev server's anchor check, as the CLI's
    *  `comments move`). Absent = the anchor is written unchecked. */
   anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[], look?: AnchorLook): Promise<AnchorCheck>
@@ -399,6 +406,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const sharedBefore = b.exclusive ? null : sharedMtimes(root)
     const touched = new Set<string>()
     for (const f of b.frames) light(f)
+    // a batch that holds a capture shoots its reserved frames before and after - both while it still
+    // holds them, so no other job's edit lands in between (a batch of tags alone shoots none)
+    const capturing = cards().some((c) => !!c.capture)
+    const theme = (() => { const c = cards().find((x) => x.capture); return (c && readCapture(root, c.capture!)?.record.view.theme) || 'light' })()
+    const shoot = async (when: 'before' | 'after') => {
+      if (!capturing || !hooks.shoot) return
+      const shots: NonNullable<Batch['shots']> = b.shots ?? b.frames.map((frame) => ({ frame }))
+      for (const s of shots) { if (stopped) return; const id = await hooks.shoot(s.frame, theme, { batch: b.batchId }).catch(() => null); if (id) s[when] = id }
+      await q.lock(() => { b.shots = shots; q.persist() })
+    }
+    if (!b.shots?.some((s) => s.before)) await shoot('before')   // a retry keeps the first attempt's
     const followWork = () => {
       for (const [id, mt] of sceneFrameMtimes(root)) if (startMtimes.get(id) !== mt) touched.add(id)   // created or edited
       for (const id of touched) light(id)
@@ -433,6 +451,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         log(`  jam: gave up on a batch of ${b.members.length} after ${b.attempts} attempts`)
         return
       }
+      await shoot('after')
       // results first: every member's result in ONE journal write, before anything is posted
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
       const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt).map(([f]) => f) : []
@@ -454,6 +473,92 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     } finally {
       clearGlow()
     }
+  }
+
+  // ---- captures: confirm, keep, Looks good, More work ------------------------------------------------
+
+  /** Write a card's pending comment (once - an event already there must say the same, or the step
+   *  fails closed), ledger it, and end the step. Under the lock; resumable at any point. */
+  const finishStep = (id: string) => q.lock((j) => {
+    const c = j.cards.find((x) => x.id === id)
+    const p = c?.pending
+    if (!c || !p) return c ? structuredClone(c) : undefined
+    const there = readLog(commentsDir, c.board).find((e) => e.id === p.event.id)
+    if (there && !sameComment(there, p.event)) { conflictStep(j, c); q.persist(); return structuredClone(c) }
+    if (!there) appendEvents(commentsDir, c.board, [p.event])
+    ledgerRecord(root, c.board, p.event.id)
+    if (p.op === 'confirm') ledgerRecord(root, c.board, payloadKey(c))
+    settled(endStep(j, c))
+    q.persist()
+    return structuredClone(c)
+  })
+
+  /** Confirm a draft (`end: queued`) or keep it from its read-back (`end: kept`): one recoverable step.
+   *  A retried request after a lost answer finds the step done and answers with the card. */
+  const confirm = async (id: string, rev: number, end: 'queued' | 'kept') => {
+    const c0 = q.j.cards.find((x) => x.id === id)
+    if (!c0 || c0.kind !== 'capture') return { ok: false, error: 'no such capture' }
+    if (c0.pending?.op === 'confirm') return { ok: true, card: await finishStep(id) }
+    if (c0.thread && (c0.state === end || (end === 'queued' && ['working', 'asks', 'review', 'done'].includes(c0.state)))) return { ok: true, card: structuredClone(c0) }
+    if (c0.state !== 'draft' || c0.rev !== rev) return { ok: false, card: structuredClone(c0), error: 'the card changed - look again' }
+    const cap = readCapture(root, id)
+    if (!cap || cap.hash !== c0.payload?.recordHash) return { ok: false, card: structuredClone(c0), error: 'the capture changed after it was sealed' }
+    // pinned on the first point (found in the rendered frame), else its first frame, else the board
+    const point = firstPoint(cap.record)
+    let at: { frame?: string; anchor?: unknown } = { frame: point?.frame ?? captureFrames(cap.record)[0] }
+    if (point?.frame && hooks.anchor) {
+      const target = point.bundle.quote && point.bundle.quote !== '•••' ? { on: point.bundle.quote } : point.bundle.testId && point.bundle.testId !== '•••' ? { at: point.bundle.testId } : point.bundle.cssPath ? { at: point.bundle.cssPath } : null
+      if (target) {
+        const check = await hooks.anchor(point.frame, target, [], undefined).catch(() => null)
+        if (check?.ok) at = { frame: point.frame, anchor: check.anchor }
+      }
+    }
+    const began = await q.lock((j) => {
+      const c = j.cards.find((x) => x.id === id)
+      if (!c || c.state !== 'draft' || c.rev !== rev) return null
+      beginStep(j, c, 'confirm', captureComment(c, cap.record, at, me()), Date.now(), end)
+      q.persist()
+      return true
+    })
+    if (!began) return { ok: false, card: structuredClone(q.j.cards.find((x) => x.id === id)!), error: 'the card changed - look again' }
+    const card = await finishStep(id)
+    reserve(); queueChanged(); void pump()
+    return { ok: card?.state === end, card, ...(card?.state === end ? {} : { error: card?.note }) }
+  }
+
+  /** More work on a review: your words post as an @marver reply in the capture's thread (a ledgered
+   *  `mw-` reply that mints no tag card) and the SAME card goes round again, first. Recoverable. */
+  const moreWork = async (id: string, rev: number, words: string) => {
+    const c0 = q.j.cards.find((x) => x.id === id)
+    if (c0?.pending?.op === 'more') return { ok: true, card: await finishStep(id) }
+    if (!words.trim()) return { ok: false, card: c0 && structuredClone(c0), error: 'say what more to do' }
+    const began = await q.lock((j) => {
+      const c = j.cards.find((x) => x.id === id)
+      if (!c || c.state !== 'review' || c.rev !== rev || !c.thread) return null
+      const who = me()
+      beginStep(j, c, 'more', { id: `mw-${c.id}-${c.rev}`, ts: Date.now(), type: 'reply', commentId: `mw-c-${c.id}-${c.rev}`, parentId: c.thread, board: c.board, author: who, body: `@marver ${words.trim()}`.slice(0, 20_000) })
+      q.persist()
+      return true
+    })
+    if (!began) { const c = q.j.cards.find((x) => x.id === id); return { ok: false, card: c && structuredClone(c), error: 'the card changed - look again' } }
+    const card = await finishStep(id)
+    reserve(); queueChanged(); void pump()
+    hooks.changed?.(card?.board ?? '')
+    return { ok: card?.state === 'queued', card }
+  }
+
+  /** Looks good: done, and the thread resolved (an ordinary owner resolve) unless something newer is open. */
+  const good = async (id: string, rev: number) => {
+    const r = await q.lock((j, ctx) => {
+      const c = j.cards.find((x) => x.id === id)
+      if (!c || c.state !== 'review' || c.rev !== rev) return { ok: false, card: c && structuredClone(c), error: 'the card changed - look again' }
+      const { resolve } = looksGood(j, ctx, c, readLog(commentsDir, c.board))
+      if (resolve && c.thread) appendEvents(commentsDir, c.board, [{ id: `rs-${c.id}-${rev}`, ts: Date.now(), type: 'resolve', commentId: c.thread, board: c.board, author: me() }])
+      q.persist()
+      return { ok: true, card: structuredClone(c) }
+    })
+    if (r.ok) { queueChanged(); hooks.changed?.(r.card!.board) }
+    return r
   }
 
   // ---- the scheduler --------------------------------------------------------------------------
@@ -565,6 +670,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let ready = false
   let recovering: Promise<void> | null = null
   const recover = () => recovering ??= (async () => {
+    // a confirm or a More work a crash interrupted resumes first: its comment is in the journal
+    for (const c of q.j.cards.filter((x) => x.pending)) await finishStep(c.id).catch((err) => log(`  jam: could not resume a step - ${(err as Error).message}`))
     const leftover = await q.lock((j) => {
       const out: { b: Batch; results: boolean }[] = []
       for (const b of j.batches) {
@@ -655,13 +762,33 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     await idle()
   }
 
+  /** What the lane and the review need of a capture card - its first words, whether it is in the
+   *  run, its last run's before and after pictures, the run it reviewed, your edit, its notes. */
+  const titles = new Map<string, { title: string; notes: number }>()
+  const captureView = (c: Card) => {
+    let t = titles.get(c.id)
+    if (!t) {
+      const rec = readCapture(root, c.id)?.record
+      const words = rec ? rec.timeline.flatMap((x) => (x.event === 'words' || x.event === 'note' ? [x.text] : [])).join(' ').replace(/\s+/g, ' ').trim() : ''
+      t = { title: words.slice(0, 80) || 'Capture', notes: rec ? rec.timeline.filter((x) => x.event === 'note').length : 0 }
+      if (rec) titles.set(c.id, t)
+    }
+    const b = q.j.batches.find((x) => x.batchId === c.batch)
+    return {
+      title: c.payload?.edited?.trim() ? c.payload.edited.trim().slice(0, 80) : t.title, notes: t.notes,
+      inRun: !!q.j.run && c.made >= q.j.run.since,
+      ...(b?.shots ? { shots: b.shots } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}),
+      ...(c.payload?.edited ? { edited: c.payload.edited } : {}),
+    }
+  }
   const view = (): QueueView => {
     const j = q.j
     const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
-    const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000)
+    const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000 || (!!j.run && c.kind !== 'comment' && c.made >= j.run.since))
     const exclusiveAhead = jamReservations.exclusive
     return {
       agent: adapter.name,
+      ...(q.j.run ? { run: q.j.run } : {}),
       cards: shown.map((c) => {
         const position = c.state === 'queued' ? queued.indexOf(c) + 1 : undefined
         const held = c.state === 'queued' ? c.frames.find((f) => hooks.held?.(f)) : undefined
@@ -673,6 +800,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,
           ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}), ...(c.batch ? { batch: c.batch } : {}),
           ...(position ? { position } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
+          ...(c.kind !== 'comment' ? captureView(c) : {}),
         }
       }),
     }
@@ -691,7 +819,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     snapshot() { return q.j },
     view,
-    async act(id, rev, action) {
+    async capture(raw) {
+      const rec = checkRecord(raw)
+      if (typeof rec === 'string') return { ok: false, error: rec }
+      const stored = storeCapture(root, rec)
+      if (typeof stored === 'string') return { ok: false, error: stored }
+      ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
+      const card = await q.lock((j) => { const c = addCapture(j, rec, stored.hash); q.persist(); return structuredClone(c) })
+      queueChanged()
+      // `jam.capture: 'at-once'`: no read-back - queued as soon as it is sealed
+      if (cfg.capture === 'at-once' && card.state === 'draft') return confirm(card.id, card.rev, 'queued')
+      return { ok: true, card }
+    },
+    async act(id, rev, action, body) {
+      const c = q.j.cards.find((x) => x.id === id)
+      if (c?.kind === 'capture' && (action === 'confirm' || (action === 'keep' && (c.state === 'draft' || c.state === 'confirming')))) return confirm(id, rev, action === 'confirm' ? 'queued' : 'kept')
+      if (action === 'good' && c && c.kind !== 'comment') return good(id, rev)
+      if (action === 'more' && c && c.kind !== 'comment') return moreWork(id, rev, body ?? '')
       // Retry on a card whose results are saved but were never posted posts them - it never reruns
       const saved = await q.lock((j) => {
         const c = j.cards.find((x) => x.id === id)
@@ -703,7 +847,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       })
       if (saved) { redeliver(saved.b, 1, 0); queueChanged(); return { ok: true, card: saved.card } }
       // the card as this action left it - a copy, so the next claim cannot change the answer under the caller
-      const r = await q.lock((j) => { const out = act(j, id, rev, action); if (out.ok) q.persist(); return { ...out, ...(out.card ? { card: structuredClone(out.card) } : {}) } })
+      const r = await q.lock((j) => { const out = act(j, id, rev, action, Date.now(), body); if (out.ok) q.persist(); return { ...out, ...(out.card ? { card: structuredClone(out.card) } : {}) } })
       if (r.ok) { reserve(); queueChanged(); void pump() }
       return r
     },
@@ -721,7 +865,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
  *  one merged glow, and its holds are also reservations (reserve.ts), restored here before
  *  anything is scheduled. Returns null when the adapter is unavailable or another dev server
  *  already holds the repo lock (that one runs the loop; this one watches without it). */
-export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor'], onQueue?: () => void): JamDaemon | null {
+export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor'], onQueue?: () => void, shoot?: JamHooks['shoot']): JamDaemon | null {
   const adapter: JamAdapter | null = adapters[cfg.agent] ?? null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
@@ -739,6 +883,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
     anyHold: () => activity.leases('cli').length > 0,
     queue: onQueue,
     anchor,
+    shoot,
   })
   let stopped = false
   let scheduled: ReturnType<typeof setTimeout> | null = null
@@ -752,7 +897,8 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   void core.tick()
   jamLive.poke = () => void core.poke()
   jamLive.view = () => core.view()
-  jamLive.act = (id, rev, action) => core.act(id, rev, action)
+  jamLive.act = (id, rev, action, body) => core.act(id, rev, action, body)
+  jamLive.capture = (record) => core.capture(record)
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.
@@ -764,7 +910,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       clearInterval(interval)
       watcher?.close()
       core.stop()
-      delete jamLive.poke; delete jamLive.view; delete jamLive.act
+      delete jamLive.poke; delete jamLive.view; delete jamLive.act; delete jamLive.capture
       jamReservations.frames.clear(); jamReservations.exclusive = null; jamReservations.settling = false
       releaseLock(root)
     },

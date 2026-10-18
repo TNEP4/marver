@@ -44,6 +44,10 @@ export interface CommentEvent {
   /** A jam reply (0.26): shared files the job changed though it was not given them - drawn as one
    *  line under the reply ("Also changed _kit.tsx"). */
   alsoChanged?: string[]
+  /** A capture's comment (0.26): the capture it stands for, and a short line of facts ("0:19 · 2 points
+   *  · 1 picture"). A thread draws it as a capture block; ingest never makes a card of it. */
+  capture?: string
+  facts?: string
   origin?: string                 // server-stamped 'local' on dev-owner writes; the daemon's owner-trigger key
 }
 
@@ -60,6 +64,8 @@ export interface Thread {
   agentMeta?: AgentMeta
   mentions?: Mention[]
   asks?: boolean
+  capture?: string                // a capture's comment (0.26)
+  facts?: string
   replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[]; asks?: boolean; alsoChanged?: string[] }[]
   reactions: Record<string, string[]>   // emoji -> author emails (toggle semantics)
 }
@@ -90,6 +96,7 @@ export function replay(events: CommentEvent[]): Thread[] {
       id: ev.commentId, board: ev.board, nodeKey: ev.nodeKey, frame: ev.frame,
       anchor: ev.anchor, author: ev.author, body: ev.body, ts: ev.ts,
       resolved: false, agent: ev.agent, agentMeta: ev.agentMeta, mentions: ev.mentions, asks: ev.asks, replies: [], reactions: {},
+      ...(ev.capture ? { capture: ev.capture, ...(ev.facts ? { facts: ev.facts } : {}) } : {}),
     })
   }
   for (const ev of ordered) {

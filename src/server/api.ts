@@ -44,13 +44,13 @@ function json(res: any, status: number, body: unknown) {
   res.end(JSON.stringify(body))
 }
 
-function readBody(req: any): Promise<string | null> {
+function readBody(req: any, limit = BODY_LIMIT): Promise<string | null> {
   return new Promise((done) => {
     let size = 0
     const chunks: Buffer[] = []
     req.on('data', (c: Buffer) => {
       size += c.length
-      if (size > BODY_LIMIT) { done(null); req.destroy() } else chunks.push(c)
+      if (size > limit) { done(null); req.destroy() } else chunks.push(c)
     })
     req.on('end', () => done(Buffer.concat(chunks).toString('utf8')))
     req.on('error', () => done(null))
@@ -982,11 +982,62 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (raw == null) return json(res, 400, { error: 'body too large' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         const { ACTIONS } = await import('./jam/queue.ts')
-        if (!b || typeof b.id !== 'string' || !Number.isInteger(b.rev) || !ACTIONS.includes(b.action)) return json(res, 400, { error: 'expected { id, rev, action }' })
+        if (!b || typeof b.id !== 'string' || !Number.isInteger(b.rev) || !ACTIONS.includes(b.action) || (b.body !== undefined && typeof b.body !== 'string')) return json(res, 400, { error: 'expected { id, rev, action, body? }' })
+        if ('kind' in b) return json(res, 400, { error: 'a capture has no category' })
         const { jamLive } = await import('./jam/live.ts')
         if (!jamLive.act) return json(res, 409, { error: 'jam is not running here' })
-        const r = await jamLive.act(b.id, b.rev, b.action)
+        const r = await jamLive.act(b.id, b.rev, b.action, b.body)
         return json(res, r.ok ? 200 : 409, r)
+      }
+      if (path === 'jam/capture' && req.method === 'POST') {
+        // the sealed capture at E: stored once, a draft card - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req, 4_000_000)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const { jamLive } = await import('./jam/live.ts')
+        if (!jamLive.capture) return json(res, 409, { error: 'jam is not running here' })
+        const r = await jamLive.capture(b?.record)
+        return json(res, r.ok ? 200 : 400, r)
+      }
+      if (path === 'jam/capture' && req.method === 'GET') {
+        // a capture's record, its edited text and its pictures' ids - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { readCapture } = await import('./jam/capture.ts')
+        const id = url.searchParams.get('id') ?? ''
+        const cap = readCapture(root, id)
+        if (!cap) return json(res, 404, { error: 'no such capture' })
+        const { jamLive } = await import('./jam/live.ts')
+        const card = jamLive.view?.().cards.find((c) => c.id === id)
+        return json(res, 200, { record: cap.record, ...(card?.edited ? { edited: card.edited } : {}), pictures: cap.record.pictures })
+      }
+      if (path === 'jam/picture' && req.method === 'POST') {
+        // shoot one capture picture into a new file - owner only; the capture must not be sealed yet
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const { CAPTURE_ID, readCapture, addPicture, sweepPictures } = await import('./jam/capture.ts')
+        if (!b || typeof b.capture !== 'string' || !CAPTURE_ID.test(b.capture) || typeof b.frame !== 'string') return json(res, 400, { error: 'expected { capture, frame, theme?, viewport? }' })
+        if (readCapture(root, b.capture)) return json(res, 409, { error: 'that capture is sealed' })
+        const theme = typeof b.theme === 'string' && /^[a-z0-9-]+$/i.test(b.theme) ? b.theme : 'light'
+        const { shootFrame } = await import('./shot.ts')
+        const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
+        const vp = typeof b.viewport === 'string' ? opts.viewports?.[b.viewport] : undefined
+        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId: b.frame, theme, origin, ...(vp ? { size: { w: vp.width, h: vp.height } } : {}) })
+        if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : 503, { error: r.error })
+        sweepPictures(root)
+        return json(res, 200, { id: addPicture(root, r.path, { frame: b.frame, capture: b.capture }) })
+      }
+      if (path === 'jam/picture' && req.method === 'GET') {
+        // one picture by its opaque id; the file must stay inside design/.local/jam/ - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { picturePath } = await import('./jam/capture.ts')
+        const p = picturePath(root, url.searchParams.get('id') ?? '')
+        if (!p) return json(res, 404, { error: 'no such picture' })
+        const png = readFileSync(p.path)
+        res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store' })
+        return res.end(png)
       }
       if (path === 'boards.rights' && req.method === 'GET') {
         // every board is commentable in dev; the published policy applies out there
