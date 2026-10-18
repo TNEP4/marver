@@ -10,12 +10,14 @@
 // touches laser/pick/anchor/highlight. It self-installs the pointer + message
 // listeners and returns { modeActive } so the host can guard its own nav clicks.
 //
-//   createInspect({ post, getId, onModeChange? })
+//   createInspect({ post, getId, onModeChange?, onLaserPick? })
 //     post(msg)        send a message up to the shell (parent)
 //     getId()          the frame id to stamp on posts (static on canvas, the
 //                      current stage frame in play - it swaps without reload)
 //     onModeChange?()  called after any laser/pick flip (the canvas bridge uses it
 //                      to report its interaction lease; the stage ignores it)
+//     onLaserPick?(el, e)  a laser click; returning true means a capture took it as its pick
+//                      (trail.js) - no sh:laser-copy then
 //
 //   shell -> frame : sh:laser · sh:pick · sh:copy-ok · sh:resolve-anchors · sh:highlight-anchor
 //   frame -> shell : sh:frame-down · sh:picked · sh:laser-copy · sh:anchor-rects
@@ -111,6 +113,81 @@ const elBundle = (el) => {
       hue: hueOf(el),
     },
   }
+}
+
+// ---- safeBundle: what a capture may carry out of a frame (spec 27, "Nothing secret leaves the frame")
+
+const FIELD = 'input, textarea, select'
+const EDITABLE = '[contenteditable]:not([contenteditable="false"])'
+const SECRET = /pass|secret|token|card|cc-|cvv|cvc|one-?time|otp/i
+const MASK = '•••'
+
+/** The words a field is known by: its type, name, id, autocomplete, aria-label, labels. */
+const fieldWords = (f) => {
+  const out = [f.getAttribute('type'), f.getAttribute('name'), f.id, f.getAttribute('autocomplete'), f.getAttribute('aria-label'), f.getAttribute('placeholder')]
+  for (const l of f.labels ?? []) out.push(l.textContent)
+  for (const ref of (f.getAttribute('aria-labelledby') ?? '').split(/\s+/)) if (ref) out.push(document.getElementById(ref)?.textContent)
+  return out.filter(Boolean).join(' ')
+}
+/** A field that holds a secret: a password, or one whose words say secret, token, card, cvv, one-time code. */
+export const sensitiveField = (f) => f instanceof Element && f.matches(FIELD) && (f.getAttribute('type') === 'password' || SECRET.test(fieldWords(f)))
+
+/** A sensitive context: the element is, contains, or sits inside a field or an editable region, or
+ *  relates to a secret field (a label for it, an element naming it). Such a bundle keeps only its
+ *  tag, its source and a css path without attribute values. */
+const sensitive = (el) => {
+  if (el.isContentEditable || el.closest(`${FIELD}, ${EDITABLE}`) || el.querySelector(`${FIELD}, ${EDITABLE}`)) return true
+  const label = el.closest('label')
+  const control = label?.control ?? (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.control : null)
+  if (control && sensitiveField(control)) return true
+  for (const ref of [el.getAttribute('aria-controls'), el.getAttribute('aria-describedby')]) {
+    const f = ref && document.getElementById(ref)
+    if (f && sensitiveField(f)) return true
+  }
+  return false
+}
+/** The text a person reads in it - every field and editable subtree skipped, whatever it is called. */
+const safeText = (el) => {
+  let t = ''
+  for (const n of el.childNodes) {
+    if (n.nodeType === 3) t += n.data
+    else if (n.nodeType === 1 && !n.matches(`${FIELD}, ${EDITABLE}, script, style, noscript, template`)) t += ' ' + safeText(n)
+  }
+  return t
+}
+/** A css path built from tags and positions only - no id, no attribute value. */
+const plainPath = (el) => {
+  const seg = []
+  for (let cur = el; cur && cur !== document.body && cur.nodeType === 1; cur = cur.parentElement) {
+    const tag = cur.tagName.toLowerCase()
+    let n = 1
+    for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling) if (sib.tagName === cur.tagName) n++
+    seg.unshift(n > 1 ? `${tag}:nth-of-type(${n})` : tag)
+  }
+  return seg.join(' > ')
+}
+
+/** The element as a capture records it - a pick, a click, a hover, a probe answer, a field. Built
+ *  on elBundle's shape; a sensitive context is masked. `point` (viewport px) adds where it was hit. */
+export function safeBundle(el, point) {
+  const r = el.getBoundingClientRect()
+  const where = point ? { pos: { fx: r.width ? Math.min(1, Math.max(0, (point.x - r.left) / r.width)) : .5, fy: r.height ? Math.min(1, Math.max(0, (point.y - r.top) / r.height)) : .5 } } : {}
+  const rect = { rect: { x: r.left, y: r.top, w: r.width, h: r.height } }
+  if (sensitive(el)) {
+    return { el: { semantics: { tag: el.tagName.toLowerCase(), role: MASK, ariaLabel: MASK, testId: MASK, quote: MASK }, cssPath: plainPath(el), source: el.dataset?.mvLoc ?? undefined, sensitive: true }, ...where, ...rect }
+  }
+  const b = elBundle(el)
+  b.el.semantics.quote = norm(safeText(el)).slice(0, 200) || undefined
+  return { ...b, ...where, ...rect }
+}
+
+/** What a field change records: the value only for a text, search, number or select field that is
+ *  not a secret one; anything else "changed (12 characters)". */
+export function fieldValue(f) {
+  const v = typeof f.value === 'string' ? f.value : ''
+  const type = (f.getAttribute('type') ?? 'text').toLowerCase()
+  const plain = f.matches('select') || (f.matches('input') && ['text', 'search', 'number'].includes(type))
+  return plain && !sensitiveField(f) ? v : `changed (${v.length} characters)`
 }
 
 const SKIP = 'script,style,noscript,template'
@@ -243,7 +320,7 @@ const checkTarget = ({ on, at, nth } = {}, others = []) => {
 }
 if (typeof window !== 'undefined') window.__mvAnchorCheck = checkTarget
 
-export function createInspect({ post, getId, onModeChange }) {
+export function createInspect({ post, getId, onModeChange, onLaserPick }) {
   let laserOn = false, pickOn = false
   // quiet pick (⇧L laser comment off): clicks still anchor comments, but NO hover outline,
   // label, or lock lighting inside the artwork - the shell decides, the frame obeys
@@ -299,6 +376,9 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
   }
 
   const applyModes = () => {
+    // one mode flag for the whole frame: the capture recorder records no click while it is set,
+    // so a pick is recorded once (trail.js)
+    window.__mvPick = modeActive()
     const cur = document.getElementById(LASER_ID)
     if (!modeActive()) { if (cur) cur.remove(); clearHover(); return }
     const s = cur ?? document.createElement('style')
@@ -422,7 +502,8 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
       if (!pickQuiet) applyLock(el, hueOf(el))
       clearHover()
       post({ type: 'sh:picked', id: getId(), anchor: anchorBundle(el, e) })
-    } else {
+    } else if (!onLaserPick?.(el, e)) {
+      // outside a capture a laser click copies the element's path; inside one it is the capture's pick
       copyEl = el
       post({ type: 'sh:laser-copy', id: getId(), seq: ++copySeq, path: cssPath(el), source: el.dataset.mvLoc ?? null })
     }
@@ -488,6 +569,7 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
       clearHover(); clearLock()
       document.getElementById(LASER_ID)?.remove()
       document.getElementById(BASE_ID)?.remove()
+      window.__mvPick = false
     },
   }
 }
