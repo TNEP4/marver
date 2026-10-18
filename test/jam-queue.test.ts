@@ -1111,3 +1111,100 @@ describe('Jam V2: review round 6 fixes', () => {
     done()
   }, 20_000)
 })
+
+describe('Jam V2: review round 7 fixes', () => {
+  it('a delivery in flight when the daemon stops never writes over its successor\'s journal', async () => {
+    const { root, dir, done } = setup()
+    const envelope = JSON.stringify({ result: 'Moved it.\n```marver-reanchor\n[{"thread":"T-1","on":"Pay"}]\n```' })
+    const a: JamAdapter = { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(envelope)})`] }), parse: claudeAdapter.parse }
+    let release!: () => void
+    let asked = false
+    const old = createJam(root, CFG, a, undefined, { anchor: () => { asked = true; return new Promise((r) => { release = () => r({ ok: false, unchecked: 'later' }) }) } })
+    appendEvents(dir, 'home', [{ id: 'T-1', ts: tick(), type: 'create', commentId: 'T-1', frame: 'demo/a', board: 'home', author: OWNER, body: '@marver move it' }])
+    record(root, 'home', 'T-1')
+    const run = old.tick()
+    for (let i = 0; i < 50 && !asked; i++) await wait(100)
+    old.stop()
+    const next = createJam(root, CFG, agent('ok', { delay: 5000 }))
+    const q = say(root, dir, '@marver queued one', { frame: 'demo/q' })
+    const z = say(root, dir, '@marver another', { frame: 'demo/q2' })
+    await next.poke()
+    const cz = cardOf(next, z)!
+    if (cz.state === 'queued') await next.act(cz.id, cz.rev, 'drop')
+    const want = JSON.stringify(readJournal(root).cards.map((c) => [c.id, c.state]))
+    release()
+    await run.catch(() => {})
+    await wait(300)
+    expect(JSON.stringify(readJournal(root).cards.map((c) => [c.id, c.state]))).toBe(want)
+    next.stop()
+    expect(q.id).toBeTruthy()
+    done()
+  }, 20_000)
+
+  it('a recovery waiting between post attempts stops with its daemon - it never touches the reservations after', async () => {
+    const { root, dir, done } = setup()
+    const t = say(root, dir, '@marver go', { frame: 'demo/a' })
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-n', made: t.ts, order: t.ts, rev: 2, at: now })
+    j.batches.push({ batchId: 'b-n', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { body: 'x', asks: false, reanchors: [] } } })
+    writeJournal(root, j)
+    const old = createJam(root, CFG, agent(), undefined, { changed: () => { throw new Error('push failed') } })
+    const run = old.tick()
+    await wait(300)
+    old.stop()
+    jamReservations.settling = true; jamReservations.frames.set('demo/z', 'successor')   // what a successor holds
+    await run
+    await wait(1500)
+    expect(jamReservations.settling).toBe(true)
+    expect(jamReservations.frames.get('demo/z')).toBe('successor')
+    jamReservations.settling = false; jamReservations.frames.clear()
+    done()
+  }, 20_000)
+
+  it('Retry on a member that never answered runs again - only a saved reply is posted again', async () => {
+    const { root, dir, done } = setup()
+    const a = say(root, dir, '@marver one', { frame: 'demo/a' })
+    const b = say(root, dir, '@marver two', { frame: 'demo/a' })
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    const card = (e: CommentEvent): Card => ({ id: `c-${e.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: e.commentId, events: [e.id], state: 'working', batch: 'b-mx', made: e.ts, order: e.ts, rev: 2, at: now, brief: { asks: [{ id: e.id, owner: true, rev: e.id, body: e.body!, ts: e.ts }], history: [] } })
+    j.cards.push(card(a), card(b))
+    j.batches.push({ batchId: 'b-mx', members: [{ id: 'm1', card: `c-${a.id}`, board: 'home' }, { id: 'm2', card: `c-${b.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now,
+      results: { m1: { body: 'one done', asks: false, reanchors: [] }, m2: { missing: true } } })
+    writeJournal(root, j)
+    let failing = true
+    const jam = createJam(root, CFG, agent(), undefined, { changed: () => { if (failing) throw new Error('push failed') } })
+    await jam.tick()
+    expect(cardOf(jam, b)!.state).toBe('failed')
+    expect(cardOf(jam, b)!.note).toBe('the agent did not answer this one')
+    failing = false
+    const cb = cardOf(jam, b)!
+    await jam.act(cb.id, cb.rev, 'retry')
+    await jam.tick(); jam.stop()
+    expect(cardOf(jam, b)!.state).toBe('done')
+    expect(packets(root).map((p) => p.members.map((m: any) => m.card))).toEqual([[`c-${b.id}`]])   // it really ran
+    done()
+  }, 30_000)
+
+  it('an early question answered while the job runs is recognised whatever words the final question uses', async () => {
+    const { root, dir, done } = setup()
+    const line1 = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Pill or outline?' }] } })
+    const line2 = JSON.stringify({ type: 'result', result: '```marver-reply ask\nShould I use the pill style?\n```' })
+    const script = `const L=${JSON.stringify([line1, line2])};process.stdout.write(L[0]+'\\n');setTimeout(()=>process.stdout.write(L[1]+'\\n'),500)`
+    const a: JamAdapter = { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: process.execPath, args: ['-e', script] }), parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText }
+    const jam = createJam(root, CFG, a)
+    const t = say(root, dir, '@marver the badge')
+    const run = jam.tick()
+    await wait(300)
+    say(root, dir, 'pill', { thread: t.commentId })
+    await run; jam.stop()
+    expect([cardOf(jam, t)!.state, cardOf(jam, t)!.note]).toEqual(['done', 'answered'])
+    expect(agentReplies(dir).map((r) => !!r.asks)).toEqual([false, false])
+    done()
+  })
+})

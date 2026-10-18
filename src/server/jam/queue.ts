@@ -444,7 +444,9 @@ export function undelivered(j: Journal, b: Batch, note: string, now = Date.now()
 export function redelivering(j: Journal, b: Batch, now = Date.now()) {
   for (const m of b.members) {
     const c = j.cards.find((x) => x.id === m.card)
-    if (c && c.state === 'failed' && c.batch === b.batchId) set(c, 'working', now, '')
+    const r = b.results?.[m.id]
+    // only a reply that was never posted goes back: a missing answer stays failed (its Retry reruns)
+    if (c && c.state === 'failed' && c.batch === b.batchId && r && 'body' in r) set(c, 'working', now, '')
   }
   b.undelivered = false
 }
@@ -563,7 +565,7 @@ export interface Queue {
 
 /** Load the journal - upgrading a v1 one, or starting fresh and baselining - and wrap it in the
  *  lock. `onUpgrade` gets the orphans to fence and runs once, before anything is scheduled. */
-export function createQueue(root: string, onUpgrade?: (fence: number[]) => void): Queue {
+export function createQueue(root: string, onUpgrade?: (fence: number[]) => void, alive: () => boolean = () => true): Queue {
   const raw = readRaw(root)
   let ctx = ctxFor(root)
   let j: Journal
@@ -578,6 +580,8 @@ export function createQueue(root: string, onUpgrade?: (fence: number[]) => void)
     ctx: () => ctx,
     lock<T>(fn: (j: Journal, ctx: Ctx) => T | Promise<T>): Promise<T> {
       const run = tail.then(async () => {
+        // a stopped daemon neither ingests nor writes: its server may already have a successor
+        if (!alive()) throw new Error('jam stopped')
         ctx = ctxFor(root)
         if (ingest(j, ctx)) write(root, j)
         return fn(j, ctx)
@@ -585,6 +589,6 @@ export function createQueue(root: string, onUpgrade?: (fence: number[]) => void)
       tail = run.catch(() => {})
       return run
     },
-    persist() { write(root, j) },
+    persist() { if (alive()) write(root, j) },
   }
 }

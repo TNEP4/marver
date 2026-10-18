@@ -162,12 +162,12 @@ export function canonicalShared(root: string, f: string): string | null {
  *  every tick ingests, claims what can run and waits until the work is idle. */
 export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log: (m: string) => void = () => {}, hooks: JamHooks = {}): JamCore {
   const commentsDir = join(root, 'design', 'comments')
+  let stopped = false
   const q0: Queue = createQueue(root, (fence) => {
     for (const pid of fence) fenceGroup(pid)
     log(`  jam: only comments that tag @marver start work now - plain replies are listed in \`npx marver marks\` for your agent`)
-  })
+  }, () => !stopped)
 
-  let stopped = false
   // a stopped daemon never writes the journal again: a timer or a delivery still in flight when it
   // stopped must not overwrite what the server that replaced it wrote
   const q: Queue = {
@@ -308,6 +308,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   const changedBoards = (b: Batch) => { for (const board of new Set(b.members.map((m) => m.board))) hooks.changed?.(board) }
   const reserve = (exclusiveWaiting?: boolean) => {
+    if (stopped) return   // the table is the process's: a successor may own it now
     jamReservations.frames = new Map([...runningBatches.values()].flatMap((b) => b.frames.map((f) => [f, b.batchId] as [string, string])))
     const exclusiveRunning = [...runningBatches.values()].some((b) => b.exclusive)
     jamReservations.exclusive = exclusiveRunning ? 'running'
@@ -335,8 +336,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const r: Result | undefined = b.results?.[m.id]
       if (!c || !r || !('body' in r) || !c.thread) continue
       const sameAsEarly = !!early && b.members.length === 1 && r.body === early.body
-      // a question you answered before it was asked: done, no notice - so it is posted as not asking
-      const answered = r.asks && sameAsEarly && answeredSince(ctxFor(root), c.board, c.thread, early!.ts)
+      // a question you answered before it was asked: the early line asked it (or this one repeats it),
+      // and you replied after that line - done, no notice, posted as not asking. Equal words only
+      // decide whether the early line IS the reply (no second post).
+      const earlyAsked = !!early && b.members.length === 1 && (sameAsEarly || early.asks || /\?\s*$/.test(early.body))
+      const answered = r.asks && earlyAsked && answeredSince(ctxFor(root), c.board, c.thread, early!.ts)
       if (sameAsEarly) {
         if (r.asks && !early!.asks && !answered) {
           const who = me()
@@ -507,6 +511,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  posts, its cards fail with the results kept: Retry posts them (and a boot tries again) - the agent
    *  never runs twice for one result. */
   const timers = new Set<ReturnType<typeof setTimeout>>()
+  /** a wait that stop() cancels (it resolves at once then; the caller checks `stopped`) */
+  const naps = new Set<() => void>()
+  const nap = (ms: number) => new Promise<void>((done) => {
+    const t = setTimeout(() => { timers.delete(t); naps.delete(wake); done() }, ms)
+    const wake = () => { clearTimeout(t); timers.delete(t); done() }
+    timers.add(t); naps.add(wake)
+  })
   const redeliver = (b: Batch, n: number, delay = 5_000 * n) => {
     if (stopped) return
     delivering.add(b.batchId); runningBatches.set(b.batchId, b); reserve()
@@ -616,7 +627,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             await q.lock((j) => { settled(undelivered(j, b, 'its replies could not be posted - Retry posts them')); q.persist() })
             break
           }
-          await new Promise((r) => setTimeout(r, 500 * 2 ** n))
+          await nap(500 * 2 ** n)
+          if (stopped) return
         }
       }
       runningBatches.delete(b.batchId)
@@ -670,6 +682,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (recheck) clearTimeout(recheck)
       for (const t of timers) clearTimeout(t)
       timers.clear()
+      for (const wake of naps) wake()
+      naps.clear()
       for (const c of activeChildren) fenceGroup(c.pid)
     },
     snapshot() { return q.j },
@@ -679,7 +693,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const saved = await q.lock((j) => {
         const c = j.cards.find((x) => x.id === id)
         const b = c && action === 'retry' && c.state === 'failed' && c.rev === rev ? j.batches.find((x) => x.batchId === c.batch && x.state === 'claimed' && x.results && x.undelivered) : undefined
-        if (!b) return null
+        const r = b?.results?.[b.members.find((m) => m.card === id)?.id ?? '']
+        if (!b || !r || !('body' in r)) return null   // only a saved reply is posted again; anything else reruns
         redelivering(j, b); q.persist()
         return { b, card: structuredClone(c!) }
       })
