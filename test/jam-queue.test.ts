@@ -15,6 +15,7 @@ import { refuseHold, restoreHolds, saveHolds } from '../src/server/jam/reserve.t
 import { createActivity } from '../src/server/jam/activity.ts'
 import type { Batch, Card, JamAdapter, Journal, JournalV1 } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
+import { statusLines } from '../src/client/shell/jam-lines.ts'
 
 const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true }
 const AGENT = fileURLToPath(new URL('./fixtures/jam-agent.cjs', import.meta.url))
@@ -654,5 +655,22 @@ describe('Jam V2: the queue rules, unit', () => {
     expect(j.cards.find((c) => c.id === `c-${b.id}`)?.state).toBe('dropped')
     expect(ctx.dir).toBe(dir)
     done()
+  })
+})
+
+describe('Jam V2: what the status icon says', () => {
+  const base = { id: 'c-1', kind: 'comment' as const, board: 'home', frames: ['demo/a'], events: ['e1'], rev: 1, made: 0, order: 0, at: 0 }
+  const H = { claude: 'Claude Code' }
+  it('queued: the position counts every queued card, the first reads next; joined tags and a held card say so', () => {
+    expect(statusLines({ ...base, state: 'queued', position: 1 }, 'claude', H).head).toBe('Queued · next')
+    expect(statusLines({ ...base, state: 'queued', position: 4 }, 'claude', H).head).toBe('Queued · 4th - runs after 3 others')
+    expect(statusLines({ ...base, state: 'queued', position: 2, events: ['e1', 'e2'] }, 'claude', H).head).toBe('Queued · 2nd · 2 tags - runs after 1 other')
+    expect(statusLines({ ...base, state: 'queued', position: 1, waiting: 'waiting - demo/a is held by your agent' }, 'claude', H).detail).toBe('waiting - demo/a is held by your agent')
+  })
+  it('working gives the clock and the agent; asks points at the question; failed gives why and the way back', () => {
+    expect(statusLines({ ...base, state: 'working', at: 1000 }, 'claude', H, 42_000).head).toBe('Agent working · 0:41 - Claude Code')
+    expect(statusLines({ ...base, state: 'asks' }, 'claude', H).head).toBe('Asks you - see the question below')
+    const f = statusLines({ ...base, state: 'failed', note: 'the agent did not answer this one' }, 'claude', H)
+    expect(f).toEqual({ head: 'Failed - the agent did not answer this one', detail: 'Retry here, or tag @marver again' })
   })
 })

@@ -70,3 +70,5 @@ export const useJamQueue = create<QueueState>((set, get) => {
     },
   }
 })
+
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamQueue = useJamQueue

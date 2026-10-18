@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom'
 export function Tip({ label, side = 'top', inv = false, children }: { label: ReactNode; side?: 'top' | 'bottom' | 'right'; inv?: boolean; children: ReactElement }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const timer = useRef<number | undefined>(undefined)
-  const show = (e: React.MouseEvent) => {
+  const show = (e: React.SyntheticEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     // right: beside the trigger, centred on it - a sidebar row's glyph, read toward the canvas
     const at = side === 'right' ? { x: r.right + 9, y: r.top + r.height / 2 } : { x: r.left + r.width / 2, y: side === 'top' ? r.top - 7 : r.bottom + 7 }
@@ -52,6 +52,9 @@ export function Tip({ label, side = 'top', inv = false, children }: { label: Rea
       {cloneElement(child, {
         onMouseEnter: (e: React.MouseEvent) => { child.props.onMouseEnter?.(e); show(e) },
         onMouseLeave: (e: React.MouseEvent) => { child.props.onMouseLeave?.(e); hide() },
+        // the keyboard's way in: a trigger reached by Tab shows its tip too (a mouse click never does)
+        onFocus: (e: React.FocusEvent) => { child.props.onFocus?.(e); if ((e.currentTarget as HTMLElement).matches(':focus-visible')) show(e) },
+        onBlur: (e: React.FocusEvent) => { child.props.onBlur?.(e); hide() },
         onClick: (e: React.MouseEvent) => { child.props.onClick?.(e); hide() },
       })}
       {pos && app && createPortal(

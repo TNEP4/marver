@@ -1112,16 +1112,18 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   background: none; cursor: pointer }
 .cm-tstat-btn:hover, .cm-tstat.on .cm-tstat-btn { background: var(--glass-hover) }
 .cm-tstat-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
-.cm-tstat-pop { position: absolute; left: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 50; display: flex; align-items: center; gap: 10px;
-  padding: 6px 6px 6px 10px; border-radius: 8px; background: var(--tip-bg); color: var(--tip-ink); white-space: nowrap;
-  font: 500 12px -apple-system, system-ui, sans-serif; box-shadow: 0 8px 22px -8px rgba(0, 0, 0, .45); animation: sh-tip-pop-r .12s ease }
-.cm-tstat-pop .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; white-space: normal; max-width: 300px }
-.cm-tstat-pop .sh-tip-lines b { font-weight: 600; font-size: 12px; letter-spacing: 0 }
+.cm-tstat-pop { position: absolute; left: -4px; top: calc(100% + 6px); z-index: 50; display: flex; align-items: center; gap: 10px; width: max-content; max-width: 320px;
+  padding: 7px 7px 7px 11px; border-radius: 8px; background: var(--tip-bg); color: var(--tip-ink);
+  font: 500 12px -apple-system, system-ui, sans-serif; box-shadow: 0 8px 22px -8px rgba(0, 0, 0, .45); animation: sh-tip-pop-b .12s ease }
+@keyframes sh-tstat-pop { from { opacity: 0; transform: translateY(-3px) } }
+.cm-tstat-pop { animation-name: sh-tstat-pop }
+.cm-tstat-pop .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; white-space: normal; min-width: 0 }
+.cm-tstat-pop .sh-tip-lines b { font-weight: 600; font-size: 12px; letter-spacing: 0; white-space: normal; overflow: visible; text-overflow: clip; max-width: none; color: inherit }
 .cm-tstat-pop .sh-tip-lines small { opacity: .62; font-size: 11px; line-height: 1.35 }
 .cm-tstat-act { flex: none; height: 24px; padding: 0 10px; border: 0; border-radius: 6px; cursor: pointer;
   background: color-mix(in srgb, var(--tip-ink) 14%, transparent); color: var(--tip-ink); font: 600 12px -apple-system, system-ui, sans-serif }
 .cm-tstat-act:hover { background: color-mix(in srgb, var(--tip-ink) 22%, transparent) }
-.cm-card .cm-scroll:has(.cm-tstat.on) { overflow: visible }
+.cm-card:has(.cm-tstat.on), .cm-card .cm-scroll:has(.cm-tstat.on) { overflow: visible }
 /* a jam reply that changed a shared file it was not given says so in one line */
 .cm-also { margin-top: 4px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
 .jm-spin { transform-origin: 7px 7px; animation: jm-spin 1.1s linear infinite }

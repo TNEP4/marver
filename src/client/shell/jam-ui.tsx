@@ -7,9 +7,10 @@
  * open with the card's one move - Drop while queued, Retry when failed. Replied, answered, done or
  * dropped: no icon - Marver's reply under it says it.
  */
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Tip } from './Tip.tsx'
-import { cardForEvent, useJamQueue, type JamCard, type JamCardState } from './jam-queue.ts'
+import { cardForEvent, useJamQueue, type JamCardState } from './jam-queue.ts'
+import { statusLines } from './jam-lines.ts'
 
 const GRAY = 'var(--glass-ink-3)'
 const RED = '#e5484d'              // board-icons.tsx RED - errors and failures only
@@ -49,23 +50,6 @@ export function JamStateIcon({ state, size = 14 }: { state: JamGlyph; size?: num
   )
 }
 
-const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
-const clock = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` }
-
-/** What the icon's tooltip says: the state, then the detail - position, clock and agent, the reason
- *  a held card waits, why a card failed. */
-export function statusLines(c: JamCard, agent: string | null, harness: Record<string, string>, now = Date.now()): { head: string; detail?: string } {
-  const tags = c.events.length > 1 ? ` · ${c.events.length} tags` : ''
-  if (c.state === 'queued') {
-    const p = c.position ?? 1
-    return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}`, ...(c.waiting ? { detail: c.waiting } : {}) }
-  }
-  if (c.state === 'working') return { head: `Agent working · ${clock(now - c.at)}${agent ? ` - ${harness[agent] ?? agent}` : ''}` }
-  if (c.state === 'asks') return { head: 'Asks you - see the question below' }
-  if (c.state === 'failed') return { head: `Failed - ${c.note ?? 'the agent could not finish'}`, detail: 'Retry here, or tag @marver again' }
-  return { head: c.state }
-}
-
 /** The status icon right of a tag message's time. Nothing when the message carries no pending card
  *  (or this canvas has no queue - opened elsewhere, published). */
 export function TagStatus({ board, eventId, harness }: { board?: string; eventId?: string; harness: Record<string, string> }) {
@@ -87,6 +71,15 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
     return () => window.removeEventListener('pointerdown', away, true)
   }, [open])
   useEffect(() => { if (!card) setOpen(false) }, [card])
+  // the open detail stays on screen: it sits under the icon and slides left at the viewport's edge
+  const popRef = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const el = popRef.current
+    if (!el) return
+    el.style.marginLeft = '0px'
+    const over = el.getBoundingClientRect().right - (window.innerWidth - 8)
+    if (over > 0) el.style.marginLeft = `${-over}px`
+  }, [open, card?.state, card?.note])
   if (!card) return null
   const { head, detail } = statusLines(card, agent, harness)
   const move = card.state === 'queued' ? 'drop' : card.state === 'failed' ? 'retry' : null
@@ -101,7 +94,7 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
         </Tip>
       )}
       {open && (
-        <span className="cm-tstat-pop" role="dialog" aria-label={head}>
+        <span className="cm-tstat-pop" role="dialog" aria-label={head} ref={popRef}>
           {lines}
           {move && <button className="cm-tstat-act" onClick={() => { void useJamQueue.getState().act(card, move); setOpen(false) }}>{move === 'drop' ? 'Drop' : 'Retry'}</button>}
         </span>
