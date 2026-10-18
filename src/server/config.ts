@@ -12,6 +12,9 @@ export interface JamConfig {
   concurrency: number          // frames worked on at once (default 6)
   subagents: boolean           // fan-out one subagent per frame (default true)
   proactive: boolean           // P2, inert in v1: act on the owner's untagged backlog (default false)
+  chime: boolean               // a soft chime once per batch that leaves a capture to review (default true)
+  capture: 'confirm' | 'at-once'   // a capture waits for its read-back, or queues at `E` (default 'confirm')
+  loc: boolean                 // stamp host elements in design files with data-mv-loc = file:line:col (default true)
 }
 export interface ShConfig {
   mode: 'studio' | 'embedded'
@@ -161,11 +164,22 @@ function resolveJam(v: unknown): JamConfig | ShConfig['jamOff'] {
   const agent = resolveAgent(j.agent)
   if (agent === 'no-agent' || agent === 'bad-agent') return agent
   const c = j.concurrency
+  // the 0.26 fields are optional and never turn jam off: a bad value says so and takes the default
+  const pick = <T,>(key: string, v: unknown, ok: (v: unknown) => boolean, fallback: T, want: string): T => {
+    if (v === undefined) return fallback
+    if (ok(v)) return v as T
+    console.warn(`[marver] design/config.ts: jam.${key} must be ${want} - got ${show(v)}. Using ${JSON.stringify(fallback)}.`)
+    return fallback
+  }
+  const bool = (v: unknown) => typeof v === 'boolean'
   return {
     agent,
     concurrency: typeof c === 'number' && Number.isInteger(c) && c >= 1 && c <= 16 ? c : DEFAULT_CONCURRENCY,
     subagents: j.subagents !== false,   // default on
     proactive: j.proactive === true,    // default off (and inert in v1)
+    chime: pick('chime', j.chime, bool, true, 'true or false'),
+    capture: pick<JamConfig['capture']>('capture', j.capture, (v) => v === 'confirm' || v === 'at-once', 'confirm', `'confirm' or 'at-once'`),
+    loc: pick('loc', j.loc, bool, true, 'true or false'),
   }
 }
 
