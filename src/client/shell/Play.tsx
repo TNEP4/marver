@@ -469,7 +469,7 @@ function PlayInner() {
           useStore.setState({ stageShown: { at: data.at, shown: `${String(data.epoch ?? '')}:${Number(data.doc) || 0}` } })
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
-        if (p && typeof data.at === 'string') { stageNavigated(data.at); s.setPlay({ ...p, at: data.at }) }
+        if (p && typeof data.at === 'string') stageNavigated(data.at, () => s.setPlay({ ...p, at: data.at }))
       } else if (data.type === 'sh:stage-exit') {
         exit()
       } else if (data.type === 'sh:stage-error') {

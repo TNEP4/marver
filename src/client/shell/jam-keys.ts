@@ -36,23 +36,34 @@ const cardById = (id: string | null | undefined) => (id ? useJamQueue.getState()
 
 // ---- deciding a draft: one path for the buttons and the keys ---------------------------------------
 
-let saving: Promise<boolean> = Promise.resolve(true)
-/** Edits that did not save, by card: the words you meant, until they do (a decision retries them). */
+/** Per card: the last save in flight, the words you meant until they saved, and which save is the
+ *  latest (an earlier save finishing late never clears a newer edit). */
+const saving = new Map<string, Promise<boolean>>()
 const unsaved = new Map<string, string>()
+const latest = new Map<string, number>()
+let gen = 0
 /** Save the read-back's edit (the text stays where it is if the save fails - see `decideDraft`). */
 export function saveEdit(c: JamCard, text: string) {
+  const g = ++gen
+  latest.set(c.id, g)
   unsaved.set(c.id, text)
-  saving = useJamQueue.getState().act(c, 'edit', text).then((ok) => { if (ok) unsaved.delete(c.id); return ok })
+  const before = saving.get(c.id) ?? Promise.resolve(true)
+  // saves of one card run in order, each at the card's rev as the one before left it
+  saving.set(c.id, before.then(() => {
+    const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
+    return useJamQueue.getState().act(fresh, 'edit', text)
+  }).then((ok) => { if (ok && latest.get(c.id) === g) unsaved.delete(c.id); return ok }))
 }
 /** Confirm or keep a draft AFTER its edit has saved - an edit that failed is saved again first, and
  *  nothing is sent while it still fails; at the card's new rev; the panel closes once the decision
  *  took, and a refusal says why. */
 export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop') {
-  await saving
+  await saving.get(id)
   if (action !== 'drop' && unsaved.has(id)) {
     const c = useJamQueue.getState().cards?.find((x) => x.id === id)
     if (c) saveEdit(c, unsaved.get(id)!)
-    if (!(await saving) || unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
+    await saving.get(id)
+    if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
   }
   if (action === 'drop') unsaved.delete(id)
   const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
@@ -198,6 +209,8 @@ export function syncOwned() {
   for (const row of rows()) if (row.on()) for (const k of Object.keys(row.keys)) owned.add(k)
   setOwnedKeys([...owned])
 }
+
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) void import('./canvas/ctl.ts').then(({ canvasCtl }) => { (window as any).__mvJamCanvas = canvasCtl })
 
 if (typeof window !== 'undefined' && !PUBLISHED) {
   // the states live in three stores: any change may change what is owned

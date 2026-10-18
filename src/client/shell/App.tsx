@@ -574,6 +574,8 @@ export function App() {
     // the jam queue (spec 27): the status icon by each tag's time, and a failure's one notice
     import.meta.hot.on('sh:jam-queue', (m: any) => { void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().apply(m)) })
     void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
+    // captures sealed in an earlier page that never reached the server
+    void import('./jam-capture.ts').then(({ resendSealed }) => resendSealed())
     // A7 controlled HMR: a frame file changed. Reload exactly the affected frames through the
     // lease-aware path (idle frames now, leased ones deferred to a safe point) - never a shell
     // reload, never a React Fast Refresh yanking a frame the user is in.

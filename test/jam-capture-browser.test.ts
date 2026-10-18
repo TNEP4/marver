@@ -355,4 +355,61 @@ describe('captures in the browser', () => {
     expect(await browser!.eval(s, `window.__mvStore.getState().toasts.map((t) => t.text).join('|')`)).toMatch(/captures need a board/)
     await browser!.eval(s, `window.__mvStore.setState({ board: 'main' }), 1`)
   }, 30_000)
+
+  skippable('a sealed capture that cannot be sent is kept and sent again with the same id once the dev server answers', async () => {
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch1 = f; window.__fail = 1; window.fetch = (u, o) => (String(u).includes('/api/jam/capture') && o && o.method === 'POST' && window.__fail) ? Promise.reject(new TypeError('offline')) : f(u, o); return 1 })()`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('do not lose me'), 1`)
+    await key('e')
+    // sealed (after its end pictures) and refused by the network: kept here, nothing lost
+    await until(`!!JSON.parse(localStorage.getItem('mv-jam-sealed') || '{}')[${JSON.stringify(id)}]?.timeline.some((x) => x.text === 'do not lose me')`, 15_000)
+    expect(await browser!.eval(s, `(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)})`)).toBe(false)
+    await browser!.eval(s, `(window.__fail = 0), 1`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 15_000)
+    expect(await browser!.eval(s, `JSON.parse(localStorage.getItem('mv-jam-sealed') || '{}')[${JSON.stringify(id)}] ?? null`)).toBe(null)
+    await browser!.eval(s, `(window.fetch = window.__fetch1), 1`)
+    await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+  }, 60_000)
+
+  skippable('a selection is the focus at S, not what the capture keeps seeing: a settled pan and a settled zoom are view steps', async () => {
+    const clicky = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/clicky').key`)
+    const alpha = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/alpha').key`)
+    await browser!.eval(s, `window.__mvStore.getState().select(${JSON.stringify(clicky)}), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(id)}].steps[0].view.frames`)).toEqual(['spec/clicky'])
+    // the canvas moves to alpha (clicky stays selected), and settles
+    await browser!.eval(s, `window.__mvJamCanvas.fitNodes([${JSON.stringify(alpha)}]), 1`)
+    await until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}].steps.some((x) => x.event === 'view' && x !== window.__mvJamCapture.getState().caps[${JSON.stringify(id)}].steps[0] && x.view.frames.includes('spec/alpha'))`, 8000)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 20_000)
+    await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+  }, 60_000)
+
+  skippable('overlapping saves: an older edit saving late never clears a newer one that failed - confirm sends nothing', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('raw'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 15_000)
+    // "A" saves slowly and succeeds; "B" fails at once
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch2 = f; window.fetch = (u, o) => { const b = o && o.body ? String(o.body) : ''; if (b.includes('"action":"edit"') && b.includes('"body":"A"')) return new Promise((r) => setTimeout(() => r(f(u, o)), 900)); if (b.includes('"action":"edit"') && b.includes('"body":"B"')) return Promise.resolve(new Response('{"ok":false}', { status: 409 })); return f(u, o) }; return 1 })()`)
+    const typeAndBlur = async (text: string) => {
+      await click('.jm-focus .jm-editable')
+      await until(`!!document.querySelector('.jm-focus textarea')`, 3000)
+      await browser!.eval(s, `(() => { const t = document.querySelector('.jm-focus textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, ${JSON.stringify(text)}); t.dispatchEvent(new Event('input', { bubbles: true })); t.blur(); return 1 })()`)
+      await until(`!document.querySelector('.jm-focus textarea')`, 3000)
+    }
+    await typeAndBlur('A')
+    await typeAndBlur('B')
+    await click('.jm-focus .jm-btn.primary')
+    await sleep(2500)
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)}).state`)).toBe('draft')
+    await browser!.eval(s, `(window.fetch = window.__fetch2), 1`)
+    await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+  }, 90_000)
 })

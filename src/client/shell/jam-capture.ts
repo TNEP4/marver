@@ -115,7 +115,9 @@ function addStep(id: string, step: Step & { seq?: number; src?: string }) {
 }
 
 const frameIdOf = (key: string): string | undefined => useStore.getState().nodes.find((n) => n.key === key)?.frame
-const viewNow = (): View => {
+/** The view: in play the stage; on the canvas the frames on screen - or, at the start only, the frames
+ *  selected (a selection is the capture's focus, not what it keeps seeing). */
+const viewNow = (focus = false): View => {
   const s = useStore.getState()
   // in play or slides the surface is the stage: its screen, its device, its theme
   if (s.play) {
@@ -123,7 +125,7 @@ const viewNow = (): View => {
     return { board: s.board, frames: [s.play.at], theme: s.play.theme, viewport: s.play.device, ...(vp ? { width: vp.width, height: vp.height } : {}), mode: s.play.slides ? 'slides' : 'play' }
   }
   const sel = s.selection.map((k) => s.nodes.find((n) => n.key === k)).filter((n): n is Node => !!n)
-  const shown = sel.length ? sel : visibleNodes()
+  const shown = focus && sel.length ? sel : visibleNodes()
   const first = shown[0]
   return {
     board: s.board, frames: [...new Set(shown.map((n) => n.frame))], theme: first?.theme ?? s.viewTheme,
@@ -154,12 +156,13 @@ function watchUi() {
   unwatch?.()
   // the frames in view, once the camera has settled (two looks a beat apart agree): a pan to another
   // frame, described without a click, still names it
-  let lastView = (viewNow().frames ?? []).join()
+  const sig = () => { const v = viewNow(); return `${(v.frames ?? []).join()}@${Math.round((v.zoom ?? 1) * 20) / 20}` }   // frames and zoom
+  let lastView = sig()
   let sample = lastView
   const settle = setInterval(() => {
     const id = useJamCapture.getState().current
     if (!id || useStore.getState().play) return
-    const now_ = (viewNow().frames ?? []).join()
+    const now_ = sig()
     if (now_ === sample && now_ !== lastView) { lastView = now_; addStep(id, { at: now(), event: 'view', view: viewNow() }) }
     sample = now_
   }, 600)
@@ -192,8 +195,7 @@ function watchUi() {
     // a screen change the SHELL made (arrows, the walker, a variant): the stage reports its own
     // navigation itself, so a change it reported (sh:stage-at) is not recorded twice
     if (s.play && p.play && s.play.at !== p.play.at) {
-      if (stageNav === s.play.at) stageNav = null
-      else screenStep(id, at, s.play.at)
+      if (stageNav !== s.play.at) screenStep(id, at, s.play.at)
     }
     if (!!s.play !== !!p.play) addStep(id, { at, event: 'view', view: viewNow() })
     if (!!s.interact !== !!p.interact) addStep(id, { at, ...(s.interact || p.interact ? { frame: frameIdOf((s.interact ?? p.interact)!) } : {}), event: 'interact', on: !!s.interact })
@@ -270,7 +272,9 @@ function screenStep(id: string, at: number, to: string, seq?: number) {
 /** The stage moved itself to `at` (sh:stage-at): its recorder has the step; the shell's play state
  *  follows without a second line. */
 let stageNav: string | null = null
-export function stageNavigated(at: string) { stageNav = at }
+/** Run the play-state update the stage's own navigation causes: during it (and only during it) the
+ *  shell does not record a second line. */
+export function stageNavigated(at: string, update: () => void) { stageNav = at; try { update() } finally { stageNav = null } }
 
 const cleanBundle = (b: unknown): Bundle => {
   const o = (b && typeof b === 'object' ? b : {}) as Record<string, any>
@@ -407,7 +411,7 @@ function begin(reviewing?: Cap['reviewing']): boolean {
     id, state: 'recording', board: s.board, t0: now(), steps: [], seen: new Set(), points: [], pictures: [],
     probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}),
   }
-  cap.steps.push({ at: cap.t0, event: 'view', view: viewNow() })
+  cap.steps.push({ at: cap.t0, event: 'view', view: viewNow(true) })
   // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
   if (!s.play && s.selection.length) cap.steps.push({ at: cap.t0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1 }))
@@ -436,8 +440,7 @@ function drain(id: string) {
   const st = useStore.getState()
   if (st.play) shoot(id, st.play.at, 'end')
   else {
-    const sel = st.selection.map((k) => st.nodes.find((n) => n.key === k)).filter((n): n is Node => !!n)
-    for (const n of (sel.length ? sel : visibleNodes()).slice(0, 3)) shoot(id, n.frame, 'end', n.key)
+    for (const n of visibleNodes().slice(0, 3)) shoot(id, n.frame, 'end', n.key)   // what is on screen at E
   }
   broadcast({ type: 'sh:capture', id, on: false })
   setTimeout(() => {
@@ -464,12 +467,43 @@ function trySeal(id: string) {
   }
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })
-  fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ record }) })
-    .then((r) => r.json()).then((r: { ok?: boolean; card?: { id: string; rev: number }; error?: string }) => {
-      useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === id ? { ...x, ...(r.card ? { card: r.card } : {}) } : x)) }))
-      void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
-      if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
-    }, () => useStore.getState().toast('the capture could not be sent - is marver dev still running?'))
+  keepSealed(record)
+  void upload(record)
+}
+
+// ---- the sealed record is kept until the server has it ----------------------------------------------
+
+const KEPT = 'mv-jam-sealed'
+const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r) }
+const forgetSealed = (id: string) => { pendingUploads.delete(id); try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
+const pendingUploads = new Map<string, CaptureRecord>()
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+/** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
+ *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
+async function upload(record: CaptureRecord): Promise<void> {
+  let r: { ok?: boolean; card?: { id: string; rev: number }; error?: string } | null = null
+  try {
+    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ record }) })
+    r = await res.json().catch(() => ({ ok: false, error: `the dev server answered ${res.status}` }))
+    if (!res.ok && res.status >= 500) r = null
+  } catch { r = null }
+  if (!r) {
+    if (!retryTimer) useStore.getState().toast('the capture is kept here and will be sent when marver dev answers')
+    retryTimer ??= setTimeout(() => { retryTimer = null; for (const x of pendingUploads.values()) void upload(x) }, 5_000)
+    return
+  }
+  forgetSealed(record.id)
+  useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)) }))
+  void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
+  if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
+}
+
+/** Records sealed in an earlier page that never reached the server: sent again at boot. */
+export function resendSealed() {
+  try {
+    const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}') as Record<string, CaptureRecord>
+    for (const r of Object.values(all)) { pendingUploads.set(r.id, r); void upload(r) }
+  } catch { /* none */ }
 }
 
 export const useJamCapture = create<CaptureState>((set, get) => ({
