@@ -576,8 +576,21 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     for (const { b } of leftover) runningBatches.set(b.batchId, b)
     reserve()
     // reconcile first (post what is left, move the cards), then re-arm the rest
+    // ...and the barrier holds until each is reconciled: nothing new starts, no hold is taken, before a
+    // recovered batch's cards have moved (its `shared` rerun must reserve the canvas first). A posting
+    // that keeps failing is tried a few times, then its cards fail - with their results kept, so the
+    // replies are in the journal and nothing pretends the work was not done.
     for (const { b } of leftover.filter((x) => x.results)) {
-      try { await deliver(b) } catch (err) { log(`  jam: could not post a recovered batch - ${(err as Error).message}; trying again`); redeliver(b, 1) }
+      for (let n = 1; ; n++) {
+        try { await deliver(b); break } catch (err) {
+          if (n >= 4 || stopped) {
+            log(`  jam: could not post a recovered batch - ${(err as Error).message}; its cards fail`)
+            await q.lock((j) => { settled(fail(j, b, `its replies could not be posted: ${(err as Error).message}`)); q.persist() })
+            break
+          }
+          await new Promise((r) => setTimeout(r, 500 * 2 ** n))
+        }
+      }
       runningBatches.delete(b.batchId)
     }
     ready = true

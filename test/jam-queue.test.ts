@@ -443,7 +443,7 @@ describe('Jam V2: shared files and exclusive jobs', () => {
     const queued: Card = { ...base, id: 'c-b', events: ['b'], state: 'queued', rev: 1, exclusive: ['design/x.tsx'] }
     j.cards.push(failed, queued)
     expect(act(j, 'c-a', 3, 'retry').ok).toBe(true)
-    expect(queued.events).toEqual(['b', 'a'])
+    expect(queued.events).toEqual(['a', 'b'])                 // the failed card's ask first: it was there first
     expect(queued.rev).toBe(2)
     expect(queued.exclusive).toEqual(['design/x.tsx'])
     expect([failed.state, failed.note]).toEqual(['done', 'merged into c-b'])
@@ -455,7 +455,7 @@ describe('Jam V2: shared files and exclusive jobs', () => {
     expect(k.id).toBe('cap-1')
     expect(q2.state).toBe('done')
     writeJournal(root, j)
-    expect(readJournal(root).cards.find((c) => c.id === 'c-b')?.events).toEqual(['b', 'a'])
+    expect(readJournal(root).cards.find((c) => c.id === 'c-b')?.events).toEqual(['a', 'b'])
     expect(ctx.root).toBe(root)
     done()
   })
@@ -944,14 +944,49 @@ describe('Jam V2: review round 3 fixes', () => {
     const now = Date.now()
     j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-s', made: t.ts, order: t.ts, rev: 2, at: now })
     j.batches.push({ batchId: 'b-s', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { shared: ['design/scenes/demo/_kit.tsx'] } } })
+    // another job waiting on another frame: it must not start before the exclusive rerun exists
+    const other = say(root, dir, '@marver unrelated', { frame: 'demo/z' })
+    j.cards.push({ id: `c-${other.id}`, kind: 'comment', board: 'home', frames: ['demo/z'], thread: other.commentId, events: [other.id], state: 'queued', made: other.ts, order: other.ts, rev: 1, at: now })
+    j.seen.push(`home|${other.id}`)
     writeJournal(root, j)
     let broke = false
     const jam = createJam(root, CFG, agent(), undefined, { changed: () => { if (!broke) { broke = true; throw new Error('push failed') } } })
     await jam.tick()
     for (let i = 0; i < 100 && packets(root).length === 0; i++) await wait(100)
     await jam.tick(); jam.stop()
-    expect(packets(root).map((p) => p.exclusive)).toEqual([{ files: ['design/scenes/demo/_kit.tsx'] }])
+    expect(packets(root).map((p) => [p.members[0].card, p.exclusive ?? null])).toEqual([[`c-${t.id}`, { files: ['design/scenes/demo/_kit.tsx'] }], [`c-${other.id}`, null]])
     expect(cardOf(jam, t)!.state).toBe('done')
+    expect(cardOf(jam, other)!.state).toBe('done')
     done()
   }, 20_000)
+})
+
+describe('Jam V2: review round 4 fixes', () => {
+  it('an exclusive card that is no longer the owner\'s is dropped and does not hold the queue back - ordinary cards run in the same pass', () => {
+    const { root, dir, done } = setup()
+    const j = readJournal(root)
+    j.baselined = true
+    const now = Date.now()
+    appendEvents(dir, 'home', [{ id: 'gone-1', ts: tick(), type: 'create', commentId: 'gone-1', board: 'home', author: OWNER, body: '@marver whole board' }])   // never ledgered
+    j.cards.push({ id: 'c-gone-1', kind: 'comment', board: 'home', frames: [], thread: 'gone-1', events: ['gone-1'], state: 'queued', made: now, order: now, rev: 1, at: now })
+    const ok = say(root, dir, '@marver small', { frame: 'demo/a' })
+    const ctx = ctxFor(root)
+    ingest(j, ctx)
+    const { batches, exclusiveWaiting } = form(j, ctx, { free: 3, running: new Set(), exclusiveRunning: false, held: () => false, anyHold: () => false })
+    expect(j.cards.find((c) => c.id === 'c-gone-1')!.state).toBe('dropped')
+    expect(batches.map((b) => b.members[0].card)).toEqual([`c-${ok.id}`])
+    expect(exclusiveWaiting).toBe(false)
+    done()
+  })
+
+  it('a merge keeps asks in the order they were made - the newest tag keeps the icon', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamq-m-')))
+    const now = Date.now()
+    const older: Card = { id: 'c-old', kind: 'comment', board: 'home', frames: ['demo/a'], thread: 't', events: ['old'], state: 'failed', batch: 'b1', made: 100, order: 100, rev: 1, at: now }
+    const newer: Card = { id: 'c-new', kind: 'comment', board: 'home', frames: ['demo/a'], thread: 't', events: ['new'], state: 'queued', made: 200, order: 200, rev: 1, at: now }
+    j.cards.push(older, newer)
+    const keep = merge(j, newer, older, now)
+    expect(keep.id).toBe('c-new')
+    expect(keep.events).toEqual(['old', 'new'])
+  })
 })

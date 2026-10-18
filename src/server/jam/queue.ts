@@ -141,7 +141,9 @@ function resolved(j: Journal, board: string, thread: string, now: number): boole
  *  waiting) survives. */
 export function merge(j: Journal, queued: Card, other: Card, now: number): Card {
   const [keep, gone] = other.capture && !queued.capture ? [other, queued] : [queued, other]
-  keep.events = [...new Set([...gone === queued ? queued.events : [], ...keep.events, ...gone === queued ? [] : gone.events])]
+  // asks stay in the order they were made: the older card's first, so the newest tag carries the icon
+  const [first, second] = gone.made <= keep.made ? [gone, keep] : [keep, gone]
+  keep.events = [...new Set([...first.events, ...second.events])]
   if (gone.exclusive || keep.exclusive) keep.exclusive = [...new Set([...(keep.exclusive ?? []), ...(gone.exclusive ?? [])])]
   keep.shared = Math.max(keep.shared ?? 0, gone.shared ?? 0) || undefined
   for (const f of gone.frames) if (!keep.frames.includes(f)) keep.frames.push(f)
@@ -291,19 +293,18 @@ export interface FormOpts {
  *  no hold is left, and while it waits nothing new starts. Briefs are frozen, cards turn working,
  *  and each packet is written to its file. Returns the new batches (already in the journal). */
 export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { batches: Batch[]; exclusiveWaiting: boolean } {
-  const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
-  const exclusive = queued.filter((c) => c.exclusive || !c.frames.length)
   const logs = new Map<string, CommentEvent[]>()
   const log = (board: string) => { let l = logs.get(board); if (!l) logs.set(board, (l = readLog(ctx.dir, board))); return l }
+  // an exclusive card that is no longer the owner's is dropped first - it must not hold the queue back
+  for (const c of j.cards) if (c.state === 'queued' && (c.exclusive || !c.frames.length)) validate(ctx, c, log(c.board), now)
+  const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
+  const exclusive = queued.filter((c) => c.exclusive || !c.frames.length)
   type Forming = { board: string; frames: string[]; cards: Card[]; exclusive?: boolean; single: boolean }
   const forming: Forming[] = []
   if (exclusive.length) {
     if (o.exclusiveRunning || o.running.size || o.anyHold() || o.free < 1) return { batches: [], exclusiveWaiting: !o.exclusiveRunning }
-    for (const c of exclusive) {
-      if (!validate(ctx, c, log(c.board), now)) continue
-      forming.push({ board: c.board, frames: [...c.frames], cards: [c], exclusive: true, single: false })
-      break
-    }
+    const c = exclusive[0]
+    forming.push({ board: c.board, frames: [...c.frames], cards: [c], exclusive: true, single: false })
   } else if (!o.exclusiveRunning) {
     const reserved = new Set(o.running)
     for (const c of queued) {
