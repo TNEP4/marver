@@ -475,4 +475,40 @@ describe('captures in the browser', () => {
     expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)}).edited`)).toBe('saved words')
     await browser!.eval(s, `(window.fetch = window.__fetch4), 1`)
   }, 90_000)
+
+  skippable('two drafts: A\'s failed save never suppresses B\'s edit; an empty edit comes back as empty; a dropped tile leaves while the other keeps the run', async () => {
+    const make = async (note: string) => {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+      const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+      await browser!.eval(s, `window.__mvJamCapture.getState().note(${JSON.stringify(note)}), 1`)
+      await key('e')
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 15_000)
+      return id as string
+    }
+    const a = await make('first'), b = await make('second')
+    const edit = async (id: string, text: string) => {
+      await browser!.eval(s, `window.__mvJamUi.getState().open({ kind: 'capture', id: ${JSON.stringify(id)} }), 1`)
+      await sleep(300)
+      await click('.jm-focus .jm-editable')
+      await until(`!!document.querySelector('.jm-focus textarea')`, 3000)
+      await browser!.eval(s, `(() => { const t = document.querySelector('.jm-focus textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, ${JSON.stringify(text)}); t.dispatchEvent(new Event('input', { bubbles: true })); t.blur(); return 1 })()`)
+      await sleep(400)
+    }
+    // A's save of "X" fails
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch5 = f; window.fetch = (u, o) => (o && o.body && String(o.body).includes('"action":"edit"') && String(o.body).includes(${JSON.stringify(a)})) ? Promise.resolve(new Response('{"ok":false}', { status: 409 })) : f(u, o); return 1 })()`)
+    await edit(a, 'X')
+    await edit(b, 'X')                                                                   // the same words on B save
+    await until(`window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(b)})?.edited === 'X'`, 5000)
+    await browser!.eval(s, `(window.fetch = window.__fetch5), 1`)
+    // an empty edit is returned as empty, not as no edit
+    await edit(b, '')
+    await until(`window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(b)})?.edited === ''`, 5000)
+    const got = await browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${b}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
+    expect(got.edited).toBe('')
+    // drop A while B keeps the run: A's tile leaves at once
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(a)}), 'drop')`)
+    await until(`!document.querySelector('.jm-lane [data-tile="${a}"]') && !!document.querySelector('.jm-lane [data-tile="${b}"]')`, 5000)
+    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(b)}), 'drop')`)
+  }, 120_000)
 })

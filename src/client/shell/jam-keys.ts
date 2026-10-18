@@ -28,7 +28,8 @@ export const descriptor = (k: KeyIn): string =>
 /** The lane's captures (and a wrap-up), in the order made - the run when one lasts. */
 export function laneCards(cards: JamCard[] | null, run: { since: number } | null): JamCard[] {
   if (!cards) return []
-  return cards.filter((c) => (c.kind === 'capture' || c.kind === 'wrapup') && (run ? c.made >= run.since : c.state !== 'done' && c.state !== 'kept' && c.state !== 'dropped'))
+  // a dropped capture leaves the lane at once (done and kept ones stay in their run)
+  return cards.filter((c) => (c.kind === 'capture' || c.kind === 'wrapup') && c.state !== 'dropped' && (run ? c.made >= run.since : c.state !== 'done' && c.state !== 'kept'))
     .sort((a, b) => a.made - b.made)
 }
 const toReview = () => laneCards(useJamQueue.getState().cards, useJamQueue.getState().run).filter((c) => c.state === 'review')

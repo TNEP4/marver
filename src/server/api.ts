@@ -1012,7 +1012,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!cap) return json(res, 404, { error: 'no such capture' })
         const { jamLive } = await import('./jam/live.ts')
         const card = jamLive.view?.().cards.find((c) => c.id === id)
-        return json(res, 200, { record: cap.record, ...(card?.edited ? { edited: card.edited } : {}), pictures: cap.record.pictures })
+        return json(res, 200, { record: cap.record, ...(card?.edited !== undefined ? { edited: card.edited } : {}), pictures: cap.record.pictures })
       }
       if (path === 'jam/picture' && req.method === 'POST') {
         // shoot one capture picture into a new file - owner only; the capture must not be sealed yet

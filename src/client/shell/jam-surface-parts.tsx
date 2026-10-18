@@ -54,11 +54,11 @@ export function FocusPanelView(p: {
   return (
     <FocusPanel left={p.left} onClose={p.onClose}>
       {p.kind === 'review' ? (
-        <ReviewDetail title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
+        <ReviewDetail key={c.id} title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
           view={p.view} onFlip={() => p.onFlip()} reply={p.reply} shots={p.shots} agent={p.agent}
           more={p.moreOpen} onMore={p.onMore} onMoreOpen={p.onMoreOpen} onGood={p.onGood} onLater={p.onLater} onOpenThread={p.onOpenThread} />
       ) : (
-        <ReadBack title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
+        <ReadBack key={c.id} title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
           readOnly={c.state !== 'draft'} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
           onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onOpenThread={c.thread ? p.onOpenThread : undefined} />
