@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
@@ -171,7 +172,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         })()
         // wordmark: a declared share.name wins over the repo dir - deploy hosts build
         // from anonymous paths (/app), and the gate already wears the declared name
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture } : null })}`
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture } : null, workspace: createHash('sha256').update(root).digest('hex').slice(0, 16) })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'

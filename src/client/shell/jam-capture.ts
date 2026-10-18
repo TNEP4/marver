@@ -391,11 +391,15 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   }
   const ctl = new AbortController()
   const timer = setTimeout(() => ctl.abort(), PICTURE_MS)
+  // settled exactly once - a picture, or a missing one - whatever fails: the request, its body, the abort
+  let settled = false
+  const finish = (pid: string | null) => { if (settled) return; settled = true; clearTimeout(timer); done(pid) }
   fetch(`${ROUTE}/api/jam/picture`, {
     method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
     body: JSON.stringify({ capture: id, frame, theme, ...(size ? { w: Math.round(size.width), h: Math.round(size.height) } : {}) }),
-  }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id ?? null : null), () => null)
-    .then((pid) => { clearTimeout(timer); done(pid) })
+  }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id ?? null : null))
+    .catch(() => null)
+    .then((pid) => finish(typeof pid === 'string' ? pid : null))
 }
 
 // ---- start, end, seal ----------------------------------------------------------------------------------
@@ -473,7 +477,8 @@ function trySeal(id: string) {
 
 // ---- the sealed record is kept until the server has it ----------------------------------------------
 
-const KEPT = 'mv-jam-sealed'
+/** Kept per workspace: another project served later on the same port never receives this one's captures. */
+const KEPT = `mv-jam-sealed:${CONFIG.workspace ?? 'unknown'}`
 const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r) }
 const forgetSealed = (id: string) => { pendingUploads.delete(id); try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
 const pendingUploads = new Map<string, CaptureRecord>()
@@ -485,7 +490,9 @@ async function upload(record: CaptureRecord): Promise<void> {
   try {
     const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ record }) })
     r = await res.json().catch(() => ({ ok: false, error: `the dev server answered ${res.status}` }))
-    if (!res.ok && res.status >= 500) r = null
+    // only a verdict on the record itself is final: taken (200) or refused as a record (400). Anything
+    // else - jam not running yet (409), a server error, a gate - is the server being away: keep it
+    if (!res.ok && res.status !== 400) r = null
   } catch { r = null }
   if (!r) {
     if (!retryTimer) useStore.getState().toast('the capture is kept here and will be sent when marver dev answers')

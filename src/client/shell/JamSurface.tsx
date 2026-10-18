@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
-import { decideDraft, laneCards, openTile, reveal, saveEdit } from './jam-keys.ts'
+import { decideDraft, laneCards, openTile, pendingEdit, reveal, saveEdit } from './jam-keys.ts'
 import { laneLine, timelineLines } from './jam-lines.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
@@ -140,7 +140,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           })()}
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
           onOpenThread={() => openThread(panelCard)}
-          onPrev={step(-1)} onNext={step(1)}
+          onPrev={step(-1)} onNext={step(1)} pending={pendingEdit(panelCard.id)}
         />
       )}
     </>

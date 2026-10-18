@@ -42,6 +42,8 @@ const saving = new Map<string, Promise<boolean>>()
 const unsaved = new Map<string, string>()
 const latest = new Map<string, number>()
 let gen = 0
+/** The words written for a card that have not saved yet - the read-back keeps showing them. */
+export const pendingEdit = (id: string): string | undefined => unsaved.get(id)
 /** Save the read-back's edit (the text stays where it is if the save fails - see `decideDraft`). */
 export function saveEdit(c: JamCard, text: string) {
   const g = ++gen
@@ -173,7 +175,7 @@ const rows = (): Row[] => {
           ArrowLeft: () => move(-1), ArrowRight: () => move(1),
           Enter: () => { if (sel) openTile(sel.id) },
           'Meta+Enter': () => { if (sel?.state === 'queued') void act(sel, 'first') },
-          k: () => { if (sel?.state === 'queued' || sel?.state === 'draft') void act(sel, 'keep') },
+          k: () => { if (sel?.state === 'draft') void decideDraft(sel.id, 'keep'); else if (sel?.state === 'queued') void act(sel, 'keep') },
           Backspace: () => { if (sel) void act(sel, 'drop') },
           Escape: () => ui.setLaneKeys(false),
         }

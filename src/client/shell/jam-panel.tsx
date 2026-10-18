@@ -112,7 +112,7 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, editing, onEdit, onConfirm, onKeep, onDrop, agent, follows, readOnly, onOpenThread, err, warn, style }: {
+export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onConfirm, onKeep, onDrop, agent, follows, readOnly, onOpenThread, err, warn, style }: {
   title: string
   of?: [number, number]
   onPrev?: () => void
@@ -121,6 +121,8 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   lines: TimelineLine[]
   pictures: { id: string; url: string; caption: ReactNode }[]
   edited?: string
+  /** words written that have not saved yet - they win over `edited` */
+  pending?: string
   editing?: boolean
   onEdit?: (text: string) => void
   onConfirm?: () => void
@@ -138,10 +140,10 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   useEffect(() => { if (editing) setOpen(true) }, [editing])
   // the words and the notes, in time order - what the capture says (server captureWords)
   const words = lines.filter((l) => l.kind === 'words' || l.kind === 'note').map((l) => (l.kind === 'note' ? `(note) ${unquote(l.text)}` : unquote(l.text))).join(' ')
-  const [text, setText] = useState(edited ?? words)
-  // the field follows the saved edit when it changes - and keeps what you wrote otherwise (a save that
-  // failed never throws your words away)
-  useEffect(() => { setText(edited ?? words) }, [edited, words])
+  const [text, setText] = useState(pending ?? edited ?? words)
+  // the field follows the saved edit only while you are not writing and nothing newer waits to save
+  // (`pending`): an older save's answer never overwrites newer words, and a failed one never loses them
+  useEffect(() => { if (!open) setText(pending ?? edited ?? words) }, [edited, words, pending])
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (open) { const el = field.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } } }, [open])
   const save = () => { setOpen(false); if (text !== (edited ?? words)) onEdit?.(text) }

@@ -124,7 +124,7 @@ export interface JamNote {
 }
 export interface Toast { id: number; text: string; jam?: JamNote }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once' } | null } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once' } | null; workspace?: string } = shConfig
 
 /** Invariant: `branding: false` strips every Marver mention - new chrome included. */
 export const BRANDING = CONFIG.branding !== false
