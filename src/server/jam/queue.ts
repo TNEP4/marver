@@ -380,32 +380,34 @@ export interface Settled { card: Card; notice?: 'asks' | 'failed' }
  *  reply (comment id), whether its question was already answered, and when it was asked. */
 export function settle(j: Journal, b: Batch, posted: Record<string, { reply?: string; answered?: boolean; asked?: number }>, now = Date.now()): Settled[] {
   const out: Settled[] = []
-  for (const m of b.members) {
-    const c = j.cards.find((x) => x.id === m.card)
-    const r: Result | undefined = b.results?.[m.id]
-    if (!c || c.state !== 'working' || c.batch !== b.batchId || !r) continue
-    if ('body' in r) {
-      const p = posted[m.id] ?? {}
-      if (p.reply) c.reply = p.reply
-      if (c.resolved) set(c, 'done', now, 'replied')
-      else if (r.asks && p.answered) set(c, 'done', now, 'answered')
-      else if (r.asks) { c.asked = p.asked ?? now; set(c, 'asks', now, 'asks you'); out.push({ card: c, notice: 'asks' }); continue }
-      else set(c, c.kind === 'comment' ? 'done' : 'review', now, c.kind === 'comment' ? 'replied' : 'ready to review')
-      out.push({ card: c })
-    } else if (c.resolved) {
-      set(c, 'done', now, 'resolved')                  // resolved while it ran: nothing comes back to it
-      out.push({ card: c })
-    } else if ('missing' in r) {
-      set(c, 'failed', now, 'the agent did not answer this one'); out.push({ card: c, notice: 'failed' })
-    } else if (c.exclusive || (c.shared ?? 0) >= 1) {
-      set(c, 'failed', now, 'needed more shared files than it was given'); out.push({ card: c, notice: 'failed' })
-    } else {
-      c.exclusive = r.shared; c.shared = 1
-      out.push({ card: requeue(j, c, now) })
-    }
-  }
+  for (const m of b.members) settleOne(j, b, m, posted[m.id] ?? {}, now, out)
   b.state = 'done'; b.at = now
   return out
+}
+
+/** Move one member's card by its result (see `settle`). */
+function settleOne(j: Journal, b: Batch, m: Member, p: { reply?: string; answered?: boolean; asked?: number }, now: number, out: Settled[]) {
+  const c = j.cards.find((x) => x.id === m.card)
+  const r: Result | undefined = b.results?.[m.id]
+  if (!c || c.state !== 'working' || c.batch !== b.batchId || !r) return
+  if ('body' in r) {
+    if (p.reply) c.reply = p.reply
+    if (c.resolved) set(c, 'done', now, 'replied')
+    else if (r.asks && p.answered) set(c, 'done', now, 'answered')
+    else if (r.asks) { c.asked = p.asked ?? now; set(c, 'asks', now, 'asks you'); out.push({ card: c, notice: 'asks' }); return }
+    else set(c, c.kind === 'comment' ? 'done' : 'review', now, c.kind === 'comment' ? 'replied' : 'ready to review')
+    out.push({ card: c })
+  } else if (c.resolved) {
+    set(c, 'done', now, 'resolved')                  // resolved while it ran: nothing comes back to it
+    out.push({ card: c })
+  } else if ('missing' in r) {
+    set(c, 'failed', now, 'the agent did not answer this one'); out.push({ card: c, notice: 'failed' })
+  } else if (c.exclusive || (c.shared ?? 0) >= 1) {
+    set(c, 'failed', now, 'needed more shared files than it was given'); out.push({ card: c, notice: 'failed' })
+  } else {
+    c.exclusive = r.shared; c.shared = 1
+    out.push({ card: requeue(j, c, now) })
+  }
 }
 
 /** Two failed attempts: every working card of the batch turns failed. */
@@ -428,7 +430,11 @@ export function undelivered(j: Journal, b: Batch, note: string, now = Date.now()
   for (const m of b.members) {
     const c = j.cards.find((x) => x.id === m.card)
     if (!c || c.state !== 'working' || c.batch !== b.batchId) continue
-    set(c, 'failed', now, note); out.push({ card: c, notice: 'failed' })
+    const r = b.results?.[m.id]
+    // a result with nothing to post (a `shared` answer, a missing one) settles now - its exclusive
+    // rerun exists before anything else may start; only a reply that could not be posted waits
+    if (r && !('body' in r)) settleOne(j, b, m, {}, now, out)
+    else { set(c, 'failed', now, note); out.push({ card: c, notice: 'failed' }) }
   }
   b.undelivered = true; b.at = now
   return out

@@ -1068,3 +1068,46 @@ describe('Jam V2: review round 5 fixes', () => {
     expect(C.events).toEqual(['a', 'b', 'c'])
   })
 })
+
+describe('Jam V2: review round 6 fixes', () => {
+  it('a stopped daemon\'s pending retry never writes over the journal of the one that replaced it', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent(), undefined, { changed: () => { throw new Error('push failed') } })
+    const a = say(root, dir, '@marver first', { frame: 'demo/a' })
+    await jam.tick()                                                   // posting failed: a retry is pending
+    jam.stop()
+    const next = createJam(root, CFG, agent('ok', { delay: 3000 }))
+    const b = say(root, dir, '@marver second', { frame: 'demo/b' })
+    void next.tick()
+    await wait(300)
+    const cb = cardOf(next, b)!
+    await next.act(cb.id, cb.rev, 'drop')                              // a no-op on a working card; just a write
+    await wait(6000)                                                   // past the old daemon's first retry
+    expect(readJournal(root).cards.find((c) => c.events.includes(b.id))?.state).toBe(cardOf(next, b)!.state)
+    next.stop()
+    expect(a.id).toBeTruthy()
+    done()
+  }, 20_000)
+
+  it('when posting gives up, a `shared` answer still settles - its exclusive rerun exists before anything else may start', async () => {
+    const { root, dir, done } = setup()
+    const s1 = say(root, dir, '@marver kit', { frame: 'demo/a' })
+    const t2 = say(root, dir, '@marver reply', { frame: 'demo/a' })
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    const card = (e: CommentEvent): Card => ({ id: `c-${e.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: e.commentId, events: [e.id], state: 'working', batch: 'b-x', made: e.ts, order: e.ts, rev: 2, at: now })
+    j.cards.push(card(s1), card(t2))
+    j.batches.push({ batchId: 'b-x', members: [{ id: 'm1', card: `c-${s1.id}`, board: 'home' }, { id: 'm2', card: `c-${t2.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now,
+      results: { m1: { shared: ['design/scenes/demo/_kit.tsx'] }, m2: { body: 'Done.', asks: false, reanchors: [] } } })
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent(), undefined, { changed: () => { throw new Error('push failed') }, held: () => false, anyHold: () => false })
+    await jam.tick()
+    await jam.tick(); jam.stop()
+    expect(cardOf(jam, t2)!.state).toBe('failed')                        // its reply waits for Retry
+    expect(cardOf(jam, s1)!.exclusive).toEqual(['design/scenes/demo/_kit.tsx'])
+    expect(packets(root).map((p) => p.exclusive)).toEqual([{ files: ['design/scenes/demo/_kit.tsx'] }])   // the rerun ran, alone
+    done()
+  }, 20_000)
+})

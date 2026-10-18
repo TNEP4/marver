@@ -162,12 +162,20 @@ export function canonicalShared(root: string, f: string): string | null {
  *  every tick ingests, claims what can run and waits until the work is idle. */
 export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log: (m: string) => void = () => {}, hooks: JamHooks = {}): JamCore {
   const commentsDir = join(root, 'design', 'comments')
-  const q: Queue = createQueue(root, (fence) => {
+  const q0: Queue = createQueue(root, (fence) => {
     for (const pid of fence) fenceGroup(pid)
     log(`  jam: only comments that tag @marver start work now - plain replies are listed in \`npx marver marks\` for your agent`)
   })
 
   let stopped = false
+  // a stopped daemon never writes the journal again: a timer or a delivery still in flight when it
+  // stopped must not overwrite what the server that replaced it wrote
+  const q: Queue = {
+    get j() { return q0.j },
+    ctx: () => q0.ctx(),
+    lock: (fn) => q0.lock((j, ctx) => { if (stopped) throw new Error('jam stopped'); return fn(j, ctx) }),
+    persist: () => { if (!stopped) q0.persist() },
+  }
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
   const running = new Map<string, Promise<void>>()   // batchId -> its run
   const runningBatches = new Map<string, Batch>()
@@ -317,6 +325,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  journal (results, re-pins, the early ack), so a resumed delivery does exactly what the first
    *  one would have. */
   const deliver = async (b: Batch) => {
+    if (stopped) return
     const cards = b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     const early = b.early
     const posted: Record<string, { reply?: string; answered?: boolean; asked?: number }> = {}
@@ -497,10 +506,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** Post a batch's results again after a failed delivery - a few times, further apart. If it never
    *  posts, its cards fail with the results kept: Retry posts them (and a boot tries again) - the agent
    *  never runs twice for one result. */
+  const timers = new Set<ReturnType<typeof setTimeout>>()
   const redeliver = (b: Batch, n: number, delay = 5_000 * n) => {
     if (stopped) return
     delivering.add(b.batchId); runningBatches.set(b.batchId, b); reserve()
     const t = setTimeout(() => {
+      timers.delete(t)
+      if (stopped) return
       deliver(b).then(() => settleDelivery(b), async (err) => {
         log(`  jam: posting failed again - ${(err as Error).message}`)
         if (n < 5) return redeliver(b, n + 1)
@@ -508,6 +520,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         settleDelivery(b)
       })
     }, delay)
+    timers.add(t)
     t.unref?.()
   }
 
@@ -652,7 +665,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   return {
     tick,
-    stop() { stopped = true; jamReservations.settling = false; if (recheck) clearTimeout(recheck); for (const c of activeChildren) fenceGroup(c.pid) },
+    stop() {
+      stopped = true; jamReservations.settling = false
+      if (recheck) clearTimeout(recheck)
+      for (const t of timers) clearTimeout(t)
+      timers.clear()
+      for (const c of activeChildren) fenceGroup(c.pid)
+    },
     snapshot() { return q.j },
     view,
     async act(id, rev, action) {
