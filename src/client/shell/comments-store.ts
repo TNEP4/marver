@@ -128,21 +128,27 @@ export const useComments = create<CommentsState>((set, get) => {
     })
     // only a question interrupts (spec 27): a reply that says it is done is read in its thread, and
     // the sidebar marks its frame - no notice, no ping
-    const asking = news.filter((n) => n.ask)
-    if (!asking.length) return
+    // one notice per batch: a jam job's questions (`jam-<batch>-m<n>`) fold into one, the rest under it
+    const questions = news.filter((n) => n.ask)
+    if (!questions.length) return
+    const groups = new Map<string, typeof questions>()
+    for (const n of questions) { const k = /^jam-(.+)-m\d+$/.exec(n.e.id)?.[1] ?? n.e.id; groups.set(k, [...(groups.get(k) ?? []), n]) }
+    const asking = [...groups.values()].map((g) => ({ ...g[g.length - 1], rest: g.slice(0, -1) }))
     playPing()
     void import('./store.ts').then(({ useStore }) => {
       const s = useStore.getState()
-      for (const { e, threadId, body } of asking) {
-        // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
+      // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
+      const noteOf = ({ e, threadId, body }: { e: CommentEvent; threadId: string; body?: string }) => {
         const t = get().threads.find((t) => t.id === threadId)
         const entry = t?.frame ? s.manifest?.frames.find((f) => f.id === t.frame) : undefined
-        s.jamToast({
+        return {
           threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts,
           preview: (body ?? '').replace(/\s+/g, ' ').slice(0, 90),
           frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
-        })
+        }
       }
+      // a batch's other questions ride under its notice - View walks through them
+      for (const n of asking) s.jamToast({ ...noteOf(n), ...(n.rest.length ? { stack: n.rest.map(noteOf) } : {}) })
     })
   }
   // A HUMAN's fresh comment that concerns me raises the same pill the agent

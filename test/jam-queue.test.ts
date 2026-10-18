@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
+import { spawn } from 'node:child_process'
 import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { act, answers, ctxFor, form, ingest, merge } from '../src/server/jam/queue.ts'
-import { goalText, packetPath, parseMembers } from '../src/server/jam/packet.ts'
+import { act, answers, ctxFor, form, freezeBrief, ingest, merge, settle, writePacket } from '../src/server/jam/queue.ts'
+import { buildPacket, goalText, packetPath, parseMembers, sharedFile } from '../src/server/jam/packet.ts'
 import { refuseHold, restoreHolds, saveHolds } from '../src/server/jam/reserve.ts'
 import { createActivity } from '../src/server/jam/activity.ts'
 import type { Batch, Card, JamAdapter, Journal, JournalV1 } from '../src/server/jam/types.ts'
@@ -535,6 +536,8 @@ describe('Jam V2: results first, then replies', () => {
     expect([cardOf(jam, b)!.state, cardOf(jam, b)!.note]).toEqual(['dropped', 'no longer authorized'])
     expect(packets(root).length).toBe(1)                     // the same packet file, rerun
     expect(packets(root)[0].batchId).toBe('b-crash')
+    // ...holding only what is still the owner's: the dropped member never reaches the agent
+    expect(packets(root)[0].members.map((m: any) => m.card)).toEqual([`c-${a.id}`])
     expect(agentReplies(dir).length).toBe(1)
     done()
   })
@@ -672,5 +675,119 @@ describe('Jam V2: what the status icon says', () => {
     expect(statusLines({ ...base, state: 'asks' }, 'claude', H).head).toBe('Asks you - see the question below')
     const f = statusLines({ ...base, state: 'failed', note: 'the agent did not answer this one' }, 'claude', H)
     expect(f).toEqual({ head: 'Failed - the agent did not answer this one', detail: 'Retry here, or tag @marver again' })
+  })
+})
+
+describe('Jam V2: review round 1 fixes', () => {
+  it('a `shared` answer names only design source that is not a frame - never local state, logs, boards, the manifest, or a path out', () => {
+    expect(sharedFile('design/scenes/pricing/_kit.tsx')).toBe('design/scenes/pricing/_kit.tsx')
+    expect(sharedFile('./design/providers.tsx')).toBe('design/providers.tsx')
+    for (const bad of ['design/.local/jam-ledger', '../../outside.txt', 'design/../x', 'design/comments/home.jsonl', 'design/boards/home.json',
+      'design/manifest.json', 'design/scenes/pricing/hero.tsx', '/etc/passwd', 'src/app.ts', 'design//x'])
+      expect(sharedFile(bad)).toBeNull()
+    expect(parseMembers('```marver-reply m1 shared design/.local/jam-ledger ../x\n```', ['m1'])).toEqual({ m1: { missing: true } })
+  })
+
+  it('a resumed delivery posts no second copy of an early question, keeps the re-pins, and finds an answer written before the restart', async () => {
+    const { root, dir, done } = setup()
+    const t = say(root, dir, '@marver which?')
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/hero'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-e', made: t.ts, order: t.ts, rev: 2, at: now })
+    appendEvents(dir, 'home', [{ id: 'jam-e1-b-e', ts: tick(), type: 'reply', commentId: 'jam-c-e1-b-e', parentId: t.commentId, board: 'home', author: OWNER, body: 'Card or CVC?', agent: true }])
+    const earlyTs = readLog(dir, 'home').find((e) => e.id === 'jam-e1-b-e')!.ts
+    say(root, dir, 'card', { thread: t.commentId })                       // answered before the restart
+    j.batches.push({ batchId: 'b-e', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/hero'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now,
+      results: { m1: { body: 'Card or CVC?', asks: true, reanchors: [] } }, early: { body: 'Card or CVC?', asks: false, commentId: 'jam-c-e1-b-e', ts: earlyTs },
+      reanchors: [{ thread: t.commentId!, target: { on: 'Pay' } }] })
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent('ok', { touch: 'ran.marker' }))
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'ran.marker'))).toBe(false)
+    expect(agentReplies(dir).map((r) => r.body)).toEqual(['Card or CVC?'])
+    expect(readLog(dir, 'home').some((e) => e.type === 'reanchor' && e.commentId === t.commentId)).toBe(true)
+    expect([cardOf(jam, t)!.state, cardOf(jam, t)!.note]).toEqual(['done', 'answered'])
+    done()
+  })
+
+  it('an early ack that is already a fenced `m1 asks` block posts its words once, asking', async () => {
+    const { root, dir, done } = setup()
+    const block = '```marver-reply m1 asks\nPill or outline?\n```'
+    const line1 = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: block }] } })
+    const line2 = JSON.stringify({ type: 'result', result: block })
+    const script = `const L=${JSON.stringify([line1, line2])};process.stdout.write(L[0]+'\\n');setTimeout(()=>process.stdout.write(L[1]+'\\n'),100)`
+    const a: JamAdapter = { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: process.execPath, args: ['-e', script] }), parse: claudeAdapter.parse, earlyText: claudeAdapter.earlyText }
+    const jam = createJam(root, CFG, a)
+    const t = say(root, dir, '@marver the badge')
+    await jam.tick(); jam.stop()
+    expect(agentReplies(dir).map((r) => [r.body, r.asks])).toEqual([['Pill or outline?', true]])
+    expect(cardOf(jam, t)!.state).toBe('asks')
+    done()
+  })
+
+  it('a merge keeps what the failed run said; a brief keeps long text and long threads whole', () => {
+    const { root, dir, done } = setup()
+    const ctx = ctxFor(root)
+    const j = readJournal(root)
+    const now = Date.now()
+    const base = { kind: 'comment' as const, board: 'home', frames: ['demo/hero'], thread: 't9', made: now, order: now, at: now }
+    j.batches.push({ batchId: 'b-f', members: [{ id: 'm1', card: 'c-f', board: 'home', brief: { asks: [], history: [] } }], frames: [], state: 'failed', leaseUntil: 0, attempts: 2, at: now, note: 'the agent could not finish' })
+    const failed: Card = { ...base, id: 'c-f', events: ['f'], state: 'failed', rev: 1, batch: 'b-f', brief: { asks: [{ id: 'f', body: '@marver x', ts: 1 }], history: [] } }
+    const queued: Card = { ...base, id: 'c-q', events: ['q'], state: 'queued', rev: 1 }
+    j.cards.push(failed, queued)
+    act(j, 'c-f', 1, 'retry')
+    const root1 = say(root, dir, 'root', { id: 't9' })
+    const long = 'a'.repeat(9000) + ' ONLY IN RED'
+    const ans = say(root, dir, long, { thread: root1.commentId })
+    for (let i = 0; i < 50; i++) say(root, dir, `line ${i}`, { thread: root1.commentId })
+    const brief = freezeBrief(j, ctxFor(root), queued, readLog(dir, 'home'))
+    expect(brief.follows?.result).toBe('the agent could not finish')
+    expect(brief.history.length).toBe(52)
+    expect(brief.history.find((m) => m.id === ans.id)!.body.endsWith('ONLY IN RED')).toBe(true)
+    expect(j.covered[ans.id]).toBe(ans.id)
+    expect(ctx.root).toBe(root)
+    done()
+  })
+
+  it('packet cleanup never removes the packet an unfinished batch needs', () => {
+    const { root, done } = setup()
+    writePacket(root, buildPacket('old-running', [], []))
+    for (let i = 0; i < 55; i++) writePacket(root, buildPacket(`p-${i}`, [], []), new Set(['old-running']))
+    expect(existsSync(join(root, packetPath('old-running')))).toBe(true)
+    expect(existsSync(join(root, packetPath('p-0')))).toBe(false)
+    done()
+  })
+
+  it('a card resolved while it ran and answering `shared` (or nothing) is done - it never runs again', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamq-r-')))
+    const now = Date.now()
+    const c: Card = { id: 'c-r', kind: 'comment', board: 'home', frames: ['demo/a'], thread: 't', events: ['r'], state: 'working', batch: 'b-r', resolved: true, made: now, order: now, rev: 1, at: now }
+    const b: Batch = { batchId: 'b-r', members: [{ id: 'm1', card: 'c-r', board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { shared: ['design/x.tsx'] } } }
+    j.cards.push(c); j.batches.push(b)
+    settle(j, b, {})
+    expect([c.state, c.note, c.exclusive]).toEqual(['done', 'resolved', undefined])
+  })
+
+  it('the startup barrier: an orphan left running by a dead server is fenced before its batch runs again', async () => {
+    const { root, dir, done } = setup()
+    const orphan = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
+    orphan.unref()
+    const t = say(root, dir, '@marver go')
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/hero'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-o', made: t.ts, order: t.ts, rev: 2, at: now })
+    j.batches.push({ batchId: 'b-o', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/hero'], state: 'claimed', leaseUntil: 0, attempts: 0, pgid: orphan.pid, at: now })
+    mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
+    writeFileSync(join(root, packetPath('b-o')), JSON.stringify(buildPacket('b-o', [{ id: 'm1', card: `c-${t.id}`, kind: 'comment', board: 'home', thread: t.commentId, frames: ['demo/hero'], brief: { asks: [{ id: t.id, body: '@marver go', ts: t.ts }], history: [] } }], ['demo/hero'])))
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent('ok', { orphan: orphan.pid }))
+    await jam.tick(); jam.stop()
+    expect(readFileSync(join(root, 'orphan.txt'), 'utf8')).toBe('dead')
+    expect(cardOf(jam, t)!.state).toBe('done')
+    done()
   })
 })

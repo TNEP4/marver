@@ -200,12 +200,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           // One parser either way (packet.ts). A plain ack asks nothing: only the final block can
           // say `ask`, and when its words match the ack the daemon re-flags it - so a flag only
           // ever turns on, the way a question's notice can follow.
-          const parsed = parseAgentText(hit.text)
+          // A fenced first message is parsed the way the final one is - by member (`m1 asks` included);
+          // a `shared` or empty block is no ack at all.
           const fenced = /```marver-reply/.test(hit.text)
-          const text = fenced ? parsed.reply : parsed.reply.split(/\n\s*\n/)[0].trim()
+          const block = fenced ? parseMembers(hit.text, ['m1']).m1 : null
+          if (block && !('body' in block)) continue
+          const text = block && 'body' in block ? block.body : parseAgentText(hit.text).reply.split(/\n\s*\n/)[0].trim()
           if (!text || metaNarration(text)) continue
           earlyFired = true
-          try { onEarly!(text, fenced && parsed.asks, hit.model) } catch { /* early delivery is best-effort */ }
+          try { onEarly!(text, !!block && 'body' in block && block.asks, hit.model) } catch { /* early delivery is best-effort */ }
           break
         }
       })
@@ -288,18 +291,21 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   /** Post a batch's results (each append a no-op if it already landed) and move its cards. Never
-   *  runs the agent: a batch with results is reconciled, not rerun. */
-  const deliver = async (b: Batch, early?: { body: string; asks: boolean; commentId: string; ts: number }, reanchors: Reanchor[] = []) => {
+   *  runs the agent: a batch with results is reconciled, not rerun. Everything it needs is in the
+   *  journal (results, re-pins, the early ack), so a resumed delivery does exactly what the first
+   *  one would have. */
+  const deliver = async (b: Batch) => {
     const cards = b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
+    const early = b.early
     const posted: Record<string, { reply?: string; answered?: boolean; asked?: number }> = {}
+    const loggedTs = (board: string, id: string) => readLog(commentsDir, board).find((e) => e.id === id)?.ts
     for (const m of b.members) {
       const c = cards.find((x) => x.id === m.card)
       const r: Result | undefined = b.results?.[m.id]
       if (!c || !r || !('body' in r) || !c.thread) continue
       const sameAsEarly = !!early && b.members.length === 1 && r.body === early.body
-      const asked = sameAsEarly ? early!.ts : Date.now()
       // a question you answered before it was asked: done, no notice - so it is posted as not asking
-      const answered = r.asks && sameAsEarly && answeredSince(ctxFor(root), c.board, c.thread, asked)
+      const answered = r.asks && sameAsEarly && answeredSince(ctxFor(root), c.board, c.thread, early!.ts)
       if (sameAsEarly) {
         if (r.asks && !early!.asks && !answered) {
           const who = me()
@@ -308,15 +314,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
           }])
         }
-        posted[m.id] = { reply: early!.commentId, answered, asked }
+        posted[m.id] = { reply: early!.commentId, answered, asked: early!.ts }
       } else {
         const p = postReply(b, c, m.id, r.body, r.asks && !answered, r.model, 'reply', r.alsoChanged)
-        posted[m.id] = { reply: p.commentId, answered, asked: p.ts }
+        // the question's own time, as logged - a resumed post is a no-op and keeps the first one's
+        posted[m.id] = { reply: p.commentId, answered, asked: loggedTs(c.board, `jam-${b.batchId}-${m.id}`) ?? p.ts }
       }
     }
-    const repinned = await emitReanchors(b, cards, reanchors)
+    const repinned = await emitReanchors(b, cards, b.reanchors ?? [])
     changedBoards(b)
     await q.lock((j) => {
+      // answered while the reply was being posted, or before a restart: look again, under the lock
+      for (const m of b.members) {
+        const c = j.cards.find((x) => x.id === m.card)
+        const r = b.results?.[m.id]
+        const p = posted[m.id]
+        if (c?.thread && p && !p.answered && r && 'body' in r && r.asks && p.asked) p.answered = answeredSince(ctxFor(root), c.board, c.thread, p.asked)
+      }
       b.posted = true
       settled(settle(j, b, posted))
       q.persist()
@@ -380,9 +394,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       for (const [id, r] of Object.entries(split)) {
         results[id] = 'body' in r ? { body: r.body, asks: r.asks, ...(run.model ? { model: run.model } : {}), reanchors: [], ...(changedShared.length ? { alsoChanged: changedShared } : {}) } : r
       }
-      await q.lock(() => { b.results = results; if (run.model) b.model = run.model; q.persist() })
+      await q.lock(() => {
+        b.results = results
+        if (run.reanchors.length) b.reanchors = run.reanchors
+        if (early) b.early = early
+        if (run.model) b.model = run.model
+        q.persist()
+      })
       if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
-      await deliver(b, early, run.reanchors)
+      await deliver(b)
     } finally {
       clearGlow()
     }
@@ -465,8 +485,20 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const okIds = c.events.filter((id) => ctx.owned.has(`${c.board}\t${id}`) && readLog(commentsDir, c.board).some((e) => e.id === id))
           if (!okIds.length) { c.state = 'dropped'; c.note = 'no longer authorized'; c.rev += 1; c.at = Date.now() }
         }
+        const before = b.members.length
         b.members = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
         if (!b.members.length) { b.state = 'done'; continue }
+        // the rerun reads the packet file: it must hold exactly what is still the owner's - members
+        // dropped here leave it, and each frozen ask is checked against the ledger again
+        const file = join(root, packetPath(b.batchId))
+        try {
+          const packet = JSON.parse(readFileSync(file, 'utf8')) as JobPacket
+          const keep = new Set(b.members.map((m) => m.card))
+          const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`)
+          const members = packet.members.filter((m) => keep.has(m.card)).map((m) => ({ ...m, brief: { ...m.brief, asks: m.kind === 'comment' ? m.brief.asks.filter((a) => owned(m.board, a.id)) : m.brief.asks } }))
+          const changed = members.length !== packet.members.length || members.some((m, i) => m.brief.asks.length !== packet.members.filter((x) => keep.has(x.card))[i].brief.asks.length)
+          if (changed || b.members.length !== before) writeFileSync(file, JSON.stringify({ ...packet, members }, null, 1), { mode: 0o600 })
+        } catch { b.state = 'failed'; b.note = 'its packet is gone'; for (const m of b.members) { const c = j.cards.find((x) => x.id === m.card); if (c) { c.state = 'failed'; c.note = 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } continue }
         out.push({ b, results: false })
       }
       q.persist()
@@ -512,7 +544,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         return {
           id: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames, events: c.events,
           state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,
-          ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}),
+          ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}), ...(c.batch ? { batch: c.batch } : {}),
           ...(position ? { position } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
         }
       }),

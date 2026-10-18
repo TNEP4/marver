@@ -1107,11 +1107,13 @@ async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void)
   }
 }
 
-/** Retry a failed jam card from its notice, at the rev the notice saw (a newer change wins). */
-async function retryNote(f: { card: string; rev: number }) {
+/** Retry a batch's failed jam cards from their notice - each one still failed (a newer change wins). */
+async function retryNote(failed: { card: string; rev: number }[]) {
   const { useJamQueue } = await import('./jam-queue.ts')
-  const card = useJamQueue.getState().cards?.find((c) => c.id === f.card)
-  if (card && card.state === 'failed') await useJamQueue.getState().act(card, 'retry')
+  for (const f of failed) {
+    const card = useJamQueue.getState().cards?.find((c) => c.id === f.card)
+    if (card && card.state === 'failed') await useJamQueue.getState().act(card, 'retry')
+  }
 }
 
 /** One jam pill, frame-first: row 1 = intent icon + FRAME TITLE (blue) · age; row 2 = Marver · preview.

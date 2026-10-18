@@ -68,6 +68,12 @@ const HELPERS = `(() => {
     await window.__mvComments.getState().send([ev], 'main')
     return ev.commentId
   }
+  window.__tags = async (frame, bodies) => {
+    const nodeKey = window.__mvStore.getState().nodes.find((n) => n.frame === frame).key
+    const evs = bodies.map((body, i) => { const id = crypto.randomUUID(); return { id, ts: Date.now() + i, type: 'create', commentId: id, frame, nodeKey, body } })
+    await window.__mvComments.getState().send(evs, 'main')
+    return evs.map((e) => e.commentId)
+  }
   window.__icon = () => document.querySelector('.cm-card .cm-tstat')?.getAttribute('data-jam-state') ?? 'none'
 })()`
 
@@ -189,5 +195,22 @@ describe('Jam V2 in the browser: a tag\'s card in its thread', () => {
     await until(`window.__mvComments.getState().threads.find((t) => t.id === ${JSON.stringify(f)})?.replies.some((r) => r.agent && /^Done:/.test(r.body))`, 30_000)
     await until(`window.__icon() === 'none'`)
     expect(journal().cards.find((x: any) => x.thread === f).ran.length).toBe(1)
+  }, 120_000)
+
+  skippable('two asks on one frame fail together: one notice for the batch, and its Retry retries both', async () => {
+    agentMode({ fail: true })
+    await browser!.eval(s, `window.__mvStore.getState().clearJamToasts(), 1`)
+    // one write, so both are queued before a slot takes them: one batch (a tag alone on a free slot runs alone)
+    const [x, y] = await browser!.eval(s, `window.__tags('spec/charlie', ['@marver one thing', '@marver another thing'])`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => [${JSON.stringify(x)}, ${JSON.stringify(y)}].includes(c.thread) && c.state === 'failed').length === 2`, 30_000)
+    await sleep(500)
+    const notes = await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam?.failed).map((t) => [t.jam.failed.length, t.jam.preview])`)
+    expect(notes.length).toBe(1)
+    expect(notes[0][0]).toBe(2)
+    expect(notes[0][1]).toMatch(/^2 asks - /)
+    agentMode({})
+    await click('.sh-jam-view')                                              // Retry comes first on a failure notice
+    await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => [${JSON.stringify(x)}, ${JSON.stringify(y)}].includes(c.thread) && c.state === 'failed').length === 0`, 30_000)
+    await until(`[${JSON.stringify(x)}, ${JSON.stringify(y)}].every((id) => window.__mvComments.getState().threads.find((t) => t.id === id)?.replies.some((r) => r.agent))`, 30_000)
   }, 120_000)
 })

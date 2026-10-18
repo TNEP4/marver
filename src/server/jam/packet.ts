@@ -115,6 +115,20 @@ export function goalText(packet: JobPacket, subagents = true): string {
   ].join('\n')
 }
 
+const FRAME_FILE = /\.(tsx|jsx|html)$/
+/** A file a `shared` answer may name: a relative path under design/ that is design source and not a
+ *  frame - never local state, the comment logs, the board files, the manifest, or a path that climbs
+ *  out. Anything else is dropped (an exclusive job's grant names only what passes). */
+export function sharedFile(raw: string): string | null {
+  const f = raw.replace(/\\/g, '/').replace(/^\.\//, '')
+  if (!/^design\/[\w./@+-]+$/.test(f) || f.split('/').some((p) => p === '..' || p === '.' || p === '')) return null
+  const parts = f.split('/').slice(1)
+  if (['comments', 'boards'].includes(parts[0]) || parts[0].startsWith('.') || f === 'design/manifest.json') return null
+  const base = parts[parts.length - 1]
+  if (parts[0] === 'scenes' && FRAME_FILE.test(base) && !base.startsWith('_') && !parts.slice(1, -1).some((p) => p.startsWith('_'))) return null
+  return f
+}
+
 /** Split the agent's final message into one reply per member. A block is
  *  ```marver-reply <member> [asks | shared <file>...]; the first block for an id wins and a block
  *  for an unknown id is ignored. A member with no block is `missing` - never reported as done. A
@@ -131,7 +145,7 @@ export function parseMembers(said: string, ids: string[]): Record<string, { body
     const id = words[0]
     if (!want.has(id) || out[id]) continue
     if (words[1] === 'shared') {
-      const files = words.slice(2).map((f) => sanitize(f, 512)).filter(Boolean)
+      const files = words.slice(2).map(sharedFile).filter((f): f is string => !!f)
       out[id] = files.length ? { shared: files } : { missing: true }
     } else if (body) out[id] = { body, asks: /^asks?$/.test(words[1] ?? '') }
   }

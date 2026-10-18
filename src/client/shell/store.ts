@@ -115,8 +115,8 @@ export interface JamNote {
   frame?: string; frameTitle?: string; intent?: string
   kind?: 'mention' | 'reply'                      // absent = the agent pill
   author?: { name?: string; avatar?: string; id?: string; email?: string }
-  /** a jam card that failed (spec 27): the notice carries Retry */
-  failed?: { card: string; rev: number }
+  /** jam cards of one batch that failed (spec 27): the notice carries Retry, for all of them */
+  failed?: { card: string; rev: number }[]
   /** earlier notices folded under this one - View walks through them */
   stack?: JamNote[]
 }
@@ -589,7 +589,7 @@ interface State {
   toast(text: string): void
   jamToast(note: JamNote): void
   /** a jam card failed - one notice, with Retry (spec 27: only a question or a failure interrupts) */
-  jamFailed(card: { id: string; rev: number; board: string; thread?: string; frames: string[]; note?: string }): void
+  jamFailed(cards: { id: string; rev: number; board: string; thread?: string; frames: string[]; note?: string }[]): void
   dismissToast(id: number): void
   /** View on a notice: a round's notice moves to its next reply, any other one goes. */
   advanceToast(id: number): void
@@ -1745,14 +1745,16 @@ export const useStore = create<State>((set, get) => {
         return { toasts: [...others, { id, text, jam }].slice(-8) }
       })
     },
-    jamFailed(card) {
+    jamFailed(cards) {
+      const card = cards[0]
+      if (!card) return
       const frame = card.frames[0]
       const entry = frame ? get().manifest?.frames.find((f) => f.id === frame) : undefined
       get().jamToast({
         threadId: card.thread ?? '', board: card.board, ts: Date.now(),
-        preview: card.note ?? 'the agent could not finish',
+        preview: (cards.length > 1 ? `${cards.length} asks - ` : '') + (card.note ?? 'the agent could not finish'),
         frame, frameTitle: entry?.title ?? frame, intent: entry?.intent,
-        failed: { card: card.id, rev: card.rev },
+        failed: cards.map((c) => ({ card: c.id, rev: c.rev })),
       })
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },

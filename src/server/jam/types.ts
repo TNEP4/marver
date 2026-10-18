@@ -101,6 +101,11 @@ export interface Batch {
   attempts: number
   pgid?: number              // spawned process group, for fencing an orphan on resume
   results?: Record<string, Result>   // written before any reply is posted
+  /** the rest of the delivery record, written with `results`: the re-pins, and the one-member
+   *  early ack the final reply may be (so a resumed delivery never posts it twice) */
+  reanchors?: Reanchor[]
+  early?: { body: string; asks: boolean; commentId: string; ts: number }
+  note?: string              // why it failed (two failed attempts) - what a card that follows it reads
   posted?: boolean           // every reply and reanchor of `results` is in the log
   model?: string
   at: number

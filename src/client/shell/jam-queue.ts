@@ -12,7 +12,7 @@ export type JamCardState = 'draft' | 'confirming' | 'queued' | 'working' | 'asks
 export interface JamCard {
   id: string; kind: 'comment' | 'capture' | 'wrapup'; board: string; thread?: string; frames: string[]; events: string[]
   state: JamCardState; note?: string; rev: number; made: number; order: number; at: number
-  follows?: string; reply?: string; position?: number; waiting?: string; exclusive?: boolean
+  follows?: string; reply?: string; position?: number; waiting?: string; exclusive?: boolean; batch?: string
 }
 interface QueueState {
   /** null: no queue here (published, jam off, or not loaded yet) - no icon anywhere */
@@ -54,10 +54,12 @@ export const useJamQueue = create<QueueState>((set, get) => {
       loaded = true
       set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null })
       if (first) return
-      // a failure interrupts once: a card that turned failed since the last look
+      // a failure interrupts once per batch: the cards that turned failed since the last look, by batch
       const failed = next.filter((c) => c.state === 'failed' && before.get(c.id)?.state !== 'failed')
+      const byBatch = new Map<string, JamCard[]>()
+      for (const c of failed) { const k = c.batch ?? c.id; byBatch.set(k, [...(byBatch.get(k) ?? []), c]) }
       if (failed.length) void import('./store.ts').then(({ useStore }) => {
-        for (const c of failed) useStore.getState().jamFailed(c)
+        for (const cards of byBatch.values()) useStore.getState().jamFailed(cards)
       })
     },
     async act(card, action) {

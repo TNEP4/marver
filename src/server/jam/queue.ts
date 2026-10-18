@@ -23,7 +23,9 @@ export const MENTION = /@marver\b/i
 /** A batch holds at most this many cards; the next waits for the next batch. */
 export const MAX_MEMBERS = 8
 const KEEP_MS = 7 * 24 * 60 * 60_000
-const HISTORY = 40
+/** A brief copies text whole; a message longer than this (pasted logs) is cut, and then not counted as
+ *  taken in - the reader never saw all of it. */
+const BODY_CAP = 100_000
 
 const TERMINAL: CardState[] = ['done', 'dropped', 'kept']
 export const pending = (c: Card): boolean => !TERMINAL.includes(c.state)
@@ -227,20 +229,25 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const { body, rev } = textOf(ctx, c.board, events, e, owner)
     const note = !owner && !e.agent ? 'someone else - context only'
       : owner && !asks.has(e.id) && dropped.has(e.id) ? 'dropped - not an ask' : undefined
-    if (owner) j.covered[e.id] = rev
+    if (owner && body.length <= BODY_CAP) j.covered[e.id] = rev
     return { id: e.id, ...(e.author?.name ? { author: sanitize(e.author.name, 80) } : {}), ...(e.agent ? { agent: true } : {}),
-      ...(owner ? { owner: true, rev } : {}), body: sanitize(body), ts: e.ts, ...(note ? { note } : {}) }
+      ...(owner ? { owner: true, rev } : {}), body: sanitize(body, BODY_CAP), ts: e.ts, ...(note ? { note } : {}) }
   }
   const brief: Brief = {
     asks: c.events.map((id) => msgs.find((e) => e.id === id) ?? events.find((e) => e.id === id)).filter((e): e is CommentEvent => !!e).map(toMsg),
-    history: msgs.filter((e) => !asks.has(e.id)).slice(-HISTORY).map(toMsg),
+    history: msgs.filter((e) => !asks.has(e.id)).map(toMsg),
   }
   const followed = c.follows ? j.cards.find((x) => x.id === c.follows) : undefined
-  if (followed) brief.follows = { asks: followed.brief?.asks ?? [], result: resultText(j, followed.batch, followed.id, followed.note ?? '') }
+  // a run is named by its batch: the card's current one, or - requeued or merged since - its last in `ran`
+  const lastRun = (x: Card) => x.batch ?? x.ran?.[x.ran.length - 1]
+  if (followed) {
+    const b = lastRun(followed)
+    brief.follows = { asks: followed.brief?.asks ?? [], result: resultText(j, b, followed.id, j.batches.find((x) => x.batchId === b)?.note ?? followed.note ?? '') }
+  }
   else if (c.ran?.length) {
     const last = c.ran[c.ran.length - 1]
     const m = j.batches.find((b) => b.batchId === last)?.members.find((x) => x.card === c.id)
-    brief.follows = { asks: m?.brief?.asks ?? [], result: resultText(j, last, c.id, 'the run failed') }
+    brief.follows = { asks: m?.brief?.asks ?? [], result: resultText(j, last, c.id, j.batches.find((b) => b.batchId === last)?.note ?? 'the run failed') }
   }
   return brief
 }
@@ -324,22 +331,24 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     }
     const files = f.exclusive ? [...new Set(f.cards.flatMap((c) => c.exclusive ?? []))] : undefined
     const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now }
-    writePacket(ctx.root, buildPacket(batchId, packetMembers, f.frames, f.exclusive ? files : undefined))
     j.batches.push(b)
+    writePacket(ctx.root, buildPacket(batchId, packetMembers, f.frames, f.exclusive ? files : undefined), new Set(j.batches.filter((x) => x.state === 'claimed').map((x) => x.batchId)))
     batches.push(b)
   }
   return { batches, exclusiveWaiting: exclusive.length > 0 && batches.length === 0 }
 }
 
 const PACKETS_KEPT = 50
-function writePacket(root: string, packet: ReturnType<typeof buildPacket>) {
+/** Write a batch's packet once (a rerun reads the same file) and forget old ones - never one an
+ *  unfinished batch (`keep`) still needs to resume. */
+export function writePacket(root: string, packet: ReturnType<typeof buildPacket>, keep: Set<string> = new Set()) {
   const file = join(root, packetPath(packet.batchId))
   const dir = join(root, 'design', '.local', 'jam', 'packets')
   mkdirSync(dir, { recursive: true })
   writeFileSync(file, JSON.stringify(packet, null, 1), { mode: 0o600, flag: 'wx' })
   try {
     const files = readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t)
-    for (const { f } of files.slice(PACKETS_KEPT)) rmSync(join(dir, f), { force: true })
+    for (const { f } of files.slice(PACKETS_KEPT)) if (!keep.has(f.replace(/\.json$/, ''))) rmSync(join(dir, f), { force: true })
   } catch { /* housekeeping only */ }
 }
 
@@ -369,6 +378,9 @@ export function settle(j: Journal, b: Batch, posted: Record<string, { reply?: st
       else if (r.asks) { c.asked = p.asked ?? now; set(c, 'asks', now, 'asks you'); out.push({ card: c, notice: 'asks' }); continue }
       else set(c, c.kind === 'comment' ? 'done' : 'review', now, c.kind === 'comment' ? 'replied' : 'ready to review')
       out.push({ card: c })
+    } else if (c.resolved) {
+      set(c, 'done', now, 'resolved')                  // resolved while it ran: nothing comes back to it
+      out.push({ card: c })
     } else if ('missing' in r) {
       set(c, 'failed', now, 'the agent did not answer this one'); out.push({ card: c, notice: 'failed' })
     } else if (c.exclusive || (c.shared ?? 0) >= 1) {
@@ -391,7 +403,7 @@ export function fail(j: Journal, b: Batch, note: string, now = Date.now()): Sett
     if (c.resolved) set(c, 'done', now, 'resolved')
     else { set(c, 'failed', now, note); out.push({ card: c, notice: 'failed' }) }
   }
-  b.state = 'failed'; b.at = now
+  b.state = 'failed'; b.at = now; b.note = note
   return out
 }
 

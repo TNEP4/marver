@@ -11,6 +11,7 @@ export interface QueueView {
     position?: number    // 1 = next, counting every queued card - tags and captures share one queue
     waiting?: string     // why a queued card is held
     exclusive?: boolean
+    batch?: string       // the batch that ran it last - a page folds one batch's failures into one notice
   })[]
 }
 
