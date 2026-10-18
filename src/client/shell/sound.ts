@@ -30,3 +30,25 @@ export function playPing(): void {
     }
   } catch { /* no audio here - fine */ }
 }
+
+/** Something is ready to review (spec 27): a soft, lower two-note chime - once per batch that leaves a
+ *  capture to review, only while the page has focus (`jam.chime`, on by default). */
+export function playChime(): void {
+  try {
+    ctx ??= new AudioContext()
+    if (ctx.state === 'suspended') { void ctx.resume().catch(() => {}); if (ctx.state === 'suspended') return }
+    const t0 = ctx.currentTime
+    for (const [freq, at, dur] of [[659.3, 0, .14], [987.8, .12, .26]] as const) {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(0, t0 + at)
+      gain.gain.linearRampToValueAtTime(0.05, t0 + at + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur)
+      osc.connect(gain).connect(ctx.destination)
+      osc.start(t0 + at)
+      osc.stop(t0 + at + dur + 0.05)
+    }
+  } catch { /* no audio here */ }
+}

@@ -65,6 +65,13 @@ export const useJamQueue = create<QueueState>((set, get) => {
       const run = (v as { run?: { since?: unknown } }).run
       set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null, run: run && typeof run.since === 'number' ? { since: run.since } : null })
       if (first) return
+      // something to review: a soft chime, once per batch that leaves a capture to review, if the page
+      // has focus - never a notice (spec 27, Part 2)
+      const ready = new Set(next.filter((c) => c.state === 'review' && before.get(c.id)?.state !== 'review').map((c) => c.batch ?? c.id))
+      if (ready.size && document.hasFocus()) void import('./store.ts').then(({ CONFIG }) => {
+        if (CONFIG.jam?.chime === false) return
+        void import('./sound.ts').then(({ playChime }) => playChime())
+      })
       // a failure interrupts once per batch: the cards that turned failed since the last look, by batch
       const failed = next.filter((c) => c.state === 'failed' && before.get(c.id)?.state !== 'failed')
       const byBatch = new Map<string, JamCard[]>()
