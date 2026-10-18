@@ -102,11 +102,12 @@ export function replay(events: CommentEvent[]): Thread[] {
       }
       case 'edit': {
         // an edit changes the words, the `asks` flag, or both - and keeps whichever it leaves out
-        if (!ev.commentId || (ev.body === undefined && ev.asks === undefined)) break
+        if (!ev.commentId || (ev.body === undefined && ev.asks === undefined && ev.alsoChanged === undefined)) break
         const m = threads.get(ev.commentId) ?? [...threads.values()].flatMap((th) => th.replies).find((r) => r.id === ev.commentId)
         if (!m) break
         if (ev.body !== undefined) m.body = ev.body
         if (ev.asks !== undefined) m.asks = ev.asks
+        if (ev.alsoChanged !== undefined && !('replies' in m)) (m as { alsoChanged?: string[] }).alsoChanged = ev.alsoChanged   // a reply's
         break
       }
       case 'resolve': {

@@ -23,9 +23,6 @@ export const MENTION = /@marver\b/i
 /** A batch holds at most this many cards; the next waits for the next batch. */
 export const MAX_MEMBERS = 8
 const KEEP_MS = 7 * 24 * 60 * 60_000
-/** A brief copies text whole; a message longer than this (pasted logs) is cut, and then not counted as
- *  taken in - the reader never saw all of it. */
-const BODY_CAP = 100_000
 
 const TERMINAL: CardState[] = ['done', 'dropped', 'kept']
 export const pending = (c: Card): boolean => !TERMINAL.includes(c.state)
@@ -229,9 +226,9 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const { body, rev } = textOf(ctx, c.board, events, e, owner)
     const note = !owner && !e.agent ? 'someone else - context only'
       : owner && !asks.has(e.id) && dropped.has(e.id) ? 'dropped - not an ask' : undefined
-    if (owner && body.length <= BODY_CAP) j.covered[e.id] = rev
+    if (owner) j.covered[e.id] = rev
     return { id: e.id, ...(e.author?.name ? { author: sanitize(e.author.name, 80) } : {}), ...(e.agent ? { agent: true } : {}),
-      ...(owner ? { owner: true, rev } : {}), body: sanitize(body, BODY_CAP), ts: e.ts, ...(note ? { note } : {}) }
+      ...(owner ? { owner: true, rev } : {}), body: sanitize(body, Infinity), ts: e.ts, ...(note ? { note } : {}) }   // whole: the packet is a file, and a cut ask can lose its last constraint
   }
   const brief: Brief = {
     asks: c.events.map((id) => msgs.find((e) => e.id === id) ?? events.find((e) => e.id === id)).filter((e): e is CommentEvent => !!e).map(toMsg),

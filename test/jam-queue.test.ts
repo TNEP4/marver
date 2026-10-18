@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { spawn } from 'node:child_process'
-import { createJam } from '../src/server/jam/daemon.ts'
+import { canonicalShared, createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
@@ -788,6 +788,123 @@ describe('Jam V2: review round 1 fixes', () => {
     await jam.tick(); jam.stop()
     expect(readFileSync(join(root, 'orphan.txt'), 'utf8')).toBe('dead')
     expect(cardOf(jam, t)!.state).toBe('done')
+    done()
+  })
+})
+
+describe('Jam V2: review round 2 fixes', () => {
+  const crashed2 = (root: string, dir: string) => {
+    const a = say(root, dir, '@marver one')
+    const b = say(root, dir, '@marver two')
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    const brief = (e: CommentEvent, rev = e.id) => ({ asks: [{ id: e.id, owner: true, rev, body: e.body!, ts: e.ts }], history: [] })
+    const card = (e: CommentEvent): Card => ({ id: `c-${e.id}`, kind: 'comment', board: 'home', frames: ['demo/hero'], thread: e.commentId, events: [e.id], state: 'working', batch: 'b-2', made: e.ts, order: e.ts, rev: 2, at: now, brief: brief(e) })
+    j.cards.push(card(a), card(b))
+    j.batches.push({ batchId: 'b-2', members: [{ id: 'm1', card: `c-${a.id}`, board: 'home', brief: brief(a) }, { id: 'm2', card: `c-${b.id}`, board: 'home', brief: brief(b) }], frames: ['demo/hero'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now })
+    mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
+    const pm = (e: CommentEvent, id: string, rev = e.id) => ({ id, card: `c-${e.id}`, kind: 'comment' as const, board: 'home', thread: e.commentId, frames: ['demo/hero'], brief: brief(e, rev) })
+    return { a, b, j, pm }
+  }
+
+  it('recovery checks each frozen revision too: an ask whose revision is not ledgered never reaches the agent, nor the journal briefs; the survivor is m1 again and answers as m1', async () => {
+    const { root, dir, done } = setup()
+    const { a, b, j, pm } = crashed2(root, dir)
+    // a's packet copy names a revision that was never ledgered (a synced edit)
+    writeFileSync(join(root, packetPath('b-2')), JSON.stringify(buildPacket('b-2', [pm(a, 'm1', 'synced-edit'), pm(b, 'm2')], ['demo/hero'])))
+    j.cards[0].brief!.asks[0].rev = 'synced-edit'
+    j.batches[0].members[0].brief!.asks[0].rev = 'synced-edit'
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent())
+    await jam.tick(); jam.stop()
+    expect([cardOf(jam, a)!.state, cardOf(jam, a)!.note]).toEqual(['dropped', 'no longer authorized'])
+    expect(cardOf(jam, a)!.brief!.asks).toEqual([])
+    const seen = packets(root)
+    expect(seen[0].members.map((m: any) => [m.id, m.card])).toEqual([['m1', `c-${b.id}`]])
+    expect(cardOf(jam, b)!.state).toBe('done')
+    done()
+  })
+
+  it('shared paths are checked on disk: a case alias of the board files, or a symlink into local state, is refused', () => {
+    const { root, done } = setup()
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    mkdirSync(join(root, 'design', 'scenes', 'demo'), { recursive: true })
+    writeFileSync(join(root, 'design', 'scenes', 'demo', '_kit.tsx'), '')
+    symlinkSync(join(root, 'design', '.local'), join(root, 'design', 'scenes', 'demo', '_link'))
+    symlinkSync(tmpdir(), join(root, 'design', '_out'))
+    expect(canonicalShared(root, 'design/scenes/demo/_kit.tsx')).toBe('design/scenes/demo/_kit.tsx')
+    expect(canonicalShared(root, 'design/scenes/demo/_new-kit.tsx')).toBe('design/scenes/demo/_new-kit.tsx')   // not there yet: its folder decides
+    expect(canonicalShared(root, 'design/BOARDS/home.json')).toBeNull()
+    expect(canonicalShared(root, 'design/scenes/demo/_link/jam-ledger')).toBeNull()
+    expect(canonicalShared(root, 'design/_out/x.ts')).toBeNull()
+    done()
+  })
+
+  it('a delivery that breaks after the results are written is posted again - the agent never runs twice', async () => {
+    const { root, dir, done } = setup()
+    let broke = false
+    const jam = createJam(root, CFG, agent('ok', { touch: 'runs.marker' }), undefined, { changed: () => { if (!broke) { broke = true; throw new Error('push failed') } } })
+    const t = say(root, dir, '@marver go')
+    await jam.tick()
+    expect(cardOf(jam, t)!.state).toBe('working')
+    for (let i = 0; i < 80 && cardOf(jam, t)!.state === 'working'; i++) await wait(100)
+    jam.stop()
+    expect(cardOf(jam, t)!.state).toBe('done')
+    expect(packets(root).length).toBe(1)
+    expect(agentReplies(dir).length).toBe(1)
+    done()
+  }, 20_000)
+
+  it('an early ack that is the whole reply still says which shared file the job changed', async () => {
+    const { root, dir, done } = setup()
+    const script = `require('fs').mkdirSync('design/scenes/demo',{recursive:true});require('fs').writeFileSync('design/scenes/demo/_kit.tsx','x'+Date.now());process.stdout.write('FINAL\\n')`
+    const oneShot: JamAdapter = {
+      name: 'codex', supportsSubagents: false,
+      spawnArgs: () => ({ cmd: process.execPath, args: ['-e', script] }),
+      earlyText: (line) => (line.includes('FINAL') ? { text: '```marver-reply\nRestyled it.\n```' } : null),
+      parse: () => ({ reply: 'Restyled it.', said: '```marver-reply\nRestyled it.\n```', asks: false, ok: true, reanchors: [] }),
+    }
+    const jam = createJam(root, { ...CFG, agent: 'codex' }, oneShot)
+    say(root, dir, '@marver restyle')
+    await jam.tick(); jam.stop()
+    const replies = agentReplies(dir)
+    expect(replies.length).toBe(1)
+    expect(replies[0].alsoChanged).toEqual(['design/scenes/demo/_kit.tsx'])
+    done()
+  })
+
+  it('the startup barrier: the orphan is fenced, a resumed batch waits for a restored hold, and the exclusive rerun of a `shared` result waits for every hold', async () => {
+    const { root, dir, done } = setup()
+    const orphan = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
+    orphan.unref()
+    const held = new Set(['demo/b'])
+    const s1 = say(root, dir, '@marver shared one', { frame: 'demo/a' })
+    const o1 = say(root, dir, '@marver resume me', { frame: 'demo/b' })
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    const card = (e: CommentEvent, batch: string, frame: string): Card => ({ id: `c-${e.id}`, kind: 'comment', board: 'home', frames: [frame], thread: e.commentId, events: [e.id], state: 'working', batch, made: e.ts, order: e.ts, rev: 2, at: now, brief: { asks: [{ id: e.id, owner: true, rev: e.id, body: e.body!, ts: e.ts }], history: [] } })
+    j.cards.push(card(s1, 'b-s', 'demo/a'), card(o1, 'b-o', 'demo/b'))
+    j.batches.push({ batchId: 'b-s', members: [{ id: 'm1', card: `c-${s1.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { shared: ['design/scenes/demo/_kit.tsx'] } } })
+    j.batches.push({ batchId: 'b-o', members: [{ id: 'm1', card: `c-${o1.id}`, board: 'home' }], frames: ['demo/b'], state: 'claimed', leaseUntil: 0, attempts: 0, pgid: orphan.pid, at: now })
+    mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
+    writeFileSync(join(root, packetPath('b-o')), JSON.stringify(buildPacket('b-o', [{ id: 'm1', card: `c-${o1.id}`, kind: 'comment', board: 'home', thread: o1.commentId, frames: ['demo/b'], brief: { asks: [{ id: o1.id, owner: true, rev: o1.id, body: '@marver resume me', ts: o1.ts }], history: [] } }], ['demo/b'])))
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent('ok', { orphan: orphan.pid }), undefined, { held: (f) => held.has(f), anyHold: () => held.size > 0 })
+    await jam.tick()
+    const gone = async () => { for (let i = 0; i < 40; i++) { try { process.kill(orphan.pid!, 0) } catch { return true } await wait(50) } return false }
+    expect(await gone()).toBe(true)                                // fenced at boot, before anything
+    expect(packets(root)).toEqual([])                              // the resumed batch waits for the hold; the exclusive rerun too
+    expect(cardOf(jam, s1)!.exclusive).toEqual(['design/scenes/demo/_kit.tsx'])
+    expect(cardOf(jam, s1)!.state).toBe('queued')
+    held.clear()
+    await jam.tick(); await jam.tick(); jam.stop()
+    const order = packets(root).map((p) => p.members[0].card)
+    expect(order).toEqual([`c-${o1.id}`, `c-${s1.id}`])            // the resumed one first, then the exclusive rerun alone
+    expect(packets(root)[1].exclusive).toEqual({ files: ['design/scenes/demo/_kit.tsx'] })
     done()
   })
 })

@@ -213,4 +213,15 @@ describe('Jam V2 in the browser: a tag\'s card in its thread', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => [${JSON.stringify(x)}, ${JSON.stringify(y)}].includes(c.thread) && c.state === 'failed').length === 0`, 30_000)
     await until(`[${JSON.stringify(x)}, ${JSON.stringify(y)}].every((id) => window.__mvComments.getState().threads.find((t) => t.id === id)?.replies.some((r) => r.agent))`, 30_000)
   }, 120_000)
+
+  skippable('a batch\'s questions arriving in two updates (a restart between them) fold into one notice', async () => {
+    await browser!.eval(s, `window.__mvStore.getState().clearJamToasts(), 1`)
+    const thread = (body: string) => browser!.eval(s, `window.__tag('spec/alpha', ${JSON.stringify(body)})`)
+    const t1 = await thread('first'), t2 = await thread('second')
+    // the daemon's questions for one batch: m1's now, m2's after a restart - two separate updates
+    await browser!.eval(s, `window.__mvStore.getState().jamToast({ threadId: ${JSON.stringify(t1)}, board: 'main', ts: Date.now(), preview: 'Which one?', batch: 'b-split' }), 1`)
+    await browser!.eval(s, `window.__mvStore.getState().jamToast({ threadId: ${JSON.stringify(t2)}, board: 'main', ts: Date.now(), preview: 'And this?', batch: 'b-split' }), 1`)
+    const notes = await browser!.eval(s, `window.__mvStore.getState().toasts.filter((t) => t.jam?.batch === 'b-split').map((t) => [t.jam.preview, t.jam.stack?.length ?? 0])`)
+    expect(notes).toEqual([['And this?', 1]])
+  })
 })

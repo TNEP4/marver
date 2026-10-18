@@ -133,10 +133,11 @@ export const useComments = create<CommentsState>((set, get) => {
     if (!questions.length) return
     const groups = new Map<string, typeof questions>()
     for (const n of questions) { const k = /^jam-(.+)-m\d+$/.exec(n.e.id)?.[1] ?? n.e.id; groups.set(k, [...(groups.get(k) ?? []), n]) }
-    const asking = [...groups.values()].map((g) => ({ ...g[g.length - 1], rest: g.slice(0, -1) }))
-    playPing()
+    const asking = [...groups].map(([batch, g]) => ({ ...g[g.length - 1], batch, rest: g.slice(0, -1) }))
     void import('./store.ts').then(({ useStore }) => {
       const s = useStore.getState()
+      // a batch whose notice is already up folds in quietly: one ping per batch, like one notice
+      if (asking.some((n) => !s.toasts.some((t) => t.jam?.batch === n.batch))) playPing()
       // the FRAME is the news: resolve the reply's thread -> frame -> manifest title + intent
       const noteOf = ({ e, threadId, body }: { e: CommentEvent; threadId: string; body?: string }) => {
         const t = get().threads.find((t) => t.id === threadId)
@@ -148,7 +149,7 @@ export const useComments = create<CommentsState>((set, get) => {
         }
       }
       // a batch's other questions ride under its notice - View walks through them
-      for (const n of asking) s.jamToast({ ...noteOf(n), ...(n.rest.length ? { stack: n.rest.map(noteOf) } : {}) })
+      for (const n of asking) s.jamToast({ ...noteOf(n), batch: n.batch, ...(n.rest.length ? { stack: n.rest.map(noteOf) } : {}) })
     })
   }
   // A HUMAN's fresh comment that concerns me raises the same pill the agent

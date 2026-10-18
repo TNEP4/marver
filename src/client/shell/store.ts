@@ -115,6 +115,8 @@ export interface JamNote {
   frame?: string; frameTitle?: string; intent?: string
   kind?: 'mention' | 'reply'                      // absent = the agent pill
   author?: { name?: string; avatar?: string; id?: string; email?: string }
+  /** the jam batch this notice is about - its later questions fold into it, whenever they arrive */
+  batch?: string
   /** jam cards of one batch that failed (spec 27): the notice carries Retry, for all of them */
   failed?: { card: string; rev: number }[]
   /** earlier notices folded under this one - View walks through them */
@@ -589,7 +591,7 @@ interface State {
   toast(text: string): void
   jamToast(note: JamNote): void
   /** a jam card failed - one notice, with Retry (spec 27: only a question or a failure interrupts) */
-  jamFailed(cards: { id: string; rev: number; board: string; thread?: string; frames: string[]; note?: string }[]): void
+  jamFailed(cards: { id: string; rev: number; board: string; thread?: string; frames: string[]; note?: string; batch?: string }[]): void
   dismissToast(id: number): void
   /** View on a notice: a round's notice moves to its next reply, any other one goes. */
   advanceToast(id: number): void
@@ -1735,9 +1737,12 @@ export const useStore = create<State>((set, get) => {
       const id = ++toastSeq
       const text = note.kind === 'mention' ? 'You were mentioned' : note.kind === 'reply' ? 'New reply' : note.failed ? 'Marver failed' : 'Marver asks'
       set((s) => {
-        const jam = note
+        // one notice per batch (spec 27): a batch's question arriving later folds into its open notice
+        const prev = note.batch ? s.toasts.find((t) => t.jam?.batch === note.batch && !t.jam?.failed === !note.failed) : undefined
+        const jam = prev ? { ...note, stack: [...(prev.jam!.stack ?? []), { ...prev.jam!, stack: undefined }, ...(note.stack ?? [])].filter((n) => n.threadId !== note.threadId) } : note
         // a notice whose top reply is this thread steps down to the replies under it, never loses them
         const others = s.toasts.flatMap((t) => {
+          if (t === prev) return []
           const rest = (t.jam?.stack ?? []).filter((n) => n.threadId !== note.threadId)
           if (t.jam?.threadId !== note.threadId) return [t.jam?.stack ? { ...t, jam: { ...t.jam, stack: rest } } : t]
           return rest.length ? [{ ...t, jam: { ...rest[rest.length - 1], stack: rest.slice(0, -1) } }] : []
@@ -1755,6 +1760,7 @@ export const useStore = create<State>((set, get) => {
         preview: (cards.length > 1 ? `${cards.length} asks - ` : '') + (card.note ?? 'the agent could not finish'),
         frame, frameTitle: entry?.title ?? frame, intent: entry?.intent,
         failed: cards.map((c) => ({ card: c.id, rev: c.rev })),
+        ...(card.batch ? { batch: card.batch } : {}),
       })
     },
     dismissToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },

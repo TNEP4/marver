@@ -18,8 +18,8 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
-import { join, relative } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { toFrameId } from '../manifest.ts'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
 import type { JamConfig } from '../config.ts'
@@ -27,12 +27,12 @@ import { localProfile } from '../profile.ts'
 import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
-import { goalText, packetPath, parseAgentText, parseMembers } from './packet.ts'
+import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
 import { act, answeredSince, createQueue, ctxFor, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
-import type { Batch, Card, JamAdapter, JobPacket, Journal, Reanchor, Result } from './types.ts'
+import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -137,6 +137,22 @@ const sharedMtimes = (root: string): Map<string, number> => {
     try { const st = statSync(join(design, rel)); if (st.isFile()) out.set(`design/${rel.split(/[\\/]/).join('/')}`, st.mtimeMs) } catch { /* vanished */ }
   }
   return out
+}
+
+/** A `shared` file as the disk sees it: past the lexical check (any case - this filesystem may not
+ *  care), its nearest existing ancestor must resolve inside design/, and the resolved path must
+ *  still be shared design source - a symlink cannot alias local state, a board file or the outside. */
+export function canonicalShared(root: string, f: string): string | null {
+  if (!sharedFile(f) || !sharedFile(f.toLowerCase())) return null
+  try {
+    const design = realpathSync(join(root, 'design'))
+    let at = join(root, f)
+    const tail: string[] = []
+    while (!existsSync(at)) { tail.unshift(basename(at)); at = dirname(at) }
+    const rel = relative(design, join(realpathSync(at), ...tail))
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
+    return sharedFile(`design/${rel.split(sep).join('/')}`.toLowerCase()) ? f : null
+  } catch { return null }
 }
 
 /** The loop, without timers/watch/lock. Loads the queue (upgrading a v1 journal, baselining a
@@ -278,6 +294,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return n
   }
 
+  const realShared = (f: string) => canonicalShared(root, f)
+
   const changedBoards = (b: Batch) => { for (const board of new Set(b.members.map((m) => m.board))) hooks.changed?.(board) }
   const reserve = (exclusiveWaiting?: boolean) => {
     jamReservations.frames = new Map([...runningBatches.values()].flatMap((b) => b.frames.map((f) => [f, b.batchId] as [string, string])))
@@ -311,6 +329,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const who = me()
           appendEvents(commentsDir, c.board, [{
             id: `jam-f-e${b.attempts}-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early!.commentId, asks: true, board: c.board,
+            author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
+          }])
+        }
+        // the early ack is the reply: a shared file the job changed anyway is said on it
+        if (r.alsoChanged?.length) {
+          const who = me()
+          appendEvents(commentsDir, c.board, [{
+            id: `jam-ac-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early!.commentId, alsoChanged: r.alsoChanged, board: c.board,
             author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
           }])
         }
@@ -391,7 +417,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
       const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt).map(([f]) => f) : []
       const results: Record<string, Result> = {}
-      for (const [id, r] of Object.entries(split)) {
+      for (const [id, r0] of Object.entries(split)) {
+        let r = r0
+        if ('shared' in r) { const files = r.shared.map(realShared).filter((f): f is string => !!f); r = files.length ? { shared: files } : { missing: true } }
         results[id] = 'body' in r ? { body: r.body, asks: r.asks, ...(run.model ? { model: run.model } : {}), reanchors: [], ...(changedShared.length ? { alsoChanged: changedShared } : {}) } : r
       }
       await q.lock(() => {
@@ -417,9 +445,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
   const waitingSaid = new Set<string>()
 
+  /** Batches recovered at boot that still wait for a chat agent's hold to end; they keep their frames. */
+  const deferred: Batch[] = []
+
   /** Claim what can run now and start it. Under the lock, after the ingest. */
   const pump = async (): Promise<void> => {
     if (stopped || !ready) return
+    for (const b of [...deferred]) {
+      if (b.frames.some((f) => hooks.held?.(f)) || (b.exclusive && hooks.anyHold?.())) { holdLater(); continue }
+      deferred.splice(deferred.indexOf(b), 1)
+      launch(b)
+    }
     const started = await q.lock((j, ctx) => {
       const frames = new Set([...runningBatches.values()].flatMap((b) => b.frames))
       const { batches, exclusiveWaiting } = form(j, ctx, {
@@ -448,13 +484,25 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     for (const b of started) launch(b)
   }
 
+  /** Post a batch's results again after a failed delivery - a few times, further apart; boot recovery
+   *  reconciles it otherwise (it stays claimed, with its results). */
+  const redeliver = (b: Batch, n: number) => {
+    if (n > 5 || stopped) return
+    const t = setTimeout(() => { deliver(b).catch((err) => { log(`  jam: posting failed again - ${(err as Error).message}`); redeliver(b, n + 1) }) }, 5_000 * n)
+    t.unref?.()
+  }
+
   const launch = (b: Batch) => {
     runningBatches.set(b.batchId, b)
     const p = (async () => {
       try { await runBatch(b) } catch (err) {
         log(`  jam: batch error - ${(err as Error).message}`)
-        try { await q.lock((j) => { settled(fail(j, b, `the job broke: ${(err as Error).message}`)); q.persist() }) } catch { /* the journal keeps it claimed; boot recovers it */ }
-        queueChanged()
+        // a batch with results did its work: only posting broke - post again later, never rerun it
+        if (b.results) redeliver(b, 1)
+        else {
+          try { await q.lock((j) => { settled(fail(j, b, `the job broke: ${(err as Error).message}`)); q.persist() }) } catch { /* the journal keeps it claimed; boot recovers it */ }
+          queueChanged()
+        }
       } finally {
         runningBatches.delete(b.batchId)
         running.delete(b.batchId)
@@ -477,27 +525,43 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (b.state !== 'claimed') continue
         if (b.results) { out.push({ b, results: true }); continue }
         fenceGroup(b.pgid)   // an orphan may still be editing
-        // a member whose ask is no longer ledgered never runs
+        // Nothing reaches the agent that is not still the owner's: an ask stands only if its event is
+        // in the log, ledgered, and its frozen revision is the event itself or a ledgered edit of it.
+        // The journal's briefs (which `follows` reads later) and the packet are cleaned alike.
         const ctx = q.ctx()
+        const logs = new Map<string, CommentEvent[]>()
+        const logOf = (board: string) => { let l = logs.get(board); if (!l) logs.set(board, (l = readLog(commentsDir, board))); return l }
+        const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`) && logOf(board).some((e) => e.id === id)
+        const askOk = (board: string, a: Msg) => owned(board, a.id) && (!a.rev || a.rev === a.id || owned(board, a.rev))
+        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? brief : {
+          ...brief,
+          asks: brief.asks.filter((a) => askOk(board, a)),
+          history: brief.history.map((m) => (m.owner && !askOk(board, m) ? { id: m.id, ...(m.author ? { author: m.author } : {}), body: m.body, ts: m.ts, note: 'someone else - context only' } : m)),
+          ...(brief.follows ? { follows: { ...brief.follows, asks: brief.follows.asks.filter((a) => askOk(board, a)) } } : {}),
+        }
         for (const m of b.members) {
           const c = j.cards.find((x) => x.id === m.card)
-          if (!c || c.kind !== 'comment') continue
-          const okIds = c.events.filter((id) => ctx.owned.has(`${c.board}\t${id}`) && readLog(commentsDir, c.board).some((e) => e.id === id))
-          if (!okIds.length) { c.state = 'dropped'; c.note = 'no longer authorized'; c.rev += 1; c.at = Date.now() }
+          if (!c) continue
+          const comment = c.kind === 'comment'
+          const had = c.brief?.asks.length ?? 0
+          c.brief = clean(c.board, c.brief, comment)
+          m.brief = clean(m.board, m.brief, comment)
+          const events = comment ? c.events.filter((id) => owned(c.board, id)) : c.events
+          // dropped when none of its asks is the owner's any more - by its events, or by the frozen brief
+          if (comment && (!events.length || (had > 0 && !c.brief?.asks.length))) { c.state = 'dropped'; c.note = 'no longer authorized'; c.rev += 1; c.at = Date.now() }
         }
-        const before = b.members.length
-        b.members = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
-        if (!b.members.length) { b.state = 'done'; continue }
-        // the rerun reads the packet file: it must hold exactly what is still the owner's - members
-        // dropped here leave it, and each frozen ask is checked against the ledger again
+        const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
+        if (!survivors.length) { b.state = 'done'; continue }
+        // survivors are numbered again from m1, so the prompt and the early ack name a member that exists
+        const ids = new Map(survivors.map((m, i) => [m.card, `m${i + 1}`]))
+        const renumbered = survivors.some((m) => ids.get(m.card) !== m.id) || survivors.length !== b.members.length
+        b.members = survivors.map((m) => ({ ...m, id: ids.get(m.card)! }))
         const file = join(root, packetPath(b.batchId))
         try {
           const packet = JSON.parse(readFileSync(file, 'utf8')) as JobPacket
-          const keep = new Set(b.members.map((m) => m.card))
-          const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`)
-          const members = packet.members.filter((m) => keep.has(m.card)).map((m) => ({ ...m, brief: { ...m.brief, asks: m.kind === 'comment' ? m.brief.asks.filter((a) => owned(m.board, a.id)) : m.brief.asks } }))
-          const changed = members.length !== packet.members.length || members.some((m, i) => m.brief.asks.length !== packet.members.filter((x) => keep.has(x.card))[i].brief.asks.length)
-          if (changed || b.members.length !== before) writeFileSync(file, JSON.stringify({ ...packet, members }, null, 1), { mode: 0o600 })
+          const members = packet.members.filter((m) => ids.has(m.card)).map((m) => ({ ...m, id: ids.get(m.card)!, brief: clean(m.board, m.brief, m.kind === 'comment')! }))
+          const next = { ...packet, members }
+          if (renumbered || JSON.stringify(next) !== JSON.stringify(packet)) writeFileSync(file, JSON.stringify(next, null, 1), { mode: 0o600 })
         } catch { b.state = 'failed'; b.note = 'its packet is gone'; for (const m of b.members) { const c = j.cards.find((x) => x.id === m.card); if (c) { c.state = 'failed'; c.note = 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } continue }
         out.push({ b, results: false })
       }
@@ -512,7 +576,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       runningBatches.delete(b.batchId)
     }
     ready = true
-    for (const { b } of leftover.filter((x) => !x.results)) launch(b)
+    // a resumed batch still waits for a hold restored at boot (an exclusive one, for every hold)
+    for (const { b } of leftover.filter((x) => !x.results)) deferred.push(b)
   })()
 
   const idle = async () => { while (running.size && !stopped) await Promise.race([...running.values()]) }
