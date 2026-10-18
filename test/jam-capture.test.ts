@@ -554,3 +554,34 @@ describe('captures: review round 2 fixes', () => {
     done()
   })
 })
+
+describe('captures: review round 3 fixes', () => {
+  it('a capture\'s own card outlives the retention window, so a later tag on its thread still carries it', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-p2-')))
+    const long = Date.now() - 60 * 24 * 3600_000
+    j.cards.push({ id: 'cap-kept', kind: 'capture', board: 'home', frames: ['demo/a', 'demo/b'], thread: 'cap-cap-kept', events: [], state: 'kept', made: long, order: long, rev: 1, at: long } as any)
+    j.cards.push({ id: 'c-old', kind: 'comment', board: 'home', frames: [], events: ['x'], state: 'done', made: long, order: long, rev: 1, at: long } as any)
+    prune(j)
+    expect(j.cards.map((c) => c.id)).toEqual(['cap-kept'])
+  })
+
+  it('Looks good keeps the thread open when the More work reply was edited after its run was claimed', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    const rev = card(jam, r.id).rev
+    await jam.act(r.id, rev, 'more', 'the hover')
+    await jam.tick()                                                   // the rerun: claimed with the mw- reply frozen
+    expect(card(jam, r.id).state).toBe('review')
+    const e = `ed-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id: e, ts: Date.now() + 10, type: 'edit', commentId: `mw-c-${r.id}-${rev}`, author: OWNER, body: '@marver the hover AND the focus ring' }])
+    record(root, 'home', e)
+    await jam.act(r.id, card(jam, r.id).rev, 'good')
+    jam.stop()
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)!.resolved).toBe(false)
+    done()
+  })
+})

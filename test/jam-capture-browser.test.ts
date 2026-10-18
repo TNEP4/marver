@@ -307,6 +307,8 @@ describe('captures in the browser', () => {
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`, 5000)
     const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await key('i')
+    // the shell's own navigation, quick revisits included: A -> B -> A -> B, each a line
+    for (const at of ['spec/bravo', 'spec/alpha', 'spec/bravo']) await browser!.eval(s, `window.__mvStore.getState().setPlay({ ...window.__mvStore.getState().play, at: ${JSON.stringify(at)} }), 1`)
     await key('e')
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 20_000)
     const rec = await browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
@@ -314,11 +316,43 @@ describe('captures in the browser', () => {
     expect(tl[0].view.frames).toEqual(['spec/alpha'])
     expect(tl[0].view.mode).toBe('play')
     expect(tl.some((x: any) => x.event === 'select')).toBe(false)
-    const pics = tl.filter((x: any) => x.event === 'picture')
+    const pics = tl.filter((x: any) => x.event === 'picture' && x.why === 'key')
     expect(pics.length).toBeGreaterThan(0)
     expect(pics.every((x: any) => x.frame === 'spec/alpha')).toBe(true)
+    expect(tl.filter((x: any) => x.event === 'screen').map((x: any) => x.to)).toEqual(['spec/bravo', 'spec/alpha', 'spec/bravo'])
     await browser!.eval(s, `window.__mvStore.getState().setPlay(null), 1`)
     await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
   }, 90_000)
+
+  skippable('a failed edit keeps blocking: Add to queue twice after a rejected save sends nothing, until the edit saves', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('raw'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 15_000)
+    // edits fail for now
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.fetch = (u, o) => (o && o.body && String(o.body).includes('"action":"edit"')) ? Promise.resolve(new Response('{"ok":false}', { status: 409 })) : f(u, o); return 1 })()`)
+    await click('.jm-focus .jm-editable')
+    await until(`!!document.querySelector('.jm-focus textarea')`, 3000)
+    await browser!.eval(s, `(() => { const t = document.querySelector('.jm-focus textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'my real words'); t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await click('.jm-focus .jm-btn.primary')
+    await sleep(600)
+    await click('.jm-focus .jm-btn.primary')                                        // the second try
+    await sleep(600)
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)}).state`)).toBe('draft')
+    // edits work again: the next try saves the words first, then queues
+    await browser!.eval(s, `(window.fetch = window.__fetch0), 1`)
+    await click('.jm-focus .jm-btn.primary')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state !== 'draft' && c.edited === 'my real words')`, 10_000)
+  }, 120_000)
+
+  skippable('no capture on Not on a board: S says a board is needed', async () => {
+    await browser!.eval(s, `window.__mvStore.setState({ board: '~unplaced' }), 1`)
+    await key('s')
+    await sleep(300)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(null)
+    expect(await browser!.eval(s, `window.__mvStore.getState().toasts.map((t) => t.text).join('|')`)).toMatch(/captures need a board/)
+    await browser!.eval(s, `window.__mvStore.setState({ board: 'main' }), 1`)
+  }, 30_000)
 })

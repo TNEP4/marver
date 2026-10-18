@@ -42,6 +42,7 @@ export function FocusPanelView(p: {
   onTab(i: number): void; onFlip(): void; onMoreOpen(on: boolean): void; onClose(): void
   onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void
   onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
+  onPrev?: () => void; onNext?: () => void
 }) {
   const c = p.card
   const title = c.title ?? 'Capture'
@@ -53,11 +54,11 @@ export function FocusPanelView(p: {
   return (
     <FocusPanel left={p.left} onClose={p.onClose}>
       {p.kind === 'review' ? (
-        <ReviewDetail title={title} of={p.of} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
+        <ReviewDetail title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
           view={p.view} onFlip={() => p.onFlip()} reply={p.reply} shots={p.shots} agent={p.agent}
           more={p.moreOpen} onMore={p.onMore} onMoreOpen={p.onMoreOpen} onGood={p.onGood} onLater={p.onLater} onOpenThread={p.onOpenThread} />
       ) : (
-        <ReadBack title={title} of={p.of} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited}
+        <ReadBack title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited}
           readOnly={c.state !== 'draft'} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
           onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onOpenThread={c.thread ? p.onOpenThread : undefined} />

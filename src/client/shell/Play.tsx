@@ -10,7 +10,7 @@
  * on - no auto-fade, no hover magic. The bottom-left navigator (restart · prev · i/N ·
  * next) stays prototype-only.
  */
-import { frameLoaded, frameReady, onFrameMessage } from './jam-capture.ts'
+import { frameLoaded, frameReady, onFrameMessage, stageNavigated } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
@@ -469,7 +469,7 @@ function PlayInner() {
           useStore.setState({ stageShown: { at: data.at, shown: `${String(data.epoch ?? '')}:${Number(data.doc) || 0}` } })
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
-        if (p && typeof data.at === 'string') s.setPlay({ ...p, at: data.at })
+        if (p && typeof data.at === 'string') { stageNavigated(data.at); s.setPlay({ ...p, at: data.at }) }
       } else if (data.type === 'sh:stage-exit') {
         exit()
       } else if (data.type === 'sh:stage-error') {

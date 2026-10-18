@@ -37,14 +37,24 @@ const cardById = (id: string | null | undefined) => (id ? useJamQueue.getState()
 // ---- deciding a draft: one path for the buttons and the keys ---------------------------------------
 
 let saving: Promise<boolean> = Promise.resolve(true)
+/** Edits that did not save, by card: the words you meant, until they do (a decision retries them). */
+const unsaved = new Map<string, string>()
 /** Save the read-back's edit (the text stays where it is if the save fails - see `decideDraft`). */
-export function saveEdit(c: JamCard, text: string) { saving = useJamQueue.getState().act(c, 'edit', text) }
-/** Confirm or keep a draft AFTER the edit still saving - only if it saved, at the card's new rev; the
- *  panel closes once the decision took, and a refusal says why. */
+export function saveEdit(c: JamCard, text: string) {
+  unsaved.set(c.id, text)
+  saving = useJamQueue.getState().act(c, 'edit', text).then((ok) => { if (ok) unsaved.delete(c.id); return ok })
+}
+/** Confirm or keep a draft AFTER its edit has saved - an edit that failed is saved again first, and
+ *  nothing is sent while it still fails; at the card's new rev; the panel closes once the decision
+ *  took, and a refusal says why. */
 export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop') {
-  const saved = await saving
-  saving = Promise.resolve(true)
-  if (!saved && action !== 'drop') { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
+  await saving
+  if (action !== 'drop' && unsaved.has(id)) {
+    const c = useJamQueue.getState().cards?.find((x) => x.id === id)
+    if (c) saveEdit(c, unsaved.get(id)!)
+    if (!(await saving) || unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
+  }
+  if (action === 'drop') unsaved.delete(id)
   const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
   if (!fresh) return
   if (await useJamQueue.getState().act(fresh, action)) useJamUi.getState().close()

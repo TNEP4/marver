@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
-import { decideDraft, laneCards, openTile, saveEdit } from './jam-keys.ts'
+import { decideDraft, laneCards, openTile, reveal, saveEdit } from './jam-keys.ts'
 import { laneLine, timelineLines } from './jam-lines.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
@@ -67,6 +67,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     setShownSeal(cap.sealed.length)
     if (ui.panel?.kind === 'capture' && ui.panel.id === draft.id) return
     ui.open({ kind: 'capture', id: draft.id })
+    reveal(draft)
   }, [cap.current, cap.sealed, cards])
 
   const list = laneCards(cards, run)
@@ -84,6 +85,13 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
   const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) => (c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false))
   const openThread = (c?: JamCard) => { if (c?.thread) useComments.getState().setActive(c.thread) }
+  /** The panel's arrows: the previous or next card of the same kind on the lane (reviews among reviews). */
+  const step = (d: number) => {
+    if (!ui.panel || !panelCard) return undefined
+    const of = list.filter((c) => (ui.panel!.kind === 'review' ? c.state === 'review' : true))
+    const n = of[of.findIndex((c) => c.id === panelCard.id) + d]
+    return n ? () => openTile(n.id) : undefined
+  }
   const detail = useMemo(() => {
     if (!ui.panel || !panelCard) return null
     const of = list.filter((c) => (ui.panel!.kind === 'review' ? c.state === 'review' : true))
@@ -125,9 +133,14 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onKeep={() => void decideDraft(panelCard.id, 'keep')}
           onDrop={() => void decideDraft(panelCard.id, 'drop')}
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
-          onMore={(text) => { void act(panelCard, 'more', text); ui.close() }}
+          onMore={(text) => void (async () => {
+            // the composer and its words stay until the follow-up is really queued
+            if (await act(panelCard, 'more', text)) { ui.setMoreOpen(false); ui.close() }
+            else useStore.getState().toast('your follow-up was not sent - try again')
+          })()}
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
           onOpenThread={() => openThread(panelCard)}
+          onPrev={step(-1)} onNext={step(1)}
         />
       )}
     </>

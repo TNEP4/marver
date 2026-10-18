@@ -15,6 +15,7 @@
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
+import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -122,7 +123,7 @@ const viewNow = (): View => {
     return { board: s.board, frames: [s.play.at], theme: s.play.theme, viewport: s.play.device, ...(vp ? { width: vp.width, height: vp.height } : {}), mode: s.play.slides ? 'slides' : 'play' }
   }
   const sel = s.selection.map((k) => s.nodes.find((n) => n.key === k)).filter((n): n is Node => !!n)
-  const shown = (sel.length ? sel : s.nodes.filter((n) => !n.missing)).slice(0, 20)
+  const shown = sel.length ? sel : visibleNodes()
   const first = shown[0]
   return {
     board: s.board, frames: [...new Set(shown.map((n) => n.frame))], theme: first?.theme ?? s.viewTheme,
@@ -131,13 +132,39 @@ const viewNow = (): View => {
   }
 }
 
+/** The nodes actually on screen now - the canvas's instances whose box meets the viewport, left of
+ *  nothing that covers it (the panel and the lane leave their own room). */
+export function visibleNodes(): Node[] {
+  const s = useStore.getState()
+  const W = window.innerWidth, H = window.innerHeight
+  const out: Node[] = []
+  for (const n of s.nodes) {
+    if (n.missing) continue
+    const el = document.querySelector(`.sh-node[data-node="${CSS.escape(n.key)}"]`)
+    const r = el?.getBoundingClientRect()
+    if (r && r.right > 0 && r.bottom > 0 && r.left < W && r.top < H) out.push(n)
+  }
+  return out.slice(0, 20)
+}
+
 // ---- UI steps: the shell's own, written the moment they happen, only while recording ----------------
 
 let unwatch: (() => void) | null = null
 function watchUi() {
   unwatch?.()
+  // the frames in view, once the camera has settled (two looks a beat apart agree): a pan to another
+  // frame, described without a click, still names it
+  let lastView = (viewNow().frames ?? []).join()
+  let sample = lastView
+  const settle = setInterval(() => {
+    const id = useJamCapture.getState().current
+    if (!id || useStore.getState().play) return
+    const now_ = (viewNow().frames ?? []).join()
+    if (now_ === sample && now_ !== lastView) { lastView = now_; addStep(id, { at: now(), event: 'view', view: viewNow() }) }
+    sample = now_
+  }, 600)
   let prev = useStore.getState()
-  unwatch = useStore.subscribe((s) => {
+  const unsub = useStore.subscribe((s) => {
     const id = useJamCapture.getState().current
     const p = prev
     prev = s
@@ -162,11 +189,16 @@ function watchUi() {
       if (s.play.theme !== p.play.theme && (s.play.theme === 'light' || s.play.theme === 'dark')) addStep(id, { at, frame: s.play.at, event: 'theme', theme: s.play.theme })
       if (s.play.device !== p.play.device) { const vp = CONFIG.viewports[s.play.device]; addStep(id, { at, frame: s.play.at, event: 'device', viewport: s.play.device, width: vp?.width ?? 0, height: vp?.height ?? 0 }) }
     }
-    // a screen change in play, whatever moved it (arrows, the walker, a goto inside the stage): one line
-    if (s.play && p.play && s.play.at !== p.play.at) screenStep(id, at, s.play.at)
+    // a screen change the SHELL made (arrows, the walker, a variant): the stage reports its own
+    // navigation itself, so a change it reported (sh:stage-at) is not recorded twice
+    if (s.play && p.play && s.play.at !== p.play.at) {
+      if (stageNav === s.play.at) stageNav = null
+      else screenStep(id, at, s.play.at)
+    }
     if (!!s.play !== !!p.play) addStep(id, { at, event: 'view', view: viewNow() })
     if (!!s.interact !== !!p.interact) addStep(id, { at, ...(s.interact || p.interact ? { frame: frameIdOf((s.interact ?? p.interact)!) } : {}), event: 'interact', on: !!s.interact })
   })
+  unwatch = () => { unsub(); clearInterval(settle) }
 }
 
 /** A copy happened (path or image, of which frame) - never what the clipboard holds. */
@@ -230,14 +262,15 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
 
 /** A frame's bundle (`{ el: { semantics: { tag, quote, testId, ariaLabel, role }, cssPath, source } }`,
  *  safeBundle) as the record keeps it: flat, strings only - a masked one keeps its '•••'. */
-/** One screen change, recorded once: the stage reports its own navigation, and the shell sees the same
- *  change in its play state - whichever comes second is the same step. */
+/** One screen change - each navigation once, by whoever made it (revisits are their own lines). */
 function screenStep(id: string, at: number, to: string, seq?: number) {
-  const c = capOf(id)
-  if (!c || !to) return
-  const dup = c.steps.some((x) => x.event === 'screen' && x.to === to && Math.abs(x.at - at) < 1_500)
-  if (!dup) addStep(id, { at, frame: to, event: 'screen', to, ...(seq !== undefined ? { seq } : {}) })
+  if (!capOf(id) || !to) return
+  addStep(id, { at, frame: to, event: 'screen', to, ...(seq !== undefined ? { seq } : {}) })
 }
+/** The stage moved itself to `at` (sh:stage-at): its recorder has the step; the shell's play state
+ *  follows without a second line. */
+let stageNav: string | null = null
+export function stageNavigated(at: string) { stageNav = at }
 
 const cleanBundle = (b: unknown): Bundle => {
   const o = (b && typeof b === 'object' ? b : {}) as Record<string, any>
@@ -365,9 +398,11 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
 
 const broadcast = (msg: unknown) => { for (const inst of instances.values()) post(inst, msg) }
 
-function begin(reviewing?: Cap['reviewing']) {
-  const id = `cap-${Date.now()}-${rand(6)}`
+function begin(reviewing?: Cap['reviewing']): boolean {
   const s = useStore.getState()
+  // a capture becomes a thread on a board: the Not on a board view takes none (as it takes no comment)
+  if (s.board === UNPLACED) { s.toast('captures need a board - open one first'); return false }
+  const id = `cap-${Date.now()}-${rand(6)}`
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: now(), steps: [], seen: new Set(), points: [], pictures: [],
     probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}),
@@ -378,6 +413,7 @@ function begin(reviewing?: Cap['reviewing']) {
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1 }))
   broadcast({ type: 'sh:capture', id, on: true })
   watchUi()
+  return true
 }
 
 /** Stop recording `id`: flush every recorder that holds a captureDoc, wait for them, for every probe
@@ -401,7 +437,7 @@ function drain(id: string) {
   if (st.play) shoot(id, st.play.at, 'end')
   else {
     const sel = st.selection.map((k) => st.nodes.find((n) => n.key === k)).filter((n): n is Node => !!n)
-    for (const n of (sel.length ? sel : st.nodes.filter((x) => !x.missing)).slice(0, 3)) shoot(id, n.frame, 'end', n.key)
+    for (const n of (sel.length ? sel : visibleNodes()).slice(0, 3)) shoot(id, n.frame, 'end', n.key)
   }
   broadcast({ type: 'sh:capture', id, on: false })
   setTimeout(() => {

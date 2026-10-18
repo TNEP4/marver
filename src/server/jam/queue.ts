@@ -506,7 +506,9 @@ export function redelivering(j: Journal, b: Batch, now = Date.now()) {
 export function prune(j: Journal, now = Date.now()) {
   // a live card keeps what it reads: the card it follows, its runs - and the capture it carries
   const needed = new Set(j.cards.filter(pending).flatMap((c) => [c.follows, ...(c.ran ?? []), c.batch, c.capture]).filter(Boolean) as string[])
-  j.cards = j.cards.filter((c) => pending(c) || c.at > now - KEEP_MS || needed.has(c.id))
+  // a capture's own card is kept for good: a tag on its thread, written any time later, reads its
+  // payload, frames and edit from it (one small card per capture)
+  j.cards = j.cards.filter((c) => pending(c) || c.kind === 'capture' || c.at > now - KEEP_MS || needed.has(c.id))
   const cardIds = new Set(j.cards.map((c) => c.id))
   j.batches = j.batches.filter((b) => b.state === 'claimed' || needed.has(b.batchId) || b.members.some((m) => cardIds.has(m.card)))
 }
@@ -712,7 +714,7 @@ export function looksGood(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[],
   // an owner message in this thread the brief never copied, or one whose latest ledgered revision is
   // not the one it copied (edited since - however many times before)
   const after = events.some((e) => {
-    if (e.agent || !isOwned(ctx, c.board, e.id) || e.id.startsWith('mw-')) return false
+    if (e.agent || !isOwned(ctx, c.board, e.id)) return false
     const inThread = (e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread)
     if (!inThread) return false
     if (!frozen.has(e.id)) return e.type === 'reply'
