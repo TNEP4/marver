@@ -166,9 +166,10 @@ at once, and raise the bottom-right pill with a ping - Marver's replies on one b
 single notice ("2 replies", View walks through them), a message that asks (a note, unless the
 agent wrote `--fyi`; a reply with `--ask`; a jam reply opened with ```` ```marver-reply ask ````)
 stands on its own, and the frame wears the orange question
-bubble in the sidebar until the thread is resolved. Reply in a note and it is a jam job like any
-reply to Marver - no tag needed; while the chat agent still has that frame lit (`marver work
-start`), the job waits for it. Notes stay on your machine for now, like jam replies; a reply to a
+bubble in the sidebar until the thread is resolved. A plain reply in a note starts nothing - only
+a tag does: tag `@marver` in your reply and it is a jam job, with the note in its brief; while
+the chat agent still has that frame lit (`marver work start`), the job waits for it. Your plain
+answers are listed by `npx marver marks` ("answered by you") for your chat agent. Notes stay on your machine for now, like jam replies; a reply to a
 collaborator's thread keeps your voice, the one that reaches them on the published canvas.
 
 ## Parallelism
