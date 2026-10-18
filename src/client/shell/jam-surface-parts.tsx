@@ -42,7 +42,7 @@ export function FocusPanelView(p: {
   onTab(i: number): void; onFlip(): void; onMoreOpen(on: boolean): void; onClose(): void
   onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void
   onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
-  onPrev?: () => void; onNext?: () => void; pending?: string
+  onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void
 }) {
   const c = p.card
   const title = c.title ?? 'Capture'
@@ -61,7 +61,8 @@ export function FocusPanelView(p: {
         <ReadBack key={c.id} title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
           readOnly={c.state !== 'draft'} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
-          onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onOpenThread={c.thread ? p.onOpenThread : undefined} />
+          onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onOpenThread={c.thread ? p.onOpenThread : undefined}
+          onRetry={c.state === 'failed' ? p.onRetry : undefined} />
       )}
     </FocusPanel>
   )

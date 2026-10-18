@@ -461,7 +461,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         {!interact && !commentMode && !laser && (
           <div
             className="sh-overlay sh-no-pan"
-            onPointerDown={(e) => { downAt.current = { x: e.clientX, y: e.clientY, t: pressNow() }; drag(e, 'move') }}
+            onPointerDown={(e) => { downAt.current = { x: e.clientX, y: e.clientY, t: pressNow() }; if (capturing) canvasPointer(null); drag(e, 'move') }}
             onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
             // a capture records canvas-mode clicks and hovers: the overlay keeps the click (drag and
             // select are unchanged) and asks the frame what is under it

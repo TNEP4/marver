@@ -112,7 +112,7 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onConfirm, onKeep, onDrop, agent, follows, readOnly, onOpenThread, err, warn, style }: {
+export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, agent, follows, readOnly, onOpenThread, err, warn, style }: {
   title: string
   of?: [number, number]
   onPrev?: () => void
@@ -123,6 +123,8 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   edited?: string
   /** words written that have not saved yet - they win over `edited` */
   pending?: string
+  /** a failed capture: its Retry (with Drop beside it) in the read-only footer */
+  onRetry?: () => void
   editing?: boolean
   onEdit?: (text: string) => void
   onConfirm?: () => void
@@ -182,7 +184,8 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
       <div className="rule" />
       <div className="actions">
         {readOnly ? (
-          <><span className="sp" />{onOpenThread && <button className="jm-btn" onClick={onOpenThread}>Open thread</button>}</>
+          <><span className="sp" />{onOpenThread && <button className="jm-btn" onClick={onOpenThread}>Open thread</button>}
+            {onRetry && <><button className="jm-btn ghost" onClick={onDrop}>Drop</button><button className="jm-btn primary" onClick={onRetry}>Retry</button></>}</>
         ) : (
           <>
             <span className="dim">{agent ? <>For <b style={{ color: 'var(--glass-ink-2)', fontWeight: 600 }}>{agent}</b></> : 'No agent yet - it waits in the queue'}</span>

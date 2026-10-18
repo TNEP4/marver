@@ -50,6 +50,9 @@ export function frameGone(key: string) { instances.delete(key) }
 export function frameReady(key: string) {
   const inst = instances.get(key)
   if (!inst) return
+  // a recorder installed after `load` (the stage mounts late) missed the hello: ask again, while the
+  // Document the hello was bound to is still the one in the iframe
+  if (inst.nonce && current(inst)) post(inst, { type: 'sh:capture-hello', nonce: inst.nonce })
   const cur = useJamCapture.getState().current
   if (cur) post(inst, { type: 'sh:capture', id: cur, on: true })
   post(inst, { type: 'sh:keys', owned: ownedNow })
@@ -104,6 +107,8 @@ interface CaptureState {
   picture(frame?: string): void
   /** the drafts sealed, in order - their read-backs open when capturing stops */
   sealed: { id: string; card?: { id: string; rev: number } }[]
+  /** sealed captures the server does not hold yet (kept, sent again until it takes them) */
+  unsent: string[]
 }
 
 const mutate = (fn: (s: CaptureState) => void) => useJamCapture.setState((s) => { fn(s); return { caps: { ...s.caps }, tick: s.tick + 1 } })
@@ -344,7 +349,7 @@ function probeAnswered(key: string, data: Record<string, any>) {
 }
 
 /** The canvas overlay saw a click (not a drag) on a node while a capture records. */
-export function canvasClick(key: string, clientX: number, clientY: number, pressAt?: number) { probe(key, 'click', clientX, clientY, pressAt) }
+export function canvasClick(key: string, clientX: number, clientY: number, pressAt?: number) { cancelDwell(); probe(key, 'click', clientX, clientY, pressAt) }
 /** When the press began, on the capture clock - the overlay calls this on pointerdown. */
 export const pressNow = (): number => now()
 
@@ -482,8 +487,9 @@ function trySeal(id: string) {
 
 /** Kept per workspace: another project served later on the same port never receives this one's captures. */
 const KEPT = `mv-jam-sealed:${CONFIG.workspace ?? 'unknown'}`
-const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r) }
-const forgetSealed = (id: string) => { pendingUploads.delete(id); try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
+const syncUnsent = () => useJamCapture.setState({ unsent: [...pendingUploads.keys()] })
+const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r); syncUnsent() }
+const forgetSealed = (id: string) => { pendingUploads.delete(id); syncUnsent(); try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
 const pendingUploads = new Map<string, CaptureRecord>()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
@@ -517,6 +523,7 @@ export function resendSealed() {
   try {
     const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}') as Record<string, CaptureRecord>
     for (const r of Object.values(all)) { pendingUploads.set(r.id, r); void upload(r) }
+    syncUnsent()
   } catch { /* none */ }
 }
 
@@ -527,6 +534,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   noteDraft: '',
   tick: 0,
   sealed: [],
+  unsent: [],
   start(reviewing) {
     if (get().current) return get().end(true, reviewing)
     begin(reviewing)
@@ -582,4 +590,4 @@ export function captureCounts(c: Cap | undefined, t = now()): { time: string; co
   }
 }
 
-if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamCapture = useJamCapture
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamCapture = useJamCapture; (window as any).__mvJamInstances = instances }

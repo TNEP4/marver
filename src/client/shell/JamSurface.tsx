@@ -26,8 +26,9 @@ const picture = (id?: string) => (id ? `${ROUTE}/api/jam/picture?id=${encodeURIC
 export function useLaneShown(): boolean {
   const cards = useJamQueue((s) => s.cards)
   const run = useJamQueue((s) => s.run)
-  const recording = useJamCapture((s) => !!s.current)
-  return !PUBLISHED && (recording || laneCards(cards, run).length > 0)
+  // a capture recording, sealing or waiting to send keeps the lane up until its server card arrives
+  const busy = useJamCapture((s) => !!s.current || Object.keys(s.caps).length > 0 || s.unsent.length > 0)
+  return !PUBLISHED && (busy || laneCards(cards, run).length > 0)
 }
 
 /** A capture's record, loaded once per id for its detail. */
@@ -72,6 +73,10 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
 
   const list = laneCards(cards, run)
   const tiles = list.map((c) => ({ id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) }))
+  // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send
+  const known = new Set(list.map((c) => c.id))
+  for (const c of Object.values(cap.caps)) if (c.state === 'draining' && !known.has(c.id)) tiles.push({ id: c.id, state: 'confirming', title: 'Capture', line: 'Finishing' })
+  for (const id of cap.unsent) if (!known.has(id) && !cap.caps[id]) tiles.push({ id, state: 'confirming', title: 'Capture', line: 'Waiting to send' })
   const recording = cap.current ? (() => {
     const c = cap.caps[cap.current!]
     const counts = captureCounts(c)
@@ -141,6 +146,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
           onOpenThread={() => openThread(panelCard)}
           onPrev={step(-1)} onNext={step(1)} pending={pendingEdit(panelCard.id)}
+          onRetry={() => void (async () => { if (await act(useJamQueue.getState().cards?.find((x) => x.id === panelCard.id), 'retry')) ui.close(); else useStore.getState().toast('the capture could not be retried - look again') })()}
         />
       )}
     </>

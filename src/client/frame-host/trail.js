@@ -33,8 +33,11 @@ const nonce = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toS
  *     trusted(e)     is this message the shell's?
  *   returns { pick(el, e) -> boolean, screen(to), dispose() }
  */
+/** One per document load (spec 27): a recorder created again in the same document keeps it, so the
+ *  shell's binding to this document holds. */
+const captureDoc = nonce()
+
 export function createRecorder({ post, getFrame, mode, trusted }) {
-  const captureDoc = nonce()
   let captureId = null
   let seq = 0
   // fields changed and not sent yet: element -> { id, frame, at, timer }
