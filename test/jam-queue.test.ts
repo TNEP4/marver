@@ -12,7 +12,7 @@ import { deviceId } from '../src/server/jam/device.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
 import { act, answers, ctxFor, form, freezeBrief, ingest, merge, settle, writePacket } from '../src/server/jam/queue.ts'
 import { buildPacket, goalText, packetPath, parseMembers, sharedFile } from '../src/server/jam/packet.ts'
-import { refuseHold, restoreHolds, saveHolds } from '../src/server/jam/reserve.ts'
+import { jamReservations, refuseHold, restoreHolds, saveHolds } from '../src/server/jam/reserve.ts'
 import { createActivity } from '../src/server/jam/activity.ts'
 import type { Batch, Card, JamAdapter, Journal, JournalV1 } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
@@ -988,5 +988,83 @@ describe('Jam V2: review round 4 fixes', () => {
     const keep = merge(j, newer, older, now)
     expect(keep.id).toBe('c-new')
     expect(keep.events).toEqual(['old', 'new'])
+  })
+})
+
+describe('Jam V2: review round 5 fixes', () => {
+  const withResults = (root: string, dir: string) => {
+    const t = say(root, dir, '@marver go', { frame: 'demo/a' })
+    const j = readJournal(root)
+    j.baselined = true
+    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+    const now = Date.now()
+    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-u', made: t.ts, order: t.ts, rev: 2, at: now })
+    j.batches.push({ batchId: 'b-u', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { body: 'Done, saved.', asks: false, reanchors: [] } } })
+    writeJournal(root, j)
+    return t
+  }
+
+  it('a post that keeps failing at boot fails its cards with the results kept; no new hold meanwhile; a restart posts them, and so does Retry - the agent never runs', async () => {
+    const { root, dir, done } = setup()
+    const t = withResults(root, dir)
+    let failing = true
+    const jam = createJam(root, CFG, agent('ok', { touch: 'ran.marker' }), undefined, { changed: () => { if (failing) throw new Error('push failed') } })
+    const run = jam.tick()
+    await wait(300)
+    expect(refuseHold('demo/other', false)).toMatch(/finishing a job/)       // the barrier: no new hold while it settles
+    await run
+    const c = cardOf(jam, t)!
+    expect([c.state, c.note]).toEqual(['failed', 'its replies could not be posted - Retry posts them'])
+    expect(jam.snapshot().batches[0].state).toBe('claimed')
+    failing = false
+    const r = await jam.act(c.id, c.rev, 'retry')
+    expect(r.ok).toBe(true)
+    for (let i = 0; i < 40 && cardOf(jam, t)!.state !== 'done'; i++) await wait(100)
+    jam.stop()
+    expect(cardOf(jam, t)!.state).toBe('done')
+    expect(existsSync(join(root, 'ran.marker'))).toBe(false)
+    expect(agentReplies(dir).map((x) => x.body)).toEqual(['Done, saved.'])
+    // and a restart reconciles one a previous boot gave up on
+    const { root: r2, dir: d2, done: done2 } = setup()
+    const t2 = withResults(r2, d2)
+    const g = createJam(r2, CFG, agent(), undefined, { changed: () => { throw new Error('push failed') } })
+    await g.tick(); g.stop()
+    expect(cardOf(g, t2)!.state).toBe('failed')
+    const h = createJam(r2, CFG, agent('ok', { touch: 'ran.marker' }))
+    await h.tick(); h.stop()
+    expect(cardOf(h, t2)!.state).toBe('done')
+    expect(existsSync(join(r2, 'ran.marker'))).toBe(false)
+    done(); done2()
+  }, 30_000)
+
+  it('a live batch whose post fails keeps its frames and holds back every new job and hold until it is posted', async () => {
+    const { root, dir, done } = setup()
+    let broke = false
+    const jam = createJam(root, CFG, agent(), undefined, { changed: () => { if (!broke) { broke = true; throw new Error('push failed') } } })
+    const a = say(root, dir, '@marver first', { frame: 'demo/a' })
+    await jam.tick()
+    expect(cardOf(jam, a)!.state).toBe('working')
+    const b = say(root, dir, '@marver second', { frame: 'demo/b' })
+    await jam.poke()
+    expect(packets(root).length).toBe(1)                                       // the second waits for the first's post
+    expect(jamReservations.frames.has('demo/a')).toBe(true)
+    expect(refuseHold('demo/c', false)).toMatch(/finishing a job/)
+    for (let i = 0; i < 100 && cardOf(jam, b)!.state !== 'done'; i++) { await wait(100); if (cardOf(jam, a)!.state === 'done') await jam.tick() }
+    jam.stop()
+    expect(cardOf(jam, a)!.state).toBe('done')
+    expect(cardOf(jam, b)!.state).toBe('done')
+    expect(packets(root).length).toBe(2)
+    done()
+  }, 20_000)
+
+  it('asks merged across several cards stay in the order they were made, by each ask\'s own time', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamq-m2-')))
+    const now = Date.now()
+    const card = (id: string, ev: string, t: number, state: Card['state']): Card => ({ id, kind: 'comment', board: 'home', frames: ['demo/a'], thread: 't', events: [ev], when: { [ev]: t }, state, batch: state === 'failed' ? 'b' : undefined, made: t, order: t, rev: 1, at: now })
+    const A = card('c-a', 'a', 100, 'failed'), B = card('c-b', 'b', 200, 'failed'), C = card('c-c', 'c', 300, 'queued')
+    j.cards.push(A, B, C)
+    merge(j, C, A, now)
+    merge(j, C, B, now)
+    expect(C.events).toEqual(['a', 'b', 'c'])
   })
 })

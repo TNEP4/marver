@@ -19,6 +19,9 @@ export interface Reservations {
   frames: Map<string, string>
   /** an exclusive job waits (queued) or runs */
   exclusive: 'waiting' | 'running' | null
+  /** results wait to be posted (the startup barrier, or a delivery being retried): what they move
+   *  is not known yet - a `shared` answer turns exclusive - so no new hold is taken meanwhile */
+  settling?: boolean
 }
 
 /** One per process - the daemon writes it, the work route reads it. */
@@ -30,6 +33,7 @@ export function refuseHold(frame: string, holding: boolean, r: Reservations = ja
   if (holding) return null
   if (r.frames.has(frame)) return 'Marver is working on this frame - try again when it is done'
   if (r.exclusive) return 'Marver is changing a shared file - try again when it is done'
+  if (r.settling) return 'Marver is finishing a job - try again in a moment'
   return null
 }
 

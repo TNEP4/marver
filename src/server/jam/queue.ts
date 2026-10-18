@@ -86,7 +86,7 @@ function tagged(j: Journal, board: string, ev: CommentEvent, frame: string | und
   const thread = threadId(ev)
   const on = onThread(j, board, thread)
   const queued = on.find((c) => c.state === 'queued')
-  if (queued) { queued.events.push(ev.id); queued.rev += 1; queued.at = now; return }
+  if (queued) { queued.events.push(ev.id); queued.when = { ...queued.when, [ev.id]: ev.ts }; queued.rev += 1; queued.at = now; return }
   let follows: string | undefined
   const working = on.find((c) => c.state === 'working')
   const asking = on.find((c) => c.state === 'asks')
@@ -97,7 +97,7 @@ function tagged(j: Journal, board: string, ev: CommentEvent, frame: string | und
   const capture = on.find((c) => c.capture)?.capture
   j.cards.push({
     id: `c-${ev.id}`, kind: 'comment', board, frames: frame ? [frame] : [], thread,
-    ...(capture ? { capture } : {}), events: [ev.id], state: 'queued', ...(follows ? { follows } : {}),
+    ...(capture ? { capture } : {}), events: [ev.id], when: { [ev.id]: ev.ts }, state: 'queued', ...(follows ? { follows } : {}),
     made: ev.ts, order: ev.ts, rev: 1, at: now,
   })
 }
@@ -141,9 +141,12 @@ function resolved(j: Journal, board: string, thread: string, now: number): boole
  *  waiting) survives. */
 export function merge(j: Journal, queued: Card, other: Card, now: number): Card {
   const [keep, gone] = other.capture && !queued.capture ? [other, queued] : [queued, other]
-  // asks stay in the order they were made: the older card's first, so the newest tag carries the icon
-  const [first, second] = gone.made <= keep.made ? [gone, keep] : [keep, gone]
-  keep.events = [...new Set([...first.events, ...second.events])]
+  // asks stay in the order they were made - each by its own time (a card's `made` for one that never
+  // recorded it), the id breaking a tie - so the newest tag carries the icon, however many merges
+  const when = { ...gone.when, ...keep.when }
+  const at = (id: string) => when[id] ?? (gone.events.includes(id) ? gone.made : keep.made)
+  keep.events = [...new Set([...gone.events, ...keep.events])].sort((a, b) => at(a) - at(b) || (a < b ? -1 : 1))
+  keep.when = Object.fromEntries(keep.events.map((id) => [id, at(id)]))
   if (gone.exclusive || keep.exclusive) keep.exclusive = [...new Set([...(keep.exclusive ?? []), ...(gone.exclusive ?? [])])]
   keep.shared = Math.max(keep.shared ?? 0, gone.shared ?? 0) || undefined
   for (const f of gone.frames) if (!keep.frames.includes(f)) keep.frames.push(f)
@@ -416,6 +419,28 @@ export function fail(j: Journal, b: Batch, note: string, now = Date.now()): Sett
   }
   b.state = 'failed'; b.at = now; b.note = note
   return out
+}
+
+/** Results saved, posting failed for good: the cards show failed - Retry posts the saved replies - and
+ *  the batch stays claimed with its results, so a boot reconciles it too. Never a rerun. */
+export function undelivered(j: Journal, b: Batch, note: string, now = Date.now()): Settled[] {
+  const out: Settled[] = []
+  for (const m of b.members) {
+    const c = j.cards.find((x) => x.id === m.card)
+    if (!c || c.state !== 'working' || c.batch !== b.batchId) continue
+    set(c, 'failed', now, note); out.push({ card: c, notice: 'failed' })
+  }
+  b.undelivered = true; b.at = now
+  return out
+}
+
+/** A batch whose replies are posted again (Retry, or a boot): its failed cards go back to working. */
+export function redelivering(j: Journal, b: Batch, now = Date.now()) {
+  for (const m of b.members) {
+    const c = j.cards.find((x) => x.id === m.card)
+    if (c && c.state === 'failed' && c.batch === b.batchId) set(c, 'working', now, '')
+  }
+  b.undelivered = false
 }
 
 /** Forget finished cards and batches after a week, unless a live card follows one. */

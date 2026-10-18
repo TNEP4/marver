@@ -65,6 +65,7 @@ export interface Card {
   thread?: string            // the thread it lives in
   capture?: string           // the capture this thread was made for (M2)
   events: string[]           // the owner's asks it holds, in order - all ledgered
+  when?: Record<string, number>   // each ask's time, so asks merged from several cards stay in order
   brief?: Brief              // frozen when its batch is claimed
   state: CardState
   follows?: string           // the card this one follows up
@@ -106,6 +107,7 @@ export interface Batch {
   reanchors?: Reanchor[]
   early?: { body: string; asks: boolean; commentId: string; ts: number }
   note?: string              // why it failed (two failed attempts) - what a card that follows it reads
+  undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns
   posted?: boolean           // every reply and reanchor of `results` is in the log
   model?: string
   at: number

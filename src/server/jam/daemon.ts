@@ -29,7 +29,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, answeredSince, createQueue, ctxFor, stillOwned, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { act, answeredSince, createQueue, ctxFor, redelivering, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -304,6 +304,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const exclusiveRunning = [...runningBatches.values()].some((b) => b.exclusive)
     jamReservations.exclusive = exclusiveRunning ? 'running'
       : (exclusiveWaiting ?? q.j.cards.some((c) => c.state === 'queued' && (c.exclusive || !c.frames.length))) ? 'waiting' : null
+    // results still to be posted (the barrier, a retried delivery): no new hold until they settle
+    jamReservations.settling = !ready || delivering.size > 0
   }
   const queueChanged = () => { try { hooks.queue?.() } catch { /* a push is advisory */ } }
   const settled = (out: Settled[]) => {
@@ -453,6 +455,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** Claim what can run now and start it. Under the lock, after the ingest. */
   const pump = async (): Promise<void> => {
     if (stopped || !ready) return
+    if (delivering.size) { holdLater(); return }   // results first: nothing new until they are posted
     for (const b of [...deferred]) {
       if (b.frames.some((f) => hooks.held?.(f)) || (b.exclusive && hooks.anyHold?.())) { holdLater(); continue }
       deferred.splice(deferred.indexOf(b), 1)
@@ -486,14 +489,25 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     for (const b of started) launch(b)
   }
 
-  /** Post a batch's results again after a failed delivery - a few times, further apart; boot recovery
-   *  reconciles it otherwise (it stays claimed, with its results). */
-  const redeliver = (b: Batch, n: number) => {
-    if (n > 5 || stopped) return
+  /** Batches whose results are saved and whose replies wait to be posted again. While any does, it
+   *  keeps its frames, nothing new is dispatched and no new hold is taken: what it moves (a `shared`
+   *  answer turns exclusive) must exist before anything else starts. */
+  const delivering = new Set<string>()
+  const settleDelivery = (b: Batch) => { delivering.delete(b.batchId); runningBatches.delete(b.batchId); reserve(); queueChanged(); void pump() }
+  /** Post a batch's results again after a failed delivery - a few times, further apart. If it never
+   *  posts, its cards fail with the results kept: Retry posts them (and a boot tries again) - the agent
+   *  never runs twice for one result. */
+  const redeliver = (b: Batch, n: number, delay = 5_000 * n) => {
+    if (stopped) return
+    delivering.add(b.batchId); runningBatches.set(b.batchId, b); reserve()
     const t = setTimeout(() => {
-      // posted: what it held is free and what it moved (a `shared` requeue) may run - refresh and dispatch
-      deliver(b).then(() => { reserve(); void pump() }, (err) => { log(`  jam: posting failed again - ${(err as Error).message}`); redeliver(b, n + 1) })
-    }, 5_000 * n)
+      deliver(b).then(() => settleDelivery(b), async (err) => {
+        log(`  jam: posting failed again - ${(err as Error).message}`)
+        if (n < 5) return redeliver(b, n + 1)
+        await q.lock((j) => { settled(undelivered(j, b, 'its replies could not be posted - Retry posts them')); q.persist() }).catch(() => {})
+        settleDelivery(b)
+      })
+    }, delay)
     t.unref?.()
   }
 
@@ -509,7 +523,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           queueChanged()
         }
       } finally {
-        runningBatches.delete(b.batchId)
+        if (!delivering.has(b.batchId)) runningBatches.delete(b.batchId)   // a delivery being retried keeps its frames
         running.delete(b.batchId)
         reserve()
         // what this batch held is free: start what waited on it BEFORE this run counts as over, so
@@ -581,11 +595,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // that keeps failing is tried a few times, then its cards fail - with their results kept, so the
     // replies are in the journal and nothing pretends the work was not done.
     for (const { b } of leftover.filter((x) => x.results)) {
+      await q.lock((j) => { redelivering(j, b); q.persist() })   // one a previous boot gave up on, too
       for (let n = 1; ; n++) {
         try { await deliver(b); break } catch (err) {
           if (n >= 4 || stopped) {
-            log(`  jam: could not post a recovered batch - ${(err as Error).message}; its cards fail`)
-            await q.lock((j) => { settled(fail(j, b, `its replies could not be posted: ${(err as Error).message}`)); q.persist() })
+            log(`  jam: could not post a recovered batch - ${(err as Error).message}; its cards fail, Retry posts them`)
+            await q.lock((j) => { settled(undelivered(j, b, 'its replies could not be posted - Retry posts them')); q.persist() })
             break
           }
           await new Promise((r) => setTimeout(r, 500 * 2 ** n))
@@ -594,6 +609,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       runningBatches.delete(b.batchId)
     }
     ready = true
+    reserve()
     // a resumed batch still waits for a hold restored at boot (an exclusive one, for every hold)
     for (const { b } of leftover.filter((x) => !x.results)) deferred.push(b)
   })()
@@ -636,10 +652,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   return {
     tick,
-    stop() { stopped = true; if (recheck) clearTimeout(recheck); for (const c of activeChildren) fenceGroup(c.pid) },
+    stop() { stopped = true; jamReservations.settling = false; if (recheck) clearTimeout(recheck); for (const c of activeChildren) fenceGroup(c.pid) },
     snapshot() { return q.j },
     view,
     async act(id, rev, action) {
+      // Retry on a card whose results are saved but were never posted posts them - it never reruns
+      const saved = await q.lock((j) => {
+        const c = j.cards.find((x) => x.id === id)
+        const b = c && action === 'retry' && c.state === 'failed' && c.rev === rev ? j.batches.find((x) => x.batchId === c.batch && x.state === 'claimed' && x.results && x.undelivered) : undefined
+        if (!b) return null
+        redelivering(j, b); q.persist()
+        return { b, card: structuredClone(c!) }
+      })
+      if (saved) { redeliver(saved.b, 1, 0); queueChanged(); return { ok: true, card: saved.card } }
       // the card as this action left it - a copy, so the next claim cannot change the answer under the caller
       const r = await q.lock((j) => { const out = act(j, id, rev, action); if (out.ok) q.persist(); return { ...out, ...(out.card ? { card: structuredClone(out.card) } : {}) } })
       if (r.ok) { reserve(); queueChanged(); void pump() }
@@ -703,7 +728,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       watcher?.close()
       core.stop()
       delete jamLive.poke; delete jamLive.view; delete jamLive.act
-      jamReservations.frames.clear(); jamReservations.exclusive = null
+      jamReservations.frames.clear(); jamReservations.exclusive = null; jamReservations.settling = false
       releaseLock(root)
     },
   }
