@@ -210,10 +210,15 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
   }
 }
 
+/** A frame's bundle (`{ el: { semantics: { tag, quote, testId, ariaLabel, role }, cssPath, source } }`,
+ *  safeBundle) as the record keeps it: flat, strings only - a masked one keeps its '•••'. */
 const cleanBundle = (b: unknown): Bundle => {
-  const o = (b && typeof b === 'object' ? b : {}) as Record<string, unknown>
+  const o = (b && typeof b === 'object' ? b : {}) as Record<string, any>
+  const el = (o.el && typeof o.el === 'object' ? o.el : o) as Record<string, any>
+  const sem = (el.semantics && typeof el.semantics === 'object' ? el.semantics : el) as Record<string, unknown>
   const out: Bundle = {}
-  for (const k of ['tag', 'quote', 'testId', 'ariaLabel', 'role', 'cssPath', 'source'] as const) if (typeof o[k] === 'string') out[k] = o[k] as string
+  for (const k of ['tag', 'quote', 'testId', 'ariaLabel', 'role'] as const) if (typeof sem[k] === 'string') out[k] = sem[k] as string
+  for (const k of ['cssPath', 'source'] as const) if (typeof el[k] === 'string') out[k] = el[k] as string
   return out
 }
 
