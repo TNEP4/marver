@@ -107,6 +107,32 @@ describe('words: cutting phrases (no model)', () => {
   })
 })
 
+describe('words: review fixes (no model)', () => {
+  it('a gap of minutes (a microphone opened late, a resumed capture) keeps every sample at its exact number', async () => {
+    const words: Word[] = []
+    const seg = new Segmenter(new FakeVad(), fakeRecognizer(), (w) => words.push(...w))
+    seg.push(0, concatAll([speech(RATE), silence(RATE)]))
+    seg.push(120 * RATE, concatAll([speech(RATE), silence(RATE)]))   // two minutes later
+    await seg.end(123 * RATE)
+    const later = words.filter((w) => w.at >= 100 * RATE)
+    expect(later.length).toBeGreaterThan(0)
+    expect(Math.min(...later.map((w) => w.at))).toBe(120 * RATE)      // no pre-roll across the gap, no drift
+  })
+
+  it('a dropped capture is discarded: nothing it holds is transcribed, no word is given', async () => {
+    let calls = 0
+    const words: Word[] = []
+    const seg = new Segmenter(new FakeVad(), async () => { calls++; return { tokens: [' x'], timestamps: [0] } }, (w) => words.push(...w))
+    seg.push(0, speech(2 * RATE))                                      // a phrase still being said
+    seg.cancel()
+    await seg.end(2 * RATE)
+    seg.push(2 * RATE, concatAll([speech(RATE), silence(RATE)]))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toBe(0)
+    expect(words).toEqual([])
+  })
+})
+
 function concatAll(parts: Float32Array[]) {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0
   for (const p of parts) { out.set(p, o); o += p.length }
@@ -157,6 +183,21 @@ describe('words: the audio socket', () => {
     } finally { s.close() }
   })
 
+  it('an audio chunk names its capture: one for a capture not begun, ended or dropped is not taken; an end for an unknown capture is final, incomplete', async () => {
+    const s = await serve()
+    try {
+      const c = await open(s.port, issueTicket())
+      const got: any[] = []
+      c.ws.on('message', (d) => got.push(JSON.parse(String(d))))
+      const frame = (id: string, offset: number) => { const idb = Buffer.from(id); const pcm = Buffer.alloc(3200); const b = Buffer.alloc(1 + idb.length + 4); b[0] = idb.length; idb.copy(b, 1); b.writeUInt32LE(offset, 1 + idb.length); return Buffer.concat([b, pcm]) }
+      c.ws.send(frame('cap-1792399514739-nobody', 0))                    // never begun: dropped quietly
+      c.ws.send(JSON.stringify({ type: 'end', capture: 'cap-1792399514739-nobody', lastSample: 0 }))
+      await new Promise((r) => setTimeout(r, 100))
+      expect(got).toContainEqual({ type: 'final', capture: 'cap-1792399514739-nobody', incomplete: true })
+      c.ws.close()
+    } finally { s.close() }
+  })
+
   it('without a model, an end still answers final at once (typed notes only)', async () => {
     const prev = process.env.MARVER_MODELS
     process.env.MARVER_MODELS = join(import.meta.dirname, 'fixtures', 'no-models-here')
@@ -194,6 +235,24 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
       return words
     } finally { await w.terminate() }
   }
+  it('a dropped capture gives no words, even with speech already sent', async () => {
+    const w = new Worker(new URL('../src/server/jam/speech-worker.ts', import.meta.url), { workerData: { paths: modelPaths() } })
+    try {
+      await new Promise<void>((res, rej) => w.on('message', (m) => { if (m.type === 'ready') res(); if (m.type === 'unavailable') rej(new Error(m.reason)) }))
+      const wav = sherpa.readWave(join(import.meta.dirname, 'fixtures', 'speech', 'en.wav'))
+      const id = 'cap-1792399514739-drop12'
+      const out: any[] = []
+      w.on('message', (m) => { if (m.capture === id) out.push(m) })
+      w.postMessage({ type: 'begin', capture: id })
+      const pcm = new Int16Array(wav.samples.length)
+      for (let k = 0; k < pcm.length; k++) pcm[k] = Math.round(wav.samples[k] * 32767)
+      w.postMessage({ type: 'audio', capture: id, offset: 0, pcm })
+      w.postMessage({ type: 'drop', capture: id })
+      await new Promise((r) => setTimeout(r, 1500))
+      expect(out.filter((m) => m.type === 'words')).toEqual([])
+    } finally { await w.terminate() }
+  }, 60_000)
+
   const text = (ws: Word[]) => ws.map((w) => w.w).join(' ')
   const inOrder = (ws: Word[]) => ws.every((w, i) => i === 0 || w.at >= ws[i - 1].at)
 

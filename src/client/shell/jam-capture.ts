@@ -465,7 +465,8 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   // is not part of the capture), its pictures and its numbered points; then recording goes on
   // (to just before this instant: everything carried over is strictly before `resumes.at`, the new part after)
   const shift = from ? t - 1 - (from.timeline[from.timeline.length - 1]?.at ?? t) : 0
-  const steps = from ? from.timeline.map((x) => ({ ...x, at: x.at + shift })) : []
+  // (a phrase's words move with it - each word keeps its place in the phrase)
+  const steps = from ? from.timeline.map((x) => ({ ...x, at: x.at + shift, ...(x.event === 'words' && x.words ? { words: x.words.map((w) => ({ ...w, at: w.at + shift })) } : {}) }) as Step) : []
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],

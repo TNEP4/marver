@@ -691,6 +691,24 @@ describe('captures: the first trial (Resume, Rename, the words)', () => {
     done()
   })
 
+  it('Resume carries a phrase\'s words moved with it (each word by the same offset, to fractions of a millisecond)', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const t0 = 1_000_000.123
+    const a = rec({ timeline: [{ at: t0, event: 'view', view: { frames: ['demo/a'] } }, { at: t0 + 500.25, event: 'words', text: 'make it blue', words: [{ w: 'make', at: t0 + 500.25 }, { w: 'it', at: t0 + 700.5 }, { w: 'blue', at: t0 + 900.75 }] }] })
+    await jam.capture(a)
+    const d = 61_234.567
+    const at = t0 + 900.75 + d + 1
+    const moved = a.timeline.map((x: any) => ({ ...x, at: x.at + d, ...(x.words ? { words: x.words.map((w: any) => ({ ...w, at: w.at + d })) } : {}) }))
+    const b = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...moved, { at: at + 5, event: 'note', text: 'and bold' }] })
+    expect((await jam.capture(b)).ok).toBe(true)
+    // a word left on the old clock is not a continuation
+    const stale = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...a.timeline.map((x: any) => ({ ...x, at: x.at + d })), { at: at + 5, event: 'note', text: 'x' }] })
+    expect((await jam.capture(stale)).error).toMatch(/does not continue/)
+    jam.stop()
+    done()
+  })
+
   it('a record that names itself as the draft it resumes, or a bad id, carries no resume', () => {
     const r = rec()
     const self = checkRecord({ ...r, context: { ...r.context, resumes: { id: r.id, at: 5 } } }) as CaptureRecord

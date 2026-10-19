@@ -37,7 +37,11 @@ const vadFor = (): VadLike => new sherpa.Vad({
   sampleRate: RATE, debug: false, numThreads: 1,
 }, 30)
 
-const recognize = (samples: Float32Array): Recognized => {
+// Decoding is synchronous and blocks this thread's messages: before each phrase the thread yields a turn,
+// so audio that arrived meanwhile is cut into phrases first - and counted against the 30 s that may wait.
+const turn = () => new Promise<void>((r) => setImmediate(r))
+const recognize = async (samples: Float32Array): Promise<Recognized> => {
+  await turn()
   const s = recognizer.createStream()
   s.acceptWaveform({ sampleRate: RATE, samples })
   recognizer.decode(s)
@@ -60,7 +64,11 @@ port.on('message', (m: any) => {
     seg.push(m.offset, f)
   } else if (m.type === 'end') {
     const seg = captures.get(id)
-    if (!seg) { port.postMessage({ type: 'final', capture: id }); return }
+    if (!seg) { port.postMessage({ type: 'final', capture: id, incomplete: true }); return }   // never begun here (a new worker)
     void seg.end(Number(m.lastSample) || 0).then(() => { captures.delete(id); port.postMessage({ type: 'final', capture: id }) })
-  } else if (m.type === 'drop') captures.delete(id)
+  } else if (m.type === 'drop') {
+    // dropped: what it holds goes, untranscribed; nothing more is said about it
+    captures.get(id)?.cancel()
+    captures.delete(id)
+  }
 })

@@ -7,10 +7,11 @@
  * socket per canvas: a second closes the first.
  *
  * On the socket, the page speaks in order - so `end` can never overtake the audio:
- *   text   { type: 'begin', capture } · { type: 'end', capture, lastSample }
- *   binary [u32 offset, little endian][16 kHz mono Int16 samples] - the capture begun last, `offset` its
- *          sample number from the capture's start
- * and hears { type: 'words', capture, words: [{ w, at }] } (at = capture sample) and { type: 'final', capture }.
+ *   text   { type: 'begin', capture } · { type: 'end', capture, lastSample } · { type: 'drop', capture }
+ *   binary [u8 id length][capture id][u32 offset, little endian][16 kHz mono Int16 samples] - `offset` the
+ *          chunk's sample number from that capture's start
+ * and hears { type: 'words', capture, words: [{ w, at }] } (at = capture sample), { type: 'final', capture,
+ * incomplete? } and { type: 'unavailable', capture, reason } (no words for it - typed notes only).
  * Decoding runs in a worker thread (speech-worker.ts); raw audio is never written anywhere.
  */
 import { randomBytes } from 'node:crypto'
@@ -75,49 +76,57 @@ const IDLE_MS = 10 * 60_000
 
 export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): Speech {
   let worker: Worker | null = null
+  let ready: Promise<Worker | null> | null = null
+  let unavailable: string | undefined
+  let live: WebSocket | null = null
   let lastUse = Date.now()
+  const owners = new Map<string, WebSocket>()   // capture -> the socket it came on, until its final (or drop)
+
   const idle = setInterval(() => {
     if (worker && owners.size === 0 && Date.now() - lastUse > (opts.idleMs ?? IDLE_MS)) { const w = worker; worker = null; ready = null; void w.terminate() }
   }, Math.min(60_000, opts.idleMs ?? IDLE_MS))
   idle.unref()
-  let ready: Promise<boolean> | null = null
-  let unavailable: string | undefined
-  let live: WebSocket | null = null
-  const owners = new Map<string, WebSocket>()   // capture -> the socket it came on
 
   const engineMissing = (): string | undefined => {
     try { import.meta.resolve('sherpa-onnx-node'); return undefined } catch { return 'the speech engine (sherpa-onnx-node) is not installed - typed notes only' }
   }
+  const tell = (ws: WebSocket | undefined, m: unknown) => { if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(m)) }
 
-  const start = (): Promise<boolean> => {
+  /** The worker, started once (and again after it went): resolves to it once the model is loaded, or to
+   *  null - the engine missing or failing, the model not there - and says why in `unavailable`. */
+  const start = (): Promise<Worker | null> => {
     if (ready) return ready
-    ready = (async () => {
+    const p: Promise<Worker | null> = (async () => {
       const missing = engineMissing()
-      if (missing) { unavailable = missing; return false }
-      if (!(await modelsReady())) return false
+      if (missing) { unavailable = missing; return null }
+      if (!(await modelsReady())) return null
       const url = opts.workerUrl ?? new URL(import.meta.url.endsWith('.ts') ? './speech-worker.ts' : './speech-worker.mjs', import.meta.url)
       const w = new Worker(url, { workerData: { paths: modelPaths() } })
-      worker = w
       w.unref()
-      w.on('message', (m: any) => {
-        if (m?.type === 'words' || m?.type === 'final') {
-          const s = owners.get(m.capture)
-          if (m.type === 'final') owners.delete(m.capture)
-          if (s && s.readyState === s.OPEN) s.send(JSON.stringify(m))
+      return new Promise<Worker | null>((resolve) => {
+        let settled = false
+        const settle = (v: Worker | null) => { if (!settled) { settled = true; resolve(v) } }
+        w.on('message', (m: any) => {
+          if (m?.type === 'ready') { worker = w; settle(w) }
+          else if (m?.type === 'unavailable') { unavailable = `the speech engine could not start: ${m.reason} - typed notes only`; void w.terminate(); settle(null) }
+          else if (m?.type === 'words' || m?.type === 'final') {
+            const ws = owners.get(m.capture)
+            if (m.type === 'final') owners.delete(m.capture)
+            tell(ws, m)
+          }
+        })
+        // a worker that dies takes its captures' words with it: each is told they may be incomplete
+        const gone = (why: string) => {
+          if (worker === w) { worker = null; ready = null }
+          if (!settled) { unavailable = `the speech engine stopped: ${why} - typed notes only`; settle(null); return }
+          for (const [id, ws] of [...owners]) { owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) }
         }
-      })
-      w.on('error', () => { if (worker === w) { worker = null; ready = null } })
-      w.on('exit', () => { if (worker === w) { worker = null; ready = null } })
-      return new Promise<boolean>((resolve) => {
-        const first = (m: any) => {
-          if (m?.type === 'ready') { w.off('message', first); resolve(true) }
-          else if (m?.type === 'unavailable') { w.off('message', first); unavailable = `the speech engine could not start: ${m.reason}`; void w.terminate(); resolve(false) }
-        }
-        w.on('message', first)
+        w.on('error', (err) => gone(err.message))
+        w.on('exit', (code) => gone(`exit ${code}`))
       })
     })()
-    const p = ready
-    void p.then((ok) => { if (!ok && ready === p) ready = null })
+    ready = p
+    void p.then((w) => { if (!w && ready === p) ready = null })
     return p
   }
 
@@ -125,50 +134,73 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
     // one audio socket per canvas: a second closes the first
     if (live && live !== ws) { try { live.close(4000, 'another audio connection took over') } catch { /* gone */ } }
     live = ws
-    let current: string | null = null
-    const mine = new Set<string>()
-    // per capture, everything goes to the worker through one gate, in the order it came: audio said while
-    // the model loads (the first capture) waits for it instead of being lost
-    const gates = new Map<string, Promise<boolean>>()
-    const send = (capture: string, msg: unknown, transfer: ArrayBuffer[] = []) => {
-      const g = gates.get(capture)
-      if (g) gates.set(capture, g.then((ok) => { if (ok && worker) worker.postMessage(msg, transfer); return ok }))
+    let closed = false
+    // per capture, one gate: everything for it reaches the worker in the order it came, and only the
+    // worker it began on (audio said while the model loads waits for it instead of being lost); a capture
+    // ended, dropped or whose socket closed takes nothing more
+    interface Cap { gate: Promise<Worker | null>; ended: boolean; dropped: boolean }
+    const caps = new Map<string, Cap>()
+    const then = (c: Cap, f: (w: Worker) => void, otherwise?: () => void) => {
+      c.gate = c.gate.then((w) => {
+        if (w && worker === w && !closed) f(w)
+        else otherwise?.()
+        return w
+      })
     }
     ws.on('message', (data, isBinary) => {
+      lastUse = Date.now()
       if (isBinary) {
+        // [u8 id length][capture id][u32 offset][Int16 samples] - every chunk names its capture
         const buf = Buffer.isBuffer(data) ? data : Buffer.concat(data as Buffer[])
-        if (!current || buf.length < 6 || (buf.length - 4) % 2) return
-        const offset = buf.readUInt32LE(0)
-        const pcm = new Int16Array(buf.buffer.slice(buf.byteOffset + 4, buf.byteOffset + buf.length))
-        send(current, { type: 'audio', capture: current, offset, pcm }, [pcm.buffer as ArrayBuffer])
+        const n = buf.length ? buf[0] : 0
+        if (buf.length < 1 + n + 6 || (buf.length - 1 - n - 4) % 2) return
+        const id = buf.toString('utf8', 1, 1 + n)
+        const c = caps.get(id)
+        if (!c || c.ended || c.dropped) return
+        const offset = buf.readUInt32LE(1 + n)
+        const pcm = new Int16Array(buf.buffer.slice(buf.byteOffset + 1 + n + 4, buf.byteOffset + buf.length))
+        then(c, (w) => { if (!c.dropped) w.postMessage({ type: 'audio', capture: id, offset, pcm }, [pcm.buffer as ArrayBuffer]) })
         return
       }
       let m: any
       try { m = JSON.parse(String(data)) } catch { return }
       if (typeof m?.capture !== 'string' || !ID.test(m.capture)) return
       const id: string = m.capture
-      lastUse = Date.now()
       if (m.type === 'begin') {
-        if (gates.has(id)) return
-        current = id
-        mine.add(id)
+        if (caps.has(id)) return
         owners.set(id, ws)
-        gates.set(id, start().then((ok) => { if (ok && worker) worker.postMessage({ type: 'begin', capture: id }); return ok && !!worker }))
-      } else if (m.type === 'end') {
-        if (current === id) current = null
-        const lastSample = Number(m.lastSample)
-        const g = gates.get(id) ?? Promise.resolve(false)
-        gates.delete(id)
-        // the worker answers `final` after the last words; with no worker there is nothing to wait for
-        void g.then((ok) => {
-          if (ok && worker) worker.postMessage({ type: 'end', capture: id, lastSample: Number.isFinite(lastSample) ? lastSample : 0 })
-          else { owners.delete(id); if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'final', capture: id })) }
+        const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }
+        c.gate = start().then((w) => {
+          if (!w) { tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
+          if (closed || c.dropped || worker !== w) return null
+          w.postMessage({ type: 'begin', capture: id })
+          return w
         })
+        caps.set(id, c)
+      } else if (m.type === 'end') {
+        const c = caps.get(id)
+        if (!c || c.ended || c.dropped) { tell(ws, { type: 'final', capture: id, incomplete: true }); return }
+        c.ended = true
+        const lastSample = Number(m.lastSample)
+        // the worker answers `final` after the last words; without the worker it began on, they may be incomplete
+        then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: Number.isFinite(lastSample) ? lastSample : 0 }),
+          () => { owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
+      } else if (m.type === 'drop') {
+        const c = caps.get(id)
+        if (!c || c.dropped) return
+        c.dropped = true
+        owners.delete(id)
+        then(c, (w) => w.postMessage({ type: 'drop', capture: id }))
       }
     })
     ws.on('close', () => {
+      closed = true
       if (live === ws) live = null
-      for (const id of mine) { owners.delete(id); worker?.postMessage({ type: 'drop', capture: id }) }
+      for (const [id, c] of caps) {
+        if (owners.get(id) === ws) owners.delete(id)
+        c.dropped = true
+        worker?.postMessage({ type: 'drop', capture: id })
+      }
     })
   }
 
@@ -181,7 +213,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
       if (!(await modelsReady())) return { state: 'needs-model' }
       if (worker) return { state: 'ready' }
       void start()
-      return { state: 'loading' }
+      return unavailable ? { state: 'unavailable', reason: unavailable } : { state: 'loading' }
     },
     attach(server) {
       server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {

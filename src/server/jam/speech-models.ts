@@ -4,9 +4,9 @@
  * checked against the hash it was published with before it is used. Nothing here runs a model; the
  * worker does (speech-worker.ts).
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -92,31 +92,64 @@ const untar = (archive: string, into: string) => new Promise<void>((resolve, rej
   p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`tar exited ${code}`))))
 })
 
-/** Download the models (once - a second call joins the first). Each file checked; the archive is removed
- *  once unpacked and checked. */
+const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
+
+/** Download the models (once - a second call joins the first; another dev server downloading them is
+ *  waited for, through a lock file). Everything lands in a staging folder of this process first, is
+ *  checked there, and only then moves into place; a failure leaves nothing behind. */
 export function downloadModels(dir = modelsDir(), fetchImpl: typeof fetch = fetch): Promise<void> {
   if (running) return running
   download = { state: 'downloading', received: 0, total: ARCHIVE.bytes + VAD.bytes }
   running = (async () => {
+    mkdirSync(dir, { recursive: true })
+    const lock = join(dir, '.download.lock')
+    // another process downloading: wait for it, then see what it left
+    for (;;) {
+      try { writeFileSync(lock, JSON.stringify({ pid: process.pid }), { flag: 'wx' }); break }
+      catch {
+        let pid = 0
+        try { pid = Number(JSON.parse(readFileSync(lock, 'utf8')).pid) || 0 } catch { /* half written */ }
+        if (pid && !alive(pid)) { rmSync(lock, { force: true }); continue }
+        await new Promise((r) => setTimeout(r, 1_000))
+        if (!existsSync(lock)) { if (await modelsReady(dir)) { download = { ...download, state: 'done', received: download.total }; return } }
+      }
+    }
+    const stage = join(dir, `.staging-${process.pid}-${randomBytes(4).toString('hex')}`)
     try {
-      mkdirSync(dir, { recursive: true })
+      mkdirSync(stage, { recursive: true })
       const count = (n: number) => { download.received += n }
       const p = modelPaths(dir)
-      if (!(await fileOk(p.vad, VAD.sha256))) await fetchChecked(RELEASE + VAD.name, p.vad, VAD.sha256, count, fetchImpl)
+      if (!(await fileOk(p.vad, VAD.sha256))) await fetchChecked(RELEASE + VAD.name, join(stage, VAD.name), VAD.sha256, count, fetchImpl)
       else download.received += VAD.bytes
-      const archive = join(dir, ARCHIVE.name)
-      if (!(await modelsReady(dir))) {
+      const parakeetOk = await (async () => { for (const k of Object.keys(PARAKEET_FILES) as (keyof typeof PARAKEET_FILES)[]) if (!(await fileOk(p[k], PARAKEET_FILES[k].sha256))) return false; return true })()
+      if (!parakeetOk) {
+        const archive = join(stage, ARCHIVE.name)
         await fetchChecked(RELEASE + ARCHIVE.name, archive, ARCHIVE.sha256, count, fetchImpl)
         download.state = 'checking'
-        await untar(archive, dir)
+        await untar(archive, stage)
         rmSync(archive, { force: true })
+        // (the archive's hash was checked before it was opened; tar refuses absolute and `..` paths by default)
+        if (!(await parakeetIn(stage))) throw new Error('the unpacked model did not match its published hashes')
       } else download.received += ARCHIVE.bytes
       download.state = 'checking'
-      if (!(await modelsReady(dir))) throw new Error('the unpacked model did not match its published hashes')
+      // into place, checked: the folder whole, then the VAD
+      if (!parakeetOk) { rmSync(join(dir, PARAKEET_DIR), { recursive: true, force: true }); renameSync(join(stage, PARAKEET_DIR), join(dir, PARAKEET_DIR)) }
+      if (existsSync(join(stage, VAD.name))) renameSync(join(stage, VAD.name), p.vad)
+      if (!(await modelsReady(dir))) throw new Error('the model did not match its published hashes once in place')
       download.state = 'done'
     } catch (err) {
       download = { ...download, state: 'failed', error: (err as Error).message }
-    } finally { running = null }
-  })()
+    } finally {
+      rmSync(stage, { recursive: true, force: true })
+      rmSync(lock, { force: true })
+    }
+  })().finally(() => { running = null })
   return running
+}
+
+/** The recognizer's files, checked, in a folder (the staging one: the VAD may already be in place). */
+async function parakeetIn(dir: string): Promise<boolean> {
+  const p = modelPaths(dir)
+  for (const k of Object.keys(PARAKEET_FILES) as (keyof typeof PARAKEET_FILES)[]) if (!(await fileOk(p[k], PARAKEET_FILES[k].sha256))) return false
+  return true
 }

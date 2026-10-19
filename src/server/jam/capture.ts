@@ -174,8 +174,15 @@ export function continues(prev: CaptureRecord, next: CaptureRecord, at: number):
   if (b.length < a.length || !prev.pictures.every((p) => next.pictures.includes(p))) return false
   if (!a.length) return b.every((x) => x.at > at)
   const d = b[0].at - a[0].at
-  const same = (x: Step, y: Step) => { const { at: _x, ...rx } = x; const { at: _y, ...ry } = y; return JSON.stringify(rx) === JSON.stringify(ry) }
-  for (let i = 0; i < a.length; i++) if (b[i].at - a[i].at !== d || b[i].at >= at || !same(a[i], b[i])) return false
+  // times on the page clock are fractional milliseconds: "moved by d" holds to a microsecond
+  const near = (x: number, y: number) => Math.abs(x - y) < 1e-3
+  const bare = (x: Step): string => { const { at: _a, ...r } = x as Step & { words?: unknown }; return JSON.stringify('words' in r && Array.isArray(r.words) ? { ...r, words: (r.words as { w: string }[]).map((w) => w.w) } : r) }
+  const wordsMoved = (x: Step, y: Step): boolean => {
+    const wx = (x as { words?: { at: number }[] }).words, wy = (y as { words?: { at: number }[] }).words
+    if (!wx || !wy) return !wx && !wy
+    return wx.length === wy.length && wx.every((w, i) => near(wy[i].at - w.at, d))
+  }
+  for (let i = 0; i < a.length; i++) if (!near(b[i].at - a[i].at, d) || b[i].at >= at || bare(a[i]) !== bare(b[i]) || !wordsMoved(a[i], b[i])) return false
   return b.slice(a.length).every((x) => x.at > at)
 }
 

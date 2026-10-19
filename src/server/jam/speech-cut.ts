@@ -59,6 +59,9 @@ export class Segmenter {
   private history = new Float32Array(HISTORY) // the last HISTORY samples, by sample number mod HISTORY
   private speech = 0                          // samples since the phrase now being said began
   private forcedAt = -1                       // where the last forced cut fell (no pre-roll across it)
+  private skipped = 0                         // capture samples never given to the VAD (a long gap, below)
+  private gapEnd = 0                          // where the last long gap ended (no pre-roll across it)
+  private cancelled = false
   private waiting: Phrase[] = []              // phrases waiting for the recognizer
   private busy = false
   private idle: (() => void)[] = []
@@ -71,11 +74,20 @@ export class Segmenter {
     this.vad = vad; this.recognize = recognize; this.onWords = onWords
   }
 
-  /** The samples from `offset` on (the page numbers them; a gap is silence, an overlap is skipped). */
+  /** The samples from `offset` on (the page numbers them; an overlap is skipped). A short gap is silence
+   *  given to the VAD; a long one (over a second - a microphone that opened late, a resumed capture) ends
+   *  the phrase being said and is stepped over whole: every sample keeps its exact number. */
   push(offset: number, pcm: Float32Array) {
     if (this.ended) return
-    const have = this.fed + this.pending.length
-    if (offset > have) this.push(have, new Float32Array(Math.min(offset - have, 60 * RATE)))   // a gap: silence
+    let have = this.fed + this.pending.length
+    if (offset > have && offset - have <= RATE) { this.take(new Float32Array(offset - have)); have = offset }
+    else if (offset > have) {
+      if (this.pending.length) { const w = new Float32Array(WINDOW); w.set(this.pending); this.pending = new Float32Array(0); this.window(w) }
+      this.vad.flush(); this.drain(); this.speech = 0
+      if (offset > this.fed) { this.skipped += offset - this.fed; this.fed = offset }
+      this.gapEnd = this.fed
+      have = this.fed
+    }
     const skip = Math.max(0, have - offset)
     if (skip >= pcm.length) return
     this.take(pcm.subarray(skip))
@@ -104,10 +116,12 @@ export class Segmenter {
   /** Phrases the VAD has finished, each with its pre-roll, into the waiting list. */
   private drain() {
     while (!this.vad.isEmpty()) {
-      const seg = this.vad.front()
+      const raw = this.vad.front()
       this.vad.pop()
-      // never before the capture's start, never across a forced cut, never older than the history holds
-      const floor = Math.max(0, this.forcedAt >= 0 && this.forcedAt <= seg.start ? this.forcedAt : 0, this.fed - HISTORY)
+      // the VAD counts only what it heard: a stepped-over gap is added back (none is open across one)
+      const seg = { start: raw.start + this.skipped, samples: raw.samples }
+      // never before the capture's start, never across a forced cut or a long gap, never older than the history holds
+      const floor = Math.max(0, this.forcedAt >= 0 && this.forcedAt <= seg.start ? this.forcedAt : 0, this.gapEnd <= seg.start ? this.gapEnd : 0, this.fed - HISTORY)
       const from = Math.max(floor, seg.start - PREROLL)
       const pre = new Float32Array(Math.max(0, seg.start - from))
       for (let k = 0; k < pre.length; k++) pre[k] = this.history[(from + k) % HISTORY]
@@ -120,7 +134,7 @@ export class Segmenter {
     // at most 30 s waits: the oldest waiting phrase goes, and the transcript says so where it was
     while (this.waiting.length > 1 && this.waiting.reduce((n, x) => n + x.samples.length, 0) > MAX_WAITING) {
       const gone = this.waiting.shift()!
-      this.onWords([{ w: '[words lost]', at: gone.start, lost: true }])
+      if (!this.cancelled) this.onWords([{ w: '[words lost]', at: gone.start, lost: true }])
     }
     void this.run()
   }
@@ -134,7 +148,7 @@ export class Segmenter {
         let words: Word[] = []
         try { words = tokensToWords(await this.recognize(p.samples), p.start) } catch { words = [{ w: '[words lost]', at: p.start, lost: true }] }
         const kept = words.filter((x) => x.at <= this.last)
-        if (kept.length) this.onWords(kept)
+        if (kept.length && !this.cancelled) this.onWords(kept)
       }
     } finally {
       this.busy = false
@@ -142,6 +156,16 @@ export class Segmenter {
       else void this.run()
     }
   }
+
+  /** The capture was dropped: everything it holds goes - nothing waiting is transcribed, no word is given. */
+  cancel() {
+    this.cancelled = true; this.ended = true; this.last = -Infinity
+    this.waiting = []; this.pending = new Float32Array(0)
+    if (!this.busy) for (const f of this.idle.splice(0)) f()
+  }
+
+  /** Audio given and not yet turned into words: phrases waiting, in samples (the worker's backlog). */
+  get waitingSamples(): number { return this.waiting.reduce((n, x) => n + x.samples.length, 0) }
 
   /** The capture ended at `lastSample`: the partial window padded with silence, the VAD flushed, the
    *  rest transcribed; resolves when every word up to `lastSample` has been given. */

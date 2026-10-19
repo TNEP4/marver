@@ -105,19 +105,36 @@ registerProcessor('mv-pcm', MvPcm)`
 
 interface Live {
   capture: string
-  t0: number                      // the capture's start on the page clock (ms)
-  base: number                    // capture samples before this microphone opened (it opened late: the first S answered later)
-  from: number                    // the worklet sample the capture's audio starts at
+  base: number                    // capture samples before this microphone opened (it opened late: the question answered later)
+  from: number                    // the worklet sample the capture's audio starts at (-1 until the first mark)
   ctx: AudioContext
   stream: MediaStream
   node: AudioWorkletNode
+  closed: boolean                 // ended or dropped: nothing more of it is sent
 }
 let live: Live | null = null
+/** A microphone being opened (its permission, its worklet): ending or dropping the capture cancels it. */
+let opening: { capture: string; cancelled: boolean } | null = null
 /** The capture recording now, for a microphone that opens after it started (the question answered). */
 let current: { capture: string; t0: number } | null = null
+/** Captures whose words are still taken (recording or ending) - a dropped or sealed one takes none. */
+const accepting = new Set<string>()
+/** Captures whose words may be incomplete: the connection or the engine went while they recorded. */
+const broken = new Set<string>()
 let ws: WebSocket | null = null
 let wsOpen: Promise<WebSocket | null> | null = null
-const finals = new Map<string, () => void>()
+const finals = new Map<string, (complete: boolean) => void>()
+let toldUnavailable = false
+
+/** The microphone stops for a capture still recording (its connection or the engine went): the words heard
+ *  so far are kept, the rest is typed notes - and the capture knows its words may be incomplete. */
+function lost(capture: string, why: string) {
+  broken.add(capture)
+  const l = live
+  if (l && l.capture === capture) { close(l); live = null; useJamVoice.setState({ hearing: null }) }
+  useStore.getState().toast(why)
+}
+const close = (l: Live) => { l.closed = true; l.node.port.onmessage = null; l.stream.getTracks().forEach((t) => t.stop()); void l.ctx.close().catch(() => {}) }
 
 function socket(): Promise<WebSocket | null> {
   if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve(ws)
@@ -133,13 +150,34 @@ function socket(): Promise<WebSocket | null> {
       s.onmessage = (e) => {
         let m: any
         try { m = JSON.parse(String(e.data)) } catch { return }
-        if (m?.type === 'words' && typeof m.capture === 'string' && Array.isArray(m.words)) {
+        if (typeof m?.capture !== 'string') return
+        if (m.type === 'words' && Array.isArray(m.words)) {
+          if (!accepting.has(m.capture)) return   // dropped or sealed: nothing more of it
           const words = (m.words as Heard[]).filter((x) => typeof x?.w === 'string' && Number.isFinite(x?.at))
           useJamVoice.setState((st) => ({ heard: { ...st.heard, [m.capture]: [...(st.heard[m.capture] ?? []), ...words] } }))
           onWords?.(m.capture, words)
-        } else if (m?.type === 'final' && typeof m.capture === 'string') { finals.get(m.capture)?.(); finals.delete(m.capture) }
+        } else if (m.type === 'final') {
+          const f = finals.get(m.capture)
+          finals.delete(m.capture)
+          if (f) f(m.incomplete !== true)
+          else if (m.incomplete === true && accepting.has(m.capture)) lost(m.capture, 'the words stopped (the speech engine went) - the rest of this capture is typed notes')
+        } else if (m.type === 'unavailable') {
+          // no words for it: the microphone closes, and the reason is said once
+          useJamVoice.setState({ server: 'unavailable', reason: typeof m.reason === 'string' ? m.reason : undefined })
+          broken.add(m.capture)
+          const l = live
+          if (l && l.capture === m.capture) { close(l); live = null; useJamVoice.setState({ hearing: null }) }
+          if (!toldUnavailable) { toldUnavailable = true; useStore.getState().toast(typeof m.reason === 'string' ? m.reason : 'words are not available - typed notes only') }
+        }
       }
-      s.onclose = () => { if (ws === s) ws = null; for (const f of finals.values()) f(); finals.clear() }
+      s.onclose = () => {
+        if (ws === s) ws = null
+        // a closed connection is not a final: what was waiting may be incomplete
+        for (const f of finals.values()) f(false)
+        finals.clear()
+        const l = live
+        if (l && !l.closed) lost(l.capture, 'the microphone connection closed - the words so far are kept')
+      }
       ws = s
       return s
     } catch { return null } finally { wsOpen = null }
@@ -151,52 +189,75 @@ function socket(): Promise<WebSocket | null> {
 let onWords: ((capture: string, words: Heard[]) => void) | null = null
 export const setWordsListener = (f: typeof onWords) => { onWords = f }
 
+const enc = new TextEncoder()
+/** One chunk, naming its capture: [u8 id length][id][u32 offset][Int16 samples]. */
 const send = (capture: string, offset: number, pcm: Int16Array) => {
   if (!ws || ws.readyState !== WebSocket.OPEN || !pcm.length) return
-  const out = new Uint8Array(4 + pcm.byteLength)
-  new DataView(out.buffer).setUint32(0, Math.max(0, offset), true)
-  out.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), 4)
+  const id = enc.encode(capture)
+  const out = new Uint8Array(1 + id.length + 4 + pcm.byteLength)
+  out[0] = id.length
+  out.set(id, 1)
+  new DataView(out.buffer).setUint32(1 + id.length, Math.max(0, offset), true)
+  out.set(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), 1 + id.length + 4)
   ws.send(out)
 }
 
-/** Open the microphone for `capture` (started at `t0` on the page clock). */
+/** Open the microphone for `capture` (started at `t0` on the page clock). Every step checks the capture is
+ *  still recording; ending or dropping it meanwhile cancels the opening, and whatever was opened closes. */
 async function listen(capture: string, t0: number) {
-  if (live?.capture === capture) return
+  if (live?.capture === capture || opening?.capture === capture) return
   const v = useJamVoice.getState()
   if (v.choice !== 'yes' || (v.server !== 'ready' && v.server !== 'loading')) return
-  const s = await socket()
-  if (!s || current?.capture !== capture) return
-  let stream: MediaStream
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }) }
-  catch { useJamVoice.setState({ denied: true, hearing: null }); useStore.getState().toast('the microphone is blocked for this page - typed notes only'); return }
-  if (current?.capture !== capture) { stream.getTracks().forEach((t) => t.stop()); return }
-  const ctx = new AudioContext({ sampleRate: RATE })
-  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })))
-  const node = new AudioWorkletNode(ctx, 'mv-pcm')
-  ctx.createMediaStreamSource(stream).connect(node)
-  // the capture's sample clock: what was before the microphone opened counts too (silence, unheard)
-  const base = Math.max(0, Math.round(((performance.timeOrigin + performance.now()) - t0) / 1000 * RATE))
-  const l: Live = { capture, t0, base, from: -1, ctx, stream, node }
-  node.port.onmessage = (e) => {
-    const d = e.data as { start: number; pcm: Int16Array; mark?: number }
-    if (l.from < 0) { if (d.mark === undefined) return; l.from = d.mark; return }   // the first mark sets the start
-    if (d.mark !== undefined) return                                                // a mark answered elsewhere (end)
-    send(capture, l.base + d.start - l.from, d.pcm)
-  }
-  s.send(JSON.stringify({ type: 'begin', capture }))
-  node.port.postMessage('mark')
-  live = l
-  useJamVoice.setState({ hearing: capture, denied: false })
+  const op = { capture, cancelled: false }
+  opening = op
+  const stale = () => op.cancelled || current?.capture !== capture
+  let stream: MediaStream | null = null
+  let ctx: AudioContext | null = null
+  const undo = () => { stream?.getTracks().forEach((t) => t.stop()); void ctx?.close().catch(() => {}) }
+  try {
+    const s = await socket()
+    if (!s || stale()) return
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }) }
+    catch { useJamVoice.setState({ denied: true, hearing: null }); useStore.getState().toast('the microphone is blocked for this page - typed notes only'); return }
+    if (stale()) { undo(); return }
+    ctx = new AudioContext({ sampleRate: RATE })
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })))
+    if (stale() || s.readyState !== WebSocket.OPEN) { undo(); return }
+    const node = new AudioWorkletNode(ctx, 'mv-pcm')
+    ctx.createMediaStreamSource(stream).connect(node)
+    // the capture's sample clock: what was before the microphone opened counts too (silence, unheard)
+    const base = Math.max(0, Math.round(((performance.timeOrigin + performance.now()) - t0) / 1000 * RATE))
+    const l: Live = { capture, base, from: -1, ctx, stream, node, closed: false }
+    node.port.onmessage = (e) => {
+      if (l.closed) return
+      const d = e.data as { start: number; pcm: Int16Array; mark?: number }
+      if (l.from < 0) { if (d.mark !== undefined) l.from = d.mark; return }   // the first mark sets the start
+      if (d.mark === undefined) send(capture, l.base + d.start - l.from, d.pcm)
+    }
+    s.send(JSON.stringify({ type: 'begin', capture }))
+    node.port.postMessage('mark')
+    live = l
+    useJamVoice.setState({ hearing: capture, denied: false })
+  } catch {
+    undo()
+    useStore.getState().toast('the microphone could not start - typed notes only')
+  } finally { if (opening === op) opening = null }
 }
 
 /** A capture starts: open the microphone if you said yes (ask first, once, if not asked yet). */
 export async function voiceBegin(capture: string, t0: number) {
   current = { capture, t0 }
+  accepting.add(capture)
   const v = useJamVoice.getState()
   if (v.choice === 'no') return
   await v.refresh()
   const s = useJamVoice.getState()
-  if (s.server === 'unavailable') { if (s.choice === null) { useJamVoice.setState({ choice: 'no' }); useStore.getState().toast(s.reason ?? 'words are not available here - typed notes only') } return }
+  if (s.server === 'unavailable') {
+    // the one line why, once - and a first S takes it as the answer
+    if (s.choice === null) useJamVoice.setState({ choice: 'no' })
+    if (!toldUnavailable) { toldUnavailable = true; useStore.getState().toast(s.reason ?? 'words are not available here - typed notes only') }
+    return
+  }
   // first time, or yes but the model is missing: the question (the capture records meanwhile)
   if (s.choice === null || s.server === 'needs-model') { useJamVoice.setState({ asking: true }); if (s.choice === null) return }
   if (s.server === 'needs-model') return
@@ -207,40 +268,50 @@ export async function voiceBegin(capture: string, t0: number) {
  *  words are complete, false when they may not be. */
 export async function voiceEnd(capture: string): Promise<boolean> {
   if (current?.capture === capture) current = null
+  if (opening?.capture === capture) opening.cancelled = true
   useJamVoice.setState((st) => ({ asking: st.asking && st.choice === null ? false : st.asking }))
+  const wasBroken = broken.delete(capture)
   const l = live
-  if (!l || l.capture !== capture) return true
+  if (!l || l.capture !== capture) return !wasBroken
   live = null
   useJamVoice.setState({ hearing: null })
   // the cut: the worklet's partial chunk and the sample count at this instant, then `end` - in order
   const cut = await new Promise<{ start: number; pcm: Int16Array; mark: number } | null>((res) => {
     const t = setTimeout(() => res(null), 500)
-    l.node.port.onmessage = (e) => { if ((e.data as any).mark !== undefined) { clearTimeout(t); res(e.data) } else if (l.from >= 0) send(capture, l.base + e.data.start - l.from, e.data.pcm) }
+    l.node.port.onmessage = (e) => {
+      if ((e.data as any).mark !== undefined) { clearTimeout(t); res(e.data) }
+      else if (l.from >= 0) send(capture, l.base + e.data.start - l.from, e.data.pcm)
+    }
     l.node.port.postMessage('mark')
   })
-  l.stream.getTracks().forEach((t) => t.stop())
-  void l.ctx.close()
   const lastSample = cut && l.from >= 0 ? l.base + cut.mark - l.from : l.base
   if (cut && l.from >= 0) send(capture, l.base + cut.start - l.from, cut.pcm)
+  close(l)   // nothing of it after the cut
   if (!ws || ws.readyState !== WebSocket.OPEN) return false
-  const done = new Promise<boolean>((res) => { const t = setTimeout(() => { finals.delete(capture); res(false) }, FINAL_MS); finals.set(capture, () => { clearTimeout(t); res(true) }) })
+  const done = new Promise<boolean>((res) => {
+    const t = setTimeout(() => { finals.delete(capture); res(false) }, FINAL_MS)
+    finals.set(capture, (complete) => { clearTimeout(t); res(complete) })
+  })
   ws.send(JSON.stringify({ type: 'end', capture, lastSample }))
   return done
 }
 
-/** A capture dropped: the microphone closes, nothing more is sent for it. */
+/** A capture dropped: the microphone closes, and its audio is discarded - nothing of it is transcribed. */
 export function voiceDrop(capture: string) {
   if (current?.capture === capture) current = null
+  if (opening?.capture === capture) opening.cancelled = true
+  accepting.delete(capture)
+  broken.delete(capture)
+  useJamVoice.setState((st) => { const heard = { ...st.heard }; delete heard[capture]; return { heard, ...(st.hearing === capture ? { hearing: null } : {}) } })
   const l = live
-  if (!l || l.capture !== capture) return
-  live = null
-  l.stream.getTracks().forEach((t) => t.stop())
-  void l.ctx.close()
-  useJamVoice.setState((st) => { const heard = { ...st.heard }; delete heard[capture]; return { hearing: null, heard } })
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'end', capture, lastSample: 0 }))
+  if (l && l.capture === capture) { close(l); live = null }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'drop', capture }))
 }
 
-/** Words heard for a capture can be forgotten once it is sealed (they are in its record). */
-export const forgetHeard = (capture: string) => useJamVoice.setState((st) => { if (!st.heard[capture]) return st; const heard = { ...st.heard }; delete heard[capture]; return { heard } })
+/** A capture sealed: its words are in its record - nothing more of it is taken. */
+export const forgetHeard = (capture: string) => {
+  accepting.delete(capture)
+  useJamVoice.setState((st) => { if (!st.heard[capture]) return st; const heard = { ...st.heard }; delete heard[capture]; return { heard } })
+}
 
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamVoice = useJamVoice
