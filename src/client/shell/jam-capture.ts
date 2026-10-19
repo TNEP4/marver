@@ -453,7 +453,8 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   // each picture is a render on the server, and the capture waits for it as it ends: a point or the end
   // pictures a frame once - only I asks for another
   if (why !== 'key' && c.shotFrames.includes(frame)) return
-  mutate((s) => { const x = s.caps[id]; if (x && !x.shotFrames.includes(frame)) x.shotFrames.push(frame) })
+  // the instance pictured is the one this frame is about (its size for the run's pictures)
+  mutate((s) => { const x = s.caps[id]; if (x) { if (!x.shotFrames.includes(frame)) x.shotFrames.push(frame); if (why === 'key' || !x.keys[frame]) sample(x, { event: 'picture', frame, src: key }) } })
   const at = now()
   // the instance it was seen in: its size (a responsive defect is shot as seen) and its theme
   const st = useStore.getState()
@@ -640,7 +641,8 @@ function endPictures(id: string): boolean {
   const since = c.resumes?.at
   const touched = touchedFrames(since === undefined ? c.steps : c.steps.filter((x) => x.at >= since), undefined, false)
   const frames = (touched.length || since !== undefined ? touched : touchedFrames(c.steps).slice(0, 1)).filter((f) => !c.shotFrames.includes(f)).slice(0, 3)
-  for (const f of frames) shoot(id, f, 'end', onScreen.find((n) => n.frame === f)?.key)
+  // each as the instance it was touched on (else the one in view)
+  for (const f of frames) shoot(id, f, 'end', c.keys[f] ?? onScreen.find((n) => n.frame === f)?.key)
   return frames.length > 0
 }
 
@@ -656,6 +658,8 @@ function framesSizes(c: Cap): Record<string, { w: number; h: number; play?: true
     // touch counts); else as it was sampled
     const sampled = c.sizes[f]
     if (sampled?.play) { out[f] = sampled; continue }
+    // no instance known for it in this recording (carried on by a Resume, or seen without one): as measured then
+    if (!c.keys[f] && sampled) { out[f] = sampled; continue }
     if (st.play && st.play.at === f) { const v = CONFIG.viewports[st.play.device]; if (v) out[f] = { w: Math.round(v.width), h: Math.round(v.height), play: true }; continue }
     const k = c.keys[f]
     const n = (k ? st.nodes.find((x) => x.key === k && x.frame === f) : undefined) ?? onScreen.find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
