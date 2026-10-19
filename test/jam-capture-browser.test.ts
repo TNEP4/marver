@@ -821,4 +821,28 @@ describe('captures in the browser: the first trial', () => {
     expect(rec2.record.timeline.filter((x: any) => x.event === 'picture')).toHaveLength(1)
     await decide(id2, 'drop')
   })
+
+  skippable('a capture at its picture limit still seals: E waits only for pictures actually under way', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    const ka = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/alpha').key`)
+    // twelve pictures of alpha (the limit)
+    // (one at a time, each awaited - a picture that fails is asked for again)
+    for (let i = 0; i < 30; i++) {
+      const n = await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(id)}].pictures.length`)
+      if (n >= 12) break
+      await browser!.eval(s, `window.__mvJamCapture.getState().picture('spec/alpha'), 1`)
+      await until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}].shots === 0`, 20_000)
+    }
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(id)}].pictures.length`)).toBe(12)
+    // then bravo touched (selected) - its end picture is refused at the limit
+    const kb = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/bravo').key`)
+    await browser!.eval(s, `(window.__mvStore.getState().select(${JSON.stringify(kb)}), 1)`)
+    await sleep(300)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    void ka
+    await decide(id, 'drop')
+    await browser!.eval(s, `(window.__mvStore.getState().select(null), 1)`)
+  })
 })

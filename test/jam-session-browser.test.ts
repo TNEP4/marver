@@ -539,11 +539,14 @@ describe('the Jam session in the browser', () => {
     await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 30_000)
     await enter()                                                                   // confirm: the agent takes it
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(c1)} && c.state === 'review')`, 30_000)
-    // a session, between captures
+    // its review open, a session started: its first capture follows that review, as S would
+    await click(`.jm-lane [data-tile="${c1}"]`)
+    await until(`window.__mvJamUi.getState().panel?.kind === 'review' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 5000)
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
-    await enter(); await until(`!!window.__mvJamQueue.getState().session`, 5000)
+    await enter(); await until(`!!window.__mvJamQueue.getState().session && !!window.__mvJamCapture.getState().current`, 5000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[window.__mvJamCapture.getState().current].reviewing?.card ?? null`)).toBe(c1)
     await dropAuto()
-    // its review open, then Capture on the tile
+    // its review open again, then Capture on the Jam on tile
     await click(`.jm-lane [data-tile="${c1}"]`)
     await until(`window.__mvJamUi.getState().panel?.kind === 'review' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 5000)
     await click('.jm-lane [data-tile="between"] .go')

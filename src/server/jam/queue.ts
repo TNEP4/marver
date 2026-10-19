@@ -669,7 +669,9 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
   const more = src?.payload?.edited !== undefined && rs ? wordsSince(record, rs.at) : ''
   const edited = src?.payload?.edited !== undefined ? [src.payload.edited.trim(), more].filter(Boolean).join('\n') : undefined
   const c: Card = {
-    id: record.id, kind: 'capture', board: record.context.board, frames: captureFrames(record), capture: record.id, events: [],
+    // a resumed capture keeps every frame the recording it continues was about (that card's frames - a chain
+    // of resumes carries them all), beside the new part's
+    id: record.id, kind: 'capture', board: record.context.board, frames: [...new Set([...(src?.frames ?? []), ...captureFrames(record)])], capture: record.id, events: [],
     state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}) },
     ...(r ? { reviewing: r, follows: r.card } : {}), ...(src?.name ? { name: src.name } : {}),
     // a capture of the session running now: in its record. One whose session has ended (it reached the server

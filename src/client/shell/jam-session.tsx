@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ROUTE } from '../const.ts'
 import { setSessionEnding, useJamCapture } from './jam-capture.ts'
-import { laneCards } from './jam-keys.ts'
+import { laneCards, startCapture } from './jam-keys.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { JamStateIcon } from './jam-ui.tsx'
@@ -55,7 +55,8 @@ export async function startSession(): Promise<boolean> {
     useJamUi.getState().setSheet(null)
     // the session starts capturing at once - its first capture is under way as soon as it starts (its talk
     // begins when that capture ends)
-    if (!useJamCapture.getState().current) useJamCapture.getState().start(undefined, id)
+    // (over an open review it follows that review, as S does)
+    if (!useJamCapture.getState().current) startCapture(id)
     hear()
   })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }

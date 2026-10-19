@@ -10,7 +10,7 @@ import { has, record } from '../src/server/jam/ledger.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
 import { addPicture, captureWords, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
 import { speechLines } from '../src/shared/speech.ts'
-import { merge, payloadKey, prune, sameComment, touchRun } from '../src/server/jam/queue.ts'
+import { addCapture, merge, payloadKey, prune, sameComment, touchRun } from '../src/server/jam/queue.ts'
 import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
@@ -521,6 +521,16 @@ describe('captures: review round 2 fixes', () => {
       { at: 3, event: 'words', text: 'these two' },
     ] as any, view: { frames: [] } as any })
     expect(captureFrames(blank)).toEqual(['demo/a', 'demo/b'])
+  })
+
+  it('a chain of resumes keeps every frame each recording was about (the card it continues names them)', () => {
+    const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-rs-')))
+    const a = rec({ timeline: [{ at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b'] } }, { at: 2, event: 'note', text: 'both of these' }] as any })
+    expect(addCapture(j, a, 'h1').frames).toEqual(['demo/a', 'demo/b'])
+    const b = rec({ context: { resumes: { id: a.id, at: 10 } } as any, timeline: [...a.timeline, { at: 10, event: 'view', view: { frames: ['demo/c'] } }, { at: 11, frame: 'demo/c', event: 'pick', point: 1, bundle: { tag: 'h1' }, mode: 'canvas' }] as any })
+    expect(addCapture(j, b, 'h2').frames).toEqual(['demo/a', 'demo/b', 'demo/c'])
+    const c = rec({ context: { resumes: { id: b.id, at: 20 } } as any, timeline: [...b.timeline, { at: 20, frame: 'demo/d', event: 'pick', point: 2, bundle: { tag: 'p' }, mode: 'canvas' }] as any })
+    expect(addCapture(j, c, 'h3').frames).toEqual(['demo/a', 'demo/b', 'demo/c', 'demo/d'])
   })
 
   it('pruning keeps the capture a waiting follow-up carries', () => {

@@ -604,8 +604,11 @@ function endPictures(id: string): boolean {
   if (!c || c.endShot) return false
   mutate((s) => { const x = s.caps[id]; if (x) x.endShot = true })
   const onScreen = visibleNodes()
-  const touched = touchedFrames(c.steps, undefined, false, c.resumes?.at)
-  const frames = (touched.length ? touched : touchedFrames(c.steps).slice(0, 1)).filter((f) => !c.shotFrames.includes(f)).slice(0, 3)
+  // resumed: the new part's frames (what the part before was about was pictured then - its pictures are carried);
+  // none touched in a fresh capture: the one frame it began on
+  const since = c.resumes?.at
+  const touched = touchedFrames(since === undefined ? c.steps : c.steps.filter((x) => x.at >= since), undefined, false)
+  const frames = (touched.length || since !== undefined ? touched : touchedFrames(c.steps).slice(0, 1)).filter((f) => !c.shotFrames.includes(f)).slice(0, 3)
   for (const f of frames) shoot(id, f, 'end', onScreen.find((n) => n.frame === f)?.key)
   return frames.length > 0
 }
@@ -613,15 +616,17 @@ function endPictures(id: string): boolean {
 function trySeal(id: string) {
   const c = capOf(id)
   if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0) return
-  // every step is in: now the end pictures (sealing waits for them)
-  if (!c.endShot && endPictures(id)) return
-  if (c.shots > 0 || c.hearing) return
-  const timeline = [...c.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
+  // every step is in: now the end pictures - sealing waits only for those actually under way (one refused at
+  // the picture limit is never waited for)
+  if (!c.endShot) endPictures(id)
+  const c2 = capOf(id)
+  if (!c2 || c2.shots > 0 || c2.hearing) return
+  const timeline = [...c2.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
   const record: CaptureRecord = {
     format: 'marver.jam.capture', v: 1, id,
     context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
     view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
-    timeline, pictures: c.pictures,
+    timeline, pictures: c2.pictures,
   }
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })

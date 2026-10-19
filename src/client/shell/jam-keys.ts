@@ -160,8 +160,9 @@ function reviewNow(): { card: string; batch: string; rev: number } | undefined {
   return ui.panel?.kind === 'review' && c?.kind === 'capture' && c.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
 }
 
-/** Start a capture, as S does: one made while a capture's review is open follows that review (its run). */
-export const startCapture = () => useJamCapture.getState().start(reviewNow())
+/** Start a capture, as S does: one made while a capture's review is open follows that review (its run).
+ *  `session`: the session it belongs to when the queue may not show it yet (a session's Start). */
+export const startCapture = (session?: string) => useJamCapture.getState().start(reviewNow(), session)
 
 const rows = (): Row[] => {
   const cap = useJamCapture.getState()
