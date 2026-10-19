@@ -363,10 +363,12 @@ async function open(owner: Owner) {
     ctx = new AudioContext({ sampleRate: RATE })
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })))
     if (stale()) { undo(); return }
-    const reclaim = reclaiming
+    // a capture is something you just did here: it takes the connection; a session's talk only takes it if it
+    // is free (after a reload too) - refused, it asks again until it is
+    const reclaim = owner.kind === 'talk' || reclaiming
     reclaiming = false
     const s = await socket(reclaim)
-    if (!s) { undo(); if (reclaim) takeBackLater(); return }   // still busy: ask again later
+    if (!s) { undo(); if (reclaim && owner.kind === 'talk') takeBackLater(); return }   // still busy: ask again later
     if (stale() || s.readyState !== WebSocket.OPEN) { undo(); return }
     const node = new AudioWorkletNode(ctx, 'mv-pcm')
     ctx.createMediaStreamSource(stream).connect(node)
