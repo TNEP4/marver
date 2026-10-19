@@ -173,7 +173,11 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
       if (typeof m?.capture !== 'string' || !ID.test(m.capture)) return
       const id: string = m.capture
       if (m.type === 'begin') {
-        if (caps.has(id)) return
+        // a capture begins once - unless its words stopped (its worker went, or it could not start): then
+        // the microphone asked again begins it anew, on the worker there is now
+        const prev = caps.get(id)
+        if (prev && !prev.ended && !prev.dropped && owners.has(id)) return
+        if (prev) prev.dropped = true
         const own: { ws: WebSocket; w?: Worker } = { ws }
         owners.set(id, own)
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }

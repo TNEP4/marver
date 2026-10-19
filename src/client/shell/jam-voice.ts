@@ -302,7 +302,8 @@ export async function voiceEnd(capture: string): Promise<boolean> {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false
   const done = new Promise<boolean>((res) => {
     const t = setTimeout(() => { finals.delete(capture); res(false) }, FINAL_MS)
-    finals.set(capture, (complete) => { clearTimeout(t); res(complete && cleanCut) })
+    // complete only if the server says so, the cut was clean, and nothing was lost on the way
+    finals.set(capture, (complete) => { clearTimeout(t); res(complete && cleanCut && !wasBroken) })
   })
   ws.send(JSON.stringify({ type: 'end', capture, lastSample }))
   return done

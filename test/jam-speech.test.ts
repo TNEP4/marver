@@ -8,8 +8,8 @@ import { Worker } from 'node:worker_threads'
 import WebSocket from 'ws'
 import { MAX_PHRASE, MAX_WAITING, PREROLL, RATE, Segmenter, WINDOW, tokensToWords, type Recognized, type VadLike, type Word } from '../src/server/jam/speech-cut.ts'
 import { AUDIO_PATH, createSpeech, issueTicket, takeTicket } from '../src/server/jam/audio.ts'
-import { dropLock, modelPaths, modelsReady, takeLock } from '../src/server/jam/speech-models.ts'
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { downloadModels, downloadState, dropLock, modelPaths, modelsReady, takeLock } from '../src/server/jam/speech-models.ts'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 /** A VAD stand-in: a window with any non-zero sample is speech; 0.4 s of silence ends a phrase; `flush`
@@ -150,6 +150,21 @@ describe('words: the download lock', () => {
     rmSync(d, { recursive: true, force: true })
   })
 
+  it('a lock that cannot be read fails the download with a reason - it never spins; an unwritable models folder fails it too', async () => {
+    const d = dir(), lock = join(d, '.download.lock')
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, token: 'x' }))
+    chmodSync(lock, 0o000)
+    await expect(takeLock(lock, d)).rejects.toThrow()
+    chmodSync(lock, 0o600)
+    // a "folder" that is a file: nothing can be made in it
+    const f = join(d, 'not-a-folder')
+    writeFileSync(f, 'x')
+    await downloadModels(join(f, 'models'), (async () => { throw new Error('no network in tests') }) as any)
+    expect(downloadState().state).toBe('failed')
+    expect(downloadState().error).toMatch(/could not start/)
+    rmSync(d, { recursive: true, force: true })
+  })
+
   it('a lock left half written by a process that died is reclaimed after the grace, never before', async () => {
     const d = dir(), lock = join(d, '.download.lock')
     writeFileSync(lock, '')
@@ -229,6 +244,24 @@ describe('words: the audio socket', () => {
       expect(got).toContainEqual({ type: 'final', capture: 'cap-1792399514739-nobody', incomplete: true })
       c.ws.close()
     } finally { s.close() }
+  })
+
+  it('a capture whose words could not start can begin again (the microphone asked again) - it is told again, never left silent', async () => {
+    const prev = process.env.MARVER_MODELS
+    process.env.MARVER_MODELS = join(import.meta.dirname, 'fixtures', 'no-models-here')
+    const s = await serve()
+    try {
+      const c = await open(s.port, issueTicket())
+      const got: any[] = []
+      c.ws.on('message', (d) => got.push(JSON.parse(String(d))))
+      const id = 'cap-1792399514739-again1'
+      c.ws.send(JSON.stringify({ type: 'begin', capture: id }))
+      await new Promise((r) => setTimeout(r, 150))
+      c.ws.send(JSON.stringify({ type: 'begin', capture: id }))
+      await new Promise((r) => setTimeout(r, 150))
+      expect(got.filter((m) => m.type === 'unavailable' && m.capture === id).length).toBe(2)
+      c.ws.close()
+    } finally { s.close(); if (prev === undefined) delete process.env.MARVER_MODELS; else process.env.MARVER_MODELS = prev }
   })
 
   it('without a model, an end still answers final at once (typed notes only)', async () => {
