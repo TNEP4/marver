@@ -470,8 +470,11 @@ const tellOpen = (capture: string, session: string, on: boolean) => {
 }
 /** The server had already written the session's record (in another tab) when it heard of this capture: it is
  *  not in that record - it goes on as a capture of its own, and you are told. */
+const toldOutside = new Set<string>()
 function leftOutOfSession(capture: string) {
-  if (!openOnServer.has(capture)) return
+  // said once, whichever answer says it first (the registration's, or the upload's) - whatever order they come in
+  if (toldOutside.has(capture)) return
+  toldOutside.add(capture)
   releaseOpen(capture, false)
   useJamCapture.setState((st) => {
     const c = st.caps[capture]
@@ -616,7 +619,7 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
  *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
 async function upload(record: CaptureRecord): Promise<void> {
-  type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string }
+  type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string; outside?: boolean }
   let r: Verdict | null = null
   try {
     // the workspace it was made in travels with it: another project served on this port refuses it
@@ -640,6 +643,8 @@ async function upload(record: CaptureRecord): Promise<void> {
   useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)), ...(was ? { resuming: st.resuming.filter((x) => x !== was) } : {}) }))
   void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
   if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
+  // it reached the server after its session ended (another tab wrote the record): on its own
+  else if (r.outside) leftOutOfSession(record.id)
 }
 
 /** Records sealed in an earlier page that never reached the server: sent again at boot. */

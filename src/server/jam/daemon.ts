@@ -1050,8 +1050,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     captureOpen(capture, session, on) {
       if (!CAPTURE_ID.test(capture) || !SESSION_ID.test(session)) return 'ok'
       if (!on) { openCaps.delete(capture); return 'ok' }
-      // a renewal for one that has landed is late news: ignored (only landing or an explicit off clears one)
-      if (q.j.cards.some((c) => c.id === capture)) return 'ok'
+      // a renewal for one that has landed is late news: ignored (only landing or an explicit off clears one) -
+      // unless it landed outside the session (it reached the server after the session ended): said again
+      const landed = q.j.cards.find((c) => c.id === capture)
+      if (landed) return landed.kind === 'capture' && landed.session !== session ? 'ended' : 'ok'
       // the session has ended (its record written, or ended without one): this capture is not in it - it
       // stands on its own, and its page is told (one already held open keeps holding until it lands)
       if (q.j.session?.id !== session && !openCaps.has(capture)) return 'ended'
@@ -1094,7 +1096,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // (and while it lands - a retry or a re-sent upload included - it is held open here on the server)
       const ses = rec.context.session
       if (ses) landing.set(rec.id, { session: ses, n: (landing.get(rec.id)?.n ?? 0) + 1 })
-      try { return await landCapture(rec) } finally {
+      try {
+        const r = await landCapture(rec)
+        // made in a session that had ended when it reached the server: it stands on its own - its page is told
+        const c = r.ok ? q.j.cards.find((x) => x.id === rec.id) : undefined
+        return ses && c && c.session !== ses ? { ...r, outside: true as const } : r
+      } finally {
         openCaps.delete(rec.id)
         const l = landing.get(rec.id)
         if (l) { if (l.n <= 1) landing.delete(rec.id); else l.n -= 1 }

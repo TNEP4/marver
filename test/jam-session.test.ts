@@ -196,16 +196,19 @@ describe('sessions: review fixes', () => {
     // its registration comes late: refused - the page is told it stands on its own
     expect(jam.captureOpen('cap-1792399514739-late02', SES, true)).toBe('ended')
     expect(jam.canWrap(SES)).toBeTruthy()                               // (no session to wrap anyway)
-    // and when it lands it carries no session
+    // and when it lands it carries no session - and says so (its upload may overtake its registration)
     const r = rec('made as the session ended elsewhere', SES)
-    await jam.capture(r)
+    expect((await jam.capture(r) as any).outside).toBe(true)
     expect(card(jam, r.id).session).toBeUndefined()
+    expect(jam.captureOpen(r.id, SES, true)).toBe('ended')             // its registration after it: said again
+    expect((await jam.capture(r) as any).outside).toBe(true)            // a retried upload too
     // a capture of the session running now keeps it
     const SES2 = 'ses-1792399514800-again2'
     await jam.session({ action: 'start', id: SES2 })
     const r2 = rec('in the new one', SES2)
-    await jam.capture(r2)
+    expect((await jam.capture(r2) as any).outside).toBeUndefined()
     expect(card(jam, r2.id).session).toBe(SES2)
+    expect(jam.captureOpen(r2.id, SES2, true)).toBe('ok')
     jam.stop()
     done()
   })

@@ -460,6 +460,32 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
+  skippable('a capture whose upload says it landed outside its session (it overtook its registration) says so too, once', async () => {
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter()
+    await until(`!!window.__mvJamQueue.getState().session`, 5000)
+    // its registration is never answered; its upload answers "outside"
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__toasts = 0; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/capture-open')) return new Promise(() => {})
+      if (String(u).endsWith('/api/jam/capture') && o?.method === 'POST') { const r = await f(u, o); const b = await r.json(); return new Response(JSON.stringify({ ...b, outside: true }), { status: r.status, headers: { 'content-type': 'application/json' } }) }
+      return f(u, o)
+    }; const t = window.__mvStore.getState().toast; window.__toast0 = t; window.__mvStore.setState({ toast: (m) => { if (/on its own/.test(m)) window.__toasts += 1; return t(m) } }); return 1 })()`)
+    try {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`, 3000)
+      const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+      await browser!.eval(s, `window.__mvJamCapture.getState().note('outside'), 1`)
+      await key('e')
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)})`, 30_000)
+      await until(`window.__toasts === 1`, 5000)
+      await sleep(300)
+      expect(await browser!.eval(s, `window.__toasts`)).toBe(1)
+    } finally { await browser!.eval(s, `(() => { window.fetch = window.__fetch0; window.__mvStore.setState({ toast: window.__toast0 }); return 1 })()`) }
+    await esc(); await esc()
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 10_000)
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
+  })
+
   skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
