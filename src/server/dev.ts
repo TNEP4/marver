@@ -392,9 +392,9 @@ async function boot(root: string, portFlag: number | undefined, instance: string
         return () => { due ??= setTimeout(async () => { due = null; const { jamLive } = await import('./jam/live.ts'); server.ws.send('sh:jam-queue', (jamLive.view?.() ?? { cards: [] }) as any) }, 60) }
       })(),
       // a jam picture: one frame shot headless into an immutable file behind an opaque id
-      async (frameId, theme, entry) => {
+      async (frameId, theme, entry, size) => {
         const { shootFrame } = await import('./shot.ts')
-        const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: `http://localhost:${port}` })
+        const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: `http://localhost:${port}`, ...(size ? { size } : {}) })
         if (!r.ok) return null
         const { addPicture } = await import('./jam/capture.ts')
         return addPicture(root, r.path, { frame: frameId, ...entry })

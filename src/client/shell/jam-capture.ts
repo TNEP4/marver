@@ -619,6 +619,21 @@ function endPictures(id: string): boolean {
   return frames.length > 0
 }
 
+/** Each frame the capture is about, at the size it is on screen now (the instance in view, else any): a device,
+ *  or a width you dragged it to. In play, the stage's device. Its run is pictured at these sizes. */
+function framesSizes(c: Cap): Record<string, { w: number; h: number }> {
+  const st = useStore.getState()
+  const onScreen = visibleNodes()
+  const frames = new Set([...(c.inherited ?? []), ...touchedFrames(c.steps, undefined, true, c.resumes?.at)])
+  const out: Record<string, { w: number; h: number }> = {}
+  for (const f of frames) {
+    if (st.play && st.play.at === f) { const v = CONFIG.viewports[st.play.device]; if (v) out[f] = { w: Math.round(v.width), h: Math.round(v.height) }; continue }
+    const n = onScreen.find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
+    if (n && n.w > 0 && n.h > 0) out[f] = { w: Math.round(n.w), h: Math.round(n.h) }
+  }
+  return out
+}
+
 function trySeal(id: string) {
   const c = capOf(id)
   if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0) return
@@ -632,7 +647,7 @@ function trySeal(id: string) {
     format: 'marver.jam.capture', v: 1, id,
     context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
     view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
-    timeline, pictures: c2.pictures,
+    timeline, pictures: c2.pictures, ...(() => { const sizes = framesSizes(c2); return Object.keys(sizes).length ? { sizes } : {} })(),
   }
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })

@@ -809,6 +809,17 @@ describe('captures in the browser: the first trial', () => {
     const pics = rec.record.timeline.filter((x: any) => x.event === 'picture')
     expect(pics.map((x: any) => x.frame)).toEqual(['spec/bravo'])
     expect((await cardsNow()).find((c: any) => c.id === id).frames).toEqual(['spec/bravo'])
+    // its size as it was on screen, for the run's pictures
+    expect(rec.record.sizes?.['spec/bravo']?.w).toBeGreaterThan(0)
+    // a note added in its read-back, after it ended: under a divider; what is typed there is never a capture key
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)} && !!document.querySelector('[data-jam-addnote]')`, 10_000)
+    await click('[data-jam-addnote]')
+    await browser!.send('Input.insertText', { text: 'see the edges' }, s)
+    for (const ch of ['s', 'e']) await browser!.press(s, ch)
+    await enter()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(id)})?.added?.[0]?.text === 'see the edgesse'`, 5000)
+    await until(`/Added after/.test(document.querySelector('[data-jam-added]')?.textContent ?? '') && !!document.querySelector('[data-jam-added-note]')`, 5000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBeNull()
     await decide(id, 'drop')
     // nothing touched: one picture, of where it began
     await browser!.eval(s, `(window.__mvStore.getState().select(null), 1)`)

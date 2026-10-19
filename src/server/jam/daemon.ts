@@ -18,6 +18,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
+import { tmpdir } from 'node:os'
 import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { toFrameId } from '../manifest.ts'
@@ -33,7 +34,7 @@ import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, textO
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
-import { CAPTURE_ID, captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
+import { CAPTURE_ID, captureFrames, captureWords, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
@@ -89,7 +90,7 @@ export interface JamHooks {
   queue?(): void
   /** Shoot one frame into a jam picture (the dev server's shootFrame); null when it fails - a
    *  missing picture, never a failed job. */
-  shoot?(frame: string, theme: string, entry: { capture?: string; batch?: string }): Promise<string | null>
+  shoot?(frame: string, theme: string, entry: { capture?: string; batch?: string }, size?: { w: number; h: number }): Promise<string | null>
   /** Find a re-pin's element in the rendered frame (the dev server's anchor check, as the CLI's
    *  `comments move`). Absent = the anchor is written unchecked. */
   anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[], look?: AnchorLook): Promise<AnchorCheck>
@@ -329,6 +330,76 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return n
   }
 
+  /** A short name for a capture, from its words, by a small fast model (the adapter's namer - Haiku with Claude
+   *  Code), as soon as it lands: the lane, the panel and its thread show it. Never over a name you gave it;
+   *  nothing when the agent has no namer, the capture has no words, or the call fails (its first words stay). */
+  const naming = new Set<string>()
+  const nameCapture = (id: string) => {
+    const c0 = q.j.cards.find((x) => x.id === id)
+    if (!adapter.namerArgs || cfg.names === false || !c0 || c0.kind !== 'capture' || c0.name || c0.autoName || naming.has(id)) return
+    const cap = readCapture(root, id)
+    const words = cap ? [captureWords(cap.record, c0.payload?.edited), ...(c0.payload?.added ?? []).map((a) => a.text)].join('\n').trim() : ''
+    if (!words) return
+    naming.add(id)
+    const prompt = 'Name this design note in 2 to 6 plain words, like a short task title (e.g. "New product page", "Quieter save button"). ' +
+      'Reply with the name only - no quotes, no punctuation at the end.\n\nThe note (spoken and written):\n' + words.slice(0, 4000)
+    const { cmd, args } = adapter.namerArgs(prompt)
+    let out = ''
+    let child: ChildProcess
+    // in a folder of its own: no project instructions to read, nothing of the repo in reach
+    const cwd = tmpdir()
+    try { child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), PWD: cwd } }) } catch { naming.delete(id); return }
+    const to = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 45_000)
+    child.stdout?.on('data', (d: Buffer) => { out += d.toString('utf8'); if (out.length > 4000) out = out.slice(0, 4000) })
+    child.on('error', () => { clearTimeout(to); naming.delete(id) })
+    child.on('close', (code) => {
+      clearTimeout(to)
+      naming.delete(id)
+      if (stopped || code !== 0) return
+      const name = (out.split('\n').map((l) => l.trim()).find(Boolean) ?? '').replace(/^["'“”‘’`*#\s-]+|["'“”‘’`*.\s]+$/g, '').replace(/\s+/g, ' ').slice(0, 60).trim()
+      if (!name) return
+      void q.lock((j) => {
+        const c = j.cards.find((x) => x.id === id)
+        if (!c || c.name || c.autoName) return
+        c.autoName = name; c.rev += 1; c.at = Date.now()
+        q.persist()
+      }).then(() => { titles.delete(id); queueChanged() })
+    })
+  }
+
+  /** A capture whose run made a new frame and left every frame it named as it was asked for something new:
+   *  its thread moves onto the new frame (a re-pin naming the frame - frame-level, deterministic id, once),
+   *  and its card names that frame too. Where you pointed was where to put it, not what to change. */
+  const hostOnNew = async (b: Batch, created: string[]) => {
+    await q.lock((j) => {
+      for (const m of b.members) {
+        const c = j.cards.find((x) => x.id === m.card)
+        if (!c || c.kind !== 'capture' || !c.thread) continue
+        const own = (b.shots ?? []).filter((x) => !x.new && c.frames.includes(x.frame))
+        if (own.some((x) => !x.same)) continue                  // it changed a frame it named: it stays there
+        const to = created.find((f) => (b.shots ?? []).some((x) => x.new && x.frame === f))
+        if (!to) continue
+        const id = `jam-${b.batchId}-${m.id}-host`
+        if (!readLog(commentsDir, c.board).some((e) => e.id === id)) {
+          const who = me()
+          appendEvents(commentsDir, c.board, [{ id, ts: Date.now(), type: 'reanchor', commentId: c.thread, frame: to, board: c.board, author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name } }])
+        }
+        if (!c.frames.includes(to)) { c.frames = [...c.frames, to]; c.rev += 1; c.at = Date.now() }
+      }
+      q.persist()
+    })
+    changedBoards(b)
+  }
+
+  /** Frames that exist now and did not when the run began, on a board the batch works on - three at most. */
+  const newFrames = (start: Map<string, number>, b: Batch): string[] => {
+    const boards = [...new Set(b.members.map((m) => m.board))]
+    const onBoard = (f: string) => boards.some((board) => {
+      try { const j = JSON.parse(readFileSync(join(root, 'design', 'boards', `${board}.json`), 'utf8')); return j.auto === true || (Array.isArray(j.nodes) && j.nodes.some((n: any) => n?.frame === f)) } catch { return false }
+    })
+    return [...sceneFrameMtimes(root).keys()].filter((f) => !start.has(f) && onBoard(f)).slice(0, 3)
+  }
+
   const realShared = (f: string) => canonicalShared(root, f)
   const cards0 = (b: Batch) => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
 
@@ -459,10 +530,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // holds them, so no other job's edit lands in between (a batch of tags alone shoots none)
     const capturing = cards().some((c) => !!c.capture)
     const theme = (() => { const c = cards().find((x) => x.capture); return (c && readCapture(root, c.capture!)?.record.view.theme) || 'light' })()
+    // each frame at the size it was on screen when captured (a device, or a width you dragged it to)
+    const sizes: Record<string, { w: number; h: number }> = Object.assign({}, ...cards().flatMap((c) => (c.capture ? [readCapture(root, c.capture)?.record.sizes ?? {}] : [])))
     const shoot = async (when: 'before' | 'after') => {
       if (!capturing || !hooks.shoot) return
       const shots: NonNullable<Batch['shots']> = b.shots ?? b.frames.map((frame) => ({ frame }))
-      for (const s of shots) { if (stopped) return; const id = await hooks.shoot(s.frame, theme, { batch: b.batchId }).catch(() => null); if (id) s[when] = id }
+      for (const s of shots) { if (stopped) return; if (s.new) continue; const id = await hooks.shoot(s.frame, theme, { batch: b.batchId }, sizes[s.frame]).catch(() => null); if (id) s[when] = id }
       // a frame the run left exactly as it was (the same pixels) is marked: the review shows the frames
       // that changed, not every frame the capture named
       if (when === 'after') for (const s of shots) { if (s.before && s.after && samePicture(s.before, s.after)) s.same = true; else delete s.same }
@@ -512,6 +585,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         return
       }
       await shoot('after')
+      // frames the run made (on a board it works on): pictured as they are - new, with nothing before
+      const created = capturing ? newFrames(startMtimes, b) : []
+      if (created.length && hooks.shoot) {
+        const shots = [...(b.shots ?? [])]
+        for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
+        await q.lock(() => { b.shots = shots; q.persist() })
+      }
       // results first: every member's result in ONE journal write, before anything is posted
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
       const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt).map(([f]) => f) : []
@@ -529,6 +609,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         q.persist()
       })
       if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
+      if (created.length) await hostOnNew(b, created)
       await deliver(b)
     } finally {
       clearGlow()
@@ -958,11 +1039,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     }
     const b = q.j.batches.find((x) => x.batchId === c.batch)
     return {
-      title: c.name ?? (c.payload?.edited !== undefined ? (c.payload.edited.replace(/\s+/g, ' ').trim().slice(0, 300) || '(no words)') : t.title), notes: t.notes,
-      ...(c.name ? { named: true } : {}),
+      title: c.name ?? c.autoName ?? (c.payload?.edited !== undefined ? (c.payload.edited.replace(/\s+/g, ' ').trim().slice(0, 300) || '(no words)') : t.title), notes: t.notes,
+      ...(c.name ? { named: true } : {}), ...(c.name ?? c.autoName ? { name: c.name ?? c.autoName } : {}),
       inRun: !!q.j.run && c.made >= q.j.run.since, ...(c.session ? { session: c.session } : {}),
       ...(b?.shots ? { shots: b.shots } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}),
       ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
+      ...(c.payload?.added?.length ? { added: c.payload.added } : {}),
     }
   }
   // every view is numbered as it is built: a page that gets an answer and a push out of order keeps the newer
@@ -1098,6 +1180,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (ses) landing.set(rec.id, { session: ses, n: (landing.get(rec.id)?.n ?? 0) + 1 })
       try {
         const r = await landCapture(rec)
+        if (r.ok) nameCapture(rec.id)
         // made in a session that had ended when it reached the server: it stands on its own - its page is told
         const c = r.ok ? q.j.cards.find((x) => x.id === rec.id) : undefined
         return ses && c && c.session !== ses ? { ...r, outside: true as const } : r

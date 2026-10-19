@@ -28,6 +28,10 @@ export const claudeAdapter: JamAdapter = {
       args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch', '--disallowedTools', 'Bash', '--output-format', 'stream-json', '--verbose'],
     }
   },
+  // a capture's short name: Haiku, no tools at all, no MCP servers, nothing kept - one answer in plain text
+  namerArgs(prompt) {
+    return { cmd: 'claude', args: ['-p', prompt, '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--output-format', 'text'] }
+  },
   earlyText(line) {
     try {
       const o = JSON.parse(line) as Record<string, any>

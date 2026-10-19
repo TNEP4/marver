@@ -98,10 +98,14 @@ export function checkRecord(raw: unknown): CaptureRecord | string {
   const pictures = strs(r.pictures).filter((p) => PICTURE_ID.test(p)).slice(0, MAX_PICTURES)
   const rs = c.resumes && typeof c.resumes === 'object' ? c.resumes : null
   const resumes = rs && typeof rs.id === 'string' && CAPTURE_ID.test(rs.id) && rs.id !== r.id && num(rs.at) !== undefined ? { id: rs.id, at: rs.at as number } : undefined
+  // each frame's size on screen: whole pixels within what a shot takes, a few dozen frames at most
+  const px = (v: unknown) => { const n = num(v); return n !== undefined && n >= 1 && n <= 10_000 ? Math.round(n) : undefined }
+  const sizes = Object.fromEntries(Object.entries(r.sizes && typeof r.sizes === 'object' && !Array.isArray(r.sizes) ? r.sizes as Record<string, any> : {}).slice(0, 50)
+    .flatMap(([f, v]) => { const w = px(v?.w), h = px(v?.h); return /^[\w./-]{1,300}$/.test(f) && w && h ? [[f, { w, h }]] : [] }))
   return {
     format: 'marver.jam.capture', v: 1, id: r.id,
     context: { canvas: str(c.canvas, 300) ?? '', board: c.board, ...(str(c.session, 200) ? { session: str(c.session, 200) } : {}), ...(reviewing ? { reviewing } : {}), ...(resumes ? { resumes } : {}) },
-    view: viewOf(r.view), timeline, pictures,
+    view: viewOf(r.view), timeline, pictures, ...(Object.keys(sizes).length ? { sizes } : {}),
   }
 }
 

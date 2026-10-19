@@ -58,15 +58,25 @@ export function CaptureLaneRow({ tiles, recording, between, selected, keyboard, 
 export function FocusPanelView(p: {
   left: number; kind: 'capture' | 'review' | 'wrapup'; card: JamCard; of: [number, number] | undefined; agent: string; reviewedTitle?: string
   lines: TimelineLine[]; pictures: { id: string; url: string; caption: string }[]
-  shots: { frame: string; before?: string; after?: string }[]; reply: string
+  shots: { frame: string; before?: string; after?: string; new?: boolean }[]; reply: string
   view: 'after' | 'before'; tab: number; moreOpen: boolean
   onTab(i: number): void; onFlip(): void; onMoreOpen(on: boolean): void; onClose(): void
   onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void; onResume?: () => void
   onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
   onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void; locked?: boolean
+  /** a note added in the read-back (a draft) */
+  onAddNote?(text: string): Promise<boolean>
 }) {
   const c = p.card
   const title = c.title ?? 'Capture'
+  // a capture under review: its review, or the capture itself as it was read back (its pictures, its timeline)
+  const [pane, setPane] = useState<'review' | 'capture'>('review')
+  useEffect(() => { setPane('review') }, [c.id])
+  const head = p.kind === 'review' ? (
+    <div className="jm-ftabs jm-panes" role="tablist" data-jam-panes="">
+      {(['review', 'capture'] as const).map((v) => <button key={v} role="tab" aria-selected={v === pane} className={v === pane ? 'on' : undefined} onClick={() => setPane(v)}>{v === 'review' ? 'Review' : 'Capture'}</button>)}
+    </div>
+  ) : undefined
   // points are picks and clicks (a picture line carries its own number, not a point)
   const points = p.lines.filter((l) => l.point != null && (l.kind === 'pick' || l.kind === 'click')).length
   const notes = p.lines.filter((l) => l.kind === 'note').length
@@ -75,12 +85,13 @@ export function FocusPanelView(p: {
     notes ? `${notes} note${notes === 1 ? '' : 's'}` : ''].filter(Boolean)
   return (
     <FocusPanel left={p.left} onClose={p.onClose}>
-      {p.kind === 'review' ? (
-        <ReviewDetail key={c.id} title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
+      {p.kind === 'review' && pane === 'review' ? (
+        <ReviewDetail key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
           view={p.view} onFlip={() => p.onFlip()} reply={p.reply} shots={p.shots} agent={p.agent}
           more={p.moreOpen} draftKey={c.id} onMore={p.onMore} onMoreOpen={p.onMoreOpen} onGood={p.onGood} onLater={p.onLater} onOpenThread={p.onOpenThread} />
       ) : (
-        <ReadBack key={c.id} title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
+        <ReadBack key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
+          added={c.added} onAddNote={c.state === 'draft' ? p.onAddNote : undefined}
           readOnly={c.state !== 'draft'} locked={p.locked} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
           onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onResume={c.state === 'draft' ? p.onResume : undefined} onOpenThread={c.thread ? p.onOpenThread : undefined}

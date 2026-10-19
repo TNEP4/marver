@@ -8,17 +8,19 @@ import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { PUBLISHED } from './store.ts'
 
-export type JamAction = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename'
+export type JamAction = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename' | 'note'
 export type JamCardState = 'draft' | 'confirming' | 'queued' | 'working' | 'asks' | 'review' | 'done' | 'kept' | 'failed' | 'dropped'
 export interface JamCard {
   id: string; kind: 'comment' | 'capture' | 'wrapup'; board: string; thread?: string; frames: string[]; events: string[]
   state: JamCardState; note?: string; rev: number; made: number; order: number; at: number
   follows?: string; reply?: string; position?: number; waiting?: string; exclusive?: boolean; batch?: string
   // captures: the lane and the review
-  title?: string; inRun?: boolean; shots?: { frame: string; before?: string; after?: string; same?: boolean }[]
-  reviewing?: { card: string; batch: string; rev: number }; edited?: string; notes?: number; capture?: string
+  title?: string; inRun?: boolean; shots?: { frame: string; before?: string; after?: string; same?: boolean; new?: boolean }[]
+  reviewing?: { card: string; batch: string; rev: number }; edited?: string; added?: { at: number; text: string }[]; notes?: number; capture?: string
   /** the title is the name you gave it (Rename), not its first words */
   named?: boolean
+  /** its name - yours, or the one a small model gave it from its words */
+  name?: string
   /** the session it was made in (a capture), or whose record it writes (a wrap-up) */
   session?: string
   /** a session record: the file it writes */

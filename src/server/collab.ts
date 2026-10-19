@@ -175,7 +175,7 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
         // non-null anchor, and only the thread's author may move its pin (not any commenter).
         if (!creates.has(ev.commentId!) && !incoming.some((x) => x.type === 'create' && x.commentId === ev.commentId))
           return 'cannot reanchor a thread that does not exist'
-        if (ev.anchor == null) return 'reanchor needs a new anchor'
+        if (ev.anchor == null && !(typeof ev.frame === 'string' && ev.frame)) return 'reanchor needs a new anchor (or a frame)'
         const owner = authors.get(ev.commentId!)
         if (owner && owner !== me) return 'only the thread author can reanchor'
         break

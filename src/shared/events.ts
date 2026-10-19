@@ -130,8 +130,12 @@ export function replay(events: CommentEvent[]): Thread[] {
       case 'reanchor': {
         // Live Jam: re-pin the whole thread to a new element (the agent moved the target).
         // Only a root (thread) can be re-pinned, and a null/absent anchor is ignored (never un-pins).
+        // One naming a FRAME moves the thread onto that frame (0.26: a capture whose work made a new frame
+        // is hosted there) - its anchor, when it has one, else the frame itself; a reader that predates it
+        // keeps the thread where it was.
         const t = ev.commentId ? threads.get(ev.commentId) : undefined
-        if (t && ev.anchor != null) t.anchor = ev.anchor
+        if (t && typeof ev.frame === 'string' && ev.frame) { t.frame = ev.frame; t.nodeKey = ev.nodeKey; t.anchor = ev.anchor ?? undefined }
+        else if (t && ev.anchor != null) t.anchor = ev.anchor
         break
       }
       case 'react': {

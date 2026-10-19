@@ -18,7 +18,7 @@ import type { Batch, Card, JamAdapter, Journal, JournalV1 } from '../src/server/
 import type { JamConfig } from '../src/server/config.ts'
 import { statusLines } from '../src/client/shell/jam-lines.ts'
 
-const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true }
+const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: false }
 const AGENT = fileURLToPath(new URL('./fixtures/jam-agent.cjs', import.meta.url))
 const OWNER = { email: 'nic@local', name: 'Nic' }
 

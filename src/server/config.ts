@@ -14,6 +14,7 @@ export interface JamConfig {
   proactive: boolean           // P2, inert in v1: act on the owner's untagged backlog (default false)
   chime: boolean               // a soft chime once per batch that leaves a capture to review (default true)
   capture: 'confirm' | 'at-once'   // a capture waits for its read-back, or queues at `E` (default 'confirm')
+  names: boolean               // a small fast model names each capture from its words as it lands (default true; Claude Code only)
   loc: boolean                 // stamp host elements in design files with data-mv-loc = file:line:col (default true)
 }
 export interface ShConfig {
@@ -180,6 +181,7 @@ function resolveJam(v: unknown): JamConfig | ShConfig['jamOff'] {
     chime: pick('chime', j.chime, bool, true, 'true or false'),
     capture: pick<JamConfig['capture']>('capture', j.capture, (v) => v === 'confirm' || v === 'at-once', 'confirm', `'confirm' or 'at-once'`),
     loc: pick('loc', j.loc, bool, true, 'true or false'),
+    names: pick('names', j.names, bool, true, 'true or false'),
   }
 }
 

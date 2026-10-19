@@ -18,6 +18,8 @@ export interface QueueView {
     shots?: { frame: string; before?: string; after?: string }[]
     reviewing?: { card: string; batch: string; rev: number }
     edited?: string
+    /** notes written in its read-back after it ended */
+    added?: { at: number; text: string }[]
     notes?: number
     session?: string     // the session it was made in, or whose record it writes
     file?: string        // a session record: the file it writes

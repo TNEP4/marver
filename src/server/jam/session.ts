@@ -58,6 +58,8 @@ export interface WrapupCapture {
   kept?: true
   record: CaptureRecord
   edited?: string
+  /** notes written in its read-back after it ended */
+  added?: { at: number; text: string }[]
   /** the agent's reply, when there is one */
   reply?: string
   /** your verdict on its review: looks good, more work */
@@ -130,7 +132,7 @@ export function buildWrapup(j: Journal, root: string, o: { session: string; sinc
     const verdict = c.verdict
     caps.push({
       id: c.id, title: o.title?.(c) ?? c.name ?? c.id, state: c.state, ...(c.state === 'kept' ? { kept: true as const } : {}),
-      record: cap.record, ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
+      record: cap.record, ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}), ...(c.payload?.added?.length ? { added: c.payload.added } : {}),
       ...(o.reply?.(c) ? { reply: o.reply(c) } : {}), ...(verdict ? { verdict } : {}),
       ...(o.more?.(c).length ? { more: o.more(c) } : {}),
     })
@@ -170,4 +172,4 @@ export function readWrapup(root: string, id: string): { wrapup: Wrapup; hash: st
 }
 
 /** The words of a capture in the record, as you read them (the same rule as its thread comment). */
-export const captureText = (c: WrapupCapture): string => c.edited ?? speechLines(c.record.timeline.flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : [])))
+export const captureText = (c: WrapupCapture): string => [c.edited ?? speechLines(c.record.timeline.flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : []))), ...(c.added ?? []).map((a) => a.text)].filter(Boolean).join('\n')

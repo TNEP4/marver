@@ -1670,6 +1670,13 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-lines .pt.click { box-shadow: inset 0 0 0 1.5px var(--jm-rec); color: var(--jm-rec-strong) }
 .jm-lines code { margin-left: 4px }
 .jm-lines .secret { letter-spacing: .1em; color: var(--glass-ink-3) }
+.jm-added { display: flex; flex-direction: column; gap: 8px; margin-top: 10px }
+.jm-added-rule { display: flex; align-items: center; gap: 8px; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.jm-added-rule::before, .jm-added-rule::after { content: ''; flex: 1; height: 1px; background: color-mix(in srgb, var(--glass-ink) 10%, transparent) }
+.jm-addnote { display: flex; gap: 8px; align-items: center }
+.jm-addnote input { flex: 1; min-width: 0; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--glass-ink) 12%, transparent);
+  background: var(--glass-field, #fff); color: var(--glass-ink); font: 400 13px -apple-system, system-ui, sans-serif; outline: none }
+.jm-addnote input:focus { border-color: var(--glass-accent); box-shadow: 0 0 0 3px var(--glass-accent-bg) }
 /* the editable words: the comment field's surface and the accent focus ring */
 .jm-edit { padding: 8px 10px; margin: -4px -6px; border-radius: 10px; background: var(--cm-field); color: var(--glass-ink);
   box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring); font: 400 13px/1.5 -apple-system, system-ui, sans-serif }
@@ -1773,6 +1780,10 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-chip .notebtn:hover { background: var(--glass-hover); color: var(--glass-ink) }
 .jm-chip .notebtn.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
 .jm-chip .notebtn.on svg { color: var(--glass-accent) }
+/* trial 2: open, the count and the key sit on white - blue on white, never grey on blue */
+.jm-chip .notebtn.on b { background: #fff; color: var(--glass-accent); box-shadow: 0 0 0 .5px color-mix(in srgb, var(--glass-accent) 25%, transparent) }
+.jm-chip .notebtn.on kbd { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center;
+  background: #fff; color: var(--glass-accent); box-shadow: 0 0 0 .5px color-mix(in srgb, var(--glass-accent) 25%, transparent) }
 /* the notes card */
 .jm-notes { width: 340px; gap: 10px; padding: 14px }
 .jm-notes .top h3 { flex: none }
@@ -1798,6 +1809,10 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-ftabs button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: none;
   color: var(--glass-ink-2); font: 500 12px -apple-system, system-ui, sans-serif; cursor: pointer }
 .jm-ftabs button svg { color: var(--glass-ink-3) }
+/* trial 2: a capture under review - its review, or the capture itself (in the panel's title row) */
+.jm-ftabs.jm-panes { padding: 2px; margin-left: 4px; flex: none }
+.jm-ftabs.jm-panes button { height: 22px; padding: 0 9px; font-size: 11.5px }
+.jm-newtag { margin-left: 2px; padding: 1px 6px; border-radius: 999px; background: var(--glass-accent-bg); color: var(--glass-accent); font: 600 10px/14px -apple-system, system-ui, sans-serif }
 .jm-ftabs button small { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
 .jm-ftabs button.on { background: var(--solid); color: var(--glass-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(24, 24, 27, .12), 0 0 0 .5px var(--glass-brd) }
 .jm-focus > .jm-readback .jm-thumbs { gap: 12px }

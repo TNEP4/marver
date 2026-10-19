@@ -19,7 +19,7 @@ import { deviceId } from '../src/server/jam/device.ts'
 import type { JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
-const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true }
+const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: false }
 
 // A deterministic stand-in for `claude -p`: it really spawns (so spawn/capture/parse/fence are
 // exercised) but runs a node one-liner that edits a marker file and prints a claude-style JSON

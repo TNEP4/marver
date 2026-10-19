@@ -188,8 +188,8 @@ export function requeue(j: Journal, c: Card, now: number, first = false): Card {
   return other ? merge(j, other, c, now) : c
 }
 
-export type Action = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename'
-export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', 'edit', 'good', 'more', 'later', 'rename']
+export type Action = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename' | 'note'
+export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', 'edit', 'good', 'more', 'later', 'rename', 'note']
 
 /** One card action from the page (POST /jam/card). It applies only if the card is still at `rev`
  *  (two tabs cannot both decide); anything not allowed answers with the current card. */
@@ -210,6 +210,11 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
   }
   if (action === 'edit' && capture && c.state === 'draft' && typeof body === 'string') {
     c.payload = { ...c.payload!, edited: body.slice(0, 20_000) }; c.rev += 1; c.at = now
+    return { ok: true, card: c }
+  }
+  // a note written in its read-back after it ended: added under what it recorded (before it is sent)
+  if (action === 'note' && capture && c.state === 'draft' && typeof body === 'string' && body.trim() && (c.payload?.added?.length ?? 0) < 50) {
+    c.payload = { ...c.payload!, added: [...(c.payload?.added ?? []), { at: now, text: body.trim().slice(0, 4000) }] }; c.rev += 1; c.at = now
     return { ok: true, card: c }
   }
   // a capture's title as you name it (empty: its first words again) - the lane and the review show it;
@@ -286,7 +291,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
-      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited } : {}),
+      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
         ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
     }
   }
@@ -647,7 +652,7 @@ export function answers(root: string): { answered: Answer[]; earlier: Answer[] }
 // ---- captures --------------------------------------------------------------------------------------
 
 /** The ledger key that binds a confirmed capture's payload: its record hash and your edit. */
-export const payloadKey = (c: Card): string => `cap:${c.id}:${hashOf({ recordHash: c.payload?.recordHash ?? '', edited: c.payload?.edited ?? null })}`   // no edit and an empty edit differ
+export const payloadKey = (c: Card): string => `cap:${c.id}:${hashOf({ recordHash: c.payload?.recordHash ?? '', edited: c.payload?.edited ?? null, ...(c.payload?.added?.length ? { added: c.payload.added } : {}) })}`   // no edit and an empty edit differ; notes added after, when any
 
 /** A sealed capture becomes a draft card (once - a second post finds it). A capture made during a
  *  review follows the reviewed card and keeps the run it saw (`reviewing`). */
@@ -672,7 +677,7 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
     // a resumed capture keeps every frame the recording it continues was about (that card's frames - a chain
     // of resumes carries them all), beside the new part's
     id: record.id, kind: 'capture', board: record.context.board, frames: [...new Set([...(src?.frames ?? []), ...captureFrames(record)])], capture: record.id, events: [],
-    state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}) },
+    state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}), ...(src?.payload?.added?.length ? { added: src.payload.added } : {}) },
     ...(r ? { reviewing: r, follows: r.card } : {}), ...(src?.name ? { name: src.name } : {}),
     // a capture of the session running now: in its record. One whose session has ended (it reached the server
     // only after the record was written - the page is told) stands on its own
@@ -688,7 +693,7 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
  *  text stays in the record), its facts, the capture it stands for; pinned on the first point, else
  *  its first frame, else the board. Deterministic ids, so a resumed confirm writes it once. */
 export function captureComment(c: Card, record: CaptureRecord, at: { frame?: string; anchor?: unknown }, author: CommentEvent['author'], now = Date.now()): CommentEvent {
-  const words = captureWords(record, c.payload?.edited)
+  const words = [captureWords(record, c.payload?.edited), ...(c.payload?.added ?? []).map((a) => a.text)].filter(Boolean).join('\n')
   return {
     id: `cap-${c.id}-e`, ts: now, type: 'create', commentId: `cap-${c.id}`, board: c.board, author,
     body: (words.length > 600 ? words.slice(0, 599) + '…' : words) || '(a capture with no words)',
@@ -706,7 +711,7 @@ export function beginStep(j: Journal, c: Card, op: 'confirm' | 'more', event: Co
     const r = c.reviewing && j.batches.find((b) => b.batchId === c.reviewing!.batch)
     const m = r && r.members.find((x) => x.card === c.reviewing!.card)
     if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], result: resultText(j, r!.batchId, m.card, r!.note ?? ''),
-      ...(m.brief?.capture ? { capture: { record: m.brief.capture.record, recordHash: m.brief.capture.recordHash, ...(m.brief.capture.edited !== undefined ? { edited: m.brief.capture.edited } : {}) } } : {}) } }
+      ...(m.brief?.capture ? { capture: { record: m.brief.capture.record, recordHash: m.brief.capture.recordHash, ...(m.brief.capture.edited !== undefined ? { edited: m.brief.capture.edited } : {}), ...(m.brief.capture.added?.length ? { added: m.brief.capture.added } : {}) } } : {}) } }
   }
   c.rev += 1; c.at = now
 }

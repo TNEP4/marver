@@ -186,7 +186,7 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
       <div className="rows">
         <button className="row" data-jam-mic-switch={mic ? 'on' : 'off'} onClick={() => voice.setChoice(mic ? 'no' : 'yes')}>
           {mic ? <MicrophoneIcon size={15} /> : <MicrophoneSlashIcon size={15} />}
-          <span>Microphone<br /><small>Words stay on this Mac</small></span>
+          <span>Microphone<br /><small>Transcribed on this Mac{name === 'Claude Code' ? ' · Haiku names each capture' : ''}</small></span>
           <span className="v">{mic ? 'On' : 'Off'}<i className={`jm-switch${mic ? ' on' : ''}`} /></span>
         </button>
         {name

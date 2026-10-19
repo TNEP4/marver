@@ -15,7 +15,7 @@ import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
-const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true }
+const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: false }
 const AGENT = fileURLToPath(new URL('./fixtures/jam-agent.cjs', import.meta.url))
 const OWNER = { email: 'nic@local', name: 'Nic' }
 const agent = (mode: unknown = 'ok', opts: Record<string, unknown> = {}): JamAdapter => ({
@@ -777,5 +777,77 @@ describe('captures: the first trial (Resume, Rename, the words)', () => {
     const r = rec()
     expect(captureWords(r)).toBe('this badge should match the plan badge\nthe outline one')
     expect(speechLines([{ kind: 'note', text: ' a ' }, { kind: 'words', text: 'b' }, { kind: 'words', text: ' c ' }, { kind: 'note', text: '' }])).toBe('a\nb c')
+  })
+})
+
+describe('captures: trial 2 (sizes, new frames, notes added after, names)', () => {
+  const png = (root: string, name: string, bytes: string) => { const f = join(root, name); writeFileSync(f, bytes); return name }
+
+  it('the run pictures each frame at the size it was captured; a frame the run made is pictured as new, and a capture that left its own frames as they were moves its thread onto it', async () => {
+    const { root, dir, done } = setup()
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'home.json'), JSON.stringify({ version: 1, name: 'home', auto: true, nodes: [] }))
+    mkdirSync(join(root, 'design', 'scenes', 'demo'), { recursive: true })
+    writeFileSync(join(root, 'design', 'scenes', 'demo', 'a.tsx'), 'export default () => null\n')
+    const calls: { frame: string; size?: { w: number; h: number } }[] = []
+    const jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, {
+      anchor: async (_f, target) => ({ ok: true, anchor: { el: { semantics: { quote: target.on } } }, holders: [], viewport: 'laptop', theme: 'light' }),
+      // the same pixels for demo/a before and after (the run left it as it was)
+      shoot: async (frame, _theme, _entry, size) => { calls.push({ frame, ...(size ? { size } : {}) }); return addPicture(root, png(root, `shot-${frame.replace('/', '-')}.png`, `pixels of ${frame}`), { frame }) },
+    })
+    const r = { ...rec({ words: 'a brand new frame to the right of this one' }), sizes: { 'demo/a': { w: 411, h: 900 } } }
+    expect((checkRecord(r) as CaptureRecord).sizes).toEqual({ 'demo/a': { w: 411, h: 900 } })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    expect(calls.filter((c) => c.frame === 'demo/a')).toEqual([{ frame: 'demo/a', size: { w: 411, h: 900 } }, { frame: 'demo/a', size: { w: 411, h: 900 } }])
+    const shots: any[] = jam.snapshot().batches[0].shots ?? []
+    expect(shots.find((s: any) => s.frame === 'demo/a').same).toBe(true)
+    expect(shots.find((s: any) => s.frame === 'demo/fresh')).toMatchObject({ frame: 'demo/fresh', new: true })
+    expect(shots.find((s: any) => s.frame === 'demo/fresh').after).toMatch(/^p-/)
+    // hosted on the new frame: the thread moved there, the card names it
+    const t = replay(readLog(dir, 'home')).find((x) => x.id === `cap-${r.id}`)!
+    expect(t.frame).toBe('demo/fresh')
+    expect(card(jam, r.id).frames).toContain('demo/fresh')
+    done()
+  })
+
+  it('a note added in a draft\'s read-back goes with it: in its thread comment, in what the agent reads, bound at confirm; never once it is sent', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec({ words: 'make the badge match' })
+    const a = await jam.capture(r)
+    const n = await jam.act(r.id, a.card!.rev, 'note', 'and the outline too')
+    expect(n.ok).toBe(true)
+    expect(card(jam, r.id).payload.added.map((x: any) => x.text)).toEqual(['and the outline too'])
+    expect(jam.view().cards.find((c) => c.id === r.id)?.added?.[0].text).toBe('and the outline too')
+    await jam.act(r.id, card(jam, r.id).rev, 'confirm')
+    expect(readLog(dir, 'home').find((e) => e.id === `cap-${r.id}-e`)!.body).toMatch(/make the badge match[\s\S]*and the outline too$/)
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'note', 'too late')).ok).toBe(false)
+    await jam.tick(); jam.stop()
+    expect(packets(root)[0].members[0].brief.capture.added.map((x: any) => x.text)).toEqual(['and the outline too'])
+    done()
+  })
+
+  it('a capture is named by the small model as it lands - never over your own name, never with names off', async () => {
+    const namer = (name: string): JamAdapter => ({ ...agent(), namerArgs: () => ({ cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(name + '\n')})`] }) })
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, names: true }, namer('"Quieter save button."'))
+    const r = rec({ words: 'the save button is too loud, tone it down' })
+    await jam.capture(r)
+    for (let i = 0; i < 100 && !card(jam, r.id).autoName; i++) await wait(50)
+    expect(card(jam, r.id).autoName).toBe('Quieter save button')
+    expect(jam.view().cards.find((c) => c.id === r.id)?.title).toBe('Quieter save button')
+    // renamed by you: yours wins
+    await jam.act(r.id, card(jam, r.id).rev, 'rename', 'Save button')
+    expect(jam.view().cards.find((c) => c.id === r.id)?.title).toBe('Save button')
+    jam.stop()
+    const off = createJam(root, { ...CFG, names: false }, namer('Should not be'))
+    const r2 = rec({ words: 'another one' })
+    await off.capture(r2)
+    await wait(600)
+    expect(card(off, r2.id).autoName).toBeUndefined()
+    off.stop()
+    done()
   })
 })

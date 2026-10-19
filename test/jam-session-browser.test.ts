@@ -193,6 +193,20 @@ describe('the Jam session in the browser', () => {
     expect(readFileSync(join(root, w.file), 'utf8')).toMatch(/lead with the save button/)
   })
 
+  skippable('a capture under review: Review and Capture tabs - the capture as it was read back, its pictures and timeline; Before/After keeps its key in a tooltip', async () => {
+    const c = (await cards()).find((x: any) => x.kind === 'capture' && x.state === 'review')
+    await click(`.jm-lane [data-tile="${c.id}"]`)
+    await until(`!!document.querySelector('[data-jam-review] [data-jam-panes]')`, 5000)
+    expect(await browser!.eval(s, `document.querySelector('[data-jam-review] .jm-fbar kbd')`)).toBeNull()
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-panes] button')].find((b) => b.textContent === 'Capture').click(), 1`)
+    await until(`!!document.querySelector('[data-jam-readback] [data-jam-panes]') && !document.querySelector('[data-jam-review]')`, 3000)
+    expect(await browser!.eval(s, `document.querySelector('[data-jam-readback]').textContent`)).toMatch(/the save button is too quiet/)
+    await pic('3a-capture-tab')
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-panes] button')].find((b) => b.textContent === 'Review').click(), 1`)
+    await until(`!!document.querySelector('[data-jam-review]')`, 3000)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+  })
+
   skippable('the record opens in the focus panel - the page the agent wrote, its reply; ⇧⏎ More work writes it again with your note; ⏎ Looks good', async () => {
     const w = (await cards()).find((c: any) => c.kind === 'wrapup' && c.state === 'review')
     await click(`.jm-lane [data-tile="${w.id}"]`)

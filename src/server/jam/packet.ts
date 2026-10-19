@@ -68,6 +68,9 @@ export function goalText(packet: JobPacket, subagents = true): string {
       'member\'s reply; one that is only a note gets a reply and no edit. `capture.note` "kept - not an ask" or',
       '"dropped - not an ask" means the capture is context for the tag that is the ask. `reviewed` is the run they',
       'were reviewing when they captured: its ask and your result, so "use your second suggestion" can be done.',
+      'A frame they pointed at can be WHERE they want something new ("a new frame to the right of this one"), not',
+      'what to change: then leave that frame as it is and make the new one - Marver moves the capture\'s thread onto it.',
+      '`added` are notes they wrote after the capture ended, in its read-back: read them after the timeline.',
       '',
     ] : []),
     ...(packet.members.some((m) => m.brief.wrapup) ? [

@@ -17,6 +17,7 @@ import {
 } from './icons.tsx'
 import { LANE_H } from './jam-lane.tsx'
 import { Tip } from './Tip.tsx'
+import { useJamQueue } from './jam-queue.ts'
 
 /** A heading cut short by its ellipsis: its tooltip shows it whole (one that fits shows none). */
 const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
@@ -92,6 +93,44 @@ function LineRow({ l }: { l: TimelineLine }) {
 /** The merged timeline: words and notes among every step, each at its moment. */
 export const Lines = ({ lines }: { lines: TimelineLine[] }) => <div className="jm-lines">{lines.map((l, i) => <LineRow key={i} l={l} />)}</div>
 
+/** Notes written in a read-back after the capture ended: under a divider, in the timeline's own rows, then a
+ *  clean field and Add note (⏎). What you type is never a capture key. */
+function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; onAdd?: (text: string) => Promise<boolean> }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const add = async () => {
+    const t = text.trim()
+    if (!t || busy || !onAdd) return
+    setBusy(true)
+    const ok = await onAdd(t)
+    setBusy(false)
+    if (ok) setText('')
+  }
+  return (
+    <div className="jm-added" data-jam-added="">
+      {added.length > 0 && <>
+        <div className="jm-added-rule"><span>Added after</span></div>
+        <div className="jm-lines">{added.map((a, i) => (
+          <div key={i} data-jam-added-note=""><span className="ts">{new Date(a.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><span className="g"><PencilSimpleIcon size={12} /></span><span className="words">{a.text}</span></div>
+        ))}</div>
+      </>}
+      {onAdd && (
+        <div className="jm-addnote">
+          <input value={text} placeholder="Add a note..." data-jam-addnote="" disabled={busy}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return
+              if (e.key === 'Enter') { e.preventDefault(); void add() }
+              else if (e.key === 'Escape') { e.preventDefault(); setText(''); (e.target as HTMLInputElement).blur() }
+            }} />
+          <button className="jm-btn" disabled={!text.trim() || busy} onClick={() => void add()}>Add note</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** A picture, or the dashed "No picture" where a shot failed. */
 export const Shot = ({ url, cap, alt }: { url?: string; cap?: ReactNode; alt?: string }) => (
   <div className="jm-shot">
@@ -127,8 +166,10 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, err, warn, style }: {
+export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, added, onAddNote, err, warn, style }: {
   title: string
+  /** beside the title: the Review | Capture switch (a capture under review) */
+  head?: ReactNode
   of?: [number, number]
   onPrev?: () => void
   onNext?: () => void
@@ -153,6 +194,10 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   /** the words cannot be edited for now (its Resume is starting) - the rest stays as it is */
   locked?: boolean
   onOpenThread?: () => void
+  /** notes written here after it ended - under a divider, as the timeline shows its own */
+  added?: { at: number; text: string }[]
+  /** a note added from here (a draft): resolves whether it saved */
+  onAddNote?: (text: string) => Promise<boolean>
   err?: ReactNode
   warn?: ReactNode
   style?: CSSProperties
@@ -181,6 +226,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
       <div className="top">
         <span className="jm-capglyph"><WaveformIcon size={14} /></span>
         <Tip side="bottom" label={<span className="jm-tip-title">{title}</span>} only={cutShort}><h3>{title || 'Capture'}</h3></Tip>
+        {head}
         <Walk of={of} onPrev={onPrev} onNext={onNext} />
       </div>
       <Meta items={meta} />
@@ -199,6 +245,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
             <Lines lines={lines} />
           </div>
         )}
+        {(added?.length || (onAddNote && !readOnly)) ? <AddedNotes added={added ?? []} onAdd={readOnly ? undefined : onAddNote} /> : null}
       </div>
       <div className="rule" />
       <div className="actions">
@@ -232,8 +279,10 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
  * `shots` are picture URLs per frame (`frames` names the tabs; it defaults to the shots' frames);
  * `alsoChanged` = shared files the job changed anyway.
  */
-export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab, view, onFlip, reply, shots, alsoChanged, agent, when, more, onMore, onMoreOpen, onGood, onLater, onOpenThread, style, draftKey }: {
+export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, onTab, view, onFlip, reply, shots, alsoChanged, agent, when, more, onMore, onMoreOpen, onGood, onLater, onOpenThread, style, draftKey }: {
   title: string
+  /** beside the title: the Review | Capture switch */
+  head?: ReactNode
   of?: [number, number]
   onPrev?: () => void
   onNext?: () => void
@@ -243,7 +292,8 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
   view: 'before' | 'after'
   onFlip(view: 'before' | 'after'): void
   reply: ReactNode
-  shots: { frame: string; before?: string; after?: string }[]
+  /** `new`: a frame the run made - nothing before it */
+  shots: { frame: string; before?: string; after?: string; new?: boolean }[]
   alsoChanged?: string[]
   agent?: string
   when?: string
@@ -259,6 +309,7 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
 }) {
   const names = frames ?? shots.map((s) => s.frame)
   const shot = shots[active] ?? shots.find((s) => s.frame === names[active])
+  const isNew = (f: string) => !!shots.find((s) => s.frame === f)?.new
   const label = (f: string) => f.split('/').pop() ?? f
   // the More work words outlive the panel: a click elsewhere closes it, and the words wait for its return -
   // they go only when sent, or when you leave the composer yourself (Esc)
@@ -275,6 +326,7 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
       <div className="top">
         <JamStateIcon state="review" />
         <Tip side="bottom" label={<span className="jm-tip-title">{title}</span>} only={cutShort}><h3>{title}</h3></Tip>
+        {head}
         <Walk of={of} onPrev={onPrev} onNext={onNext} />
       </div>
       <Meta items={[...names.map((f) => <span key={f} className="jm-flink"><FrameRectIcon size={11} />{label(f)}</span>), ...(agent ? [agent] : []), ...(when ? [when] : [])]} />
@@ -288,13 +340,18 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
       {names.length > 0 && (
         <div className="jm-fbar">
           {names.length > 1
-            ? <div className="jm-ftabs" role="tablist">{names.map((f, i) => <button key={f} role="tab" aria-selected={i === active} className={i === active ? 'on' : undefined} onClick={() => onTab(i)}><FrameRectIcon size={12} />{label(f)}</button>)}</div>
-            : <span className="jm-framehd"><FrameRectIcon size={12} />{label(names[0])}</span>}
+            ? <div className="jm-ftabs" role="tablist">{names.map((f, i) => <button key={f} role="tab" aria-selected={i === active} className={i === active ? 'on' : undefined} onClick={() => onTab(i)}><FrameRectIcon size={12} />{label(f)}{isNew(f) && <span className="jm-newtag">New</span>}</button>)}</div>
+            : <span className="jm-framehd"><FrameRectIcon size={12} />{label(names[0])}{isNew(names[0]) && <span className="jm-newtag">New</span>}</span>}
           <span className="sp" />
-          <div className="jm-ftabs">{(['before', 'after'] as const).map((v) => <button key={v} className={v === view ? 'on' : undefined} aria-pressed={v === view} onClick={() => onFlip(v)}>{v === 'before' ? 'Before' : 'After'}</button>)}<kbd>B</kbd></div>
+          {/* a frame the run made has nothing before it: no switch */}
+          {shot?.new ? <span className="dim" data-jam-new="">New frame</span> : (
+            <Tip side="bottom" label={<span>Before / After<kbd style={{ marginLeft: 8 }}>B</kbd></span>}>
+              <div className="jm-ftabs" data-jam-flip="">{(['before', 'after'] as const).map((v) => <button key={v} className={v === view ? 'on' : undefined} aria-pressed={v === view} onClick={() => onFlip(v)}>{v === 'before' ? 'Before' : 'After'}</button>)}</div>
+            </Tip>
+          )}
         </div>
       )}
-      <div className="jm-big"><Shot url={view === 'before' ? shot?.before : shot?.after} alt={`${label(names[active] ?? '')} ${view}`} /></div>
+      <div className="jm-big"><Shot url={view === 'before' && !shot?.new ? shot?.before : shot?.after} alt={`${label(names[active] ?? '')} ${shot?.new ? 'new' : view}`} /></div>
       {alsoChanged && alsoChanged.length > 0 && (
         <div className="jm-file"><FileCodeIcon size={14} /><span>Also changed {alsoChanged.map((f, i) => <span key={f}>{i > 0 && ', '}<code>{f.split('/').pop()}</code></span>)}</span></div>
       )}
@@ -407,12 +464,16 @@ export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, s
 /** A capture's comment in its thread (round 3): labelled as a capture - a teal waveform, "Capture"
  *  with its short id and facts - then its words. Where its card stands is the status icon in the
  *  message header, not here. */
-export const CaptureBlock = ({ id, facts, words }: { id: string; facts?: string; words: ReactNode }) => (
+export const CaptureBlock = ({ id, facts, words }: { id: string; facts?: string; words: ReactNode }) => {
+  // its name, once it has one (yours, or the one a small model gave it) - else "Capture" and its short id
+  const name = useJamQueue((s) => s.cards?.find((c) => c.id === id)?.name)
+  return (
   <span className="jm-capcm" data-capture={id}>
-    <span className="hd"><WaveformIcon size={13} /><span>Capture {id.replace(/^cap-\d+-/, '')}</span>{facts && <span className="dim">· {facts}</span>}</span>
+    <span className="hd"><WaveformIcon size={13} /><span>{name ?? `Capture ${id.replace(/^cap-\d+-/, '')}`}</span>{facts && <span className="dim">· {facts}</span>}</span>
     <span className="w">{words}</span>
   </span>
-)
+  )
+}
 
 /** The thin teal ring round the canvas edge (or the play stage) while a capture records. */
 export const EdgeRing = ({ style }: { style?: CSSProperties }) => <div className="jm-edge" data-jam-edge="" style={style} />
