@@ -215,8 +215,11 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
   // a note written in its read-back after it ended: added under what it recorded (before it is sent)
   // (sent as { id, text }: the same note sent again - its answer lost - is kept once)
   if (action === 'note' && capture && c.state === 'draft' && typeof body === 'string' && body.trim()) {
-    let n: { id?: string; text: string } = { text: body }
-    try { const o = JSON.parse(body); if (o && typeof o.text === 'string') n = { ...(typeof o.id === 'string' && /^n-[a-z0-9]{6,24}$/.test(o.id) ? { id: o.id } : {}), text: o.text } } catch { /* plain words */ }
+    let n: { id?: string; text: string; order?: number } = { text: body }
+    try {
+      const o = JSON.parse(body)
+      if (o && typeof o.text === 'string') n = { ...(typeof o.id === 'string' && /^n-[a-z0-9]{6,24}$/.test(o.id) ? { id: o.id } : {}), text: o.text, ...(Number.isFinite(o.order) ? { order: Number(o.order) } : {}) }
+    } catch { /* plain words */ }
     const text = n.text.trim().slice(0, 4000)
     const was = n.id ? c.payload?.added?.find((a) => a.id === n.id) : undefined
     if (was) {
@@ -225,7 +228,9 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
       return { ok: true, card: c }
     }
     if (text && (c.payload?.added?.length ?? 0) < 50) {
-      c.payload = { ...c.payload!, added: [...(c.payload?.added ?? []), { at: now, text, ...(n.id ? { id: n.id } : {}) }] }; c.rev += 1; c.at = now
+      // in the order they were written (a note sent again after a failure keeps its place before later ones)
+      const added = [...(c.payload?.added ?? []), { at: n.order ?? now, text, ...(n.id ? { id: n.id } : {}) }].sort((a, b) => a.at - b.at)
+      c.payload = { ...c.payload!, added }; c.rev += 1; c.at = now
       return { ok: true, card: c }
     }
   }

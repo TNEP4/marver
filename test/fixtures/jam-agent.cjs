@@ -8,7 +8,7 @@ const mode = JSON.parse(process.env.MODE || '"ok"')
 const opts = JSON.parse(process.env.OPTS || '{}')
 fs.appendFileSync('packets-seen.jsonl', JSON.stringify(p) + '\n')
 if (opts.orphan) { let alive = true; try { process.kill(opts.orphan, 0) } catch { alive = false } fs.writeFileSync('orphan.txt', alive ? 'alive' : 'dead') }
-if (opts.touch) { fs.mkdirSync(path.dirname(opts.touch), { recursive: true }); fs.writeFileSync(opts.touch, 'x' + Date.now() + Math.random()) }
+for (const t of [].concat(opts.touch || [])) { fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, 'x' + Date.now() + Math.random()) }
 if (opts.fail) process.exit(1)
 if (opts.hang) setInterval(() => {}, 1000)
 // a session record: the agent writes it where the content says, and nothing else

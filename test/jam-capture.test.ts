@@ -894,6 +894,22 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('every frame a run made is its own (four new frames: all four held and named; three pictured)', async () => {
+    const { root, done } = setup()
+    freshBoard(root)
+    const four = ['one', 'two', 'three', 'four'].map((x) => `design/scenes/demo/${x}.tsx`)
+    const jam = createJam(root, CFG, agent('ok', { touch: four }), undefined, { anchor: anchorOk as any, shoot: (f: string) => sameShot(root)(f) } as any)
+    const r = rec({ words: 'four onboarding screens to the right' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    const b: any = jam.snapshot().batches[0]
+    expect(b.created.sort()).toEqual(['demo/four', 'demo/one', 'demo/three', 'demo/two'])
+    expect(card(jam, r.id).frames).toEqual(expect.arrayContaining(['demo/four', 'demo/one', 'demo/three', 'demo/two']))
+    expect(b.shots.filter((x: any) => x.new)).toHaveLength(3)
+    done()
+  })
+
   it('a frame that appeared while the daemon was down is no one\'s: the rerun neither pictures it as new nor moves the thread', async () => {
     const { root, dir, done } = setup()
     freshBoard(root)
@@ -948,6 +964,11 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     expect(card(jam, r.id).payload.added.map((x: any) => x.text)).toEqual(['one', 'two'])
     expect((await n('n-aaaaaaaa', 'one, edited')).ok).toBe(true)            // edited in the field after its answer was lost
     expect(card(jam, r.id).payload.added.map((x: any) => x.text)).toEqual(['one, edited', 'two'])
+    // a note that failed and is sent after a later one keeps the place it was written in
+    const later = (id: string, text: string, order: number) => jam.act(r.id, card(jam, r.id).rev, 'note', JSON.stringify({ id, text, order }))
+    await later('n-dddddddd', 'make it red instead', 3_000_000_000_000)
+    await later('n-cccccccc', 'make it blue', 2_000_000_000_000)
+    expect(card(jam, r.id).payload.added.map((x: any) => x.text).slice(-2)).toEqual(['make it blue', 'make it red instead'])
     jam.stop()
     done()
   })

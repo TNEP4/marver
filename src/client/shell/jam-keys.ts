@@ -68,14 +68,14 @@ export function saveEdit(c: JamCard, text: string) {
 /** Notes added in a read-back not saved yet, per card: each with its own id - one on its way, or one that failed
  *  and waits to be sent again. Sent again (from the field, or before a decision) it keeps its id: the server
  *  keeps a note once, whatever answer was lost; a different note never takes a failed one's place. */
-type PendingNote = { id: string; text: string; failed: boolean }
+type PendingNote = { id: string; text: string; failed: boolean; order: number }
 const unsavedNotes = new Map<string, PendingNote[]>()
 const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
   n.failed = false
   const before = saving.get(c.id) ?? Promise.resolve(true)
   const p = before.then(() => {
     const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
-    return useJamQueue.getState().act(fresh, 'note', JSON.stringify({ id: n.id, text: n.text }))
+    return useJamQueue.getState().act(fresh, 'note', JSON.stringify({ id: n.id, text: n.text, order: n.order }))
   }).then((ok) => {
     const list = unsavedNotes.get(c.id) ?? []
     if (ok) { const left = list.filter((x) => x !== n); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id) } else n.failed = true
@@ -87,7 +87,9 @@ const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
 /** Add a note to a draft from its read-back: in line with its edits (a decision or a Resume waits for it). The
  *  same `id` again is that note's retry (its words as the field holds them now). */
 export function addNote(c: JamCard, text: string, id: string): Promise<boolean> {
-  const n: PendingNote = { id, text, failed: false }
+  // written when it was first sent: a retry keeps its place among the notes
+  const was = (unsavedNotes.get(c.id) ?? []).find((x) => x.id === id)
+  const n: PendingNote = { id, text, failed: false, order: was?.order ?? Date.now() }
   unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []).filter((x) => x.id !== id), n])
   return sendNote(c, n)
 }

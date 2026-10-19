@@ -454,12 +454,14 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   // pictures a frame once - only I asks for another
   if (why !== 'key' && c.shotFrames.includes(frame)) return
   // the instance pictured is the one this frame is about (its size for the run's pictures)
-  mutate((s) => { const x = s.caps[id]; if (x) { if (!x.shotFrames.includes(frame)) x.shotFrames.push(frame); if (why === 'key' || !x.keys[frame]) sample(x, { event: 'picture', frame, src: key }) } })
+  mutate((s) => { const x = s.caps[id]; if (x) { if (!x.shotFrames.includes(frame)) x.shotFrames.push(frame); if (why === 'key') sample(x, { event: 'picture', frame, src: key }) } })
   const at = now()
   // the instance it was seen in: its size (a responsive defect is shot as seen) and its theme
   const st = useStore.getState()
   const n = (key ? st.nodes.find((x) => x.key === key && x.frame === frame) : undefined) ?? st.nodes.find((x) => x.frame === frame)
-  const size = st.play && st.play.at === frame ? CONFIG.viewports[st.play.device] : n ? { width: n.w, height: n.h } : undefined
+  // as it was seen: on the stage's device now, or as it was on the stage (left play since), or its node
+  const seen = c.sizes[frame]
+  const size = st.play && st.play.at === frame ? CONFIG.viewports[st.play.device] : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
   const done = (pid: string | null) => {

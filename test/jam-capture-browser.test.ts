@@ -322,6 +322,10 @@ describe('captures in the browser', () => {
     await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.steps ?? []).some((x) => x.event === 'click' && x.mode === 'play')`, 5000)
     // the shell's own navigation, quick revisits included: A -> B -> A -> B, each a line
     for (const at of ['spec/bravo', 'spec/alpha', 'spec/bravo']) await browser!.eval(s, `window.__mvStore.getState().setPlay({ ...window.__mvStore.getState().play, at: ${JSON.stringify(at)} }), 1`)
+    // play is left before E: what was seen on the stage keeps the stage's size
+    const stageVp = await browser!.eval(s, `window.__mvStore.getState().play.device`)
+    await browser!.eval(s, `window.__mvStore.getState().setPlay(null), 1`)
+    await sleep(300)
     await key('e')
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 20_000)
     const rec = await browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
@@ -334,10 +338,9 @@ describe('captures in the browser', () => {
     expect(pics.every((x: any) => x.frame === 'spec/alpha')).toBe(true)
     expect(tl.filter((x: any) => x.event === 'screen').map((x: any) => x.to)).toEqual(['spec/bravo', 'spec/alpha', 'spec/bravo'])
     // every screen visited keeps the stage's device size, not only the one it ended on
-    const vp = await browser!.eval(s, `(() => { const p = window.__mvStore.getState().play; const v = (window.__mvConfig ?? {}).viewports?.[p.device]; return v ? { w: Math.round(v.width), h: Math.round(v.height) } : null })()`)
-    expect(rec.record.sizes?.['spec/alpha']).toBeTruthy()
+    expect(stageVp).toBeTruthy()
+    expect(rec.record.sizes?.['spec/alpha']?.play).toBe(true)
     expect(rec.record.sizes?.['spec/alpha']).toEqual(rec.record.sizes?.['spec/bravo'])
-    if (vp) expect(rec.record.sizes['spec/alpha']).toEqual(vp)
     await browser!.eval(s, `window.__mvStore.getState().setPlay(null), 1`)
     await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)

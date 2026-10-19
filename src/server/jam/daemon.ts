@@ -402,7 +402,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const onBoard = (f: string) => boards.some((board) => {
       try { const j = JSON.parse(readFileSync(join(root, 'design', 'boards', `${board}.json`), 'utf8')); return j.auto === true || (Array.isArray(j.nodes) && j.nodes.some((n: any) => n?.frame === f)) } catch { return false }
     })
-    return [...sceneFrameMtimes(root).keys()].filter((f) => !start.has(f) && onBoard(f)).slice(0, 3)
+    return [...sceneFrameMtimes(root).keys()].filter((f) => !start.has(f) && onBoard(f))
   }
 
   const realShared = (f: string) => canonicalShared(root, f)
@@ -567,7 +567,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (one0?.kind !== 'capture' || b.crowded || crowded || !aloneAtStart || batchStarts !== myStart || hooks.anyHold?.()) return
       const found = newFrames(new Set(b.before ?? []), b).filter((f) => !(b.created ?? []).includes(f))
       if (!found.length) return
-      await q.lock(() => { b.created = [...(b.created ?? []), ...found].slice(0, 3); b.frames = [...new Set([...b.frames, ...b.created])]; q.persist() })
+      await q.lock(() => { b.created = [...(b.created ?? []), ...found]; b.frames = [...new Set([...b.frames, ...b.created])]; q.persist() })
       reserve()
     }
     const sharedBefore = b.exclusive ? null : sharedMtimes(root)
@@ -644,7 +644,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (created.length && hooks.shoot) {
         // pictured as they are now (again on a rerun: the frame may have changed since)
         const shots = (b.shots ?? []).filter((x) => !(x.new && created.includes(x.frame)))
-        for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
+        // (all of them are its frames; three are pictured)
+        for (const f of created.slice(0, 3)) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
         // its own frames came out as they were: it asked for something new - its thread goes onto the new frame
         const own = shots.filter((x) => !x.new && one!.frames.includes(x.frame))
         if (one!.thread && own.every((x) => x.same)) hosts = [{ member: b.members[0].id, frame: created[0] }]
