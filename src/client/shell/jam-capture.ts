@@ -91,6 +91,7 @@ interface Cap {
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
+  endSizes?: Record<string, { w: number; h: number; play?: true }>   // the sizes as they were at E (what it was about, then)
   sizes: Record<string, { w: number; h: number; play?: true }>   // each frame's size when it was last touched (`play`: on the stage's device)
   keys: Record<string, string>             // each frame's instance last touched (a frame can sit on a board twice)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
@@ -152,6 +153,7 @@ if (typeof window !== 'undefined') onStageSize(() => {
   if (!id || !st.play || st.play.at !== stageSize.at) return
   mutate((s) => { const c = s.caps[id]; if (c && c.state === 'recording') c.sizes[stageSize.at] = { w: stageSize.w, h: stageSize.h, play: true } })
 })
+const sampleSize = sample   // (the watcher has a `sample` of its own)
 /** Leaving play selects the frame it ended on: that selection is the shell's, not a touch (until then) */
 let playLeftAt = 0
 /** A frame's size on screen now: in play the stage's device, on the canvas its node (the one in view). */
@@ -261,6 +263,14 @@ function watchUi() {
       if (o.w !== n.w && n.sizeMode === 'device') {
         const vp = Object.entries(CONFIG.viewports).find(([, v]) => v.width === Math.round(n.w))
         addStep(id, { at, frame: n.frame, event: 'device', viewport: vp?.[0] ?? 'custom', width: Math.round(n.w), height: Math.round(n.h), src: n.key })
+      } else if ((Math.round(o.w) !== Math.round(n.w) || Math.round(o.h) !== Math.round(n.h)) && n.sizeMode !== 'auto' && n.sizeMode !== 'device') {
+        // dragged to a size of its own: a step like a device, and the size it is about now - one step per drag (a
+        // drag moves it on every frame: the last step of it, still going, takes the new size)
+        const lastSteps = capOf(id)?.steps ?? []
+        const last = lastSteps[lastSteps.length - 1] as (Step & { src?: string }) | undefined
+        if (last && last.event === 'device' && last.src === n.key && last.viewport === 'custom' && at - last.at < 1500) {
+          mutate((st) => { const c = st.caps[id]; const l = c?.steps[c.steps.length - 1] as (Step & { src?: string; width?: number; height?: number }) | undefined; if (c && l) { l.width = Math.round(n.w); l.height = Math.round(n.h); l.at = at; sampleSize(c, l) } })
+        } else addStep(id, { at, frame: n.frame, event: 'device', viewport: 'custom', width: Math.round(n.w), height: Math.round(n.h), src: n.key })
       }
       if (o.theme !== n.theme && s.viewTheme === p.viewTheme && (n.theme === 'light' || n.theme === 'dark')) addStep(id, { at, frame: n.frame, event: 'theme', theme: n.theme, src: n.key })
     }
@@ -627,6 +637,8 @@ function drain(id: string) {
     const x = st.caps[id]
     if (!x) return
     x.state = 'draining'
+    // its frames' sizes as they are at E - a resize while it finishes is not part of it
+    x.endSizes = framesSizes(x)
     if (draft) x.steps.push({ at: now(), event: 'note', text: draft })
     for (const inst of instances.values()) if (inst.captureDoc && current(inst)) x.flushWait.set(inst.key, inst.captureDoc)
   })
@@ -700,6 +712,15 @@ function framesSizes(c: Cap): Record<string, { w: number; h: number; play?: true
   return out
 }
 
+/** The sizes it seals with: as they were at E; a frame only named by a step that came in after (a hover still in
+ *  flight) as it was sampled when that step came - never as it is now. */
+function sealedSizes(c: Cap): Record<string, { w: number; h: number; play?: true }> {
+  if (!c.endSizes) return framesSizes(c)
+  const out = { ...c.endSizes }
+  for (const f of new Set([...(c.inherited ?? []), ...touchedFrames(c.steps, undefined, true, c.resumes?.at)])) if (!out[f] && c.sizes[f]) out[f] = c.sizes[f]
+  return out
+}
+
 function trySeal(id: string) {
   const c = capOf(id)
   if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0) return
@@ -713,7 +734,7 @@ function trySeal(id: string) {
     format: 'marver.jam.capture', v: 1, id,
     context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
     view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
-    timeline, pictures: c2.pictures, ...(() => { const sizes = framesSizes(c2); return Object.keys(sizes).length ? { sizes } : {} })(),
+    timeline, pictures: c2.pictures, ...(() => { const sizes = sealedSizes(c2); return Object.keys(sizes).length ? { sizes } : {} })(),
   }
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })
