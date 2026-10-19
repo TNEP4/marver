@@ -43,11 +43,11 @@ export async function startSession(): Promise<boolean> {
   const ok = await post({ action: 'start', id })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }
   useJamUi.getState().setSheet(null)
-  // ended meanwhile (in another tab): no microphone for a session that is over
-  if (useJamQueue.getState().session?.id !== id) return true
   // this tab holds the session's microphone (a reload of it takes it back; other tabs never take it)
   try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ }
-  void voiceSession(id, now())
+  // the talk starts once the queue shows the session: now, or when its view comes (a refresh that failed
+  // leaves that to the push - the lane hears it then); a session ended meanwhile never gets the microphone
+  if (useJamQueue.getState().session?.id === id) void voiceSession(id, now())
   return true
 }
 /** The session whose microphone this tab holds (per tab: it survives a reload, not another tab). */

@@ -271,7 +271,6 @@ describe('the Jam session in the browser', () => {
       expect(await browser!.eval(s, `window.__mvJamQueue.getState().session`)).toBeNull()
       expect(await browser!.eval(s, `window.__startId`)).toMatch(/^ses-/)
       expect(await browser!.eval(s, `window.__mvJamVoiceSession()`)).toBeNull()
-      expect(await browser!.eval(s, `sessionStorage.getItem('mv-jam-session-mic') === window.__startId`)).toBe(false)
     } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
   })
 
@@ -298,8 +297,25 @@ describe('the Jam session in the browser', () => {
       expect(await browser!.eval(s, `window.__afterPush`)).toBeNull()          // the push of the end came first
       expect(await browser!.eval(s, `window.__mvJamQueue.getState().session`)).toBeNull()
       expect(await browser!.eval(s, `window.__mvJamVoiceSession()`)).toBeNull()
-      expect(await browser!.eval(s, `sessionStorage.getItem('mv-jam-session-mic') === window.__startId`)).toBe(false)
     } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+  })
+
+  skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
+      if (window.__race === 1 && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__race = 2; throw new TypeError('offline') }
+      return f(u, o)
+    }; return 1 })()`)
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+      await enter()
+      await until(`window.__race === 2`, 5000)
+      await until(`window.__mvJamQueue.getState().session?.id === window.__startId`, 5000)   // the push
+      await until(`window.__mvJamVoiceSession() === window.__startId`, 5000)                // its talk
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 5000)
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
     // and no component broke along the way
     expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })
