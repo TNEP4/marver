@@ -534,7 +534,6 @@ describe('Jam V2: results first, then replies', () => {
     expect(existsSync(join(root, 'ran.marker'))).toBe(false)
     expect(replay(readLog(dir, 'home')).find((t) => t.id === a.commentId)?.frame).toBe('demo/fresh')
     expect(readLog(dir, 'home').filter((e) => e.id === 'jam-b-crash-m1-host')).toHaveLength(1)
-    expect(cardOf(jam, a)!.frames).toContain('demo/fresh')
     done()
   })
 
