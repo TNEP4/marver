@@ -90,7 +90,7 @@ beforeAll(async () => {
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/config.ts', "export default { jam: { agent: 'claude', concurrency: 1 } }\n")
   for (const f of ['alpha', 'bravo', 'charlie']) put(`design/scenes/spec/${f}.tsx`, frame(f))
-  put('design/scenes/spec/clicky.tsx', `export default () => <main><button onClick={() => { (window as any).__clicked = ((window as any).__clicked ?? 0) + 1 }}>Save 20%</button><input id="email" defaultValue="" style={{ display: 'block', marginTop: 40, width: 200, height: 30 }} /></main>\n`)
+  put('design/scenes/spec/clicky.tsx', `export default () => <main><button onClick={() => { (window as any).__clicked = ((window as any).__clicked ?? 0) + 1 }}>Save 20%</button><input id="email" defaultValue="" style={{ display: 'block', marginTop: 40, width: 200, height: 30 }} /><div id="rich" contentEditable suppressContentEditableWarning style={{ marginTop: 20, width: 200, height: 30 }}><span id="richspan">Rich text</span></div></main>\n`)
   put('design/boards/main.json', { version: 1, name: 'main', auto: false, order: 0, nodes: [{ frame: 'spec/alpha' }, { frame: 'spec/bravo' }, { frame: 'spec/charlie' }, { frame: 'spec/clicky' }] })
   agentMode({})
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, BROWSER: 'none', CI: '1' } })
@@ -589,6 +589,17 @@ describe('captures in the browser: the first trial', () => {
     expect(await browser!.eval(s, `document.querySelector('.sh-node[data-node="${k}"] iframe').contentDocument.querySelector('#email').value`)).toBe('esne')
     expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(id)
     expect(await browser!.eval(s, `window.__mvJamCapture.getState().noteOpen`)).toBe(false)
+    // rich text: a click on a span inside an editable area puts the caret in its editing host
+    await esc()
+    await until(`window.__mvStore.getState().interact === null`, 3000)
+    const at2 = await browser!.eval(s, `(() => { const f = document.querySelector('.sh-node[data-node="${k}"] iframe'); const b = f.contentDocument.querySelector('#richspan').getBoundingClientRect(); const r = f.getBoundingClientRect(); const sx = r.width / f.clientWidth; return { x: r.left + (b.left + b.width / 2) * sx, y: r.top + (b.top + b.height / 2) * sx } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at2.x, y: at2.y, button: 'left', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at2.x, y: at2.y, button: 'left', clickCount: 1 }, s)
+    await until(`window.__mvStore.getState().interact === ${JSON.stringify(k)} && document.querySelector('.sh-node[data-node="${k}"] iframe').contentDocument.activeElement?.id === 'rich'`, 5000)
+    await browser!.press(s, 'e')
+    await sleep(300)
+    expect(await browser!.eval(s, `document.querySelector('.sh-node[data-node="${k}"] iframe').contentDocument.querySelector('#rich').textContent`)).toBe('Rich texte')
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(id)
     // Esc leaves the field and interact - the capture still records; E now ends it
     await esc()
     await until(`window.__mvStore.getState().interact === null`, 3000)
@@ -611,6 +622,11 @@ describe('captures in the browser: the first trial', () => {
     const b1 = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     expect(await browser!.eval(s, `window.__mvJamUi.getState().panel`)).toBeNull()
     await until(`!document.querySelector('.jm-lane [data-tile="${a}"]')`, 3000)
+    // the lane's keys never reach the draft that stepped aside
+    expect(await browser!.eval(s, `window.__mvJamUi.getState().selected`)).not.toBe(a)
+    await key('q'); await sleep(100)
+    expect(await browser!.eval(s, `window.__mvJamUi.getState().selected`)).not.toBe(a)
+    await browser!.eval(s, `window.__mvJamUi.getState().setLaneKeys(false), 1`)
     // the resumed capture carries the first part already
     expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(b1)}].steps.filter((x) => x.event === 'note').map((x) => x.text)`)).toEqual(['first part'])
     // Esc: the resumed capture goes, the draft is back as it was
@@ -652,7 +668,9 @@ describe('captures in the browser: the first trial', () => {
     expect(await width(a)).toBe(wa)
     const gap = await browser!.eval(s, `(() => { const x = document.querySelector('.jm-lane [data-tile="${a}"]').getBoundingClientRect(), y = document.querySelector('.jm-lane [data-tile="${b}"]').getBoundingClientRect(); return Math.round(y.left - x.right) })()`)
     expect(gap).toBe(10)
-    // the tooltip: the shell's own, the whole title - only for the title cut short
+    // the tooltip: the shell's own, the whole title - only for the title cut short (the pointer comes in
+    // from elsewhere: it may already rest where the tile now is)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 700, y: 300 }, s)
     await hover(`.jm-lane [data-tile="${a}"] .t`)
     await until(`/move the footer link under the price, with more room above/.test(document.querySelector('.sh-tip')?.textContent ?? '')`, 3000)
     expect(await browser!.eval(s, `document.querySelector('.jm-lane [data-tile="${a}"]').getAttribute('title')`)).toBeNull()

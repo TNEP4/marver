@@ -648,6 +648,49 @@ describe('captures: the first trial (Resume, Rename, the words)', () => {
     done()
   })
 
+  it('Resume is refused from a record changed after its seal, and for a record that does not continue it', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const a = rec()
+    await jam.capture(a)
+    const at = 1_010_000
+    // not a continuation: a step of the draft is missing
+    const gap = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...a.timeline.slice(1), { at: at + 5, event: 'note', text: 'x' }] })
+    expect((await jam.capture(gap)).error).toMatch(/does not continue/)
+    // moved by two different offsets
+    const skew = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: a.timeline.map((x, i) => ({ ...x, at: x.at + (i ? 10 : 0) })) })
+    expect((await jam.capture(skew)).error).toMatch(/does not continue/)
+    expect(jam.sealed(a.id)).toBe(true)
+    // the draft's file changed on disk after its seal
+    const f = join(root, 'design', '.local', 'jam', 'captures', `${a.id}.json`)
+    writeFileSync(f, readFileSync(f, 'utf8').replace('the outline one', 'the filled one'))
+    expect(jam.sealed(a.id)).toBe(false)
+    const b = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...a.timeline, { at: at + 5, event: 'note', text: 'more' }] })
+    expect((await jam.capture(b)).error).toMatch(/changed after it was sealed/)
+    jam.stop()
+    expect(card(jam, a.id).state).toBe('draft')
+    done()
+  })
+
+  it('the edit carried on takes only what came after the resume - a note you deleted at the end of the draft stays deleted; a draft decided meanwhile still gives its edit', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    const a0 = rec()
+    const a = rec({ timeline: a0.timeline.filter((x) => x.event !== 'theme') })   // it ends on its note
+    expect(a.timeline[a.timeline.length - 1].event).toBe('note')
+    const ca = await jam.capture(a)
+    await jam.act(a.id, ca.card!.rev, 'edit', 'only the badge')   // the trailing note deleted
+    await jam.act(a.id, card(jam, a.id).rev, 'keep')               // decided in another tab while this one resumes
+    const last = a.timeline[a.timeline.length - 1].at
+    const at = last + 1   // the client puts everything carried over strictly before the resume
+    const b = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...a.timeline, { at: at + 5, event: 'note', text: 'and the footer' }] })
+    expect((await jam.capture(b)).ok).toBe(true)
+    jam.stop()
+    expect(card(jam, b.id).payload.edited).toBe('only the badge\nand the footer')
+    expect(card(jam, a.id).state).not.toBe('dropped')
+    done()
+  })
+
   it('a record that names itself as the draft it resumes, or a bad id, carries no resume', () => {
     const r = rec()
     const self = checkRecord({ ...r, context: { ...r.context, resumes: { id: r.id, at: 5 } } }) as CaptureRecord

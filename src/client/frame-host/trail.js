@@ -24,6 +24,13 @@ const HOVER_SLOP = 4
 const SCROLL_SETTLE_MS = 400
 
 const now = () => performance.timeOrigin + performance.now()
+/** The element whose contenteditable makes `el` editable - the outermost editable ancestor. */
+const editingHost = (el) => {
+  if (!el.isContentEditable) return null
+  let h = el
+  while (h.parentElement && h.parentElement.isContentEditable) h = h.parentElement
+  return h
+}
 const nonce = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
 
 /**
@@ -159,11 +166,15 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
     }
     else if (m.type === 'sh:focus-at' && Number.isFinite(m.x) && Number.isFinite(m.y)) {
       const el = document.elementFromPoint(m.x, m.y)
-      const f = el && (el.isContentEditable ? el : el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))
+      // the field itself - for rich text, its editing host (a span inside it is not focusable)
+      const f = el && (el.closest('input, textarea, select') ?? editingHost(el))
       if (f && typeof f.focus === 'function') {
         f.focus({ preventScroll: true })
         // the caret at the end of what is there, as a click at the end of the text would leave it
-        try { if (typeof f.value === 'string' && typeof f.setSelectionRange === 'function') f.setSelectionRange(f.value.length, f.value.length) } catch { /* a type without a selection (email, number) */ }
+        try {
+          if (typeof f.value === 'string' && typeof f.setSelectionRange === 'function') f.setSelectionRange(f.value.length, f.value.length)
+          else if (f.isContentEditable) { const r = document.createRange(); r.selectNodeContents(f); r.collapse(false); const sel = getSelection(); sel?.removeAllRanges(); sel?.addRange(r) }
+        } catch { /* a type without a selection (email, number) */ }
       }
     }
   })

@@ -635,15 +635,18 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
   // lane, its name, your edit with the new words after it) and the draft leaves. A draft already
   // decided (confirmed, kept, dropped) is not taken: the record is then a capture of its own.
   const rs = record.context.resumes
-  const prev = rs ? j.cards.find((c) => c.id === rs.id && c.kind === 'capture' && c.state === 'draft' && c.board === record.context.board) : undefined
+  // what it carries on from (your edit, its name, the review it followed) - whatever became of it - and
+  // the draft it replaces, only while that is still a draft
+  const src = rs ? j.cards.find((c) => c.id === rs.id && c.kind === 'capture' && c.board === record.context.board) : undefined
+  const prev = src?.state === 'draft' ? src : undefined
   const made = prev?.made ?? (madeOf(record.id) || now)
-  const r = record.context.reviewing ?? prev?.reviewing
-  const more = prev?.payload?.edited !== undefined && rs ? wordsSince(record, rs.at) : ''
-  const edited = prev?.payload?.edited !== undefined ? [prev.payload.edited.trim(), more].filter(Boolean).join('\n') : undefined
+  const r = record.context.reviewing ?? src?.reviewing
+  const more = src?.payload?.edited !== undefined && rs ? wordsSince(record, rs.at) : ''
+  const edited = src?.payload?.edited !== undefined ? [src.payload.edited.trim(), more].filter(Boolean).join('\n') : undefined
   const c: Card = {
     id: record.id, kind: 'capture', board: record.context.board, frames: captureFrames(record), capture: record.id, events: [],
     state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}) },
-    ...(r ? { reviewing: r, follows: r.card } : {}), ...(prev?.name ? { name: prev.name } : {}),
+    ...(r ? { reviewing: r, follows: r.card } : {}), ...(src?.name ? { name: src.name } : {}),
   }
   if (prev) set(prev, 'dropped', now, `resumed as ${record.id}`)
   j.cards.push(c)

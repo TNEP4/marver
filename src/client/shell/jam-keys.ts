@@ -32,7 +32,12 @@ export function laneCards(cards: JamCard[] | null, run: { since: number } | null
   return cards.filter((c) => (c.kind === 'capture' || c.kind === 'wrapup') && c.state !== 'dropped' && (run ? c.made >= run.since : c.state !== 'done' && c.state !== 'kept'))
     .sort((a, b) => a.made - b.made)
 }
-const toReview = () => laneCards(useJamQueue.getState().cards, useJamQueue.getState().run).filter((c) => c.state === 'review')
+/** The lane as shown: a draft being resumed steps aside (the recording stands for it) while it is a draft. */
+export function shownLane(cards: JamCard[] | null, run: { since: number } | null, resuming: string[]): JamCard[] {
+  return laneCards(cards, run).filter((c) => !(c.state === 'draft' && resuming.includes(c.id)))
+}
+const lane = () => shownLane(useJamQueue.getState().cards, useJamQueue.getState().run, useJamCapture.getState().resuming)
+const toReview = () => lane().filter((c) => c.state === 'review')
 const cardById = (id: string | null | undefined) => (id ? useJamQueue.getState().cards?.find((c) => c.id === id) : undefined)
 
 // ---- deciding a draft: one path for the buttons and the keys ---------------------------------------
@@ -83,7 +88,10 @@ export async function resumeDraft(id: string) {
   const c = cardById(id)
   if (!c || c.state !== 'draft') return
   const ui = useJamUi.getState()
-  if (await useJamCapture.getState().resume(id)) { if (ui.panel?.id === id) ui.close() }
+  if (await useJamCapture.getState().resume(id)) {
+    if (ui.panel?.id === id) ui.close()
+    if (ui.selected === id) ui.select(null)   // its tile has stepped aside: nothing points at it
+  }
 }
 
 /** What clicking a tile (or ⏎ on it) does: a review opens the review detail, a card that asks opens
@@ -180,7 +188,7 @@ const rows = (): Row[] => {
     { // the lane has the keyboard
       on: () => ui.laneKeys,
       keys: (() => {
-        const list = laneCards(useJamQueue.getState().cards, useJamQueue.getState().run)
+        const list = lane()
         const at = Math.max(0, list.findIndex((c) => c.id === ui.selected))
         const sel = list[at]
         const move = (d: number) => { const n = list[Math.min(list.length - 1, Math.max(0, at + d))]; if (n) ui.select(n.id) }
@@ -198,7 +206,7 @@ const rows = (): Row[] => {
       on: () => !PUBLISHED,
       keys: {
         s: () => cap.start(reviewNow()),
-        q: () => { const list = laneCards(useJamQueue.getState().cards, useJamQueue.getState().run); if (!list.length) return; ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) },
+        q: () => { const list = lane(); if (!list.length) return; ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) },
         v: () => { const n = nextReview(); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } else useStore.getState().toast('nothing to review') },
       },
     },

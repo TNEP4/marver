@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
-import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit } from './jam-keys.ts'
+import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, CheckIcon, CommentIcon, EyeIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
@@ -61,21 +61,22 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // the read-back of the capture just ended opens when capturing stops - over a review too (a capture
   // made during a review is confirmed in its read-back; the review it follows stays bound in its record).
   // It waits for that capture's own card: a resumed one replaces its draft, which must not open instead
-  const [shownSeal, setShownSeal] = useState(0)
+  // the capture ENDED last, not the one that sealed last (pictures can keep an earlier one sealing longer)
+  const [shownFor, setShownFor] = useState<string | null>(null)
   useEffect(() => {
-    if (cap.current || cap.sealed.length <= shownSeal) return
-    const sealed = cap.sealed[cap.sealed.length - 1]
+    if (cap.current || !cap.lastEnded || cap.lastEnded === shownFor) return
+    const sealed = cap.sealed.find((x) => x.id === cap.lastEnded)
     if (!sealed?.card) return
     const draft = cards?.find((c) => c.id === sealed.card!.id && c.state === 'draft')
     if (!draft) return
-    setShownSeal(cap.sealed.length)
+    setShownFor(cap.lastEnded)
     if (ui.panel?.kind === 'capture' && ui.panel.id === draft.id) return
     ui.open({ kind: 'capture', id: draft.id })
     reveal(draft)
-  }, [cap.current, cap.sealed, cards])
+  }, [cap.current, cap.sealed, cap.lastEnded, cards])
 
   // a draft being resumed is the capture recording (or sealing) now: its own tile steps aside
-  const list = laneCards(cards, run).filter((c) => !cap.resuming.includes(c.id))
+  const list = shownLane(cards, run, cap.resuming)
   const cm = useContextMenu()
   const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
   const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean } }))

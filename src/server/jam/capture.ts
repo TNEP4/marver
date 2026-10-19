@@ -161,9 +161,22 @@ export function captureWords(r: CaptureRecord, edited?: string): string {
 }
 
 
-/** The words and notes said or written from `since` on (a resumed capture's new part), in time order. */
+/** The words and notes said or written after `since` (a resumed capture's new part - every step it
+ *  carried over sits before that instant), in time order. */
 export function wordsSince(r: CaptureRecord, since: number): string {
-  return r.timeline.filter((s) => s.at >= since).flatMap((s) => (s.event === 'words' || s.event === 'note' ? [s.text.trim()] : [])).filter(Boolean).join('\n')
+  return speechLines(r.timeline.filter((s) => s.at > since).flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : [])))
+}
+
+/** Does `next` continue `prev` (Resume)? Every step of `prev`, in order, moved by one offset, comes
+ *  first, all before `at`; then only steps after `at`; and every picture of `prev` is kept. */
+export function continues(prev: CaptureRecord, next: CaptureRecord, at: number): boolean {
+  const a = prev.timeline, b = next.timeline
+  if (b.length < a.length || !prev.pictures.every((p) => next.pictures.includes(p))) return false
+  if (!a.length) return b.every((x) => x.at > at)
+  const d = b[0].at - a[0].at
+  const same = (x: Step, y: Step) => { const { at: _x, ...rx } = x; const { at: _y, ...ry } = y; return JSON.stringify(rx) === JSON.stringify(ry) }
+  for (let i = 0; i < a.length; i++) if (b[i].at - a[i].at !== d || b[i].at >= at || !same(a[i], b[i])) return false
+  return b.slice(a.length).every((x) => x.at > at)
 }
 
 /** The first pick or click: where the capture's comment is pinned. */

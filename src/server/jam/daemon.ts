@@ -33,9 +33,9 @@ import { act, addCapture, answeredSince, captureIntact, beginStep, captureCommen
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
-import { captureFrames, checkRecord, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
+import { captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
-import { record as ledgerRecord } from './ledger.ts'
+import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -54,6 +54,9 @@ export interface JamCore {
   act(id: string, rev: number, action: string, body?: string): Promise<{ ok: boolean; card?: Card; error?: string }>
   /** A sealed capture from the page (POST /jam/capture): stored once, a draft card (or queued at once). */
   capture(record: unknown): Promise<{ ok: boolean; card?: Card; error?: string }>
+  /** Is this capture's record still the one sealed (its bytes hash to what its card holds)? Resume
+   *  starts only from an intact record. */
+  sealed(id: string): boolean
   /** ingest now (the page's comment route, right after it appends) */
   poke(): Promise<void>
 }
@@ -772,6 +775,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     await idle()
   }
 
+  /** A capture's record is the one sealed: its card holds the hash of these bytes, ledgered at the seal. */
+  const sourceIntact = (id: string): boolean => {
+    const card = q.j.cards.find((c) => c.id === id && c.kind === 'capture')
+    const cap = readCapture(root, id)
+    return !!card?.payload && !!cap && cap.hash === card.payload.recordHash && ledgerHas(root, card.board, `capture:${id}:${cap.hash}`)
+  }
+  /** Already stored under this id (a retried upload): the checks ran when it was first taken. */
+  const storedOnce = (rec: { id: string }) => q.j.cards.some((c) => c.id === rec.id)
+
   /** Two pictures with the same bytes (the same render of the same pixels). */
   const samePicture = (a: string, b: string): boolean => {
     const fa = picturePath(root, a), fb = picturePath(root, b)
@@ -838,9 +850,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     snapshot() { return q.j },
     view,
+    sealed: (id) => sourceIntact(id),
     async capture(raw) {
       const rec = checkRecord(raw)
       if (typeof rec === 'string') return { ok: false, error: rec }
+      // Resume: only from a record still as it was sealed, and only as its continuation - every step of
+      // it, moved by one offset, ahead of the new ones, and its pictures kept
+      const rs = rec.context.resumes
+      if (rs && !storedOnce(rec)) {
+        const src = readCapture(root, rs.id)
+        if (!src || !sourceIntact(rs.id)) return { ok: false, error: 'the capture it resumes changed after it was sealed - capture it again' }
+        if (!continues(src.record, rec, rs.at)) return { ok: false, error: 'this capture does not continue the one it resumes' }
+      }
       const stored = storeCapture(root, rec)
       if (typeof stored === 'string') return { ok: false, error: stored }
       ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
@@ -918,6 +939,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.view = () => core.view()
   jamLive.act = (id, rev, action, body) => core.act(id, rev, action, body)
   jamLive.capture = (record) => core.capture(record)
+  jamLive.sealed = (id) => core.sealed(id)
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.

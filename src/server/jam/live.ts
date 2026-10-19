@@ -29,4 +29,5 @@ export const jamLive: {
   view?: () => QueueView
   act?: (id: string, rev: number, action: string, body?: string) => Promise<{ ok: boolean; card?: unknown; error?: string }>
   capture?: (record: unknown) => Promise<{ ok: boolean; card?: unknown; error?: string }>
+  sealed?: (id: string) => boolean
 } = {}

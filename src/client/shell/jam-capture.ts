@@ -117,6 +117,8 @@ interface CaptureState {
   resume(draft: string): Promise<boolean>
   /** drafts being continued right now (recording, sealing or waiting to send) - the lane hides them */
   resuming: string[]
+  /** the capture ended last (E): its read-back is the one that opens, whatever seals first */
+  lastEnded: string | null
 }
 
 const mutate = (fn: (s: CaptureState) => void) => useJamCapture.setState((s) => { fn(s); return { caps: { ...s.caps }, tick: s.tick + 1 } })
@@ -446,7 +448,8 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   const t = now()
   // Resume: the draft's steps, moved up so its last step meets this instant (the pause between the two
   // is not part of the capture), its pictures and its numbered points; then recording goes on
-  const shift = from ? t - (from.timeline[from.timeline.length - 1]?.at ?? t) : 0
+  // (to just before this instant: everything carried over is strictly before `resumes.at`, the new part after)
+  const shift = from ? t - 1 - (from.timeline[from.timeline.length - 1]?.at ?? t) : 0
   const steps = from ? from.timeline.map((x) => ({ ...x, at: x.at + shift })) : []
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
@@ -573,12 +576,15 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   sealed: [],
   unsent: [],
   resuming: [],
+  lastEnded: null,
   async resume(draft) {
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
     let rec: CaptureRecord | null = null
     try {
       const r = await fetch(`${ROUTE}/api/jam/capture?id=${encodeURIComponent(draft)}`, { headers: { 'x-mv-c': csrf() } })
-      rec = r.ok ? ((await r.json()) as { record?: CaptureRecord }).record ?? null : null
+      const body = r.ok ? ((await r.json()) as { record?: CaptureRecord; sealed?: boolean }) : null
+      if (body?.record && body.sealed !== true) { useStore.getState().toast('the capture changed after it was sealed - it cannot be resumed'); return false }
+      rec = body?.record ?? null
     } catch { rec = null }
     if (!rec) { useStore.getState().toast('the capture could not be loaded to resume it'); return false }
     if (get().current) return false
@@ -593,7 +599,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   end() {
     const id = get().current
     if (!id) return
-    set({ current: null })
+    set({ current: null, lastEnded: id })
     cancelDwell()
     drain(id)
     unwatch?.(); unwatch = null
