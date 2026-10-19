@@ -1596,6 +1596,13 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-chip .stop:hover { background: var(--glass-hover); color: var(--glass-ink) }
 .jm-chip .stop:disabled svg { color: var(--glass-ink-3) }
 .jm-chip.finishing .time { color: var(--glass-ink-2) }
+/* a session between captures (trial 2): still on - the same dot - and Capture (S) starts the next */
+.jm-chip.between .stats { gap: 5px }
+.jm-chip .go { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 9px; flex: none; border: 0;
+  border-radius: 7px; background: none; font: 600 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink); cursor: pointer }
+.jm-chip .go::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--jm-rec); flex: none }
+.jm-chip .go kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; padding: 0 }
+.jm-chip .go:hover { background: var(--glass-hover) }
 
 /* points: screen-constant markers (scale by --sh-inv inside a World) */
 .jm-pt { position: absolute; transform: translate(-50%, -50%) scale(var(--sh-inv, 1)); display: inline-flex; align-items: center;

@@ -21,6 +21,7 @@ import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId } from './ja
 import { HARNESS } from './Comments.tsx'
 import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlashIcon, WarningIcon, WaveformIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
+import { useSessionClock } from './jam-lane.tsx'
 import { useStore } from './store.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -48,7 +49,15 @@ export async function startSession(): Promise<boolean> {
   // the talk starts once the queue shows the session - whichever comes first: the push (before the answer,
   // or after it), or the refresh; a session ended meanwhile never gets the microphone
   const hear = () => { if (useJamQueue.getState().session?.id === id && voiceSessionId() !== id) void voiceSession(id, now()) }
-  const ok = await post({ action: 'start', id }, (ok) => { if (!ok) return; try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ } hear() })
+  const ok = await post({ action: 'start', id }, (ok) => {
+    if (!ok) return
+    try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ }
+    useJamUi.getState().setSheet(null)
+    // the session starts capturing at once - its first capture is under way as soon as it starts (its talk
+    // begins when that capture ends)
+    if (!useJamCapture.getState().current) useJamCapture.getState().start(undefined, id)
+    hear()
+  })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }
   useJamUi.getState().setSheet(null)
   hear()
@@ -111,18 +120,14 @@ export function pressJ() {
 // ---- the Jam button ----------------------------------------------------------------------------------------
 
 /** The session's length in minutes, ticking. */
-function useMinutes(since: number | undefined): string {
-  const [, tick] = useState(0)
-  useEffect(() => { if (since === undefined) return; const t = setInterval(() => tick((n) => n + 1), 15_000); return () => clearInterval(t) }, [since])
-  return since === undefined ? '' : `${Math.max(0, Math.floor((Date.now() - since) / 60_000))}m`
-}
+
 
 export function JamButton({ inPlay }: { inPlay?: boolean }) {
   const session = useJamQueue((s) => s.session)
   const recording = useJamCapture((s) => !!s.current)
   const sheet = useJamUi((s) => s.sheet)
   const voice = useJamVoice()
-  const minutes = useMinutes(session?.since)
+  const minutes = useSessionClock(session?.since)
   // off: no, blocked, no engine - or stopped (another tab has it, the connection went) while you said yes
   const micOff = voice.choice === 'no' || voice.denied || voice.server === 'unavailable' || (!!session && voice.choice === 'yes' && !voice.live && !recording)
   const state = recording ? 'rec' : session ? 'live' : 'idle'
@@ -131,8 +136,10 @@ export function JamButton({ inPlay }: { inPlay?: boolean }) {
     <Tip side="bottom" inv={inPlay} label={label}>
       <button className={`sh-pill-btn jm-jam${state !== 'idle' ? ` ${state}` : ''}${sheet === 'start' || sheet === 'wrap' ? ' press' : ''}`}
         data-jam-button={state} aria-label={session ? 'End the Jam session' : 'Jam session'} onClick={pressJ}>
-        {state === 'rec' ? <i className="jm-live-dot" /> : session && micOff ? <MicrophoneSlashIcon size={15} className="jm-nomic" /> : <WaveformIcon size={16} />}
+        {/* the whole session reads as on: the dot pulses from start to end, between captures too */}
+        {session ? <i className="jm-live-dot" /> : <WaveformIcon size={16} />}
         {session && <span className="jm-clock">{minutes}</span>}
+        {session && micOff && <MicrophoneSlashIcon size={14} className="jm-nomic" />}
       </button>
     </Tip>
   )
@@ -173,7 +180,7 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
     <div className="jm-panel jm-sheet" data-jam-sheet="start" style={style}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <h3>Jam session</h3>
-        <p>Talk, point, capture. Each capture goes to the agent.</p>
+        <p>Start captures at once. Between captures the session stays on; S captures again, J wraps up.</p>
       </div>
       <div className="rows">
         <button className="row" data-jam-mic-switch={mic ? 'on' : 'off'} onClick={() => voice.setChoice(mic ? 'no' : 'yes')}>

@@ -33,7 +33,9 @@ export function useLaneShown(): boolean {
   const run = useJamQueue((s) => s.run)
   // a capture recording, sealing or waiting to send keeps the lane up until its server card arrives
   const busy = useJamCapture((s) => !!s.current || Object.keys(s.caps).length > 0 || s.unsent.length > 0)
-  return !PUBLISHED && (busy || laneCards(cards, run).length > 0)
+  // a session keeps it up from start to end: between captures its own tile says it is still on
+  const session = useJamQueue((s) => !!s.session)
+  return !PUBLISHED && (busy || session || laneCards(cards, run).length > 0)
 }
 
 /** A capture's record, loaded once per id for its detail. */
@@ -133,6 +135,12 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
       ...(voice.hearing === cap.current ? { mic: 'on' as const } : voice.choice !== null || voice.denied ? { mic: 'off' as const, onMic: () => useJamVoice.setState({ asking: true, choice: null }) } : {}) }
   })() : undefined
 
+  // a session between captures (none recording, none still sealing here): its own tile
+  const between = session && !cap.current ? {
+    since: session.since, mic: voice.live,
+    onCapture: () => useJamCapture.getState().start(),
+  } : undefined
+
   const panelCard = ui.panel ? cards?.find((c) => c.id === ui.panel!.id) : undefined
   const rec = useRecord(ui.panel?.kind === 'capture' || ui.panel?.kind === 'review' ? ui.panel.id : undefined)
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
@@ -160,14 +168,15 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const folded = playing && !ui.laneKeys
   return (
     <>
-      {cap.current && <EdgeRing />}
+      {/* the edges glow while a capture records - and for the whole session, between captures too */}
+      {(cap.current || session) && <EdgeRing />}
       {ui.sheet === 'start' && <div className="jm-sheet-at"><StartSheet /></div>}
       {ui.sheet === 'wrap' && <div className="jm-sheet-at"><WrapSheet /></div>}
       {askAlone && !sheetOpen && <div className="jm-sheet-at"><VoiceAsk {...voiceAsk(voice)} /></div>}
       {folded && shown && <PlayCounter cards={list} style={{ left: playNavRight(), bottom: 'var(--edge)' }} />}
       {shown && (
         <CaptureLaneRow
-          tiles={folded ? [] : tiles} recording={recording} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
+          tiles={folded ? [] : tiles} recording={recording} between={between} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
           onOpen={(id) => openTile(id)}
           onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c)) } else e.preventDefault() }}
           ask={voice.asking && cap.current ? voiceAsk(voice) : undefined}

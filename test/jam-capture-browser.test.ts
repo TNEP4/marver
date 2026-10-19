@@ -695,6 +695,9 @@ describe('captures in the browser: the first trial', () => {
     await enter()
     await until(`document.querySelector('.jm-lane [data-tile="${b}"] .t')?.textContent === 'Badge fix'`, 5000)
     expect(await browser!.eval(s, `!!document.querySelector('.sh-ctxmenu')`)).toBe(false)
+    // (every frame on screen first: where the canvas last fitted depends on the frames the captures touched)
+    { const b = { key: '!', code: 'Digit1', windowsVirtualKeyCode: 49, modifiers: 8 }; await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...b }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...b }, s) }
+    await sleep(700)
     // a click anywhere else on the canvas - empty space or a frame - lets a selected tile go (no panel open)
     for (const where of ['empty', 'frame']) {
       await browser!.eval(s, `(window.__mvJamUi.getState().close(), window.__mvJamUi.getState().select(${JSON.stringify(a)}), 1)`)
@@ -791,4 +794,31 @@ describe('captures in the browser: the first trial', () => {
     await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(r)}), 'good')`)
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
   }, 150_000)
+
+  skippable('a capture is about the frames you touched: with four on screen and one selected, E pictures that one alone, once - its card names it alone; with none touched, one picture', async () => {
+    const getRec = (id: string) => browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
+    // one frame selected as it starts
+    const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/bravo').key`)
+    await browser!.eval(s, `(window.__mvStore.getState().select(${JSON.stringify(k)}), 1)`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('just this one'), 1`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    const rec = await getRec(id)
+    const pics = rec.record.timeline.filter((x: any) => x.event === 'picture')
+    expect(pics.map((x: any) => x.frame)).toEqual(['spec/bravo'])
+    expect((await cardsNow()).find((c: any) => c.id === id).frames).toEqual(['spec/bravo'])
+    await decide(id, 'drop')
+    // nothing touched: one picture, of where it began
+    await browser!.eval(s, `(window.__mvStore.getState().select(null), 1)`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id2 = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('somewhere here'), 1`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id2)} && c.state === 'draft')`, 30_000)
+    const rec2 = await getRec(id2)
+    expect(rec2.record.timeline.filter((x: any) => x.event === 'picture')).toHaveLength(1)
+    await decide(id2, 'drop')
+  })
 })

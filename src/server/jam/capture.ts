@@ -13,6 +13,7 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, re
 import { join, relative, resolve, sep } from 'node:path'
 import { sanitize } from './packet.ts'
 import { speechLines } from '../../shared/speech.ts'
+import { touchedFrames } from '../../shared/capture-frames.ts'
 import type { Bundle, CaptureRecord, Step, View } from './types.ts'
 
 export const CAPTURE_ID = /^cap-\d{10,16}-[a-z0-9]{4,12}$/
@@ -135,22 +136,10 @@ export function readCapture(root: string, id: string): { record: CaptureRecord; 
 /** When the capture started: the time in its id. */
 export const madeOf = (id: string): number => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
 
-/** The frames a capture names, focus first: the frames selected when it started (the view's, when a
- *  selection led it), then every frame picked, clicked, hovered or changed in, then the frames in view. */
+/** The frames a capture is about (what its run reserves, and pictures before and after): the ones you
+ *  touched, not every frame that was on screen - the rule is shared with the page (shared/capture-frames.ts). */
 export function captureFrames(r: CaptureRecord): string[] {
-  const out: string[] = []
-  const add = (f?: string) => { if (f && !out.includes(f)) out.push(f) }
-  const firstSelect = r.timeline.find((s) => s.event === 'select') as Extract<Step, { event: 'select' }> | undefined
-  if (firstSelect && firstSelect.at <= (r.timeline[0]?.at ?? 0) + 50) firstSelect.frames.forEach(add)
-  for (const s of r.timeline) if (['pick', 'click', 'hover', 'field', 'device', 'picture'].includes(s.event)) add(s.frame ?? (s as { frame?: string }).frame)
-  // every screen visited and every view after the first: a note about B, reached without a click, names B
-  for (const s of r.timeline) {
-    if (s.event === 'select') s.frames.forEach(add)
-    else if (s.event === 'screen') add(s.to)
-    else if (s.event === 'view') (s.view.frames ?? []).forEach(add)
-  }
-  ;(r.view.frames ?? []).forEach(add)
-  return out
+  return touchedFrames(r.timeline, r.view)
 }
 
 /** What you said and wrote, in time order: the words and the notes merged - or your edit. */

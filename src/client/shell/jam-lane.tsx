@@ -60,9 +60,38 @@ export interface LaneRecording {
  * changes when a new capture or draft arrives - the lane scrolls back to its right end then (a manual
  * scroll back stays put until the next change).
  */
-export function Lane({ tiles, recording, selected, keyboard, onOpen, onMenu, followEnd }: {
+/** The session's length: seconds in its first minute ("42s"), then minutes ("3m"). */
+export const sessionClock = (since: number, t = Date.now()): string => {
+  const sec = Math.max(0, Math.floor((t - since) / 1000))
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m`
+}
+/** The session's clock, ticking - every second in its first minute, then often enough for the minutes. */
+export function useSessionClock(since: number | undefined): string {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (since === undefined) return
+    let t: ReturnType<typeof setTimeout>
+    const next = () => { t = setTimeout(() => { tick((n) => n + 1); next() }, Date.now() - since < 60_000 ? 1000 : 5000) }
+    next()
+    return () => clearTimeout(t)
+  }, [since])
+  return since === undefined ? '' : sessionClock(since)
+}
+
+/** A session between captures: still on - its talk heard - and S starts the next capture. */
+export interface LaneBetween {
+  /** when the session began (its clock) */
+  since: number
+  /** the microphone hears the session's talk */
+  mic: boolean
+  onCapture(): void
+}
+
+export function Lane({ tiles, recording, between, selected, keyboard, onOpen, onMenu, followEnd }: {
   tiles: LaneTile[]
   recording?: LaneRecording
+  /** no capture recording in a session: its own tile, last */
+  between?: LaneBetween
   selected?: string
   keyboard?: boolean
   onOpen(id: string): void
@@ -84,7 +113,7 @@ export function Lane({ tiles, recording, selected, keyboard, onOpen, onMenu, fol
     const el = ref.current
     if (el) el.scrollLeft = el.scrollWidth
     measure()
-  }, [followEnd, tiles.length, !!recording])
+  }, [followEnd, tiles.length, !!recording, !!between])
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -125,8 +154,24 @@ export function Lane({ tiles, recording, selected, keyboard, onOpen, onMenu, fol
             {t.exclusive && <span className="x" aria-label="changes a shared file"><FileCodeIcon size={13} /></span>}
           </button>
         ))}
-        {recording && <CaptureTile {...recording} />}
+        {recording ? <CaptureTile {...recording} /> : between ? <BetweenTile {...between} /> : null}
       </div>
+    </div>
+  )
+}
+
+/** The session between captures: the same pulsing dot, "Jam on" and its clock, what it hears - then Capture (S). */
+export function BetweenTile({ since, mic, onCapture }: LaneBetween) {
+  const time = useSessionClock(since)
+  return (
+    <div className="jm-chip between" data-tile="between">
+      <i className="jm-live-dot" />
+      <span className="tx">
+        <span className="lead">Jam on<span className="time">{time}</span></span>
+        <span className="stats">{mic ? <><MicrophoneIcon size={12} />Listening between captures</> : <><MicrophoneSlashIcon size={12} />Between captures</>}</span>
+      </span>
+      <i className="sep" />
+      <button className="go" onClick={onCapture}>Capture<kbd>S</kbd></button>
     </div>
   )
 }

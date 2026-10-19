@@ -19,6 +19,7 @@ import { CONFIG, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
+import { touchedFrames } from '../../shared/capture-frames.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -86,6 +87,7 @@ interface Cap {
   pictures: string[]
   probes: number                           // probe answers still out
   shots: number                            // picture requests still out
+  shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
@@ -105,7 +107,8 @@ interface CaptureState {
   /** a number that changes on every capture change - for components to redraw (timer, counts) */
   tick: number
   /** Start one - never while one records (it says so instead) */
-  start(reviewing?: Cap['reviewing']): void
+  /** `session`: the session it belongs to, when the caller knows it before the queue shows it (Start) */
+  start(reviewing?: Cap['reviewing'], session?: string): void
   end(): void
   drop(): void
   note(text: string): void
@@ -423,6 +426,10 @@ let pointerAt: { key: string; at: number } | null = null
 function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: string) {
   const c = capOf(id)
   if (!c || c.pictures.length + c.shots >= MAX_PICTURES) return
+  // each picture is a render on the server, and the capture waits for it as it ends: a point or the end
+  // pictures a frame once - only I asks for another
+  if (why !== 'key' && c.shotFrames.includes(frame)) return
+  mutate((s) => { const x = s.caps[id]; if (x && !x.shotFrames.includes(frame)) x.shotFrames.push(frame) })
   const at = now()
   // the instance it was seen in: its size (a responsive defect is shot as seen) and its theme
   const st = useStore.getState()
@@ -506,7 +513,7 @@ function releaseOpen(capture: string, tell: boolean) {
 let sessionNow: () => string | undefined = () => undefined
 void import('./jam-queue.ts').then(({ useJamQueue }) => { sessionNow = () => useJamQueue.getState().session?.id })
 
-function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
+function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord, session = sessionNow()): boolean {
   const s = useStore.getState()
   // checked here, as recording starts: a Resume that began loading before the session's wrap-up never
   // starts recording into it
@@ -527,8 +534,8 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
-    probes: 0, shots: 0, hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
-    ...(sessionNow() ? { session: sessionNow() } : {}),
+    probes: 0, shots: 0, shotFrames: steps.flatMap((x) => (x.event === 'picture' && x.frame ? [x.frame] : [])), hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
+    ...(session ? { session } : {}),
   }
   // what is on screen and selected as it starts - a resumed one too, just after the resume (you may have
   // moved to another frame in the pause: the record names it)
@@ -560,11 +567,17 @@ function drain(id: string) {
     for (const inst of instances.values()) if (inst.captureDoc && current(inst)) x.flushWait.set(inst.key, inst.captureDoc)
   })
   useJamCapture.setState({ noteDraft: '', noteOpen: false })
-  // the frames in view, shot at E - each as the instance shows it (a narrow, dark second copy as itself)
+  // the frames it is about, pictured at E - those not pictured in it yet, three at most - each as the instance on
+  // screen shows it (a narrow, dark second copy as itself); never every frame that happens to be in view
   const st = useStore.getState()
   if (st.play) shoot(id, st.play.at, 'end')
   else {
-    for (const n of visibleNodes().slice(0, 3)) shoot(id, n.frame, 'end', n.key)   // what is on screen at E
+    const c2 = capOf(id)
+    const onScreen = visibleNodes()
+    // (none touched: the one frame it began on - its words were about the place, one picture shows it)
+    const touched = touchedFrames(c2?.steps ?? [], undefined, false)
+    const frames = (touched.length ? touched : touchedFrames(c2?.steps ?? []).slice(0, 1)).filter((f) => !c2?.shotFrames.includes(f)).slice(0, 3)
+    for (const f of frames) shoot(id, f, 'end', onScreen.find((n) => n.frame === f)?.key)
   }
   broadcast({ type: 'sh:capture', id, on: false })
   // the audio is cut at the key press, then its last words are awaited (3 s at most)
@@ -696,11 +709,11 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return false }
     return resumeNow(draft, ready)
   },
-  start(reviewing) {
+  start(reviewing, session) {
     // one capture at a time: the one recording is ended or dropped first
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return }
     if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return }
-    begin(reviewing)
+    begin(reviewing, undefined, session)
   },
   end() {
     const id = get().current
@@ -747,7 +760,7 @@ export function captureCounts(c: Cap | undefined, t = now()): { time: string; co
   if (!c) return { time: '0:00', counts: '', notes: 0 }
   const sec = Math.max(0, Math.floor((t - c.t0) / 1000))
   const steps = c.steps.filter((x) => ['select', 'device', 'theme', 'copied', 'interact'].includes(x.event)).length
-  const frames = new Set(c.steps.flatMap((x) => (x.frame ? [x.frame] : []))).size
+  const frames = touchedFrames(c.steps).length
   const plural = (n: number, w: string) => (n ? `${n} ${w}${n === 1 ? '' : 's'}` : '')
   return {
     time: `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`,

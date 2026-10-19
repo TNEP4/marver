@@ -4,6 +4,7 @@ import { letGoOfTile } from './jam-state.ts'
 import { JamSurface, useLaneLift } from './JamSurface.tsx'
 import { JamButton } from './jam-session.tsx'
 import { useJamCapture } from './jam-capture.ts'
+import { useJamQueue } from './jam-queue.ts'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
@@ -346,7 +347,10 @@ export function App() {
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
   const laneLift = useLaneLift()
-  const recording = useJamCapture((st) => !!st.current)   // the collapsed toolbar keeps the recording dot
+  // the collapsed toolbar keeps the dot - while a capture records, and for a whole Jam session
+  const capturing = useJamCapture((st) => !!st.current)
+  const inSession = useJamQueue((st) => !!st.session)
+  const recording = capturing || inSession
   const toasts = useStore((s) => s.toasts)
   const selection = useStore((s) => s.selection)
   const laser = useStore((s) => s.laser)

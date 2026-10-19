@@ -4,13 +4,13 @@
  * panel showing a capture's detail (a draft's read-back) or a review.
  */
 import { useEffect, useState } from 'react'
-import { Lane, type LaneRecording, type LaneTile } from './jam-lane.tsx'
+import { Lane, type LaneBetween, type LaneRecording, type LaneTile } from './jam-lane.tsx'
 import { Caption, FocusPanel, NotesCard, ReadBack, ReviewDetail, VoiceAsk } from './jam-panel.tsx'
 import type { TimelineLine } from './jam-lines.ts'
 import type { JamCard } from './jam-queue.ts'
 
-export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd, onOpen, onMenu, notes, ask, caption }: {
-  tiles: LaneTile[]; recording?: LaneRecording; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string): void
+export function CaptureLaneRow({ tiles, recording, between, selected, keyboard, followEnd, onOpen, onMenu, notes, ask, caption }: {
+  tiles: LaneTile[]; recording?: LaneRecording; between?: LaneBetween; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string): void
   onMenu?(e: React.MouseEvent, id: string): void
   notes?: { notes: { t: string; text: string }[]; draft: string; onDraft(t: string): void; onAdd(): void; onClose(): void }
   /** the microphone question (and the model's download), over the capture tile */
@@ -35,7 +35,7 @@ export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd
   const roomLeft = (at?.left ?? 10) - 8 >= 300
   return (
     <>
-      <Lane tiles={tiles} recording={recording} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} onMenu={onMenu} />
+      <Lane tiles={tiles} recording={recording} between={between} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} onMenu={onMenu} />
       {/* one lane up, over the capture tile: the question, then the notes card above it; the words just
           left of the notes card (bottoms aligned), or over the tile when it is closed */}
       {(notes || ask) && (

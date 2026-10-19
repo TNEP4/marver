@@ -495,6 +495,18 @@ describe('captures: review round 2 fixes', () => {
     expect(captureFrames(r).sort()).toEqual(['demo/a', 'demo/b', 'demo/c', 'demo/d'])
   })
 
+  it('a frame merely on screen is not the capture\'s: views of several frames name none - the frames touched do; with none touched, the first view\'s (three at most)', () => {
+    const r = rec({ timeline: [
+      { at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b', 'demo/c', 'demo/d'] } },
+      { at: 2, frame: 'demo/b', event: 'pick', point: 1, bundle: { tag: 'button' }, mode: 'canvas' },
+      { at: 3, frame: 'demo/c', event: 'picture', id: 'p-0000000000000002', why: 'end' },   // automatic: names nothing
+      { at: 4, event: 'view', view: { frames: ['demo/a', 'demo/d'] } },
+    ] as any })
+    expect(captureFrames(r)).toEqual(['demo/b'])
+    const none = rec({ timeline: [{ at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b', 'demo/c', 'demo/d'] } }, { at: 2, event: 'note', text: 'hm' }] as any })
+    expect(captureFrames(none)).toEqual(['demo/a', 'demo/b', 'demo/c'])
+  })
+
   it('pruning keeps the capture a waiting follow-up carries', () => {
     const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-p-')))
     const long = Date.now() - 30 * 24 * 3600_000
