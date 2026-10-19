@@ -41,12 +41,16 @@ export const useJamUi = create<JamUi>((set, get) => ({
   follow() { set((s) => ({ followEnd: s.followEnd + 1 })) },
 }))
 
-/** A click somewhere else - the canvas, a frame, inside an interactive frame: a lane tile selected with
- *  nothing open for it lets go, and the lane gives the keys back. A tile whose read-back or review is
- *  open stays selected with its panel. */
+/** A click somewhere else - the canvas, a frame, inside an interactive frame: the read-back or review open
+ *  closes, its tile lets go, and the lane gives the keys back (trial 1: "anywhere on the canvas should
+ *  close the review card and deselect the capture card"). Words being edited in the read-back save first:
+ *  the field is left before the panel goes. */
 export function letGoOfTile() {
   const s = useJamUi.getState()
-  if (!s.panel && (s.selected || s.laneKeys)) useJamUi.setState({ selected: null, laneKeys: false })
+  if (!s.panel && !s.selected && !s.laneKeys) return
+  const a = document.activeElement
+  if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur()
+  useJamUi.setState({ panel: null, moreOpen: false, selected: null, laneKeys: false })
 }
 
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamUi = useJamUi

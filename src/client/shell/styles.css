@@ -1803,6 +1803,10 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-focus { flex-direction: column }
 .jm-focus > .jm-panel { overflow: hidden }
 .jm-focus-x { position: absolute; top: 14px; right: 14px; z-index: 1 }
+/* the header leaves the close button its own room: "1 of 3", the arrows, then the X - never under it */
+.jm-focus > .jm-panel > .top { padding-right: 34px }
+/* "For Claude Code" stays on one line beside the actions */
+.jm-focus .jm-panel .actions .dim { white-space: nowrap; flex: none }
 /* the panel's middle scrolls; its head and its footer stay in view */
 .jm-panel .jm-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; margin: 0 -16px; padding: 0 16px }
 .jm-focus .jm-panel .jm-body { flex: 1 }

@@ -684,6 +684,9 @@ describe('captures in the browser: the first trial', () => {
     await until(`!!document.querySelector('.sh-ctxmenu')`, 3000)
     const items = await browser!.eval(s, `[...document.querySelectorAll('.sh-ctxmenu button')].map((b) => b.textContent)`)
     expect(items).toEqual(['Open read-back', 'Resume capture', 'Rename', 'Add to queue', 'Keep, do not send', 'Drop'])
+    // one icon per action: no two alike
+    const icons = await browser!.eval(s, `[...document.querySelectorAll('.sh-ctxmenu button svg')].map((x) => x.innerHTML)`)
+    expect(new Set(icons).size).toBe(items.length)
     await browser!.eval(s, `[...document.querySelectorAll('.sh-ctxmenu button')].find((b) => b.textContent === 'Rename').click(), 1`)
     await until(`!!document.querySelector('.jm-rename input')`, 3000)
     await browser!.eval(s, `document.querySelector('.jm-rename input').focus(), 1`)
@@ -718,6 +721,51 @@ describe('captures in the browser: the first trial', () => {
     await sleep(300)
     expect(await browser!.eval(s, `[${JSON.stringify(a)}, ${JSON.stringify(b)}].map((id) => window.__mvJamQueue.getState().cards.find((c) => c.id === id).state)`)).toEqual(['draft', 'draft'])
     await browser!.eval(s, `window.__mvJamUi.getState().setLaneKeys(false), 1`)
+    for (const id of ids) await decide(id, 'drop')
+  }, 120_000)
+
+  skippable('the panel: wide enough for its footer on one line, the close button clear of the arrows; a click anywhere else on the canvas, or a comment opening, closes it and lets its tile go', async () => {
+    const ids: string[] = []
+    for (const note of ['first one', 'second one']) {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+      ids.push(await browser!.eval(s, `window.__mvJamCapture.getState().current`))
+      await browser!.eval(s, `window.__mvJamCapture.getState().note(${JSON.stringify(note)}), 1`)
+      await key('e')
+      await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(ids[ids.length - 1])}`, 30_000)
+    }
+    const [a, b] = ids
+    // the read-back of b: "2 of 2", the arrows and the X never overlap; "For Claude Code" on one line
+    const geo = await browser!.eval(s, `(() => { const r = (el) => el.getBoundingClientRect(); const x = r(document.querySelector('.jm-focus-x')); const arrows = [...document.querySelectorAll('.jm-focus .top .jm-iconbtn')].map(r); const dim = document.querySelector('.jm-focus .actions .dim'); return { overlap: arrows.some((q) => q.right > x.left && q.left < x.right && q.bottom > x.top && q.top < x.bottom), lines: new Set([...(() => { const g = document.createRange(); g.selectNodeContents(dim); return g.getClientRects() })()].map((q) => Math.round(q.top))).size, width: r(document.querySelector('.jm-focus')).width } })()`)
+    expect(geo.overlap).toBe(false)
+    expect(geo.lines).toBeLessThanOrEqual(1)
+    expect(geo.width).toBeGreaterThanOrEqual(580)
+    // a click inside the panel keeps it; on another tile switches it; on the canvas closes it and lets go
+    await click('.jm-focus .meta')
+    await sleep(150)
+    expect(await browser!.eval(s, `window.__mvJamUi.getState().panel?.id`)).toBe(b)
+    await click(`.jm-lane [data-tile="${a}"]`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)} && window.__mvJamUi.getState().selected === ${JSON.stringify(a)}`, 3000)
+    const empty = await browser!.eval(s, `(() => { const r = document.querySelector('.sh-canvas').getBoundingClientRect(); for (let y = r.top + 120; y < r.bottom - 120; y += 20) for (let x = r.right - 40; x > r.left + 300; x -= 20) { const e = document.elementFromPoint(x, y); if (e && e.closest('.sh-canvas') && !e.closest('.sh-node, .sh-pill, .sh-pill-fab, .jm-lane, .jm-focus, .sh-toasts, .sh-banner')) return { x, y } } return null })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: empty.x, y: empty.y, button: 'left', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: empty.x, y: empty.y, button: 'left', clickCount: 1 }, s)
+    await until(`window.__mvJamUi.getState().panel === null && window.__mvJamUi.getState().selected === null && !document.querySelector('.jm-focus')`, 3000)
+    // a frame click too
+    await click(`.jm-lane [data-tile="${b}"]`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(b)}`, 3000)
+    const f = await browser!.eval(s, `(() => { const r = [...document.querySelectorAll('.sh-node .sh-overlay')].map((x) => x.getBoundingClientRect()).find((q) => q.left > document.querySelector('.jm-focus').getBoundingClientRect().right + 10); return r ? { x: r.x + 20, y: r.y + 20 } : null })()`)
+    if (f) {
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: f.x, y: f.y, button: 'left', clickCount: 1 }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: f.x, y: f.y, button: 'left', clickCount: 1 }, s)
+      await until(`window.__mvJamUi.getState().panel === null && window.__mvJamUi.getState().selected === null`, 3000)
+    }
+    // a comment opening takes the panel's place
+    await click(`.jm-lane [data-tile="${a}"]`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 3000)
+    const t = await browser!.eval(s, `window.__tag('spec/alpha', 'a plain note')`)
+    await until(`window.__mvComments.getState().threads.some((x) => x.id === ${JSON.stringify(t)})`, 5000)
+    await browser!.eval(s, `window.__mvComments.getState().setActive(${JSON.stringify(t)}), 1`)
+    await until(`window.__mvJamUi.getState().panel === null && window.__mvJamUi.getState().selected === null`, 3000)
+    await browser!.eval(s, `window.__mvComments.getState().setActive(null), 1`)
     for (const id of ids) await decide(id, 'drop')
   }, 120_000)
 })

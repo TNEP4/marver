@@ -33,9 +33,11 @@ const Marver = ({ size = 20 }: { size?: number }) => (
  *  bottom just above the lane, its left edge at `left` (the sidebar's right edge plus an inset - the
  *  shell passes it), `width` px wide (520 at least). The panel inside fills it; its middle scrolls and
  *  its footer stays in view. `onClose` adds a quiet close button in its corner. */
-export function FocusPanel({ children, left, width = 520, onClose }: { children: ReactNode; left: number; width?: number; onClose?: () => void }) {
+export function FocusPanel({ children, left, width = 580, onClose }: { children: ReactNode; left: number; width?: number; onClose?: () => void }) {
+  // 580: the footer's "For Claude Code" and its four actions on one line; never wider than the window allows
+  const w = Math.max(360, Math.min(Math.max(580, width), (typeof window !== 'undefined' ? window.innerWidth : 1400) - left - 12))
   return (
-    <div className="jm-focus" data-jam-focus="" style={{ left, width: Math.max(520, width), bottom: `calc(var(--edge) + ${LANE_H + 2}px)` }}>
+    <div className="jm-focus" data-jam-focus="" style={{ left, width: w, bottom: `calc(var(--edge) + ${LANE_H + 2}px)` }}>
       {children}
       {onClose && <button className="jm-iconbtn jm-focus-x" aria-label="Close" onClick={onClose}><XIcon size={13} /></button>}
     </div>

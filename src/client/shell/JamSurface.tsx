@@ -10,10 +10,10 @@ import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
 import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
-import { ArrowBendUpLeftIcon, ArrowLineUpIcon, CheckIcon, CommentIcon, EyeIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
+import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { useJamUi } from './jam-state.ts'
+import { letGoOfTile, useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
 import { EdgeRing } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
@@ -78,6 +78,14 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // a draft being resumed is the capture recording (or sealing) now: its own tile steps aside
   const list = shownLane(cards, run, cap.resuming)
   const cm = useContextMenu()
+  // a comment opening (a pin, a thread, Open thread) takes the place of the read-back or review: the panel
+  // closes; the tile lets go too, unless the thread is that tile's own (a capture that asks opens its thread)
+  useEffect(() => useComments.subscribe((s, p) => {
+    if (!s.active || s.active === p.active) return
+    const st = useJamUi.getState()
+    const sel = useJamQueue.getState().cards?.find((c) => c.id === st.selected)
+    if (sel?.thread === s.active) { if (st.panel) st.close() } else letGoOfTile()
+  }), [])
   const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
   const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean } }))
   // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
@@ -183,15 +191,17 @@ function tileMenu(c: JamCard): MenuItem[] {
   const q = useJamQueue.getState()
   const act = (a: Parameters<typeof q.act>[1], body?: string) => { const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id); if (fresh) void useJamQueue.getState().act(fresh, a, body) }
   const item = (label: string, icon: ReactNode, onClick: () => void): MenuItem => ({ label, icon, onClick })
-  const open = item(c.state === 'review' ? 'Review' : c.state === 'draft' ? 'Open read-back' : 'Open', <EyeIcon size={14} />, () => openTile(c.id))
+  // one icon per action, never two alike in a menu: open (eye), review (checklist), resume (play), rename
+  // (pencil), add to queue (send arrow), keep (notebook), do next (to the top), retry, reply, thread, drop
+  const open = item(c.state === 'review' ? 'Review' : c.state === 'draft' ? 'Open read-back' : 'Open', c.state === 'review' ? <CheckSquareOffsetIcon size={14} /> : <EyeIcon size={14} />, () => openTile(c.id))
   const rename: MenuItem = { label: 'Rename', icon: <PencilSimpleIcon size={14} />, panel: (close) => <RenameField card={c} close={close} /> }
   const reply = c.thread ? [item('Reply in thread', <ArrowBendUpLeftIcon size={14} />, () => replyIn(c))] : []
   const thread = c.thread ? [item('Open thread', <CommentIcon size={14} />, () => { useComments.getState().setActive(c.thread!) })] : []
   switch (c.state) {
     case 'draft': return [open, item('Resume capture', <PlayIcon size={14} />, () => void resumeDraft(c.id)), rename,
-      item('Add to queue', <CheckIcon size={14} />, () => void decideDraft(c.id, 'confirm')), item('Keep, do not send', <CheckIcon size={14} />, () => void decideDraft(c.id, 'keep')),
+      item('Add to queue', <ArrowUpIcon size={14} />, () => void decideDraft(c.id, 'confirm')), item('Keep, do not send', <NotebookIcon size={14} />, () => void decideDraft(c.id, 'keep')),
       item('Drop', <XIcon size={14} />, () => void decideDraft(c.id, 'drop'))]
-    case 'queued': return [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, () => act('first')), item('Keep, do not send', <CheckIcon size={14} />, () => act('keep')), item('Drop', <XIcon size={14} />, () => act('drop'))]
+    case 'queued': return [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, () => act('first')), item('Keep, do not send', <NotebookIcon size={14} />, () => act('keep')), item('Drop', <XIcon size={14} />, () => act('drop'))]
     case 'review': return [open, ...reply, ...thread, rename]
     case 'asks': return [...reply, open, rename]
     case 'failed': return [item('Retry', <ReloadIcon size={14} />, () => act('retry')), open, ...thread, item('Drop', <XIcon size={14} />, () => act('drop'))]
