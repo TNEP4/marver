@@ -170,6 +170,8 @@ const rows = (): Row[] => {
       keys: {
         Enter: () => { if (ui.sheet === 'start') void startSession(); else wrapWrite.current?.() },
         Escape: () => ui.setSheet(null),
+        // over the wrap-up, no new capture starts (it would miss the record): close the sheet first
+        ...(ui.sheet === 'wrap' ? { s: () => useStore.getState().toast('the session is wrapping up - close the sheet (Esc) to capture again') } : {}),
       },
     },
     { // a read-back open

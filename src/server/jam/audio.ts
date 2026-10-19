@@ -87,7 +87,10 @@ export interface Speech {
  *  (the next capture loads it again in under a second). */
 const IDLE_MS = 10 * 60_000
 
-export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: (t: TalkWords) => void } = {}): Speech {
+export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: (t: TalkWords) => void
+  /** (tests) whether the model is there, and why the engine is missing - by default the real checks */
+  modelsReady?: () => Promise<boolean>; engineMissing?: () => string | undefined } = {}): Speech {
+  const ready_ = opts.modelsReady ?? modelsReady
   /** talk segments: their start on the page clock (ms), so their words get the time they were said */
   const talkT0 = new Map<string, number>()
   let worker: Worker | null = null
@@ -106,6 +109,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
   idle.unref()
 
   const engineMissing = (): string | undefined => {
+    if (opts.engineMissing) return opts.engineMissing()
     try { createRequire(import.meta.url).resolve('sherpa-onnx-node'); return undefined } catch { return 'the speech engine (sherpa-onnx-node) is not installed - typed notes only' }
   }
   const tell = (ws: WebSocket | undefined, m: unknown) => { if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(m)) }
@@ -117,7 +121,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
     const p: Promise<Worker | null> = (async () => {
       const missing = engineMissing()
       if (missing) { unavailable = missing; return null }
-      if (!(await modelsReady())) return null
+      if (!(await ready_())) return null
       const url = opts.workerUrl ?? new URL(import.meta.url.endsWith('.ts') ? './speech-worker.ts' : './speech-worker.mjs', import.meta.url)
       const w = new Worker(url, { workerData: { paths: modelPaths() } })
       w.unref()
@@ -294,7 +298,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       const missing = engineMissing()
       if (missing) return { state: 'unavailable', reason: missing }
       if (unavailable) return { state: 'unavailable', reason: unavailable }
-      if (!(await modelsReady())) return { state: 'needs-model' }
+      if (!(await ready_())) return { state: 'needs-model' }
       if (worker) return { state: 'ready' }
       void start()
       return unavailable ? { state: 'unavailable', reason: unavailable } : { state: 'loading' }

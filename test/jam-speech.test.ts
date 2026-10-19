@@ -184,6 +184,45 @@ describe('words: the download lock', () => {
   })
 })
 
+describe('words: one audio connection, refereed (no model needed)', () => {
+  it('the audio connection is busy while a segment is open, while its last words are not back, and just after it opened; a reclaim is refused while busy', async () => {
+    // a stand-in engine that holds each final back for half a second
+    const d = mkdtempSync(join(tmpdir(), 'mv-slowworker-'))
+    const slow = join(d, 'w.mjs')
+    writeFileSync(slow, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 500) })\n")
+    const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
+    const svc = createSpeech({ workerUrl: new URL(`file://${slow}`), modelsReady: async () => true, engineMissing: () => undefined })
+    svc.attach(server)
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    const connect = (reclaim = false) => new Promise<{ ok: boolean; ws: WebSocket }>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}${reclaim ? '&reclaim=1' : ''}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
+      ws.on('open', () => resolve({ ok: true, ws })); ws.on('error', () => resolve({ ok: false, ws }))
+    })
+    try {
+      const a = await connect()
+      expect(svc.busy()).toBe(true)                                   // just opened: its page is still starting
+      expect((await connect(true)).ok).toBe(false)
+      await new Promise((r) => setTimeout(r, 5_100))                  // past the opening's grace: idle, free
+      expect(svc.busy()).toBe(false)
+      const id = 'cap-1792399514739-busy01~p1'
+      a.ws.send(JSON.stringify({ type: 'begin', capture: id }))
+      await new Promise((r) => setTimeout(r, 200))
+      expect(svc.busy()).toBe(true)                                   // a segment open
+      expect((await connect(true)).ok).toBe(false)                    // a reclaim never takes it from a working tab
+      a.ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
+      await new Promise((r) => setTimeout(r, 150))
+      expect(svc.busy()).toBe(true)                                   // ended, its final held back
+      expect((await connect(true)).ok).toBe(false)
+      await new Promise((r) => setTimeout(r, 700))
+      expect(svc.busy()).toBe(false)                                  // the final is back
+      const b = await connect(true)
+      expect(b.ok).toBe(true)                                         // free: taken back
+      b.ws.close()
+    } finally { svc.stop(); server.close(); rmSync(d, { recursive: true, force: true }) }
+  }, 30_000)
+})
+
 function concatAll(parts: Float32Array[]) {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0
   for (const p of parts) { out.set(p, o); o += p.length }
@@ -338,42 +377,6 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
     } finally { svc.stop(); rmSync(d, { recursive: true, force: true }) }
   }, 30_000)
 
-  it('the audio connection is busy while a segment is open, while its last words are not back, and just after it opened; a reclaim is refused while busy', async () => {
-    // a stand-in engine that holds each final back for half a second
-    const d = mkdtempSync(join(tmpdir(), 'mv-slowworker-'))
-    const slow = join(d, 'w.mjs')
-    writeFileSync(slow, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 500) })\n")
-    const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
-    const svc = createSpeech({ workerUrl: new URL(`file://${slow}`) })
-    svc.attach(server)
-    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
-    const port = (server.address() as { port: number }).port
-    const connect = (reclaim = false) => new Promise<{ ok: boolean; ws: WebSocket }>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}${reclaim ? '&reclaim=1' : ''}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
-      ws.on('open', () => resolve({ ok: true, ws })); ws.on('error', () => resolve({ ok: false, ws }))
-    })
-    try {
-      const a = await connect()
-      expect(svc.busy()).toBe(true)                                   // just opened: its page is still starting
-      expect((await connect(true)).ok).toBe(false)
-      await new Promise((r) => setTimeout(r, 5_100))                  // past the opening's grace: idle, free
-      expect(svc.busy()).toBe(false)
-      const id = 'cap-1792399514739-busy01~p1'
-      a.ws.send(JSON.stringify({ type: 'begin', capture: id }))
-      await new Promise((r) => setTimeout(r, 200))
-      expect(svc.busy()).toBe(true)                                   // a segment open
-      expect((await connect(true)).ok).toBe(false)                    // a reclaim never takes it from a working tab
-      a.ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
-      await new Promise((r) => setTimeout(r, 150))
-      expect(svc.busy()).toBe(true)                                   // ended, its final held back
-      expect((await connect(true)).ok).toBe(false)
-      await new Promise((r) => setTimeout(r, 700))
-      expect(svc.busy()).toBe(false)                                  // the final is back
-      const b = await connect(true)
-      expect(b.ok).toBe(true)                                         // free: taken back
-      b.ws.close()
-    } finally { svc.stop(); server.close(); rmSync(d, { recursive: true, force: true }) }
-  }, 30_000)
 
   const text = (ws: Word[]) => ws.map((w) => w.w).join(' ')
   const inOrder = (ws: Word[]) => ws.every((w, i) => i === 0 || w.at >= ws[i - 1].at)

@@ -56,6 +56,12 @@ export const holdsSessionMic = (id: string): boolean => { try { return sessionSt
 export async function endSession(write: { instructions: string; includeTalk: boolean } | null): Promise<boolean> {
   const ses = useJamQueue.getState().session
   if (!ses) { useJamUi.getState().setSheet(null); return true }
+  // never over a capture still recording, sealing or sending: it belongs in the session (and its record)
+  const cap = useJamCapture.getState()
+  if (cap.current || Object.keys(cap.caps).length || cap.unsent.length) {
+    useStore.getState().toast(cap.current ? 'a capture is recording - end it first (E), then wrap up' : 'a capture is still being sent - a moment, then wrap up')
+    return false
+  }
   // the talk's last words first: they belong in the transcript the record reads
   await voiceSessionEnd()
   const ok = write
