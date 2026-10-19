@@ -5,12 +5,14 @@
  * capture records. The pieces are presentational (jam-lane.tsx, jam-panel.tsx); this file feeds
  * them from the three stores and turns their clicks into queue actions.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
-import { decideDraft, laneCards, openTile, pendingEdit, reveal, saveEdit } from './jam-keys.ts'
+import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit } from './jam-keys.ts'
+import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
+import { ArrowBendUpLeftIcon, ArrowLineUpIcon, CheckIcon, CommentIcon, EyeIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
-import { useJamQueue, type JamCard } from './jam-queue.ts'
+import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
 import { EdgeRing } from './jam-panel.tsx'
@@ -56,14 +58,15 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t) }, [])
   // a new capture or a new draft brings the lane back to its right end
   useEffect(() => { ui.follow() }, [cap.current, cards?.filter((c) => c.kind === 'capture').length])
-  // the oldest draft's read-back opens when capturing stops - over a review too (a capture made during a
-  // review is confirmed in its read-back; the review it follows stays bound in its record)
+  // the read-back of the capture just ended opens when capturing stops - over a review too (a capture
+  // made during a review is confirmed in its read-back; the review it follows stays bound in its record).
+  // It waits for that capture's own card: a resumed one replaces its draft, which must not open instead
   const [shownSeal, setShownSeal] = useState(0)
   useEffect(() => {
     if (cap.current || cap.sealed.length <= shownSeal) return
     const sealed = cap.sealed[cap.sealed.length - 1]
     if (!sealed?.card) return
-    const draft = laneCards(cards, run).find((c) => c.state === 'draft')
+    const draft = cards?.find((c) => c.id === sealed.card!.id && c.state === 'draft')
     if (!draft) return
     setShownSeal(cap.sealed.length)
     if (ui.panel?.kind === 'capture' && ui.panel.id === draft.id) return
@@ -71,7 +74,9 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     reveal(draft)
   }, [cap.current, cap.sealed, cards])
 
-  const list = laneCards(cards, run)
+  // a draft being resumed is the capture recording (or sealing) now: its own tile steps aside
+  const list = laneCards(cards, run).filter((c) => !cap.resuming.includes(c.id))
+  const cm = useContextMenu()
   const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
   const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean } }))
   // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
@@ -115,6 +120,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
         <CaptureLaneRow
           tiles={tiles} recording={recording} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
           onOpen={(id) => openTile(id)}
+          onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c)) } else e.preventDefault() }}
           notes={cap.noteOpen ? {
             notes: (cap.current ? cap.caps[cap.current]?.steps ?? [] : []).filter((x) => x.event === 'note').map((x) => ({ t: captureCounts({ ...cap.caps[cap.current!]!, t0: cap.caps[cap.current!]!.t0 }, x.at).time, text: (x as { text: string }).text })),
             draft: cap.noteDraft, onDraft: cap.setNoteDraft, onAdd: () => cap.note(cap.noteDraft), onClose: () => cap.setNoteOpen(false),
@@ -131,7 +137,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           reviewedTitle={panelCard.reviewing ? cards?.find((c) => c.id === panelCard.reviewing!.card)?.title : undefined}
           lines={rec ? timelineLines(rec.record, panelCard.edited ?? rec.edited) : []}
           pictures={(rec?.record.pictures ?? []).map((id, i) => ({ id, url: picture(id)!, caption: `picture ${i + 1}` }))}
-          shots={(panelCard.shots ?? []).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after) }))}
+          shots={changedShots(panelCard.shots).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after) }))}
           reply={panelCard.reply ? replyText(panelCard) : ''}
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
           onTab={(i) => ui.setTab(i)} onFlip={() => ui.flip()} onMoreOpen={(on) => ui.setMoreOpen(on)}
@@ -140,6 +146,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onConfirm={() => void decideDraft(panelCard.id, 'confirm')}
           onKeep={() => void decideDraft(panelCard.id, 'keep')}
           onDrop={() => void decideDraft(panelCard.id, 'drop')}
+          onResume={() => void resumeDraft(panelCard.id)}
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
           onMore={(text) => void (async () => {
             // the composer and its words stay until the follow-up is really queued
@@ -152,7 +159,61 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onRetry={() => void (async () => { if (await act(useJamQueue.getState().cards?.find((x) => x.id === panelCard.id), 'retry')) ui.close(); else useStore.getState().toast('the capture could not be retried - look again') })()}
         />
       )}
+      <ContextMenu menu={cm.menu} close={cm.close} />
     </>
+  )
+}
+
+/** Open a card's thread with the caret in its reply field - to add to the conversation. */
+function replyIn(c: JamCard) {
+  if (!c.thread) return
+  useComments.getState().setActive(c.thread)
+  // once the thread's card has drawn
+  let tries = 0
+  const focus = () => {
+    const el = document.querySelector<HTMLTextAreaElement>('.cm-card textarea')
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } else if (++tries < 20) requestAnimationFrame(focus)
+  }
+  requestAnimationFrame(focus)
+}
+
+/** A tile's right-click menu: what can be done with this capture now. */
+function tileMenu(c: JamCard): MenuItem[] {
+  const q = useJamQueue.getState()
+  const act = (a: Parameters<typeof q.act>[1], body?: string) => { const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id); if (fresh) void useJamQueue.getState().act(fresh, a, body) }
+  const item = (label: string, icon: ReactNode, onClick: () => void): MenuItem => ({ label, icon, onClick })
+  const open = item(c.state === 'review' ? 'Review' : c.state === 'draft' ? 'Open read-back' : 'Open', <EyeIcon size={14} />, () => openTile(c.id))
+  const rename: MenuItem = { label: 'Rename', icon: <PencilSimpleIcon size={14} />, panel: (close) => <RenameField card={c} close={close} /> }
+  const reply = c.thread ? [item('Reply in thread', <ArrowBendUpLeftIcon size={14} />, () => replyIn(c))] : []
+  const thread = c.thread ? [item('Open thread', <CommentIcon size={14} />, () => { useComments.getState().setActive(c.thread!) })] : []
+  switch (c.state) {
+    case 'draft': return [open, item('Resume capture', <PlayIcon size={14} />, () => void resumeDraft(c.id)), rename,
+      item('Add to queue', <CheckIcon size={14} />, () => void decideDraft(c.id, 'confirm')), item('Keep, do not send', <CheckIcon size={14} />, () => void decideDraft(c.id, 'keep')),
+      item('Drop', <XIcon size={14} />, () => void decideDraft(c.id, 'drop'))]
+    case 'queued': return [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, () => act('first')), item('Keep, do not send', <CheckIcon size={14} />, () => act('keep')), item('Drop', <XIcon size={14} />, () => act('drop'))]
+    case 'review': return [open, ...reply, ...thread, rename]
+    case 'asks': return [...reply, open, rename]
+    case 'failed': return [item('Retry', <ReloadIcon size={14} />, () => act('retry')), open, ...thread, item('Drop', <XIcon size={14} />, () => act('drop'))]
+    default: return [open, ...reply, ...thread, rename]
+  }
+}
+
+/** Rename, in place of the menu: the title as it is, ⏎ saves, Esc leaves; empty gives back its first words. */
+function RenameField({ card, close }: { card: JamCard; close: () => void }) {
+  const [text, setText] = useState(card.named ? card.title ?? '' : card.title === 'Capture' ? '' : card.title ?? '')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { requestAnimationFrame(() => ref.current?.select()) }, [])
+  const save = async () => {
+    const fresh = useJamQueue.getState().cards?.find((x) => x.id === card.id)
+    if (fresh && !(await useJamQueue.getState().act(fresh, 'rename', text))) useStore.getState().toast('the capture could not be renamed - look again')
+    close()
+  }
+  return (
+    <div className="jm-rename">
+      <input ref={ref} value={text} maxLength={80} placeholder="Name this capture" aria-label="Capture name"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void save(); if (e.key === 'Escape') close() }} />
+    </div>
   )
 }
 
@@ -164,13 +225,8 @@ function replyText(c: JamCard): string {
 }
 
 /** Lift the bottom edge while the lane shows: the sidebar stops above it, the Update pill, toasts and
- *  notices rise one lane. */
-export function useLaneLift() {
-  const shown = useLaneShown()
-  useEffect(() => {
-    const app = document.querySelector('.sh-app')
-    app?.classList.toggle('jm-lane-on', shown)
-    return () => app?.classList.remove('jm-lane-on')
-  }, [shown])
-  void useStore
+ *  notices rise one lane. Returns the class for `.sh-app` - in its className, so a re-render of the app
+ *  (interact on or off, the theme) never drops it. */
+export function useLaneLift(): string {
+  return useLaneShown() ? ' jm-lane-on' : ''
 }

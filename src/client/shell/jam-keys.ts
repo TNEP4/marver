@@ -3,9 +3,9 @@
  * first state below that is on AND handles that key takes it; a key no state lists falls through to
  * the shell's own keys, unchanged (`J` during a capture, `S` during a review still work):
  *
- *   a read-back open      ⏎ confirm · K keep · Esc drop
+ *   a read-back open      ⏎ confirm · K keep · R resume (it ended too soon) · Esc drop
  *   the notes card open   Esc closes the card · N puts the focus back in its field
- *   a capture open        E end · S end and start the next · N notes card · I picture · Esc drop
+ *   a capture open        E end · S says to end it first · N notes card · I picture · Esc drop
  *   a review open         ⏎ looks good · ⇧⏎ more work · → later / next · ← back · B before/after ·
  *                         ⌥← ⌥→ frame tabs · Esc leave
  *   the lane has the keys ← → move · ⏎ open · ⌘⏎ do next · K keep · ⌫ drop · Esc leave
@@ -16,7 +16,7 @@
  * owned. A tag's card never reaches `Q`, `V`, `K` or `⌘⏎`: it lives in its thread.
  */
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
-import { useJamQueue, type JamCard } from './jam-queue.ts'
+import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { PUBLISHED, useStore } from './store.ts'
 
@@ -75,6 +75,17 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
   else useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : action === 'keep' ? 'kept' : 'dropped'} - look again`)
 }
 
+/** Resume a draft that ended too soon: its edit saves first (the resumed capture carries it on), the
+ *  read-back closes, and recording goes on where it stopped. */
+export async function resumeDraft(id: string) {
+  await saving.get(id)
+  if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return }
+  const c = cardById(id)
+  if (!c || c.state !== 'draft') return
+  const ui = useJamUi.getState()
+  if (await useJamCapture.getState().resume(id)) { if (ui.panel?.id === id) ui.close() }
+}
+
 /** What clicking a tile (or ⏎ on it) does: a review opens the review detail, a card that asks opens
  *  its thread, any other capture its detail - the read-back for a draft. */
 export function openTile(id: string) {
@@ -113,7 +124,7 @@ const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJam
 
 interface Row { on(): boolean; keys: Record<string, () => void> }
 
-/** The run on screen, when a review is open: a capture started now binds it (and S -> S does again). */
+/** The run on screen, when a review is open: a capture started now binds it. */
 function reviewNow(): { card: string; batch: string; rev: number } | undefined {
   const ui = useJamUi.getState()
   const c = cardById(ui.panel?.id)
@@ -130,6 +141,7 @@ const rows = (): Row[] => {
       keys: {
         Enter: () => void decideDraft(panelCard!.id, 'confirm'),
         k: () => void decideDraft(panelCard!.id, 'keep'),
+        r: () => void resumeDraft(panelCard!.id),
         Escape: () => void decideDraft(panelCard!.id, 'drop'),
       },
     },
@@ -144,7 +156,7 @@ const rows = (): Row[] => {
       on: () => !!cap.current,
       keys: {
         e: () => cap.end(),
-        s: () => cap.end(true, reviewNow()),
+        s: () => cap.start(),                // one at a time: it says to end this one first
         // L: laser picks - a pick inside a capture is its pick (frames forward it while interacting)
         l: () => { const st = useStore.getState(); if (!st.laser) void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); st.setLaser(!st.laser) },
         n: () => { cap.setNoteOpen(true); window.dispatchEvent(new CustomEvent('mv-jam-note-focus')) },
@@ -161,7 +173,7 @@ const rows = (): Row[] => {
         ArrowLeft: () => { const n = nextReview(panelCard!.id, -1); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n) } },
         b: () => ui.flip(),
         'Alt+ArrowLeft': () => ui.setTab(Math.max(0, ui.tab - 1)),
-        'Alt+ArrowRight': () => ui.setTab(Math.min((panelCard?.shots?.length ?? 1) - 1, ui.tab + 1)),
+        'Alt+ArrowRight': () => ui.setTab(Math.min(Math.max(1, changedShots(panelCard?.shots).length) - 1, ui.tab + 1)),
         Escape: () => (ui.moreOpen ? ui.setMoreOpen(false) : ui.close()),
       },
     },

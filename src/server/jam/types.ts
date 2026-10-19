@@ -79,7 +79,10 @@ export type Step = { at: number; frame?: string } & (
 /** The sealed capture (design/.local/jam/captures/<id>.json). No category: a capture is what you said and did. */
 export interface CaptureRecord {
   format: 'marver.jam.capture'; v: 1; id: string
-  context: { canvas: string; board: string; session?: string; reviewing?: { card: string; batch: string; rev: number } }
+  context: { canvas: string; board: string; session?: string; reviewing?: { card: string; batch: string; rev: number }
+    /** a capture that continues a draft ended too soon: that draft's id, and when recording resumed
+     *  (every step before it is the draft's, moved up to close the pause) */
+    resumes?: { id: string; at: number } }
   view: View; timeline: Step[]; pictures: string[]
 }
 /** What a capture card's brief carries, frozen at confirm. `note` marks a capture that is context, not an ask. */
@@ -106,6 +109,7 @@ export interface Card {
   note?: string              // why it is where it is
   resolved?: boolean         // the thread was resolved while the card was working
   exclusive?: string[]       // runs alone and may edit these shared files (a `shared` answer)
+  name?: string              // a capture's title as you named it (Rename) - in place of its first words
   /** a capture card: the sealed record's hash, your edit (with its hash, ledgered at confirm) and the
    *  reviewed run it followed - what every brief on its thread carries */
   payload?: { recordHash: string; edited?: string; editedHash?: string; reviewed?: Reviewed }
@@ -148,7 +152,7 @@ export interface Batch {
   undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns
   posted?: boolean           // every reply and reanchor of `results` is in the log
   /** before and after pictures of every reserved frame, for a batch that holds a capture (picture ids) */
-  shots?: { frame: string; before?: string; after?: string }[]
+  shots?: { frame: string; before?: string; after?: string; same?: boolean }[]   // `same`: the run left it as it was
   model?: string
   at: number
 }

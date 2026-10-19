@@ -646,6 +646,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 @keyframes sh-tip-pop-b { from { opacity: 0; transform: translate(-50%, 0) scale(.95) } }
 .sh-tip.right { transform: translate(0, -50%); animation-name: sh-tip-pop-r }
 @keyframes sh-tip-pop-r { from { opacity: 0; transform: translate(0, -50%) scale(.95) } }
+/* a lane tile's whole title: wraps past one line, never wider than a short paragraph */
+.sh-tip .jm-tip-title { display: block; max-width: 320px; white-space: normal; line-height: 16px }
 /* a status's tooltip: the status, then where it came from - each piece of evidence on its own line */
 .sh-tip .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; max-width: 420px; max-height: calc(100vh - 32px); overflow: hidden; white-space: normal }
 /* read by a screen reader, never seen: what a glyph says to the eye */
@@ -657,8 +659,9 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-tip span { opacity: .55; font-size: 11px; margin-left: auto }
 .sh-tip span.k { opacity: .4; margin-left: 0; font-weight: 600 }
 
-.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 12px -apple-system, system-ui, sans-serif;
-  color: var(--glass-warn); border-radius: 999px; padding: 8px 14px }
+.sh-banner { position: absolute; bottom: var(--edge); right: var(--edge); z-index: 10; font: 500 12px/16px -apple-system, system-ui, sans-serif;
+  color: var(--glass-warn); border-radius: 16px; padding: 8px 14px;
+  max-width: min(460px, calc(100% - 2 * var(--edge))) }   /* wraps rather than running under a panel on the left */
 
 /* update pill: bottom-center, the quietest possible member of the pill family.
    The command IS the button - one click copies it for the terminal or the agent. */
@@ -1514,7 +1517,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 /* ---- the lane: full width from the bottom-left corner, items left to right, scrolls sideways - the
    run's captures in the order made, the one recording now last at the right end (never cut) ---- */
 .jm-lane { position: absolute; left: var(--edge); right: var(--edge); bottom: var(--edge); z-index: 31; display: flex; pointer-events: none; min-width: 0 }
-.jm-lane-in { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; pointer-events: auto;
+.jm-lane-in { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; pointer-events: auto;
   padding: 6px 4px; margin: -6px -4px; scrollbar-width: none; overscroll-behavior-x: contain }   /* room for the tiles' shadow inside the scroller */
 .jm-lane-in::-webkit-scrollbar { display: none }
 .jm-lane-in.fade-r { -webkit-mask: linear-gradient(90deg, #000 calc(100% - 56px), transparent); mask: linear-gradient(90deg, #000 calc(100% - 56px), transparent) }
@@ -1543,7 +1546,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 
 /* ---- a capture's tile (round 3): two lines, a little squarer - glyph | title over a status line
    ("Ready to review", "Agent working · 0:41", "Done · 1 frame changed"). Colour only in the glyph. ---- */
-.jm-card { display: inline-flex; align-items: center; gap: 10px; height: 44px; min-width: 136px; max-width: 216px; flex: none;
+.jm-card { display: inline-flex; align-items: center; gap: 10px; height: 44px; width: 216px; flex: none;   /* one width: a tile never resizes */
   padding: 0 14px 0 12px; border-radius: 10px; color: var(--glass-ink); text-align: left; cursor: pointer }
 .jm-card .jm-st { flex: none }
 .jm-card .tx { display: flex; flex-direction: column; gap: 1px; min-width: 0 }
@@ -1559,8 +1562,14 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-card.held .jm-st { opacity: .55 }
 .jm-card.ghost { opacity: .35 }
 /* selected (clicked, or Q's focus): the ONE place blue shows on the lane - a 2px accent ring round the tile */
-.jm-card.focus { color: var(--glass-ink); max-width: 260px; border-radius: 10px;
+.jm-card.focus { color: var(--glass-ink); border-radius: 10px;
   box-shadow: var(--jm-tile-shadow), 0 0 0 2px var(--accent), 0 0 0 5px var(--accent-ring) }
+
+/* a tile's Rename, in place of its menu */
+.jm-rename { padding: 6px }
+.jm-rename input { width: 100%; height: 30px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--glass-brd); background: var(--glass-hover);
+  color: var(--glass-ink); font: 500 12.5px -apple-system, system-ui, sans-serif; outline: none }
+.jm-rename input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring) }
 
 /* ---- the capture: an edge ring round the window, the chip, the caption, points ---- */
 .jm-edge { position: absolute; inset: 0; pointer-events: none; z-index: 40;

@@ -18,7 +18,7 @@ import { owned as ownedSet } from './ledger.ts'
 import { fresh, readRaw, write } from './journal.ts'
 import { buildPacket, packetPath, sanitize, threadId } from './packet.ts'
 import type { Batch, Brief, Card, CardState, CaptureRecord, Journal, JournalV1, Member, Msg, PacketMember, Payload, Result } from './types.ts'
-import { captureFrames, captureWords, factsOf, hashOf, madeOf, readCapture } from './capture.ts'
+import { captureFrames, captureWords, factsOf, hashOf, madeOf, readCapture, wordsSince } from './capture.ts'
 
 export const MENTION = /@marver\b/i
 /** A batch holds at most this many cards; the next waits for the next batch. */
@@ -187,8 +187,8 @@ export function requeue(j: Journal, c: Card, now: number, first = false): Card {
   return other ? merge(j, other, c, now) : c
 }
 
-export type Action = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later'
-export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', 'edit', 'good', 'more', 'later']
+export type Action = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename'
+export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', 'edit', 'good', 'more', 'later', 'rename']
 
 /** One card action from the page (POST /jam/card). It applies only if the card is still at `rev`
  *  (two tabs cannot both decide); anything not allowed answers with the current card. */
@@ -209,6 +209,14 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
   }
   if (action === 'edit' && capture && c.state === 'draft' && typeof body === 'string') {
     c.payload = { ...c.payload!, edited: body.slice(0, 20_000) }; c.rev += 1; c.at = now
+    return { ok: true, card: c }
+  }
+  // a capture's title as you name it (empty: its first words again) - the lane and the review show it;
+  // what the agent reads never changes by it
+  if (action === 'rename' && (capture || c.kind === 'wrapup') && c.state !== 'dropped' && typeof body === 'string') {
+    const name = body.replace(/\s+/g, ' ').trim().slice(0, 80)
+    if (name) c.name = name; else delete c.name
+    c.rev += 1; c.at = now
     return { ok: true, card: c }
   }
   if (action === 'later' && c.state === 'review') return { ok: true, card: c }
@@ -623,13 +631,21 @@ export const payloadKey = (c: Card): string => `cap:${c.id}:${hashOf({ recordHas
 export function addCapture(j: Journal, record: CaptureRecord, hash: string, now = Date.now()): Card {
   const have = j.cards.find((c) => c.id === record.id)
   if (have) return have
-  const made = madeOf(record.id) || now
-  const r = record.context.reviewing
+  // Resume: this record continues a draft ended too soon - it takes the draft's place (its spot on the
+  // lane, its name, your edit with the new words after it) and the draft leaves. A draft already
+  // decided (confirmed, kept, dropped) is not taken: the record is then a capture of its own.
+  const rs = record.context.resumes
+  const prev = rs ? j.cards.find((c) => c.id === rs.id && c.kind === 'capture' && c.state === 'draft' && c.board === record.context.board) : undefined
+  const made = prev?.made ?? (madeOf(record.id) || now)
+  const r = record.context.reviewing ?? prev?.reviewing
+  const more = prev?.payload?.edited !== undefined && rs ? wordsSince(record, rs.at) : ''
+  const edited = prev?.payload?.edited !== undefined ? [prev.payload.edited.trim(), more].filter(Boolean).join('\n') : undefined
   const c: Card = {
     id: record.id, kind: 'capture', board: record.context.board, frames: captureFrames(record), capture: record.id, events: [],
-    state: 'draft', made, order: made, rev: 1, at: now, payload: { recordHash: hash },
-    ...(r ? { reviewing: r, follows: r.card } : {}),
+    state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}) },
+    ...(r ? { reviewing: r, follows: r.card } : {}), ...(prev?.name ? { name: prev.name } : {}),
   }
+  if (prev) set(prev, 'dropped', now, `resumed as ${record.id}`)
   j.cards.push(c)
   touchRun(j, now)
   return c

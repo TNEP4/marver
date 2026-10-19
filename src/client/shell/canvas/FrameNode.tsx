@@ -6,9 +6,7 @@ import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { threadHostKey } from '../keys.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
-import { canvasClick, canvasPointer, frameGone, frameLoaded, pressNow, useJamCapture, type Point as CapPoint } from '../jam-capture.ts'
-import { CapturePoint } from '../jam-panel.tsx'
-const NO_POINTS: CapPoint[] = []
+import { canvasClick, canvasPointer, frameGone, frameLoaded, pressNow, useJamCapture } from '../jam-capture.ts'
 import { primeCameraFor } from './camera-broadcast.ts'
 import { sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
@@ -143,11 +141,6 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const regWin = useRef<WindowProxy | null>(null)
   const downAt = useRef<{ x: number; y: number; t: number } | null>(null)
   const capturing = useJamCapture((s) => !!s.current)
-  // select the capture's points as stored (a stable array) and pick this node's here - a selector
-  // that builds a new array on every read would loop React
-  const pointCount = useJamCapture((s) => (s.current ? s.caps[s.current]?.points.length ?? 0 : 0))   // redraw on each new point
-  const points = pointCount ? (useJamCapture.getState().caps[useJamCapture.getState().current ?? '']?.points ?? NO_POINTS).filter((p) => p.key === node.key) : NO_POINTS
-  const pointScale = iframeRef.current?.clientWidth ? node.w / iframeRef.current.clientWidth : 1
   useEffect(() => () => frameGone(node.key), [node.key])
   const registerWin = () => {
     const iframe = iframeRef.current
@@ -471,8 +464,6 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           />
         )}
         {working && <div className="sh-work-wave" />}
-        {/* a capture's numbered points on this frame (teal), where each pick or click happened */}
-        {points.map((p) => <CapturePoint key={p.n} n={p.n} x={p.x * pointScale} y={p.y * pointScale} type="click" />)}
       </div>
 
       {/* comments live OUTSIDE the clipped body: a card or pin near the frame edge

@@ -84,6 +84,9 @@ window.addEventListener('message', (e) => {
     // mirrored on the document so content primitives can observe it (Video disarms its
     // player when the human leaves interact mode - a playing clip must not outlive the mode)
     document.documentElement.toggleAttribute('data-sh-interactive', interactiveOn)
+    // leaving interact leaves the field you were typing in: the next key is a shortcut again, not a
+    // letter typed into a frame you are no longer using
+    if (!interactiveOn) { const a = document.activeElement; if (a && a !== document.body && typeof a.blur === 'function') a.blur() }
   }
 })
 

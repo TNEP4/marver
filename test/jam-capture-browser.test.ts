@@ -90,7 +90,7 @@ beforeAll(async () => {
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/config.ts', "export default { jam: { agent: 'claude', concurrency: 1 } }\n")
   for (const f of ['alpha', 'bravo', 'charlie']) put(`design/scenes/spec/${f}.tsx`, frame(f))
-  put('design/scenes/spec/clicky.tsx', `export default () => <main><button onClick={() => { (window as any).__clicked = ((window as any).__clicked ?? 0) + 1 }}>Save 20%</button></main>\n`)
+  put('design/scenes/spec/clicky.tsx', `export default () => <main><button onClick={() => { (window as any).__clicked = ((window as any).__clicked ?? 0) + 1 }}>Save 20%</button><input id="email" defaultValue="" style={{ display: 'block', marginTop: 40, width: 200, height: 30 }} /></main>\n`)
   put('design/boards/main.json', { version: 1, name: 'main', auto: false, order: 0, nodes: [{ frame: 'spec/alpha' }, { frame: 'spec/bravo' }, { frame: 'spec/charlie' }, { frame: 'spec/clicky' }] })
   agentMode({})
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, BROWSER: 'none', CI: '1' } })
@@ -146,6 +146,8 @@ const pic = async (name: string, clip?: { x: number; y: number; width: number; h
   writeFileSync(join(process.env.MARVER_SHOT_DIR, `cap-${name}.png`), Buffer.from(out.data, 'base64'))
 }
 const cardsNow = () => browser!.eval(s, `window.__mvJamQueue.getState().cards ?? []`)
+/** Drop (or decide) a capture's card through the queue, and close whatever panel is open. */
+const decide = async (id: string, action: string) => { await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = (q.cards ?? []).find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, ${JSON.stringify(action)}) : 1 })()`); await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`) }
 
 describe('captures in the browser', () => {
   skippable('S, a canvas click on a button (recorded, not clicked), a note, E - a draft whose record holds them in time order', async () => {
@@ -235,22 +237,22 @@ describe('captures in the browser', () => {
     await until(`!document.querySelector('.jm-lane')`, 5000)
   }, 120_000)
 
-  skippable('Esc with no notes card open drops the capture; S with one open seals it and starts the next', async () => {
+  skippable('S while a capture records starts nothing and says so - one at a time; Esc with no notes card open drops it', async () => {
     await key('s')
     await until(`!!window.__mvJamCapture.getState().current`)
     const first = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await sleep(200)
     await key('s')
-    await until(`window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(first)}`, 3000)
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(first)} && c.state === 'draft')`, 30_000)
+    await until(`[...document.querySelectorAll('.sh-toast')].some((t) => /press E to end it first/.test(t.textContent))`, 3000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(first)
+    expect(await browser!.eval(s, `Object.keys(window.__mvJamCapture.getState().caps).length`)).toBe(1)
     const b = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }
     await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...b }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...b }, s)
     await until(`!window.__mvJamCapture.getState().current`, 3000)
-    // leave nothing behind: the first one's draft is dropped
-    await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(first)}), 'drop')`)
-    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    expect(await browser!.eval(s, `(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(first)})`)).toBe(false)
   }, 60_000)
 
-  skippable('during a review: S, a note, S again, a note, E - both drafts bind the review; the newest draft\'s read-back opens over it and ⏎ confirms that draft, not the review', async () => {
+  skippable('during a review: S, a note, E - the draft binds the review; its read-back opens over it and ⏎ confirms that draft, not the review', async () => {
     agentMode({})
     // a capture to review first
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
@@ -262,19 +264,15 @@ describe('captures in the browser', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r0)} && c.state === 'review')`, 30_000)
     await key('v')
     await until(`window.__mvJamUi.getState().panel?.kind === 'review' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r0)}`, 5000)
-    // S during the review, S -> S, E
+    // S during the review, a note, E: the draft binds the review
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('use your second idea'), 1`)
-    await key('s'); await until(`window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 3000)
-    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
-    await browser!.eval(s, `window.__mvJamCapture.getState().note('and the border'), 1`)
     await key('e')
-    await until(`[${JSON.stringify(a)}, ${JSON.stringify(b)}].every((id) => (window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === id && c.state === 'draft' && c.reviewing?.card === ${JSON.stringify(r0)}))`, 15_000)
-    await until(`window.__mvJamUi.getState().panel?.kind === 'capture'`, 5000)
-    const opened = await browser!.eval(s, `window.__mvJamUi.getState().panel.id`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(a)} && c.state === 'draft' && c.reviewing?.card === ${JSON.stringify(r0)})`, 15_000)
+    await until(`window.__mvJamUi.getState().panel?.kind === 'capture' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 5000)
     await enter()
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(opened)} && c.state !== 'draft')`, 10_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(a)} && c.state !== 'draft')`, 10_000)
     // the review was not approved by that ⏎: confirming the capture sent it back as more work instead
     expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(r0)})?.note`)).toBe('more work')
     // clean up the other draft
@@ -519,13 +517,14 @@ describe('captures in the browser', () => {
     await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(b)}), 'drop')`)
   }, 120_000)
 
-  skippable('a canvas dwell belongs to its capture: S -> S inside the 0.8 s leaves the next capture without that hover', async () => {
+  skippable('a canvas dwell belongs to its capture: E then S inside the 0.8 s leaves the next capture without that hover', async () => {
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const first = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/bravo').key`)
     const at = await browser!.eval(s, `(() => { const r = document.querySelector('.sh-node[data-node="${k}"] .sh-overlay').getBoundingClientRect(); return { x: r.x + 40, y: r.y + 60 } })()`)
     await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y }, s)
     await sleep(300)
+    await key('e')
     await key('s')                                                             // the next capture, before the dwell completes
     await until(`window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(first)}`, 3000)
     const second = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
@@ -564,5 +563,116 @@ describe('captures in the browser', () => {
     await browser!.eval(s, `[...document.querySelectorAll('.jm-focus .jm-btn')].find((b) => b.textContent === 'Retry').click(), 1`)
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 30_000)
     await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(id)}), 'good')`)
+  }, 120_000)
+})
+
+describe('captures in the browser: the first trial', () => {
+  const esc = async () => { const b = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }; await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...b }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...b }, s) }
+  const clickyKey = () => browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/clicky').key`)
+
+  skippable('a click on a field during a capture puts the caret in it: E, S and N typed there are letters, never capture keys; no numbered badge is drawn; Esc leaves the field, then E ends', async () => {
+    await browser!.eval(s, `window.__mvStore.getState().setInteract(null), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await sleep(300)
+    const k = await clickyKey()
+    const at = await browser!.eval(s, `(() => { const f = document.querySelector('.sh-node[data-node="${k}"] iframe'); const b = f.contentDocument.querySelector('#email').getBoundingClientRect(); const r = f.getBoundingClientRect(); const sx = r.width / f.clientWidth; return { x: r.left + (b.left + b.width / 2) * sx, y: r.top + (b.top + b.height / 2) * sx } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 }, s)
+    // the click is recorded (with its number), the frame turns interactive and the field has the caret
+    await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.steps ?? []).some((x) => x.event === 'click' && x.point >= 1)`)
+    await until(`window.__mvStore.getState().interact === ${JSON.stringify(k)} && document.querySelector('.sh-node[data-node="${k}"] iframe').contentDocument.activeElement?.id === 'email'`, 5000)
+    expect(await browser!.eval(s, `document.querySelectorAll('.jm-pt').length`)).toBe(0)
+    for (const ch of ['e', 's', 'n', 'e']) await browser!.press(s, ch)
+    await sleep(300)
+    expect(await browser!.eval(s, `document.querySelector('.sh-node[data-node="${k}"] iframe').contentDocument.querySelector('#email').value`)).toBe('esne')
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(id)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().noteOpen`)).toBe(false)
+    // Esc leaves the field and interact - the capture still records; E now ends it
+    await esc()
+    await until(`window.__mvStore.getState().interact === null`, 3000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBe(id)
+    await sleep(200)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    await decide(id, 'drop')
+  }, 90_000)
+
+  skippable('Resume: R in a read-back records on where it stopped - the draft steps aside, and the new end takes its place with both parts; Esc on a resumed capture gives the draft back', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('first part'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 30_000)
+    await sleep(200)
+    await key('r')
+    await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 5000)
+    const b1 = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    expect(await browser!.eval(s, `window.__mvJamUi.getState().panel`)).toBeNull()
+    await until(`!document.querySelector('.jm-lane [data-tile="${a}"]')`, 3000)
+    // the resumed capture carries the first part already
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(b1)}].steps.filter((x) => x.event === 'note').map((x) => x.text)`)).toEqual(['first part'])
+    // Esc: the resumed capture goes, the draft is back as it was
+    await esc()
+    await until(`!window.__mvJamCapture.getState().current && !!document.querySelector('.jm-lane [data-tile="${a}"]')`, 5000)
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(a)}).state`)).toBe('draft')
+    // again, this time to the end: the Resume button in its read-back
+    await click(`.jm-lane [data-tile="${a}"]`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 5000)
+    await browser!.eval(s, `[...document.querySelectorAll('.jm-focus .jm-btn')].find((b) => /Resume/.test(b.textContent)).click(), 1`)
+    await until(`!!window.__mvJamCapture.getState().current`, 5000)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('second part'), 1`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(b)} && c.state === 'draft') && (window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(a)})?.state !== 'draft'`, 30_000)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(b)} && /first part/.test(document.querySelector('.jm-focus').textContent) && /second part/.test(document.querySelector('.jm-focus').textContent)`, 10_000)
+    expect(await browser!.eval(s, `!!document.querySelector('.jm-lane [data-tile="${a}"]')`)).toBe(false)
+    await decide(b, 'drop')
+  }, 120_000)
+
+  skippable('the lane: one tile width, selected or not, 10 px apart; a title cut short shows whole in the shell\'s tooltip; a right-click opens the tile\'s menu and Rename names it', async () => {
+    const long = 'make the checkout badge outlined and move the footer link under the price, with more room above'
+    const ids: string[] = []
+    for (const note of [long, 'short']) {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+      ids.push(await browser!.eval(s, `window.__mvJamCapture.getState().current`))
+      await browser!.eval(s, `window.__mvJamCapture.getState().note(${JSON.stringify(note)}), 1`)
+      await key('e')
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(ids[ids.length - 1])} && c.state === 'draft')`, 30_000)
+      await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+      await sleep(150)
+    }
+    const [a, b] = ids
+    const width = (id: string) => browser!.eval(s, `document.querySelector('.jm-lane [data-tile="${id}"]').getBoundingClientRect().width`)
+    const wa = await width(a), wb = await width(b)
+    expect(wa).toBe(wb)
+    await browser!.eval(s, `window.__mvJamUi.getState().select(${JSON.stringify(a)}), 1`)
+    await sleep(100)
+    expect(await width(a)).toBe(wa)
+    const gap = await browser!.eval(s, `(() => { const x = document.querySelector('.jm-lane [data-tile="${a}"]').getBoundingClientRect(), y = document.querySelector('.jm-lane [data-tile="${b}"]').getBoundingClientRect(); return Math.round(y.left - x.right) })()`)
+    expect(gap).toBe(10)
+    // the tooltip: the shell's own, the whole title - only for the title cut short
+    await hover(`.jm-lane [data-tile="${a}"] .t`)
+    await until(`/move the footer link under the price, with more room above/.test(document.querySelector('.sh-tip')?.textContent ?? '')`, 3000)
+    expect(await browser!.eval(s, `document.querySelector('.jm-lane [data-tile="${a}"]').getAttribute('title')`)).toBeNull()
+    await hover(`.jm-lane [data-tile="${b}"] .t`)
+    await sleep(400)
+    expect(await browser!.eval(s, `document.querySelector('.sh-tip')?.textContent ?? ''`)).toBe('')
+    // right-click: the draft's menu; Rename names the tile
+    const at = await browser!.eval(s, `(() => { const r = document.querySelector('.jm-lane [data-tile="${b}"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'right', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'right', clickCount: 1 }, s)
+    await until(`!!document.querySelector('.sh-ctxmenu')`, 3000)
+    const items = await browser!.eval(s, `[...document.querySelectorAll('.sh-ctxmenu button')].map((b) => b.textContent)`)
+    expect(items).toEqual(['Open read-back', 'Resume capture', 'Rename', 'Add to queue', 'Keep, do not send', 'Drop'])
+    await browser!.eval(s, `[...document.querySelectorAll('.sh-ctxmenu button')].find((b) => b.textContent === 'Rename').click(), 1`)
+    await until(`!!document.querySelector('.jm-rename input')`, 3000)
+    await browser!.eval(s, `document.querySelector('.jm-rename input').focus(), 1`)
+    await browser!.eval(s, `(() => { const t = document.querySelector('.jm-rename input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(t, 'Badge fix'); t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await enter()
+    await until(`document.querySelector('.jm-lane [data-tile="${b}"] .t')?.textContent === 'Badge fix'`, 5000)
+    expect(await browser!.eval(s, `!!document.querySelector('.sh-ctxmenu')`)).toBe(false)
+    for (const id of ids) await decide(id, 'drop')
   }, 120_000)
 })

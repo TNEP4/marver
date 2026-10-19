@@ -8,7 +8,8 @@ import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { has, record } from '../src/server/jam/ledger.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { addPicture, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
+import { addPicture, captureWords, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
+import { speechLines } from '../src/shared/speech.ts'
 import { merge, payloadKey, prune, sameComment, touchRun } from '../src/server/jam/queue.ts'
 import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
@@ -106,7 +107,7 @@ describe('captures: confirm, and the thread it becomes', () => {
     expect(ev.facts).toBe('0:04 · 1 point · 1 note')
     expect(ev.frame).toBe('demo/a')
     expect(ev.anchor).toEqual({ el: { semantics: { quote: 'Save 20%' } } })
-    expect(ev.body).toBe('please @marver make this match (note) the outline one')
+    expect(ev.body).toBe('please @marver make this match\nthe outline one')   // a note is its own line
     expect(has(root, 'home', ev.id)).toBe(true)
     await jam.tick(); jam.stop()
     // the comment made no card of its own, though its words tag @marver
@@ -393,7 +394,7 @@ describe('captures: review round 1 fixes', () => {
     const jam = createJam(root, CFG, agent())
     const r = rec()
     const a = await jam.capture(r)
-    const body = 'this badge should match the plan badge (note) the outline one'
+    const body = 'this badge should match the plan badge\nthe outline one'
     appendEvents(dir, 'home', [{ id: `cap-${r.id}-e`, ts: tick(), type: 'create', commentId: `cap-${r.id}`, board: 'home', author: OWNER, body, frame: 'demo/elsewhere', capture: 'cap-0000000000-other' }])
     expect((await jam.act(r.id, a.card!.rev, 'confirm')).ok).toBe(false)
     jam.stop()
@@ -602,5 +603,77 @@ describe('captures: review round 6 fixes', () => {
     expect(p.brief.capture.edited).toBe('')
     expect(card(again, r.id).state).toBe('review')
     done()
+  })
+})
+
+describe('captures: the first trial (Resume, Rename, the words)', () => {
+  it('Resume: a record that continues a draft takes its place - its spot, its name, your edit with the new words after it - and the draft leaves', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const a = rec()
+    const ca = await jam.capture(a)
+    await jam.act(a.id, ca.card!.rev, 'edit', 'make the badge outline')
+    await jam.act(a.id, card(jam, a.id).rev, 'rename', 'Badge')
+    const at = 1_010_000
+    const b = rec({
+      context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any,
+      timeline: [...a.timeline, { at: at + 500, event: 'note', text: 'and the footer link' }],
+    })
+    const cb = await jam.capture(b)
+    jam.stop()
+    expect(cb.ok).toBe(true)
+    expect(card(jam, a.id).state).toBe('dropped')
+    const nb = card(jam, b.id)
+    expect(nb.state).toBe('draft')
+    expect(nb.made).toBe(card(jam, a.id).made)
+    expect(nb.payload.edited).toBe('make the badge outline\nand the footer link')
+    expect(jam.view().cards.find((c) => c.id === b.id)?.title).toBe('Badge')
+    expect(readCapture(root, b.id)!.record.context.resumes).toEqual({ id: a.id, at })
+    done()
+  })
+
+  it('Resume of a draft already decided (or on another board) is a capture of its own: the earlier card is left as it is', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    const a = rec()
+    const ca = await jam.capture(a)
+    await jam.act(a.id, ca.card!.rev, 'keep')
+    const kept = card(jam, a.id).state
+    const b = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at: 1_010_000 } } as any })
+    await jam.capture(b)
+    jam.stop()
+    expect(card(jam, a.id).state).toBe(kept)
+    expect(card(jam, b.id).state).toBe('draft')
+    expect(card(jam, b.id).made).not.toBe(card(jam, a.id).made)
+    done()
+  })
+
+  it('a record that names itself as the draft it resumes, or a bad id, carries no resume', () => {
+    const r = rec()
+    const self = checkRecord({ ...r, context: { ...r.context, resumes: { id: r.id, at: 5 } } }) as CaptureRecord
+    expect(self.context.resumes).toBeUndefined()
+    const bad = checkRecord({ ...r, context: { ...r.context, resumes: { id: '../x', at: 5 } } }) as CaptureRecord
+    expect(bad.context.resumes).toBeUndefined()
+  })
+
+  it('Rename names the tile (empty gives back its first words); a dropped capture is not renamed; the agent never reads the name', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    const c = await jam.capture(r)
+    expect((await jam.act(r.id, c.card!.rev, 'rename', '  Checkout   badge ')).ok).toBe(true)
+    expect(jam.view().cards.find((x) => x.id === r.id)?.title).toBe('Checkout badge')
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'rename', '')).ok).toBe(true)
+    expect(jam.view().cards.find((x) => x.id === r.id)?.title).toBe('this badge should match the plan badge the outline one')
+    await jam.act(r.id, card(jam, r.id).rev, 'drop')
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'rename', 'late')).ok).toBe(false)
+    jam.stop()
+    done()
+  })
+
+  it('the words read as written: what was said runs on, every note is its own line - no "(note)"', () => {
+    const r = rec()
+    expect(captureWords(r)).toBe('this badge should match the plan badge\nthe outline one')
+    expect(speechLines([{ kind: 'note', text: ' a ' }, { kind: 'words', text: 'b' }, { kind: 'words', text: ' c ' }, { kind: 'note', text: '' }])).toBe('a\nb c')
   })
 })

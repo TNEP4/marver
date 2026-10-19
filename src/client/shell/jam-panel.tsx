@@ -9,12 +9,17 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { JamStateIcon } from './jam-ui.tsx'
 import type { TimelineLine } from './jam-lines.ts'
+import { speechLines } from '../../shared/speech.ts'
 import {
   ArrowBendUpLeftIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, CopyIcon, CursorClickIcon, CursorIcon, EyeIcon, FileCodeIcon,
   FrameRectIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MoonIcon, PencilSimpleIcon, SignpostIcon, SunIcon, TextboxIcon,
   ParallelogramFillIcon, WarningIcon, WaveformIcon, XIcon, deviceIcon,
 } from './icons.tsx'
 import { LANE_H } from './jam-lane.tsx'
+import { Tip } from './Tip.tsx'
+
+/** A heading cut short by its ellipsis: its tooltip shows it whole (one that fits shows none). */
+const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
 
 /** Marver's mark, as the thread draws it (Comments.tsx MarverAvatar) - drawn here from the same classes
  *  so the panels never import the comments module (which will import these panels). */
@@ -112,7 +117,7 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, agent, follows, readOnly, onOpenThread, err, warn, style }: {
+export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, onOpenThread, err, warn, style }: {
   title: string
   of?: [number, number]
   onPrev?: () => void
@@ -130,6 +135,8 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   onConfirm?: () => void
   onKeep?: () => void
   onDrop?: () => void
+  /** ended too soon: recording goes on where it stopped (R) */
+  onResume?: () => void
   agent?: string | null
   follows?: string
   readOnly?: boolean
@@ -141,7 +148,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   const [open, setOpen] = useState(!!editing)
   useEffect(() => { if (editing) setOpen(true) }, [editing])
   // the words and the notes, in time order - what the capture says (server captureWords)
-  const words = lines.filter((l) => l.kind === 'words' || l.kind === 'note').map((l) => (l.kind === 'note' ? `(note) ${unquote(l.text)}` : unquote(l.text))).join(' ')
+  const words = speechLines(lines.flatMap((l) => (l.kind === 'words' || l.kind === 'note' ? [{ kind: l.kind, text: unquote(l.text) }] : [])))
   const [text, setText] = useState(pending ?? edited ?? words)
   // the field follows the saved edit only while you are not writing and nothing newer waits to save
   // (`pending`): an older save's answer never overwrites newer words, and a failed one never loses them
@@ -161,7 +168,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
     <div className="jm-panel jm-readback" data-jam-readback="" style={style}>
       <div className="top">
         <span className="jm-capglyph"><WaveformIcon size={14} /></span>
-        <h3 title={title}>{title || 'Capture'}</h3>
+        <Tip side="bottom" label={<span className="jm-tip-title">{title}</span>} only={cutShort}><h3>{title || 'Capture'}</h3></Tip>
         <Walk of={of} onPrev={onPrev} onNext={onNext} />
       </div>
       <Meta items={meta} />
@@ -190,6 +197,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
           <>
             <span className="dim">{agent ? <>For <b style={{ color: 'var(--glass-ink-2)', fontWeight: 600 }}>{agent}</b></> : 'No agent yet - it waits in the queue'}</span>
             <span className="sp" />
+            {onResume && <button className="jm-btn ghost" onClick={onResume}>Resume <kbd>R</kbd></button>}
             <button className="jm-btn ghost" onClick={onDrop}>Drop <kbd>esc</kbd></button>
             <button className="jm-btn ghost" onClick={onKeep}>Keep <kbd>K</kbd></button>
             <button className="jm-btn primary" onClick={onConfirm}>Add to queue <kbd>⏎</kbd></button>
@@ -246,7 +254,7 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
     <div className="jm-panel jm-review" data-jam-review="" style={style}>
       <div className="top">
         <JamStateIcon state="review" />
-        <h3 title={title}>{title}</h3>
+        <Tip side="bottom" label={<span className="jm-tip-title">{title}</span>} only={cutShort}><h3>{title}</h3></Tip>
         <Walk of={of} onPrev={onPrev} onNext={onNext} />
       </div>
       <Meta items={[...names.map((f) => <span key={f} className="jm-flink"><FrameRectIcon size={11} />{label(f)}</span>), ...(agent ? [agent] : []), ...(when ? [when] : [])]} />

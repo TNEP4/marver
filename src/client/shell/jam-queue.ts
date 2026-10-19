@@ -8,16 +8,22 @@ import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { PUBLISHED } from './store.ts'
 
-export type JamAction = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later'
+export type JamAction = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename'
 export type JamCardState = 'draft' | 'confirming' | 'queued' | 'working' | 'asks' | 'review' | 'done' | 'kept' | 'failed' | 'dropped'
 export interface JamCard {
   id: string; kind: 'comment' | 'capture' | 'wrapup'; board: string; thread?: string; frames: string[]; events: string[]
   state: JamCardState; note?: string; rev: number; made: number; order: number; at: number
   follows?: string; reply?: string; position?: number; waiting?: string; exclusive?: boolean; batch?: string
   // captures: the lane and the review
-  title?: string; inRun?: boolean; shots?: { frame: string; before?: string; after?: string }[]
+  title?: string; inRun?: boolean; shots?: { frame: string; before?: string; after?: string; same?: boolean }[]
   reviewing?: { card: string; batch: string; rev: number }; edited?: string; notes?: number; capture?: string
+  /** the title is the name you gave it (Rename), not its first words */
+  named?: boolean
 }
+/** The review's frames: the ones the run changed (all of them when none did - there is still a before
+ *  and after to look at). */
+export const changedShots = (shots: JamCard['shots']) => { const all = shots ?? []; const changed = all.filter((x) => !x.same); return changed.length ? changed : all }
+
 interface QueueState {
   /** null: no queue here (published, jam off, or not loaded yet) - no icon anywhere */
   cards: JamCard[] | null

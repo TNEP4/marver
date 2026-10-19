@@ -9,8 +9,9 @@ import { FocusPanel, NotesCard, ReadBack, ReviewDetail } from './jam-panel.tsx'
 import type { TimelineLine } from './jam-lines.ts'
 import type { JamCard } from './jam-queue.ts'
 
-export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd, onOpen, notes }: {
+export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd, onOpen, onMenu, notes }: {
   tiles: LaneTile[]; recording?: LaneRecording; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string): void
+  onMenu?(e: React.MouseEvent, id: string): void
   notes?: { notes: { t: string; text: string }[]; draft: string; onDraft(t: string): void; onAdd(): void; onClose(): void }
 }) {
   // the notes card floats one lane up over the capture tile, left edges aligned, clamped on screen
@@ -28,7 +29,7 @@ export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd
   }, [!!notes, tiles.length])
   return (
     <>
-      <Lane tiles={tiles} recording={recording} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} />
+      <Lane tiles={tiles} recording={recording} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} onMenu={onMenu} />
       {notes && <NotesCard {...notes} style={{ position: 'absolute', left: at?.left ?? 10, bottom: 'calc(var(--edge) + 56px + 8px)', zIndex: 41 }} />}
     </>
   )
@@ -40,7 +41,7 @@ export function FocusPanelView(p: {
   shots: { frame: string; before?: string; after?: string }[]; reply: string
   view: 'after' | 'before'; tab: number; moreOpen: boolean
   onTab(i: number): void; onFlip(): void; onMoreOpen(on: boolean): void; onClose(): void
-  onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void
+  onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void; onResume?: () => void
   onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
   onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void
 }) {
@@ -61,7 +62,7 @@ export function FocusPanelView(p: {
         <ReadBack key={c.id} title={title} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
           readOnly={c.state !== 'draft'} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
-          onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onOpenThread={c.thread ? p.onOpenThread : undefined}
+          onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onResume={c.state === 'draft' ? p.onResume : undefined} onOpenThread={c.thread ? p.onOpenThread : undefined}
           onRetry={c.state === 'failed' ? p.onRetry : undefined} />
       )}
     </FocusPanel>

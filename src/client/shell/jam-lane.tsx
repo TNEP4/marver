@@ -4,12 +4,14 @@
  * never cut. No bar behind it: every item is its own floating frosted tile, two lines, 44 px. Full,
  * it scrolls sideways and keeps the newest in view; earlier tiles scroll away under the left fade.
  * A tile never moves: a state change rewrites its status line in place. Colour lives only in the
- * glyph; the selected tile alone wears the accent ring.
+ * glyph; the selected tile alone wears the accent ring. Every tile is one width - selecting one never
+ * resizes it; a title cut short shows whole in a tooltip, and a right-click opens the tile's menu.
  *
  * Presentational only - the shell decides what is on it (jam-capture.ts and App mount it).
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
+import { Tip } from './Tip.tsx'
 import { CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
@@ -55,12 +57,14 @@ export interface LaneRecording {
  * changes when a new capture or draft arrives - the lane scrolls back to its right end then (a manual
  * scroll back stays put until the next change).
  */
-export function Lane({ tiles, recording, selected, keyboard, onOpen, followEnd }: {
+export function Lane({ tiles, recording, selected, keyboard, onOpen, onMenu, followEnd }: {
   tiles: LaneTile[]
   recording?: LaneRecording
   selected?: string
   keyboard?: boolean
   onOpen(id: string): void
+  /** a right-click on a tile: its menu */
+  onMenu?(e: React.MouseEvent, id: string): void
   followEnd?: unknown
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -108,9 +112,13 @@ export function Lane({ tiles, recording, selected, keyboard, onOpen, followEnd }
         {tiles.map((t) => (
           <button key={t.id} data-tile={t.id} data-state={t.state}
             className={`jm-card ${t.state}${selected === t.id ? ' focus' : ''}`}
-            title={t.title} onClick={() => onOpen(t.id)}>
+            onClick={() => onOpen(t.id)} onContextMenu={onMenu ? (e) => onMenu(e, t.id) : undefined}>
             <JamStateIcon state={t.state} />
-            <span className="tx"><span className="t">{t.title}</span><span className="m">{t.line}</span></span>
+            <span className="tx">
+              {/* the whole title, in the shell's own tooltip - only when the tile cuts it short */}
+              <Tip label={<span className="jm-tip-title">{t.title}</span>} only={(el) => el.scrollWidth > el.clientWidth + 1}><span className="t">{t.title}</span></Tip>
+              <span className="m">{t.line}</span>
+            </span>
             {t.exclusive && <span className="x" aria-label="changes a shared file"><FileCodeIcon size={13} /></span>}
           </button>
         ))}

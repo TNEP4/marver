@@ -4,11 +4,13 @@ import { createPortal } from 'react-dom'
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. `inv` pins the
  *  flipped (light) bubble for surfaces with fixed dark chrome (play mode), where the
- *  theme-following default would sit dark-on-dark. */
-export function Tip({ label, side = 'top', inv = false, children }: { label: ReactNode; side?: 'top' | 'bottom' | 'right'; inv?: boolean; children: ReactElement }) {
+ *  theme-following default would sit dark-on-dark. `only(trigger)` decides at hover whether it shows. */
+export function Tip({ label, side = 'top', inv = false, only, children }: { label: ReactNode; side?: 'top' | 'bottom' | 'right'; inv?: boolean; only?: (el: HTMLElement) => boolean; children: ReactElement }) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const timer = useRef<number | undefined>(undefined)
   const show = (e: React.SyntheticEvent) => {
+    // `only`: shown when the trigger needs it (a title cut short shows whole; one that fits shows nothing)
+    if (only && !only(e.currentTarget as HTMLElement)) return
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     // right: beside the trigger, centred on it - a sidebar row's glyph, read toward the canvas
     const at = side === 'right' ? { x: r.right + 9, y: r.top + r.height / 2 } : { x: r.left + r.width / 2, y: side === 'top' ? r.top - 7 : r.bottom + 7 }

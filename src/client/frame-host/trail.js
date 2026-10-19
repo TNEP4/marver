@@ -2,7 +2,8 @@
 // frames (bridge.js) and the play stage (stage/main.tsx). It does nothing while no capture is open.
 //
 //   shell -> frame : sh:capture { id, on } · sh:capture-hello { nonce } · sh:probe { id, req, x, y }
-//   frame -> shell : sh:capture-hello { nonce, captureDoc } · sh:probe { id, req, captureDoc, bundle }
+//                    sh:focus-at { x, y }
+//   frame -> shell : sh:capture-hello { nonce, captureDoc } · sh:probe { id, req, captureDoc, bundle, field }
 //                    sh:trail { id, captureDoc, frame, seq, at, event, mode, ...payload }
 //                    sh:capture-flushed { id, captureDoc, seq }
 //
@@ -14,6 +15,7 @@
 // safeBundle, a field's value through fieldValue - interact and play are no exception. The clipboard
 // is never read, keys outside fields are never recorded.
 import { fieldValue, safeBundle } from './inspect.js'
+import { inField } from './keys.js'
 
 const FIELD_IDLE_MS = 600
 const HOVER_MS = 800
@@ -151,7 +153,18 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
       // what is at this point, as a canvas-mode click would have hit it - nothing is clicked
       const el = document.elementFromPoint(m.x, m.y)
       const hit = el && el !== document.documentElement ? el : null
-      post({ type: 'sh:probe', id: m.id, req: m.req, captureDoc, bundle: hit ? safeBundle(hit, { x: m.x, y: m.y }) : null })
+      // a field there: the shell makes the frame interactive and puts the caret in it, so what you type
+      // next is the field's - never a capture key
+      post({ type: 'sh:probe', id: m.id, req: m.req, captureDoc, bundle: hit ? safeBundle(hit, { x: m.x, y: m.y }) : null, field: !!hit && inField(hit) })
+    }
+    else if (m.type === 'sh:focus-at' && Number.isFinite(m.x) && Number.isFinite(m.y)) {
+      const el = document.elementFromPoint(m.x, m.y)
+      const f = el && (el.isContentEditable ? el : el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))
+      if (f && typeof f.focus === 'function') {
+        f.focus({ preventScroll: true })
+        // the caret at the end of what is there, as a click at the end of the text would leave it
+        try { if (typeof f.value === 'string' && typeof f.setSelectionRange === 'function') f.setSelectionRange(f.value.length, f.value.length) } catch { /* a type without a selection (email, number) */ }
+      }
     }
   })
 

@@ -9,8 +9,9 @@
  * itself takes (select, device, theme, copy, interactive mode), notes, pictures - and the end: the
  * flush, the drain, the seal, and the post of the sealed record.
  *
- * A capture is recording, then draining, then sealed. With `S` -> `S` the next one records from the
- * same instant under its own id, so each message lands in the capture whose id it carries.
+ * A capture is recording, then draining, then sealed. One records at a time: `S` while one records
+ * starts nothing - it is ended (E) or dropped (Esc) first. Each message lands in the capture whose
+ * id it carries.
  */
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
@@ -86,6 +87,8 @@ interface Cap {
   shots: number                            // picture requests still out
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
+  /** Resume: the draft this capture continues, and when recording resumed */
+  resumes?: { id: string; at: number }
 }
 
 interface CaptureState {
@@ -97,9 +100,9 @@ interface CaptureState {
   noteDraft: string
   /** a number that changes on every capture change - for components to redraw (timer, counts) */
   tick: number
+  /** Start one - never while one records (it says so instead) */
   start(reviewing?: Cap['reviewing']): void
-  /** `next`: S with one open - the next starts at once, bound to the review on screen (`reviewing`) */
-  end(next?: boolean, reviewing?: Cap['reviewing']): void
+  end(): void
   drop(): void
   note(text: string): void
   setNoteOpen(open: boolean): void
@@ -109,6 +112,11 @@ interface CaptureState {
   sealed: { id: string; card?: { id: string; rev: number } }[]
   /** sealed captures the server does not hold yet (kept, sent again until it takes them) */
   unsent: string[]
+  /** Continue a draft that ended too soon: its record is loaded and recording goes on from where it
+   *  stopped, under a new id that takes the draft's place when it seals. Dropping it leaves the draft. */
+  resume(draft: string): Promise<boolean>
+  /** drafts being continued right now (recording, sealing or waiting to send) - the lane hides them */
+  resuming: string[]
 }
 
 const mutate = (fn: (s: CaptureState) => void) => useJamCapture.setState((s) => { fn(s); return { caps: { ...s.caps }, tick: s.tick + 1 } })
@@ -346,6 +354,22 @@ function probeAnswered(key: string, data: Record<string, any>) {
     c.steps.push({ at: p.at, ...(frame ? { frame } : {}), event: p.event, bundle: cleanBundle(data.bundle), mode: 'canvas', ...(n ? { point: n } : {}), ...(selects ? { selects: true } : {}) })
   })
   trySeal(p.cap)
+  // a click on a field: you mean to type there - the frame turns interactive and the caret goes in the
+  // field, so the letters you type are the field's and never end, restart or drop the capture
+  if (p.event === 'click' && data.field === true && useJamCapture.getState().current === p.cap) focusField(p.key, p.x, p.y)
+}
+
+function focusField(key: string, x: number, y: number) {
+  const st = useStore.getState()
+  if (st.play || !st.nodes.some((n) => n.key === key)) return
+  if (st.interact !== key) st.setInteract(key)
+  // after the overlay has stepped aside (interact removes it): focus the iframe, then the field in it
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const inst = instances.get(key)
+    if (!inst || !current(inst)) return
+    try { inst.iframe.focus() } catch { /* gone */ }
+    post(inst, { type: 'sh:focus-at', x, y })
+  }))
 }
 
 /** The canvas overlay saw a click (not a drag) on a node while a capture records. */
@@ -414,19 +438,27 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
 
 const broadcast = (msg: unknown) => { for (const inst of instances.values()) post(inst, msg) }
 
-function begin(reviewing?: Cap['reviewing']): boolean {
+function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   const s = useStore.getState()
   // a capture becomes a thread on a board: the Not on a board view takes none (as it takes no comment)
   if (s.board === UNPLACED) { s.toast('captures need a board - open one first'); return false }
   const id = `cap-${Date.now()}-${rand(6)}`
+  const t = now()
+  // Resume: the draft's steps, moved up so its last step meets this instant (the pause between the two
+  // is not part of the capture), its pictures and its numbered points; then recording goes on
+  const shift = from ? t - (from.timeline[from.timeline.length - 1]?.at ?? t) : 0
+  const steps = from ? from.timeline.map((x) => ({ ...x, at: x.at + shift })) : []
   const cap: Cap = {
-    id, state: 'recording', board: s.board, t0: now(), steps: [], seen: new Set(), points: [], pictures: [],
-    probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}),
+    id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
+    points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
+    probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
   }
-  cap.steps.push({ at: cap.t0, event: 'view', view: viewNow(true) })
-  // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
-  if (!s.play && s.selection.length) cap.steps.push({ at: cap.t0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
-  useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1 }))
+  if (!from) {
+    cap.steps.push({ at: cap.t0, event: 'view', view: viewNow(true) })
+    // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
+    if (!s.play && s.selection.length) cap.steps.push({ at: cap.t0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
+  }
+  useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1, ...(from ? { resuming: [...st.resuming, from.id] } : {}) }))
   broadcast({ type: 'sh:capture', id, on: true })
   watchUi()
   return true
@@ -473,7 +505,7 @@ function trySeal(id: string) {
   const timeline = [...c.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
   const record: CaptureRecord = {
     format: 'marver.jam.capture', v: 1, id,
-    context: { canvas: location.host, board: c.board, ...(c.reviewing ? { reviewing: c.reviewing } : {}) },
+    context: { canvas: location.host, board: c.board, ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
     view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
     timeline, pictures: c.pictures,
   }
@@ -513,7 +545,9 @@ async function upload(record: CaptureRecord): Promise<void> {
     return
   }
   forgetSealed(record.id)
-  useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)) }))
+  // the server holds it: a resumed draft is replaced now (or, refused, shows again)
+  const was = record.context.resumes?.id
+  useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)), ...(was ? { resuming: st.resuming.filter((x) => x !== was) } : {}) }))
   void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
   if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
 }
@@ -524,6 +558,9 @@ export function resendSealed() {
     const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}') as Record<string, CaptureRecord>
     for (const r of Object.values(all)) { pendingUploads.set(r.id, r); void upload(r) }
     syncUnsent()
+    // a resumed capture still to send keeps its draft off the lane until it lands
+    const was = Object.values(all).flatMap((r) => (r.context?.resumes?.id ? [r.context.resumes.id] : []))
+    if (was.length) useJamCapture.setState((st) => ({ resuming: [...new Set([...st.resuming, ...was])] }))
   } catch { /* none */ }
 }
 
@@ -535,25 +572,40 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   tick: 0,
   sealed: [],
   unsent: [],
+  resuming: [],
+  async resume(draft) {
+    if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
+    let rec: CaptureRecord | null = null
+    try {
+      const r = await fetch(`${ROUTE}/api/jam/capture?id=${encodeURIComponent(draft)}`, { headers: { 'x-mv-c': csrf() } })
+      rec = r.ok ? ((await r.json()) as { record?: CaptureRecord }).record ?? null : null
+    } catch { rec = null }
+    if (!rec) { useStore.getState().toast('the capture could not be loaded to resume it'); return false }
+    if (get().current) return false
+    if (rec.context.board !== useStore.getState().board) { useStore.getState().toast('open the capture\'s board to resume it'); return false }
+    return begin(rec.context.reviewing, rec)
+  },
   start(reviewing) {
-    if (get().current) return get().end(true, reviewing)
+    // one capture at a time: the one recording is ended or dropped first
+    if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return }
     begin(reviewing)
   },
-  end(next, reviewing) {
+  end() {
     const id = get().current
     if (!id) return
     set({ current: null })
     cancelDwell()
     drain(id)
-    if (next) begin(reviewing)
-    else { unwatch?.(); unwatch = null }
+    unwatch?.(); unwatch = null
   },
   drop() {
     const id = get().current
     if (!id) return
     broadcast({ type: 'sh:capture', id, on: false })
     cancelDwell()
-    set((s) => { const caps = { ...s.caps }; delete caps[id]; return { current: null, caps, noteOpen: false, noteDraft: '', tick: s.tick + 1 } })
+    // a resumed capture dropped: its draft is still there, as it was
+    const was = get().caps[id]?.resumes?.id
+    set((s) => { const caps = { ...s.caps }; delete caps[id]; return { current: null, caps, noteOpen: false, noteDraft: '', tick: s.tick + 1, ...(was ? { resuming: s.resuming.filter((x) => x !== was) } : {}) } })
     unwatch?.(); unwatch = null
   },
   note(text) {

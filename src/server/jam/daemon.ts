@@ -33,7 +33,8 @@ import { act, addCapture, answeredSince, captureIntact, beginStep, captureCommen
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
-import { captureFrames, checkRecord, firstPoint, readCapture, storeCapture } from './capture.ts'
+import { captureFrames, checkRecord, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
+import { createHash } from 'node:crypto'
 import { record as ledgerRecord } from './ledger.ts'
 
 const LEASE_MS = 12 * 60_000
@@ -414,6 +415,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (!capturing || !hooks.shoot) return
       const shots: NonNullable<Batch['shots']> = b.shots ?? b.frames.map((frame) => ({ frame }))
       for (const s of shots) { if (stopped) return; const id = await hooks.shoot(s.frame, theme, { batch: b.batchId }).catch(() => null); if (id) s[when] = id }
+      // a frame the run left exactly as it was (the same pixels) is marked: the review shows the frames
+      // that changed, not every frame the capture named
+      if (when === 'after') for (const s of shots) { if (s.before && s.after && samePicture(s.before, s.after)) s.same = true; else delete s.same }
       await q.lock(() => { b.shots = shots; q.persist() })
     }
     if (!b.shots?.some((s) => s.before)) await shoot('before')   // a retry keeps the first attempt's
@@ -768,6 +772,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     await idle()
   }
 
+  /** Two pictures with the same bytes (the same render of the same pixels). */
+  const samePicture = (a: string, b: string): boolean => {
+    const fa = picturePath(root, a), fb = picturePath(root, b)
+    if (!fa || !fb) return false
+    try { const h = (p: string) => createHash('sha256').update(readFileSync(p)).digest('hex'); return h(fa.path) === h(fb.path) } catch { return false }
+  }
+
   /** What the lane and the review need of a capture card - its first words, whether it is in the
    *  run, its last run's before and after pictures, the run it reviewed, your edit, its notes. */
   const titles = new Map<string, { title: string; notes: number }>()
@@ -776,12 +787,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (!t) {
       const rec = readCapture(root, c.id)?.record
       const words = rec ? rec.timeline.flatMap((x) => (x.event === 'words' || x.event === 'note' ? [x.text] : [])).join(' ').replace(/\s+/g, ' ').trim() : ''
-      t = { title: words.slice(0, 80) || 'Capture', notes: rec ? rec.timeline.filter((x) => x.event === 'note').length : 0 }
+      // up to 300 characters: the tile trims it, its tooltip shows it whole
+      t = { title: words.slice(0, 300) || 'Capture', notes: rec ? rec.timeline.filter((x) => x.event === 'note').length : 0 }
       if (rec) titles.set(c.id, t)
     }
     const b = q.j.batches.find((x) => x.batchId === c.batch)
     return {
-      title: c.payload?.edited !== undefined ? (c.payload.edited.trim().slice(0, 80) || '(no words)') : t.title, notes: t.notes,
+      title: c.name ?? (c.payload?.edited !== undefined ? (c.payload.edited.replace(/\s+/g, ' ').trim().slice(0, 300) || '(no words)') : t.title), notes: t.notes,
+      ...(c.name ? { named: true } : {}),
       inRun: !!q.j.run && c.made >= q.j.run.since,
       ...(b?.shots ? { shots: b.shots } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}),
       ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),

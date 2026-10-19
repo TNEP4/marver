@@ -342,7 +342,7 @@ export function App() {
   const manifest = useStore((s) => s.manifest)
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
-  useLaneLift()
+  const laneLift = useLaneLift()
   const toasts = useStore((s) => s.toasts)
   const selection = useStore((s) => s.selection)
   const laser = useStore((s) => s.laser)
@@ -867,7 +867,7 @@ export function App() {
   }
 
   return (
-    <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}`}>
+    <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}${laneLift}`}>
       <Canvas />
       <SelectionBar />
 

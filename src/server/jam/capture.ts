@@ -12,6 +12,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import { sanitize } from './packet.ts'
+import { speechLines } from '../../shared/speech.ts'
 import type { Bundle, CaptureRecord, Step, View } from './types.ts'
 
 export const CAPTURE_ID = /^cap-\d{10,16}-[a-z0-9]{4,12}$/
@@ -94,9 +95,11 @@ export function checkRecord(raw: unknown): CaptureRecord | string {
   const timeline = r.timeline.map(stepOf).filter((s: Step | null): s is Step => !!s)
     .sort((a: Step, b: Step) => a.at - b.at)
   const pictures = strs(r.pictures).filter((p) => PICTURE_ID.test(p)).slice(0, MAX_PICTURES)
+  const rs = c.resumes && typeof c.resumes === 'object' ? c.resumes : null
+  const resumes = rs && typeof rs.id === 'string' && CAPTURE_ID.test(rs.id) && rs.id !== r.id && num(rs.at) !== undefined ? { id: rs.id, at: rs.at as number } : undefined
   return {
     format: 'marver.jam.capture', v: 1, id: r.id,
-    context: { canvas: str(c.canvas, 300) ?? '', board: c.board, ...(str(c.session, 200) ? { session: str(c.session, 200) } : {}), ...(reviewing ? { reviewing } : {}) },
+    context: { canvas: str(c.canvas, 300) ?? '', board: c.board, ...(str(c.session, 200) ? { session: str(c.session, 200) } : {}), ...(reviewing ? { reviewing } : {}), ...(resumes ? { resumes } : {}) },
     view: viewOf(r.view), timeline, pictures,
   }
 }
@@ -154,7 +157,13 @@ export function captureFrames(r: CaptureRecord): string[] {
 export function captureWords(r: CaptureRecord, edited?: string): string {
   // an edit - even an empty one, which deleted everything - stands in for the words and the notes
   if (edited !== undefined) return edited.trim()
-  return r.timeline.flatMap((s) => (s.event === 'words' ? [s.text] : s.event === 'note' ? [`(note) ${s.text}`] : [])).join(' ').replace(/\s+/g, ' ').trim()
+  return speechLines(r.timeline.flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : [])))
+}
+
+
+/** The words and notes said or written from `since` on (a resumed capture's new part), in time order. */
+export function wordsSince(r: CaptureRecord, since: number): string {
+  return r.timeline.filter((s) => s.at >= since).flatMap((s) => (s.event === 'words' || s.event === 'note' ? [s.text.trim()] : [])).filter(Boolean).join('\n')
 }
 
 /** The first pick or click: where the capture's comment is pinned. */
