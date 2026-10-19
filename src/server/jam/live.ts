@@ -38,4 +38,5 @@ export const jamLive: {
   record?: (id: string) => { file: string; text: string | null; reply?: string } | null
   canWrap?: (id: string) => string | null
   captureOpen?: (capture: string, session: string, on: boolean) => void
+  tags?: (session: string) => number
 } = {}

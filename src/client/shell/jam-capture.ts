@@ -491,6 +491,9 @@ void import('./jam-queue.ts').then(({ useJamQueue }) => { sessionNow = () => use
 
 function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   const s = useStore.getState()
+  // checked here, as recording starts: a Resume that began loading before the session's wrap-up never
+  // starts recording into it
+  if (sessionEnding) { s.toast('the session is being wrapped up - a moment'); return false }
   // a capture becomes a thread on a board: the Not on a board view takes none (as it takes no comment)
   if (s.board === UNPLACED) { s.toast('captures need a board - open one first'); return false }
   const id = `cap-${Date.now()}-${rand(6)}`

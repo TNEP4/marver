@@ -1021,7 +1021,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (req.method === 'GET') {
           const ses = jamLive.view().session ?? null
           const { readTalk, talkMinutes } = await import('./jam/session.ts')
-          return json(res, 200, { session: ses, talkMinutes: ses ? talkMinutes(readTalk(root, ses.id)) : 0 })
+          return json(res, 200, { session: ses, talkMinutes: ses ? talkMinutes(readTalk(root, ses.id)) : 0, tags: ses ? jamLive.tags?.(ses.id) ?? 0 : 0 })
         }
         const raw = await readBody(req)
         if (raw == null) return json(res, 400, { error: 'body too large' })

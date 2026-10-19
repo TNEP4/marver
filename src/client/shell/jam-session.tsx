@@ -70,7 +70,7 @@ export async function endSession(write: { instructions: string; includeTalk: boo
     // the talk's last words first: they belong in the transcript the record reads
     await voiceSessionEnd()
     ok = write
-      ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, tags: tagsDuring(ses), board: useStore.getState().board })
+      ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, board: useStore.getState().board })
       : await post({ action: 'end', id: ses.id })
   } finally { setSessionEnding(false) }
   if (!ok) {
@@ -84,8 +84,6 @@ export async function endSession(write: { instructions: string; includeTalk: boo
   return true
 }
 
-/** Tags written during the session: answered in their threads, not in the record (the sheet says so). */
-const tagsDuring = (ses: { since: number }) => (useJamQueue.getState().cards ?? []).filter((c) => c.kind === 'comment' && c.made >= ses.since).length
 
 /** `J` (or the Jam button): at rest, the start sheet (again: closes it); in a session, the wrap-up - a
  *  capture recording ends first, and the wrap-up waits for its read-back to close. */
@@ -202,10 +200,11 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   const [text, setText] = useState('')
   const [talk, setTalk] = useState(true)
   const [talkMin, setTalkMin] = useState(0)
+  const [tags, setTags] = useState(0)
   const [busy, setBusy] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
-    fetch(`${ROUTE}/api/jam/session`, { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then((b) => setTalkMin(b?.talkMinutes ?? 0), () => {})
+    fetch(`${ROUTE}/api/jam/session`, { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then((b) => { setTalkMin(b?.talkMinutes ?? 0); setTags(b?.tags ?? 0) }, () => {})
     requestAnimationFrame(() => field.current?.focus())
   }, [])
   // the field grows with its words: three lines at least
@@ -215,7 +214,6 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   const minutes = Math.max(1, Math.round((Date.now() - session.since) / 60_000))
   // the session's captures - the lane's tiles - with where each stands
   const caps = laneCards(cards, run).filter((c) => c.kind === 'capture' && c.session === session.id && c.state !== 'dropped')
-  const tags = tagsDuring(session)
   const name = agent ? HARNESS[agent] ?? agent : 'your agent'
   const write = async () => { if (busy) return; setBusy(true); await endSession({ instructions: text.trim(), includeTalk: talk }); setBusy(false) }
   // ⏎ anywhere in the sheet writes the record - it never reaches a panel beneath it (jam-keys' sheet row)

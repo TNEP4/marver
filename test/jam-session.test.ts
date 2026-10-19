@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createJam } from '../src/server/jam/daemon.ts'
+import { appendEvents } from '../src/server/comments.ts'
+import { record } from '../src/server/jam/ledger.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { appendTalk, readTalk, recordFile, recordPathProblem, talkMinutes } from '../src/server/jam/session.ts'
 import { symlinkSync } from 'node:fs'
@@ -146,6 +148,28 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('the record re-checks open captures where it is sealed (one opened after the first check holds it back); the tags of the session are counted on the server', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    // a tag during the session
+    const ev = { id: 'etag01', ts: Date.now() + 5, type: 'create' as const, commentId: 'etag01', frame: 'demo/hero', board: 'home', author: OWNER, body: '@marver fix the footer' }
+    appendEvents(join(root, 'design', 'comments'), 'home', [ev]); record(root, 'home', 'etag01')
+    await jam.poke()
+    expect(jam.tags(SES)).toBe(1)
+    expect(jam.canWrap(SES)).toBeNull()
+    jam.captureOpen('cap-1792399514739-late01', SES, true)          // opened after the check, before the seal
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w.ok).toBe(false)
+    expect(w.error).toMatch(/still recording or being sent/)
+    jam.captureOpen('cap-1792399514739-late01', SES, false)
+    const w2 = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w2.ok).toBe(true)
+    expect(JSON.parse(readFileSync(join(root, 'design', '.local', 'jam', 'wrapups', `${w2.card!.id}.json`), 'utf8')).tags).toBe(1)
+    jam.stop()
+    done()
+  })
+
   it('the session survives a restart of the dev server', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())
@@ -230,7 +254,7 @@ describe('sessions: the server', () => {
     expect(stored.captures.map((c: any) => c.id).sort()).toEqual([sent.id, kept.id].sort())
     expect(stored.captures.find((c: any) => c.id === kept.id).kept).toBe(true)
     expect(stored.talk).toBeUndefined()
-    expect(stored.tags).toBe(2)
+    expect(stored.tags).toBe(0)                                     // counted on the server: no tag was written in it
     expect(stored.file).toBe(recordFile(root, stored.since, SES))
     jam.stop()
     done()
