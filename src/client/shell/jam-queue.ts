@@ -38,6 +38,8 @@ interface QueueState {
   session: { id: string; since: number } | null
   load(): Promise<void>
   apply(view: unknown): void
+  /** A session this page ended (the server said so): gone at once, and no view shows it again */
+  forget(session: string): void
   act(card: JamCard, action: JamAction, body?: string): Promise<boolean>
 }
 
@@ -58,6 +60,8 @@ export const useJamQueue = create<QueueState>((set, get) => {
   let loaded = false
   /** the newest view applied: an older one (a slow answer overtaken by a push) is never applied over it */
   let seen: { boot: string; n: number } | null = null
+  /** sessions known to be over: a view built before the end (however it arrives) never brings one back */
+  const over = new Set<string>()
   return {
     cards: null,
     agent: null,
@@ -85,7 +89,7 @@ export const useJamQueue = create<QueueState>((set, get) => {
       const run = (v as { run?: { since?: unknown } }).run
       const ses = (v as { session?: { id?: unknown; since?: unknown } }).session
       set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null, run: run && typeof run.since === 'number' ? { since: run.since } : null,
-        session: ses && typeof ses.id === 'string' && typeof ses.since === 'number' ? { id: ses.id, since: ses.since } : null })
+        session: ses && typeof ses.id === 'string' && typeof ses.since === 'number' && !over.has(ses.id) ? { id: ses.id, since: ses.since } : null })
       if (first) return
       // something to review: a soft chime, once per batch that leaves a capture to review, if the page
       // has focus - never a notice (spec 27, Part 2)
@@ -101,6 +105,10 @@ export const useJamQueue = create<QueueState>((set, get) => {
       if (failed.length) void import('./store.ts').then(({ useStore }) => {
         for (const cards of byBatch.values()) useStore.getState().jamFailed(cards)
       })
+    },
+    forget(session) {
+      over.add(session)
+      if (get().session?.id === session) set({ session: null })
     },
     async act(card, action, body) {
       const res = await fetch(`${ROUTE}/api/jam/card`, {

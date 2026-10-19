@@ -672,7 +672,9 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
     id: record.id, kind: 'capture', board: record.context.board, frames: captureFrames(record), capture: record.id, events: [],
     state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}) },
     ...(r ? { reviewing: r, follows: r.card } : {}), ...(src?.name ? { name: src.name } : {}),
-    ...(record.context.session ? { session: record.context.session } : {}),
+    // a capture of the session running now: in its record. One whose session has ended (it reached the server
+    // only after the record was written - the page is told) stands on its own
+    ...(record.context.session && j.session?.id === record.context.session ? { session: record.context.session } : {}),
   }
   if (prev) set(prev, 'dropped', now, `resumed as ${record.id}`)
   j.cards.push(c)

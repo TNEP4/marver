@@ -465,7 +465,21 @@ export const setSessionEnding = (on: boolean) => { sessionEnding = on }
  *  that every 20 s until it lands or is dropped: the session's record waits for it, whatever tab ends it. */
 const openOnServer = new Map<string, { session: string; timer: ReturnType<typeof setInterval> }>()
 const tellOpen = (capture: string, session: string, on: boolean) => {
-  void fetch(`${ROUTE}/api/jam/capture-open`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ capture, session, on }) }).catch(() => {})
+  void fetch(`${ROUTE}/api/jam/capture-open`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ capture, session, on }) })
+    .then(async (r) => { if (on && r.status === 409 && (await r.json().catch(() => null))?.ended) leftOutOfSession(capture) }, () => {})
+}
+/** The server had already written the session's record (in another tab) when it heard of this capture: it is
+ *  not in that record - it goes on as a capture of its own, and you are told. */
+function leftOutOfSession(capture: string) {
+  if (!openOnServer.has(capture)) return
+  releaseOpen(capture, false)
+  useJamCapture.setState((st) => {
+    const c = st.caps[capture]
+    if (!c?.session) return {}
+    const { session: _gone, ...rest } = c
+    return { caps: { ...st.caps, [capture]: rest as Cap } }
+  })
+  useStore.getState().toast('the session ended in another tab - this capture is on its own, not in its record')
 }
 function holdOpen(capture: string, session: string) {
   tellOpen(capture, session, true)

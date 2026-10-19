@@ -415,6 +415,51 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
+  skippable('a session ended from here is gone at once - before any refresh or push, a capture started is not its', async () => {
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter()
+    await until(`!!window.__mvJamQueue.getState().session`, 5000)
+    // no view reaches the page from here (the refresh is held, pushes are not applied)
+    await browser!.eval(s, `(() => { const q = window.__mvJamQueue; window.__apply0 = q.getState().apply; q.setState({ apply: () => {} }); const f = window.fetch; window.__fetch0 = f; window.__release = null; window.__held = false; window.fetch = async (u, o) => {
+      if (!window.__held && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__held = true; await new Promise((r) => { window.__release = r }) }
+      return f(u, o)
+    }; return 1 })()`)
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 5000)
+      await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+      await until(`window.__held && !window.__mvJamQueue.getState().session`, 5000)
+      await browser!.eval(s, `window.__mvJamCapture.getState().start(), 1`)
+      await until(`!!window.__mvJamCapture.getState().current`, 3000)
+      expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[window.__mvJamCapture.getState().current].session ?? null`)).toBeNull()
+      await browser!.eval(s, `window.__mvJamCapture.getState().drop(), 1`)
+    } finally {
+      await browser!.eval(s, `(() => { window.__mvJamQueue.setState({ apply: window.__apply0 }); window.fetch = window.__fetch0; window.__release?.(); return 1 })()`)
+    }
+    await until(`!window.__mvJamCapture.getState().current`, 5000)
+    expect(await browser!.eval(s, `window.__mvJamQueue.getState().session`)).toBeNull()
+  })
+
+  skippable('a capture the server first hears of after the session ended (in another tab) goes on as a capture of its own, and says so', async () => {
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter()
+    await until(`!!window.__mvJamQueue.getState().session`, 5000)
+    // the capture's registration is answered "ended" (another tab wrote the record first)
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/capture-open') && JSON.parse(o.body).on) return new Response(JSON.stringify({ ok: false, ended: true, error: 'the session has ended' }), { status: 409, headers: { 'content-type': 'application/json' } })
+      return f(u, o)
+    }; return 1 })()`)
+    try {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`, 3000)
+      await until(`!window.__mvJamCapture.getState().caps[window.__mvJamCapture.getState().current].session`, 3000)
+      await until(`/the session ended in another tab - this capture is on its own/.test(document.body.textContent)`, 3000)
+      await browser!.eval(s, `window.__mvJamCapture.getState().drop(), 1`)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+    await until(`!window.__mvJamCapture.getState().current`, 5000)
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 5000)
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
+  })
+
   skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }

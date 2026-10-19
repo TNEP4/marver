@@ -39,6 +39,6 @@ export const jamLive: {
   session?: (op: any) => Promise<{ ok: boolean; session?: unknown; card?: unknown; error?: string }>
   record?: (id: string) => { file: string; text: string | null; reply?: string } | null
   canWrap?: (id: string) => string | null
-  captureOpen?: (capture: string, session: string, on: boolean) => void
+  captureOpen?: (capture: string, session: string, on: boolean) => 'ok' | 'ended'
   tags?: (session: string) => number
 } = {}

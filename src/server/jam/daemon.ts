@@ -70,7 +70,8 @@ export interface JamCore {
   tags(id: string): number
   /** A capture of a session is open on a page (recording, sealing, waiting to send) - or no longer. Renewed
    *  every 20 s by its page while it is; one not renewed for a minute (its tab gone) is forgotten. */
-  captureOpen(capture: string, session: string, on: boolean): void
+  /** 'ended': the session is over - the capture is not in it */
+  captureOpen(capture: string, session: string, on: boolean): 'ok' | 'ended'
 }
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
@@ -1047,10 +1048,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       return { ok: true, session: null, card: r.card }
     },
     captureOpen(capture, session, on) {
-      if (!CAPTURE_ID.test(capture) || !SESSION_ID.test(session)) return
+      if (!CAPTURE_ID.test(capture) || !SESSION_ID.test(session)) return 'ok'
+      if (!on) { openCaps.delete(capture); return 'ok' }
       // a renewal for one that has landed is late news: ignored (only landing or an explicit off clears one)
-      if (on) { if (!q.j.cards.some((c) => c.id === capture)) openCaps.set(capture, { session, until: Date.now() + 60_000 }) }
-      else openCaps.delete(capture)
+      if (q.j.cards.some((c) => c.id === capture)) return 'ok'
+      // the session has ended (its record written, or ended without one): this capture is not in it - it
+      // stands on its own, and its page is told (one already held open keeps holding until it lands)
+      if (q.j.session?.id !== session && !openCaps.has(capture)) return 'ended'
+      openCaps.set(capture, { session, until: Date.now() + 60_000 })
+      return 'ok'
     },
     tags(id) {
       const ses = q.j.session

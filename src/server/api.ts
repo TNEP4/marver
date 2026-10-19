@@ -1053,8 +1053,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { jamLive } = await import('./jam/live.ts')
         if (!jamLive.captureOpen) return json(res, 409, { error: 'jam is not running here' })
         if (typeof b?.capture !== 'string' || typeof b?.session !== 'string') return json(res, 400, { error: 'expected { capture, session, on }' })
-        jamLive.captureOpen(b.capture, b.session, b.on === true)
-        return json(res, 200, { ok: true })
+        const r = jamLive.captureOpen(b.capture, b.session, b.on === true)
+        return r === 'ended' ? json(res, 409, { ok: false, ended: true, error: 'the session has ended' }) : json(res, 200, { ok: true })
       }
       if (path === 'jam/record' && req.method === 'GET') {
         // a session record: its file, what it says now, the agent's reply - owner only

@@ -78,6 +78,8 @@ export async function endSession(write: { instructions: string; includeTalk: boo
   // session goes on - its talk heard again in the tab that holds its microphone, and you are told why
   const answered = (ok: boolean) => {
     if (!mine()) return
+    // ended: gone from this page at once - a capture started from here on is not the session's
+    if (ok) useJamQueue.getState().forget(ses.id)
     setSessionEnding(false)
     onAnswer?.()
     if (ok) { useJamUi.getState().setSheet(null); return }

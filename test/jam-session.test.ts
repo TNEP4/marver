@@ -186,6 +186,30 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a capture the server first hears of after the session ended is refused as the session\'s: it lands on its own, outside the record', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    expect(jam.captureOpen('cap-1792399514739-early1', SES, true)).toBe('ok')
+    jam.captureOpen('cap-1792399514739-early1', SES, false)
+    expect((await jam.session({ action: 'end', id: SES })).ok).toBe(true)
+    // its registration comes late: refused - the page is told it stands on its own
+    expect(jam.captureOpen('cap-1792399514739-late02', SES, true)).toBe('ended')
+    expect(jam.canWrap(SES)).toBeTruthy()                               // (no session to wrap anyway)
+    // and when it lands it carries no session
+    const r = rec('made as the session ended elsewhere', SES)
+    await jam.capture(r)
+    expect(card(jam, r.id).session).toBeUndefined()
+    // a capture of the session running now keeps it
+    const SES2 = 'ses-1792399514800-again2'
+    await jam.session({ action: 'start', id: SES2 })
+    const r2 = rec('in the new one', SES2)
+    await jam.capture(r2)
+    expect(card(jam, r2.id).session).toBe(SES2)
+    jam.stop()
+    done()
+  })
+
   it('a tag that joins a queued capture of the session counts too (its own comment never does)', async () => {
     const { root, done } = setup()
     const jam = createJam(root, { ...CFG, capture: 'at-once', concurrency: 1 }, agent('ok', { hang: true }))
