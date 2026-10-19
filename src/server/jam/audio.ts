@@ -25,7 +25,7 @@ import { modelPaths, modelsReady } from './speech-models.ts'
 export const AUDIO_PATH = '/__mv/api/jam/audio'
 const TICKET_MS = 30_000
 /** A segment on the socket: a capture's audio or a session's talk, numbered (`<owner>~<n>`). */
-const ID = /^(cap|ses)-\d{10,16}-[a-z0-9]{4,12}~\d{1,9}$/
+const ID = /^(cap|ses)-\d{10,16}-[a-z0-9]{4,12}~[a-z0-9]{1,24}$/
 /** A session's talk, heard between its captures: its words go to the session's transcript. */
 export interface TalkWords { session: string; words: { w: string; at: number; lost?: true }[] }
 
@@ -181,11 +181,11 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
     // per capture, one gate: everything for it reaches the worker in the order it came, and only the
     // worker it began on (audio said while the model loads waits for it instead of being lost); a capture
     // ended, dropped or whose socket closed takes nothing more
-    interface Cap { gate: Promise<Worker | null>; ended: boolean; dropped: boolean; sent: number }
+    interface Cap { gate: Promise<Worker | null>; ended: boolean; dropped: boolean; sent: number; keep?: true }   // keep: talk finished after its socket closed
     const caps = new Map<string, Cap>()
     const then = (c: Cap, f: (w: Worker) => void, otherwise?: () => void) => {
       c.gate = c.gate.then((w) => {
-        if (w && worker === w && !closed) f(w)
+        if (w && worker === w && (!closed || c.keep)) f(w)
         else otherwise?.()
         return w
       })
@@ -238,8 +238,8 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           })
         }
         c.gate = start().then((w) => {
-          if (!w) { owners.delete(id); own.done?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
-          if (closed || c.dropped || worker !== w) return null
+          if (!w) { owners.delete(id); own.done?.(); own.onFinal?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
+          if ((closed && !c.keep) || c.dropped || worker !== w) return null
           own.w = w   // its words come from this worker only
           w.postMessage({ type: 'begin', capture: id })
           return w
@@ -270,7 +270,9 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         // a session's talk still coming in is finished at its last sample, its words still go to the
         // transcript (they need no page); a capture's audio goes - its page knows its words may be incomplete
         if (id.startsWith('ses-') && !c.dropped) {
-          if (!c.ended) { c.ended = true; c.gate = c.gate.then((w) => { if (w && worker === w) w.postMessage({ type: 'end', capture: id, lastSample: c.sent }); return w }) }
+          // everything already received - its begin and audio waiting for the model too - still drains, in order
+          c.keep = true
+          if (!c.ended) { c.ended = true; then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent })) }
           continue
         }
         talkT0.delete(id)

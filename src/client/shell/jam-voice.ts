@@ -270,8 +270,10 @@ function sendChunk(s: Segment, start: number, pcm: Int16Array) {
 }
 
 /** A new segment for `owner`, starting at worklet sample `from` (-1: at the next mark). */
+/** This page's own mark in its segment ids: a reload never reuses the id of a segment still finishing. */
+const PAGE = Math.random().toString(36).slice(2, 8).padEnd(6, '0')
 function segmentFor(owner: Owner, from: number): Segment {
-  const seg = `${owner.id}~${++segN}`
+  const seg = `${owner.id}~${PAGE}${++segN}`
   owners.set(seg, owner)
   // the owner's clock: the time before this segment counts too (unheard)
   const base = Math.max(0, Math.round((now() - owner.t0) / 1000 * RATE))

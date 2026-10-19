@@ -241,10 +241,10 @@ describe('words: the audio socket', () => {
       const got: any[] = []
       c.ws.on('message', (d) => got.push(JSON.parse(String(d))))
       const frame = (id: string, offset: number) => { const idb = Buffer.from(id); const pcm = Buffer.alloc(3200); const b = Buffer.alloc(1 + idb.length + 4); b[0] = idb.length; idb.copy(b, 1); b.writeUInt32LE(offset, 1 + idb.length); return Buffer.concat([b, pcm]) }
-      c.ws.send(frame('cap-1792399514739-nobody~1', 0))                    // never begun: dropped quietly
-      c.ws.send(JSON.stringify({ type: 'end', capture: 'cap-1792399514739-nobody~1', lastSample: 0 }))
+      c.ws.send(frame('cap-1792399514739-nobody~p1', 0))                    // never begun: dropped quietly
+      c.ws.send(JSON.stringify({ type: 'end', capture: 'cap-1792399514739-nobody~p1', lastSample: 0 }))
       await new Promise((r) => setTimeout(r, 100))
-      expect(got).toContainEqual({ type: 'final', capture: 'cap-1792399514739-nobody~1', incomplete: true })
+      expect(got).toContainEqual({ type: 'final', capture: 'cap-1792399514739-nobody~p1', incomplete: true })
       c.ws.close()
     } finally { s.close() }
   })
@@ -257,7 +257,7 @@ describe('words: the audio socket', () => {
       const c = await open(s.port, issueTicket())
       const got: any[] = []
       c.ws.on('message', (d) => got.push(JSON.parse(String(d))))
-      const id = 'cap-1792399514739-again1~1'
+      const id = 'cap-1792399514739-again1~p1'
       c.ws.send(JSON.stringify({ type: 'begin', capture: id }))
       await new Promise((r) => setTimeout(r, 150))
       c.ws.send(JSON.stringify({ type: 'begin', capture: id }))
@@ -273,7 +273,7 @@ describe('words: the audio socket', () => {
     const s = await serve()
     try {
       const c = await open(s.port, issueTicket())
-      const id = 'cap-1792399514739-abcd12~1'
+      const id = 'cap-1792399514739-abcd12~p1'
       const final = new Promise<any>((r) => c.ws.on('message', (d) => { const m = JSON.parse(String(d)); if (m.type === 'final') r(m) }))
       c.ws.send(JSON.stringify({ type: 'begin', capture: id }))
       c.ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
@@ -355,18 +355,20 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
     try {
       const a = await connect()
       expect(svc.busy()).toBe(true)                                   // just opened: its page is still starting
-      const id = 'cap-1792399514739-busy01~1'
+      expect((await connect(true)).ok).toBe(false)
+      await new Promise((r) => setTimeout(r, 5_100))                  // past the opening's grace: idle, free
+      expect(svc.busy()).toBe(false)
+      const id = 'cap-1792399514739-busy01~p1'
       a.ws.send(JSON.stringify({ type: 'begin', capture: id }))
       await new Promise((r) => setTimeout(r, 200))
-      expect(svc.busy()).toBe(true)
+      expect(svc.busy()).toBe(true)                                   // a segment open
       expect((await connect(true)).ok).toBe(false)                    // a reclaim never takes it from a working tab
       a.ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
       await new Promise((r) => setTimeout(r, 150))
-      expect(svc.busy()).toBe(true)                                   // ended, its final not back
+      expect(svc.busy()).toBe(true)                                   // ended, its final held back
+      expect((await connect(true)).ok).toBe(false)
       await new Promise((r) => setTimeout(r, 700))
-      // the final is back - and the grace after opening is long past only after 5 s: wait for it
-      await new Promise((r) => setTimeout(r, 4_500))
-      expect(svc.busy()).toBe(false)
+      expect(svc.busy()).toBe(false)                                  // the final is back
       const b = await connect(true)
       expect(b.ok).toBe(true)                                         // free: taken back
       b.ws.close()
