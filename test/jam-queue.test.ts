@@ -528,6 +528,12 @@ describe('Jam V2: results first, then replies', () => {
     const { a, j, batch } = crashed(root, dir)
     batch.results = { m1: { body: 'one done', asks: false, reanchors: [] }, m2: { body: 'two done', asks: false, reanchors: [] } }
     batch.hosts = [{ member: 'm1', frame: 'demo/fresh' }]
+    batch.created = ['demo/fresh']
+    // the frame it made exists, on the board
+    mkdirSync(join(root, 'design', 'scenes', 'demo'), { recursive: true })
+    writeFileSync(join(root, 'design', 'scenes', 'demo', 'fresh.tsx'), 'export default () => null\n')
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'home.json'), JSON.stringify({ version: 1, name: 'home', auto: true, nodes: [] }))
     writeJournal(root, j)
     const jam = createJam(root, CFG, agent('ok', { touch: 'ran.marker' }))
     await jam.tick(); jam.stop()

@@ -92,6 +92,7 @@ interface Cap {
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
   endSizes?: Record<string, { w: number; h: number; play?: true }>   // the sizes as they were at E (what it was about, then)
+  endNodes?: { key: string; frame: string; w: number; h: number; visible: boolean }[]   // every instance at E (a step answering late is sized by these)
   sizes: Record<string, { w: number; h: number; play?: true }>   // each frame's size when it was last touched (`play`: on the stage's device)
   keys: Record<string, string>             // each frame's instance last touched (a frame can sit on a board twice)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
@@ -175,6 +176,13 @@ function sizeNow(f: string, key?: string): { w: number; h: number; play?: true }
   const n = (key ? st.nodes.find((x) => x.key === key && x.frame === f) : undefined) ?? visibleNodes().find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
   return n && n.w > 0 && n.h > 0 ? { w: Math.round(n.w), h: Math.round(n.h) } : undefined
 }
+/** A frame as it was at E (a capture finishing): its touched instance, else the one then in view, else any. */
+function sizeAtEnd(c: Cap, f: string): { w: number; h: number; play?: true } | undefined {
+  if (c.sizes[f]?.play) return c.sizes[f]
+  const ns = (c.endNodes ?? []).filter((n) => n.frame === f)
+  const n = ns.find((x) => x.key === c.keys[f]) ?? ns.find((x) => x.visible) ?? ns[0]
+  return n && n.w > 0 && n.h > 0 ? { w: n.w, h: n.h } : undefined
+}
 /** Each frame a step touches, at the size it is as it is touched (a frame visited on a phone in play keeps the
  *  phone's size, wherever the capture ends). */
 function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string; view?: { frames?: string[] } }, keys?: string[], auto = false) {
@@ -186,7 +194,7 @@ function sample(c: Cap, step: { event: string; frame?: string; to?: string; fram
     // the instance it came from (a step's own frame document), or the selected one showing this frame
     const k = [step.src, ...(keys ?? [])].find((x) => x && nodes.some((n) => n.key === x && n.frame === f))
     if (k) c.keys[f] = k
-    const z = sizeNow(f, c.keys[f])
+    const z = c.state === 'draining' && c.endNodes ? sizeAtEnd(c, f) : sizeNow(f, c.keys[f])
     // a view (play left, a fit) is not a touch: what was seen on the stage keeps the stage's size until the frame is
     // used on the canvas
     if (z && !((auto || step.event === 'view') && c.sizes[f]?.play && !z.play)) c.sizes[f] = z
@@ -501,7 +509,7 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   // as it was seen: on the stage's device now, or as it was on the stage (left play since), or its node
   const seen = c.sizes[frame]
   // after E: as the frame was at E (a resize while it finishes is not part of it); else as it is seen now
-  const atEnd = c.state === 'draining' ? c.endSizes?.[frame] ?? seen : undefined
+  const atEnd = c.state === 'draining' ? c.endSizes?.[frame] ?? (c.endNodes ? sizeAtEnd(c, frame) : undefined) ?? seen : undefined
   const onStage = st.play && st.play.at === frame ? sizeNow(frame) : undefined
   const size = atEnd ? { width: atEnd.w, height: atEnd.h } : onStage ? { width: onStage.w, height: onStage.h } : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
@@ -640,8 +648,11 @@ function drain(id: string) {
     const x = st.caps[id]
     if (!x) return
     x.state = 'draining'
-    // its frames' sizes as they are at E - a resize while it finishes is not part of it
+    // its frames' sizes as they are at E - a resize while it finishes is not part of it; and every instance as it
+    // is at E, for a step that answers late (a hover still in flight names a frame then)
     x.endSizes = framesSizes(x)
+    const vis = new Set(visibleNodes().map((n) => n.key))
+    x.endNodes = useStore.getState().nodes.map((n) => ({ key: n.key, frame: n.frame, w: Math.round(n.w), h: Math.round(n.h), visible: vis.has(n.key) }))
     if (draft) x.steps.push({ at: now(), event: 'note', text: draft })
     for (const inst of instances.values()) if (inst.captureDoc && current(inst)) x.flushWait.set(inst.key, inst.captureDoc)
   })

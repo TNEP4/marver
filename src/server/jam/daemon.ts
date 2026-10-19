@@ -379,9 +379,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  fails (its Retry is a new batch from the card: it must still hold them). Under the lock. */
   const ownCreated = (j: Journal, b: Batch) => {
     if (!b.created?.length || b.members.length !== 1) return
+    const live = liveCreated(b)
     const c = j.cards.find((x) => x.id === b.members[0].card)
     if (c) for (const x of j.cards.filter((y) => y === c || (y.state === 'queued' && y.board === c.board && !!c.thread && y.thread === c.thread))) {
-      const add = b.created.filter((f) => !x.frames.includes(f))
+      const add = live.filter((f) => !x.frames.includes(f))
       if (add.length) { x.frames = [...x.frames, ...add]; if (x !== c) { x.rev += 1; x.at = Date.now() } }
     }
   }
@@ -390,7 +391,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  delivery (again after a restart - it is in the batch with the results), its thread moves onto the new frame
    *  (a re-pin naming the frame, frame-level, a deterministic id: written once) and its card names that frame. */
   const hostOnNew = (b: Batch) => {
+    const live = new Set(liveCreated(b))
     for (const h of b.hosts ?? []) {
+      if (!live.has(h.frame)) continue   // gone since (renamed, removed): the thread stays where it is
       const m = b.members.find((x) => x.id === h.member)
       const c = m && q.j.cards.find((x) => x.id === m.card)
       if (!c?.thread) continue
@@ -399,6 +402,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const who = me()
       appendEvents(commentsDir, c.board, [{ id, ts: Date.now(), type: 'reanchor', commentId: c.thread, frame: h.frame, board: c.board, author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name } }])
     }
+  }
+  /** The frames a run made that still exist, on a board it works on (one made, then renamed or removed, is not). */
+  const liveCreated = (b: Batch): string[] => {
+    if (!b.created?.length) return []
+    const now = sceneFrameMtimes(root)
+    const boards = [...new Set(b.members.map((m) => m.board))]
+    const onBoard = (f: string) => boards.some((board) => {
+      try { const j = JSON.parse(readFileSync(join(root, 'design', 'boards', `${board}.json`), 'utf8')); return j.auto === true || (Array.isArray(j.nodes) && j.nodes.some((n: any) => n?.frame === f)) } catch { return false }
+    })
+    return b.created.filter((f) => now.has(f) && onBoard(f))
   }
   /** A frame's size where it sits on a board (its node's width and height), when the board says. */
   const sizeOnBoard = (frame: string, board: string): { w: number; h: number } | undefined => {
@@ -645,7 +658,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       await shoot('after')
       // frames the run made (on its board): pictured as they are (new, nothing before) at their size on the board
       const one = b.members.length === 1 ? cards()[0] : undefined
-      const created = capturing && one?.kind === 'capture' ? (b.created ?? []) : []
+      // (as they are now: one made then renamed or removed during the run is not pictured, nor hosts the thread)
+      const created = capturing && one?.kind === 'capture' ? liveCreated(b) : []
       let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {
         // pictured as they are now (again on a rerun: the frame may have changed since)

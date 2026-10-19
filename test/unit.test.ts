@@ -306,7 +306,7 @@ describe('Live Jam: config.jam (on by default)', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { loadConfig } = await import('../src/server/config.ts')
-  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true }
+  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: true }
 
   // Pin what detection sees: a PATH with a fake `claude` and no agent env markers.
   const dirs: string[] = []
@@ -387,17 +387,18 @@ describe('Live Jam: config.jam (on by default)', async () => {
     expect((await load(`export default { jam: { concurrency: 12 } }\n`)).jam).toEqual({ ...ON, concurrency: 12 })
   })
   it('0.26 fields: chime, capture and loc are kept when valid', async () => {
-    expect((await load(`export default { jam: { chime: false, capture: 'at-once', loc: false } }\n`)).jam)
-      .toEqual({ ...ON, chime: false, capture: 'at-once', loc: false })
+    expect((await load(`export default { jam: { chime: false, capture: 'at-once', loc: false, names: false } }\n`)).jam)
+      .toEqual({ ...ON, chime: false, capture: 'at-once', loc: false, names: false })
   })
   it('0.26 fields: a bad value warns, takes the default, and never turns jam off', async () => {
     const warn = vi.mocked(console.warn)
-    const c = await load(`export default { jam: { chime: 'yes', capture: 'later', loc: 1 } }\n`)
+    const c = await load(`export default { jam: { chime: 'yes', capture: 'later', loc: 1, names: 'haiku' } }\n`)
     expect(c.jam).toEqual(ON)
     const said = warn.mock.calls.map((a) => String(a[0]))
     expect(said.some((m) => m.includes('jam.chime'))).toBe(true)
     expect(said.some((m) => m.includes('jam.capture'))).toBe(true)
     expect(said.some((m) => m.includes('jam.loc'))).toBe(true)
+    expect(said.some((m) => m.includes('jam.names'))).toBe(true)
   })
   it('a config.ts that fails to load → off, because it may have said jam: false', async () => {
     expect((await load(`export default { jam: {`)).jam).toBeUndefined()

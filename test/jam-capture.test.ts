@@ -923,6 +923,28 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('a frame the run made and then removed (renamed) is neither pictured nor given the thread', async () => {
+    const { root, dir, done } = setup()
+    freshBoard(root)
+    let afterOfA = 0
+    const shoot1 = sameShot(root)
+    const jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/temporary.tsx' }), undefined, {
+      anchor: anchorOk as any,
+      // (as the run's own frame is pictured after, the made frame is gone - renamed)
+      shoot: async (frame: string) => { if (frame === 'demo/a' && ++afterOfA === 2) rmSync(join(root, 'design', 'scenes', 'demo', 'temporary.tsx'), { force: true }); return shoot1(frame) },
+    } as any)
+    const r = rec({ words: 'a brand new frame to the right of this one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    const b: any = jam.snapshot().batches[0]
+    expect(b.created).toEqual(['demo/temporary'])                          // it was found
+    expect((b.shots ?? []).some((x: any) => x.new)).toBe(false)              // and is gone: not pictured
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)?.frame).toBe('demo/a')
+    expect(card(jam, r.id).frames).not.toContain('demo/temporary')
+    done()
+  })
+
   it('a frame that appeared while the daemon was down is no one\'s: the rerun neither pictures it as new nor moves the thread', async () => {
     const { root, dir, done } = setup()
     freshBoard(root)
