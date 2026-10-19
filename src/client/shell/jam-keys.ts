@@ -87,8 +87,9 @@ export async function resumeDraft(id: string) {
   if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return }
   const c = cardById(id)
   if (!c || c.state !== 'draft') return
-  const ui = useJamUi.getState()
   if (await useJamCapture.getState().resume(id)) {
+    // as the UI is NOW (the record loaded meanwhile - another panel may have opened): only what points at it
+    const ui = useJamUi.getState()
     if (ui.panel?.id === id) ui.close()
     // its tile has stepped aside: nothing points at it, and the lane gives its keys back
     if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
