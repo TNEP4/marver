@@ -10,7 +10,7 @@
  * on - no auto-fade, no hover magic. The bottom-left navigator (restart · prev · i/N ·
  * next) stays prototype-only.
  */
-import { stageSize } from './stage-size.ts'
+import { setStageSize } from './stage-size.ts'
 import { frameLoaded, frameReady, onFrameMessage, stageNavigated } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
@@ -591,8 +591,10 @@ function PlayInner() {
     : docPreset ? { width: Math.min(win.w, 860), height: win.h }
     : fill ? { width: win.w, height: win.h }
     : CONFIG.viewports[play.device] ?? Object.values(CONFIG.viewports)[0]
-  // (a capture reads what the stage is: the size a frame seen here is pictured at)
-  stageSize.at = play.at; stageSize.w = Math.round(vp.width); stageSize.h = Math.round(vp.height)
+  // (a capture reads what the stage is: the size a frame seen here is pictured at - published after this layout)
+  // (no hook here - this is past the early return: a microtask, right after this layout)
+  const stageAt = play.at, stageW = Math.round(vp.width), stageH = Math.round(vp.height)
+  queueMicrotask(() => setStageSize(stageAt, stageW, stageH))
   const scale = stage ? Math.max(0.05, fill ? Math.min(win.w / vp.width, win.h / vp.height)
       : slides ? Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
       : Math.min((win.w - 96) / vp.width, (win.h - 128) / vp.height))

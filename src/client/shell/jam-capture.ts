@@ -20,7 +20,7 @@ import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
 import { touchedFrames } from '../../shared/capture-frames.ts'
-import { stageSize } from './stage-size.ts'
+import { onStageSize, stageSize } from './stage-size.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -144,6 +144,14 @@ const capOf = (id: string): Cap | undefined => useJamCapture.getState().caps[id]
 function addStep(id: string, step: Step & { seq?: number; src?: string }, keys?: string[], auto = false) {
   mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step, keys, auto) } })
 }
+/** The stage laid out again (a resize, a device, Fill, a document's width): the frame on it, while a capture records,
+ *  is measured as it is now - the last measurement before it leaves the stage is the one kept. */
+if (typeof window !== 'undefined') onStageSize(() => {
+  const id = useJamCapture.getState().current
+  const st = useStore.getState()
+  if (!id || !st.play || st.play.at !== stageSize.at) return
+  mutate((s) => { const c = s.caps[id]; if (c && c.state === 'recording') c.sizes[stageSize.at] = { w: stageSize.w, h: stageSize.h, play: true } })
+})
 /** Leaving play selects the frame it ended on: that selection is the shell's, not a touch (until then) */
 let playLeftAt = 0
 /** A frame's size on screen now: in play the stage's device, on the canvas its node (the one in view). */
@@ -151,15 +159,15 @@ function sizeNow(f: string, key?: string): { w: number; h: number; play?: true }
   const st = useStore.getState()
   if (st.play) {
     if (st.play.at !== f) return undefined
-    // a slide: its own fixed stage (whatever the device); Fill window: the window; a device preset: its size; else
-    // the stage as play draws it (a document's reading width)
+    // the stage as play last laid it out (a document's reading width, a slide's stage, the window when it fills);
+    // before play has laid this screen out, the same rules play follows: a slide's own stage, the window, the preset
+    if (stageSize.at === f && stageSize.w > 0 && stageSize.h > 0) return { w: stageSize.w, h: stageSize.h, play: true }
     const entry = st.manifest?.frames.find((x) => x.id === f)
     const slide = (entry && slideSize(entry, CONFIG.viewports)) ?? (st.play.slides ? SLIDE_INTRINSIC : null)
     if (slide) return { w: Math.round(slide.width), h: Math.round(slide.height), play: true }
     if (st.play.device === 'fill') return { w: window.innerWidth, h: window.innerHeight, play: true }
     const v = CONFIG.viewports[st.play.device]
-    if (v) return { w: Math.round(v.width), h: Math.round(v.height), play: true }
-    return stageSize.at === f && stageSize.w > 0 && stageSize.h > 0 ? { w: stageSize.w, h: stageSize.h, play: true } : undefined
+    return v ? { w: Math.round(v.width), h: Math.round(v.height), play: true } : undefined
   }
   // the instance touched first; else the one in view; else any
   const n = (key ? st.nodes.find((x) => x.key === key && x.frame === f) : undefined) ?? visibleNodes().find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
