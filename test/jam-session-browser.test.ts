@@ -347,6 +347,39 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
+  skippable('a record refused while the queue answers slowly: at once the session goes on - its talk again, captures allowed, the reason said, Write again', async () => {
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter()
+    await until(`!!window.__mvJamQueue.getState().session && window.__mvJamVoiceSession() === window.__mvJamQueue.getState().session.id`, 5000)
+    const id = await browser!.eval(s, `window.__mvJamQueue.getState().session.id`)
+    // the record is refused (as when a capture is open in another tab), and the refresh after it is held
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.__release = null; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'wrapup') { window.__race = 1; return new Response(JSON.stringify({ ok: false, error: 'a capture of the session is still recording or being sent in another tab' }), { status: 409, headers: { 'content-type': 'application/json' } }) }
+      if (window.__race === 1 && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__race = 2; await new Promise((r) => { window.__release = r }) }
+      return f(u, o)
+    }; return 1 })()`)
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]') && document.activeElement?.hasAttribute('data-jam-wrap-field')`, 5000)
+      await browser!.send('Input.insertText', { text: 'short' }, s)
+      await enter()
+      await until(`window.__race === 2`, 5000)                                   // refused; the refresh held
+      await until(`window.__mvJamVoiceSession() === ${JSON.stringify(id)}`, 3000)  // its talk again
+      await until(`/could not be written - a capture of the session is still recording/.test(document.body.textContent)`, 3000)
+      expect(await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /Write the record/.test(b.textContent))?.disabled`)).toBe(false)
+      await esc(); await until(`!document.querySelector('[data-jam-sheet]')`, 3000)
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`, 3000)   // captures start again
+      await browser!.eval(s, `window.__mvJamCapture.getState().drop?.() ?? window.__mvJamCapture.getState().end(), 1`)
+      await until(`!window.__mvJamCapture.getState().current`, 5000)
+      await browser!.eval(s, `window.__release(), 1`)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+    await sleep(300)
+    await until(`!window.__mvJamCapture.getState().current && !Object.keys(window.__mvJamCapture.getState().caps).length && !window.__mvJamCapture.getState().unsent.length`, 30_000)
+    await esc(); await esc()
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 10_000)
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
+  })
+
   skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }

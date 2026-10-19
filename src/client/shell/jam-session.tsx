@@ -30,11 +30,12 @@ const now = () => performance.timeOrigin + performance.now()
 
 /** Why the last session move was refused (the server's words), for the one line that says so. */
 let lastError: string | undefined
-async function post(body: Record<string, unknown>, onOk?: () => void): Promise<boolean> {
+async function post(body: Record<string, unknown>, onAnswer?: (ok: boolean) => void): Promise<boolean> {
   const r = await fetch(`${ROUTE}/api/jam/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) }).catch(() => null)
   lastError = r && !r.ok ? ((await r.json().catch(() => null)) as { error?: string } | null)?.error : r ? undefined : 'marver dev did not answer'
-  // what a move that landed settles at once, before the refresh (a push may come first)
-  if (r?.ok) onOk?.()
+  // what the server's answer settles happens at once, never behind the refresh (which may be slow, and a push
+  // may come first)
+  try { onAnswer?.(!!r?.ok) } catch { /* the refresh still runs */ }
   await useJamQueue.getState().load()
   return !!r?.ok
 }
@@ -47,7 +48,7 @@ export async function startSession(): Promise<boolean> {
   // the talk starts once the queue shows the session - whichever comes first: the push (before the answer,
   // or after it), or the refresh; a session ended meanwhile never gets the microphone
   const hear = () => { if (useJamQueue.getState().session?.id === id && voiceSessionId() !== id) void voiceSession(id, now()) }
-  const ok = await post({ action: 'start', id }, () => { try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ } hear() })
+  const ok = await post({ action: 'start', id }, (ok) => { if (!ok) return; try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ } hear() })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }
   useJamUi.getState().setSheet(null)
   hear()
@@ -58,7 +59,7 @@ export const MIC_OWNER = 'mv-jam-session-mic'
 export const holdsSessionMic = (id: string): boolean => { try { return sessionStorage.getItem(MIC_OWNER) === id } catch { return false } }
 
 /** End the session - with a record (the wrap-up's instructions and talk switch), or without one. */
-export async function endSession(write: { instructions: string; includeTalk: boolean } | null): Promise<boolean> {
+export async function endSession(write: { instructions: string; includeTalk: boolean } | null, onAnswer?: () => void): Promise<boolean> {
   const ses = useJamQueue.getState().session
   if (!ses) { useJamUi.getState().setSheet(null); return true }
   // never over a capture still recording, sealing or sending: it belongs in the session (and its record)
@@ -70,23 +71,22 @@ export async function endSession(write: { instructions: string; includeTalk: boo
   // from here until the server answers, no capture starts (the record must not miss it); the server also
   // refuses the record while a capture of the session is open in any tab
   setSessionEnding(true)
-  let ok = false
+  // the server's answer, acted on at once (not behind the refresh): captures may start again; refused, the
+  // session goes on - its talk heard again in the tab that holds its microphone, and you are told why
+  const answered = (ok: boolean) => {
+    setSessionEnding(false)
+    onAnswer?.()
+    if (ok) { useJamUi.getState().setSheet(null); return }
+    if (useJamQueue.getState().session?.id === ses.id && holdsSessionMic(ses.id) && voiceSessionId() !== ses.id) void voiceSession(ses.id, now())
+    useStore.getState().toast(write ? `the record could not be written - ${lastError ?? 'look again'}` : 'the session could not end - look again')
+  }
   try {
     // the talk's last words first: they belong in the transcript the record reads
     await voiceSessionEnd()
-    ok = write
-      ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, board: useStore.getState().board })
-      : await post({ action: 'end', id: ses.id })
+    return write
+      ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, board: useStore.getState().board }, answered)
+      : await post({ action: 'end', id: ses.id }, answered)
   } finally { setSessionEnding(false) }
-  if (!ok) {
-    // the session goes on: its talk is heard again (in the tab that holds its microphone)
-    const still = useJamQueue.getState().session
-    if (still && holdsSessionMic(still.id)) void voiceSession(still.id, now())
-    useStore.getState().toast(write ? `the record could not be written - ${lastError ?? 'look again'}` : 'the session could not end - look again')
-    return false
-  }
-  useJamUi.getState().setSheet(null)
-  return true
 }
 
 
@@ -221,7 +221,7 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   // the session's captures - the lane's tiles - with where each stands
   const caps = laneCards(cards, run).filter((c) => c.kind === 'capture' && c.session === session.id && c.state !== 'dropped')
   const name = agent ? HARNESS[agent] ?? agent : 'your agent'
-  const write = async () => { if (busy) return; setBusy(true); await endSession({ instructions: text.trim(), includeTalk: talk }); setBusy(false) }
+  const write = async () => { if (busy) return; setBusy(true); await endSession({ instructions: text.trim(), includeTalk: talk }, () => setBusy(false)); setBusy(false) }
   // ⏎ anywhere in the sheet writes the record - it never reaches a panel beneath it (jam-keys' sheet row)
   wrapWrite.current = () => void write()
   const summary = caps.length
