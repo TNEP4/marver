@@ -90,7 +90,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
   let live: WebSocket | null = null
   let lastUse = Date.now()
   // capture -> the socket it came on and the worker it began on, until its final (or drop)
-  const owners = new Map<string, { ws: WebSocket; w?: Worker }>()
+  const owners = new Map<string, { ws: WebSocket; w?: Worker; done?: () => void }>()
 
   const idle = setInterval(() => {
     if (worker && owners.size === 0 && Date.now() - lastUse > (opts.idleMs ?? IDLE_MS)) { const w = worker; worker = null; ready = null; void w.terminate() }
@@ -126,7 +126,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           else if (m?.type === 'words' || m?.type === 'final') {
             const o = owners.get(m.capture)
             if (!o || o.w !== w) return   // not this worker's capture (any more)
-            if (m.type === 'final') owners.delete(m.capture)
+            if (m.type === 'final') { owners.delete(m.capture); o.done?.() }
             // a session's talk: its words go to the transcript, here, on this Mac
             const t0 = talkT0.get(m.capture)
             if (m.type === 'words' && t0 !== undefined && Array.isArray(m.words)) {
@@ -144,7 +144,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           down = true
           if (worker === w) { worker = null; ready = null }
           if (!settled) { unavailable = `the speech engine stopped: ${why} - typed notes only`; settle(null); return }
-          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
+          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); o.done?.(); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
         }
         w.on('error', (err) => gone(err.message))
         w.on('exit', (code) => gone(`exit ${code}`))
@@ -197,12 +197,14 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const prev = caps.get(id)
         if (prev && !prev.ended && !prev.dropped && owners.has(id)) return
         if (prev) prev.dropped = true
-        const own: { ws: WebSocket; w?: Worker } = { ws }
+        const own: { ws: WebSocket; w?: Worker; done?: () => void } = { ws }
         owners.set(id, own)
         if (id.startsWith('ses-') && Number.isFinite(m.t0)) talkT0.set(id, Number(m.t0))
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }
+        // a segment that is over (final, dropped, or never started) is forgotten here
+        own.done = () => { if (caps.get(id) === c) caps.delete(id) }
         c.gate = start().then((w) => {
-          if (!w) { owners.delete(id); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
+          if (!w) { owners.delete(id); own.done?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
           if (closed || c.dropped || worker !== w) return null
           own.w = w   // its words come from this worker only
           w.postMessage({ type: 'begin', capture: id })
@@ -216,11 +218,12 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const lastSample = Number(m.lastSample)
         // the worker answers `final` after the last words; without the worker it began on, they may be incomplete
         then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: Number.isFinite(lastSample) ? lastSample : 0 }),
-          () => { owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
+          () => { owners.get(id)?.done?.(); owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
       } else if (m.type === 'drop') {
         const c = caps.get(id)
         if (!c || c.dropped) return
         c.dropped = true
+        owners.get(id)?.done?.()
         owners.delete(id)
         then(c, (w) => w.postMessage({ type: 'drop', capture: id }))
       }

@@ -62,9 +62,9 @@ export const useJamVoice = create<VoiceStore>((set, get) => ({
     try { localStorage.setItem(CHOICE, c) } catch { /* this page only */ }
     set({ choice: c, ...(c === 'no' ? { asking: false } : {}) })
     // no: an opening is cancelled, an open microphone is cut now - the words said so far are kept
-    if (c === 'no') { cancelOpening(); void closeMic() }
+    if (c === 'no') void reconcile()
     // yes: an engine that failed to start is tried again, then the microphone opens for what runs now
-    if (c === 'yes') void get().retry().then(() => { if (get().server === 'ready' || get().server === 'loading') { set({ asking: false }); void openFor(target()) } })
+    if (c === 'yes') void get().retry().then(() => { if (get().server === 'ready' || get().server === 'loading') set({ asking: false }); void reconcile() })
   },
   async refresh() {
     try {
@@ -98,7 +98,7 @@ function poll() {
     const d = s.download?.state
     if (d !== 'downloading' && d !== 'checking') {
       clearInterval(polling!); polling = null
-      if (s.server === 'ready' || s.server === 'loading') { useJamVoice.setState({ asking: false }); void openFor(target()) }
+      if (s.server === 'ready' || s.server === 'loading') { useJamVoice.setState({ asking: false }); void reconcile() }
     }
   }, 1_000)
 }
@@ -188,13 +188,14 @@ function socket(): Promise<WebSocket | null> {
           finals.delete(m.capture)
           if (owner && (owner.kind === 'talk' || !accepting.has(owner.id))) owners.delete(m.capture)
           if (f) f(m.incomplete !== true)
-          else if (m.incomplete === true && owner) lost(owner, 'the words stopped (the speech engine went)')
+          else if (m.incomplete === true && owner) lost(owner, m.capture, 'the words stopped (the speech engine went)')
         } else if (m.type === 'unavailable') {
           // no words for it: the microphone closes, and the reason is said once
           useJamVoice.setState({ server: 'unavailable', reason: typeof m.reason === 'string' ? m.reason : undefined })
           if (owner) broken.add(owner.id)
           const cur = mic
           if (cur && cur.seg?.seg === m.capture) { closeNow(cur); mic = null; setLive() }
+          void reconcile()
           if (!toldUnavailable) { toldUnavailable = true; useStore.getState().toast(typeof m.reason === 'string' ? m.reason : 'words are not available - typed notes only') }
         }
       }
@@ -203,7 +204,7 @@ function socket(): Promise<WebSocket | null> {
         // a closed connection is not a final: what was waiting may be incomplete
         for (const f of finals.values()) f(false)
         finals.clear()
-        if (mic && !mic.closed && mic.seg) lost(mic.seg.owner, 'the microphone connection closed')
+        if (mic && !mic.closed && mic.seg) lost(mic.seg.owner, mic.seg.seg, 'the microphone connection closed')
       }
       ws = s
       return s
@@ -214,9 +215,11 @@ function socket(): Promise<WebSocket | null> {
 
 /** The microphone stops (its connection or the engine went): the words heard so far are kept, the owner's
  *  words are marked as maybe incomplete. */
-function lost(owner: Owner, why: string) {
+function lost(owner: Owner, seg: string, why: string) {
   broken.add(owner.id)
-  if (mic && !mic.closed && mic.seg?.owner.id === owner.id) { closeNow(mic); mic = null; setLive() }
+  // only the very segment that failed closes the microphone (a late word about an older one never does)
+  const m = mic
+  if (m && !m.closed && m.seg?.seg === seg) { closeNow(m); mic = null; setLive() }
   useStore.getState().toast(`${why} - the words so far are kept`)
 }
 const closeNow = (m: Mic) => { m.closed = true; m.node.port.onmessage = null; m.stream.getTracks().forEach((t) => t.stop()); void m.ctx.close().catch(() => {}) }
@@ -281,33 +284,46 @@ function endSegment(s: Segment, at: { start: number; pcm: Int16Array; mark: numb
   cuts.set(s.owner.id, list)
 }
 
-/** Switch the open microphone to `next` at one instant: the current segment ends at the mark, the next
- *  starts at it - nothing between them is lost or heard twice. `next` null closes the microphone. */
-let switching: Promise<void> = Promise.resolve()
-function switchTo(next: Owner | null): Promise<void> {
-  switching = switching.then(async () => {
-    const m = mic
-    if (!m || m.closed) return
+/** Who the microphone should hear now: what runs (a capture, else the session's talk) - if you said yes
+ *  and the engine can run. */
+const wanted = (): Owner | null => {
+  const v = useJamVoice.getState()
+  return v.choice === 'yes' && (v.server === 'ready' || v.server === 'loading') ? target() : null
+}
+
+/** Bring the microphone to what should be heard NOW. Every change - open, switch, close - is one step in
+ *  one chain, so no change overtakes another: a switch ends the current segment and starts the next at
+ *  the same worklet mark (nothing lost, nothing heard twice); an opening still waiting gives way to a
+ *  newer state (it checks after every wait) and the step after it looks again. */
+let chain: Promise<void> = Promise.resolve()
+function reconcile(): Promise<void> {
+  cancelOpening()
+  chain = chain.then(step, step)
+  return chain
+}
+async function step() {
+  const want = wanted()
+  const m = mic && !mic.closed ? mic : null
+  if (m && want && m.seg?.owner.id === want.id) return
+  if (m) {
     const cur = m.seg
     const at = await mark(m, cur)
     if (cur) endSegment(cur, at)
-    if (next && !m.closed && at) { m.seg = segmentFor(next, at.mark); listenTo(m) }
-    else { closeNow(m); if (mic === m) mic = null }
+    const next = wanted()                 // looked at again: it may have changed during the mark
+    if (next && at && !m.closed) { m.seg = segmentFor(next, at.mark); listenTo(m); setLive(); return }
+    closeNow(m)
+    if (mic === m) mic = null
     setLive()
-  })
-  return switching
+  }
+  const now_ = wanted()
+  if (now_) await open(now_)
 }
 
-/** Open the microphone for `owner` (it may be cancelled meanwhile by a newer change, or the answer no). */
-async function openFor(owner: Owner | null) {
-  if (!owner) return
-  if (mic && !mic.closed) { if (mic.seg?.owner.id !== owner.id) await switchTo(owner); return }
-  const v = useJamVoice.getState()
-  if (v.choice !== 'yes' || (v.server !== 'ready' && v.server !== 'loading')) return
-  cancelOpening()
+/** Open the microphone for `owner` - one step of the chain; a newer state cancels it at its next wait. */
+async function open(owner: Owner) {
   const op = { cancelled: false }
   opening = op
-  const stale = () => op.cancelled || target()?.id !== owner.id || useJamVoice.getState().choice !== 'yes'
+  const stale = () => op.cancelled || wanted()?.id !== owner.id
   let stream: MediaStream | null = null
   let ctx: AudioContext | null = null
   const undo = () => { stream?.getTracks().forEach((t) => t.stop()); void ctx?.close().catch(() => {}) }
@@ -337,11 +353,12 @@ async function openFor(owner: Owner | null) {
   } finally { if (opening === op) opening = null }
 }
 const cancelOpening = () => { if (opening) opening.cancelled = true }
-/** Close the microphone now (its current segment ends at the mark). */
-const closeMic = () => switchTo(null)
+/** The chain settled - but never longer than `ms` (an opening may wait on the browser's permission
+ *  question; what the caller needs - the cuts of its segments - is done before it). */
+const settle = (ms = 2_000) => Promise.race([reconcile(), new Promise<void>((r) => setTimeout(r, ms))])
 
-/** What the question and the server say before the microphone opens for `owner`. */
-async function begin(owner: Owner) {
+/** What the question and the server say before the microphone opens for what runs now. */
+async function begin() {
   const v = useJamVoice.getState()
   if (v.choice === 'no') return
   await v.refresh()
@@ -354,7 +371,7 @@ async function begin(owner: Owner) {
   }
   // first time, or yes but the model is missing: the question (the capture or session runs meanwhile)
   if (s.choice === null || s.server === 'needs-model') { useJamVoice.setState({ asking: true }); return }
-  await openFor(target())
+  await reconcile()
 }
 
 /** Every segment of an owner ended: true when all its words came back whole. */
@@ -373,27 +390,25 @@ async function settled(owner: string): Promise<boolean> {
 export async function voiceBegin(id: string, t0: number) {
   capture = { id, t0 }
   accepting.add(id)
-  if (mic && !mic.closed) { await switchTo(target()); return }
-  await begin({ kind: 'capture', id, t0 })
+  if (mic && !mic.closed) { await reconcile(); return }
+  await begin()
 }
 
 /** A capture ends: its audio cut at this instant (in a session the talk goes on from it), its words awaited
  *  (3 s at most). Resolves true when the words are complete, false when they may not be. */
 export async function voiceEnd(id: string): Promise<boolean> {
   if (capture?.id === id) capture = null
-  cancelOpening()
   useJamVoice.setState((st) => ({ asking: st.asking && st.choice === null && !session ? false : st.asking }))
-  if (mic && !mic.closed && mic.seg?.owner.id === id) await switchTo(target())
+  await settle()
   return settled(id)
 }
 
 /** A capture dropped: what was heard for it is discarded - nothing of it is transcribed. */
 export async function voiceDrop(id: string) {
   if (capture?.id === id) capture = null
-  cancelOpening()
   accepting.delete(id)
   useJamVoice.setState((st) => { const heard = { ...st.heard }; delete heard[id]; return { heard } })
-  if (mic && !mic.closed && mic.seg?.owner.id === id) await switchTo(target())
+  await settle()
   // every segment it had: dropped on the server (discarded, untranscribed)
   for (const [seg, o] of owners) if (o.id === id) { ws?.send(JSON.stringify({ type: 'drop', capture: seg })); finals.get(seg)?.(false); finals.delete(seg); owners.delete(seg) }
   cuts.delete(id)
@@ -411,8 +426,8 @@ export const forgetHeard = (id: string) => {
 export async function voiceSession(id: string, t0: number) {
   session = { id, t0 }
   if (capture) return   // the capture keeps the microphone; the talk starts when it ends
-  if (mic && !mic.closed) { await switchTo(target()); return }
-  await begin({ kind: 'talk', id, t0 })
+  if (mic && !mic.closed) { await reconcile(); return }
+  await begin()
 }
 
 /** A session ends: its talk's last segment is cut; the microphone closes (unless a capture records). */
@@ -420,7 +435,7 @@ export async function voiceSessionEnd(): Promise<void> {
   const s = session
   session = null
   if (!s) return
-  if (mic && !mic.closed && mic.seg?.owner.id === s.id) await switchTo(target())
+  await settle()
   await settled(s.id)
 }
 

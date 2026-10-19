@@ -1012,6 +1012,34 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const st = await speechLive.svc.state()
         return json(res, 200, { ...st, download: downloadState(), mb: DOWNLOAD_MB })
       }
+      if (path === 'jam/session' && (req.method === 'GET' || req.method === 'POST')) {
+        // the Jam session (spec 27 Part 5): GET what runs (and how long its talk is); POST start, end, or
+        // end with a wrap-up that writes the record - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { jamLive } = await import('./jam/live.ts')
+        if (!jamLive.session || !jamLive.view) return json(res, 409, { error: 'jam is not running here' })
+        if (req.method === 'GET') {
+          const ses = jamLive.view().session ?? null
+          const { readTalk, talkMinutes } = await import('./jam/session.ts')
+          return json(res, 200, { session: ses, talkMinutes: ses ? talkMinutes(readTalk(root, ses.id)) : 0 })
+        }
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!b || typeof b.id !== 'string' || !['start', 'end', 'wrapup'].includes(b.action)) return json(res, 400, { error: 'expected { action, id }' })
+        if (b.action === 'wrapup' && (typeof b.instructions !== 'string' || typeof b.board !== 'string')) return json(res, 400, { error: 'expected { instructions, board }' })
+        const r = await jamLive.session(b.action === 'wrapup'
+          ? { action: 'wrapup', id: b.id, instructions: b.instructions, includeTalk: b.includeTalk !== false, tags: Number(b.tags) || 0, board: b.board }
+          : { action: b.action, id: b.id })
+        return json(res, r.ok ? 200 : 409, r)
+      }
+      if (path === 'jam/record' && req.method === 'GET') {
+        // a session record: its file, what it says now, the agent's reply - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { jamLive } = await import('./jam/live.ts')
+        const r = jamLive.record?.(url.searchParams.get('id') ?? '')
+        return r ? json(res, 200, r) : json(res, 404, { error: 'no such record' })
+      }
       if (path === 'jam/capture' && req.method === 'POST') {
         // the sealed capture at E: stored once, a draft card - owner only
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })

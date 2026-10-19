@@ -402,7 +402,9 @@ async function boot(root: string, portFlag: number | undefined, instance: string
     if (jam) {
       // words on this Mac (spec 27 Part 4): the audio socket beside the canvas; the model loads on first use
       const { createSpeech, speechLive } = await import('./jam/audio.ts')
-      const speech = createSpeech()
+      // a session's talk (what is said between its captures) goes to its transcript, on this Mac
+      const { appendTalk } = await import('./jam/session.ts')
+      const speech = createSpeech({ onTalk: (t) => appendTalk(root, t.session, t.words) })
       if (server.httpServer) speech.attach(server.httpServer as import('node:http').Server)
       speechLive.svc = speech
       const close = server.close.bind(server)

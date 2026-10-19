@@ -11,6 +11,12 @@ if (opts.orphan) { let alive = true; try { process.kill(opts.orphan, 0) } catch 
 if (opts.touch) { fs.mkdirSync(path.dirname(opts.touch), { recursive: true }); fs.writeFileSync(opts.touch, 'x' + Date.now() + Math.random()) }
 if (opts.fail) process.exit(1)
 if (opts.hang) setInterval(() => {}, 1000)
+// a session record: the agent writes it where the content says, and nothing else
+for (const m of p.members) if (m.brief.wrapup) {
+  const c = m.brief.wrapup.content
+  fs.mkdirSync(path.dirname(c.file), { recursive: true })
+  fs.writeFileSync(c.file, '# Session record\n\n' + c.instructions + '\n\n' + c.captures.map((x) => '- ' + x.title + ' (' + x.state + ')').join('\n') + (c.more ? '\n\nMore: ' + c.more : '') + '\n')
+}
 const F = '```'
 const out = p.members.map((m) => {
   const how = typeof mode === 'string' ? mode : (mode[m.card] || mode[m.id] || 'ok')

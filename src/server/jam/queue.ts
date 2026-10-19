@@ -19,6 +19,7 @@ import { fresh, readRaw, write } from './journal.ts'
 import { buildPacket, packetPath, sanitize, threadId } from './packet.ts'
 import type { Batch, Brief, Card, CardState, CaptureRecord, Journal, JournalV1, Member, Msg, PacketMember, Payload, Result } from './types.ts'
 import { captureFrames, captureWords, factsOf, hashOf, madeOf, readCapture, wordsSince } from './capture.ts'
+import { readWrapup, type Wrapup } from './session.ts'
 
 export const MENTION = /@marver\b/i
 /** A batch holds at most this many cards; the next waits for the next batch. */
@@ -289,6 +290,10 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
         ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
     }
   }
+  if (c.kind === 'wrapup') {
+    const w = readWrapup(ctx.root, wrapupOf(c))
+    if (w) brief.wrapup = { content: { ...w.wrapup, ...(c.payload?.edited ? { more: c.payload.edited } : {}) }, hash: w.hash }
+  }
   const followed = c.follows ? j.cards.find((x) => x.id === c.follows) : undefined
   // a run is named by its batch: the card's current one, or - requeued or merged since - its last in `ran`
   const lastRun = (x: Card) => x.batch ?? x.ran?.[x.ran.length - 1]
@@ -319,6 +324,14 @@ export function captureIntact(j: Journal, ctx: Ctx, capId: string): boolean {
   return !!capCard?.payload && !!cap && cap.hash === capCard.payload.recordHash && isOwned(ctx, capCard.board, payloadKey(capCard))
 }
 
+/** A wrap-up's content is the one sealed: its file hashes to what the card holds, and that is ledgered. */
+export function wrapupIntact(ctx: Ctx, c: Card): boolean {
+  const w = readWrapup(ctx.root, wrapupOf(c))
+  return !!w && !!c.payload && w.hash === c.payload.recordHash && isOwned(ctx, c.board, `wrapup:${w.wrapup.id}:${w.hash}`)
+}
+/** The wrap-up content a card writes from (a More work card writes from the same, its note added). */
+export const wrapupOf = (c: Card): string => c.wrapup ?? c.id
+
 function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j?: Journal): boolean {
   if (c.capture && j && !captureIntact(j, ctx, c.capture)) {
     set(c, 'failed', now, 'the capture changed after it was confirmed - capture it again')
@@ -329,7 +342,12 @@ function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j?: Jo
     if (!ok) set(c, 'failed', now, 'an ask on this capture is no longer the owner\'s')
     return ok
   }
-  if (c.kind !== 'comment') return true   // wrap-ups are checked by their own seal (M4)
+  if (c.kind === 'wrapup') {
+    // its sealed content, as ledgered: changed after the seal, it never reaches the agent
+    if (!wrapupIntact(ctx, c)) { set(c, 'failed', now, 'the session record changed after it was written - write it again'); return false }
+    return true
+  }
+  if (c.kind !== 'comment') return true
   const ok = c.events.filter((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))
   if (ok.length !== c.events.length) { c.events = ok; c.rev += 1; c.at = now }
   if (!ok.length) { set(c, 'dropped', now, 'no longer authorized'); return false }
@@ -453,6 +471,8 @@ function settleOne(j: Journal, b: Batch, m: Member, p: { reply?: string; answere
     if (p.reply) c.reply = p.reply
     if (c.resolved) set(c, 'done', now, 'replied')
     else if (r.asks && p.answered) set(c, 'done', now, 'answered')
+    // a session record has no thread to ask in: it always comes back to review (More work answers it)
+    else if (c.kind === 'wrapup') set(c, 'review', now, 'ready to review')
     else if (r.asks) { c.asked = p.asked ?? now; set(c, 'asks', now, 'asks you'); out.push({ card: c, notice: 'asks' }); return }
     else set(c, c.kind === 'comment' ? 'done' : 'review', now, c.kind === 'comment' ? 'replied' : 'ready to review')
     out.push({ card: c })
@@ -647,6 +667,7 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
     id: record.id, kind: 'capture', board: record.context.board, frames: captureFrames(record), capture: record.id, events: [],
     state: 'draft', made, order: prev?.order ?? made, rev: 1, at: now, payload: { recordHash: hash, ...(edited !== undefined ? { edited } : {}) },
     ...(r ? { reviewing: r, follows: r.card } : {}), ...(src?.name ? { name: src.name } : {}),
+    ...(record.context.session ? { session: record.context.session } : {}),
   }
   if (prev) set(prev, 'dropped', now, `resumed as ${record.id}`)
   j.cards.push(c)
@@ -744,11 +765,53 @@ export function looksGood(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[],
   return { resolve: !!c.thread && !newer && !after }
 }
 
+// ---- sessions (Part 5) ------------------------------------------------------------------------------
+
+/** Start a session (once: one runs at a time). */
+export function startSession(j: Journal, id: string, now = Date.now()): { id: string; since: number } {
+  if (!j.session) { j.session = { id, since: now }; touchRun(j, now) }
+  return j.session
+}
+/** End the session running (if it is `id`): the run then lasts while its captures are pending. */
+export function endSession(j: Journal, id: string, now = Date.now()): boolean {
+  if (j.session?.id !== id) return false
+  j.session = undefined
+  touchRun(j, now)
+  return true
+}
+/** A sealed wrap-up becomes a queued card - the run's last tile; it writes the session's record. */
+export function addWrapup(j: Journal, w: Wrapup, hash: string, board: string, now = Date.now()): Card {
+  const have = j.cards.find((c) => c.id === w.id)
+  if (have) return have
+  const c: Card = {
+    id: w.id, kind: 'wrapup', board, frames: [], events: [], state: 'queued', made: now, order: now, rev: 1, at: now,
+    payload: { recordHash: hash }, session: w.session, name: 'Session record',
+  }
+  j.cards.push(c)
+  touchRun(j, now)
+  return c
+}
+/** More work on a record: a new wrap-up card writes from the same sealed content, your note added, and
+ *  follows the record it improves (which is done). */
+export function moreWrapup(j: Journal, prev: Card, note: string, now = Date.now()): Card {
+  const c: Card = {
+    id: `wrap-${now}-${randomUUID().replace(/-/g, '').slice(0, 6)}`, kind: 'wrapup', board: prev.board, frames: [], events: [], state: 'queued',
+    made: now, order: now, rev: 1, at: now, wrapup: wrapupOf(prev), follows: prev.id,
+    payload: { recordHash: prev.payload!.recordHash, edited: note.slice(0, 20_000) }, session: prev.session, name: 'Session record',
+  }
+  set(prev, 'done', now, 'more work')
+  j.cards.push(c)
+  touchRun(j, now)
+  return c
+}
+
 /** The lane's run: the captures made since the lane last appeared. It lasts while any of them is
  *  pending (or a session runs - M4) and ends when every one is done, kept or dropped. */
 export function touchRun(j: Journal, now = Date.now()) {
   const lane = j.cards.filter((c) => c.kind === 'capture' || c.kind === 'wrapup')
   const live = lane.filter((c) => pending(c))
+  // a session holds the run open from its start, whatever is pending (its captures stay on the lane)
+  if (j.session) { j.run = { since: Math.min(j.run?.since ?? Infinity, j.session.since, ...live.map((c) => c.made)) }; return }
   if (!j.run && live.length) j.run = { since: Math.min(...live.map((c) => c.made)) }
   else if (j.run && !live.length) j.run = undefined
   // an older capture that sealed later (S -> S, its pictures slower) is still in the run

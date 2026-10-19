@@ -19,9 +19,13 @@ export interface QueueView {
     reviewing?: { card: string; batch: string; rev: number }
     edited?: string
     notes?: number
+    session?: string     // the session it was made in, or whose record it writes
+    file?: string        // a session record: the file it writes
   })[]
   /** the lane's run, while one lasts (captures made since then) */
   run?: { since: number }
+  /** the Jam session running now */
+  session?: { id: string; since: number }
 }
 
 export const jamLive: {
@@ -30,4 +34,6 @@ export const jamLive: {
   act?: (id: string, rev: number, action: string, body?: string) => Promise<{ ok: boolean; card?: unknown; error?: string }>
   capture?: (record: unknown) => Promise<{ ok: boolean; card?: unknown; error?: string }>
   sealed?: (id: string) => boolean
+  session?: (op: any) => Promise<{ ok: boolean; session?: unknown; card?: unknown; error?: string }>
+  record?: (id: string) => { file: string; text: string | null; reply?: string } | null
 } = {}

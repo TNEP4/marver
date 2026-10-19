@@ -29,13 +29,14 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, addCapture, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
 import { captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
+import { buildWrapup, readWrapup, SESSION_ID, storeWrapup } from './session.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -59,6 +60,10 @@ export interface JamCore {
   sealed(id: string): boolean
   /** ingest now (the page's comment route, right after it appends) */
   poke(): Promise<void>
+  /** The Jam session (Part 5): start one, or end it - with no record, or with a wrap-up that writes one. */
+  session(op: { action: 'start'; id: string } | { action: 'end'; id: string } | { action: 'wrapup'; id: string; instructions: string; includeTalk: boolean; tags: number; board: string }): Promise<{ ok: boolean; session?: { id: string; since: number } | null; card?: Card; error?: string }>
+  /** A session record's file and what it says now, and the agent's reply on it. */
+  record(id: string): { file: string; text: string | null; reply?: string } | null
 }
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
@@ -539,6 +544,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const c0 = q.j.cards.find((x) => x.id === id)
     if (c0?.pending?.op === 'more') return { ok: true, card: await finishStep(id) }
     if (!words.trim()) return { ok: false, card: c0 && structuredClone(c0), error: 'say what more to do' }
+    // a session record has no thread: More work is a new record job from the same content, your note added
+    if (c0?.kind === 'wrapup') {
+      const r = await q.lock((j) => {
+        const c = j.cards.find((x) => x.id === id)
+        if (!c || c.state !== 'review' || c.rev !== rev || !c.payload) return null
+        const next = moreWrapup(j, c, words.trim())
+        q.persist()
+        return structuredClone(next)
+      })
+      if (!r) { const c = q.j.cards.find((x) => x.id === id); return { ok: false, card: c && structuredClone(c), error: 'the card changed - look again' } }
+      reserve(); queueChanged(); void pump()
+      return { ok: true, card: r }
+    }
     const began = await q.lock((j) => {
       const c = j.cards.find((x) => x.id === id)
       if (!c || c.state !== 'review' || c.rev !== rev || !c.thread) return null
@@ -704,6 +722,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           if (!c) continue
           // a capture changed since it was confirmed never runs again, whoever carries it
           if (c.capture && !captureIntact(j, ctx, c.capture)) { c.state = 'failed'; c.note = 'the capture changed after it was confirmed - capture it again'; c.rev += 1; c.at = Date.now(); continue }
+          // a session record whose sealed content changed never runs again either
+          if (c.kind === 'wrapup' && !wrapupIntact(ctx, c)) { c.state = 'failed'; c.note = 'the session record changed after it was written - write it again'; c.rev += 1; c.at = Date.now(); continue }
           // every kind's asks are checked (a capture's More work and merged tags are events too); only
           // a tag's card has nothing left to do without them - a capture still has its payload
           const comment = c.kind === 'comment'
@@ -784,6 +804,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** Already stored under this id (a retried upload): the checks ran when it was first taken. */
   const storedOnce = (rec: { id: string }) => q.j.cards.some((c) => c.id === rec.id)
 
+  /** The agent's reply on a card's last run, as it said it. */
+  const resultFor = (j: Journal, c: Card): string | undefined => {
+    const b = j.batches.find((x) => x.batchId === (c.batch ?? c.ran?.[c.ran.length - 1]))
+    const m = b?.members.find((x) => x.card === c.id)
+    const r = m && b?.results?.[m.id]
+    return r && 'body' in r ? r.body : undefined
+  }
+
   /** Two pictures with the same bytes (the same render of the same pixels). */
   const samePicture = (a: string, b: string): boolean => {
     const fa = picturePath(root, a), fb = picturePath(root, b)
@@ -795,6 +823,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  run, its last run's before and after pictures, the run it reviewed, your edit, its notes. */
   const titles = new Map<string, { title: string; notes: number }>()
   const captureView = (c: Card) => {
+    if (c.kind === 'wrapup') return {
+      // a session record: its file, and the agent's reply once it ran
+      title: c.name ?? 'Session record', inRun: !!q.j.run && c.made >= q.j.run.since,
+      ...(c.session ? { session: c.session } : {}),
+      ...(readWrapup(root, wrapupOf(c)) ? { file: readWrapup(root, wrapupOf(c))!.wrapup.file } : {}),
+    }
     let t = titles.get(c.id)
     if (!t) {
       const rec = readCapture(root, c.id)?.record
@@ -807,7 +841,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return {
       title: c.name ?? (c.payload?.edited !== undefined ? (c.payload.edited.replace(/\s+/g, ' ').trim().slice(0, 300) || '(no words)') : t.title), notes: t.notes,
       ...(c.name ? { named: true } : {}),
-      inRun: !!q.j.run && c.made >= q.j.run.since,
+      inRun: !!q.j.run && c.made >= q.j.run.since, ...(c.session ? { session: c.session } : {}),
       ...(b?.shots ? { shots: b.shots } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}),
       ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
     }
@@ -820,6 +854,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return {
       agent: adapter.name,
       ...(q.j.run ? { run: q.j.run } : {}),
+      ...(q.j.session ? { session: q.j.session } : {}),
       cards: shown.map((c) => {
         const position = c.state === 'queued' ? queued.indexOf(c) + 1 : undefined
         const held = c.state === 'queued' ? c.frames.find((f) => hooks.held?.(f)) : undefined
@@ -851,6 +886,48 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     snapshot() { return q.j },
     view,
     sealed: (id) => sourceIntact(id),
+    async session(op) {
+      if (!SESSION_ID.test(op.id)) return { ok: false, error: 'bad session id' }
+      if (op.action === 'start') {
+        const r = await q.lock((j) => { const ses = startSession(j, op.id); q.persist(); return ses })
+        queueChanged()
+        return { ok: r.id === op.id, session: r, ...(r.id === op.id ? {} : { error: 'a session already runs' }) }
+      }
+      if (op.action === 'end') {
+        const ended = await q.lock((j) => { const ok = endSession(j, op.id); q.persist(); return ok })
+        queueChanged()
+        return { ok: ended, session: null, ...(ended ? {} : { error: 'no such session runs' }) }
+      }
+      // the wrap-up: sealed at this moment (as of now), ledgered with its hash, a queued card - and the
+      // session ends
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(op.board)) return { ok: false, error: 'bad board' }
+      const r = await q.lock((j) => {
+        if (j.session?.id !== op.id) return null
+        const w = buildWrapup(j, root, {
+          session: op.id, since: j.session.since, instructions: op.instructions, includeTalk: op.includeTalk, tags: Math.max(0, Math.floor(op.tags) || 0),
+          title: (c) => (captureView(c) as { title?: string }).title ?? c.id, reply: (c) => resultFor(j, c),
+        })
+        const hash = storeWrapup(root, w)
+        ledgerRecord(root, op.board, `wrapup:${w.id}:${hash}`)
+        const card = addWrapup(j, w, hash, op.board)
+        endSession(j, op.id)
+        q.persist()
+        return structuredClone(card)
+      })
+      if (!r) return { ok: false, error: 'no such session runs' }
+      reserve(); queueChanged(); void pump()
+      return { ok: true, session: null, card: r }
+    },
+    record(id) {
+      const c = q.j.cards.find((x) => x.id === id && x.kind === 'wrapup')
+      const w = c && readWrapup(root, wrapupOf(c))
+      if (!c || !w) return null
+      const file = w.wrapup.file
+      let text: string | null = null
+      try { const p = join(root, file); if (!relative(root, p).startsWith('..')) text = readFileSync(p, 'utf8') } catch { text = null }
+      const reply = resultFor(q.j, c)
+      return { file, text, ...(reply ? { reply } : {}) }
+    },
     async capture(raw) {
       const rec = checkRecord(raw)
       if (typeof rec === 'string') return { ok: false, error: rec }
@@ -940,6 +1017,8 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.act = (id, rev, action, body) => core.act(id, rev, action, body)
   jamLive.capture = (record) => core.capture(record)
   jamLive.sealed = (id) => core.sealed(id)
+  jamLive.session = (op) => core.session(op)
+  jamLive.record = (id) => core.record(id)
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.

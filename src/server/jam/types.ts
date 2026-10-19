@@ -55,6 +55,8 @@ export interface Brief {
   history: Msg[]
   capture?: Payload          // a capture's frozen payload: the record, your edit, the reviewed run
   follows?: { asks: Msg[]; result: string }
+  /** a wrap-up's sealed content (Part 5): what the session record is written from */
+  wrapup?: { content: import('./session.ts').Wrapup; hash: string }
 }
 
 // ---- captures (Part 3) ---------------------------------------------------------------------------
@@ -110,6 +112,8 @@ export interface Card {
   resolved?: boolean         // the thread was resolved while the card was working
   exclusive?: string[]       // runs alone and may edit these shared files (a `shared` answer)
   name?: string              // a capture's title as you named it (Rename) - in place of its first words
+  session?: string           // the session it was made in (a capture), or whose record it writes (a wrap-up)
+  wrapup?: string            // a More work record: the sealed wrap-up it writes from (the first record's)
   /** a capture card: the sealed record's hash, your edit (with its hash, ledgered at confirm) and the
    *  reviewed run it followed - what every brief on its thread carries */
   payload?: { recordHash: string; edited?: string; editedHash?: string; reviewed?: Reviewed }
@@ -173,6 +177,7 @@ export interface Journal {
   legacy: string[]
   upgraded?: number          // when a v1 journal became this one (the boot line says what changed)
   run?: { since: number }    // the lane's run: captures made since then (queue.ts touchRun)
+  session?: { id: string; since: number }   // the Jam session running now (Part 5): its id and when it began
 }
 
 /** The 0.25 journal, read once by the upgrade. */
