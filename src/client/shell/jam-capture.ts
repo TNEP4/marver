@@ -95,6 +95,7 @@ interface Cap {
   endNodes?: { key: string; frame: string; w: number; h: number; visible: boolean }[]   // every instance at E (a step answering late is sized by these)
   sizes: Record<string, { w: number; h: number; play?: true }>   // each frame's size when it was last touched (`play`: on the stage's device)
   keys: Record<string, string>             // each frame's instance last touched (a frame can sit on a board twice)
+  sizedAt: Record<string, number>          // when the touch that sized each frame happened (a late answer of an older one is ignored)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
@@ -177,28 +178,34 @@ function sizeNow(f: string, key?: string): { w: number; h: number; play?: true }
   return n && n.w > 0 && n.h > 0 ? { w: Math.round(n.w), h: Math.round(n.h) } : undefined
 }
 /** A frame as it was at E (a capture finishing): its touched instance, else the one then in view, else any. */
-function sizeAtEnd(c: Cap, f: string): { w: number; h: number; play?: true } | undefined {
-  if (c.sizes[f]?.play) return c.sizes[f]
+function sizeAtEnd(c: Cap, f: string, key?: string): { w: number; h: number; play?: true } | undefined {
   const ns = (c.endNodes ?? []).filter((n) => n.frame === f)
+  // a touch of a canvas instance (it names one): that instance as it was at E - over a size seen on the stage
+  const touched = key ? ns.find((x) => x.key === key) : undefined
+  if (touched && touched.w > 0 && touched.h > 0) return { w: touched.w, h: touched.h }
+  if (c.sizes[f]?.play) return c.sizes[f]
   const n = ns.find((x) => x.key === c.keys[f]) ?? ns.find((x) => x.visible) ?? ns[0]
   return n && n.w > 0 && n.h > 0 ? { w: n.w, h: n.h } : undefined
 }
 /** Each frame a step touches, at the size it is as it is touched (a frame visited on a phone in play keeps the
  *  phone's size, wherever the capture ends). */
-function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string; view?: { frames?: string[] } }, keys?: string[], auto = false) {
+function sample(c: Cap, step: { at?: number; event: string; frame?: string; to?: string; frames?: string[]; src?: string; view?: { frames?: string[] } }, keys?: string[], auto = false) {
   const nodes = useStore.getState().nodes
   // (a view of one frame - the stage as play opens, a frame zoomed to - is a frame it is about)
   const viewed = step.event === 'view' && step.view?.frames?.length === 1 ? step.view.frames : []
   for (const f of [step.frame, step.to, ...(step.event === 'select' ? step.frames ?? [] : []), ...viewed]) {
     if (!f) continue
+    // a touch older than the one that sized this frame (its answer came late) changes nothing
+    if (step.at !== undefined && (c.sizedAt[f] ?? -Infinity) > step.at) continue
     // the instance it came from (a step's own frame document), or the selected one showing this frame
     const k = [step.src, ...(keys ?? [])].find((x) => x && nodes.some((n) => n.key === x && n.frame === f))
     if (k) c.keys[f] = k
-    const z = c.state === 'draining' && c.endNodes ? sizeAtEnd(c, f) : sizeNow(f, c.keys[f])
+    const z = c.state === 'draining' && c.endNodes ? sizeAtEnd(c, f, k) : sizeNow(f, c.keys[f])
     // a view (play left, a fit) is not a touch: what was seen on the stage keeps the stage's size until the frame is
     // used on the canvas
     if (z && !((auto || step.event === 'view') && c.sizes[f]?.play && !z.play)) {
       c.sizes[f] = z
+      if (step.at !== undefined) c.sizedAt[f] = step.at
       // a step answering after E (a hover in flight) was a touch at E: the size kept for E follows the instance it
       // touched - for the seal and the end pictures alike
       if (c.state === 'draining' && c.endSizes && !auto && step.event !== 'view') c.endSizes[f] = z
@@ -361,7 +368,7 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
         const c = s.caps[cap.id]
         if (!c) return
         if (n && pt) c.points.push({ n, key, x: pt.x, y: pt.y })
-        c.steps.push({ ...base, event: data.event, bundle: cleanBundle(data.bundle), mode, ...(n ? { point: n } : {}) }); sample(c, { event: data.event, frame: base.frame, src: key })
+        c.steps.push({ ...base, event: data.event, bundle: cleanBundle(data.bundle), mode, ...(n ? { point: n } : {}) }); sample(c, { at: base.at, event: data.event, frame: base.frame, src: key })
       })
       if (data.event === 'pick' && frame) shoot(cap.id, frame, 'pick', key === 'stage' ? undefined : key)
       return true
@@ -449,7 +456,7 @@ function probeAnswered(key: string, data: Record<string, any>) {
     const i = p.selectStep ? c.steps.indexOf(p.selectStep as (typeof c.steps)[number]) : -1
     const selects = i >= 0
     if (selects) c.steps.splice(i, 1)
-    c.steps.push({ at: p.at, ...(frame ? { frame } : {}), event: p.event, bundle: cleanBundle(data.bundle), mode: 'canvas', ...(n ? { point: n } : {}), ...(selects ? { selects: true } : {}) }); sample(c, { event: p.event, frame, src: key })
+    c.steps.push({ at: p.at, ...(frame ? { frame } : {}), event: p.event, bundle: cleanBundle(data.bundle), mode: 'canvas', ...(n ? { point: n } : {}), ...(selects ? { selects: true } : {}) }); sample(c, { at: p.at, event: p.event, frame, src: key })
   })
   trySeal(p.cap)
   // a click on a field: you mean to type there - the frame turns interactive and the caret goes in the
@@ -621,7 +628,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord, session = ses
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
-    sizes: { ...(from?.sizes ?? {}) }, keys: {},
+    sizes: { ...(from?.sizes ?? {}) }, keys: {}, sizedAt: {},
     probes: 0, shots: 0, shotFrames: steps.flatMap((x) => (x.event === 'picture' && x.frame ? [x.frame] : [])), hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t }, inherited: cardFrames(from.id) } : {}),
     ...(session ? { session } : {}),
   }
