@@ -460,11 +460,12 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
     probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
   }
-  if (!from) {
-    cap.steps.push({ at: cap.t0, event: 'view', view: viewNow(true) })
-    // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
-    if (!s.play && s.selection.length) cap.steps.push({ at: cap.t0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
-  }
+  // what is on screen and selected as it starts - a resumed one too, just after the resume (you may have
+  // moved to another frame in the pause: the record names it)
+  const at0 = from ? t + 1 : cap.t0
+  cap.steps.push({ at: at0, event: 'view', view: viewNow(true) })
+  // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
+  if (!s.play && s.selection.length) cap.steps.push({ at: at0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1, ...(from ? { resuming: [...st.resuming, from.id] } : {}) }))
   broadcast({ type: 'sh:capture', id, on: true })
   watchUi()

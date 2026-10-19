@@ -627,8 +627,9 @@ describe('captures in the browser: the first trial', () => {
     await key('q'); await sleep(100)
     expect(await browser!.eval(s, `window.__mvJamUi.getState().selected`)).not.toBe(a)
     await browser!.eval(s, `window.__mvJamUi.getState().setLaneKeys(false), 1`)
-    // the resumed capture carries the first part already
+    // the resumed capture carries the first part already, then what is on screen as it resumes
     expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(b1)}].steps.filter((x) => x.event === 'note').map((x) => x.text)`)).toEqual(['first part'])
+    expect(await browser!.eval(s, `(() => { const c = window.__mvJamCapture.getState().caps[${JSON.stringify(b1)}]; const v = c.steps.filter((x) => x.event === 'view'); return v.length >= 2 && v[v.length - 1].at > c.resumes.at })()`)).toBe(true)
     // Esc: the resumed capture goes, the draft is back as it was
     await esc()
     await until(`!window.__mvJamCapture.getState().current && !!document.querySelector('.jm-lane [data-tile="${a}"]')`, 5000)
