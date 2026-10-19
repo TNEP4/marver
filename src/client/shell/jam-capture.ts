@@ -513,7 +513,9 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   // pictures a frame once - only I asks for another
   if (why !== 'key' && c.shotFrames.includes(frame)) return
   // the instance pictured is the one this frame is about (its size for the run's pictures)
-  mutate((s) => { const x = s.caps[id]; if (x) { if (!x.shotFrames.includes(frame)) x.shotFrames.push(frame); if (why === 'key') sample(x, { event: 'picture', frame, src: key }) } })
+  // (an I picture is a touch at this instant: a hover from before it, answering late, never overrides it)
+  const touchAt = now()
+  mutate((s) => { const x = s.caps[id]; if (x) { if (!x.shotFrames.includes(frame)) x.shotFrames.push(frame); if (why === 'key') sample(x, { at: touchAt, event: 'picture', frame, src: key }) } })
   const at = now()
   // the instance it was seen in: its size (a responsive defect is shot as seen) and its theme
   const st = useStore.getState()
