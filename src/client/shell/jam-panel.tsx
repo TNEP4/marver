@@ -51,6 +51,8 @@ export function FocusPanel({ children, left, width = 580, onClose }: { children:
 /** More work words not sent yet, by card - they survive the panel closing on a click elsewhere. */
 const moreDrafts = new Map<string, string>()
 export const clearMoreDraft = (id: string) => { moreDrafts.delete(id) }
+export const moreDraftOf = (id: string): string => moreDrafts.get(id) ?? ''
+export const setMoreDraft = (id: string, t: string) => { if (t) moreDrafts.set(id, t); else moreDrafts.delete(id) }
 
 const unquote = (s: string) => s.replace(/^"(.*)"$/s, '$1')
 const DEVICE: Record<string, string> = { phone: 'mobile', mobile: 'mobile', tablet: 'tablet', laptop: 'laptop', desktop: 'monitor', monitor: 'monitor', tv: 'tv' }

@@ -16,7 +16,7 @@ import { laneCards } from './jam-keys.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { JamStateIcon } from './jam-ui.tsx'
-import { Marver } from './jam-panel.tsx'
+import { Marver, moreDraftOf, setMoreDraft } from './jam-panel.tsx'
 import { useJamVoice, voiceSession, voiceSessionEnd } from './jam-voice.ts'
 import { HARNESS } from './Comments.tsx'
 import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlashIcon, WarningIcon, WaveformIcon } from './icons.tsx'
@@ -100,7 +100,8 @@ export function JamButton({ inPlay }: { inPlay?: boolean }) {
   const sheet = useJamUi((s) => s.sheet)
   const voice = useJamVoice()
   const minutes = useMinutes(session?.since)
-  const micOff = voice.choice === 'no' || voice.denied || voice.server === 'unavailable'
+  // off: no, blocked, no engine - or stopped (another tab has it, the connection went) while you said yes
+  const micOff = voice.choice === 'no' || voice.denied || voice.server === 'unavailable' || (!!session && voice.choice === 'yes' && !voice.live && !recording)
   const state = recording ? 'rec' : session ? 'live' : 'idle'
   const label = session ? <><b>End the session</b><span>J</span></> : <><b>Jam session</b><span>J</span></>
   return (
@@ -270,7 +271,10 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
       .then((r) => (r.ok ? r.json() : null)).then((b) => { if (live && b) setRec(b) }, () => {})
     return () => { live = false }
   }, [card.id, card.state, card.rev])
-  const [note, setNote] = useState('')
+  // unsent words outlive the panel (a click elsewhere closes it), as a capture review's do
+  const [note, setNoteState] = useState(() => moreDraftOf(card.id))
+  const setNote = (t: string) => { setNoteState(t); setMoreDraft(card.id, t) }
+  useEffect(() => { if (moreDraftOf(card.id) && !more) onMoreOpen(true) }, [])
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (more) field.current?.focus() }, [more])
   const review = card.state === 'review'

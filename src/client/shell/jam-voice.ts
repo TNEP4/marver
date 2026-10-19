@@ -159,6 +159,7 @@ let ws: WebSocket | null = null
 let wsOpen: Promise<WebSocket | null> | null = null
 const finals = new Map<string, (complete: boolean) => void>()   // segment -> its final
 let toldUnavailable = false
+let takenOver = false
 
 const setLive = () => useJamVoice.setState({ live: !!mic && !mic.closed, hearing: mic && !mic.closed && mic.seg?.owner.kind === 'capture' ? mic.seg.owner.id : null })
 
@@ -202,12 +203,13 @@ function socket(): Promise<WebSocket | null> {
           if (!toldUnavailable) { toldUnavailable = true; useStore.getState().toast(typeof m.reason === 'string' ? m.reason : 'words are not available - typed notes only') }
         }
       }
-      s.onclose = () => {
+      s.onclose = (ev) => {
         if (ws === s) ws = null
+        takenOver = ev.code === 4000
         // a closed connection is not a final: what was waiting may be incomplete
         for (const f of finals.values()) f(false)
         finals.clear()
-        if (mic && !mic.closed && mic.seg) lost(mic.seg.owner, mic.seg.seg, 'the microphone connection closed')
+        if (mic && !mic.closed && mic.seg) lost(mic.seg.owner, mic.seg.seg, takenOver ? 'another tab took the microphone - it comes back here when that tab is done' : 'the microphone connection closed')
       }
       ws = s
       return s
@@ -225,7 +227,17 @@ function lost(owner: Owner, seg: string, why: string) {
   if (m && !m.closed && m.seg?.seg === seg) { closeNow(m); mic = null; setLive() }
   useStore.getState().toast(`${why} - the words so far are kept`)
 }
-const closeNow = (m: Mic) => { m.closed = true; m.node.port.onmessage = null; m.stream.getTracks().forEach((t) => t.stop()); void m.ctx.close().catch(() => {}) }
+const closeNow = (m: Mic) => {
+  m.closed = true; m.node.port.onmessage = null; m.stream.getTracks().forEach((t) => t.stop()); void m.ctx.close().catch(() => {})
+  // other tabs of this canvas hear that the microphone is free (a session's tab takes it back)
+  try { tabs?.postMessage({ type: 'released' }) } catch { /* no other tab */ }
+}
+
+/** The tabs of this canvas, told when one lets the microphone go: there is one audio connection per
+ *  canvas, so a capture in another tab takes it over - when that tab is done, the session's tab (the one
+ *  that holds its talk) takes it back. */
+const tabs: BroadcastChannel | null = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(`mv-jam-mic:${CONFIG.workspace ?? 'unknown'}`)
+if (tabs) tabs.onmessage = (e) => { if ((e.data as { type?: string })?.type === 'released' && session && !(mic && !mic.closed)) void reconcile() }
 
 /** Words for a capture, as they come (jam-capture.ts records them in its timeline). */
 let onWords: ((capture: string, words: Heard[]) => void) | null = null

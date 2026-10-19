@@ -183,7 +183,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
             onGood={() => { void act(panelCard, 'good'); ui.close() }}
             onLater={() => { void act(panelCard, 'later'); ui.close() }}
             onMore={(text) => void (async () => {
-              if (await act(panelCard, 'more', text)) { ui.setMoreOpen(false); ui.close() }
+              if (await act(panelCard, 'more', text)) { clearMoreDraft(panelCard.id); ui.setMoreOpen(false); ui.close() }
               else useStore.getState().toast('your note was not sent - try again')
             })()} />
         </FocusPanel>
