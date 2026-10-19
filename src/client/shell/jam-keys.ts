@@ -87,17 +87,21 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
 const leavePanelField = () => { const a = document.activeElement; if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur() }
 
 export async function resumeDraft(id: string) {
-  leavePanelField()
-  await saving.get(id)
-  if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return }
-  const c = cardById(id)
-  if (!c || c.state !== 'draft') return
-  if (await useJamCapture.getState().resume(id)) {
+  // every edit of the draft saved - before the record loads, and again after (words typed while it loaded)
+  // - so the resumed capture carries them: recording starts only then, and only from a draft
+  const settled = async (): Promise<boolean> => {
+    if (useJamUi.getState().panel?.id === id) leavePanelField()
+    for (let i = 0; i < 3 && saving.get(id); i++) { const p = saving.get(id); await p; if (saving.get(id) === p) break }
+    if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return false }
+    return cardById(id)?.state === 'draft'
+  }
+  if (!(await settled())) return
+  if (await useJamCapture.getState().resume(id, settled)) {
     // as the UI is NOW (the record loaded meanwhile - another panel may have opened): only what points at
     // it; words typed in its read-back while the record loaded save before it closes (the resumed capture
     // carries the draft's edit when it seals)
     const ui = useJamUi.getState()
-    if (ui.panel?.id === id) { leavePanelField(); ui.close() }
+    if (ui.panel?.id === id) ui.close()
     // its tile has stepped aside: nothing points at it, and the lane gives its keys back
     if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
   }

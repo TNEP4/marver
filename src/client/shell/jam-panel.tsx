@@ -262,7 +262,9 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
   const setText = (t: string) => { setTextState(t); if (draftKey) { if (t) moreDrafts.set(draftKey, t); else moreDrafts.delete(draftKey) } }
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (draftKey && moreDrafts.get(draftKey) && !more) onMoreOpen(true) }, [])   // back with words waiting: the composer is open
-  useEffect(() => { if (more) field.current?.focus() }, [more])
+  // left on purpose (Esc cleared its words from the map): the composer's words go too; closed by a click
+  // elsewhere, the map still holds them
+  useEffect(() => { if (more) field.current?.focus(); else if (draftKey && !moreDrafts.has(draftKey)) setTextState('') }, [more])
   const send = () => { if (text.trim()) onMore(text.trim()) }
   return (
     <div className="jm-panel jm-review" data-jam-review="" style={style}>

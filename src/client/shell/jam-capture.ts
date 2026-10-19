@@ -114,7 +114,7 @@ interface CaptureState {
   unsent: string[]
   /** Continue a draft that ended too soon: its record is loaded and recording goes on from where it
    *  stopped, under a new id that takes the draft's place when it seals. Dropping it leaves the draft. */
-  resume(draft: string): Promise<boolean>
+  resume(draft: string, ready?: () => Promise<boolean>): Promise<boolean>
   /** drafts being continued right now (recording, sealing or waiting to send) - the lane hides them */
   resuming: string[]
   /** the capture ended last (E): its read-back is the one that opens, whatever seals first */
@@ -577,7 +577,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   unsent: [],
   resuming: [],
   lastEnded: null,
-  async resume(draft) {
+  async resume(draft, ready) {
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
     let rec: CaptureRecord | null = null
     try {
@@ -589,6 +589,9 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     if (!rec) { useStore.getState().toast('the capture could not be loaded to resume it'); return false }
     if (get().current) return false
     if (rec.context.board !== useStore.getState().board) { useStore.getState().toast('open the capture\'s board to resume it'); return false }
+    // the caller's last word before recording starts (the draft's edit saved, it is still a draft)
+    if (ready && !(await ready())) return false
+    if (get().current) return false
     return begin(rec.context.reviewing, rec)
   },
   start(reviewing) {
