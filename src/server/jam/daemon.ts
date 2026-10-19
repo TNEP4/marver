@@ -904,16 +904,21 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   /** Captures of a session open on some page, until they land: capture id -> its session, renewed until. */
   const openCaps = new Map<string, { session: string; until: number }>()
+  /** Captures of a session being taken in right now (counted: a retry may overlap the first upload). */
+  const landing = new Map<string, { session: string; n: number }>()
   const openFor = (session: string): boolean => {
     const now = Date.now()
     for (const [k, v] of openCaps) if (v.until < now) openCaps.delete(k)
-    return [...openCaps.values()].some((v) => v.session === session)
+    return [...openCaps.values()].some((v) => v.session === session) || [...landing.values()].some((v) => v.session === session)
   }
   /** Tags written since a session began (they are answered in their threads, not in its record). */
   // counted per tag, by when each was written (tags merged into one card, or joining a card from before the
   // session, each count once)
-  const tagsSince = (j: Journal, since: number): number => j.cards.filter((c) => c.kind === 'comment')
-    .reduce((n, c) => n + c.events.filter((id) => (c.when?.[id] ?? c.made) >= since).length, 0)
+  const tagsSince = (j: Journal, since: number): number => {
+    const seen = new Set<string>()   // one tag once, whatever cards carry it (a merge keeps it on both)
+    for (const c of j.cards) if (c.kind === 'comment') for (const id of c.events) if ((c.when?.[id] ?? c.made) >= since) seen.add(`${c.board}|${id}`)
+    return seen.size
+  }
 
   /** The agent's reply on a card's last run, as it said it. */
   const resultFor = (j: Journal, c: Card): string | undefined => {
@@ -1047,7 +1052,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       return ses && ses.id === id ? tagsSince(q.j, ses.since) : 0
     },
     canWrap(id) {
-      const j = q.j, ctx = q.ctx()
+      // the ledger as it is now (the queue's own copy refreshes only under its lock)
+      const j = q.j, ctx = ctxFor(root)
       if (j.session?.id !== id) return 'no such session runs'
       // a capture of the session still open in some tab (recording, sealing, sending) belongs in the record
       if (openFor(id)) return 'a capture of the session is still recording or being sent - end it first, then write the record'
@@ -1074,7 +1080,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (typeof rec === 'string') return { ok: false, error: rec }
       // it is still open until it has landed whole - its card made, and queued at once when that is the
       // setting: only then is it no longer open (a record sealed meanwhile waits for it)
-      try { return await landCapture(rec) } finally { openCaps.delete(rec.id) }
+      // (and while it lands - a retry or a re-sent upload included - it is held open here on the server)
+      const ses = rec.context.session
+      if (ses) landing.set(rec.id, { session: ses, n: (landing.get(rec.id)?.n ?? 0) + 1 })
+      try { return await landCapture(rec) } finally {
+        openCaps.delete(rec.id)
+        const l = landing.get(rec.id)
+        if (l) { if (l.n <= 1) landing.delete(rec.id); else l.n -= 1 }
+      }
     },
 
     async act(id, rev, action, body) {

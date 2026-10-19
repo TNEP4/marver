@@ -186,6 +186,25 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a capture of the session is held open on the server while it lands - a re-sent upload with no marker from its page too', async () => {
+    const { root, done } = setup()
+    // at once: it is queued as it lands, and its pin is looked up slowly
+    const jam = createJam(root, { ...CFG, capture: 'at-once', concurrency: 1 }, agent('ok', { hang: true }), () => {}, {
+      anchor: async () => { await new Promise((r) => setTimeout(r, 400)); return { ok: false, unchecked: 'slow' } as any },
+    })
+    await jam.session({ action: 'start', id: SES })
+    const r = rec('sent again after a reload', SES)
+    r.timeline.push({ at: 1_002_000, frame: 'demo/a', event: 'click', point: 1, mode: 'canvas', bundle: { tag: 'button', quote: 'Save' } } as any)   // its pin is looked up
+    const landing = jam.capture(r)                                     // no captureOpen from any page
+    await new Promise((res) => setTimeout(res, 50))
+    expect(jam.canWrap(SES)).toMatch(/still recording or being sent/)
+    await landing
+    expect(jam.canWrap(SES)).toBeNull()
+    expect(card(jam, r.id).state).not.toBe('draft')
+    jam.stop()
+    done()
+  })
+
   it('the session survives a restart of the dev server', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())

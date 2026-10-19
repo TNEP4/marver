@@ -471,7 +471,7 @@ function holdOpen(capture: string, session: string) {
   tellOpen(capture, session, true)
   const timer = setInterval(() => {
     const st = useJamCapture.getState()
-    if (st.current === capture || st.caps[capture] || st.unsent.includes(capture)) tellOpen(capture, session, true)
+    if (st.current === capture || st.caps[capture] || st.unsent.includes(capture) || pendingUploads.has(capture)) tellOpen(capture, session, true)
     else releaseOpen(capture, false)
   }, 20_000)
   openOnServer.set(capture, { session, timer })
@@ -632,7 +632,8 @@ async function upload(record: CaptureRecord): Promise<void> {
 export function resendSealed() {
   try {
     const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}') as Record<string, CaptureRecord>
-    for (const r of Object.values(all)) { pendingUploads.set(r.id, r); void upload(r) }
+    // a session's capture waiting to be sent is still open: the server is told again until it lands
+    for (const r of Object.values(all)) { pendingUploads.set(r.id, r); if (r.context?.session && !openOnServer.has(r.id)) holdOpen(r.id, r.context.session); void upload(r) }
     syncUnsent()
     // a resumed capture still to send keeps its draft off the lane until it lands
     const was = Object.values(all).flatMap((r) => (r.context?.resumes?.id ? [r.context.resumes.id] : []))
