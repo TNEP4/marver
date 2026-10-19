@@ -263,7 +263,8 @@ function watchUi() {
       if (o.w !== n.w && n.sizeMode === 'device') {
         const vp = Object.entries(CONFIG.viewports).find(([, v]) => v.width === Math.round(n.w))
         addStep(id, { at, frame: n.frame, event: 'device', viewport: vp?.[0] ?? 'custom', width: Math.round(n.w), height: Math.round(n.h), src: n.key })
-      } else if ((Math.round(o.w) !== Math.round(n.w) || Math.round(o.h) !== Math.round(n.h)) && n.sizeMode !== 'auto' && n.sizeMode !== 'device') {
+      } else if ((Math.round(o.w) !== Math.round(n.w) || Math.round(o.h) !== Math.round(n.h)) && n.sizeMode !== 'device' && s.resized !== p.resized && s.resized?.key === n.key) {
+        // (a person resized it - never a measurement: only a resize sets `resized`)
         // dragged to a size of its own: a step like a device, and the size it is about now - one step per drag (a
         // drag moves it on every frame: the last step of it, still going, takes the new size)
         const lastSteps = capOf(id)?.steps ?? []
@@ -499,8 +500,10 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   const n = (key ? st.nodes.find((x) => x.key === key && x.frame === frame) : undefined) ?? st.nodes.find((x) => x.frame === frame)
   // as it was seen: on the stage's device now, or as it was on the stage (left play since), or its node
   const seen = c.sizes[frame]
+  // after E: as the frame was at E (a resize while it finishes is not part of it); else as it is seen now
+  const atEnd = c.state === 'draining' ? c.endSizes?.[frame] ?? seen : undefined
   const onStage = st.play && st.play.at === frame ? sizeNow(frame) : undefined
-  const size = onStage ? { width: onStage.w, height: onStage.h } : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
+  const size = atEnd ? { width: atEnd.w, height: atEnd.h } : onStage ? { width: onStage.w, height: onStage.h } : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
   const done = (pid: string | null) => {

@@ -504,6 +504,8 @@ interface State {
    *  name and no canvas door (presentation default of the link, 04 §2.35). */
   play: { at: string; device: string; theme: string; focus?: boolean; deep?: boolean; slides?: boolean } | null
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
+  /** the node a person resized last (a new object each time) - a measurement never sets it */
+  resized: { key: string } | null
   laser: boolean                      // laser/inspect mode: frames outline their structure
   board: string                       // active board name; UNPLACED is the Not on a board view
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
@@ -1033,7 +1035,7 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, laser: false,
+    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, resized: null, laser: false,
     board: DATA?.default ?? UNPLACED, boardAuto: false, deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     externalLeases: {}, playUpdateRevision: null, stageShown: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
@@ -1370,6 +1372,7 @@ export const useStore = create<State>((set, get) => {
         const content = !!s.manifest?.frames.find((x) => x.id === cur?.frame)?.contentWidth
         return {
           nodes: s.nodes.map((n) => (n.key === key ? { ...n, w: W, h: H, ...(content ? { sizeMode: 'manual' as const } : {}) } : n)),
+          resized: { key },
           dirty: true,
           deviceView: null,
           baseLayout: s.baseLayout && cur
