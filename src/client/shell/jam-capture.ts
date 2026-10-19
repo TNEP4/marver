@@ -89,6 +89,7 @@ interface Cap {
   shots: number                            // picture requests still out
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
+  inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
@@ -512,7 +513,12 @@ function releaseOpen(capture: string, tell: boolean) {
 
 /** The session running now (the queue view holds it), if any. */
 let sessionNow: () => string | undefined = () => undefined
-void import('./jam-queue.ts').then(({ useJamQueue }) => { sessionNow = () => useJamQueue.getState().session?.id })
+/** A card's frames as the server holds them (a resumed capture counts the ones it carries on). */
+let cardFrames: (id: string) => string[] = () => []
+void import('./jam-queue.ts').then(({ useJamQueue }) => {
+  sessionNow = () => useJamQueue.getState().session?.id
+  cardFrames = (id) => useJamQueue.getState().cards?.find((c) => c.id === id)?.frames ?? []
+})
 
 function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord, session = sessionNow()): boolean {
   const s = useStore.getState()
@@ -535,7 +541,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord, session = ses
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
-    probes: 0, shots: 0, shotFrames: steps.flatMap((x) => (x.event === 'picture' && x.frame ? [x.frame] : [])), hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
+    probes: 0, shots: 0, shotFrames: steps.flatMap((x) => (x.event === 'picture' && x.frame ? [x.frame] : [])), hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t }, inherited: cardFrames(from.id) } : {}),
     ...(session ? { session } : {}),
   }
   // what is on screen and selected as it starts - a resumed one too, just after the resume (you may have
@@ -775,7 +781,7 @@ export function captureCounts(c: Cap | undefined, t = now()): { time: string; co
   if (!c) return { time: '0:00', counts: '', notes: 0 }
   const sec = Math.max(0, Math.floor((t - c.t0) / 1000))
   const steps = c.steps.filter((x) => ['select', 'device', 'theme', 'copied', 'interact'].includes(x.event)).length
-  const frames = touchedFrames(c.steps).length
+  const frames = new Set([...(c.inherited ?? []), ...touchedFrames(c.resumes ? c.steps.filter((x) => x.at >= c.resumes!.at) : c.steps, undefined, !c.resumes)]).size
   const plural = (n: number, w: string) => (n ? `${n} ${w}${n === 1 ? '' : 's'}` : '')
   return {
     time: `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`,
