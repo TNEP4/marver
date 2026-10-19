@@ -11,10 +11,10 @@ import { Browser as Cdp, findChrome } from '../src/server/cdp.ts'
 export class Browser {
   private cdp!: Cdp
 
-  static async launch(): Promise<Browser | null> {
+  static async launch(flags: string[] = []): Promise<Browser | null> {
     if (!findChrome()) return null
     const b = new Browser()
-    b.cdp = await Cdp.launch('mv-browser-')
+    b.cdp = await Cdp.launch('mv-browser-', flags)
     return b
   }
 

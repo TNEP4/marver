@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
+import { useJamVoice, type Heard } from './jam-voice.ts'
 import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
@@ -52,6 +53,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const agent = useJamQueue((s) => s.agent)
   const ui = useJamUi()
   const cap = useJamCapture()
+  const voice = useJamVoice()
   const shown = useLaneShown()
   const [, setTick] = useState(0)
   // the capture tile's timer and a working card's clock move
@@ -99,7 +101,9 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     const counts = captureCounts(c)
     const steps = (c?.steps ?? []).filter((x) => ['select', 'device', 'theme', 'copied', 'interact'].includes(x.event)).length
     return { time: counts.time, points: c?.points.length ?? 0, pictures: c?.pictures.length ?? 0, picturesMax: (c?.pictures.length ?? 0) >= 12, steps,
-      notes: counts.notes, noteOn: cap.noteOpen, onNote: () => cap.setNoteOpen(!cap.noteOpen), onStop: () => cap.end() }
+      notes: counts.notes, noteOn: cap.noteOpen, onNote: () => cap.setNoteOpen(!cap.noteOpen), onStop: () => cap.end(),
+      // the microphone: on while it hears this capture; off once you were asked (a click asks again)
+      ...(voice.hearing === cap.current ? { mic: 'on' as const } : voice.choice !== null || voice.denied ? { mic: 'off' as const, onMic: () => useJamVoice.setState({ asking: true, choice: null }) } : {}) }
   })() : undefined
 
   const panelCard = ui.panel ? cards?.find((c) => c.id === ui.panel!.id) : undefined
@@ -130,6 +134,8 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           tiles={tiles} recording={recording} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
           onOpen={(id) => openTile(id)}
           onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c)) } else e.preventDefault() }}
+          ask={voice.asking && cap.current ? voiceAsk(voice) : undefined}
+          caption={cap.current ? captionOf(voice.heard[cap.current]) : undefined}
           notes={cap.noteOpen ? {
             notes: (cap.current ? cap.caps[cap.current]?.steps ?? [] : []).filter((x) => x.event === 'note').map((x) => ({ t: captureCounts({ ...cap.caps[cap.current!]!, t0: cap.caps[cap.current!]!.t0 }, x.at).time, text: (x as { text: string }).text })),
             draft: cap.noteDraft, onDraft: cap.setNoteDraft, onAdd: () => cap.note(cap.noteDraft), onClose: () => cap.setNoteOpen(false),
@@ -171,6 +177,27 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
       <ContextMenu menu={cm.menu} close={cm.close} />
     </>
   )
+}
+
+/** What the microphone question shows now: the question, the download, its progress. */
+function voiceAsk(v: ReturnType<typeof useJamVoice.getState>) {
+  const d = v.download
+  const step = v.choice === null ? 'ask' as const
+    : d?.state === 'downloading' ? 'downloading' as const : d?.state === 'checking' ? 'checking' as const
+    : d?.state === 'failed' ? 'failed' as const : 'download' as const
+  return {
+    step, mb: v.mb, progress: d && d.total ? d.received / d.total : 0, error: d?.error,
+    onYes: () => v.setChoice('yes'), onNo: () => v.setChoice('no'), onDownload: () => void v.startDownload(),
+  }
+}
+
+/** The caption's words: the newest phrase in ink, a little of what came before it dim. */
+function captionOf(heard: Heard[] | undefined): { old: string; live: string } | undefined {
+  if (!heard?.length) return undefined
+  const text = heard.map((w) => w.w)
+  const live = text.slice(-12)
+  const old = text.slice(Math.max(0, text.length - 24), Math.max(0, text.length - 12))
+  return { old: old.join(' '), live: live.join(' ') }
 }
 
 /** Open a card's thread with the caret in its reply field - to add to the conversation. */

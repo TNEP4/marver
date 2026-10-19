@@ -69,8 +69,17 @@ export interface Speech {
   stop(): void
 }
 
-export function createSpeech(opts: { workerUrl?: URL } = {}): Speech {
+/** The model holds about a gigabyte while loaded: with no capture for this long, the worker lets it go
+ *  (the next capture loads it again in under a second). */
+const IDLE_MS = 10 * 60_000
+
+export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): Speech {
   let worker: Worker | null = null
+  let lastUse = Date.now()
+  const idle = setInterval(() => {
+    if (worker && owners.size === 0 && Date.now() - lastUse > (opts.idleMs ?? IDLE_MS)) { const w = worker; worker = null; ready = null; void w.terminate() }
+  }, Math.min(60_000, opts.idleMs ?? IDLE_MS))
+  idle.unref()
   let ready: Promise<boolean> | null = null
   let unavailable: string | undefined
   let live: WebSocket | null = null
@@ -97,8 +106,8 @@ export function createSpeech(opts: { workerUrl?: URL } = {}): Speech {
           if (s && s.readyState === s.OPEN) s.send(JSON.stringify(m))
         }
       })
-      w.on('error', () => { worker = null; ready = null })
-      w.on('exit', () => { worker = null; ready = null })
+      w.on('error', () => { if (worker === w) { worker = null; ready = null } })
+      w.on('exit', () => { if (worker === w) { worker = null; ready = null } })
       return new Promise<boolean>((resolve) => {
         const first = (m: any) => {
           if (m?.type === 'ready') { w.off('message', first); resolve(true) }
@@ -138,6 +147,7 @@ export function createSpeech(opts: { workerUrl?: URL } = {}): Speech {
       try { m = JSON.parse(String(data)) } catch { return }
       if (typeof m?.capture !== 'string' || !ID.test(m.capture)) return
       const id: string = m.capture
+      lastUse = Date.now()
       if (m.type === 'begin') {
         if (gates.has(id)) return
         current = id
@@ -185,6 +195,7 @@ export function createSpeech(opts: { workerUrl?: URL } = {}): Speech {
       })
     },
     stop() {
+      clearInterval(idle)
       try { live?.close() } catch { /* gone */ }
       void worker?.terminate()
       wss.close()

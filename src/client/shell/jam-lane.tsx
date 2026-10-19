@@ -12,7 +12,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
 import { Tip } from './Tip.tsx'
-import { CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, PencilSimpleIcon } from './icons.tsx'
+import { CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
  *  above it and everything else on the bottom edge (the Update pill, toasts, notices) rises this much. */
@@ -46,6 +46,9 @@ export interface LaneRecording {
   noteOn: boolean
   /** after E, waiting for the last words and the frames' flush */
   finishing?: boolean
+  /** the microphone: hearing you (`on`), or not (`off` - a click asks again); none when never asked */
+  mic?: 'on' | 'off'
+  onMic?(): void
   onNote(): void
   onStop(): void
 }
@@ -130,10 +133,17 @@ export function Lane({ tiles, recording, selected, keyboard, onOpen, onMenu, fol
 
 /** The capture recording now: a pulsing teal dot, "Capturing" and the timer over what it holds so far,
  *  then the Note button (N, with the count) and Stop (E). After E it reads "Finishing". */
-export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, counts, notes, noteOn, finishing, onNote, onStop }: LaneRecording) {
+export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, counts, notes, noteOn, finishing, mic, onMic, onNote, onStop }: LaneRecording) {
   return (
     <div className={`jm-chip${finishing ? ' finishing' : ''}`} data-tile="capturing">
       {finishing ? <JamStateIcon state="confirming" /> : <i className="jm-live-dot" />}
+      {mic && !finishing && (
+        <Tip label={mic === 'on' ? 'Hearing you - words on this Mac' : 'Microphone off - click to use it'}>
+          <button className={`mic${mic === 'off' ? ' off' : ''}`} data-jam-mic={mic} onClick={onMic} aria-label={mic === 'on' ? 'Microphone on' : 'Microphone off'}>
+            {mic === 'on' ? <MicrophoneIcon size={13} /> : <MicrophoneSlashIcon size={13} />}
+          </button>
+        </Tip>
+      )}
       <span className="tx">
         <span className="lead">{finishing ? 'Finishing' : 'Capturing'}{!finishing && <span className="time">{time}</span>}</span>
         <span className="stats">

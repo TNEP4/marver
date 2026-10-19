@@ -1844,3 +1844,25 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .sh-app.jm-lane-on .sh-update { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-toasts { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-banner { bottom: calc(var(--edge) + 56px) }
+
+
+/* ---- words on this Mac (spec 27 Part 4): the live caption over the capture tile, the one question ---- */
+.jm-caption { display: flex; gap: 10px; align-items: flex-start; max-width: 420px; padding: 9px 14px 10px 12px; border-radius: 16px;
+  background: var(--jm-tile-glaze), var(--jm-tile); backdrop-filter: var(--jm-tile-blur); -webkit-backdrop-filter: var(--jm-tile-blur);
+  box-shadow: var(--jm-tile-shadow); font: 400 13px/1.45 -apple-system, system-ui, sans-serif; color: var(--glass-ink); pointer-events: none }
+.jm-caption .old { color: var(--glass-ink-3) }
+.jm-bars { display: inline-flex; align-items: center; gap: 2px; height: 14px; flex: none; margin-top: 2px }
+.jm-bars i { width: 2px; border-radius: 1px; background: var(--jm-rec); animation: jm-bar 1s ease-in-out infinite }
+.jm-bars i:nth-child(1) { height: 6px; animation-delay: -.2s } .jm-bars i:nth-child(2) { height: 12px; animation-delay: -.5s }
+.jm-bars i:nth-child(3) { height: 8px; animation-delay: -.8s } .jm-bars i:nth-child(4) { height: 10px; animation-delay: -.35s }
+@keyframes jm-bar { 50% { transform: scaleY(.45) } }
+@media (prefers-reduced-motion: reduce) { .jm-bars i { animation: none } }
+.jm-voiceask { width: 340px; gap: 10px; padding: 14px }
+.jm-voiceask .top h3 { flex: 1 }
+.jm-voiceask p { margin: 0; font: 400 12.5px/1.45 -apple-system, system-ui, sans-serif }
+.jm-progress { height: 4px; border-radius: 2px; background: var(--glass-hover); overflow: hidden }
+.jm-progress i { display: block; height: 100%; background: var(--jm-rec); transition: width .3s ease }
+/* the capture tile's microphone: teal while it hears you, crossed out when it cannot */
+.jm-chip .mic { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--jm-rec); flex: none; cursor: pointer }
+.jm-chip .mic:hover { background: var(--glass-hover) }
+.jm-chip .mic.off { color: var(--glass-ink-3) }

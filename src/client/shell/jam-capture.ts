@@ -18,6 +18,7 @@ import { ROUTE } from '../const.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
+import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -85,6 +86,7 @@ interface Cap {
   pictures: string[]
   probes: number                           // probe answers still out
   shots: number                            // picture requests still out
+  hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
   /** Resume: the draft this capture continues, and when recording resumed */
@@ -221,6 +223,15 @@ function watchUi() {
   })
   unwatch = () => { unsub(); clearInterval(settle) }
 }
+
+/** Words heard for a capture (recording or still draining): one `words` step per phrase, at its first
+ *  word, each word with its time on the capture's clock (sample 0 = the capture's start). */
+setWordsListener((capture, words) => {
+  const c = capOf(capture)
+  if (!c || !words.length) return
+  const ms = (sample: number) => c.t0 + (sample / RATE) * 1000
+  addStep(capture, { at: ms(words[0].at), event: 'words', text: words.map((w) => w.w).join(' '), words: words.map((w) => ({ w: w.w, at: ms(w.at) })) })
+})
 
 /** A copy happened (path or image, of which frame) - never what the clipboard holds. */
 export function recordCopy(what: 'path' | 'image', frame: string) {
@@ -458,7 +469,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
-    probes: 0, shots: 0, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
+    probes: 0, shots: 0, hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
   }
   // what is on screen and selected as it starts - a resumed one too, just after the resume (you may have
   // moved to another frame in the pause: the record names it)
@@ -469,6 +480,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1, ...(from ? { resuming: [...st.resuming, from.id] } : {}) }))
   broadcast({ type: 'sh:capture', id, on: true })
   watchUi()
+  void voiceBegin(id, cap.t0)   // your words, if you said yes to the microphone (spec 27 Part 4)
   return true
 }
 
@@ -495,6 +507,17 @@ function drain(id: string) {
     for (const n of visibleNodes().slice(0, 3)) shoot(id, n.frame, 'end', n.key)   // what is on screen at E
   }
   broadcast({ type: 'sh:capture', id, on: false })
+  // the audio is cut at the key press, then its last words are awaited (3 s at most)
+  mutate((st) => { const x = st.caps[id]; if (x) x.hearing = true })
+  void voiceEnd(id).then((complete) => {
+    mutate((st) => {
+      const x = st.caps[id]
+      if (!x) return
+      x.hearing = false
+      if (!complete) x.steps.push({ at: now(), event: 'missing', what: 'words may be incomplete' })
+    })
+    trySeal(id)
+  })
   setTimeout(() => {
     mutate((st) => {
       const x = st.caps[id]
@@ -509,7 +532,7 @@ function drain(id: string) {
 
 function trySeal(id: string) {
   const c = capOf(id)
-  if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0 || c.shots > 0) return
+  if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0 || c.shots > 0 || c.hearing) return
   const timeline = [...c.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
   const record: CaptureRecord = {
     format: 'marver.jam.capture', v: 1, id,
@@ -519,6 +542,7 @@ function trySeal(id: string) {
   }
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })
+  forgetHeard(id)
   keepSealed(record)
   void upload(record)
 }
@@ -625,6 +649,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     if (!id) return
     broadcast({ type: 'sh:capture', id, on: false })
     cancelDwell()
+    voiceDrop(id)
     // a resumed capture dropped: its draft is still there, as it was
     const was = get().caps[id]?.resumes?.id
     set((s) => { const caps = { ...s.caps }; delete caps[id]; return { current: null, caps, noteOpen: false, noteDraft: '', tick: s.tick + 1, ...(was ? { resuming: s.resuming.filter((x) => x !== was) } : {}) } })

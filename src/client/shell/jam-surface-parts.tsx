@@ -5,19 +5,23 @@
  */
 import { useEffect, useState } from 'react'
 import { Lane, type LaneRecording, type LaneTile } from './jam-lane.tsx'
-import { FocusPanel, NotesCard, ReadBack, ReviewDetail } from './jam-panel.tsx'
+import { Caption, FocusPanel, NotesCard, ReadBack, ReviewDetail, VoiceAsk } from './jam-panel.tsx'
 import type { TimelineLine } from './jam-lines.ts'
 import type { JamCard } from './jam-queue.ts'
 
-export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd, onOpen, onMenu, notes }: {
+export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd, onOpen, onMenu, notes, ask, caption }: {
   tiles: LaneTile[]; recording?: LaneRecording; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string): void
   onMenu?(e: React.MouseEvent, id: string): void
   notes?: { notes: { t: string; text: string }[]; draft: string; onDraft(t: string): void; onAdd(): void; onClose(): void }
+  /** the microphone question (and the model's download), over the capture tile */
+  ask?: Parameters<typeof VoiceAsk>[0]
+  /** the words heard so far: the earlier ones and the newest phrase */
+  caption?: { old: string; live: string }
 }) {
   // the notes card floats one lane up over the capture tile, left edges aligned, clamped on screen
   const [at, setAt] = useState<{ left: number } | null>(null)
   useEffect(() => {
-    if (!notes) return
+    if (!notes && !ask && !caption) return
     const place = () => {
       const tile = document.querySelector('.jm-lane .jm-chip, .jm-lane [data-jam-recording]') as HTMLElement | null
       const r = tile?.getBoundingClientRect()
@@ -26,11 +30,27 @@ export function CaptureLaneRow({ tiles, recording, selected, keyboard, followEnd
     place()
     window.addEventListener('resize', place)
     return () => window.removeEventListener('resize', place)
-  }, [!!notes, tiles.length])
+  }, [!!notes, !!ask, !!caption, tiles.length])
+  const words = !!caption && !!(caption.old || caption.live)
+  const roomLeft = (at?.left ?? 10) - 8 >= 300
   return (
     <>
       <Lane tiles={tiles} recording={recording} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} onMenu={onMenu} />
-      {notes && <NotesCard {...notes} style={{ position: 'absolute', left: at?.left ?? 10, bottom: 'calc(var(--edge) + 56px + 8px)', zIndex: 41 }} />}
+      {/* one lane up, over the capture tile: the question, then the notes card above it; the words just
+          left of the notes card (bottoms aligned), or over the tile when it is closed */}
+      {(notes || ask) && (
+        <div className="jm-over" style={{ position: 'absolute', left: at?.left ?? 10, bottom: 'calc(var(--edge) + 56px + 8px)', zIndex: 41, display: 'flex', flexDirection: 'column-reverse', gap: 8, alignItems: 'flex-start' }}>
+          {ask && <VoiceAsk {...ask} />}
+          {notes && <NotesCard {...notes} />}
+          {/* no room to its left (the tile near the window's left edge): the words go on top */}
+          {words && !roomLeft && <Caption old={caption!.old} live={caption!.live} />}
+        </div>
+      )}
+      {words && (!(notes || ask) || roomLeft) && (
+        <Caption old={caption!.old} live={caption!.live} style={notes || ask
+          ? { position: 'absolute', right: `calc(100% - ${(at?.left ?? 10) - 8}px)`, bottom: 'calc(var(--edge) + 56px + 8px)', zIndex: 41 }
+          : { position: 'absolute', left: at?.left ?? 10, bottom: 'calc(var(--edge) + 56px + 8px)', zIndex: 41 }} />
+      )}
     </>
   )
 }
@@ -47,7 +67,8 @@ export function FocusPanelView(p: {
 }) {
   const c = p.card
   const title = c.title ?? 'Capture'
-  const points = p.lines.filter((l) => l.point).length
+  // points are picks and clicks (a picture line carries its own number, not a point)
+  const points = p.lines.filter((l) => l.point != null && (l.kind === 'pick' || l.kind === 'click')).length
   const notes = p.lines.filter((l) => l.kind === 'note').length
   const meta = [p.lines.length ? p.lines[p.lines.length - 1].t : '0:00', `${c.frames.length} frame${c.frames.length === 1 ? '' : 's'}`,
     points ? `${points} point${points === 1 ? '' : 's'}` : '', p.pictures.length ? `${p.pictures.length} picture${p.pictures.length === 1 ? '' : 's'}` : '',

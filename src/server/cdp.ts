@@ -96,12 +96,13 @@ export class Browser {
 
   /** Spawn and handshake (`Browser.getVersion` within 15s), or throw with the reason. A Chrome
    *  that starts but never brings up CDP is killed here - it can never hold a lane. */
-  static async launch(prefix = 'mv-shot-'): Promise<Browser> {
+  static async launch(prefix = 'mv-shot-', extra: string[] = []): Promise<Browser> {
     const bin = findChrome()
     if (!bin) throw new Error('no Chrome/Chromium found - install one or set MARVER_CHROME to a browser binary')
     const b = new Browser()
     b.profile = mkdtempSync(join(tmpdir(), prefix))
-    b.proc = spawn(bin, [...FLAGS, `--user-data-dir=${b.profile}`, '--remote-debugging-pipe', 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] })
+    // `extra`: a caller's own flags (the tests' fake microphone)
+    b.proc = spawn(bin, [...FLAGS, ...extra, `--user-data-dir=${b.profile}`, '--remote-debugging-pipe', 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] })
     b.out = b.proc.stdio[3] as NodeJS.WritableStream
     const inp = b.proc.stdio[4] as NodeJS.ReadableStream
     b.exited = new Promise<void>((res) => b.proc.once('exit', () => res()))

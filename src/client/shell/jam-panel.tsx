@@ -360,6 +360,44 @@ export function NotesCard({ notes, draft, onDraft, onAdd, onClose, style }: {
   )
 }
 
+/** The words, streaming above the capture tile (spec 27 Part 4): the earlier ones dim, the newest in ink;
+ *  a dropped phrase reads "[words lost]". */
+export const Caption = ({ old, live, style }: { old?: string; live?: string; style?: CSSProperties }) => (
+  <div className="jm-caption" data-jam-caption="" style={style}>
+    <span className="jm-bars"><i /><i /><i /><i /></span>
+    <span>{old && <span className="old">{old} </span>}{live}</span>
+  </div>
+)
+
+/** The one question words need (first `S` on a canvas), then the model's download if it is missing. */
+export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, style }: {
+  step: 'ask' | 'download' | 'downloading' | 'checking' | 'failed'
+  mb: number
+  progress?: number
+  error?: string
+  onYes(): void; onNo(): void; onDownload(): void
+  style?: CSSProperties
+}) {
+  return (
+    <div className="jm-panel jm-voiceask" data-jam-voiceask={step} style={style}>
+      <div className="top"><MicrophoneIcon size={14} style={{ color: 'var(--jm-rec)' }} /><h3>{step === 'ask' ? 'Say it instead of typing?' : 'Words on this Mac'}</h3></div>
+      <p className="dim">
+        {step === 'ask' && 'While a capture records, what you say becomes words in it - transcribed on this Mac. The audio is never kept or sent anywhere.'}
+        {step === 'download' && `One download first: the speech model, ${mb} MB, kept in ~/.marver/models for every canvas.`}
+        {step === 'downloading' && `Downloading the speech model - ${Math.round((progress ?? 0) * 100)}%. Captures keep recording; your words start with the next one.`}
+        {step === 'checking' && 'Checking the speech model...'}
+        {step === 'failed' && `The download did not finish: ${error ?? 'unknown error'}.`}
+      </p>
+      {(step === 'downloading' || step === 'checking') && <div className="jm-progress"><i style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} /></div>}
+      <div className="actions">
+        <span className="sp" />
+        {step === 'ask' && <><button className="jm-btn ghost" onClick={onNo}>Not now</button><button className="jm-btn primary" onClick={onYes}>Use the microphone</button></>}
+        {(step === 'download' || step === 'failed') && <><button className="jm-btn ghost" onClick={onNo}>Typed notes only</button><button className="jm-btn primary" onClick={onDownload}>{step === 'failed' ? 'Try again' : `Download ${mb} MB`}</button></>}
+      </div>
+    </div>
+  )
+}
+
 // ---- in a thread, and on the canvas ---------------------------------------------------------------
 
 /** A capture's comment in its thread (round 3): labelled as a capture - a teal waveform, "Capture"
