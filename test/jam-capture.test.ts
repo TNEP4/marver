@@ -840,6 +840,7 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     await again.tick(); again.stop()
     const b: any = again.snapshot().batches.find((x: any) => x.members.some((m: any) => m.card === r.id))
     expect(b.created).toEqual(['demo/fresh'])
+    expect(b.frames).toContain('demo/fresh')                              // held like its other frames
     expect(b.shots.find((x: any) => x.frame === 'demo/fresh')?.after).toMatch(/^p-/)
     expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)?.frame).toBe('demo/fresh')
     done()

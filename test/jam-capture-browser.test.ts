@@ -910,4 +910,31 @@ describe('captures in the browser: the first trial', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 60_000)
     await decide(id, 'good')
   })
+
+  skippable('a note that failed to save: sent again by Add note (one copy, never two); Resume waits for it and the resumed capture carries it', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('retry note test'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)} && !!document.querySelector('[data-jam-addnote]')`, 30_000)
+    // the note's save fails, once
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch6 = f; window.__noteFail = 1; window.fetch = async (u, o) => { if (window.__noteFail && String(u).includes('/api/jam/card') && o?.body && String(o.body).includes('"action":"note"')) { window.__noteFail -= 1; return new Response('{"ok":false}', { status: 409 }) } return f(u, o) }; return 1 })()`)
+    try {
+      await click('[data-jam-addnote]')
+      await browser!.send('Input.insertText', { text: 'keep this once' }, s)
+      await enter()
+      await until(`window.__noteFail === 0 && document.querySelector('[data-jam-addnote]')?.value === 'keep this once' && !document.querySelector('[data-jam-addnote]').readOnly`, 5000)   // failed: its words stay in the field
+      await enter()                                                                // sent again from the field
+      await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(id)})?.added?.length === 1`, 5000)
+      // Resume: the draft's notes go on with it
+      await browser!.eval(s, `document.activeElement?.blur?.(), 1`)
+      await key('r')
+      await until(`!!window.__mvJamCapture.getState().current`, 10_000)
+      const id2 = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+      await key('e')
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id2)} && c.state === 'draft')`, 30_000)
+      expect((await cardsNow()).find((c: any) => c.id === id2).added?.map((x: any) => x.text)).toEqual(['keep this once'])
+      await decide(id2, 'drop')
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch6), 1`) }
+  })
 })

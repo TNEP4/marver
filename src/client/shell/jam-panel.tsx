@@ -116,7 +116,9 @@ function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; o
       </>}
       {onAdd && (
         <div className="jm-addnote">
-          <input value={text} placeholder="Add a note..." data-jam-addnote="" disabled={busy}
+          {/* read-only while it saves (never disabled: a disabled field lets its focus go, and the next ⏎ would
+              reach the read-back's own keys) */}
+          <input value={text} placeholder="Add a note..." data-jam-addnote="" readOnly={busy}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               e.stopPropagation()
@@ -245,7 +247,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
             <Lines lines={lines} />
           </div>
         )}
-        {(added?.length || (onAddNote && !readOnly)) ? <AddedNotes added={added ?? []} onAdd={readOnly ? undefined : onAddNote} /> : null}
+        {(added?.length || (onAddNote && !readOnly)) ? <AddedNotes added={added ?? []} onAdd={readOnly || locked ? undefined : onAddNote} /> : null}
       </div>
       <div className="rule" />
       <div className="actions">

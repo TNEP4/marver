@@ -65,21 +65,38 @@ export function saveEdit(c: JamCard, text: string) {
     return useJamQueue.getState().act(fresh, 'edit', text)
   }).then((ok) => { if (ok && latest.get(c.id) === g) unsaved.delete(c.id); return ok }))
 }
-/** Notes added in a read-back that have not saved yet, per card, in order (a failed one waits to be sent again). */
-const unsavedNotes = new Map<string, string[]>()
-/** Add a note to a draft from its read-back: in line with its edits (a decision or a Resume waits for it). */
-export function addNote(c: JamCard, text: string): Promise<boolean> {
-  unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []), text])
+/** Notes added in a read-back not saved yet, per card: each its own entry - one on its way, or one that failed and
+ *  waits to be sent again. A new note from the field takes the place of a failed one (the field kept its words:
+ *  sending them again, edited or not, is that note's retry - never a second copy). */
+type PendingNote = { text: string; failed: boolean }
+const unsavedNotes = new Map<string, PendingNote[]>()
+const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
+  n.failed = false
   const before = saving.get(c.id) ?? Promise.resolve(true)
   const p = before.then(() => {
     const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
-    return useJamQueue.getState().act(fresh, 'note', text)
+    return useJamQueue.getState().act(fresh, 'note', n.text)
   }).then((ok) => {
-    if (ok) { const left = (unsavedNotes.get(c.id) ?? []).filter((t, i, a) => i !== a.indexOf(text)); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id) }
+    const list = unsavedNotes.get(c.id) ?? []
+    if (ok) { const left = list.filter((x) => x !== n); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id) } else n.failed = true
     return ok
-  })
-  saving.set(c.id, p.then(() => true, () => true))
+  }, () => { n.failed = true; return false })
+  saving.set(c.id, p.then(() => true))
   return p
+}
+/** Add a note to a draft from its read-back: in line with its edits (a decision or a Resume waits for it). */
+export function addNote(c: JamCard, text: string): Promise<boolean> {
+  const n: PendingNote = { text, failed: false }
+  unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []).filter((x) => !x.failed), n])
+  return sendNote(c, n)
+}
+/** Every note added to a draft saved (a failed one sent again, once): before it is sent, kept or resumed. */
+async function notesSaved(id: string): Promise<boolean> {
+  await saving.get(id)
+  const c = useJamQueue.getState().cards?.find((x) => x.id === id)
+  for (const n of [...(unsavedNotes.get(id) ?? [])]) if (n.failed && c) await sendNote(c, n)
+  await saving.get(id)
+  return !(unsavedNotes.get(id) ?? []).length
 }
 
 /** Confirm or keep a draft AFTER its edit has saved - an edit that failed is saved again first, and
@@ -94,11 +111,7 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
     if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
   }
   // a note added in its read-back goes with it: one that did not save is sent again, and nothing is sent without it
-  if (action !== 'drop' && unsavedNotes.has(id)) {
-    const c = useJamQueue.getState().cards?.find((x) => x.id === id)
-    for (const t of [...(unsavedNotes.get(id) ?? [])]) { unsavedNotes.set(id, (unsavedNotes.get(id) ?? []).filter((x, i, a) => i !== a.indexOf(t))); if (c) await addNote(c, t) }
-    if (unsavedNotes.has(id)) { useStore.getState().toast('your note could not be added - try again before you send it'); return }
-  }
+  if (action !== 'drop' && unsavedNotes.has(id) && !(await notesSaved(id))) { useStore.getState().toast('your note could not be added - try again before you send it'); return }
   if (action === 'drop') { unsaved.delete(id); unsavedNotes.delete(id) }
   const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
   if (!fresh) return
@@ -124,6 +137,8 @@ export async function resumeDraft(id: string) {
     const settled = async (): Promise<boolean> => {
       for (let i = 0; i < 3 && saving.get(id); i++) { const p = saving.get(id); await p; if (saving.get(id) === p) break }
       if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return false }
+      // its notes added after too: the resumed capture carries them on
+      if (unsavedNotes.has(id) && !(await notesSaved(id))) { useStore.getState().toast('your note could not be added - try again before you resume'); return false }
       return cardById(id)?.state === 'draft'
     }
     if (!(await settled())) return

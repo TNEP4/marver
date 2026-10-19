@@ -609,7 +609,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const created = capturing && one?.kind === 'capture' ? [...new Set([...(b.created ?? []), ...(alone ? newFrames(startMtimes, b) : [])])].slice(0, 3) : []
       let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {
-        await q.lock(() => { b.created = created; q.persist() })
+        // they are this run's from here: kept, and held like its other frames (nothing else edits or pictures
+        // them meanwhile - after a restart too)
+        await q.lock(() => { b.created = created; b.frames = [...new Set([...b.frames, ...created])]; q.persist() })
+        reserve()
         // pictured as they are now (again on a rerun: the frame may have changed since)
         const shots = (b.shots ?? []).filter((x) => !(x.new && created.includes(x.frame)))
         for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
