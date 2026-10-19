@@ -117,6 +117,9 @@ interface CaptureState {
   resume(draft: string, ready?: () => Promise<boolean>): Promise<boolean>
   /** drafts being continued right now (recording, sealing or waiting to send) - the lane hides them */
   resuming: string[]
+  /** the draft whose Resume is settling (its record loading, its edits saving): its read-back is read-only
+   *  meanwhile, so nothing typed can race the start */
+  settling: string | null
   /** the capture ended last (E): its read-back is the one that opens, whatever seals first */
   lastEnded: string | null
 }
@@ -567,6 +570,26 @@ export function resendSealed() {
   } catch { /* none */ }
 }
 
+/** Resume's work, while `settling` holds the draft read-only: load the record, let the caller settle, start. */
+async function resumeNow(draft: string, ready?: () => Promise<boolean>): Promise<boolean> {
+  let rec: CaptureRecord | null = null
+  try {
+    const r = await fetch(`${ROUTE}/api/jam/capture?id=${encodeURIComponent(draft)}`, { headers: { 'x-mv-c': csrf() } })
+    const body = r.ok ? ((await r.json()) as { record?: CaptureRecord; sealed?: boolean }) : null
+    if (body?.record && body.sealed !== true) { useStore.getState().toast('the capture changed after it was sealed - it cannot be resumed'); return false }
+    rec = body?.record ?? null
+  } catch { rec = null }
+  if (!rec) { useStore.getState().toast('the capture could not be loaded to resume it'); return false }
+  if (useJamCapture.getState().current) return false
+  if (rec.context.board !== useStore.getState().board) { useStore.getState().toast('open the capture\'s board to resume it'); return false }
+  // the caller's last word before recording starts (the draft's edit saved, it is still a draft)
+  if (ready && !(await ready())) return false
+  // as things are NOW: nothing recording, still on the capture's board
+  if (useJamCapture.getState().current) return false
+  if (rec.context.board !== useStore.getState().board) { useStore.getState().toast('open the capture\'s board to resume it'); return false }
+  return begin(rec.context.reviewing, rec)
+}
+
 export const useJamCapture = create<CaptureState>((set, get) => ({
   current: null,
   caps: {},
@@ -577,22 +600,12 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   unsent: [],
   resuming: [],
   lastEnded: null,
+  settling: null,
   async resume(draft, ready) {
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
-    let rec: CaptureRecord | null = null
-    try {
-      const r = await fetch(`${ROUTE}/api/jam/capture?id=${encodeURIComponent(draft)}`, { headers: { 'x-mv-c': csrf() } })
-      const body = r.ok ? ((await r.json()) as { record?: CaptureRecord; sealed?: boolean }) : null
-      if (body?.record && body.sealed !== true) { useStore.getState().toast('the capture changed after it was sealed - it cannot be resumed'); return false }
-      rec = body?.record ?? null
-    } catch { rec = null }
-    if (!rec) { useStore.getState().toast('the capture could not be loaded to resume it'); return false }
-    if (get().current) return false
-    if (rec.context.board !== useStore.getState().board) { useStore.getState().toast('open the capture\'s board to resume it'); return false }
-    // the caller's last word before recording starts (the draft's edit saved, it is still a draft)
-    if (ready && !(await ready())) return false
-    if (get().current) return false
-    return begin(rec.context.reviewing, rec)
+    if (get().settling) return false
+    set({ settling: draft })
+    try { return await resumeNow(draft, ready) } finally { set({ settling: null }) }
   },
   start(reviewing) {
     // one capture at a time: the one recording is ended or dropped first

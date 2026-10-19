@@ -164,7 +164,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           })()}
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
           onOpenThread={() => openThread(panelCard)}
-          onPrev={step(-1)} onNext={step(1)} pending={pendingEdit(panelCard.id)}
+          onPrev={step(-1)} onNext={step(1)} pending={pendingEdit(panelCard.id)} locked={cap.settling === panelCard.id}
           onRetry={() => void (async () => { if (await act(useJamQueue.getState().cards?.find((x) => x.id === panelCard.id), 'retry')) ui.close(); else useStore.getState().toast('the capture could not be retried - look again') })()}
         />
       )}

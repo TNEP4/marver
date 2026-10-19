@@ -89,6 +89,7 @@ const leavePanelField = () => { const a = document.activeElement; if (a instance
 export async function resumeDraft(id: string) {
   // every edit of the draft saved - before the record loads, and again after (words typed while it loaded)
   // - so the resumed capture carries them: recording starts only then, and only from a draft
+  // (the second time, the read-back is locked - `settling` - so no newer words can come in meanwhile)
   const settled = async (): Promise<boolean> => {
     if (useJamUi.getState().panel?.id === id) leavePanelField()
     for (let i = 0; i < 3 && saving.get(id); i++) { const p = saving.get(id); await p; if (saving.get(id) === p) break }

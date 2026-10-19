@@ -125,7 +125,7 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, onOpenThread, err, warn, style }: {
+export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, err, warn, style }: {
   title: string
   of?: [number, number]
   onPrev?: () => void
@@ -148,6 +148,8 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
   agent?: string | null
   follows?: string
   readOnly?: boolean
+  /** the words cannot be edited for now (its Resume is starting) - the rest stays as it is */
+  locked?: boolean
   onOpenThread?: () => void
   err?: ReactNode
   warn?: ReactNode
@@ -185,12 +187,12 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
         {err && <div className="note-line err"><WarningIcon size={14} /><span>{err}</span></div>}
         {warn && <div className="note-line warn"><WarningIcon size={14} /><span>{warn}</span></div>}
         {pictures.length > 0 && <div className="jm-thumbs">{pictures.map((p) => <Shot key={p.id} url={p.url} cap={p.caption} />)}</div>}
-        {open && !readOnly ? (
+        {open && !readOnly && !locked ? (
           <textarea ref={field} className="jm-edit" value={text} rows={Math.min(10, Math.max(3, Math.ceil(text.length / 60)))}
             onChange={(e) => setText(e.target.value)} onBlur={save}
             onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { setText(edited ?? words); setOpen(false) } }} />
         ) : (
-          <div className={readOnly ? undefined : 'jm-editable'} title={readOnly ? undefined : 'Click to edit the words'} onClick={readOnly ? undefined : () => setOpen(true)}>
+          <div className={readOnly || locked ? undefined : 'jm-editable'} title={readOnly || locked ? undefined : 'Click to edit the words'} onClick={readOnly || locked ? undefined : () => setOpen(true)}>
             {edited !== undefined && !readOnly && <div className="jm-edited"><PencilSimpleIcon size={12} />Your edit</div>}
             <Lines lines={lines} />
           </div>
