@@ -143,6 +143,12 @@ describe('validateEvents - v1.1 tightenings', () => {
   ]
   const base = { id: 'e-aaaaaaaa', ts: Date.now(), author: mine }
 
+  it('a shared canvas never takes a re-pin that moves a thread to another frame (that is this Mac\'s own)', () => {
+    const own: CommentEvent[] = [...log, ev({ id: 'L3', ts: 1755000002000, commentId: 'c-mine01', author: mine })]
+    expect(validateEvents([{ ...base, type: 'reanchor', commentId: 'c-mine01', frame: 'demo/other' } as any], own, me, 'main')).toMatch(/anchor|another frame/)
+    expect(validateEvents([{ ...base, type: 'reanchor', commentId: 'c-mine01', frame: 'demo/other', anchor: { el: {} } } as any], own, me, 'main')).toMatch(/another frame/)
+    expect(validateEvents([{ ...base, type: 'reanchor', commentId: 'c-mine01', anchor: { el: {} } } as any], own, me, 'main')).toBeNull()
+  })
   it('requires a non-blank body on create and reply', () => {
     expect(validateEvents([{ ...base, type: 'create', commentId: 'c-n10000', body: '  ' } as any], log, me, 'main')).toMatch(/body/)
     expect(validateEvents([{ ...base, type: 'reply', commentId: 'c-n10000', parentId: 'c-exists' } as any], log, me, 'main')).toMatch(/body/)

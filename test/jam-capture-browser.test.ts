@@ -33,7 +33,7 @@ const frame = (name: string) => `export default () => <main><h1>${name}</h1></ma
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const until = (expr: string, ms = 20_000) => browser!.until(s, expr, ms)
 /** how the fake agent behaves next: { delay, fail } */
-const agentMode = (m: { delay?: number; fail?: boolean }) => put('fake-agent.json', m)
+const agentMode = (m: { delay?: number; fail?: boolean; create?: string }) => put('fake-agent.json', m)
 /** with MARVER_SHOT_DIR set, a picture of the open thread card (and what hangs off it) */
 const shot = async (name: string) => {
   if (!process.env.MARVER_SHOT_DIR) return
@@ -53,6 +53,13 @@ const file = (/design\\/\\.local\\/jam\\/packets\\/[\\w-]+\\.json/.exec(goal) ||
 let mode = {}; try { mode = JSON.parse(fs.readFileSync('fake-agent.json', 'utf8')) } catch {}
 if (!file || mode.fail) process.exit(1)
 const p = JSON.parse(fs.readFileSync(file, 'utf8'))
+// told to make a frame: a scene file, and its node on the main board
+if (mode.create) {
+  fs.writeFileSync('design/scenes/spec/' + mode.create + '.tsx', 'export default () => <main><h1>' + mode.create + '</h1></main>\\n')
+  const b = JSON.parse(fs.readFileSync('design/boards/main.json', 'utf8'))
+  if (!b.nodes.some((n) => n.frame === 'spec/' + mode.create)) b.nodes.push({ frame: 'spec/' + mode.create, w: 411, h: 700 })
+  fs.writeFileSync('design/boards/main.json', JSON.stringify(b, null, 2))
+}
 const F = '\`\`\`'
 const out = p.members.map((m) => F + 'marver-reply ' + m.id + '\\nDone: ' + m.brief.asks.map((a) => a.body).join(' + ') + '\\n' + F).join('\\n')
 setTimeout(() => process.stdout.write(JSON.stringify({ type: 'result', result: out }) + '\\n'), mode.delay || 0)
@@ -855,5 +862,30 @@ describe('captures in the browser: the first trial', () => {
     void ka
     await decide(id, 'drop')
     await browser!.eval(s, `(window.__mvStore.getState().select(null), 1)`)
+  })
+
+  skippable('a capture whose run made a new frame and left its own as it was: its review shows the new frame as New (no Before), and its thread moves onto it', async () => {
+    agentMode({ create: 'fresh' })
+    const ka = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/alpha').key`)
+    await browser!.eval(s, `(window.__mvStore.getState().select(${JSON.stringify(ka)}), 1)`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('a brand new frame to the right of this one'), 1`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    await decide(id, 'confirm')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 60_000)
+    agentMode({})
+    const c = (await cardsNow()).find((x: any) => x.id === id)
+    expect(c.shots.find((x: any) => x.frame === 'spec/fresh')?.new).toBe(true)
+    expect(c.frames).toContain('spec/fresh')
+    // the review: the new frame, tagged New, no Before/After
+    await click(`.jm-lane [data-tile="${id}"]`)
+    await until(`!!document.querySelector('[data-jam-review]') && /New/.test(document.querySelector('[data-jam-review] .jm-fbar')?.textContent ?? '')`, 10_000)
+    expect(await browser!.eval(s, `!!document.querySelector('[data-jam-review] [data-jam-new]') && !document.querySelector('[data-jam-review] [data-jam-flip]')`)).toBe(true)
+    // its thread is on the new frame now
+    await until(`(window.__mvComments.getState().threads ?? []).some((t) => t.id === ${JSON.stringify('cap-' + id)} && t.frame === 'spec/fresh')`, 30_000)
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await decide(id, 'good')
   })
 })

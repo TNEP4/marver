@@ -211,7 +211,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           reviewedTitle={panelCard.reviewing ? cards?.find((c) => c.id === panelCard.reviewing!.card)?.title : undefined}
           lines={rec ? timelineLines(rec.record, panelCard.edited ?? rec.edited) : []}
           pictures={(rec?.record.pictures ?? []).map((id, i) => ({ id, url: picture(id)!, caption: `picture ${i + 1}` }))}
-          shots={changedShots(panelCard.shots).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after) }))}
+          shots={changedShots(panelCard.shots).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after), ...(x.new ? { new: true } : {}) }))}
           reply={panelCard.reply ? replyText(panelCard) : ''}
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
           onTab={(i) => ui.setTab(i)} onFlip={() => ui.flip()} onMoreOpen={(on) => ui.setMoreOpen(on)}

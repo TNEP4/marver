@@ -829,6 +829,13 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('the Claude namer runs Haiku with no tools, no MCP servers and no hooks', () => {
+    const a = claudeAdapter.namerArgs!('the words')
+    expect(a.cmd).toBe('claude')
+    expect(a.args).toEqual(expect.arrayContaining(['--model', 'haiku', '--tools', '', '--strict-mcp-config', '--settings', '{"disableAllHooks":true}']))
+    expect(a.args[a.args.indexOf('-p') + 1]).toBe('the words')
+  })
+
   it('a capture is named by the small model as it lands - never over your own name, never with names off', async () => {
     const namer = (name: string): JamAdapter => ({ ...agent(), namerArgs: () => ({ cmd: process.execPath, args: ['-e', `process.stdout.write(${JSON.stringify(name + '\n')})`] }) })
     const { root, done } = setup()
@@ -837,6 +844,7 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     await jam.capture(r)
     for (let i = 0; i < 100 && !card(jam, r.id).autoName; i++) await wait(50)
     expect(card(jam, r.id).autoName).toBe('Quieter save button')
+    expect(card(jam, r.id).rev).toBe(1)                                    // a name binds nothing: its revision stays
     expect(jam.view().cards.find((c) => c.id === r.id)?.title).toBe('Quieter save button')
     // renamed by you: yours wins
     await jam.act(r.id, card(jam, r.id).rev, 'rename', 'Save button')

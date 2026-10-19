@@ -19,7 +19,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { tmpdir } from 'node:os'
-import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { toFrameId } from '../manifest.ts'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
@@ -204,6 +204,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
   const running = new Map<string, Promise<void>>()   // batchId -> its run
   const runningBatches = new Map<string, Batch>()
+  /** every run that starts, counted: a run knows whether another began while it ran */
+  let batchStarts = 0
 
   type AgentRun = { reply: string; asks: boolean; model?: string; ok: boolean; reanchors: Reanchor[]; said?: string; raw?: string }
   type Env = NodeJS.ProcessEnv
@@ -334,6 +336,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  Code), as soon as it lands: the lane, the panel and its thread show it. Never over a name you gave it;
    *  nothing when the agent has no namer, the capture has no words, or the call fails (its first words stay). */
   const naming = new Set<string>()
+  let namerDir: string | undefined
   const nameCapture = (id: string) => {
     const c0 = q.j.cards.find((x) => x.id === id)
     if (!adapter.namerArgs || cfg.names === false || !c0 || c0.kind !== 'capture' || c0.name || c0.autoName || naming.has(id)) return
@@ -346,8 +349,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const { cmd, args } = adapter.namerArgs(prompt)
     let out = ''
     let child: ChildProcess
-    // in a folder of its own: no project instructions to read, nothing of the repo in reach
-    const cwd = tmpdir()
+    // in a private folder of its own: no project instructions to read, nothing of the repo in reach
+    namerDir ??= mkdtempSync(join(tmpdir(), 'marver-namer-'))
+    const cwd = namerDir
     try { child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), PWD: cwd } }) } catch { naming.delete(id); return }
     const to = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 45_000)
     child.stdout?.on('data', (d: Buffer) => { out += d.toString('utf8'); if (out.length > 4000) out = out.slice(0, 4000) })
@@ -361,34 +365,33 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       void q.lock((j) => {
         const c = j.cards.find((x) => x.id === id)
         if (!c || c.name || c.autoName) return
-        c.autoName = name; c.rev += 1; c.at = Date.now()
+        // (its revision stays: a name changes nothing a review or a follow-up was bound to)
+        c.autoName = name
         q.persist()
       }).then(() => { titles.delete(id); queueChanged() })
     })
   }
 
-  /** A capture whose run made a new frame and left every frame it named as it was asked for something new:
-   *  its thread moves onto the new frame (a re-pin naming the frame - frame-level, deterministic id, once),
-   *  and its card names that frame too. Where you pointed was where to put it, not what to change. */
-  const hostOnNew = async (b: Batch, created: string[]) => {
-    await q.lock((j) => {
-      for (const m of b.members) {
-        const c = j.cards.find((x) => x.id === m.card)
-        if (!c || c.kind !== 'capture' || !c.thread) continue
-        const own = (b.shots ?? []).filter((x) => !x.new && c.frames.includes(x.frame))
-        if (own.some((x) => !x.same)) continue                  // it changed a frame it named: it stays there
-        const to = created.find((f) => (b.shots ?? []).some((x) => x.new && x.frame === f))
-        if (!to) continue
-        const id = `jam-${b.batchId}-${m.id}-host`
-        if (!readLog(commentsDir, c.board).some((e) => e.id === id)) {
-          const who = me()
-          appendEvents(commentsDir, c.board, [{ id, ts: Date.now(), type: 'reanchor', commentId: c.thread, frame: to, board: c.board, author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name } }])
-        }
-        if (!c.frames.includes(to)) { c.frames = [...c.frames, to]; c.rev += 1; c.at = Date.now() }
-      }
-      q.persist()
-    })
-    changedBoards(b)
+  /** A capture whose run made a new frame and left every frame it named as it was asked for something new: at
+   *  delivery (again after a restart - it is in the batch with the results), its thread moves onto the new frame
+   *  (a re-pin naming the frame, frame-level, a deterministic id: written once) and its card names that frame. */
+  const hostOnNew = (b: Batch) => {
+    for (const h of b.hosts ?? []) {
+      const m = b.members.find((x) => x.id === h.member)
+      const c = m && q.j.cards.find((x) => x.id === m.card)
+      if (!c?.thread) continue
+      const id = `jam-${b.batchId}-${h.member}-host`
+      if (readLog(commentsDir, c.board).some((e) => e.id === id)) continue
+      const who = me()
+      appendEvents(commentsDir, c.board, [{ id, ts: Date.now(), type: 'reanchor', commentId: c.thread, frame: h.frame, board: c.board, author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name } }])
+    }
+  }
+  /** A frame's size where it sits on a board (its node's width and height), when the board says. */
+  const sizeOnBoard = (frame: string, board: string): { w: number; h: number } | undefined => {
+    try {
+      const n = (JSON.parse(readFileSync(join(root, 'design', 'boards', `${board}.json`), 'utf8')).nodes ?? []).find((x: any) => x?.frame === frame)
+      return n && Number.isFinite(n.w) && Number.isFinite(n.h) && n.w > 0 && n.h > 0 ? { w: Math.round(n.w), h: Math.round(n.h) } : undefined
+    } catch { return undefined }
   }
 
   /** Frames that exist now and did not when the run began, on a board the batch works on - three at most. */
@@ -461,10 +464,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         posted[m.id] = { reply: p.commentId, answered, asked: loggedTs(c.board, `jam-${b.batchId}-${m.id}`) ?? p.ts }
       }
     }
+    hostOnNew(b)
     const repinned = await emitReanchors(b, cards, b.reanchors ?? [])
     if (stopped) return
     changedBoards(b)
     await q.lock((j) => {
+      // a capture hosted on the frame its run made names that frame too
+      for (const h of b.hosts ?? []) { const m = b.members.find((x) => x.id === h.member); const c = m && j.cards.find((x) => x.id === m.card); if (c && !c.frames.includes(h.frame)) c.frames = [...c.frames, h.frame] }
       // answered while the reply was being posted, or before a restart: look again, under the lock
       for (const m of b.members) {
         const c = j.cards.find((x) => x.id === m.card)
@@ -482,6 +488,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   const runBatch = async (b: Batch) => {
+    // a frame that appears during a run is this run's only if nothing else ran beside it (no other job could
+    // have made it)
+    const myStart = ++batchStarts
+    const aloneAtStart = [...runningBatches.keys()].every((k) => k === b.batchId)
     // The packet the agent reads is made again from the journal right before every run - its members,
     // their kinds, their frozen briefs - never trusted from the file on disk; a session record's content
     // comes from its seal, checked (a changed file cannot point the agent anywhere else)
@@ -585,11 +595,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         return
       }
       await shoot('after')
-      // frames the run made (on a board it works on): pictured as they are - new, with nothing before
-      const created = capturing ? newFrames(startMtimes, b) : []
+      // frames the run made (on its board), when they can only be its own - one capture, nothing else ran
+      // beside it: pictured as they are (new, nothing before) at their size on the board
+      const one = b.members.length === 1 ? cards()[0] : undefined
+      const created = capturing && one?.kind === 'capture' && aloneAtStart && batchStarts === myStart ? newFrames(startMtimes, b) : []
+      let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {
         const shots = [...(b.shots ?? [])]
-        for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
+        for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
+        // its own frames came out as they were: it asked for something new - its thread goes onto the new frame
+        const own = shots.filter((x) => !x.new && one!.frames.includes(x.frame))
+        if (one!.thread && own.every((x) => x.same)) hosts = [{ member: b.members[0].id, frame: created[0] }]
         await q.lock(() => { b.shots = shots; q.persist() })
       }
       // results first: every member's result in ONE journal write, before anything is posted
@@ -604,12 +620,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       await q.lock(() => {
         b.results = results
         if (run.reanchors.length) b.reanchors = run.reanchors
+        if (hosts.length) b.hosts = hosts
         if (early) b.early = early
         if (run.model) b.model = run.model
         q.persist()
       })
       if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
-      if (created.length) await hostOnNew(b, created)
       await deliver(b)
     } finally {
       clearGlow()

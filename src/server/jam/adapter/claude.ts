@@ -30,7 +30,8 @@ export const claudeAdapter: JamAdapter = {
   },
   // a capture's short name: Haiku, no tools at all, no MCP servers, nothing kept - one answer in plain text
   namerArgs(prompt) {
-    return { cmd: 'claude', args: ['-p', prompt, '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--no-session-persistence', '--output-format', 'text'] }
+    // (hooks off too: a hook of yours never sees the draft's words through this call)
+    return { cmd: 'claude', args: ['-p', prompt, '--model', 'haiku', '--tools', '', '--strict-mcp-config', '--settings', '{"disableAllHooks":true}', '--no-session-persistence', '--output-format', 'text'] }
   },
   earlyText(line) {
     try {

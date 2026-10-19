@@ -159,6 +159,8 @@ export interface Batch {
   /** the rest of the delivery record, written with `results`: the re-pins, and the one-member
    *  early ack the final reply may be (so a resumed delivery never posts it twice) */
   reanchors?: Reanchor[]
+  /** a capture that asked for something new: its thread moves onto the frame its run made (done at delivery) */
+  hosts?: { member: string; frame: string }[]
   early?: { body: string; asks: boolean; commentId: string; ts: number }
   note?: string              // why it failed (two failed attempts) - what a card that follows it reads
   undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns

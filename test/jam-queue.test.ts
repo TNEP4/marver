@@ -523,6 +523,21 @@ describe('Jam V2: results first, then replies', () => {
     done()
   })
 
+  it('a crash after the results resumes a thread move too: a member hosted on a frame its run made is moved at delivery, once', async () => {
+    const { root, dir, done } = setup()
+    const { a, j, batch } = crashed(root, dir)
+    batch.results = { m1: { body: 'one done', asks: false, reanchors: [] }, m2: { body: 'two done', asks: false, reanchors: [] } }
+    batch.hosts = [{ member: 'm1', frame: 'demo/fresh' }]
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent('ok', { touch: 'ran.marker' }))
+    await jam.tick(); jam.stop()
+    expect(existsSync(join(root, 'ran.marker'))).toBe(false)
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === a.commentId)?.frame).toBe('demo/fresh')
+    expect(readLog(dir, 'home').filter((e) => e.id === 'jam-b-crash-m1-host')).toHaveLength(1)
+    expect(cardOf(jam, a)!.frames).toContain('demo/fresh')
+    done()
+  })
+
   it('a crash before the results reruns the agent on the same packet; a member whose ask is no longer ledgered is dropped at resume', async () => {
     const { root, dir, done } = setup()
     const { a, b, j } = crashed(root, dir)
