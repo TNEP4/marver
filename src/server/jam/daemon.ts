@@ -503,7 +503,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const aloneAtStart = [...runningBatches.keys()].every((k) => k === b.batchId)
     // and nothing working in a terminal (a `marver work` hold) at any point while it ran - however briefly
     let crowded = !!hooks.anyHold?.()
-    const unwatch = hooks.watchHolds?.(() => { crowded = true }) ?? (() => {})
+    // (kept at once: a crash right after must not forget it)
+    const markCrowded = (x: Batch) => { if (x.crowded) return; void q.lock(() => { x.crowded = true; q.persist() }) }
+    const unwatch = hooks.watchHolds?.(() => { crowded = true; markCrowded(b) }) ?? (() => {})
+    // a run starting beside others: each of them has company too, from now
+    for (const o of runningBatches.values()) if (o !== b) markCrowded(o)
     // The packet the agent reads is made again from the journal right before every run - its members,
     // their kinds, their frozen briefs - never trusted from the file on disk; a session record's content
     // comes from its seal, checked (a changed file cannot point the agent anywhere else)

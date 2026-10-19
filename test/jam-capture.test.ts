@@ -869,6 +869,31 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('a terminal hold seen while it ran is kept at once: after a crash, the rerun claims no new frame', async () => {
+    const { root, dir, done } = setup()
+    freshBoard(root)
+    let jam: ReturnType<typeof createJam>
+    let shotsOfA = 0
+    const shoot1 = sameShot(root)
+    jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx', delay: 300 }), undefined, {
+      anchor: anchorOk as any, anyHold: () => false, held: () => false,
+      watchHolds: (fn: () => void) => { const t = setTimeout(fn, 80); return () => clearTimeout(t) },
+      shoot: async (frame: string) => { if (frame === 'demo/a' && ++shotsOfA === 2) { jam.stop(); return null } return shoot1(frame) },
+    } as any)
+    const r = rec({ words: 'a brand new frame to the right of this one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    await wait(300)
+    const again = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, { anchor: anchorOk as any, shoot: (f) => sameShot(root)(f) })
+    await again.tick(); again.stop()
+    const b: any = again.snapshot().batches.find((x: any) => x.members.some((m: any) => m.card === r.id))
+    expect(b.crowded).toBe(true)
+    expect(b.created ?? []).toEqual([])
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)?.frame).toBe('demo/a')
+    done()
+  })
+
   it('a tag queued on the thread while its capture ran holds the new frame too when it runs', async () => {
     const { root, dir, done } = setup()
     freshBoard(root)

@@ -91,6 +91,7 @@ interface Cap {
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
   sizes: Record<string, { w: number; h: number; play?: true }>   // each frame's size when it was last touched (`play`: on the stage's device)
+  keys: Record<string, string>             // each frame's instance last touched (a frame can sit on a board twice)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
@@ -143,16 +144,24 @@ function addStep(id: string, step: Step & { seq?: number; src?: string }) {
   mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step) } })
 }
 /** A frame's size on screen now: in play the stage's device, on the canvas its node (the one in view). */
-function sizeNow(f: string): { w: number; h: number; play?: true } | undefined {
+function sizeNow(f: string, key?: string): { w: number; h: number; play?: true } | undefined {
   const st = useStore.getState()
   if (st.play) { if (st.play.at !== f) return undefined; const v = CONFIG.viewports[st.play.device]; return v ? { w: Math.round(v.width), h: Math.round(v.height), play: true } : undefined }
-  const n = visibleNodes().find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
+  // the instance touched first; else the one in view; else any
+  const n = (key ? st.nodes.find((x) => x.key === key && x.frame === f) : undefined) ?? visibleNodes().find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
   return n && n.w > 0 && n.h > 0 ? { w: Math.round(n.w), h: Math.round(n.h) } : undefined
 }
 /** Each frame a step touches, at the size it is as it is touched (a frame visited on a phone in play keeps the
  *  phone's size, wherever the capture ends). */
-function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[] }) {
-  for (const f of [step.frame, step.to, ...(step.event === 'select' ? step.frames ?? [] : [])]) { if (!f) continue; const z = sizeNow(f); if (z) c.sizes[f] = z }
+function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string }, keys?: string[]) {
+  const nodes = useStore.getState().nodes
+  for (const f of [step.frame, step.to, ...(step.event === 'select' ? step.frames ?? [] : [])]) {
+    if (!f) continue
+    // the instance it came from (a step's own frame document), or the selected one showing this frame
+    const k = [step.src, ...(keys ?? [])].find((x) => x && nodes.some((n) => n.key === x && n.frame === f))
+    if (k) c.keys[f] = k
+    const z = sizeNow(f, c.keys[f]); if (z) c.sizes[f] = z
+  }
 }
 
 const frameIdOf = (key: string): string | undefined => useStore.getState().nodes.find((n) => n.key === key)?.frame
@@ -300,7 +309,7 @@ export function onFrameMessage(key: string, data: Record<string, any>): boolean 
         const c = s.caps[cap.id]
         if (!c) return
         if (n && pt) c.points.push({ n, key, x: pt.x, y: pt.y })
-        c.steps.push({ ...base, event: data.event, bundle: cleanBundle(data.bundle), mode, ...(n ? { point: n } : {}) }); sample(c, { event: data.event, frame: base.frame })
+        c.steps.push({ ...base, event: data.event, bundle: cleanBundle(data.bundle), mode, ...(n ? { point: n } : {}) }); sample(c, { event: data.event, frame: base.frame, src: key })
       })
       if (data.event === 'pick' && frame) shoot(cap.id, frame, 'pick', key === 'stage' ? undefined : key)
       return true
@@ -388,7 +397,7 @@ function probeAnswered(key: string, data: Record<string, any>) {
     const i = p.selectStep ? c.steps.indexOf(p.selectStep as (typeof c.steps)[number]) : -1
     const selects = i >= 0
     if (selects) c.steps.splice(i, 1)
-    c.steps.push({ at: p.at, ...(frame ? { frame } : {}), event: p.event, bundle: cleanBundle(data.bundle), mode: 'canvas', ...(n ? { point: n } : {}), ...(selects ? { selects: true } : {}) }); sample(c, { event: p.event, frame })
+    c.steps.push({ at: p.at, ...(frame ? { frame } : {}), event: p.event, bundle: cleanBundle(data.bundle), mode: 'canvas', ...(n ? { point: n } : {}), ...(selects ? { selects: true } : {}) }); sample(c, { event: p.event, frame, src: key })
   })
   trySeal(p.cap)
   // a click on a field: you mean to type there - the frame turns interactive and the caret goes in the
@@ -554,7 +563,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord, session = ses
   const cap: Cap = {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
-    sizes: { ...(from?.sizes ?? {}) },
+    sizes: { ...(from?.sizes ?? {}) }, keys: {},
     probes: 0, shots: 0, shotFrames: steps.flatMap((x) => (x.event === 'picture' && x.frame ? [x.frame] : [])), hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t }, inherited: cardFrames(from.id) } : {}),
     ...(session ? { session } : {}),
   }
@@ -565,7 +574,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord, session = ses
   // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
   if (!s.play && s.selection.length) cap.steps.push({ at: at0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
   // the sizes it starts with: the stage's device in play, the selected frames on the canvas
-  if (s.play) { const z = sizeNow(s.play.at); if (z) cap.sizes[s.play.at] = z } else if (s.selection.length) sample(cap, cap.steps[cap.steps.length - 1] as { event: string; frames?: string[] })
+  if (s.play) { const z = sizeNow(s.play.at); if (z) cap.sizes[s.play.at] = z } else if (s.selection.length) sample(cap, cap.steps[cap.steps.length - 1] as { event: string; frames?: string[] }, s.selection)
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1, ...(from ? { resuming: [...st.resuming, from.id] } : {}) }))
   if (cap.session) holdOpen(id, cap.session)
   broadcast({ type: 'sh:capture', id, on: true })
@@ -648,7 +657,8 @@ function framesSizes(c: Cap): Record<string, { w: number; h: number; play?: true
     const sampled = c.sizes[f]
     if (sampled?.play) { out[f] = sampled; continue }
     if (st.play && st.play.at === f) { const v = CONFIG.viewports[st.play.device]; if (v) out[f] = { w: Math.round(v.width), h: Math.round(v.height), play: true }; continue }
-    const n = onScreen.find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
+    const k = c.keys[f]
+    const n = (k ? st.nodes.find((x) => x.key === k && x.frame === f) : undefined) ?? onScreen.find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
     if (n && n.w > 0 && n.h > 0) out[f] = { w: Math.round(n.w), h: Math.round(n.h) }
     else if (sampled) out[f] = { w: sampled.w, h: sampled.h }
   }
