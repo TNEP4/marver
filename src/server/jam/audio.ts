@@ -24,7 +24,10 @@ import { modelPaths, modelsReady } from './speech-models.ts'
 
 export const AUDIO_PATH = '/__mv/api/jam/audio'
 const TICKET_MS = 30_000
-const ID = /^cap-\d{10,16}-[a-z0-9]{4,12}$/
+/** A segment on the socket: a capture's audio or a session's talk, numbered (`<owner>~<n>`). */
+const ID = /^(cap|ses)-\d{10,16}-[a-z0-9]{4,12}~\d{1,9}$/
+/** A session's talk, heard between its captures: its words go to the session's transcript. */
+export interface TalkWords { session: string; words: { w: string; at: number; lost?: true }[] }
 
 // ---- tickets -------------------------------------------------------------------------------------------
 
@@ -78,7 +81,9 @@ export interface Speech {
  *  (the next capture loads it again in under a second). */
 const IDLE_MS = 10 * 60_000
 
-export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): Speech {
+export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: (t: TalkWords) => void } = {}): Speech {
+  /** talk segments: their start on the page clock (ms), so their words get the time they were said */
+  const talkT0 = new Map<string, number>()
   let worker: Worker | null = null
   let ready: Promise<Worker | null> | null = null
   let unavailable: string | undefined
@@ -122,6 +127,12 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
             const o = owners.get(m.capture)
             if (!o || o.w !== w) return   // not this worker's capture (any more)
             if (m.type === 'final') owners.delete(m.capture)
+            // a session's talk: its words go to the transcript, here, on this Mac
+            const t0 = talkT0.get(m.capture)
+            if (m.type === 'words' && t0 !== undefined && Array.isArray(m.words)) {
+              try { opts.onTalk?.({ session: m.capture.split('~')[0], words: m.words.map((x: { w: string; at: number; lost?: true }) => ({ ...x, at: t0 + (x.at / 16_000) * 1000 })) }) } catch { /* the transcript is best effort */ }
+            }
+            if (m.type === 'final') talkT0.delete(m.capture)
             tell(o.ws, m)
           }
         })
@@ -188,6 +199,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
         if (prev) prev.dropped = true
         const own: { ws: WebSocket; w?: Worker } = { ws }
         owners.set(id, own)
+        if (id.startsWith('ses-') && Number.isFinite(m.t0)) talkT0.set(id, Number(m.t0))
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }
         c.gate = start().then((w) => {
           if (!w) { owners.delete(id); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }

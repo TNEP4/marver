@@ -1866,3 +1866,57 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .jm-chip .mic { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--jm-rec); flex: none; cursor: pointer }
 .jm-chip .mic:hover { background: var(--glass-hover) }
 .jm-chip .mic.off { color: var(--glass-ink-3) }
+
+/* ---- sessions (spec 27 Part 5), ported from the hi-fi kit (_jam.css): the shortcuts row and its tooltip, the
+   switch, the wrap-up list and field, the record, the play counter ---- */
+.jm-record { padding: 10px 12px; border-radius: 10px; background: var(--cm-field); border: 1px solid var(--glass-brd);
+  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--glass-ink-2); white-space: pre-wrap }
+.jm-record b { color: var(--glass-ink); font-weight: 600 }
+
+.jm-list { display: flex; flex-direction: column; margin: 0 -8px }
+.jm-list > div { display: grid; grid-template-columns: 14px 1fr auto; gap: 9px; align-items: center; height: 30px; padding: 0 8px; border-radius: 8px;
+  font: 500 12.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-list > div:hover { background: var(--glass-hover) }
+.jm-list > div > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.jm-list > div > small { font: 500 11.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); font-variant-numeric: tabular-nums }
+.jm-list > div.dim > span { color: var(--glass-ink-2) }
+.jm-list .more { display: block; height: auto; padding: 4px 8px; font: 500 11.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+
+/* the instructions field */
+.jm-field { min-height: 86px; padding: 9px 12px; border-radius: 12px; background: var(--cm-field); border: 1px solid var(--glass-brd);
+  font: 400 13px/1.5 -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-field .ph { color: var(--glass-ink-3) }
+.jm-field.on { border-color: transparent; box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring) }
+
+/* a switch: the accent pill */
+.jm-switch { position: relative; width: 28px; height: 17px; border-radius: 999px; flex: none; background: var(--glass-ink-3) }
+.jm-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform var(--morph) }
+.jm-switch.on { background: var(--accent) }
+.jm-switch.on::after { transform: translateX(11px) }
+.jm-agent { display: inline-flex; align-items: center; gap: 6px; font: 600 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-agent i { width: 6px; height: 6px; border-radius: 50%; background: var(--status-done, #34c759) }
+.jm-count { position: absolute; bottom: 16px; z-index: 32; display: flex; align-items: center; gap: 2px; height: 40px; padding: 4px 6px;
+  border-radius: 999px; background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); font: 600 12px -apple-system, system-ui, sans-serif; color: #f5f5f7;
+  font-variant-numeric: tabular-nums }
+.jm-count > span { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 999px }
+.jm-count > span:hover { background: rgba(255, 255, 255, .1) }
+.jm-count .q { color: rgba(245, 245, 247, .4); font: 600 10.5px -apple-system, system-ui, sans-serif; padding: 0 6px 0 4px }
+.jm-count .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 2px }
+.jm-sc-row { display: flex; align-items: center; gap: 9px; height: 32px; padding: 0 8px; margin: 0 -8px; border-radius: 8px;
+  font: 500 13px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.jm-sc-row > svg { flex: none; color: var(--glass-ink-3) }
+.jm-sc-row .v { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.jm-sc-row.hover { background: var(--glass-hover) }
+.jm-sc-row.hover .v { color: var(--glass-ink-2) }
+.jm-sctip { position: absolute; z-index: 40; width: 196px; padding: 8px 4px; border-radius: 12px;
+  background: rgba(28, 28, 32, .96); color: #f5f5f7; box-shadow: 0 10px 28px -10px rgba(0, 0, 0, .45), 0 0 0 .5px rgba(0, 0, 0, .3);
+  font: 500 12px -apple-system, system-ui, sans-serif }
+.jm-sctip > div { display: flex; align-items: center; height: 26px; padding: 0 10px }
+.jm-sctip > div b { margin-left: auto; min-width: 20px; height: 20px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 5px; background: rgba(255, 255, 255, .12); font: 600 11px -apple-system, system-ui, sans-serif; color: #f5f5f7 }
+.jm-sctip > .hd { height: 22px; font: 600 10.5px -apple-system, system-ui, sans-serif; letter-spacing: .03em; color: rgba(245, 245, 247, .5); text-transform: uppercase }
+:is(.dark .sh-app:not(.light), .sh-app.dark) .jm-sctip { background: rgba(250, 250, 252, .97); color: #1d1d1f; box-shadow: 0 10px 28px -10px rgba(0, 0, 0, .6) }
+:is(.dark .sh-app:not(.light), .sh-app.dark) .jm-sctip > div b { background: rgba(0, 0, 0, .07); color: #1d1d1f }
+:is(.dark .sh-app:not(.light), .sh-app.dark) .jm-sctip > .hd { color: rgba(29, 29, 31, .5) }
