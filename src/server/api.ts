@@ -1030,6 +1030,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (b.action === 'wrapup' && (typeof b.instructions !== 'string' || typeof b.board !== 'string')) return json(res, 400, { error: 'expected { instructions, board }' })
         // the session's talk still coming in (in this tab or another) ends here first: the transcript the
         // record reads is whole
+        // (a record that could not be written is refused first, before any talk is ended - the session goes on whole)
+        if (b.action === 'wrapup') { const why = jamLive.canWrap?.(b.id); if (why) return json(res, 409, { ok: false, error: why }) }
         if (b.action !== 'start') { const { speechLive } = await import('./jam/audio.ts'); await speechLive.svc?.finishTalk(b.id).catch(() => {}) }
         const r = await jamLive.session(b.action === 'wrapup'
           ? { action: 'wrapup', id: b.id, instructions: b.instructions, includeTalk: b.includeTalk !== false, tags: Number(b.tags) || 0, board: b.board }

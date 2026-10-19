@@ -189,6 +189,9 @@ function socket(): Promise<WebSocket | null> {
           if (owner && (owner.kind === 'talk' || !accepting.has(owner.id))) owners.delete(m.capture)
           if (f) f(m.incomplete !== true)
           else if (m.incomplete === true && owner) lost(owner, m.capture, 'the words stopped (the speech engine went)')
+          // the server ended the segment we are still sending (the session's talk, finished by another tab):
+          // the microphone goes on in a fresh segment
+          else if (mic && !mic.closed && mic.seg?.seg === m.capture) { mic.seg = null; void reconcile() }
         } else if (m.type === 'unavailable') {
           // no words for it: the microphone closes, and the reason is said once
           useJamVoice.setState({ server: 'unavailable', reason: typeof m.reason === 'string' ? m.reason : undefined })

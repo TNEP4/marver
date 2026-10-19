@@ -230,7 +230,7 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
 /** The text of one message as the owner wrote it: for an owner event, its body or its latest
  *  LEDGERED edit (an edit that arrived by sync is never the owner's text); for anyone else, the
  *  latest edit as replay shows it. */
-function textOf(ctx: Ctx, board: string, events: CommentEvent[], ev: CommentEvent, owner: boolean): { body: string; rev: string } {
+export function textOf(ctx: Ctx, board: string, events: CommentEvent[], ev: CommentEvent, owner: boolean): { body: string; rev: string } {
   let body = ev.body ?? ''
   let rev = ev.id
   for (const e of events) {

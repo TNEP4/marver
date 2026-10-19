@@ -36,4 +36,5 @@ export const jamLive: {
   sealed?: (id: string) => boolean
   session?: (op: any) => Promise<{ ok: boolean; session?: unknown; card?: unknown; error?: string }>
   record?: (id: string) => { file: string; text: string | null; reply?: string } | null
+  canWrap?: (id: string) => string | null
 } = {}

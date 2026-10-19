@@ -29,14 +29,14 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
 import { captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
-import { buildWrapup, moreOf, readWrapup, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
+import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -64,6 +64,8 @@ export interface JamCore {
   session(op: { action: 'start'; id: string } | { action: 'end'; id: string } | { action: 'wrapup'; id: string; instructions: string; includeTalk: boolean; tags: number; board: string }): Promise<{ ok: boolean; session?: { id: string; since: number } | null; card?: Card; error?: string }>
   /** A session record's file and what it says now, and the agent's reply on it. */
   record(id: string): { file: string; text: string | null; reply?: string } | null
+  /** Could the session's record be written now? Why not, or null - asked before its talk is ended. */
+  canWrap(id: string): string | null
 }
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
@@ -855,17 +857,24 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const moreAsks = (j: Journal, ctx: ReturnType<Queue['ctx']>, c: Card): { ask: string; result?: string }[] => {
     if (!c.events.length) return []
     const log = readLog(commentsDir, c.board)
+    // its runs, oldest first: a More work ask may have run more than once (Retry, a shared-file rerun)
     const runs = [...(c.ran ?? []), ...(c.batch ? [c.batch] : [])].map((id) => j.batches.find((b) => b.batchId === id)).filter((b): b is Batch => !!b)
     return c.events.flatMap((id) => {
       const ev = log.find((e) => e.id === id)
       if (!ev || !ctx.owned.has(`${c.board}\t${id}`)) return []
-      const run = runs.find((b) => b.members.some((m) => m.card === c.id && m.brief?.asks.some((a) => a.id === id)))
-      const m = run?.members.find((x) => x.card === c.id)
-      const r = m && run?.results?.[m.id]
-      const ask = (ev.body ?? '').replace(/^@marver\s*/i, '').trim()
-      return [{ ask, ...(r && 'body' in r ? { result: r.body } : {}) }]
+      const took = runs.flatMap((b) => { const m = b.members.find((x) => x.card === c.id && x.brief?.asks.some((a) => a.id === id)); return m ? [{ b, m }] : [] })
+      // the words as the agent got them (the last run's frozen ask), else - not run yet - your latest ledgered edit
+      const last = took[took.length - 1]
+      const frozen = last?.m.brief?.asks.find((a) => a.id === id)?.body
+      const ask = (frozen ?? textOf(ctx, c.board, log, ev, true).body).replace(/^@marver\s*/i, '').trim()
+      // what came of it: the run that answered it (the last one that did), else that it failed, else open
+      const answered = [...took].reverse().find(({ b, m }) => { const r = b.results?.[m.id]; return !!r && 'body' in r })
+      const r = answered?.b.results?.[answered.m.id]
+      const failed = !answered && took.length > 0 && took.every(({ b }) => b.state === 'done' || b.state === 'failed')
+      return [{ ask, ...(r && 'body' in r ? { result: r.body } : failed ? { result: '(the run failed - not done)' } : {}) }]
     })
   }
+
 
   /** The agent's reply on a card's last run, as it said it. */
   const resultFor = (j: Journal, c: Card): string | undefined => {
@@ -986,6 +995,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       reserve(); queueChanged(); void pump()
       return { ok: true, session: null, card: r.card }
     },
+    canWrap(id) {
+      const j = q.j, ctx = q.ctx()
+      if (j.session?.id !== id) return 'no such session runs'
+      for (const c of j.cards) {
+        if (c.kind !== 'capture' || c.session !== id || ['draft', 'dropped', 'confirming'].includes(c.state)) continue
+        if (!captureIntact(j, ctx, c.id)) return 'a capture of the session changed after it was confirmed - capture it again, then write the record'
+      }
+      const unsafe = recordPathProblem(root, recordFile(root, j.session.since, id))
+      return unsafe ? `the record's file is not safe to write: ${unsafe}` : null
+    },
     record(id) {
       const c = q.j.cards.find((x) => x.id === id && x.kind === 'wrapup')
       const w = c && readWrapup(root, wrapupOf(c))
@@ -1088,6 +1107,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.sealed = (id) => core.sealed(id)
   jamLive.session = (op) => core.session(op)
   jamLive.record = (id) => core.record(id)
+  jamLive.canWrap = (id) => core.canWrap(id)
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.
