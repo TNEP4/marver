@@ -161,6 +161,8 @@ export interface Batch {
   reanchors?: Reanchor[]
   /** a capture that asked for something new: its thread moves onto the frame its run made (done at delivery) */
   hosts?: { member: string; frame: string }[]
+  /** frames its run made (kept as soon as found: a rerun after a crash pictures them again and hosts from them) */
+  created?: string[]
   early?: { body: string; asks: boolean; commentId: string; ts: number }
   note?: string              // why it failed (two failed attempts) - what a card that follows it reads
   undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns

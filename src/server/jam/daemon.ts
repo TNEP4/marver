@@ -469,8 +469,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) return
     changedBoards(b)
     await q.lock((j) => {
-      // a capture hosted on the frame its run made names that frame too
-      for (const h of b.hosts ?? []) { const m = b.members.find((x) => x.id === h.member); const c = m && j.cards.find((x) => x.id === m.card); if (c && !c.frames.includes(h.frame)) c.frames = [...c.frames, h.frame] }
+      // a capture hosted on the frame its run made names that frame too - and so does work queued on its thread
+      // meanwhile (a tag waiting on it holds that frame when it runs)
+      for (const h of b.hosts ?? []) {
+        const m = b.members.find((x) => x.id === h.member)
+        const c = m && j.cards.find((x) => x.id === m.card)
+        if (!c) continue
+        for (const x of j.cards.filter((y) => y === c || (y.state === 'queued' && y.board === c.board && !!c.thread && y.thread === c.thread))) if (!x.frames.includes(h.frame)) { x.frames = [...x.frames, h.frame]; if (x !== c) { x.rev += 1; x.at = Date.now() } }
+      }
       // answered while the reply was being posted, or before a restart: look again, under the lock
       for (const m of b.members) {
         const c = j.cards.find((x) => x.id === m.card)
@@ -598,10 +604,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // frames the run made (on its board), when they can only be its own - one capture, nothing else ran
       // beside it: pictured as they are (new, nothing before) at their size on the board
       const one = b.members.length === 1 ? cards()[0] : undefined
-      const created = capturing && one?.kind === 'capture' && aloneAtStart && batchStarts === myStart ? newFrames(startMtimes, b) : []
+      // (a rerun after a crash finds them already there: the ones found before are kept in the batch)
+      const alone = aloneAtStart && batchStarts === myStart
+      const created = capturing && one?.kind === 'capture' ? [...new Set([...(b.created ?? []), ...(alone ? newFrames(startMtimes, b) : [])])].slice(0, 3) : []
       let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {
-        const shots = [...(b.shots ?? [])]
+        await q.lock(() => { b.created = created; q.persist() })
+        // pictured as they are now (again on a rerun: the frame may have changed since)
+        const shots = (b.shots ?? []).filter((x) => !(x.new && created.includes(x.frame)))
         for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
         // its own frames came out as they were: it asked for something new - its thread goes onto the new frame
         const own = shots.filter((x) => !x.new && one!.frames.includes(x.frame))

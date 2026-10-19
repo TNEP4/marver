@@ -11,7 +11,7 @@ import { captureCounts, useJamCapture } from './jam-capture.ts'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
 import { holdsSessionMic, PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
 import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
-import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
+import { addNote, decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
@@ -221,7 +221,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onKeep={() => void decideDraft(panelCard.id, 'keep')}
           onDrop={() => void decideDraft(panelCard.id, 'drop')}
           onResume={() => void resumeDraft(panelCard.id)}
-          onAddNote={async (text) => { const ok = await act(panelCard, 'note', text); if (!ok) useStore.getState().toast('the note was not added - try again'); return ok }}
+          onAddNote={async (text) => { const ok = await addNote(panelCard, text); if (!ok) useStore.getState().toast('the note was not added - try again'); return ok }}
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
           onMore={(text) => void (async () => {
             // the composer and its words stay until the follow-up is really queued

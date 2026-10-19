@@ -65,6 +65,23 @@ export function saveEdit(c: JamCard, text: string) {
     return useJamQueue.getState().act(fresh, 'edit', text)
   }).then((ok) => { if (ok && latest.get(c.id) === g) unsaved.delete(c.id); return ok }))
 }
+/** Notes added in a read-back that have not saved yet, per card, in order (a failed one waits to be sent again). */
+const unsavedNotes = new Map<string, string[]>()
+/** Add a note to a draft from its read-back: in line with its edits (a decision or a Resume waits for it). */
+export function addNote(c: JamCard, text: string): Promise<boolean> {
+  unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []), text])
+  const before = saving.get(c.id) ?? Promise.resolve(true)
+  const p = before.then(() => {
+    const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
+    return useJamQueue.getState().act(fresh, 'note', text)
+  }).then((ok) => {
+    if (ok) { const left = (unsavedNotes.get(c.id) ?? []).filter((t, i, a) => i !== a.indexOf(text)); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id) }
+    return ok
+  })
+  saving.set(c.id, p.then(() => true, () => true))
+  return p
+}
+
 /** Confirm or keep a draft AFTER its edit has saved - an edit that failed is saved again first, and
  *  nothing is sent while it still fails; at the card's new rev; the panel closes once the decision
  *  took, and a refusal says why. */
@@ -76,7 +93,13 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
     await saving.get(id)
     if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
   }
-  if (action === 'drop') unsaved.delete(id)
+  // a note added in its read-back goes with it: one that did not save is sent again, and nothing is sent without it
+  if (action !== 'drop' && unsavedNotes.has(id)) {
+    const c = useJamQueue.getState().cards?.find((x) => x.id === id)
+    for (const t of [...(unsavedNotes.get(id) ?? [])]) { unsavedNotes.set(id, (unsavedNotes.get(id) ?? []).filter((x, i, a) => i !== a.indexOf(t))); if (c) await addNote(c, t) }
+    if (unsavedNotes.has(id)) { useStore.getState().toast('your note could not be added - try again before you send it'); return }
+  }
+  if (action === 'drop') { unsaved.delete(id); unsavedNotes.delete(id) }
   const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
   if (!fresh) return
   if (await useJamQueue.getState().act(fresh, action)) useJamUi.getState().close()

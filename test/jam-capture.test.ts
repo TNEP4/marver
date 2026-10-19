@@ -812,6 +812,61 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  const freshBoard = (root: string) => {
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'home.json'), JSON.stringify({ version: 1, name: 'home', auto: true, nodes: [] }))
+    mkdirSync(join(root, 'design', 'scenes', 'demo'), { recursive: true })
+    writeFileSync(join(root, 'design', 'scenes', 'demo', 'a.tsx'), 'export default () => null\n')
+  }
+  const sameShot = (root: string) => async (frame: string) => addPicture(root, png(root, `shot-${frame.replace('/', '-')}-${Date.now()}.png`, `pixels of ${frame}`), { frame })
+  const anchorOk = async (_f: string, target: any) => ({ ok: true as const, anchor: { el: { semantics: { quote: target.on } } }, holders: [], viewport: 'laptop', theme: 'light' })
+
+  it('a crash while the new frame is pictured: the rerun pictures it again and still moves the thread onto it', async () => {
+    const { root, dir, done } = setup()
+    freshBoard(root)
+    let jam: ReturnType<typeof createJam>
+    const shoot1 = sameShot(root)
+    jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, {
+      anchor: anchorOk as any,
+      shoot: async (frame) => { if (frame === 'demo/fresh') { jam.stop(); return null } return shoot1(frame) },
+    })
+    const r = rec({ words: 'a brand new frame to the right of this one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    await wait(300)
+    // restarted: the frame is already there - the batch remembers it was this run's
+    const again = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, { anchor: anchorOk as any, shoot: (f) => sameShot(root)(f) })
+    await again.tick(); again.stop()
+    const b: any = again.snapshot().batches.find((x: any) => x.members.some((m: any) => m.card === r.id))
+    expect(b.created).toEqual(['demo/fresh'])
+    expect(b.shots.find((x: any) => x.frame === 'demo/fresh')?.after).toMatch(/^p-/)
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)?.frame).toBe('demo/fresh')
+    done()
+  })
+
+  it('a tag queued on the thread while its capture ran holds the new frame too when it runs', async () => {
+    const { root, dir, done } = setup()
+    freshBoard(root)
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { touch: 'design/scenes/demo/fresh.tsx', delay: 600 }), undefined, { anchor: anchorOk as any, shoot: (f) => sameShot(root)(f) })
+    const r = rec({ words: 'a brand new frame to the right of this one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    const running = jam.tick()
+    await wait(200)
+    // a tag on its thread while it works: queued behind it
+    appendEvents(dir, 'home', [{ id: 'etag-f1', ts: tick(), type: 'reply', commentId: 'rc-etag-f1', parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: '@marver and make it blue' }])
+    record(root, 'home', 'etag-f1')
+    await jam.poke()
+    const follower = () => jam.snapshot().cards.find((c: any) => c.events?.includes('etag-f1'))
+    expect(follower()?.state).toBe('queued')
+    await running
+    for (let i = 0; i < 60 && !follower()?.frames.includes('demo/fresh'); i++) await wait(50)
+    expect(follower()?.frames).toContain('demo/fresh')
+    jam.stop()
+    done()
+  })
+
   it('a note added in a draft\'s read-back goes with it: in its thread comment, in what the agent reads, bound at confirm; never once it is sent', async () => {
     const { root, dir, done } = setup()
     const jam = createJam(root, CFG, agent())

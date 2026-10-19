@@ -888,4 +888,26 @@ describe('captures in the browser: the first trial', () => {
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
     await decide(id, 'good')
   })
+
+  skippable('a note still saving when the capture is added to the queue goes with it (the decision waits for it)', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('slow note test'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)} && !!document.querySelector('[data-jam-addnote]')`, 30_000)
+    // the note's save is held for a moment
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch5 = f; window.fetch = async (u, o) => { if (String(u).includes('/api/jam/card') && o?.body && String(o.body).includes('"action":"note"')) await new Promise((r) => setTimeout(r, 1500)); return f(u, o) }; return 1 })()`)
+    try {
+      await click('[data-jam-addnote]')
+      await browser!.send('Input.insertText', { text: 'the late note' }, s)
+      await enter()
+      await sleep(100)
+      await click('[data-jam-readback] .actions .jm-btn.primary')                  // Add to queue, the note still out
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state !== 'draft')`, 10_000)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch5), 1`) }
+    expect((await cardsNow()).find((c: any) => c.id === id).added?.map((x: any) => x.text)).toEqual(['the late note'])
+    agentMode({})
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 60_000)
+    await decide(id, 'good')
+  })
 })
