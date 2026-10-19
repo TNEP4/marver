@@ -551,8 +551,25 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const startMtimes = sceneFrameMtimes(root)
     // the frames there were before its FIRST attempt, kept with the batch: a rerun after a crash still knows which
     // frames its run made (and whether anything else could have)
-    if (!b.before) await q.lock(() => { b.before = [...startMtimes.keys()]; q.persist() })
+    // A rerun after a restart: a frame that appeared while nothing was watching (the daemon down) is no one's -
+    // it joins `before`; only frames this run was seen to make (kept in `created`) stay its own
+    await q.lock(() => {
+      const made = new Set(b.created ?? [])
+      b.before = [...new Set([...(b.before ?? []), ...[...startMtimes.keys()].filter((f) => !made.has(f))])]
+      q.persist()
+    })
     if (crowded || !aloneAtStart) await q.lock(() => { b.crowded = true; q.persist() })
+    // frames this run made, found as it runs (every beat) and once more as it ends - kept with the batch and held
+    // with its frames the moment they are found, so a crash after cannot lose them. Only for a batch of one
+    // capture that nothing ran beside.
+    const one0 = b.members.length === 1 ? q.j.cards.find((c) => c.id === b.members[0].card) : undefined
+    const discover = async () => {
+      if (one0?.kind !== 'capture' || b.crowded || crowded || !aloneAtStart || batchStarts !== myStart || hooks.anyHold?.()) return
+      const found = newFrames(new Set(b.before ?? []), b).filter((f) => !(b.created ?? []).includes(f))
+      if (!found.length) return
+      await q.lock(() => { b.created = [...(b.created ?? []), ...found].slice(0, 3); b.frames = [...new Set([...b.frames, ...b.created])]; q.persist() })
+      reserve()
+    }
     const sharedBefore = b.exclusive ? null : sharedMtimes(root)
     const touched = new Set<string>()
     for (const f of b.frames) light(f)
@@ -574,6 +591,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (!b.shots?.some((s) => s.before)) await shoot('before')   // a retry keeps the first attempt's
     const followWork = () => {
       if (hooks.anyHold?.()) crowded = true
+      void discover()
       for (const [id, mt] of sceneFrameMtimes(root)) if (startMtimes.get(id) !== mt) touched.add(id)   // created or edited
       for (const id of touched) light(id)
       for (const f of lit) hooks.work?.(f, true)   // heartbeat: keep every lit frame's lease alive
@@ -615,20 +633,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         log(`  jam: gave up on a batch of ${b.members.length} after ${b.attempts} attempts`)
         return
       }
+      // the last look for frames it made - before its after pictures, so a crash while they are taken keeps them
+      if (!aloneAtStart || batchStarts !== myStart || crowded || hooks.anyHold?.()) { if (!b.crowded) await q.lock(() => { b.crowded = true; q.persist() }) }
+      await discover()
       await shoot('after')
-      // frames the run made (on its board), when they can only be its own - one capture, nothing else ran
-      // beside it: pictured as they are (new, nothing before) at their size on the board
+      // frames the run made (on its board): pictured as they are (new, nothing before) at their size on the board
       const one = b.members.length === 1 ? cards()[0] : undefined
-      // (a rerun after a crash finds them already there: the ones found before are kept in the batch)
-      const alone = !b.crowded && aloneAtStart && batchStarts === myStart && !crowded && !hooks.anyHold?.()
-      if (!alone && !b.crowded) await q.lock(() => { b.crowded = true; q.persist() })
-      const created = capturing && one?.kind === 'capture' ? [...new Set([...(b.created ?? []), ...(alone ? newFrames(new Set(b.before ?? startMtimes.keys()), b) : [])])].slice(0, 3) : []
+      const created = capturing && one?.kind === 'capture' ? (b.created ?? []) : []
       let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {
-        // they are this run's from here: kept, and held like its other frames (nothing else edits or pictures
-        // them meanwhile - after a restart too)
-        await q.lock(() => { b.created = created; b.frames = [...new Set([...b.frames, ...created])]; q.persist() })
-        reserve()
         // pictured as they are now (again on a rerun: the frame may have changed since)
         const shots = (b.shots ?? []).filter((x) => !(x.new && created.includes(x.frame)))
         for (const f of created) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }

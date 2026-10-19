@@ -894,6 +894,26 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('a frame that appeared while the daemon was down is no one\'s: the rerun neither pictures it as new nor moves the thread', async () => {
+    const { root, dir, done } = setup()
+    freshBoard(root)
+    const jam = createJam(root, CFG, agent('ok', { hang: true }), undefined, { anchor: anchorOk as any, shoot: (f: string) => sameShot(root)(f) } as any)
+    const r = rec({ words: 'a brand new frame to the right of this one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    void jam.tick()
+    for (let i = 0; i < 60 && !jam.snapshot().batches[0]?.before; i++) await wait(50)
+    jam.stop()                                                               // down
+    writeFileSync(join(root, 'design', 'scenes', 'demo', 'fresh.tsx'), 'export default () => null\n')   // another tool makes a frame
+    const again = createJam(root, CFG, agent('ok'), undefined, { anchor: anchorOk as any, shoot: (f) => sameShot(root)(f) })
+    await again.tick(); again.stop()
+    const b: any = again.snapshot().batches.find((x: any) => x.members.some((m: any) => m.card === r.id))
+    expect(b.created ?? []).toEqual([])
+    expect(b.before).toContain('demo/fresh')
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)?.frame).toBe('demo/a')
+    done()
+  })
+
   it('a tag queued on the thread while its capture ran holds the new frame too when it runs', async () => {
     const { root, dir, done } = setup()
     freshBoard(root)

@@ -140,8 +140,8 @@ const mutate = (fn: (s: CaptureState) => void) => useJamCapture.setState((s) => 
 const capOf = (id: string): Cap | undefined => useJamCapture.getState().caps[id]
 
 /** Add a step to a capture (in place; the timeline is sorted at the seal, by `at` then `seq`). */
-function addStep(id: string, step: Step & { seq?: number; src?: string }) {
-  mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step) } })
+function addStep(id: string, step: Step & { seq?: number; src?: string }, keys?: string[]) {
+  mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step, keys) } })
 }
 /** A frame's size on screen now: in play the stage's device, on the canvas its node (the one in view). */
 function sizeNow(f: string, key?: string): { w: number; h: number; play?: true } | undefined {
@@ -224,7 +224,7 @@ function watchUi() {
     if (!id) return
     const at = now()
     if (s.selection.join() !== p.selection.join() && s.selection.length) {
-      addStep(id, { at, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
+      addStep(id, { at, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] }, s.selection)
     }
     for (const n of s.nodes) {
       const o = p.nodes.find((x) => x.key === n.key)
@@ -232,9 +232,9 @@ function watchUi() {
       // a device change: the node took a preset's size (its width names the viewport)
       if (o.w !== n.w && n.sizeMode === 'device') {
         const vp = Object.entries(CONFIG.viewports).find(([, v]) => v.width === Math.round(n.w))
-        addStep(id, { at, frame: n.frame, event: 'device', viewport: vp?.[0] ?? 'custom', width: Math.round(n.w), height: Math.round(n.h) })
+        addStep(id, { at, frame: n.frame, event: 'device', viewport: vp?.[0] ?? 'custom', width: Math.round(n.w), height: Math.round(n.h), src: n.key })
       }
-      if (o.theme !== n.theme && s.viewTheme === p.viewTheme && (n.theme === 'light' || n.theme === 'dark')) addStep(id, { at, frame: n.frame, event: 'theme', theme: n.theme })
+      if (o.theme !== n.theme && s.viewTheme === p.viewTheme && (n.theme === 'light' || n.theme === 'dark')) addStep(id, { at, frame: n.frame, event: 'theme', theme: n.theme, src: n.key })
     }
     if (s.viewTheme !== p.viewTheme && (s.viewTheme === 'light' || s.viewTheme === 'dark')) addStep(id, { at, event: 'theme', theme: s.viewTheme })
     // play: the stage's device and theme through the shell's controls (its screen comes from the stage)
@@ -248,7 +248,7 @@ function watchUi() {
       if (stageNav !== s.play.at) screenStep(id, at, s.play.at)
     }
     if (!!s.play !== !!p.play) addStep(id, { at, event: 'view', view: viewNow() })
-    if (!!s.interact !== !!p.interact) addStep(id, { at, ...(s.interact || p.interact ? { frame: frameIdOf((s.interact ?? p.interact)!) } : {}), event: 'interact', on: !!s.interact })
+    if (!!s.interact !== !!p.interact) addStep(id, { at, ...(s.interact || p.interact ? { frame: frameIdOf((s.interact ?? p.interact)!), src: (s.interact ?? p.interact)! } : {}), event: 'interact', on: !!s.interact })
   })
   unwatch = () => { unsub(); clearInterval(settle) }
 }
