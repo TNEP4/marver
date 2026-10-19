@@ -846,6 +846,29 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('a crash before the new frame was found (picturing its own frame after the run): the rerun still knows the frame was its run\'s', async () => {
+    const { root, dir, done } = setup()
+    freshBoard(root)
+    let jam: ReturnType<typeof createJam>
+    let shotsOfA = 0
+    const shoot1 = sameShot(root)
+    jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, {
+      anchor: anchorOk as any,
+      shoot: async (frame) => { if (frame === 'demo/a' && ++shotsOfA === 2) { jam.stop(); return null } return shoot1(frame) },
+    })
+    const r = rec({ words: 'a brand new frame to the right of this one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    await wait(300)
+    const again = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, { anchor: anchorOk as any, shoot: (f) => sameShot(root)(f) })
+    await again.tick(); again.stop()
+    const b: any = again.snapshot().batches.find((x: any) => x.members.some((m: any) => m.card === r.id))
+    expect(b.created).toEqual(['demo/fresh'])
+    expect(replay(readLog(dir, 'home')).find((t) => t.id === `cap-${r.id}`)?.frame).toBe('demo/fresh')
+    done()
+  })
+
   it('a tag queued on the thread while its capture ran holds the new frame too when it runs', async () => {
     const { root, dir, done } = setup()
     freshBoard(root)
@@ -878,6 +901,8 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     expect((await n('n-aaaaaaaa', 'one')).ok).toBe(true)                  // its answer was lost: sent again
     expect((await n('n-bbbbbbbb', 'two')).ok).toBe(true)
     expect(card(jam, r.id).payload.added.map((x: any) => x.text)).toEqual(['one', 'two'])
+    expect((await n('n-aaaaaaaa', 'one, edited')).ok).toBe(true)            // edited in the field after its answer was lost
+    expect(card(jam, r.id).payload.added.map((x: any) => x.text)).toEqual(['one, edited', 'two'])
     jam.stop()
     done()
   })
@@ -905,7 +930,19 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     await jam2.act(r2.id, a2.card!.rev, 'confirm')
     await jam2.tick(); jam2.stop()
     expect(card(jam2, r2.id).frames).toEqual(['demo/a'])
-    done(); done2()
+    // a hold that came and went between two looks still counts (the activity is watched, not polled)
+    const { root: root3, done: done3 } = setup()
+    freshBoard(root3)
+    const jam3 = createJam(root3, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx', delay: 300 }), undefined, {
+      anchor: anchorOk as any, shoot: (f: string) => sameShot(root3)(f), anyHold: () => false, held: () => false,
+      watchHolds: (fn: () => void) => { const t = setTimeout(fn, 100); return () => clearTimeout(t) },
+    } as any)
+    const r3 = rec({ words: 'a new frame please' })
+    const a3 = await jam3.capture(r3)
+    await jam3.act(r3.id, a3.card!.rev, 'confirm')
+    await jam3.tick(); jam3.stop()
+    expect(card(jam3, r3.id).frames).toEqual(['demo/a'])
+    done(); done2(); done3()
   })
 
   it('a note added in a draft\'s read-back goes with it: in its thread comment, in what the agent reads, bound at confirm; never once it is sent', async () => {

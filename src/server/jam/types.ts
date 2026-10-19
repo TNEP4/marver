@@ -90,7 +90,7 @@ export interface CaptureRecord {
   view: View; timeline: Step[]; pictures: string[]
   /** each frame it is about, at the size it was on screen (a device, or a custom width): its run is pictured
    *  before and after at that size */
-  sizes?: Record<string, { w: number; h: number }>
+  sizes?: Record<string, { w: number; h: number; play?: true }>
 }
 /** What a capture card's brief carries, frozen at confirm. `note` marks a capture that is context, not an ask. */
 export interface Payload { record: CaptureRecord; recordHash: string; edited?: string; reviewed?: Reviewed; note?: string
@@ -163,6 +163,10 @@ export interface Batch {
   hosts?: { member: string; frame: string }[]
   /** frames its run made (kept as soon as found: a rerun after a crash pictures them again and hosts from them) */
   created?: string[]
+  /** the frames there were before its first attempt (a rerun compares with these) */
+  before?: string[]
+  /** something else ran beside it at some point (another job, a terminal hold): a frame that appeared is no one's */
+  crowded?: boolean
   early?: { body: string; asks: boolean; commentId: string; ts: number }
   note?: string              // why it failed (two failed attempts) - what a card that follows it reads
   undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns

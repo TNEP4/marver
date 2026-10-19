@@ -815,6 +815,9 @@ describe('captures in the browser: the first trial', () => {
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('just this one'), 1`)
+    // dragged to another width after it was touched: pictured as it is now
+    await browser!.eval(s, `window.__mvStore.getState().resizeNode(${JSON.stringify(k)}, 411, 777), 1`)
+    await sleep(200)
     await key('e')
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
     const rec = await getRec(id)
@@ -822,7 +825,7 @@ describe('captures in the browser: the first trial', () => {
     expect(pics.map((x: any) => x.frame)).toEqual(['spec/bravo'])
     expect((await cardsNow()).find((c: any) => c.id === id).frames).toEqual(['spec/bravo'])
     // its size as it was on screen, for the run's pictures
-    expect(rec.record.sizes?.['spec/bravo']?.w).toBeGreaterThan(0)
+    expect(rec.record.sizes?.['spec/bravo']).toMatchObject({ w: 411, h: 777 })
     // a note added in its read-back, after it ended: under a divider; what is typed there is never a capture key
     await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)} && !!document.querySelector('[data-jam-addnote]')`, 10_000)
     await click('[data-jam-addnote]')

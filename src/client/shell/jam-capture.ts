@@ -90,7 +90,7 @@ interface Cap {
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
-  sizes: Record<string, { w: number; h: number }>   // each frame's size when it was last touched (in play: the device)
+  sizes: Record<string, { w: number; h: number; play?: true }>   // each frame's size when it was last touched (`play`: on the stage's device)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
@@ -143,9 +143,9 @@ function addStep(id: string, step: Step & { seq?: number; src?: string }) {
   mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step) } })
 }
 /** A frame's size on screen now: in play the stage's device, on the canvas its node (the one in view). */
-function sizeNow(f: string): { w: number; h: number } | undefined {
+function sizeNow(f: string): { w: number; h: number; play?: true } | undefined {
   const st = useStore.getState()
-  if (st.play) { if (st.play.at !== f) return undefined; const v = CONFIG.viewports[st.play.device]; return v ? { w: Math.round(v.width), h: Math.round(v.height) } : undefined }
+  if (st.play) { if (st.play.at !== f) return undefined; const v = CONFIG.viewports[st.play.device]; return v ? { w: Math.round(v.width), h: Math.round(v.height), play: true } : undefined }
   const n = visibleNodes().find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
   return n && n.w > 0 && n.h > 0 ? { w: Math.round(n.w), h: Math.round(n.h) } : undefined
 }
@@ -637,17 +637,20 @@ function endPictures(id: string): boolean {
 
 /** Each frame the capture is about, at the size it is on screen now (the instance in view, else any): a device,
  *  or a width you dragged it to. In play, the stage's device. Its run is pictured at these sizes. */
-function framesSizes(c: Cap): Record<string, { w: number; h: number }> {
+function framesSizes(c: Cap): Record<string, { w: number; h: number; play?: true }> {
   const st = useStore.getState()
   const onScreen = visibleNodes()
   const frames = new Set([...(c.inherited ?? []), ...touchedFrames(c.steps, undefined, true, c.resumes?.at)])
-  const out: Record<string, { w: number; h: number }> = {}
+  const out: Record<string, { w: number; h: number; play?: true }> = {}
   for (const f of frames) {
-    // as it was when last touched; else as it is now
-    if (c.sizes[f]) { out[f] = c.sizes[f]; continue }
-    if (st.play && st.play.at === f) { const v = CONFIG.viewports[st.play.device]; if (v) out[f] = { w: Math.round(v.width), h: Math.round(v.height) }; continue }
+    // seen in play: as it was on the stage's device; on the canvas: as its node is now (a resize after the last
+    // touch counts); else as it was sampled
+    const sampled = c.sizes[f]
+    if (sampled?.play) { out[f] = sampled; continue }
+    if (st.play && st.play.at === f) { const v = CONFIG.viewports[st.play.device]; if (v) out[f] = { w: Math.round(v.width), h: Math.round(v.height), play: true }; continue }
     const n = onScreen.find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
     if (n && n.w > 0 && n.h > 0) out[f] = { w: Math.round(n.w), h: Math.round(n.h) }
+    else if (sampled) out[f] = { w: sampled.w, h: sampled.h }
   }
   return out
 }

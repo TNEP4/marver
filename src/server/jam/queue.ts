@@ -218,7 +218,12 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
     let n: { id?: string; text: string } = { text: body }
     try { const o = JSON.parse(body); if (o && typeof o.text === 'string') n = { ...(typeof o.id === 'string' && /^n-[a-z0-9]{6,24}$/.test(o.id) ? { id: o.id } : {}), text: o.text } } catch { /* plain words */ }
     const text = n.text.trim().slice(0, 4000)
-    if (n.id && c.payload?.added?.some((a) => a.id === n.id)) return { ok: true, card: c }
+    const was = n.id ? c.payload?.added?.find((a) => a.id === n.id) : undefined
+    if (was) {
+      // the same note again: as it is in the field now (edited after its answer was lost: the new words)
+      if (text && was.text !== text) { c.payload = { ...c.payload!, added: c.payload!.added!.map((a) => (a === was ? { ...a, text } : a)) }; c.rev += 1; c.at = now }
+      return { ok: true, card: c }
+    }
     if (text && (c.payload?.added?.length ?? 0) < 50) {
       c.payload = { ...c.payload!, added: [...(c.payload?.added ?? []), { at: now, text, ...(n.id ? { id: n.id } : {}) }] }; c.rev += 1; c.at = now
       return { ok: true, card: c }

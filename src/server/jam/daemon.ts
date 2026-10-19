@@ -86,6 +86,8 @@ export interface JamHooks {
   held?(frame: string): boolean
   /** Any `work start` hold at all - an exclusive job waits for every one to end. */
   anyHold?(): boolean
+  /** Call `fn` whenever a terminal (`marver work`) hold exists after a change - however briefly; returns the unsubscribe. */
+  watchHolds?(fn: () => void): () => void
   /** The queue changed - push it to pages (sh:jam-queue). */
   queue?(): void
   /** Shoot one frame into a jam picture (the dev server's shootFrame); null when it fails - a
@@ -395,7 +397,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   /** Frames that exist now and did not when the run began, on a board the batch works on - three at most. */
-  const newFrames = (start: Map<string, number>, b: Batch): string[] => {
+  const newFrames = (start: { has(f: string): boolean }, b: Batch): string[] => {
     const boards = [...new Set(b.members.map((m) => m.board))]
     const onBoard = (f: string) => boards.some((board) => {
       try { const j = JSON.parse(readFileSync(join(root, 'design', 'boards', `${board}.json`), 'utf8')); return j.auto === true || (Array.isArray(j.nodes) && j.nodes.some((n: any) => n?.frame === f)) } catch { return false }
@@ -499,8 +501,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // have made it)
     const myStart = ++batchStarts
     const aloneAtStart = [...runningBatches.keys()].every((k) => k === b.batchId)
-    // and nothing working in a terminal (a `marver work` hold) at any point while it ran
+    // and nothing working in a terminal (a `marver work` hold) at any point while it ran - however briefly
     let crowded = !!hooks.anyHold?.()
+    const unwatch = hooks.watchHolds?.(() => { crowded = true }) ?? (() => {})
     // The packet the agent reads is made again from the journal right before every run - its members,
     // their kinds, their frozen briefs - never trusted from the file on disk; a session record's content
     // comes from its seal, checked (a changed file cannot point the agent anywhere else)
@@ -542,6 +545,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const light = (f?: string) => { if (f && !lit.has(f)) { hooks.work?.(f, true); lit.add(f) } }
     const clearGlow = () => { for (const f of lit) hooks.work?.(f, false); lit.clear() }
     const startMtimes = sceneFrameMtimes(root)
+    // the frames there were before its FIRST attempt, kept with the batch: a rerun after a crash still knows which
+    // frames its run made (and whether anything else could have)
+    if (!b.before) await q.lock(() => { b.before = [...startMtimes.keys()]; q.persist() })
+    if (crowded || !aloneAtStart) await q.lock(() => { b.crowded = true; q.persist() })
     const sharedBefore = b.exclusive ? null : sharedMtimes(root)
     const touched = new Set<string>()
     for (const f of b.frames) light(f)
@@ -609,8 +616,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // beside it: pictured as they are (new, nothing before) at their size on the board
       const one = b.members.length === 1 ? cards()[0] : undefined
       // (a rerun after a crash finds them already there: the ones found before are kept in the batch)
-      const alone = aloneAtStart && batchStarts === myStart && !crowded && !hooks.anyHold?.()
-      const created = capturing && one?.kind === 'capture' ? [...new Set([...(b.created ?? []), ...(alone ? newFrames(startMtimes, b) : [])])].slice(0, 3) : []
+      const alone = !b.crowded && aloneAtStart && batchStarts === myStart && !crowded && !hooks.anyHold?.()
+      if (!alone && !b.crowded) await q.lock(() => { b.crowded = true; q.persist() })
+      const created = capturing && one?.kind === 'capture' ? [...new Set([...(b.created ?? []), ...(alone ? newFrames(new Set(b.before ?? startMtimes.keys()), b) : [])])].slice(0, 3) : []
       let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {
         // they are this run's from here: kept, and held like its other frames (nothing else edits or pictures
@@ -645,6 +653,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
       await deliver(b)
     } finally {
+      unwatch()
       clearGlow()
     }
   }
@@ -1274,6 +1283,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
     changed: onChanged,
     held: (f) => activity.has(f, 'cli'),
     anyHold: () => activity.leases('cli').length > 0,
+    watchHolds: (fn) => activity.onChange(() => { if (activity.leases('cli').length > 0) fn() }),
     queue: onQueue,
     anchor,
     shoot,
