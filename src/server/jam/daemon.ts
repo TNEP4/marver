@@ -661,9 +661,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // (as they are now: one made then renamed or removed during the run is not pictured, nor hosts the thread)
       const created = capturing && one?.kind === 'capture' ? liveCreated(b) : []
       let hosts: { member: string; frame: string }[] = []
+      // (a rerun: the new frames are pictured again from what is there now - a picture of one gone since goes)
+      if (!created.length && b.shots?.some((x) => x.new)) await q.lock(() => { b.shots = (b.shots ?? []).filter((x) => !x.new); q.persist() })
       if (created.length && hooks.shoot) {
         // pictured as they are now (again on a rerun: the frame may have changed since)
-        const shots = (b.shots ?? []).filter((x) => !(x.new && created.includes(x.frame)))
+        const shots = (b.shots ?? []).filter((x) => !x.new)
         // (all of them are its frames; three are pictured)
         for (const f of created.slice(0, 3)) { if (stopped) return; if (shots.some((x) => x.frame === f)) continue; const id = await hooks.shoot(f, theme, { batch: b.batchId }, sizeOnBoard(f, one!.board)).catch(() => null); shots.push({ frame: f, ...(id ? { after: id } : {}), new: true }) }
         // its own frames came out as they were: it asked for something new - its thread goes onto the new frame

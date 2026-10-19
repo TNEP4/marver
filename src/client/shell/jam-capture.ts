@@ -197,7 +197,12 @@ function sample(c: Cap, step: { event: string; frame?: string; to?: string; fram
     const z = c.state === 'draining' && c.endNodes ? sizeAtEnd(c, f) : sizeNow(f, c.keys[f])
     // a view (play left, a fit) is not a touch: what was seen on the stage keeps the stage's size until the frame is
     // used on the canvas
-    if (z && !((auto || step.event === 'view') && c.sizes[f]?.play && !z.play)) c.sizes[f] = z
+    if (z && !((auto || step.event === 'view') && c.sizes[f]?.play && !z.play)) {
+      c.sizes[f] = z
+      // a step answering after E (a hover in flight) was a touch at E: the size kept for E follows the instance it
+      // touched - for the seal and the end pictures alike
+      if (c.state === 'draining' && c.endSizes && !auto && step.event !== 'view') c.endSizes[f] = z
+    }
   }
 }
 
