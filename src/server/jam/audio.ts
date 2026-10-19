@@ -15,6 +15,7 @@
  * Decoding runs in a worker thread (speech-worker.ts); raw audio is never written anywhere.
  */
 import { randomBytes } from 'node:crypto'
+import { createRequire } from 'node:module'
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { Worker } from 'node:worker_threads'
@@ -65,6 +66,9 @@ export type VoiceState = 'unavailable' | 'needs-model' | 'loading' | 'ready'
 export const speechLive: { svc?: Speech } = {}
 export interface Speech {
   state(): Promise<{ state: VoiceState; reason?: string }>
+  /** You asked again (the microphone question answered yes): a failure to start is forgotten and the
+   *  engine tried once more - the engine missing stays what it is. */
+  retry(): void
   /** Attach the socket's upgrade handler to the dev server's HTTP server. */
   attach(server: Server): void
   stop(): void
@@ -89,7 +93,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
   idle.unref()
 
   const engineMissing = (): string | undefined => {
-    try { import.meta.resolve('sherpa-onnx-node'); return undefined } catch { return 'the speech engine (sherpa-onnx-node) is not installed - typed notes only' }
+    try { createRequire(import.meta.url).resolve('sherpa-onnx-node'); return undefined } catch { return 'the speech engine (sherpa-onnx-node) is not installed - typed notes only' }
   }
   const tell = (ws: WebSocket | undefined, m: unknown) => { if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(m)) }
 
@@ -218,6 +222,11 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 })
   return {
+    retry() {
+      if (engineMissing() || worker) return
+      unavailable = undefined
+      ready = null
+    },
     async state() {
       const missing = engineMissing()
       if (missing) return { state: 'unavailable', reason: missing }

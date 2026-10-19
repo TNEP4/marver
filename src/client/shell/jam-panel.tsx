@@ -371,7 +371,7 @@ export const Caption = ({ old, live, style }: { old?: string; live?: string; sty
 
 /** The one question words need (first `S` on a canvas), then the model's download if it is missing. */
 export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, style }: {
-  step: 'ask' | 'download' | 'downloading' | 'checking' | 'failed'
+  step: 'ask' | 'download' | 'downloading' | 'checking' | 'failed' | 'unavailable'
   mb: number
   progress?: number
   error?: string
@@ -387,12 +387,14 @@ export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, s
         {step === 'downloading' && `Downloading the speech model - ${Math.round((progress ?? 0) * 100)}%. Captures keep recording; your words start with the next one.`}
         {step === 'checking' && 'Checking the speech model...'}
         {step === 'failed' && `The download did not finish: ${error ?? 'unknown error'}.`}
+        {step === 'unavailable' && (error ?? 'Words are not available here - typed notes only.')}
       </p>
       {(step === 'downloading' || step === 'checking') && <div className="jm-progress"><i style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} /></div>}
       <div className="actions">
         <span className="sp" />
         {step === 'ask' && <><button className="jm-btn ghost" onClick={onNo}>Not now</button><button className="jm-btn primary" onClick={onYes}>Use the microphone</button></>}
         {(step === 'download' || step === 'failed') && <><button className="jm-btn ghost" onClick={onNo}>Typed notes only</button><button className="jm-btn primary" onClick={onDownload}>{step === 'failed' ? 'Try again' : `Download ${mb} MB`}</button></>}
+        {step === 'unavailable' && <><button className="jm-btn ghost" onClick={onNo}>Typed notes only</button><button className="jm-btn primary" onClick={onYes}>Try again</button></>}
       </div>
     </div>
   )

@@ -80,9 +80,12 @@ describe('words: cutting phrases (no model)', () => {
     expect(lost[0].w).toBe('[words lost]')
     release()
     await seg.end(75 * RATE)
-    // what survived is in time order, the lost marker where its phrase was
-    const ats = words.map((w) => w.at)
-    expect([...ats].sort((a, b) => a - b)).toEqual(ats.slice().sort((a, b) => a - b))
+    // the marker stands where its phrase was: the second 15 s (the first was being transcribed), and
+    // words survive on both sides of it
+    expect(lost[0].at).toBeGreaterThanOrEqual(MAX_PHRASE - WINDOW)
+    expect(lost[0].at).toBeLessThanOrEqual(MAX_PHRASE + WINDOW)
+    expect(words.some((w) => !w.lost && w.at < lost[0].at)).toBe(true)
+    expect(words.some((w) => !w.lost && w.at > 2 * MAX_PHRASE)).toBe(true)
   })
 
   it('pre-roll: 250 ms before a phrase, never before the capture\'s start', async () => {
@@ -318,6 +321,22 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
       expect(out.filter((m) => m.type === 'words')).toEqual([])
     } finally { await w.terminate() }
   }, 60_000)
+
+  it('an engine that fails to start says why, and a yes tries it again (only the engine missing stays)', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'mv-failworker-'))
+    const bad = join(d, 'w.mjs')
+    writeFileSync(bad, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'unavailable', reason: 'native module failed' })\n")
+    const svc = createSpeech({ workerUrl: new URL(`file://${bad}`) })
+    try {
+      await svc.state()                                    // starts it
+      await new Promise((r) => setTimeout(r, 500))
+      const st = await svc.state()
+      expect(st.state).toBe('unavailable')
+      expect(st.reason).toMatch(/native module failed/)
+      svc.retry()
+      expect((await svc.state()).state).toBe('loading')    // tried again, not latched
+    } finally { svc.stop(); rmSync(d, { recursive: true, force: true }) }
+  }, 30_000)
 
   const text = (ws: Word[]) => ws.map((w) => w.w).join(' ')
   const inOrder = (ws: Word[]) => ws.every((w, i) => i === 0 || w.at >= ws[i - 1].at)

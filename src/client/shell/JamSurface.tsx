@@ -183,10 +183,12 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
 function voiceAsk(v: ReturnType<typeof useJamVoice.getState>) {
   const d = v.download
   const step = v.choice === null ? 'ask' as const
+    // the engine could not start: why, and a way to try again - never a download that would not help
+    : v.server === 'unavailable' ? 'unavailable' as const
     : d?.state === 'downloading' ? 'downloading' as const : d?.state === 'checking' ? 'checking' as const
     : d?.state === 'failed' ? 'failed' as const : 'download' as const
   return {
-    step, mb: v.mb, progress: d && d.total ? d.received / d.total : 0, error: d?.error,
+    step, mb: v.mb, progress: d && d.total ? d.received / d.total : 0, error: v.server === 'unavailable' ? v.reason : d?.error,
     onYes: () => v.setChoice('yes'), onNo: () => v.setChoice('no'), onDownload: () => void v.startDownload(),
   }
 }

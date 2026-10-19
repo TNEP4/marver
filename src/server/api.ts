@@ -1002,7 +1002,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { speechLive } = await import('./jam/audio.ts')
         const { downloadModels, downloadState, DOWNLOAD_MB } = await import('./jam/speech-models.ts')
         if (!speechLive.svc) return json(res, 409, { error: 'jam is not running here' })
-        if (req.method === 'POST') void downloadModels()
+        // POST: { download: true } starts the model's download; { retry: true } tries the engine again
+        if (req.method === 'POST') {
+          const raw = await readBody(req)
+          let b: any = {}; try { b = raw ? JSON.parse(raw) : {} } catch { b = {} }
+          if (b?.retry === true) speechLive.svc.retry()
+          else void downloadModels()
+        }
         const st = await speechLive.svc.state()
         return json(res, 200, { ...st, download: downloadState(), mb: DOWNLOAD_MB })
       }

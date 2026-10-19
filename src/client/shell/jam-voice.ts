@@ -42,6 +42,8 @@ interface VoiceStore {
   heard: Record<string, Heard[]>
   setChoice(c: 'yes' | 'no'): void
   refresh(): Promise<void>
+  /** try the engine again (it failed to start before) and refresh */
+  retry(): Promise<void>
   startDownload(): Promise<void>
   dismiss(): void
 }
@@ -51,7 +53,8 @@ export const useJamVoice = create<VoiceStore>((set, get) => ({
   setChoice(c) {
     try { localStorage.setItem(CHOICE, c) } catch { /* this page only */ }
     set({ choice: c, ...(c === 'no' ? { asking: false } : {}) })
-    if (c === 'yes') void get().refresh().then(() => { if (get().server === 'ready' || get().server === 'loading') { set({ asking: false }); const cur = current; if (cur) void listen(cur.capture, cur.t0) } })
+    // yes: an engine that failed to start is tried again, then the microphone opens for the capture now
+    if (c === 'yes') void get().retry().then(() => { if (get().server === 'ready' || get().server === 'loading') { set({ asking: false }); const cur = current; if (cur) void listen(cur.capture, cur.t0) } })
   },
   async refresh() {
     try {
@@ -62,8 +65,16 @@ export const useJamVoice = create<VoiceStore>((set, get) => ({
     } catch { set({ server: 'unavailable', reason: 'marver dev did not answer' }) }
   },
   async startDownload() {
-    try { await fetch(`${ROUTE}/api/jam/voice`, { method: 'POST', headers: { 'x-mv-c': csrf() } }) } catch { /* the poll says */ }
+    try { await fetch(`${ROUTE}/api/jam/voice`, { method: 'POST', headers: { 'x-mv-c': csrf(), 'content-type': 'application/json' }, body: JSON.stringify({ download: true }) }) } catch { /* the poll says */ }
     poll()
+  },
+  async retry() {
+    toldUnavailable = false
+    try {
+      const r = await fetch(`${ROUTE}/api/jam/voice`, { method: 'POST', headers: { 'x-mv-c': csrf(), 'content-type': 'application/json' }, body: JSON.stringify({ retry: true }) })
+      if (r.ok) { const b = await r.json(); set({ server: b.state, reason: b.reason, download: b.download ?? null, mb: b.mb ?? 490 }); return }
+    } catch { /* below */ }
+    await get().refresh()
   },
   dismiss() { set({ asking: false }) },
 }))
