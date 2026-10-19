@@ -275,6 +275,8 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
   const [note, setNoteState] = useState(() => moreDraftOf(card.id))
   const setNote = (t: string) => { setNoteState(t); setMoreDraft(card.id, t) }
   useEffect(() => { if (moreDraftOf(card.id) && !more) onMoreOpen(true) }, [])
+  // left on purpose (Esc cleared the draft): the field's words go too; closed by a click elsewhere, they stay
+  useEffect(() => { if (!more && !moreDraftOf(card.id)) setNoteState('') }, [more])
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (more) field.current?.focus() }, [more])
   const review = card.state === 'review'

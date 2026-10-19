@@ -1010,7 +1010,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           else void downloadModels()
         }
         const st = await speechLive.svc.state()
-        return json(res, 200, { ...st, download: downloadState(), mb: DOWNLOAD_MB })
+        return json(res, 200, { ...st, download: downloadState(), mb: DOWNLOAD_MB, busy: speechLive.svc.busy() })
       }
       if (path === 'jam/session' && (req.method === 'GET' || req.method === 'POST')) {
         // the Jam session (spec 27 Part 5): GET what runs (and how long its talk is); POST start, end, or

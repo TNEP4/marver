@@ -74,6 +74,9 @@ export interface Speech {
   retry(): void
   /** Attach the socket's upgrade handler to the dev server's HTTP server. */
   attach(server: Server): void
+  /** Is the audio connection busy - a segment still open on it, or one whose last words are not back yet?
+   *  A tab whose microphone another tab took over takes it back only once this is false. */
+  busy(): boolean
   /** A session ends: its talk still coming in is ended here, at the last sample received, and its last words
    *  are awaited (3 s at most) - so the transcript is whole before a record is sealed, whichever tab ends it. */
   finishTalk(session: string): Promise<void>
@@ -277,6 +280,10 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       if (worker) return { state: 'ready' }
       void start()
       return unavailable ? { state: 'unavailable', reason: unavailable } : { state: 'loading' }
+    },
+    busy() {
+      const ws = live
+      return !!ws && ws.readyState === ws.OPEN && [...owners.values()].some((o) => o.ws === ws)
     },
     async finishTalk(session) {
       await Promise.all([...talk].filter(([id]) => id.startsWith(`${session}~`)).map(([, end]) => end()))

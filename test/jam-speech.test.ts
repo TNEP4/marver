@@ -338,6 +338,33 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
     } finally { svc.stop(); rmSync(d, { recursive: true, force: true }) }
   }, 30_000)
 
+  it('the audio connection is busy while a segment is open or its last words are not back - then free for another tab to take', async () => {
+    const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
+    const svc = createSpeech()
+    svc.attach(server)
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
+      await new Promise((r) => ws.on('open', r))
+      const got: any[] = []
+      ws.on('message', (d) => got.push(JSON.parse(String(d))))
+      expect(svc.busy()).toBe(false)
+      const id = 'cap-1792399514739-busy01~1'
+      ws.send(JSON.stringify({ type: 'begin', capture: id }))
+      await new Promise((r) => setTimeout(r, 50))
+      expect(svc.busy()).toBe(true)
+      ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
+      await new Promise((r) => setTimeout(r, 20))
+      // ended, its final not back yet: still busy until it is
+      const t0 = Date.now()
+      while (!got.some((m) => m.type === 'final') && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 50))
+      expect(got.some((m) => m.type === 'final')).toBe(true)
+      expect(svc.busy()).toBe(false)
+      ws.close()
+    } finally { svc.stop(); server.close() }
+  }, 30_000)
+
   const text = (ws: Word[]) => ws.map((w) => w.w).join(' ')
   const inOrder = (ws: Word[]) => ws.every((w, i) => i === 0 || w.at >= ws[i - 1].at)
 

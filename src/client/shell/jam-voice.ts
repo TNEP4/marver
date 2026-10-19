@@ -210,6 +210,7 @@ function socket(): Promise<WebSocket | null> {
         for (const f of finals.values()) f(false)
         finals.clear()
         if (mic && !mic.closed && mic.seg) lost(mic.seg.owner, mic.seg.seg, takenOver ? 'another tab took the microphone - it comes back here when that tab is done' : 'the microphone connection closed')
+        if (takenOver) takeBackLater()
       }
       ws = s
       return s
@@ -227,17 +228,24 @@ function lost(owner: Owner, seg: string, why: string) {
   if (m && !m.closed && m.seg?.seg === seg) { closeNow(m); mic = null; setLive() }
   useStore.getState().toast(`${why} - the words so far are kept`)
 }
-const closeNow = (m: Mic) => {
-  m.closed = true; m.node.port.onmessage = null; m.stream.getTracks().forEach((t) => t.stop()); void m.ctx.close().catch(() => {})
-  // other tabs of this canvas hear that the microphone is free (a session's tab takes it back)
-  try { tabs?.postMessage({ type: 'released' }) } catch { /* no other tab */ }
-}
+const closeNow = (m: Mic) => { m.closed = true; m.node.port.onmessage = null; m.stream.getTracks().forEach((t) => t.stop()); void m.ctx.close().catch(() => {}) }
 
-/** The tabs of this canvas, told when one lets the microphone go: there is one audio connection per
- *  canvas, so a capture in another tab takes it over - when that tab is done, the session's tab (the one
- *  that holds its talk) takes it back. */
-const tabs: BroadcastChannel | null = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(`mv-jam-mic:${CONFIG.workspace ?? 'unknown'}`)
-if (tabs) tabs.onmessage = (e) => { if ((e.data as { type?: string })?.type === 'released' && session && !(mic && !mic.closed)) void reconcile() }
+/** One audio connection per canvas: a capture in another tab takes it over. The session's tab (the one
+ *  hearing its talk) then asks the server every two seconds whether the connection is still busy - a
+ *  segment open on it, or last words not back yet - and takes the microphone back once it is not (that
+ *  tab done, closed, or its microphone never started). */
+let waitingBack: ReturnType<typeof setInterval> | null = null
+function takeBackLater() {
+  if (waitingBack || !session) return
+  waitingBack = setInterval(async () => {
+    if (!session || (mic && !mic.closed)) { clearInterval(waitingBack!); waitingBack = null; return }
+    try {
+      const r = await fetch(`${ROUTE}/api/jam/voice`, { headers: { 'x-mv-c': csrf() } })
+      const b = r.ok ? await r.json() : null
+      if (b && b.busy === false) { clearInterval(waitingBack!); waitingBack = null; void reconcile() }
+    } catch { /* ask again */ }
+  }, 2_000)
+}
 
 /** Words for a capture, as they come (jam-capture.ts records them in its timeline). */
 let onWords: ((capture: string, words: Heard[]) => void) | null = null
