@@ -71,9 +71,13 @@ export async function endSession(write: { instructions: string; includeTalk: boo
   // from here until the server answers, no capture starts (the record must not miss it); the server also
   // refuses the record while a capture of the session is open in any tab
   setSessionEnding(true)
+  // each try is its own: an older one finishing late (its refresh slow) never frees what a newer one holds
+  const op = ++endingOp
+  const mine = () => op === endingOp
   // the server's answer, acted on at once (not behind the refresh): captures may start again; refused, the
   // session goes on - its talk heard again in the tab that holds its microphone, and you are told why
   const answered = (ok: boolean) => {
+    if (!mine()) return
     setSessionEnding(false)
     onAnswer?.()
     if (ok) { useJamUi.getState().setSheet(null); return }
@@ -86,8 +90,10 @@ export async function endSession(write: { instructions: string; includeTalk: boo
     return write
       ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, board: useStore.getState().board }, answered)
       : await post({ action: 'end', id: ses.id }, answered)
-  } finally { setSessionEnding(false) }
+  } finally { if (mine()) setSessionEnding(false) }
 }
+/** The latest try at ending the session (each Write or End is one). */
+let endingOp = 0
 
 
 /** `J` (or the Jam button): at rest, the start sheet (again: closes it); in a session, the wrap-up - a
@@ -216,12 +222,20 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   // the field grows with its words: three lines at least
   useEffect(() => { const el = field.current; if (el) { el.style.height = 'auto'; el.style.height = `${Math.max(el.scrollHeight, 66)}px` } }, [text])
   useEffect(() => () => { wrapWrite.current = null }, [])
+  const tries = useRef(0)   // (a hook: above the early return)
   if (!session) return null
   const minutes = Math.max(1, Math.round((Date.now() - session.since) / 60_000))
   // the session's captures - the lane's tiles - with where each stands
   const caps = laneCards(cards, run).filter((c) => c.kind === 'capture' && c.session === session.id && c.state !== 'dropped')
   const name = agent ? HARNESS[agent] ?? agent : 'your agent'
-  const write = async () => { if (busy) return; setBusy(true); await endSession({ instructions: text.trim(), includeTalk: talk }, () => setBusy(false)); setBusy(false) }
+  // Write is busy until the server answers THIS try (an older try's late end never frees it)
+  const write = async () => {
+    if (busy) return
+    const n = ++tries.current
+    setBusy(true)
+    await endSession({ instructions: text.trim(), includeTalk: talk }, () => { if (n === tries.current) setBusy(false) })
+    if (n === tries.current) setBusy(false)
+  }
   // ⏎ anywhere in the sheet writes the record - it never reaches a panel beneath it (jam-keys' sheet row)
   wrapWrite.current = () => void write()
   const summary = caps.length

@@ -380,6 +380,41 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
+  skippable('Write again while the first refused try still refreshes: the first finishing late never frees the second', async () => {
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter()
+    await until(`!!window.__mvJamQueue.getState().session`, 5000)
+    // try 1: refused at once, its refresh held; try 2: its answer held
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__n = 0; window.__rel1 = null; window.__rel2 = null; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'wrapup') {
+        window.__n += 1
+        if (window.__n === 2) await new Promise((r) => { window.__rel2 = r })
+        return new Response(JSON.stringify({ ok: false, error: 'not yet' }), { status: 409, headers: { 'content-type': 'application/json' } })
+      }
+      if (window.__n === 1 && !window.__held1 && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__held1 = true; await new Promise((r) => { window.__rel1 = r }) }
+      return f(u, o)
+    }; return 1 })()`)
+    const writeBtn = `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /Write the record/.test(b.textContent))`
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]') && document.activeElement?.hasAttribute('data-jam-wrap-field')`, 5000)
+      await browser!.send('Input.insertText', { text: 'twice' }, s)
+      await enter()
+      await until(`typeof window.__rel1 === 'function' && ${writeBtn}?.disabled === false`, 5000)   // try 1 refused; its refresh held
+      await browser!.eval(s, `${writeBtn}.click(), 1`)
+      await until(`typeof window.__rel2 === 'function'`, 5000)                                     // try 2 sent, unanswered
+      await browser!.eval(s, `window.__rel1(), 1`)                                                // try 1 finishes late
+      await sleep(400)
+      expect(await browser!.eval(s, `${writeBtn}?.disabled`)).toBe(true)                          // still try 2's
+      await browser!.eval(s, `window.__mvJamCapture.getState().start(), 1`)
+      await sleep(200)
+      expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBeNull()       // no capture while it is out
+      await browser!.eval(s, `window.__rel2(), 1`)
+      await until(`${writeBtn}?.disabled === false`, 5000)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
+  })
+
   skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
