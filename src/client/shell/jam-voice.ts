@@ -163,7 +163,7 @@ let takenOver = false
 
 const setLive = () => useJamVoice.setState({ live: !!mic && !mic.closed, hearing: mic && !mic.closed && mic.seg?.owner.kind === 'capture' ? mic.seg.owner.id : null })
 
-function socket(): Promise<WebSocket | null> {
+function socket(reclaim = false): Promise<WebSocket | null> {
   if (ws && ws.readyState === WebSocket.OPEN) return Promise.resolve(ws)
   if (wsOpen) return wsOpen
   wsOpen = (async () => {
@@ -171,7 +171,7 @@ function socket(): Promise<WebSocket | null> {
       const r = await fetch(`${ROUTE}/api/jam/audio-ticket`, { method: 'POST', headers: { 'x-mv-c': csrf() } })
       if (!r.ok) return null
       const { ticket } = await r.json()
-      const s = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${ROUTE}/api/jam/audio?ticket=${encodeURIComponent(ticket)}`)
+      const s = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${ROUTE}/api/jam/audio?ticket=${encodeURIComponent(ticket)}${reclaim ? '&reclaim=1' : ''}`)
       s.binaryType = 'arraybuffer'
       await new Promise<void>((res, rej) => { s.onopen = () => res(); s.onerror = () => rej(new Error('audio socket refused')) })
       s.onmessage = (e) => {
@@ -235,6 +235,8 @@ const closeNow = (m: Mic) => { m.closed = true; m.node.port.onmessage = null; m.
  *  segment open on it, or last words not back yet - and takes the microphone back once it is not (that
  *  tab done, closed, or its microphone never started). */
 let waitingBack: ReturnType<typeof setInterval> | null = null
+/** the next opening takes the connection back (refused by the server while it is busy) */
+let reclaiming = false
 function takeBackLater() {
   if (waitingBack || !session) return
   waitingBack = setInterval(async () => {
@@ -242,7 +244,7 @@ function takeBackLater() {
     try {
       const r = await fetch(`${ROUTE}/api/jam/voice`, { headers: { 'x-mv-c': csrf() } })
       const b = r.ok ? await r.json() : null
-      if (b && b.busy === false) { clearInterval(waitingBack!); waitingBack = null; void reconcile() }
+      if (b && b.busy === false) { clearInterval(waitingBack!); waitingBack = null; reclaiming = true; void reconcile() }
     } catch { /* ask again */ }
   }, 2_000)
 }
@@ -351,13 +353,18 @@ async function open(owner: Owner) {
   let ctx: AudioContext | null = null
   const undo = () => { stream?.getTracks().forEach((t) => t.stop()); void ctx?.close().catch(() => {}) }
   try {
-    const s = await socket()
-    if (!s || stale()) return
+    // the microphone first (its permission, its worklet), the connection last: a page never holds the one
+    // audio connection while it is still starting - and a reclaim takes it only if it is free
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }) }
     catch { useJamVoice.setState({ denied: true }); useStore.getState().toast('the microphone is blocked for this page - typed notes only'); return }
     if (stale()) { undo(); return }
     ctx = new AudioContext({ sampleRate: RATE })
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })))
+    if (stale()) { undo(); return }
+    const reclaim = reclaiming
+    reclaiming = false
+    const s = await socket(reclaim)
+    if (!s) { undo(); if (reclaim) takeBackLater(); return }   // still busy: ask again later
     if (stale() || s.readyState !== WebSocket.OPEN) { undo(); return }
     const node = new AudioWorkletNode(ctx, 'mv-pcm')
     ctx.createMediaStreamSource(stream).connect(node)

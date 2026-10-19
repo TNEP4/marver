@@ -338,31 +338,39 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
     } finally { svc.stop(); rmSync(d, { recursive: true, force: true }) }
   }, 30_000)
 
-  it('the audio connection is busy while a segment is open or its last words are not back - then free for another tab to take', async () => {
+  it('the audio connection is busy while a segment is open, while its last words are not back, and just after it opened; a reclaim is refused while busy', async () => {
+    // a stand-in engine that holds each final back for half a second
+    const d = mkdtempSync(join(tmpdir(), 'mv-slowworker-'))
+    const slow = join(d, 'w.mjs')
+    writeFileSync(slow, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 500) })\n")
     const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
-    const svc = createSpeech()
+    const svc = createSpeech({ workerUrl: new URL(`file://${slow}`) })
     svc.attach(server)
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
     const port = (server.address() as { port: number }).port
+    const connect = (reclaim = false) => new Promise<{ ok: boolean; ws: WebSocket }>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}${reclaim ? '&reclaim=1' : ''}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
+      ws.on('open', () => resolve({ ok: true, ws })); ws.on('error', () => resolve({ ok: false, ws }))
+    })
     try {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
-      await new Promise((r) => ws.on('open', r))
-      const got: any[] = []
-      ws.on('message', (d) => got.push(JSON.parse(String(d))))
-      expect(svc.busy()).toBe(false)
+      const a = await connect()
+      expect(svc.busy()).toBe(true)                                   // just opened: its page is still starting
       const id = 'cap-1792399514739-busy01~1'
-      ws.send(JSON.stringify({ type: 'begin', capture: id }))
-      await new Promise((r) => setTimeout(r, 50))
+      a.ws.send(JSON.stringify({ type: 'begin', capture: id }))
+      await new Promise((r) => setTimeout(r, 200))
       expect(svc.busy()).toBe(true)
-      ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
-      await new Promise((r) => setTimeout(r, 20))
-      // ended, its final not back yet: still busy until it is
-      const t0 = Date.now()
-      while (!got.some((m) => m.type === 'final') && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 50))
-      expect(got.some((m) => m.type === 'final')).toBe(true)
+      expect((await connect(true)).ok).toBe(false)                    // a reclaim never takes it from a working tab
+      a.ws.send(JSON.stringify({ type: 'end', capture: id, lastSample: 0 }))
+      await new Promise((r) => setTimeout(r, 150))
+      expect(svc.busy()).toBe(true)                                   // ended, its final not back
+      await new Promise((r) => setTimeout(r, 700))
+      // the final is back - and the grace after opening is long past only after 5 s: wait for it
+      await new Promise((r) => setTimeout(r, 4_500))
       expect(svc.busy()).toBe(false)
-      ws.close()
-    } finally { svc.stop(); server.close() }
+      const b = await connect(true)
+      expect(b.ok).toBe(true)                                         // free: taken back
+      b.ws.close()
+    } finally { svc.stop(); server.close(); rmSync(d, { recursive: true, force: true }) }
   }, 30_000)
 
   const text = (ws: Word[]) => ws.map((w) => w.w).join(' ')

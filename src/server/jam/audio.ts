@@ -163,10 +163,20 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
     return p
   }
 
+  /** Busy: a segment open on the live connection, or its last words not back - or the connection just opened
+   *  (its page is still starting its microphone: a few seconds before its first segment). */
+  let liveSince = 0
+  const busyNow = (): boolean => {
+    const ws = live
+    if (!ws || ws.readyState !== ws.OPEN) return false
+    return [...owners.values()].some((o) => o.ws === ws) || Date.now() - liveSince < 5_000
+  }
+
   const onSocket = (ws: WebSocket) => {
     // one audio socket per canvas: a second closes the first
     if (live && live !== ws) { try { live.close(4000, 'another audio connection took over') } catch { /* gone */ } }
     live = ws
+    liveSince = Date.now()
     let closed = false
     // per capture, one gate: everything for it reaches the worker in the order it came, and only the
     // worker it began on (audio said while the model loads waits for it instead of being lost); a capture
@@ -257,6 +267,12 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       closed = true
       if (live === ws) live = null
       for (const [id, c] of caps) {
+        // a session's talk still coming in is finished at its last sample, its words still go to the
+        // transcript (they need no page); a capture's audio goes - its page knows its words may be incomplete
+        if (id.startsWith('ses-') && !c.dropped) {
+          if (!c.ended) { c.ended = true; c.gate = c.gate.then((w) => { if (w && worker === w) w.postMessage({ type: 'end', capture: id, lastSample: c.sent }); return w }) }
+          continue
+        }
         talkT0.delete(id)
         if (owners.get(id)?.ws === ws) owners.delete(id)
         c.dropped = true
@@ -281,10 +297,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       void start()
       return unavailable ? { state: 'unavailable', reason: unavailable } : { state: 'loading' }
     },
-    busy() {
-      const ws = live
-      return !!ws && ws.readyState === ws.OPEN && [...owners.values()].some((o) => o.ws === ws)
-    },
+    busy() { return busyNow() },
     async finishTalk(session) {
       await Promise.all([...talk].filter(([id]) => id.startsWith(`${session}~`)).map(([, end]) => end()))
     },
@@ -293,6 +306,13 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         if (!(req.url ?? '').startsWith(AUDIO_PATH)) return   // the HMR socket and anything else: not ours
         if (!upgradeAllowed(req)) {
           socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+          socket.destroy()
+          return
+        }
+        // a tab taking the connection BACK (its session's talk) never takes it from one still working: the
+        // check and the swap are one step, here
+        if (new URL(req.url ?? '', 'http://x').searchParams.get('reclaim') === '1' && busyNow()) {
+          socket.write('HTTP/1.1 409 Conflict\r\nConnection: close\r\n\r\n')
           socket.destroy()
           return
         }
