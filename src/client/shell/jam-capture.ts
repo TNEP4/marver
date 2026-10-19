@@ -91,6 +91,8 @@ interface Cap {
   reviewing?: { card: string; batch: string; rev: number }
   /** Resume: the draft this capture continues, and when recording resumed */
   resumes?: { id: string; at: number }
+  /** the Jam session it was made in (Part 5) */
+  session?: string
 }
 
 interface CaptureState {
@@ -455,6 +457,10 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
 
 const broadcast = (msg: unknown) => { for (const inst of instances.values()) post(inst, msg) }
 
+/** The session running now (the queue view holds it), if any. */
+let sessionNow: () => string | undefined = () => undefined
+void import('./jam-queue.ts').then(({ useJamQueue }) => { sessionNow = () => useJamQueue.getState().session?.id })
+
 function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   const s = useStore.getState()
   // a capture becomes a thread on a board: the Not on a board view takes none (as it takes no comment)
@@ -474,6 +480,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
     id, state: 'recording', board: s.board, t0: from ? (steps[0]?.at ?? t) : t, steps, seen: new Set(),
     points: steps.flatMap((x) => ('point' in x && typeof x.point === 'number' ? [{ n: x.point, key: '', x: 0, y: 0 }] : [])), pictures: from ? [...from.pictures] : [],
     probes: 0, shots: 0, hearing: false, flushWait: new Map(), ...(reviewing ? { reviewing } : {}), ...(from ? { resumes: { id: from.id, at: t } } : {}),
+    ...(sessionNow() ? { session: sessionNow() } : {}),
   }
   // what is on screen and selected as it starts - a resumed one too, just after the resume (you may have
   // moved to another frame in the pause: the record names it)
@@ -540,7 +547,7 @@ function trySeal(id: string) {
   const timeline = [...c.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
   const record: CaptureRecord = {
     format: 'marver.jam.capture', v: 1, id,
-    context: { canvas: location.host, board: c.board, ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
+    context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
     view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
     timeline, pictures: c.pictures,
   }

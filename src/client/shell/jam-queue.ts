@@ -19,6 +19,10 @@ export interface JamCard {
   reviewing?: { card: string; batch: string; rev: number }; edited?: string; notes?: number; capture?: string
   /** the title is the name you gave it (Rename), not its first words */
   named?: boolean
+  /** the session it was made in (a capture), or whose record it writes (a wrap-up) */
+  session?: string
+  /** a session record: the file it writes */
+  file?: string
 }
 /** The review's frames: the ones the run changed (all of them when none did - there is still a before
  *  and after to look at). */
@@ -30,6 +34,8 @@ interface QueueState {
   agent: string | null
   /** the lane's run, while one lasts */
   run: { since: number } | null
+  /** the Jam session running now (spec 27 Part 5) */
+  session: { id: string; since: number } | null
   load(): Promise<void>
   apply(view: unknown): void
   act(card: JamCard, action: JamAction, body?: string): Promise<boolean>
@@ -54,6 +60,7 @@ export const useJamQueue = create<QueueState>((set, get) => {
     cards: null,
     agent: null,
     run: null,
+    session: null,
     async load() {
       if (PUBLISHED) return
       try {
@@ -69,7 +76,9 @@ export const useJamQueue = create<QueueState>((set, get) => {
       const first = !loaded
       loaded = true
       const run = (v as { run?: { since?: unknown } }).run
-      set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null, run: run && typeof run.since === 'number' ? { since: run.since } : null })
+      const ses = (v as { session?: { id?: unknown; since?: unknown } }).session
+      set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null, run: run && typeof run.since === 'number' ? { since: run.since } : null,
+        session: ses && typeof ses.id === 'string' && typeof ses.since === 'number' ? { id: ses.id, since: ses.since } : null })
       if (first) return
       // something to review: a soft chime, once per batch that leaves a capture to review, if the page
       // has focus - never a notice (spec 27, Part 2)

@@ -8,7 +8,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
-import { useJamVoice, type Heard } from './jam-voice.ts'
+import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
+import { PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
+import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
 import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
@@ -55,6 +57,8 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const cap = useJamCapture()
   const voice = useJamVoice()
   const shown = useLaneShown()
+  const session = useJamQueue((s) => s.session)
+  const playing = useStore((s) => !!s.play)
   const [, setTick] = useState(0)
   // the capture tile's timer and a working card's clock move
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t) }, [])
@@ -76,6 +80,26 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     ui.open({ kind: 'capture', id: draft.id })
     reveal(draft)
   }, [cap.current, cap.sealed, cap.lastEnded, cards])
+
+  // the session as the server holds it: a page opened (or reloaded) during one hears its talk again; one
+  // ended elsewhere (another tab) stops the talk here
+  useEffect(() => {
+    if (session && voiceSessionId() !== session.id) void voiceSession(session.id, performance.timeOrigin + performance.now())
+    else if (!session && voiceSessionId()) void voiceSessionEnd()
+  }, [session?.id])
+
+  // J pressed while a capture recorded: the wrap-up waits for that capture's read-back to have opened and
+  // closed (or for it to have no draft at all - dropped, or kept at once)
+  useEffect(() => {
+    if (ui.sheet !== 'wrap-pending' || cap.current || Object.keys(cap.caps).length || cap.unsent.length) return
+    const id = cap.lastEnded
+    const card = id ? cards?.find((c) => c.id === id) : undefined
+    // sealed but its card not here yet: wait for it (a dropped capture never sealed - nothing to wait for)
+    if (id && !card && cap.sealed.some((x) => x.id === id)) return
+    // a draft: its read-back first - opened, then closed (confirmed, kept, dropped, or set aside)
+    if (card && card.state === 'draft' && (shownFor !== id || ui.panel?.id === id)) return
+    ui.setSheet('wrap')
+  }, [ui.sheet, ui.panel, cap.current, cap.caps, cap.unsent, cap.lastEnded, cards, shownFor])
 
   // a draft being resumed is the capture recording (or sealing) now: its own tile steps aside
   const list = shownLane(cards, run, cap.resuming)
@@ -125,13 +149,22 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     return { of: [idx + 1, of.length] as [number, number] }
   }, [ui.panel, panelCard, list])
 
-  if (!shown && !ui.panel) return null
+  const sheetOpen = ui.sheet === 'start' || ui.sheet === 'wrap'
+  // the microphone question in a session with no capture recording: under the Jam button
+  const askAlone = voice.asking && !cap.current && !!session
+  if (!shown && !ui.panel && !sheetOpen && !askAlone) return null
+  // in play the lane folds to a counter beside the navigator (Q opens it); the capture recording stays
+  const folded = playing && !ui.laneKeys
   return (
     <>
       {cap.current && <EdgeRing />}
+      {ui.sheet === 'start' && <div className="jm-sheet-at"><StartSheet /></div>}
+      {ui.sheet === 'wrap' && <div className="jm-sheet-at"><WrapSheet /></div>}
+      {askAlone && !sheetOpen && <div className="jm-sheet-at"><VoiceAsk {...voiceAsk(voice)} /></div>}
+      {folded && shown && <PlayCounter cards={list} style={{ left: playNavRight(), bottom: 'var(--edge)' }} />}
       {shown && (
         <CaptureLaneRow
-          tiles={tiles} recording={recording} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
+          tiles={folded ? [] : tiles} recording={recording} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
           onOpen={(id) => openTile(id)}
           onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c)) } else e.preventDefault() }}
           ask={voice.asking && cap.current ? voiceAsk(voice) : undefined}
@@ -142,7 +175,19 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           } : undefined}
         />
       )}
-      {ui.panel && panelCard && (
+      {ui.panel && panelCard && panelCard.kind === 'wrapup' && (
+        <FocusPanel left={sidebarRight} onClose={() => ui.close()}>
+          <RecordDetail key={panelCard.id} card={panelCard} agent={agentName} more={ui.moreOpen} of={detail?.of} onPrev={step(-1)} onNext={step(1)}
+            onMoreOpen={(on) => ui.setMoreOpen(on)}
+            onGood={() => { void act(panelCard, 'good'); ui.close() }}
+            onLater={() => { void act(panelCard, 'later'); ui.close() }}
+            onMore={(text) => void (async () => {
+              if (await act(panelCard, 'more', text)) { ui.setMoreOpen(false); ui.close() }
+              else useStore.getState().toast('your note was not sent - try again')
+            })()} />
+        </FocusPanel>
+      )}
+      {ui.panel && panelCard && panelCard.kind !== 'wrapup' && (
         <FocusPanelView
           left={sidebarRight}
           kind={ui.panel.kind}
@@ -177,6 +222,12 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
       <ContextMenu menu={cm.menu} close={cm.close} />
     </>
   )
+}
+
+/** In play: just right of the stage's navigator (its restart and frame arrows), where the counter sits. */
+function playNavRight(): number {
+  const r = document.querySelector('.sh-play-nav')?.getBoundingClientRect()
+  return r ? Math.round(r.right + 8) : 176
 }
 
 /** What the microphone question shows now: the question, the download, its progress. */

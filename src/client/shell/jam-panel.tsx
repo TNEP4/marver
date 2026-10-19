@@ -23,7 +23,7 @@ const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
 
 /** Marver's mark, as the thread draws it (Comments.tsx MarverAvatar) - drawn here from the same classes
  *  so the panels never import the comments module (which will import these panels). */
-const Marver = ({ size = 20 }: { size?: number }) => (
+export const Marver = ({ size = 20 }: { size?: number }) => (
   <span className="cm-avatar cm-marver" style={{ width: size, height: size }} aria-label="Marver"><ParallelogramFillIcon size={Math.round(size * 0.5)} /></span>
 )
 

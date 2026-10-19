@@ -2,6 +2,7 @@ import { frameReady, onFrameMessage, recordCopy } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
 import { JamSurface, useLaneLift } from './JamSurface.tsx'
+import { JamButton } from './jam-session.tsx'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
@@ -1022,6 +1023,8 @@ export function App() {
         {/* far-left section: actions - comment mode, laser, tidy */}
         <CommentButton />
         <LaserButton />
+        {/* Jam V2 (spec 27 Part 5): the session - between Laser and Tidy */}
+        {!PUBLISHED && CONFIG.jam && <JamButton />}
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
           <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
         </Tip>

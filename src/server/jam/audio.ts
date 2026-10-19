@@ -202,7 +202,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         if (id.startsWith('ses-') && Number.isFinite(m.t0)) talkT0.set(id, Number(m.t0))
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }
         // a segment that is over (final, dropped, or never started) is forgotten here
-        own.done = () => { if (caps.get(id) === c) caps.delete(id) }
+        own.done = () => { if (caps.get(id) === c) caps.delete(id); talkT0.delete(id) }
         c.gate = start().then((w) => {
           if (!w) { owners.delete(id); own.done?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
           if (closed || c.dropped || worker !== w) return null
@@ -232,6 +232,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       closed = true
       if (live === ws) live = null
       for (const [id, c] of caps) {
+        talkT0.delete(id)
         if (owners.get(id)?.ws === ws) owners.delete(id)
         c.dropped = true
         worker?.postMessage({ type: 'drop', capture: id })

@@ -430,6 +430,9 @@ export async function voiceSession(id: string, t0: number) {
   await begin()
 }
 
+/** The session the microphone hears now (the page's own state - the server holds the session). */
+export const voiceSessionId = (): string | null => session?.id ?? null
+
 /** A session ends: its talk's last segment is cut; the microphone closes (unless a capture records). */
 export async function voiceSessionEnd(): Promise<void> {
   const s = session

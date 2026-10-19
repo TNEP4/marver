@@ -13,6 +13,7 @@
 import { frameLoaded, frameReady, onFrameMessage, stageNavigated } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
+import { JamButton } from './jam-session.tsx'
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
@@ -680,6 +681,7 @@ function PlayInner() {
         <CommentButton />
         {!trimmed && <>
           <LaserButton />
+          {!PUBLISHED && CONFIG.jam && <JamButton inPlay />}
           <i className="sep" />
           {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill includeSlide={slides} stageOnly={slides} hint={deviceHint} dark />}
           <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />

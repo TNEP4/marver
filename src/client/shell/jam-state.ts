@@ -18,6 +18,10 @@ interface JamUi {
   moreOpen: boolean
   /** bumps when the lane should come back to its right end (a new capture or draft) */
   followEnd: number
+  /** the session's sheets (Part 5): the start sheet (J at rest), the wrap-up (J in a session) - or
+   *  'wrap-pending': J pressed while a capture recorded, the wrap-up waits for its read-back to close */
+  sheet: 'start' | 'wrap' | 'wrap-pending' | null
+  setSheet(s: JamUi['sheet']): void
   open(panel: Panel): void
   close(): void
   setLaneKeys(on: boolean): void
@@ -29,7 +33,8 @@ interface JamUi {
 }
 
 export const useJamUi = create<JamUi>((set, get) => ({
-  panel: null, selected: null, laneKeys: false, view: 'after', tab: 0, moreOpen: false, followEnd: 0,
+  panel: null, selected: null, laneKeys: false, view: 'after', tab: 0, moreOpen: false, followEnd: 0, sheet: null,
+  setSheet(s) { set({ sheet: s }) },
   // the next card opens on After, its first frame
   open(panel) { set({ panel, selected: panel?.id ?? get().selected, view: 'after', tab: 0, moreOpen: false }) },
   close() { set({ panel: null, moreOpen: false }) },

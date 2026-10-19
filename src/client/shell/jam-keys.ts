@@ -9,7 +9,8 @@
  *   a review open         ⏎ looks good · ⇧⏎ more work · → later / next · ← back · B before/after ·
  *                         ⌥← ⌥→ frame tabs · Esc leave
  *   the lane has the keys ← → move · ⏎ open · ⌘⏎ do next · K keep · ⌫ drop · Esc leave
- *   always                S start a capture · Q the lane · V next capture to review
+ *   a session sheet open  ⏎ start (the start sheet) · Esc close it
+ *   always                S start a capture · J the session (start it, or end it) · Q the lane · V next capture to review
  *
  * The same table says which keys the shell owns right now; they are mirrored into every frame (a
  * frame consumes an owned key - before a focused button sees ⏎ - and forwards it). `Tab` is never
@@ -18,6 +19,7 @@
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
+import { pressJ, startSession } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { PUBLISHED, useStore } from './store.ts'
 
@@ -162,6 +164,13 @@ const rows = (): Row[] => {
   const ui = useJamUi.getState()
   const panelCard = cardById(ui.panel?.id)
   return [
+    { // a session sheet open: the start sheet's ⏎ starts; Esc closes either (the wrap-up's field keeps its own keys)
+      on: () => ui.sheet === 'start' || ui.sheet === 'wrap',
+      keys: {
+        ...(ui.sheet === 'start' ? { Enter: () => void startSession() } : {}),
+        Escape: () => ui.setSheet(null),
+      },
+    },
     { // a read-back open
       on: () => ui.panel?.kind === 'capture' && panelCard?.state === 'draft',
       keys: {
@@ -225,6 +234,7 @@ const rows = (): Row[] => {
       on: () => !PUBLISHED,
       keys: {
         s: () => cap.start(reviewNow()),
+        j: () => pressJ(),
         q: () => { const list = lane(); if (!list.length) return; ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) },
         v: () => { const n = nextReview(); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } else useStore.getState().toast('nothing to review') },
       },
