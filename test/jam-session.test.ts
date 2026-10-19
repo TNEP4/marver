@@ -170,6 +170,22 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('tags are counted one by one, by when each was written - two merged into one card count two', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const dir = join(root, 'design', 'comments')
+    const t = Date.now() + 5
+    appendEvents(dir, 'home', [{ id: 'etag11', ts: t, type: 'create', commentId: 'etag11', frame: 'demo/hero', board: 'home', author: OWNER, body: '@marver one' }])
+    appendEvents(dir, 'home', [{ id: 'etag12', ts: t + 1, type: 'reply', commentId: 'rc-etag12', parentId: 'etag11', board: 'home', author: OWNER, body: '@marver and two' }])
+    record(root, 'home', 'etag11'); record(root, 'home', 'etag12')
+    await jam.poke()
+    expect(jam.snapshot().cards.filter((c: any) => c.kind === 'comment').length).toBe(1)
+    expect(jam.tags(SES)).toBe(2)
+    jam.stop()
+    done()
+  })
+
   it('the session survives a restart of the dev server', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())

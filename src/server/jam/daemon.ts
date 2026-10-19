@@ -881,6 +881,27 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
 
+  /** A sealed capture taken in: checked (and, resumed, as a continuation), stored, ledgered, a draft card -
+   *  or queued at once with `jam.capture: 'at-once'`. */
+  const landCapture = async (rec: import('./types.ts').CaptureRecord): Promise<{ ok: boolean; card?: Card; error?: string }> => {
+    // Resume: only from a record still as it was sealed, and only as its continuation - every step of
+    // it, moved by one offset, ahead of the new ones, and its pictures kept
+    const rs = rec.context.resumes
+    if (rs && !storedOnce(rec)) {
+      const src = readCapture(root, rs.id)
+      if (!src || !sourceIntact(rs.id)) return { ok: false, error: 'the capture it resumes changed after it was sealed - capture it again' }
+      if (!continues(src.record, rec, rs.at)) return { ok: false, error: 'this capture does not continue the one it resumes' }
+    }
+    const stored = storeCapture(root, rec)
+    if (typeof stored === 'string') return { ok: false, error: stored }
+    ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
+    const card = await q.lock((j) => { const c = addCapture(j, rec, stored.hash); q.persist(); return structuredClone(c) })
+    queueChanged()
+    // `jam.capture: 'at-once'`: no read-back - queued as soon as it is sealed
+    if (cfg.capture === 'at-once' && card.state === 'draft') return confirm(card.id, card.rev, 'queued')
+    return { ok: true, card }
+  }
+
   /** Captures of a session open on some page, until they land: capture id -> its session, renewed until. */
   const openCaps = new Map<string, { session: string; until: number }>()
   const openFor = (session: string): boolean => {
@@ -889,7 +910,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     return [...openCaps.values()].some((v) => v.session === session)
   }
   /** Tags written since a session began (they are answered in their threads, not in its record). */
-  const tagsSince = (j: Journal, since: number): number => j.cards.filter((c) => c.kind === 'comment' && c.made >= since).length
+  // counted per tag, by when each was written (tags merged into one card, or joining a card from before the
+  // session, each count once)
+  const tagsSince = (j: Journal, since: number): number => j.cards.filter((c) => c.kind === 'comment')
+    .reduce((n, c) => n + c.events.filter((id) => (c.when?.[id] ?? c.made) >= since).length, 0)
 
   /** The agent's reply on a card's last run, as it said it. */
   const resultFor = (j: Journal, c: Card): string | undefined => {
@@ -1014,7 +1038,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     captureOpen(capture, session, on) {
       if (!CAPTURE_ID.test(capture) || !SESSION_ID.test(session)) return
-      if (on && !q.j.cards.some((c) => c.id === capture)) openCaps.set(capture, { session, until: Date.now() + 60_000 })
+      // a renewal for one that has landed is late news: ignored (only landing or an explicit off clears one)
+      if (on) { if (!q.j.cards.some((c) => c.id === capture)) openCaps.set(capture, { session, until: Date.now() + 60_000 }) }
       else openCaps.delete(capture)
     },
     tags(id) {
@@ -1047,24 +1072,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     async capture(raw) {
       const rec = checkRecord(raw)
       if (typeof rec === 'string') return { ok: false, error: rec }
-      openCaps.delete(rec.id)   // it landed
-      // Resume: only from a record still as it was sealed, and only as its continuation - every step of
-      // it, moved by one offset, ahead of the new ones, and its pictures kept
-      const rs = rec.context.resumes
-      if (rs && !storedOnce(rec)) {
-        const src = readCapture(root, rs.id)
-        if (!src || !sourceIntact(rs.id)) return { ok: false, error: 'the capture it resumes changed after it was sealed - capture it again' }
-        if (!continues(src.record, rec, rs.at)) return { ok: false, error: 'this capture does not continue the one it resumes' }
-      }
-      const stored = storeCapture(root, rec)
-      if (typeof stored === 'string') return { ok: false, error: stored }
-      ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
-      const card = await q.lock((j) => { const c = addCapture(j, rec, stored.hash); q.persist(); return structuredClone(c) })
-      queueChanged()
-      // `jam.capture: 'at-once'`: no read-back - queued as soon as it is sealed
-      if (cfg.capture === 'at-once' && card.state === 'draft') return confirm(card.id, card.rev, 'queued')
-      return { ok: true, card }
+      // it is still open until it has landed whole - its card made, and queued at once when that is the
+      // setting: only then is it no longer open (a record sealed meanwhile waits for it)
+      try { return await landCapture(rec) } finally { openCaps.delete(rec.id) }
     },
+
     async act(id, rev, action, body) {
       const c = q.j.cards.find((x) => x.id === id)
       if (c?.kind === 'capture' && (action === 'confirm' || (action === 'keep' && (c.state === 'draft' || c.state === 'confirming')))) return confirm(id, rev, action === 'confirm' ? 'queued' : 'kept')
