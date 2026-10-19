@@ -162,7 +162,10 @@ function sample(c: Cap, step: { event: string; frame?: string; to?: string; fram
     // the instance it came from (a step's own frame document), or the selected one showing this frame
     const k = [step.src, ...(keys ?? [])].find((x) => x && nodes.some((n) => n.key === x && n.frame === f))
     if (k) c.keys[f] = k
-    const z = sizeNow(f, c.keys[f]); if (z) c.sizes[f] = z
+    const z = sizeNow(f, c.keys[f])
+    // a view (play left, a fit) is not a touch: what was seen on the stage keeps the stage's size until the frame is
+    // used on the canvas
+    if (z && !(step.event === 'view' && c.sizes[f]?.play && !z.play)) c.sizes[f] = z
   }
 }
 

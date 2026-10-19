@@ -978,22 +978,28 @@ describe('captures in the browser: the first trial', () => {
     await decide(id, 'good')
   })
 
-  skippable('play entered mid-capture: the stage\'s size is what the frame is pictured at, after play is left too', async () => {
+  skippable('play entered mid-capture: the stage\'s size is what the frame is pictured at, after play is left too (one frame on screen)', async () => {
     const ka = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/alpha').key`)
     await browser!.eval(s, `(window.__mvStore.getState().select(${JSON.stringify(ka)}), 1)`)
+    // only alpha on screen: leaving play then makes a one-frame view of it
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await browser!.eval(s, `window.__mvStore.getState().setPlay({ at: 'spec/alpha', device: 'mobile', theme: 'light' }), 1`)
     await until(`!!document.querySelector('iframe[title="play"]')`, 10_000)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('on the phone'), 1`)
     await sleep(300)
+    // the board shows alpha alone as play is left: the view it comes back to is of that one frame
+    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); window.__nodes0 = st.nodes; window.__mvStore.setState({ nodes: st.nodes.filter((n) => n.frame === 'spec/alpha') }); return 1 })()`)
     await browser!.eval(s, `window.__mvStore.getState().setPlay(null), 1`)
-    await sleep(300)
+    await sleep(400)
+    const views = await browser!.eval(s, `(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.steps ?? []).filter((x) => x.event === 'view').map((x) => (x.view.frames ?? []).length)`)
     await browser!.eval(s, `(window.__mvStore.getState().select(null), 1)`)
     await key('e')
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
     const rec = await browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
+    expect(views[views.length - 1]).toBe(1)                                      // the exit view was of alpha alone
     expect(rec.record.sizes?.['spec/alpha']?.play).toBe(true)
+    await browser!.eval(s, `(window.__mvStore.setState({ nodes: window.__nodes0 }), 1)`)
     await decide(id, 'drop')
   })
 })
