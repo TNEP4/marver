@@ -33,7 +33,7 @@ import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, textO
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
-import { captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
+import { CAPTURE_ID, captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
@@ -66,6 +66,9 @@ export interface JamCore {
   record(id: string): { file: string; text: string | null; reply?: string } | null
   /** Could the session's record be written now? Why not, or null - asked before its talk is ended. */
   canWrap(id: string): string | null
+  /** A capture of a session is open on a page (recording, sealing, waiting to send) - or no longer. Renewed
+   *  every 20 s by its page while it is; one not renewed for a minute (its tab gone) is forgotten. */
+  captureOpen(capture: string, session: string, on: boolean): void
 }
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
@@ -876,6 +879,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
 
+  /** Captures of a session open on some page, until they land: capture id -> its session, renewed until. */
+  const openCaps = new Map<string, { session: string; until: number }>()
+
   /** The agent's reply on a card's last run, as it said it. */
   const resultFor = (j: Journal, c: Card): string | undefined => {
     const b = j.batches.find((x) => x.batchId === (c.batch ?? c.ran?.[c.ran.length - 1]))
@@ -995,9 +1001,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       reserve(); queueChanged(); void pump()
       return { ok: true, session: null, card: r.card }
     },
+    captureOpen(capture, session, on) {
+      if (!CAPTURE_ID.test(capture) || !SESSION_ID.test(session)) return
+      if (on && !q.j.cards.some((c) => c.id === capture)) openCaps.set(capture, { session, until: Date.now() + 60_000 })
+      else openCaps.delete(capture)
+    },
     canWrap(id) {
       const j = q.j, ctx = q.ctx()
       if (j.session?.id !== id) return 'no such session runs'
+      // a capture of the session still open in some tab (recording, sealing, sending) belongs in the record
+      const now = Date.now()
+      for (const [k, v] of openCaps) if (v.until < now) openCaps.delete(k)
+      if ([...openCaps.values()].some((v) => v.session === id)) return 'a capture of the session is still recording or being sent - end it first, then write the record'
       for (const c of j.cards) {
         if (c.kind !== 'capture' || c.session !== id || ['draft', 'dropped', 'confirming'].includes(c.state)) continue
         if (!captureIntact(j, ctx, c.id)) return 'a capture of the session changed after it was confirmed - capture it again, then write the record'
@@ -1019,6 +1034,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     async capture(raw) {
       const rec = checkRecord(raw)
       if (typeof rec === 'string') return { ok: false, error: rec }
+      openCaps.delete(rec.id)   // it landed
       // Resume: only from a record still as it was sealed, and only as its continuation - every step of
       // it, moved by one offset, ahead of the new ones, and its pictures kept
       const rs = rec.context.resumes
@@ -1108,6 +1124,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.session = (op) => core.session(op)
   jamLive.record = (id) => core.record(id)
   jamLive.canWrap = (id) => core.canWrap(id)
+  jamLive.captureOpen = (c, ses, on) => core.captureOpen(c, ses, on)
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.

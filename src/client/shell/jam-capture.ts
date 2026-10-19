@@ -457,6 +457,34 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
 
 const broadcast = (msg: unknown) => { for (const inst of instances.values()) post(inst, msg) }
 
+/** The session is being wrapped up (its talk flushing, its record being written): no capture starts. */
+let sessionEnding = false
+export const setSessionEnding = (on: boolean) => { sessionEnding = on }
+
+/** A capture of a session tells the server it is open - recording, sealing, waiting to send - and renews
+ *  that every 20 s until it lands or is dropped: the session's record waits for it, whatever tab ends it. */
+const openOnServer = new Map<string, { session: string; timer: ReturnType<typeof setInterval> }>()
+const tellOpen = (capture: string, session: string, on: boolean) => {
+  void fetch(`${ROUTE}/api/jam/capture-open`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ capture, session, on }) }).catch(() => {})
+}
+function holdOpen(capture: string, session: string) {
+  tellOpen(capture, session, true)
+  const timer = setInterval(() => {
+    const st = useJamCapture.getState()
+    if (st.current === capture || st.caps[capture] || st.unsent.includes(capture)) tellOpen(capture, session, true)
+    else releaseOpen(capture, false)
+  }, 20_000)
+  openOnServer.set(capture, { session, timer })
+}
+/** Stop renewing (it landed - the server knows - or it was dropped: say so). */
+function releaseOpen(capture: string, tell: boolean) {
+  const o = openOnServer.get(capture)
+  if (!o) return
+  clearInterval(o.timer)
+  openOnServer.delete(capture)
+  if (tell) tellOpen(capture, o.session, false)
+}
+
 /** The session running now (the queue view holds it), if any. */
 let sessionNow: () => string | undefined = () => undefined
 void import('./jam-queue.ts').then(({ useJamQueue }) => { sessionNow = () => useJamQueue.getState().session?.id })
@@ -489,6 +517,7 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   // starting with frames selected makes them its focus (on the canvas - in play the stage is the surface)
   if (!s.play && s.selection.length) cap.steps.push({ at: at0, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] })
   useJamCapture.setState((st) => ({ current: id, caps: { ...st.caps, [id]: cap }, tick: st.tick + 1, ...(from ? { resuming: [...st.resuming, from.id] } : {}) }))
+  if (cap.session) holdOpen(id, cap.session)
   broadcast({ type: 'sh:capture', id, on: true })
   watchUi()
   void voiceBegin(id, cap.t0)   // your words, if you said yes to the microphone (spec 27 Part 4)
@@ -588,6 +617,7 @@ async function upload(record: CaptureRecord): Promise<void> {
     return
   }
   forgetSealed(record.id)
+  releaseOpen(record.id, !r.ok)   // it landed (the server knows); refused, it is no longer open either
   // the server holds it: a resumed draft is replaced now (or, refused, shows again)
   const was = record.context.resumes?.id
   useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)), ...(was ? { resuming: st.resuming.filter((x) => x !== was) } : {}) }))
@@ -640,11 +670,13 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   settling: null,
   async resume(draft, ready) {
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
+    if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return false }
     return resumeNow(draft, ready)
   },
   start(reviewing) {
     // one capture at a time: the one recording is ended or dropped first
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return }
+    if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return }
     begin(reviewing)
   },
   end() {
@@ -661,6 +693,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     broadcast({ type: 'sh:capture', id, on: false })
     cancelDwell()
     voiceDrop(id)
+    releaseOpen(id, true)
     // a resumed capture dropped: its draft is still there, as it was
     const was = get().caps[id]?.resumes?.id
     set((s) => { const caps = { ...s.caps }; delete caps[id]; return { current: null, caps, noteOpen: false, noteDraft: '', tick: s.tick + 1, ...(was ? { resuming: s.resuming.filter((x) => x !== was) } : {}) } })

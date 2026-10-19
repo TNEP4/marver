@@ -129,6 +129,23 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a capture of the session still open on some page (recording, sending) holds the record back until it lands; one never renewed is forgotten', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const r = rec('still recording in another tab', SES)
+    jam.captureOpen(r.id, SES, true)
+    expect(jam.canWrap(SES)).toMatch(/still recording or being sent/)
+    await jam.capture(r)                                               // it landed
+    expect(jam.canWrap(SES)).toBeNull()
+    jam.captureOpen('cap-1792399514739-gone01', SES, true)
+    expect(jam.canWrap(SES)).toMatch(/still recording/)
+    jam.captureOpen('cap-1792399514739-gone01', SES, false)            // dropped
+    expect(jam.canWrap(SES)).toBeNull()
+    jam.stop()
+    done()
+  })
+
   it('the session survives a restart of the dev server', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())

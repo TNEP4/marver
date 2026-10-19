@@ -1038,6 +1038,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           : { action: b.action, id: b.id })
         return json(res, r.ok ? 200 : 409, r)
       }
+      if (path === 'jam/capture-open' && req.method === 'POST') {
+        // a capture of a session is open on this page (or no longer) - the record waits for it - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        let b: any; try { b = JSON.parse(raw ?? '') } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const { jamLive } = await import('./jam/live.ts')
+        if (!jamLive.captureOpen) return json(res, 409, { error: 'jam is not running here' })
+        if (typeof b?.capture !== 'string' || typeof b?.session !== 'string') return json(res, 400, { error: 'expected { capture, session, on }' })
+        jamLive.captureOpen(b.capture, b.session, b.on === true)
+        return json(res, 200, { ok: true })
+      }
       if (path === 'jam/record' && req.method === 'GET') {
         // a session record: its file, what it says now, the agent's reply - owner only
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })

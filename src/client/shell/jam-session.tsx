@@ -11,7 +11,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ROUTE } from '../const.ts'
-import { useJamCapture } from './jam-capture.ts'
+import { setSessionEnding, useJamCapture } from './jam-capture.ts'
 import { laneCards } from './jam-keys.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
@@ -62,11 +62,17 @@ export async function endSession(write: { instructions: string; includeTalk: boo
     useStore.getState().toast(cap.current ? 'a capture is recording - end it first (E), then wrap up' : 'a capture is still being sent - a moment, then wrap up')
     return false
   }
-  // the talk's last words first: they belong in the transcript the record reads
-  await voiceSessionEnd()
-  const ok = write
-    ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, tags: tagsDuring(ses), board: useStore.getState().board })
-    : await post({ action: 'end', id: ses.id })
+  // from here until the server answers, no capture starts (the record must not miss it); the server also
+  // refuses the record while a capture of the session is open in any tab
+  setSessionEnding(true)
+  let ok = false
+  try {
+    // the talk's last words first: they belong in the transcript the record reads
+    await voiceSessionEnd()
+    ok = write
+      ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, tags: tagsDuring(ses), board: useStore.getState().board })
+      : await post({ action: 'end', id: ses.id })
+  } finally { setSessionEnding(false) }
   if (!ok) {
     // the session goes on: its talk is heard again (in the tab that holds its microphone)
     const still = useJamQueue.getState().session
