@@ -117,8 +117,9 @@ interface CaptureState {
   resume(draft: string, ready?: () => Promise<boolean>): Promise<boolean>
   /** drafts being continued right now (recording, sealing or waiting to send) - the lane hides them */
   resuming: string[]
-  /** the draft whose Resume is settling (its record loading, its edits saving): its read-back is read-only
-   *  meanwhile, so nothing typed can race the start */
+  /** the draft whose Resume is settling (its edits saving, its record loading): its read-back's words are
+   *  locked meanwhile, so nothing typed can race the start - set by the caller (resumeDraft) before its
+   *  first wait, cleared when the Resume is over */
   settling: string | null
   /** the capture ended last (E): its read-back is the one that opens, whatever seals first */
   lastEnded: string | null
@@ -570,7 +571,7 @@ export function resendSealed() {
   } catch { /* none */ }
 }
 
-/** Resume's work, while `settling` holds the draft read-only: load the record, let the caller settle, start. */
+/** Resume's work, while the caller holds `settling`: load the record, let the caller settle, start. */
 async function resumeNow(draft: string, ready?: () => Promise<boolean>): Promise<boolean> {
   let rec: CaptureRecord | null = null
   try {
@@ -603,9 +604,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   settling: null,
   async resume(draft, ready) {
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
-    if (get().settling) return false
-    set({ settling: draft })
-    try { return await resumeNow(draft, ready) } finally { set({ settling: null }) }
+    return resumeNow(draft, ready)
   },
   start(reviewing) {
     // one capture at a time: the one recording is ended or dropped first

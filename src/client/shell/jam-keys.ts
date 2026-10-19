@@ -81,31 +81,35 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
   else useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : action === 'keep' ? 'kept' : 'dropped'} - look again`)
 }
 
-/** Resume a draft that ended too soon: its edit saves first (the resumed capture carries it on), the
- *  read-back closes, and recording goes on where it stopped. */
 /** Leave a field in the open panel (its words save on blur) - before anything takes the panel away. */
 const leavePanelField = () => { const a = document.activeElement; if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur() }
 
+/** Resume a draft that ended too soon: its edit saves first (the resumed capture carries it on), the
+ *  read-back closes, and recording goes on where it stopped. */
 export async function resumeDraft(id: string) {
-  // every edit of the draft saved - before the record loads, and again after (words typed while it loaded)
-  // - so the resumed capture carries them: recording starts only then, and only from a draft
-  // (the second time, the read-back is locked - `settling` - so no newer words can come in meanwhile)
-  const settled = async (): Promise<boolean> => {
-    if (useJamUi.getState().panel?.id === id) leavePanelField()
-    for (let i = 0; i < 3 && saving.get(id); i++) { const p = saving.get(id); await p; if (saving.get(id) === p) break }
-    if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return false }
-    return cardById(id)?.state === 'draft'
-  }
-  if (!(await settled())) return
-  if (await useJamCapture.getState().resume(id, settled)) {
-    // as the UI is NOW (the record loaded meanwhile - another panel may have opened): only what points at
-    // it; words typed in its read-back while the record loaded save before it closes (the resumed capture
-    // carries the draft's edit when it seals)
-    const ui = useJamUi.getState()
-    if (ui.panel?.id === id) ui.close()
-    // its tile has stepped aside: nothing points at it, and the lane gives its keys back
-    if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
-  }
+  const cap = useJamCapture.getState()
+  if (cap.current) { useStore.getState().toast('a capture is recording - press E to end it first'); return }
+  if (cap.settling || cardById(id)?.state !== 'draft') return
+  // first, at once: leave the editor (its words start saving) and lock the words - from here on nothing
+  // typed can race the start; the lock holds through every wait and is let go at the end
+  if (useJamUi.getState().panel?.id === id) leavePanelField()
+  useJamCapture.setState({ settling: id })
+  try {
+    // every edit of the draft saved - before the record loads and again after - and it is still a draft
+    const settled = async (): Promise<boolean> => {
+      for (let i = 0; i < 3 && saving.get(id); i++) { const p = saving.get(id); await p; if (saving.get(id) === p) break }
+      if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return false }
+      return cardById(id)?.state === 'draft'
+    }
+    if (!(await settled())) return
+    if (await useJamCapture.getState().resume(id, settled)) {
+      // as the UI is NOW (another panel may have opened meanwhile): only what points at it
+      const ui = useJamUi.getState()
+      if (ui.panel?.id === id) ui.close()
+      // its tile has stepped aside: nothing points at it, and the lane gives its keys back
+      if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
+    }
+  } finally { useJamCapture.setState({ settling: null }) }
 }
 
 /** What clicking a tile (or ⏎ on it) does: a review opens the review detail, a card that asks opens
