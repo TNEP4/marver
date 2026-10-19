@@ -400,8 +400,13 @@ async function boot(root: string, portFlag: number | undefined, instance: string
         return addPicture(root, r.path, { frame: frameId, ...entry })
       })
     if (jam) {
+      // words on this Mac (spec 27 Part 4): the audio socket beside the canvas; the model loads on first use
+      const { createSpeech, speechLive } = await import('./jam/audio.ts')
+      const speech = createSpeech()
+      if (server.httpServer) speech.attach(server.httpServer as import('node:http').Server)
+      speechLive.svc = speech
       const close = server.close.bind(server)
-      server.close = (async () => { jam.stop(); return close() }) as typeof server.close
+      server.close = (async () => { jam.stop(); speech.stop(); speechLive.svc = undefined; return close() }) as typeof server.close
     }
   } else if (config.jamOff === 'no-agent') {
     // The one off-state nobody has explained yet - and a feature that arms itself has to say

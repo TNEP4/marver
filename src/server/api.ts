@@ -989,6 +989,23 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const r = await jamLive.act(b.id, b.rev, b.action, b.body)
         return json(res, r.ok ? 200 : 409, r)
       }
+      if (path === 'jam/audio-ticket' && req.method === 'POST') {
+        // a single-use ticket (30 s) for the audio socket - owner only (spec 27 Part 4)
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { issueTicket, speechLive } = await import('./jam/audio.ts')
+        if (!speechLive.svc) return json(res, 409, { error: 'jam is not running here' })
+        return json(res, 200, { ticket: issueTicket() })
+      }
+      if (path === 'jam/voice' && (req.method === 'GET' || req.method === 'POST')) {
+        // words on this Mac: whether they can run, the model's download (POST starts it, after you said yes)
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { speechLive } = await import('./jam/audio.ts')
+        const { downloadModels, downloadState, DOWNLOAD_MB } = await import('./jam/speech-models.ts')
+        if (!speechLive.svc) return json(res, 409, { error: 'jam is not running here' })
+        if (req.method === 'POST') void downloadModels()
+        const st = await speechLive.svc.state()
+        return json(res, 200, { ...st, download: downloadState(), mb: DOWNLOAD_MB })
+      }
       if (path === 'jam/capture' && req.method === 'POST') {
         // the sealed capture at E: stored once, a draft card - owner only
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
