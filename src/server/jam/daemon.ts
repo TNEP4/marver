@@ -916,7 +916,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   // session, each count once)
   const tagsSince = (j: Journal, since: number): number => {
     const seen = new Set<string>()   // one tag once, whatever cards carry it (a merge keeps it on both)
-    for (const c of j.cards) if (c.kind === 'comment') for (const id of c.events) if ((c.when?.[id] ?? c.made) >= since) seen.add(`${c.board}|${id}`)
+    // on any card that carries tags - one joining a queued capture too; never a capture's own comment or a More work reply
+    for (const c of j.cards) for (const id of c.events) if (!id.startsWith('cap-') && !id.startsWith('mw-') && (c.when?.[id] ?? c.made) >= since) seen.add(`${c.board}|${id}`)
     return seen.size
   }
 

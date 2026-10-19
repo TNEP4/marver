@@ -476,4 +476,4 @@ export async function voiceSessionEnd(): Promise<void> {
   await settled(s.id)
 }
 
-if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamVoice = useJamVoice
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamVoice = useJamVoice; (window as any).__mvJamVoiceSession = voiceSessionId }

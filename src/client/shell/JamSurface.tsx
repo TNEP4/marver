@@ -85,8 +85,10 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // ended elsewhere (another tab) stops the talk here
   useEffect(() => {
     // only the tab that holds the session's microphone hears its talk - another tab never takes it over
-    if (session && voiceSessionId() !== session.id && holdsSessionMic(session.id)) void voiceSession(session.id, performance.timeOrigin + performance.now())
-    else if (!session && voiceSessionId()) void voiceSessionEnd()
+    const heard = voiceSessionId()
+    if (session && heard !== session.id && holdsSessionMic(session.id)) void voiceSession(session.id, performance.timeOrigin + performance.now())
+    // the talk of a session that is not the server's (ended, or another one) stops here
+    else if (heard && heard !== session?.id) void voiceSessionEnd()
   }, [session?.id])
 
   // J pressed while a capture recorded: the wrap-up waits for that capture's read-back to have opened and

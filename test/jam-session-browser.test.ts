@@ -251,6 +251,28 @@ describe('the Jam session in the browser', () => {
     await pic('5-record-failed')
     await browser!.eval(s, `[...document.querySelectorAll('[data-jam-record] .jm-btn')].find((b) => b.textContent === 'Drop').click(), 1`)
     await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(f.id)})?.state === 'dropped' && !document.querySelector('[data-jam-record]')`, 5000)
+  })
+
+  skippable('a session ended in another tab while this one was still starting it: this tab never hears its talk', async () => {
+    // the start lands, then (before this page hears back) another tab ends it
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.fetch = async (u, o) => {
+      const r = await f(u, o)
+      if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') {
+        window.__startId = JSON.parse(o.body).id
+        await f(u, { ...o, body: JSON.stringify({ action: 'end', id: window.__startId }) })
+      }
+      return r
+    }; return 1 })()`)
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+      await enter()
+      await until(`!document.querySelector('[data-jam-sheet]')`, 5000)
+      await sleep(500)
+      expect(await browser!.eval(s, `window.__mvJamQueue.getState().session`)).toBeNull()
+      expect(await browser!.eval(s, `window.__startId`)).toMatch(/^ses-/)
+      expect(await browser!.eval(s, `window.__mvJamVoiceSession()`)).toBeNull()
+      expect(await browser!.eval(s, `sessionStorage.getItem('mv-jam-session-mic') === window.__startId`)).toBe(false)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
     // and no component broke along the way
     expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })

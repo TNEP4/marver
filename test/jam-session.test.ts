@@ -186,6 +186,30 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a tag that joins a queued capture of the session counts too (its own comment never does)', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, capture: 'at-once', concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const dir = join(root, 'design', 'comments')
+    const t = Date.now() + 5
+    // a tag the agent is working on holds the one slot: the capture after it stays queued
+    appendEvents(dir, 'home', [{ id: 'etag31', ts: t, type: 'create', commentId: 'etag31', frame: 'demo/hero', board: 'home', author: OWNER, body: '@marver first' }])
+    record(root, 'home', 'etag31')
+    await jam.poke()
+    const r = rec('queued behind it', SES)
+    await jam.capture(r)
+    expect(card(jam, r.id).state).toBe('queued')
+    expect(jam.tags(SES)).toBe(1)
+    const thread = card(jam, r.id).thread
+    appendEvents(dir, 'home', [{ id: 'etag32', ts: t + 2, type: 'reply', commentId: 'rc-etag32', parentId: thread, board: 'home', author: OWNER, body: '@marver and this too' }])
+    record(root, 'home', 'etag32')
+    await jam.poke()
+    expect(card(jam, r.id).events).toContain('etag32')
+    expect(jam.tags(SES)).toBe(2)
+    jam.stop()
+    done()
+  })
+
   it('a capture of the session is held open on the server while it lands - a re-sent upload with no marker from its page too', async () => {
     const { root, done } = setup()
     // at once: it is queued as it lands, and its pin is looked up slowly
