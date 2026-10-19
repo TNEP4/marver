@@ -74,7 +74,7 @@ export function goalText(packet: JobPacket, subagents = true): string {
       'A member with `brief.wrapup` is a SESSION RECORD: the owner reviewed their design out loud and ended the session.',
       '`content.instructions` is how THEY want it taken in - follow it first (what to lead with, what to file as',
       'backlog). `content.captures` is every capture they sent or kept: its `record` (words, notes, picks, UI steps),',
-      'their `edited` words, its `state` and your `reply`, their `verdict`. `kept` captures were never sent as work -',
+      'their `edited` words, its `state` and your `reply`, their `verdict`, and `more` - what they asked after it, with what came of each (the last may still be open). `kept` captures were never sent as work -',
       'they are for the record. `content.talk`, when present, is what they said between captures. `content.more` is',
       'their note on an earlier record (brief.follows holds it): improve that record by it.',
       `Write the record to \`content.file\` (create its folder if needed): a page in clean words - what was asked, what was`,

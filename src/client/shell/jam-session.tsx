@@ -28,8 +28,11 @@ const now = () => performance.timeOrigin + performance.now()
 
 // ---- the session's moves -------------------------------------------------------------------------------
 
+/** Why the last session move was refused (the server's words), for the one line that says so. */
+let lastError: string | undefined
 async function post(body: Record<string, unknown>): Promise<boolean> {
   const r = await fetch(`${ROUTE}/api/jam/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) }).catch(() => null)
+  lastError = r && !r.ok ? ((await r.json().catch(() => null)) as { error?: string } | null)?.error : r ? undefined : 'marver dev did not answer'
   await useJamQueue.getState().load()
   return !!r?.ok
 }
@@ -58,7 +61,13 @@ export async function endSession(write: { instructions: string; includeTalk: boo
   const ok = write
     ? await post({ action: 'wrapup', id: ses.id, instructions: write.instructions, includeTalk: write.includeTalk, tags: tagsDuring(ses), board: useStore.getState().board })
     : await post({ action: 'end', id: ses.id })
-  if (!ok) { useStore.getState().toast(write ? 'the record could not be written - look again' : 'the session could not end - look again'); return false }
+  if (!ok) {
+    // the session goes on: its talk is heard again (in the tab that holds its microphone)
+    const still = useJamQueue.getState().session
+    if (still && holdsSessionMic(still.id)) void voiceSession(still.id, now())
+    useStore.getState().toast(write ? `the record could not be written - ${lastError ?? 'look again'}` : 'the session could not end - look again')
+    return false
+  }
   useJamUi.getState().setSheet(null)
   return true
 }

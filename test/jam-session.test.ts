@@ -62,6 +62,55 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a record job\'s packet is made from the journal and the seal before each run - a packet changed on disk (its kind, its file) never reaches the agent', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    void jam.tick()
+    await new Promise((r) => setTimeout(r, 800))
+    jam.stop()
+    const sealedFile = jam.record(w.card!.id)!.file
+    const pk = join(root, 'design', '.local', 'jam', 'packets', `${card(jam, w.card!.id).batch}.json`)
+    const p = JSON.parse(readFileSync(pk, 'utf8'))
+    p.members[0].kind = 'capture'
+    p.members[0].brief.wrapup.content.file = 'design/config.ts'
+    writeFileSync(pk, JSON.stringify(p))
+    const again = createJam(root, CFG, agent())
+    await again.tick()
+    const seen = packets(root).filter((x) => x.members.some((m: any) => m.card === w.card!.id))
+    const last = seen[seen.length - 1]
+    expect(last.members[0].kind).toBe('wrapup')
+    expect(last.members[0].brief.wrapup.content.file).toBe(sealedFile)
+    expect(existsSync(join(root, 'design', 'config.ts'))).toBe(false)
+    again.stop()
+    done()
+  })
+
+  it('the record holds a capture\'s More work asks, in order, with what came of each', async () => {
+    const { root, dir: _d, done } = { ...setup(), dir: '' }
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const r = rec('make it blue', SES)
+    await jam.capture(r)
+    jam.stop()
+    // run it to review with an agent that answers, then ask for more work - left queued (the agent hangs again)
+    const a2 = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    await a2.act(r.id, card(a2, r.id).rev, 'confirm')
+    await a2.tick()
+    expect(card(a2, r.id).state).toBe('review')
+    a2.stop()
+    const a3 = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    expect((await a3.act(r.id, card(a3, r.id).rev, 'more', 'actually make it red')).ok).toBe(true)
+    const w = await a3.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w.ok).toBe(true)
+    const stored = JSON.parse(readFileSync(join(root, 'design', '.local', 'jam', 'wrapups', `${w.card!.id}.json`), 'utf8'))
+    expect(stored.captures[0].more).toEqual([{ ask: 'actually make it red' }])
+    expect(stored.captures[0].verdict).toBe('more work')
+    a3.stop()
+    done()
+  })
+
   it('the session survives a restart of the dev server', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())

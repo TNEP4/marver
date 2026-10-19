@@ -209,14 +209,21 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false, sent: 0 }
         // a segment that is over (final, dropped, or never started) is forgotten here
         own.done = () => { if (caps.get(id) === c) caps.delete(id); talkT0.delete(id); talk.delete(id) }
-        // a talk segment can be ended from here (the session ends in another tab): at the last sample received
-        if (id.startsWith('ses-')) talk.set(id, () => new Promise<void>((res) => {
-          if (c.ended || c.dropped) { res(); return }
-          c.ended = true
-          const t = setTimeout(res, 3_000)
-          own.onFinal = () => { clearTimeout(t); res() }
-          then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), () => { clearTimeout(t); res() })
-        }))
+        // a talk segment can be ended from here (the session ends in another tab): at the last sample received;
+        // one already ending (its page switched to a capture) is awaited too - until its final words, 3 s at most
+        if (id.startsWith('ses-')) {
+          let finished!: () => void
+          const final = new Promise<void>((r) => { finished = r })
+          own.onFinal = finished
+          talk.set(id, () => {
+            if (!c.ended && !c.dropped) {
+              c.ended = true
+              then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), finished)
+            }
+            if (c.dropped) finished()
+            return Promise.race([final, new Promise<void>((r) => setTimeout(r, 3_000))])
+          })
+        }
         c.gate = start().then((w) => {
           if (!w) { owners.delete(id); own.done?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
           if (closed || c.dropped || worker !== w) return null
@@ -232,12 +239,13 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const lastSample = Number(m.lastSample)
         // the worker answers `final` after the last words; without the worker it began on, they may be incomplete
         then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: Number.isFinite(lastSample) ? lastSample : 0 }),
-          () => { owners.get(id)?.done?.(); owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
+          () => { const o = owners.get(id); o?.done?.(); o?.onFinal?.(); owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
       } else if (m.type === 'drop') {
         const c = caps.get(id)
         if (!c || c.dropped) return
         c.dropped = true
         owners.get(id)?.done?.()
+        owners.get(id)?.onFinal?.()
         owners.delete(id)
         then(c, (w) => w.postMessage({ type: 'drop', capture: id }))
       }

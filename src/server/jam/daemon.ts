@@ -27,7 +27,7 @@ import { localProfile } from '../profile.ts'
 import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
-import { goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
+import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
 import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
@@ -322,6 +322,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   const realShared = (f: string) => canonicalShared(root, f)
+  const cards0 = (b: Batch) => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
 
   const changedBoards = (b: Batch) => { for (const board of new Set(b.members.map((m) => m.board))) hooks.changed?.(board) }
   const reserve = (exclusiveWaiting?: boolean) => {
@@ -402,26 +403,38 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   const runBatch = async (b: Batch) => {
-    const packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket
-    // a session record's content comes from its seal, never from the packet file: checked, and written
-    // into the packet the agent reads right before it runs (a changed packet cannot point it elsewhere)
-    if (packet.members.some((m) => m.kind === 'wrapup')) {
-      const bad: string[] = []
-      for (const m of packet.members) {
-        if (m.kind !== 'wrapup') continue
-        const c = q.j.cards.find((x) => x.id === m.card)
-        const w = c && readWrapup(root, wrapupOf(c))
-        if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
-        m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
-      }
-      if (bad.length) {
-        await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') { c.state = 'failed'; c.note = 'the session record changed after it was written - write it again'; c.rev += 1; c.at = Date.now() } } q.persist() })
-        packet.members = packet.members.filter((m) => !bad.includes(m.card))
-        b.members = b.members.filter((m) => !bad.includes(m.card))
-        if (!packet.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); return }
-      }
-      writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+    // The packet the agent reads is made again from the journal right before every run - its members,
+    // their kinds, their frozen briefs - never trusted from the file on disk; a session record's content
+    // comes from its seal, checked (a changed file cannot point the agent anywhere else)
+    const bad: string[] = []
+    const logs = new Map<string, ReturnType<typeof replay>>()
+    const threadsOf = (board: string) => { let t = logs.get(board); if (!t) logs.set(board, (t = replay(readLog(commentsDir, board)))); return t }
+    const members: JobPacket['members'] = []
+    // (a batch from an older journal kept its briefs only in the packet: those are read from it, by card -
+    // never a member's kind or a record's content, which come from the journal and the seal)
+    let disk: JobPacket | null = null
+    try { disk = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { disk = null }
+    for (const m of b.members) {
+      const c = q.j.cards.find((x) => x.id === m.card)
+      const kept = m.brief ?? (c && c.kind !== 'wrapup' ? disk?.members.find((x) => x.card === m.card && x.id === m.id)?.brief : undefined)
+      if (!c || !kept) { bad.push(m.card); continue }
+      let brief = kept
+      if (c.kind === 'wrapup') {
+        const w = readWrapup(root, wrapupOf(c))
+        if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
+        brief = { ...brief, wrapup: { content: w.wrapup, hash: w.hash } }
+      } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
+      const t = c.thread ? threadsOf(m.board).find((x) => x.id === c.thread) : undefined
+      members.push({ id: m.id, card: c.id, kind: c.kind, board: m.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames,
+        ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
     }
+    if (bad.length) {
+      await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') { c.state = 'failed'; c.note = c.kind === 'wrapup' ? 'the session record changed after it was written - write it again' : 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } q.persist() })
+      b.members = b.members.filter((m) => !bad.includes(m.card))
+      if (!b.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); return }
+    }
+    const packet = buildPacket(b.batchId, members, b.frames, b.exclusive ? [...new Set(cards0(b).flatMap((c) => c.exclusive ?? []))] : undefined)
+    writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
     const cards = () => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     // Presence glow that FOLLOWS the work. Jam agents have no shell to run `marver work`, so the
     // daemon moves the glow itself: the reserved frames light up at once ("I heard you"), then as
@@ -458,6 +471,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     try {
       while (!stopped && b.attempts < MAX_ATTEMPTS) {
         await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
+        // every spawn reads the packet the journal makes, written again now (a record's seal checked again)
+        for (const m of packet.members) if (m.kind === 'wrapup') {
+          const c = q.j.cards.find((x) => x.id === m.card)
+          const w = c && readWrapup(root, wrapupOf(c))
+          if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
+          m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
+        }
+        writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
         const beat = setInterval(followWork, 2_000)
         beat.unref?.()
         try {
@@ -829,6 +850,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** Already stored under this id (a retried upload): the checks ran when it was first taken. */
   const storedOnce = (rec: { id: string }) => q.j.cards.some((c) => c.id === rec.id)
 
+  /** A capture's More work asks (its events after the confirm - each ledgered as yours), in order, each
+   *  with the result of the run that took it (none yet for one still queued or working). */
+  const moreAsks = (j: Journal, ctx: ReturnType<Queue['ctx']>, c: Card): { ask: string; result?: string }[] => {
+    if (!c.events.length) return []
+    const log = readLog(commentsDir, c.board)
+    const runs = [...(c.ran ?? []), ...(c.batch ? [c.batch] : [])].map((id) => j.batches.find((b) => b.batchId === id)).filter((b): b is Batch => !!b)
+    return c.events.flatMap((id) => {
+      const ev = log.find((e) => e.id === id)
+      if (!ev || !ctx.owned.has(`${c.board}\t${id}`)) return []
+      const run = runs.find((b) => b.members.some((m) => m.card === c.id && m.brief?.asks.some((a) => a.id === id)))
+      const m = run?.members.find((x) => x.card === c.id)
+      const r = m && run?.results?.[m.id]
+      const ask = (ev.body ?? '').replace(/^@marver\s*/i, '').trim()
+      return [{ ask, ...(r && 'body' in r ? { result: r.body } : {}) }]
+    })
+  }
+
   /** The agent's reply on a card's last run, as it said it. */
   const resultFor = (j: Journal, c: Card): string | undefined => {
     const b = j.batches.find((x) => x.batchId === (c.batch ?? c.ran?.[c.ran.length - 1]))
@@ -932,6 +970,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           session: op.id, since: j.session.since, instructions: op.instructions, includeTalk: op.includeTalk, tags: Math.max(0, Math.floor(op.tags) || 0),
           title: (c) => (captureView(c) as { title?: string }).title ?? c.id, reply: (c) => resultFor(j, c),
           intact: (c) => captureIntact(j, ctx, c.id),
+          more: (c) => moreAsks(j, ctx, c),
         })
         if ('error' in w) return { error: w.error }
         const unsafe = recordPathProblem(root, w.file)

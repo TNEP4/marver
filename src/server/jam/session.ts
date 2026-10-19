@@ -62,6 +62,8 @@ export interface WrapupCapture {
   reply?: string
   /** your verdict on its review: looks good, more work */
   verdict?: string
+  /** what you asked after it (More work), in order, with what came of each - the last may still be open */
+  more?: { ask: string; result?: string }[]
 }
 export interface Wrapup {
   format: 'marver.jam.wrapup'; v: 1
@@ -115,7 +117,7 @@ export function recordPathProblem(root: string, file: string): string | null {
 }
 
 /** What the wrap-up says of the session, at this moment ("as of"). */
-export function buildWrapup(j: Journal, root: string, o: { session: string; since: number; instructions: string; includeTalk: boolean; tags: number; title?: (c: Card) => string; reply?: (c: Card) => string | undefined; intact?: (c: Card) => boolean; now?: number }): Wrapup | { error: string } {
+export function buildWrapup(j: Journal, root: string, o: { session: string; since: number; instructions: string; includeTalk: boolean; tags: number; title?: (c: Card) => string; reply?: (c: Card) => string | undefined; intact?: (c: Card) => boolean; more?: (c: Card) => { ask: string; result?: string }[]; now?: number }): Wrapup | { error: string } {
   const now = o.now ?? Date.now()
   const caps: WrapupCapture[] = []
   for (const c of j.cards.filter((x) => x.kind === 'capture' && x.session === o.session).sort((a, b) => a.made - b.made)) {
@@ -130,6 +132,7 @@ export function buildWrapup(j: Journal, root: string, o: { session: string; sinc
       id: c.id, title: o.title?.(c) ?? c.name ?? c.id, state: c.state, ...(c.state === 'kept' ? { kept: true as const } : {}),
       record: cap.record, ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
       ...(o.reply?.(c) ? { reply: o.reply(c) } : {}), ...(verdict ? { verdict } : {}),
+      ...(o.more?.(c).length ? { more: o.more(c) } : {}),
     })
   }
   const talk = o.includeTalk ? readTalk(root, o.session) : undefined
