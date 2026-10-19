@@ -507,6 +507,22 @@ describe('captures: review round 2 fixes', () => {
     expect(captureFrames(none)).toEqual(['demo/a', 'demo/b', 'demo/c'])
   })
 
+  it('a resumed capture keeps the frames its first part was about, beside the new part\'s; one begun over empty canvas falls back on the first view that showed frames', () => {
+    const first = [
+      { at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b'] } },
+      { at: 2, event: 'words', text: 'fix the header on a' },
+    ]
+    const r = rec({ timeline: [...first, { at: 10, event: 'view', view: { frames: ['demo/c'] } }, { at: 11, frame: 'demo/c', event: 'pick', point: 1, bundle: { tag: 'h1' }, mode: 'canvas' }] as any })
+    ;(r.context as any).resumes = { id: 'cap-1792399514739-first1', at: 10 }
+    expect(captureFrames(r)).toEqual(['demo/a', 'demo/b', 'demo/c'])
+    const blank = rec({ timeline: [
+      { at: 1, event: 'view', view: { frames: [] } },
+      { at: 2, event: 'view', view: { frames: ['demo/a', 'demo/b'] } },
+      { at: 3, event: 'words', text: 'these two' },
+    ] as any, view: { frames: [] } as any })
+    expect(captureFrames(blank)).toEqual(['demo/a', 'demo/b'])
+  })
+
   it('pruning keeps the capture a waiting follow-up carries', () => {
     const j = readJournal(mkdtempSync(join(tmpdir(), 'mv-jamc-p-')))
     const long = Date.now() - 30 * 24 * 3600_000

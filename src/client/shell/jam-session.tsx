@@ -137,7 +137,7 @@ export function JamButton({ inPlay }: { inPlay?: boolean }) {
       <button className={`sh-pill-btn jm-jam${state !== 'idle' ? ` ${state}` : ''}${sheet === 'start' || sheet === 'wrap' ? ' press' : ''}`}
         data-jam-button={state} aria-label={session ? 'End the Jam session' : 'Jam session'} onClick={pressJ}>
         {/* the whole session reads as on: the dot pulses from start to end, between captures too */}
-        {session ? <i className="jm-live-dot" /> : <WaveformIcon size={16} />}
+        {session || recording ? <i className="jm-live-dot" /> : <WaveformIcon size={16} />}
         {session && <span className="jm-clock">{minutes}</span>}
         {session && micOff && <MicrophoneSlashIcon size={14} className="jm-nomic" />}
       </button>

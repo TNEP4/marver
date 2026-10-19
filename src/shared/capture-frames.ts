@@ -9,7 +9,14 @@ type Step = { at: number; frame?: string; event: string; [k: string]: unknown }
  *  view alone (zoomed or panned to it). A frame that was merely on screen beside them is not one of them: it
  *  costs a picture before and after the run, and holds the frame for nothing. With none touched, the frames
  *  in view as it began (three at most) - the agent still has the place you were talking about. */
-export function touchedFrames(timeline: readonly Step[], view?: { frames?: string[] }, fallback = true): string[] {
+export function touchedFrames(timeline: readonly Step[], view?: { frames?: string[] }, fallback = true, resumedAt?: number): string[] {
+  // a resumed capture is two recordings: each keeps the frames it was about (the first part's, as they were
+  // before the resume, and the new part's) - the run must still reach what the first part asked for
+  if (resumedAt !== undefined) {
+    const before = touchedFrames(timeline.filter((s) => s.at < resumedAt), view, fallback)
+    const after = touchedFrames(timeline.filter((s) => s.at >= resumedAt), undefined, false)
+    return [...new Set([...before, ...after])]
+  }
   const out: string[] = []
   const add = (f?: unknown) => { if (typeof f === 'string' && f && !out.includes(f)) out.push(f) }
   for (const s of timeline) {
@@ -23,6 +30,7 @@ export function touchedFrames(timeline: readonly Step[], view?: { frames?: strin
     }
   }
   if (out.length || !fallback) return out
-  const first = (timeline.find((s) => s.event === 'view')?.view as { frames?: string[] } | undefined)?.frames ?? view?.frames ?? []
-  return first.slice(0, 3)
+  // none touched: the first view that showed any frame (it may have begun over empty canvas), three at most
+  const firstView = timeline.flatMap((s) => (s.event === 'view' ? [(s.view as { frames?: string[] } | undefined)?.frames ?? []] : [])).find((f) => f.length)
+  return (firstView ?? view?.frames ?? []).slice(0, 3)
 }

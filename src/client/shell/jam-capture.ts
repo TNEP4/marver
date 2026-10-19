@@ -88,6 +88,7 @@ interface Cap {
   probes: number                           // probe answers still out
   shots: number                            // picture requests still out
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
+  endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   hearing: boolean                         // its words are still coming (the microphone's `final` not in)
   flushWait: Map<string, string>           // instance -> the captureDoc whose flush we wait for
   reviewing?: { card: string; batch: string; rev: number }
@@ -567,18 +568,10 @@ function drain(id: string) {
     for (const inst of instances.values()) if (inst.captureDoc && current(inst)) x.flushWait.set(inst.key, inst.captureDoc)
   })
   useJamCapture.setState({ noteDraft: '', noteOpen: false })
-  // the frames it is about, pictured at E - those not pictured in it yet, three at most - each as the instance on
-  // screen shows it (a narrow, dark second copy as itself); never every frame that happens to be in view
+  // in play the stage is what it is about: pictured now. On the canvas the end pictures wait until every frame
+  // has flushed and every probe answered (trySeal) - a hover still in flight may name the frame to picture
   const st = useStore.getState()
-  if (st.play) shoot(id, st.play.at, 'end')
-  else {
-    const c2 = capOf(id)
-    const onScreen = visibleNodes()
-    // (none touched: the one frame it began on - its words were about the place, one picture shows it)
-    const touched = touchedFrames(c2?.steps ?? [], undefined, false)
-    const frames = (touched.length ? touched : touchedFrames(c2?.steps ?? []).slice(0, 1)).filter((f) => !c2?.shotFrames.includes(f)).slice(0, 3)
-    for (const f of frames) shoot(id, f, 'end', onScreen.find((n) => n.frame === f)?.key)
-  }
+  if (st.play) { mutate((s) => { const x = s.caps[id]; if (x) x.endShot = true }); shoot(id, st.play.at, 'end') }
   broadcast({ type: 'sh:capture', id, on: false })
   // the audio is cut at the key press, then its last words are awaited (3 s at most)
   mutate((st) => { const x = st.caps[id]; if (x) x.hearing = true })
@@ -603,9 +596,26 @@ function drain(id: string) {
   trySeal(id)
 }
 
+/** The end pictures, once the timeline is whole: the frames it is about not pictured in it yet, three at most -
+ *  each as the instance on screen shows it (a narrow, dark second copy as itself); never every frame that
+ *  happens to be in view. None touched: the one frame it began on. Returns whether any was asked for. */
+function endPictures(id: string): boolean {
+  const c = capOf(id)
+  if (!c || c.endShot) return false
+  mutate((s) => { const x = s.caps[id]; if (x) x.endShot = true })
+  const onScreen = visibleNodes()
+  const touched = touchedFrames(c.steps, undefined, false, c.resumes?.at)
+  const frames = (touched.length ? touched : touchedFrames(c.steps).slice(0, 1)).filter((f) => !c.shotFrames.includes(f)).slice(0, 3)
+  for (const f of frames) shoot(id, f, 'end', onScreen.find((n) => n.frame === f)?.key)
+  return frames.length > 0
+}
+
 function trySeal(id: string) {
   const c = capOf(id)
-  if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0 || c.shots > 0 || c.hearing) return
+  if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0) return
+  // every step is in: now the end pictures (sealing waits for them)
+  if (!c.endShot && endPictures(id)) return
+  if (c.shots > 0 || c.hearing) return
   const timeline = [...c.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
   const record: CaptureRecord = {
     format: 'marver.jam.capture', v: 1, id,

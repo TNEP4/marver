@@ -160,6 +160,9 @@ function reviewNow(): { card: string; batch: string; rev: number } | undefined {
   return ui.panel?.kind === 'review' && c?.kind === 'capture' && c.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
 }
 
+/** Start a capture, as S does: one made while a capture's review is open follows that review (its run). */
+export const startCapture = () => useJamCapture.getState().start(reviewNow())
+
 const rows = (): Row[] => {
   const cap = useJamCapture.getState()
   const ui = useJamUi.getState()
@@ -236,7 +239,7 @@ const rows = (): Row[] => {
     { // always (no field focused)
       on: () => !PUBLISHED,
       keys: {
-        s: () => cap.start(reviewNow()),
+        s: () => startCapture(),
         j: () => pressJ(),
         q: () => { const list = lane(); if (!list.length) return; ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) },
         v: () => { const n = nextReview(); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } else useStore.getState().toast('nothing to review') },

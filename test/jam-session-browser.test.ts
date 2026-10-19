@@ -528,4 +528,32 @@ describe('the Jam session in the browser', () => {
     // and no component broke along the way
     expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })
+
+  skippable('a capture with no session shows the dot too; Capture on the Jam on tile, over an open review, follows that review as S does', async () => {
+    // no session: the dot while it records
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`, 3000)
+    await until(`document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button') === 'rec' && !!document.querySelector('[data-jam-button] .jm-live-dot')`, 3000)
+    const c1 = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('make it louder'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 30_000)
+    await enter()                                                                   // confirm: the agent takes it
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(c1)} && c.state === 'review')`, 30_000)
+    // a session, between captures
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter(); await until(`!!window.__mvJamQueue.getState().session`, 5000)
+    await dropAuto()
+    // its review open, then Capture on the tile
+    await click(`.jm-lane [data-tile="${c1}"]`)
+    await until(`window.__mvJamUi.getState().panel?.kind === 'review' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 5000)
+    await click('.jm-lane [data-tile="between"] .go')
+    await until(`!!window.__mvJamCapture.getState().current`, 3000)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[window.__mvJamCapture.getState().current].reviewing?.card ?? null`)).toBe(c1)
+    await browser!.eval(s, `window.__mvJamCapture.getState().drop(), 1`)
+    await until(`!window.__mvJamCapture.getState().current && !Object.keys(window.__mvJamCapture.getState().caps).length`, 5000)
+    await esc()
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 5000)
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session`, 5000)
+  })
 })

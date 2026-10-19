@@ -11,7 +11,7 @@ import { captureCounts, useJamCapture } from './jam-capture.ts'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
 import { holdsSessionMic, PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
 import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
-import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane } from './jam-keys.ts'
+import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
@@ -138,7 +138,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // a session between captures (none recording, none still sealing here): its own tile
   const between = session && !cap.current ? {
     since: session.since, mic: voice.live,
-    onCapture: () => useJamCapture.getState().start(),
+    onCapture: () => startCapture(),   // as S: one started over an open review follows it
   } : undefined
 
   const panelCard = ui.panel ? cards?.find((c) => c.id === ui.panel!.id) : undefined

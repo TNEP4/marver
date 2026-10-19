@@ -139,7 +139,7 @@ export const madeOf = (id: string): number => Number(/^cap-(\d+)-/.exec(id)?.[1]
 /** The frames a capture is about (what its run reserves, and pictures before and after): the ones you
  *  touched, not every frame that was on screen - the rule is shared with the page (shared/capture-frames.ts). */
 export function captureFrames(r: CaptureRecord): string[] {
-  return touchedFrames(r.timeline, r.view)
+  return touchedFrames(r.timeline, r.view, true, r.context.resumes?.at)
 }
 
 /** What you said and wrote, in time order: the words and the notes merged - or your edit. */
