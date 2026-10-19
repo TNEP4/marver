@@ -1038,7 +1038,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const { speechLive } = await import('./jam/audio.ts')
           const whole = await (speechLive.svc?.finishTalk(b.id) ?? Promise.resolve(true)).catch(() => false)
           // a record that carries what was said is never sealed over words still being written down
-          if (!whole && b.action === 'wrapup' && b.includeTalk !== false) return json(res, 409, { ok: false, error: 'what was said is still being written down - write the record again in a moment' })
+          if (!whole && b.action === 'wrapup' && b.includeTalk !== false) return json(res, 409, { ok: false, error: 'what was said is still being written down - write the record again in a moment (or leave what was said out)' })
         }
         const r = await jamLive.session(b.action === 'wrapup'
           ? { action: 'wrapup', id: b.id, instructions: b.instructions, includeTalk: b.includeTalk !== false, tags: Number(b.tags) || 0, board: b.board }

@@ -270,9 +270,11 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
 // ---- the record, in the focus panel ------------------------------------------------------------------------
 
 /** A session record (a wrap-up card): the page the agent wrote, its reply, and the review's moves. */
-export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, onLater, of, onPrev, onNext }: {
+export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, onLater, onRetry, onDrop, of, onPrev, onNext }: {
   card: JamCard; agent: string; more: boolean; of?: [number, number]
   onMore(text: string): void; onMoreOpen(on: boolean): void; onGood(): void; onLater(): void
+  /** a record job that failed: try it again, or let it go */
+  onRetry(): void; onDrop(): void
   onPrev?: () => void; onNext?: () => void
 }) {
   const [rec, setRec] = useState<{ file: string; text: string | null; reply?: string } | null>(null)
@@ -291,6 +293,7 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (more) field.current?.focus() }, [more])
   const review = card.state === 'review'
+  const failed = card.state === 'failed'
   return (
     <div className="jm-panel jm-review jm-record-panel" data-jam-record="">
       <div className="top">
@@ -303,9 +306,17 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
       <div className="meta"><span><code>{rec?.file ?? card.file ?? 'context/sessions/'}</code></span><i /><span>{agent}</span></div>
       {rec?.reply && <div className="jm-reply"><Marver size={20} /><p>{rec.reply}</p></div>}
       <div className="jm-body">
-        {rec?.text ? <div className="jm-record">{rec.text}</div>
+        {failed ? <div className="note-line err" data-jam-record-failed=""><WarningIcon size={14} /><span>The record was not written{card.note ? ` - ${card.note}` : ''}. Retry runs it again.</span></div>
+          : rec?.text ? <div className="jm-record">{rec.text}</div>
           : <div className="note-line info"><span>{review ? 'The record file is not there - the agent may not have written it.' : card.state === 'working' ? 'The agent is writing the record...' : 'Queued - the record is written when the agent is free.'}</span></div>}
       </div>
+      {failed && <div className="rule" />}
+      {failed && (
+        <div className="actions">
+          <button className="jm-btn primary" onClick={onRetry}>Retry</button>
+          <button className="jm-btn ghost" onClick={onDrop}>Drop</button>
+        </div>
+      )}
       {review && <div className="rule" />}
       {review && (more ? (
         <div className="jm-more">

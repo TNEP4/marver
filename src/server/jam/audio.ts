@@ -102,7 +102,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
   let live: WebSocket | null = null
   let lastUse = Date.now()
   // capture -> the socket it came on and the worker it began on, until its final (or drop)
-  const owners = new Map<string, { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: () => void }>()
+  const owners = new Map<string, { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: (whole: boolean) => void }>()
   /** talk segments open on a socket: how to end each one from here */
   const talk = new Map<string, () => Promise<boolean>>()
 
@@ -141,7 +141,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           else if (m?.type === 'words' || m?.type === 'final') {
             const o = owners.get(m.capture)
             if (!o || o.w !== w) return   // not this worker's capture (any more)
-            if (m.type === 'final') { owners.delete(m.capture); o.done?.(); o.onFinal?.() }
+            if (m.type === 'final') { owners.delete(m.capture); o.done?.(); o.onFinal?.(m.incomplete !== true) }
             // a session's talk: its words go to the transcript, here, on this Mac
             const t0 = talkT0.get(m.capture)
             if (m.type === 'words' && t0 !== undefined && Array.isArray(m.words)) {
@@ -159,7 +159,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           down = true
           if (worker === w) { worker = null; ready = null }
           if (!settled) { unavailable = `the speech engine stopped: ${why} - typed notes only`; settle(null); return }
-          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); o.done?.(); o.onFinal?.(); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
+          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); o.done?.(); o.onFinal?.(false); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
         }
         w.on('error', (err) => gone(err.message))
         w.on('exit', (code) => gone(`exit ${code}`))
@@ -223,7 +223,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const prev = caps.get(id)
         if (prev && !prev.ended && !prev.dropped && owners.has(id)) return
         if (prev) prev.dropped = true
-        const own: { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: () => void } = { ws }
+        const own: { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: (whole: boolean) => void } = { ws }
         owners.set(id, own)
         if (id.startsWith('ses-') && Number.isFinite(m.t0)) talkT0.set(id, Number(m.t0))
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false, sent: 0 }
@@ -233,20 +233,30 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         // one already ending (its page switched to a capture) is awaited too - until its final words, 10 s at most
         // (false when they are still not back)
         if (id.startsWith('ses-')) {
+          // its words that never came back (the engine stopped, or the worker lost the segment) are marked
+          // in the transcript where they went missing: a record reading it says so, never silently short
           let finished!: () => void
           const final = new Promise<void>((r) => { finished = r })
-          own.onFinal = finished
+          let over = false
+          own.onFinal = (whole) => {
+            if (over) return
+            over = true
+            if (!whole && c.sent > 0) { try { opts.onTalk?.({ session: id.split('~')[0], words: [{ w: '[words lost]', at: Date.now(), lost: true }] }) } catch { /* best effort */ } }
+            finished()
+          }
+          // its worker is gone before its last words: they are lost, and the segment is over
+          const lose = () => { if (owners.get(id) === own) owners.delete(id); own.done?.(); own.onFinal?.(false) }
           talk.set(id, () => {
             if (!c.ended && !c.dropped) {
               c.ended = true
-              then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), finished)
+              then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), () => lose())
             }
             if (c.dropped) finished()
             return Promise.race([final.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), opts.talkWaitMs ?? 10_000))])
           })
         }
         c.gate = start().then((w) => {
-          if (!w) { owners.delete(id); own.done?.(); own.onFinal?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
+          if (!w) { owners.delete(id); own.done?.(); own.onFinal?.(false); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
           if ((closed && !c.keep) || c.dropped || worker !== w) return null
           own.w = w   // its words come from this worker only
           w.postMessage({ type: 'begin', capture: id })
@@ -260,13 +270,13 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const lastSample = Number(m.lastSample)
         // the worker answers `final` after the last words; without the worker it began on, they may be incomplete
         then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: Number.isFinite(lastSample) ? lastSample : 0 }),
-          () => { const o = owners.get(id); o?.done?.(); o?.onFinal?.(); owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
+          () => { const o = owners.get(id); o?.done?.(); o?.onFinal?.(false); owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) })
       } else if (m.type === 'drop') {
         const c = caps.get(id)
         if (!c || c.dropped) return
         c.dropped = true
         owners.get(id)?.done?.()
-        owners.get(id)?.onFinal?.()
+        owners.get(id)?.onFinal?.(true)   // dropped on purpose: nothing is missing
         owners.delete(id)
         then(c, (w) => w.postMessage({ type: 'drop', capture: id }))
       }
@@ -280,7 +290,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         if (id.startsWith('ses-') && !c.dropped) {
           // everything already received - its begin and audio waiting for the model too - still drains, in order
           c.keep = true
-          if (!c.ended) { c.ended = true; then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent })) }
+          if (!c.ended) { c.ended = true; then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), () => { const o = owners.get(id); owners.delete(id); o?.done?.(); o?.onFinal?.(false) }) }
           continue
         }
         talkT0.delete(id)

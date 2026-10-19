@@ -60,6 +60,7 @@ const goal = process.argv[process.argv.indexOf('-p') + 1] || ''
 const file = (/design\\/\\.local\\/jam\\/packets\\/[\\w-]+\\.json/.exec(goal) || [])[0]
 if (!file) process.exit(1)
 const p = JSON.parse(fs.readFileSync(file, 'utf8'))
+if (p.members.some((m) => m.brief.wrapup && /FAIL-RECORD/.test(m.brief.wrapup.content.instructions))) process.exit(1)
 for (const m of p.members) if (m.brief.wrapup) {
   const c = m.brief.wrapup.content
   fs.mkdirSync(path.dirname(c.file), { recursive: true })
@@ -228,6 +229,28 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !document.querySelector('[data-jam-sheet]')`, 5000)
     expect((await cards()).filter((c: any) => c.kind === 'wrapup').length).toBe(before)
     expect(await browser!.eval(s, `document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button')`)).toBe('idle')
+  })
+
+  skippable('a record job that failed says so in the focus panel, with why, Retry and Drop - never "queued"', async () => {
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+    await enter()
+    await until(`!!window.__mvJamQueue.getState().session && !document.querySelector('[data-jam-sheet]')`, 5000)
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]') && document.activeElement?.hasAttribute('data-jam-wrap-field')`, 5000)
+    await browser!.send('Input.insertText', { text: 'FAIL-RECORD please' }, s)
+    await enter()
+    await until(`!window.__mvJamQueue.getState().session`, 10_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.kind === 'wrapup' && c.state === 'failed')`, 60_000)
+    const f = (await cards()).find((c: any) => c.kind === 'wrapup' && c.state === 'failed')
+    await until(`!!document.querySelector('.jm-lane [data-tile="${f.id}"]')`, 5000)
+    await click(`.jm-lane [data-tile="${f.id}"]`)
+    await until(`!!document.querySelector('[data-jam-record] [data-jam-record-failed]')`, 5000)
+    const text = await browser!.eval(s, `document.querySelector('[data-jam-record]').textContent`)
+    expect(text).toMatch(/The record was not written/)
+    expect(text).not.toMatch(/Queued/)
+    expect(await browser!.eval(s, `[...document.querySelectorAll('[data-jam-record] .jm-btn')].map((b) => b.textContent)`)).toEqual(['Retry', 'Drop'])
+    await pic('5-record-failed')
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-record] .jm-btn')].find((b) => b.textContent === 'Drop').click(), 1`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(f.id)})?.state === 'dropped' && !document.querySelector('[data-jam-record]')`, 5000)
     // and no component broke along the way
     expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })

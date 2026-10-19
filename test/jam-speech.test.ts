@@ -248,6 +248,38 @@ describe('words: a session ending waits for its last words (no model needed)', (
       expect(await svc.finishTalk(ses)).toBe(true)                     // back: the transcript is whole
     } finally { ws.close(); svc.stop(); server.close(); rmSync(d, { recursive: true, force: true }) }
   }, 20_000)
+
+  it('an engine that stops before the last words: the transcript marks them lost where they went, once, and the talk is over (not pending)', async () => {
+    // a stand-in engine that dies when a segment ends
+    const d = mkdtempSync(join(tmpdir(), 'mv-deadtalk-'))
+    const dead = join(d, 'w.mjs')
+    writeFileSync(dead, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') process.exit(3) })\n")
+    const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
+    const heard: { session: string; words: { w: string; lost?: true }[] }[] = []
+    const svc = createSpeech({ workerUrl: new URL(`file://${dead}`), talkWaitMs: 2000, onTalk: (t) => heard.push(t), modelsReady: async () => true, engineMissing: () => undefined })
+    svc.attach(server)
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const w = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
+      w.on('open', () => resolve(w)); w.on('error', reject)
+    })
+    try {
+      const ses = 'ses-1792399514739-lost01'
+      const id = `${ses}~p1`
+      ws.send(JSON.stringify({ type: 'begin', capture: id, t0: 0 }))
+      await new Promise((r) => setTimeout(r, 300))
+      // a second of audio: [u8 id length][id][u32 offset][Int16 samples]
+      const pcm = new Int16Array(16_000)
+      const head = Buffer.alloc(1 + id.length + 4); head[0] = id.length; head.write(id, 1); head.writeUInt32LE(0, 1 + id.length)
+      ws.send(Buffer.concat([head, Buffer.from(pcm.buffer)]))
+      await new Promise((r) => setTimeout(r, 200))
+      expect(await svc.finishTalk(ses)).toBe(true)                     // over: nothing still coming
+      expect(heard.filter((t) => t.session === ses && t.words.some((w) => w.lost && w.w === '[words lost]'))).toHaveLength(1)
+      expect(await svc.finishTalk(ses)).toBe(true)
+      expect(heard.filter((t) => t.words.some((w) => w.lost))).toHaveLength(1)   // marked once
+    } finally { ws.close(); svc.stop(); server.close(); rmSync(d, { recursive: true, force: true }) }
+  }, 20_000)
 })
 
 function concatAll(parts: Float32Array[]) {

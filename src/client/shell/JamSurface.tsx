@@ -182,6 +182,8 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
             onMoreOpen={(on) => ui.setMoreOpen(on)}
             onGood={() => { void act(panelCard, 'good'); ui.close() }}
             onLater={() => { void act(panelCard, 'later'); ui.close() }}
+            onRetry={() => { void act(panelCard, 'retry'); ui.close() }}
+            onDrop={() => { void act(panelCard, 'drop'); ui.close() }}
             onMore={(text) => void (async () => {
               if (await act(panelCard, 'more', text)) { clearMoreDraft(panelCard.id); ui.setMoreOpen(false); ui.close() }
               else useStore.getState().toast('your note was not sent - try again')
