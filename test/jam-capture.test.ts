@@ -910,6 +910,19 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('a run that fails after making a frame: its card holds the frame, so a Retry holds it too', async () => {
+    const { root, done } = setup()
+    freshBoard(root)
+    const jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx', fail: true }), undefined, { anchor: anchorOk as any, shoot: (f: string) => sameShot(root)(f) } as any)
+    const r = rec({ words: 'a new frame please' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    expect(card(jam, r.id).state).toBe('failed')
+    expect(card(jam, r.id).frames).toContain('demo/fresh')
+    done()
+  })
+
   it('a frame that appeared while the daemon was down is no one\'s: the rerun neither pictures it as new nor moves the thread', async () => {
     const { root, dir, done } = setup()
     freshBoard(root)

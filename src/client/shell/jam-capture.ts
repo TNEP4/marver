@@ -153,9 +153,11 @@ function sizeNow(f: string, key?: string): { w: number; h: number; play?: true }
 }
 /** Each frame a step touches, at the size it is as it is touched (a frame visited on a phone in play keeps the
  *  phone's size, wherever the capture ends). */
-function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string }, keys?: string[]) {
+function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string; view?: { frames?: string[] } }, keys?: string[]) {
   const nodes = useStore.getState().nodes
-  for (const f of [step.frame, step.to, ...(step.event === 'select' ? step.frames ?? [] : [])]) {
+  // (a view of one frame - the stage as play opens, a frame zoomed to - is a frame it is about)
+  const viewed = step.event === 'view' && step.view?.frames?.length === 1 ? step.view.frames : []
+  for (const f of [step.frame, step.to, ...(step.event === 'select' ? step.frames ?? [] : []), ...viewed]) {
     if (!f) continue
     // the instance it came from (a step's own frame document), or the selected one showing this frame
     const k = [step.src, ...(keys ?? [])].find((x) => x && nodes.some((n) => n.key === x && n.frame === f))

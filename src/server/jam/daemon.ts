@@ -374,6 +374,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     })
   }
 
+  /** A capture names every frame its run made (hosted on one or not) - and so does work queued on its thread
+   *  meanwhile: a tag or a More work waiting on it holds those frames when it runs. At delivery, and when the run
+   *  fails (its Retry is a new batch from the card: it must still hold them). Under the lock. */
+  const ownCreated = (j: Journal, b: Batch) => {
+    if (!b.created?.length || b.members.length !== 1) return
+    const c = j.cards.find((x) => x.id === b.members[0].card)
+    if (c) for (const x of j.cards.filter((y) => y === c || (y.state === 'queued' && y.board === c.board && !!c.thread && y.thread === c.thread))) {
+      const add = b.created.filter((f) => !x.frames.includes(f))
+      if (add.length) { x.frames = [...x.frames, ...add]; if (x !== c) { x.rev += 1; x.at = Date.now() } }
+    }
+  }
+
   /** A capture whose run made a new frame and left every frame it named as it was asked for something new: at
    *  delivery (again after a restart - it is in the batch with the results), its thread moves onto the new frame
    *  (a re-pin naming the frame, frame-level, a deterministic id: written once) and its card names that frame. */
@@ -471,15 +483,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) return
     changedBoards(b)
     await q.lock((j) => {
-      // a capture names every frame its run made (hosted on one or not) - and so does work queued on its thread
-      // meanwhile: a tag or a More work waiting on it holds those frames when it runs
-      if (b.created?.length && b.members.length === 1) {
-        const c = j.cards.find((x) => x.id === b.members[0].card)
-        if (c) for (const x of j.cards.filter((y) => y === c || (y.state === 'queued' && y.board === c.board && !!c.thread && y.thread === c.thread))) {
-          const add = b.created.filter((f) => !x.frames.includes(f))
-          if (add.length) { x.frames = [...x.frames, ...add]; if (x !== c) { x.rev += 1; x.at = Date.now() } }
-        }
-      }
+      ownCreated(j, b)
       // answered while the reply was being posted, or before a restart: look again, under the lock
       for (const m of b.members) {
         const c = j.cards.find((x) => x.id === m.card)
@@ -628,7 +632,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       }
       if (stopped) return
       if (!run.ok) {
-        await q.lock((j) => { settled(fail(j, b, 'the agent could not finish - its run log is in design/.local/jam-logs')); q.persist() })
+        // what it made before it failed is still its own (a last look, then the card holds them)
+        await discover()
+        await q.lock((j) => { ownCreated(j, b); settled(fail(j, b, 'the agent could not finish - its run log is in design/.local/jam-logs')); q.persist() })
         queueChanged()
         log(`  jam: gave up on a batch of ${b.members.length} after ${b.attempts} attempts`)
         return
