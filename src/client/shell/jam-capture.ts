@@ -14,12 +14,13 @@
  * id it carries.
  */
 import { create } from 'zustand'
-import { ROUTE } from '../const.ts'
-import { CONFIG, useStore, type Node } from './store.ts'
+import { ROUTE, slideSize } from '../const.ts'
+import { CONFIG, SLIDE_INTRINSIC, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
 import { touchedFrames } from '../../shared/capture-frames.ts'
+import { stageSize } from './stage-size.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -140,20 +141,33 @@ const mutate = (fn: (s: CaptureState) => void) => useJamCapture.setState((s) => 
 const capOf = (id: string): Cap | undefined => useJamCapture.getState().caps[id]
 
 /** Add a step to a capture (in place; the timeline is sorted at the seal, by `at` then `seq`). */
-function addStep(id: string, step: Step & { seq?: number; src?: string }, keys?: string[]) {
-  mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step, keys) } })
+function addStep(id: string, step: Step & { seq?: number; src?: string }, keys?: string[], auto = false) {
+  mutate((s) => { const c = s.caps[id]; if (c) { c.steps.push(step); sample(c, step, keys, auto) } })
 }
+/** Leaving play selects the frame it ended on: that selection is the shell's, not a touch (until then) */
+let playLeftAt = 0
 /** A frame's size on screen now: in play the stage's device, on the canvas its node (the one in view). */
 function sizeNow(f: string, key?: string): { w: number; h: number; play?: true } | undefined {
   const st = useStore.getState()
-  if (st.play) { if (st.play.at !== f) return undefined; const v = CONFIG.viewports[st.play.device]; return v ? { w: Math.round(v.width), h: Math.round(v.height), play: true } : undefined }
+  if (st.play) {
+    if (st.play.at !== f) return undefined
+    // a slide: its own fixed stage (whatever the device); Fill window: the window; a device preset: its size; else
+    // the stage as play draws it (a document's reading width)
+    const entry = st.manifest?.frames.find((x) => x.id === f)
+    const slide = (entry && slideSize(entry, CONFIG.viewports)) ?? (st.play.slides ? SLIDE_INTRINSIC : null)
+    if (slide) return { w: Math.round(slide.width), h: Math.round(slide.height), play: true }
+    if (st.play.device === 'fill') return { w: window.innerWidth, h: window.innerHeight, play: true }
+    const v = CONFIG.viewports[st.play.device]
+    if (v) return { w: Math.round(v.width), h: Math.round(v.height), play: true }
+    return stageSize.at === f && stageSize.w > 0 && stageSize.h > 0 ? { w: stageSize.w, h: stageSize.h, play: true } : undefined
+  }
   // the instance touched first; else the one in view; else any
   const n = (key ? st.nodes.find((x) => x.key === key && x.frame === f) : undefined) ?? visibleNodes().find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
   return n && n.w > 0 && n.h > 0 ? { w: Math.round(n.w), h: Math.round(n.h) } : undefined
 }
 /** Each frame a step touches, at the size it is as it is touched (a frame visited on a phone in play keeps the
  *  phone's size, wherever the capture ends). */
-function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string; view?: { frames?: string[] } }, keys?: string[]) {
+function sample(c: Cap, step: { event: string; frame?: string; to?: string; frames?: string[]; src?: string; view?: { frames?: string[] } }, keys?: string[], auto = false) {
   const nodes = useStore.getState().nodes
   // (a view of one frame - the stage as play opens, a frame zoomed to - is a frame it is about)
   const viewed = step.event === 'view' && step.view?.frames?.length === 1 ? step.view.frames : []
@@ -165,7 +179,7 @@ function sample(c: Cap, step: { event: string; frame?: string; to?: string; fram
     const z = sizeNow(f, c.keys[f])
     // a view (play left, a fit) is not a touch: what was seen on the stage keeps the stage's size until the frame is
     // used on the canvas
-    if (z && !(step.event === 'view' && c.sizes[f]?.play && !z.play)) c.sizes[f] = z
+    if (z && !((auto || step.event === 'view') && c.sizes[f]?.play && !z.play)) c.sizes[f] = z
   }
 }
 
@@ -228,8 +242,9 @@ function watchUi() {
     prev = s
     if (!id) return
     const at = now()
+    if (p.play && !s.play) playLeftAt = performance.now()
     if (s.selection.join() !== p.selection.join() && s.selection.length) {
-      addStep(id, { at, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] }, s.selection)
+      addStep(id, { at, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] }, s.selection, performance.now() - playLeftAt < 200)
     }
     for (const n of s.nodes) {
       const o = p.nodes.find((x) => x.key === n.key)
@@ -466,7 +481,8 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   const n = (key ? st.nodes.find((x) => x.key === key && x.frame === frame) : undefined) ?? st.nodes.find((x) => x.frame === frame)
   // as it was seen: on the stage's device now, or as it was on the stage (left play since), or its node
   const seen = c.sizes[frame]
-  const size = st.play && st.play.at === frame ? CONFIG.viewports[st.play.device] : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
+  const onStage = st.play && st.play.at === frame ? sizeNow(frame) : undefined
+  const size = onStage ? { width: onStage.w, height: onStage.h } : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
   const done = (pid: string | null) => {
@@ -667,7 +683,7 @@ function framesSizes(c: Cap): Record<string, { w: number; h: number; play?: true
     if (sampled?.play) { out[f] = sampled; continue }
     // no instance known for it in this recording (carried on by a Resume, or seen without one): as measured then
     if (!c.keys[f] && sampled) { out[f] = sampled; continue }
-    if (st.play && st.play.at === f) { const v = CONFIG.viewports[st.play.device]; if (v) out[f] = { w: Math.round(v.width), h: Math.round(v.height), play: true }; continue }
+    if (st.play && st.play.at === f) { const z = sizeNow(f); if (z) out[f] = z; continue }
     const k = c.keys[f]
     const n = (k ? st.nodes.find((x) => x.key === k && x.frame === f) : undefined) ?? onScreen.find((x) => x.frame === f) ?? st.nodes.find((x) => x.frame === f)
     if (n && n.w > 0 && n.h > 0) out[f] = { w: Math.round(n.w), h: Math.round(n.h) }
