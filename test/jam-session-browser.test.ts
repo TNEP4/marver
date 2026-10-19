@@ -95,7 +95,7 @@ beforeAll(async () => {
   s = await browser.tab({ width: 1400, height: 900 })
   await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));const ce=console.error;console.error=(...a)=>{__errs.push(a.map(String).join(' ').slice(0,400));ce(...a)}` }, s)
   await browser.go(s, `${ORIGIN}/#/b/main`)
-  await until(`window.__mvStore?.getState().nodes.length === 2 && window.__mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvJamQueue && !!window.__mvJamVoice`, 45_000)
+  await until(`window.__mvStore?.getState().nodes.length === 2 && window.__mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvJamQueue && !!window.__mvJamVoice && window.__mvJamQueue.getState().agent === 'claude'`, 45_000)
   // typed notes only here (no model): the microphone is not asked about
   await browser.eval(s, `window.__mvJamVoice.getState().setChoice('no'), 1`)
 }, 120_000)
