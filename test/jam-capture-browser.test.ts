@@ -673,6 +673,17 @@ describe('captures in the browser: the first trial', () => {
     await enter()
     await until(`document.querySelector('.jm-lane [data-tile="${b}"] .t')?.textContent === 'Badge fix'`, 5000)
     expect(await browser!.eval(s, `!!document.querySelector('.sh-ctxmenu')`)).toBe(false)
+    // a click anywhere else on the canvas - empty space or a frame - lets a selected tile go (no panel open)
+    for (const where of ['empty', 'frame']) {
+      await browser!.eval(s, `(window.__mvJamUi.getState().close(), window.__mvJamUi.getState().select(${JSON.stringify(a)}), 1)`)
+      await sleep(100)
+      const p = await browser!.eval(s, where === 'empty'
+        ? `(() => { const r = document.querySelector('.sh-canvas').getBoundingClientRect(); for (let y = r.top + 120; y < r.bottom - 120; y += 20) for (let x = r.left + 300; x < r.right - 20; x += 20) { const e = document.elementFromPoint(x, y); if (e && e.closest('.sh-canvas') && !e.closest('.sh-node, .sh-pill, .sh-pill-fab, .jm-lane, .sh-toasts, .sh-banner')) return { x, y } } return null })()`
+        : `(() => { const r = document.querySelector('.sh-node .sh-overlay').getBoundingClientRect(); return { x: r.x + 20, y: r.y + 20 } })()`)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 }, s)
+      await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 }, s)
+      await until(`window.__mvJamUi.getState().selected === null && !document.querySelector('.jm-lane .jm-card.focus')`, 3000)
+    }
     for (const id of ids) await decide(id, 'drop')
   }, 120_000)
 })
