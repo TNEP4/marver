@@ -864,7 +864,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const log = readLog(commentsDir, c.board)
     // its runs, oldest first: a More work ask may have run more than once (Retry, a shared-file rerun)
     const runs = [...(c.ran ?? []), ...(c.batch ? [c.batch] : [])].map((id) => j.batches.find((b) => b.batchId === id)).filter((b): b is Batch => !!b)
-    return c.events.flatMap((id) => {
+    // your More work replies only - a tag that joined the card is answered in its thread, not in the record
+    return c.events.filter((id) => id.startsWith('mw-')).flatMap((id) => {
       const ev = log.find((e) => e.id === id)
       if (!ev || !ctx.owned.has(`${c.board}\t${id}`)) return []
       const took = runs.flatMap((b) => { const m = b.members.find((x) => x.card === c.id && x.brief?.asks.some((a) => a.id === id)); return m ? [{ b, m }] : [] })

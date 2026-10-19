@@ -30,9 +30,11 @@ const now = () => performance.timeOrigin + performance.now()
 
 /** Why the last session move was refused (the server's words), for the one line that says so. */
 let lastError: string | undefined
-async function post(body: Record<string, unknown>): Promise<boolean> {
+async function post(body: Record<string, unknown>, onOk?: () => void): Promise<boolean> {
   const r = await fetch(`${ROUTE}/api/jam/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) }).catch(() => null)
   lastError = r && !r.ok ? ((await r.json().catch(() => null)) as { error?: string } | null)?.error : r ? undefined : 'marver dev did not answer'
+  // what a move that landed settles at once, before the refresh (a push may come first)
+  if (r?.ok) onOk?.()
   await useJamQueue.getState().load()
   return !!r?.ok
 }
@@ -40,13 +42,13 @@ async function post(body: Record<string, unknown>): Promise<boolean> {
 /** Start a session: the dev server holds it (it survives a reload); the microphone hears its talk. */
 export async function startSession(): Promise<boolean> {
   const id = `ses-${Date.now()}-${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`
-  const ok = await post({ action: 'start', id })
+  // this tab holds the session's microphone (a reload of it takes it back; other tabs never take it) - from
+  // the moment the server has it: the push of it may come before the refresh
+  const ok = await post({ action: 'start', id }, () => { try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ } })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }
   useJamUi.getState().setSheet(null)
-  // this tab holds the session's microphone (a reload of it takes it back; other tabs never take it)
-  try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ }
-  // the talk starts once the queue shows the session: now, or when its view comes (a refresh that failed
-  // leaves that to the push - the lane hears it then); a session ended meanwhile never gets the microphone
+  // the talk starts once the queue shows the session: now, or when its view comes (a refresh that failed or
+  // is slow leaves that to the push); a session ended meanwhile never gets the microphone
   if (useJamQueue.getState().session?.id === id) void voiceSession(id, now())
   return true
 }
