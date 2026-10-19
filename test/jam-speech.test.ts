@@ -223,6 +223,33 @@ describe('words: one audio connection, refereed (no model needed)', () => {
   }, 30_000)
 })
 
+describe('words: a session ending waits for its last words (no model needed)', () => {
+  it('finishTalk says whether the talk is whole: false while its last words are still not back, true once they are', async () => {
+    // a stand-in engine that holds each final back for 1.2 s; the ending waits 400 ms here
+    const d = mkdtempSync(join(tmpdir(), 'mv-slowtalk-'))
+    const slow = join(d, 'w.mjs')
+    writeFileSync(slow, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 1200) })\n")
+    const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
+    const svc = createSpeech({ workerUrl: new URL(`file://${slow}`), talkWaitMs: 400, modelsReady: async () => true, engineMissing: () => undefined })
+    svc.attach(server)
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const w = new WebSocket(`ws://127.0.0.1:${port}${AUDIO_PATH}?ticket=${issueTicket()}`, { headers: { origin: `http://127.0.0.1:${port}`, cookie: 'mv_c=abc' } })
+      w.on('open', () => resolve(w)); w.on('error', reject)
+    })
+    try {
+      const ses = 'ses-1792399514739-talk01'
+      ws.send(JSON.stringify({ type: 'begin', capture: `${ses}~p1`, t0: 0 }))
+      await new Promise((r) => setTimeout(r, 300))
+      expect(await svc.finishTalk(ses)).toBe(false)                    // its final is still held back
+      expect(await svc.finishTalk('ses-1792399514739-other1')).toBe(true)   // another session: nothing to wait for
+      await new Promise((r) => setTimeout(r, 1200))
+      expect(await svc.finishTalk(ses)).toBe(true)                     // back: the transcript is whole
+    } finally { ws.close(); svc.stop(); server.close(); rmSync(d, { recursive: true, force: true }) }
+  }, 20_000)
+})
+
 function concatAll(parts: Float32Array[]) {
   const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0
   for (const p of parts) { out.set(p, o); o += p.length }

@@ -157,6 +157,8 @@ describe('the Jam session in the browser', () => {
     await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 10_000)
     const rows = await browser!.eval(s, `[...document.querySelectorAll('[data-jam-wrap-row]')].map((r) => r.getAttribute('data-jam-wrap-row'))`)
     expect(rows.sort()).toEqual(['kept', 'review'])
+    // it names where the record goes, as the server picks it (this project has context/)
+    await until(`/one page in context\\/sessions\\//.test(document.querySelector('[data-jam-sheet="wrap"]').textContent)`, 5000)
     // the field has the focus; it grows past three lines
     expect(await browser!.eval(s, `document.activeElement?.hasAttribute('data-jam-wrap-field')`)).toBe(true)
     const h0 = await browser!.eval(s, `document.querySelector('[data-jam-wrap-field]').getBoundingClientRect().height`)

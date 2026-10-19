@@ -78,8 +78,9 @@ export interface Speech {
    *  A tab whose microphone another tab took over takes it back only once this is false. */
   busy(): boolean
   /** A session ends: its talk still coming in is ended here, at the last sample received, and its last words
-   *  are awaited (3 s at most) - so the transcript is whole before a record is sealed, whichever tab ends it. */
-  finishTalk(session: string): Promise<void>
+   *  are awaited (10 s at most) - so the transcript is whole before a record is sealed, whichever tab ends it.
+   *  False when some words were still not back: the transcript is not whole yet. */
+  finishTalk(session: string): Promise<boolean>
   stop(): void
 }
 
@@ -88,6 +89,8 @@ export interface Speech {
 const IDLE_MS = 10 * 60_000
 
 export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: (t: TalkWords) => void
+  /** how long a session's ending waits for its last words (tests shorten it) */
+  talkWaitMs?: number
   /** (tests) whether the model is there, and why the engine is missing - by default the real checks */
   modelsReady?: () => Promise<boolean>; engineMissing?: () => string | undefined } = {}): Speech {
   const ready_ = opts.modelsReady ?? modelsReady
@@ -101,7 +104,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
   // capture -> the socket it came on and the worker it began on, until its final (or drop)
   const owners = new Map<string, { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: () => void }>()
   /** talk segments open on a socket: how to end each one from here */
-  const talk = new Map<string, () => Promise<void>>()
+  const talk = new Map<string, () => Promise<boolean>>()
 
   const idle = setInterval(() => {
     if (worker && owners.size === 0 && Date.now() - lastUse > (opts.idleMs ?? IDLE_MS)) { const w = worker; worker = null; ready = null; void w.terminate() }
@@ -227,7 +230,8 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         // a segment that is over (final, dropped, or never started) is forgotten here
         own.done = () => { if (caps.get(id) === c) caps.delete(id); talkT0.delete(id); talk.delete(id) }
         // a talk segment can be ended from here (the session ends in another tab): at the last sample received;
-        // one already ending (its page switched to a capture) is awaited too - until its final words, 3 s at most
+        // one already ending (its page switched to a capture) is awaited too - until its final words, 10 s at most
+        // (false when they are still not back)
         if (id.startsWith('ses-')) {
           let finished!: () => void
           const final = new Promise<void>((r) => { finished = r })
@@ -238,7 +242,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
               then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), finished)
             }
             if (c.dropped) finished()
-            return Promise.race([final, new Promise<void>((r) => setTimeout(r, 3_000))])
+            return Promise.race([final.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), opts.talkWaitMs ?? 10_000))])
           })
         }
         c.gate = start().then((w) => {
@@ -305,7 +309,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
     },
     busy() { return busyNow() },
     async finishTalk(session) {
-      await Promise.all([...talk].filter(([id]) => id.startsWith(`${session}~`)).map(([, end]) => end()))
+      return (await Promise.all([...talk].filter(([id]) => id.startsWith(`${session}~`)).map(([, end]) => end()))).every(Boolean)
     },
     attach(server) {
       server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {

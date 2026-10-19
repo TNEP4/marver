@@ -201,10 +201,11 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   const [talk, setTalk] = useState(true)
   const [talkMin, setTalkMin] = useState(0)
   const [tags, setTags] = useState(0)
+  const [folder, setFolder] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
-    fetch(`${ROUTE}/api/jam/session`, { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then((b) => { setTalkMin(b?.talkMinutes ?? 0); setTags(b?.tags ?? 0) }, () => {})
+    fetch(`${ROUTE}/api/jam/session`, { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then((b) => { setTalkMin(b?.talkMinutes ?? 0); setTags(b?.tags ?? 0); setFolder(typeof b?.folder === 'string' ? b.folder : null) }, () => {})
     requestAnimationFrame(() => field.current?.focus())
   }, [])
   // the field grows with its words: three lines at least
@@ -255,7 +256,7 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
         </button>
       </div>
       <p style={{ fontSize: 12, color: 'var(--glass-ink-3)', margin: 0 }}>
-        {name} reads your instructions, every capture you sent or kept with its reply, and your verdicts{talk ? ', and what was said between captures' : ''}. It writes one page in <code>context/sessions/</code> and nothing else.
+        {name} reads your instructions, every capture you sent or kept with its reply, and your verdicts{talk ? ', and what was said between captures' : ''}. It writes one page{folder ? <> in <code>{folder}</code></> : null} and nothing else.
       </p>
       <div className="actions">
         <button className="jm-btn ghost" onClick={() => void endSession(null)}>End without a record</button>

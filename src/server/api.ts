@@ -1020,8 +1020,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!jamLive.session || !jamLive.view) return json(res, 409, { error: 'jam is not running here' })
         if (req.method === 'GET') {
           const ses = jamLive.view().session ?? null
-          const { readTalk, talkMinutes } = await import('./jam/session.ts')
-          return json(res, 200, { session: ses, talkMinutes: ses ? talkMinutes(readTalk(root, ses.id)) : 0, tags: ses ? jamLive.tags?.(ses.id) ?? 0 : 0 })
+          const { readTalk, talkMinutes, recordFile } = await import('./jam/session.ts')
+          // where its record would go: context/sessions/, or design/sessions/ with no context/
+          const folder = ses ? recordFile(root, ses.since, ses.id).replace(/[^/]+$/, '') : null
+          return json(res, 200, { session: ses, talkMinutes: ses ? talkMinutes(readTalk(root, ses.id)) : 0, tags: ses ? jamLive.tags?.(ses.id) ?? 0 : 0, folder })
         }
         const raw = await readBody(req)
         if (raw == null) return json(res, 400, { error: 'body too large' })
@@ -1032,7 +1034,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // record reads is whole
         // (a record that could not be written is refused first, before any talk is ended - the session goes on whole)
         if (b.action === 'wrapup') { const why = jamLive.canWrap?.(b.id); if (why) return json(res, 409, { ok: false, error: why }) }
-        if (b.action !== 'start') { const { speechLive } = await import('./jam/audio.ts'); await speechLive.svc?.finishTalk(b.id).catch(() => {}) }
+        if (b.action !== 'start') {
+          const { speechLive } = await import('./jam/audio.ts')
+          const whole = await (speechLive.svc?.finishTalk(b.id) ?? Promise.resolve(true)).catch(() => false)
+          // a record that carries what was said is never sealed over words still being written down
+          if (!whole && b.action === 'wrapup' && b.includeTalk !== false) return json(res, 409, { ok: false, error: 'what was said is still being written down - write the record again in a moment' })
+        }
         const r = await jamLive.session(b.action === 'wrapup'
           ? { action: 'wrapup', id: b.id, instructions: b.instructions, includeTalk: b.includeTalk !== false, tags: Number(b.tags) || 0, board: b.board }
           : { action: b.action, id: b.id })
