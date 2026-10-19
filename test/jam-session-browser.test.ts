@@ -273,6 +273,33 @@ describe('the Jam session in the browser', () => {
       expect(await browser!.eval(s, `window.__mvJamVoiceSession()`)).toBeNull()
       expect(await browser!.eval(s, `sessionStorage.getItem('mv-jam-session-mic') === window.__startId`)).toBe(false)
     } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+  })
+
+  skippable('a slow queue answer overtaken by the push of the session ending never brings the session (or its microphone) back', async () => {
+    // the start lands; the queue's answer (with the session) is held while another tab ends it and the push
+    // of that arrives - then the old answer comes in
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
+      if (window.__race === 1 && String(u).includes('/api/jam/queue') && !(o?.method)) {
+        window.__race = 2
+        const r = await f(u, o)
+        await f('/__mv/api/jam/session', { method: 'POST', headers: { ...(o?.headers ?? {}), 'content-type': 'application/json' }, body: JSON.stringify({ action: 'end', id: window.__startId }) })
+        await new Promise((r) => setTimeout(r, 600))
+        window.__afterPush = window.__mvJamQueue.getState().session
+        return r
+      }
+      return f(u, o)
+    }; return 1 })()`)
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+      await enter()
+      await until(`window.__race === 2 && !document.querySelector('[data-jam-sheet]')`, 5000)
+      await sleep(1200)
+      expect(await browser!.eval(s, `window.__afterPush`)).toBeNull()          // the push of the end came first
+      expect(await browser!.eval(s, `window.__mvJamQueue.getState().session`)).toBeNull()
+      expect(await browser!.eval(s, `window.__mvJamVoiceSession()`)).toBeNull()
+      expect(await browser!.eval(s, `sessionStorage.getItem('mv-jam-session-mic') === window.__startId`)).toBe(false)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
     // and no component broke along the way
     expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })

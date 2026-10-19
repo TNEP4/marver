@@ -963,13 +963,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
     }
   }
+  // every view is numbered as it is built: a page that gets an answer and a push out of order keeps the newer
+  const boot = Math.random().toString(36).slice(2, 10)
+  let viewN = 0
   const view = (): QueueView => {
     const j = q.j
     const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
     const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000 || (!!j.run && c.kind !== 'comment' && c.made >= j.run.since))
     const exclusiveAhead = jamReservations.exclusive
     return {
-      agent: adapter.name,
+      agent: adapter.name, seq: { boot, n: ++viewN },
       ...(q.j.run ? { run: q.j.run } : {}),
       ...(q.j.session ? { session: q.j.session } : {}),
       cards: shown.map((c) => {

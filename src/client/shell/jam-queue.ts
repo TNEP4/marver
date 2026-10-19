@@ -56,6 +56,8 @@ export function cardForEvent(cards: JamCard[] | null, board: string | undefined,
 
 export const useJamQueue = create<QueueState>((set, get) => {
   let loaded = false
+  /** the newest view applied: an older one (a slow answer overtaken by a push) is never applied over it */
+  let seen: { boot: string; n: number } | null = null
   return {
     cards: null,
     agent: null,
@@ -71,6 +73,11 @@ export const useJamQueue = create<QueueState>((set, get) => {
     apply(view) {
       const v = (view && typeof view === 'object' ? view : {}) as { cards?: unknown; agent?: unknown }
       if (!Array.isArray(v.cards)) return
+      const seq = (v as { seq?: { boot?: unknown; n?: unknown } }).seq
+      if (seq && typeof seq.boot === 'string' && typeof seq.n === 'number') {
+        if (seen && seen.boot === seq.boot && seq.n <= seen.n) return
+        seen = { boot: seq.boot, n: seq.n }
+      }
       const next = v.cards.filter((c): c is JamCard => !!c && typeof c === 'object' && typeof (c as JamCard).id === 'string' && typeof (c as JamCard).state === 'string')
       const before = new Map((get().cards ?? []).map((c) => [c.id, c]))
       const first = !loaded

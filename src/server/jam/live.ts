@@ -26,6 +26,8 @@ export interface QueueView {
   run?: { since: number }
   /** the Jam session running now */
   session?: { id: string; since: number }
+  /** this view's place in order (per server run): a page never applies one older than what it shows */
+  seq?: { boot: string; n: number }
 }
 
 export const jamLive: {
