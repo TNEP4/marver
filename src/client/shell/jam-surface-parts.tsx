@@ -65,7 +65,7 @@ export function FocusPanelView(p: {
   onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
   onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void; locked?: boolean
   /** a note added in the read-back (a draft) */
-  onAddNote?(text: string): Promise<boolean>
+  onAddNote?(text: string, id: string): Promise<boolean>
 }) {
   const c = p.card
   const title = c.title ?? 'Capture'

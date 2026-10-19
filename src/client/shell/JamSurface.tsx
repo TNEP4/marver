@@ -221,7 +221,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onKeep={() => void decideDraft(panelCard.id, 'keep')}
           onDrop={() => void decideDraft(panelCard.id, 'drop')}
           onResume={() => void resumeDraft(panelCard.id)}
-          onAddNote={async (text) => { const ok = await addNote(panelCard, text); if (!ok) useStore.getState().toast('the note was not added - try again'); return ok }}
+          onAddNote={async (text, id) => { const ok = await addNote(panelCard, text, id); if (!ok) useStore.getState().toast('the note was not added - try again'); return ok }}
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
           onMore={(text) => void (async () => {
             // the composer and its words stay until the follow-up is really queued

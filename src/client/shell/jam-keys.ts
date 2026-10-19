@@ -65,17 +65,17 @@ export function saveEdit(c: JamCard, text: string) {
     return useJamQueue.getState().act(fresh, 'edit', text)
   }).then((ok) => { if (ok && latest.get(c.id) === g) unsaved.delete(c.id); return ok }))
 }
-/** Notes added in a read-back not saved yet, per card: each its own entry - one on its way, or one that failed and
- *  waits to be sent again. A new note from the field takes the place of a failed one (the field kept its words:
- *  sending them again, edited or not, is that note's retry - never a second copy). */
-type PendingNote = { text: string; failed: boolean }
+/** Notes added in a read-back not saved yet, per card: each with its own id - one on its way, or one that failed
+ *  and waits to be sent again. Sent again (from the field, or before a decision) it keeps its id: the server
+ *  keeps a note once, whatever answer was lost; a different note never takes a failed one's place. */
+type PendingNote = { id: string; text: string; failed: boolean }
 const unsavedNotes = new Map<string, PendingNote[]>()
 const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
   n.failed = false
   const before = saving.get(c.id) ?? Promise.resolve(true)
   const p = before.then(() => {
     const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
-    return useJamQueue.getState().act(fresh, 'note', n.text)
+    return useJamQueue.getState().act(fresh, 'note', JSON.stringify({ id: n.id, text: n.text }))
   }).then((ok) => {
     const list = unsavedNotes.get(c.id) ?? []
     if (ok) { const left = list.filter((x) => x !== n); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id) } else n.failed = true
@@ -84,10 +84,11 @@ const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
   saving.set(c.id, p.then(() => true))
   return p
 }
-/** Add a note to a draft from its read-back: in line with its edits (a decision or a Resume waits for it). */
-export function addNote(c: JamCard, text: string): Promise<boolean> {
-  const n: PendingNote = { text, failed: false }
-  unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []).filter((x) => !x.failed), n])
+/** Add a note to a draft from its read-back: in line with its edits (a decision or a Resume waits for it). The
+ *  same `id` again is that note's retry (its words as the field holds them now). */
+export function addNote(c: JamCard, text: string, id: string): Promise<boolean> {
+  const n: PendingNote = { id, text, failed: false }
+  unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []).filter((x) => x.id !== id), n])
   return sendNote(c, n)
 }
 /** Every note added to a draft saved (a failed one sent again, once): before it is sent, kept or resumed. */

@@ -469,13 +469,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) return
     changedBoards(b)
     await q.lock((j) => {
-      // a capture hosted on the frame its run made names that frame too - and so does work queued on its thread
-      // meanwhile (a tag waiting on it holds that frame when it runs)
-      for (const h of b.hosts ?? []) {
-        const m = b.members.find((x) => x.id === h.member)
-        const c = m && j.cards.find((x) => x.id === m.card)
-        if (!c) continue
-        for (const x of j.cards.filter((y) => y === c || (y.state === 'queued' && y.board === c.board && !!c.thread && y.thread === c.thread))) if (!x.frames.includes(h.frame)) { x.frames = [...x.frames, h.frame]; if (x !== c) { x.rev += 1; x.at = Date.now() } }
+      // a capture names every frame its run made (hosted on one or not) - and so does work queued on its thread
+      // meanwhile: a tag or a More work waiting on it holds those frames when it runs
+      if (b.created?.length && b.members.length === 1) {
+        const c = j.cards.find((x) => x.id === b.members[0].card)
+        if (c) for (const x of j.cards.filter((y) => y === c || (y.state === 'queued' && y.board === c.board && !!c.thread && y.thread === c.thread))) {
+          const add = b.created.filter((f) => !x.frames.includes(f))
+          if (add.length) { x.frames = [...x.frames, ...add]; if (x !== c) { x.rev += 1; x.at = Date.now() } }
+        }
       }
       // answered while the reply was being posted, or before a restart: look again, under the lock
       for (const m of b.members) {
@@ -498,6 +499,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // have made it)
     const myStart = ++batchStarts
     const aloneAtStart = [...runningBatches.keys()].every((k) => k === b.batchId)
+    // and nothing working in a terminal (a `marver work` hold) at any point while it ran
+    let crowded = !!hooks.anyHold?.()
     // The packet the agent reads is made again from the journal right before every run - its members,
     // their kinds, their frozen briefs - never trusted from the file on disk; a session record's content
     // comes from its seal, checked (a changed file cannot point the agent anywhere else)
@@ -559,6 +562,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     }
     if (!b.shots?.some((s) => s.before)) await shoot('before')   // a retry keeps the first attempt's
     const followWork = () => {
+      if (hooks.anyHold?.()) crowded = true
       for (const [id, mt] of sceneFrameMtimes(root)) if (startMtimes.get(id) !== mt) touched.add(id)   // created or edited
       for (const id of touched) light(id)
       for (const f of lit) hooks.work?.(f, true)   // heartbeat: keep every lit frame's lease alive
@@ -605,7 +609,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // beside it: pictured as they are (new, nothing before) at their size on the board
       const one = b.members.length === 1 ? cards()[0] : undefined
       // (a rerun after a crash finds them already there: the ones found before are kept in the batch)
-      const alone = aloneAtStart && batchStarts === myStart
+      const alone = aloneAtStart && batchStarts === myStart && !crowded && !hooks.anyHold?.()
       const created = capturing && one?.kind === 'capture' ? [...new Set([...(b.created ?? []), ...(alone ? newFrames(startMtimes, b) : [])])].slice(0, 3) : []
       let hosts: { member: string; frame: string }[] = []
       if (created.length && hooks.shoot) {

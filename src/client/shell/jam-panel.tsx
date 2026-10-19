@@ -93,18 +93,22 @@ function LineRow({ l }: { l: TimelineLine }) {
 /** The merged timeline: words and notes among every step, each at its moment. */
 export const Lines = ({ lines }: { lines: TimelineLine[] }) => <div className="jm-lines">{lines.map((l, i) => <LineRow key={i} l={l} />)}</div>
 
+const newNoteId = () => `n-${Math.random().toString(36).slice(2, 12).padEnd(8, '0')}`
+
 /** Notes written in a read-back after the capture ended: under a divider, in the timeline's own rows, then a
  *  clean field and Add note (⏎). What you type is never a capture key. */
-function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; onAdd?: (text: string) => Promise<boolean> }) {
+function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; onAdd?: (text: string, id: string) => Promise<boolean> }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  // the note in the field: one id until it saves (a failed one sent again is the same note)
+  const nid = useRef(newNoteId())
   const add = async () => {
     const t = text.trim()
     if (!t || busy || !onAdd) return
     setBusy(true)
-    const ok = await onAdd(t)
+    const ok = await onAdd(t, nid.current)
     setBusy(false)
-    if (ok) setText('')
+    if (ok) { setText(''); nid.current = newNoteId() }
   }
   return (
     <div className="jm-added" data-jam-added="">
@@ -199,7 +203,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
   /** notes written here after it ended - under a divider, as the timeline shows its own */
   added?: { at: number; text: string }[]
   /** a note added from here (a draft): resolves whether it saved */
-  onAddNote?: (text: string) => Promise<boolean>
+  onAddNote?: (text: string, id: string) => Promise<boolean>
   err?: ReactNode
   warn?: ReactNode
   style?: CSSProperties

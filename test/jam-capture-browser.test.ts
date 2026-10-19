@@ -333,6 +333,11 @@ describe('captures in the browser', () => {
     expect(pics.length).toBeGreaterThan(0)
     expect(pics.every((x: any) => x.frame === 'spec/alpha')).toBe(true)
     expect(tl.filter((x: any) => x.event === 'screen').map((x: any) => x.to)).toEqual(['spec/bravo', 'spec/alpha', 'spec/bravo'])
+    // every screen visited keeps the stage's device size, not only the one it ended on
+    const vp = await browser!.eval(s, `(() => { const p = window.__mvStore.getState().play; const v = (window.__mvConfig ?? {}).viewports?.[p.device]; return v ? { w: Math.round(v.width), h: Math.round(v.height) } : null })()`)
+    expect(rec.record.sizes?.['spec/alpha']).toBeTruthy()
+    expect(rec.record.sizes?.['spec/alpha']).toEqual(rec.record.sizes?.['spec/bravo'])
+    if (vp) expect(rec.record.sizes['spec/alpha']).toEqual(vp)
     await browser!.eval(s, `window.__mvStore.getState().setPlay(null), 1`)
     await browser!.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((x) => x.id === ${JSON.stringify(id)}); return c ? q.act(c, 'drop') : 1 })()`)
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
@@ -936,5 +941,34 @@ describe('captures in the browser: the first trial', () => {
       expect((await cardsNow()).find((c: any) => c.id === id2).added?.map((x: any) => x.text)).toEqual(['keep this once'])
       await decide(id2, 'drop')
     } finally { await browser!.eval(s, `(window.fetch = window.__fetch6), 1`) }
+  })
+
+  skippable('a failed note is never lost to a different one: added after the panel reopened, both go with the capture', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('two notes test'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)} && !!document.querySelector('[data-jam-addnote]')`, 30_000)
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch7 = f; window.__noteFail = 1; window.fetch = async (u, o) => { if (window.__noteFail && String(u).includes('/api/jam/card') && o?.body && String(o.body).includes('"action":"note"')) { window.__noteFail -= 1; return new Response('{"ok":false}', { status: 409 }) } return f(u, o) }; return 1 })()`)
+    try {
+      await click('[data-jam-addnote]')
+      await browser!.send('Input.insertText', { text: 'note A' }, s)
+      await enter()
+      await until(`window.__noteFail === 0 && !document.querySelector('[data-jam-addnote]').readOnly`, 5000)
+      // the panel closes and opens again: a fresh field
+      await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+      await sleep(200)
+      await click(`.jm-lane [data-tile="${id}"]`)
+      await until(`!!document.querySelector('[data-jam-addnote]') && document.querySelector('[data-jam-addnote]').value === ''`, 5000)
+      await click('[data-jam-addnote]')
+      await browser!.send('Input.insertText', { text: 'note B' }, s)
+      await enter()
+      await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(id)})?.added?.length === 1`, 5000)
+      await click('[data-jam-readback] .actions .jm-btn.primary')                   // Add to queue: A is sent first
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state !== 'draft')`, 10_000)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch7), 1`) }
+    expect((await cardsNow()).find((c: any) => c.id === id).added?.map((x: any) => x.text).sort()).toEqual(['note A', 'note B'])
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 60_000)
+    await decide(id, 'good')
   })
 })

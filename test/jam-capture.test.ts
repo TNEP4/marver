@@ -868,6 +868,46 @@ describe('captures: trial 2 (sizes, new frames, notes added after, names)', () =
     done()
   })
 
+  it('a note sent again under its id is kept once; another note is its own', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    const r = rec()
+    await jam.capture(r)
+    const n = (id: string, text: string) => jam.act(r.id, card(jam, r.id).rev, 'note', JSON.stringify({ id, text }))
+    expect((await n('n-aaaaaaaa', 'one')).ok).toBe(true)
+    expect((await n('n-aaaaaaaa', 'one')).ok).toBe(true)                  // its answer was lost: sent again
+    expect((await n('n-bbbbbbbb', 'two')).ok).toBe(true)
+    expect(card(jam, r.id).payload.added.map((x: any) => x.text)).toEqual(['one', 'two'])
+    jam.stop()
+    done()
+  })
+
+  it('frames a run made go to the capture even when its thread stays (it changed its own frame too); nothing is claimed while a terminal holds a frame', async () => {
+    const { root, done } = setup()
+    freshBoard(root)
+    let k = 0
+    const jam = createJam(root, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, {
+      anchor: anchorOk as any,
+      shoot: async (frame) => addPicture(root, png(root, `shot-${k}.png`, `pixels ${k++}`), { frame }),   // every picture differs: demo/a changed
+    })
+    const r = rec({ words: 'change this and add one' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    expect(card(jam, r.id).frames).toEqual(['demo/a', 'demo/fresh'])
+    expect(card(jam, r.id).thread).toBe(`cap-${r.id}`)
+    // with a terminal agent holding a frame meanwhile, a new frame is no one's
+    const { root: root2, done: done2 } = setup()
+    freshBoard(root2)
+    const jam2 = createJam(root2, CFG, agent('ok', { touch: 'design/scenes/demo/fresh.tsx' }), undefined, { anchor: anchorOk as any, shoot: (f: string) => sameShot(root2)(f), anyHold: () => true, held: () => false } as any)
+    const r2 = rec({ words: 'a new frame please' })
+    const a2 = await jam2.capture(r2)
+    await jam2.act(r2.id, a2.card!.rev, 'confirm')
+    await jam2.tick(); jam2.stop()
+    expect(card(jam2, r2.id).frames).toEqual(['demo/a'])
+    done(); done2()
+  })
+
   it('a note added in a draft\'s read-back goes with it: in its thread comment, in what the agent reads, bound at confirm; never once it is sent', async () => {
     const { root, dir, done } = setup()
     const jam = createJam(root, CFG, agent())
