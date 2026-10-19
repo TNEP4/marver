@@ -8,7 +8,9 @@ import { Worker } from 'node:worker_threads'
 import WebSocket from 'ws'
 import { MAX_PHRASE, MAX_WAITING, PREROLL, RATE, Segmenter, WINDOW, tokensToWords, type Recognized, type VadLike, type Word } from '../src/server/jam/speech-cut.ts'
 import { AUDIO_PATH, createSpeech, issueTicket, takeTicket } from '../src/server/jam/audio.ts'
-import { modelPaths, modelsReady } from '../src/server/jam/speech-models.ts'
+import { dropLock, modelPaths, modelsReady, takeLock } from '../src/server/jam/speech-models.ts'
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 /** A VAD stand-in: a window with any non-zero sample is speech; 0.4 s of silence ends a phrase; `flush`
  *  ends the phrase being said now (as sherpa's does). `start` is the first speech window's sample. */
@@ -130,6 +132,37 @@ describe('words: review fixes (no model)', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(calls).toBe(0)
     expect(words).toEqual([])
+  })
+})
+
+describe('words: the download lock', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'mv-models-'))
+  it('one installer at a time: a lock whose process is gone is reclaimed; a lock is released only by its owner', async () => {
+    const d = dir(), lock = join(d, '.download.lock')
+    writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 12345, token: 'dead' }))   // no such process
+    const t = await takeLock(lock, d)
+    expect(typeof t === 'string' && t !== 'done').toBe(true)
+    expect(JSON.parse(readFileSync(lock, 'utf8')).token).toBe(t)
+    dropLock(lock, 'someone-else')
+    expect(existsSync(lock)).toBe(true)                                              // not theirs to release
+    dropLock(lock, t as string)
+    expect(existsSync(lock)).toBe(false)
+    rmSync(d, { recursive: true, force: true })
+  })
+
+  it('a lock left half written by a process that died is reclaimed after the grace, never before', async () => {
+    const d = dir(), lock = join(d, '.download.lock')
+    writeFileSync(lock, '')
+    const old = new Date(Date.now() - 60_000)
+    utimesSync(lock, old, old)
+    const t = await takeLock(lock, d)
+    expect(t).not.toBe('done')
+    dropLock(lock, t as string)
+    // a fresh empty one is someone writing it: waited for
+    writeFileSync(lock, '')
+    const waited = await Promise.race([takeLock(lock, d).then(() => 'took', () => 'gone'), new Promise((r) => setTimeout(() => r('waiting'), 1500))])
+    expect(waited).toBe('waiting')
+    rmSync(d, { recursive: true, force: true })
   })
 })
 

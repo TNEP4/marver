@@ -93,6 +93,44 @@ const untar = (archive: string, into: string) => new Promise<void>((resolve, rej
 })
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/** A lock file unreadable (half written by a process that died writing it) for this long is stale. */
+const LOCK_GRACE = 10_000
+const ageOf = (f: string): number => { try { return Date.now() - statSync(f).mtimeMs } catch { return 0 } }
+const readRaw = (f: string): string | null => { try { return readFileSync(f, 'utf8') } catch { return null } }
+
+/** Take the download lock (one installer at a time, across dev servers). Resolves to this installer's
+ *  token, or to 'done' when another process finished the models while this one waited. A stale lock - its
+ *  process gone, or unreadable past the grace - is reclaimed by one process at a time, under a guard, and
+ *  only if it is still the same stale lock. */
+export async function takeLock(lock: string, dir: string): Promise<string | 'done'> {
+  const token = `${process.pid}-${randomBytes(6).toString('hex')}`
+  for (;;) {
+    try { writeFileSync(lock, JSON.stringify({ pid: process.pid, token }), { flag: 'wx' }); return token }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e }
+    const raw = readRaw(lock)
+    if (raw === null) continue                                  // gone meanwhile: try again
+    let pid = 0
+    try { pid = Number(JSON.parse(raw).pid) || 0 } catch { pid = 0 }
+    const stale = pid ? !alive(pid) : ageOf(lock) > LOCK_GRACE
+    if (stale) {
+      const guard = `${lock}.reclaim`
+      try { writeFileSync(guard, String(process.pid), { flag: 'wx' }) }
+      catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+        if (ageOf(guard) > LOCK_GRACE) rmSync(guard, { force: true })   // a reclaimer that died mid-way
+        await sleep(200); continue
+      }
+      try { if (readRaw(lock) === raw) rmSync(lock, { force: true }) } finally { rmSync(guard, { force: true }) }
+      continue
+    }
+    // a live installer: wait for it, then see what it left
+    await sleep(1_000)
+    if (!existsSync(lock) && (await modelsReady(dir))) return 'done'
+  }
+}
+/** Release the lock - only this installer's own. */
+export const dropLock = (lock: string, token: string) => { const raw = readRaw(lock); try { if (raw && JSON.parse(raw).token === token) rmSync(lock, { force: true }) } catch { /* not ours */ } }
 
 /** Download the models (once - a second call joins the first; another dev server downloading them is
  *  waited for, through a lock file). Everything lands in a staging folder of this process first, is
@@ -103,17 +141,10 @@ export function downloadModels(dir = modelsDir(), fetchImpl: typeof fetch = fetc
   running = (async () => {
     mkdirSync(dir, { recursive: true })
     const lock = join(dir, '.download.lock')
-    // another process downloading: wait for it, then see what it left
-    for (;;) {
-      try { writeFileSync(lock, JSON.stringify({ pid: process.pid }), { flag: 'wx' }); break }
-      catch {
-        let pid = 0
-        try { pid = Number(JSON.parse(readFileSync(lock, 'utf8')).pid) || 0 } catch { /* half written */ }
-        if (pid && !alive(pid)) { rmSync(lock, { force: true }); continue }
-        await new Promise((r) => setTimeout(r, 1_000))
-        if (!existsSync(lock)) { if (await modelsReady(dir)) { download = { ...download, state: 'done', received: download.total }; return } }
-      }
-    }
+    let token: string | 'done'
+    try { token = await takeLock(lock, dir) }
+    catch (err) { download = { ...download, state: 'failed', error: `the download could not start: ${(err as Error).message}` }; return }
+    if (token === 'done') { download = { ...download, state: 'done', received: download.total }; return }
     const stage = join(dir, `.staging-${process.pid}-${randomBytes(4).toString('hex')}`)
     try {
       mkdirSync(stage, { recursive: true })
@@ -141,7 +172,7 @@ export function downloadModels(dir = modelsDir(), fetchImpl: typeof fetch = fetc
       download = { ...download, state: 'failed', error: (err as Error).message }
     } finally {
       rmSync(stage, { recursive: true, force: true })
-      rmSync(lock, { force: true })
+      dropLock(lock, token)
     }
   })().finally(() => { running = null })
   return running

@@ -464,7 +464,10 @@ function begin(reviewing?: Cap['reviewing'], from?: CaptureRecord): boolean {
   // Resume: the draft's steps, moved up so its last step meets this instant (the pause between the two
   // is not part of the capture), its pictures and its numbered points; then recording goes on
   // (to just before this instant: everything carried over is strictly before `resumes.at`, the new part after)
-  const shift = from ? t - 1 - (from.timeline[from.timeline.length - 1]?.at ?? t) : 0
+  // (the latest instant in it: a step's, or a word's inside the last phrase - every carried word stays
+  // before the resume)
+  const latest = from ? Math.max(...from.timeline.flatMap((x) => [x.at, ...(x.event === 'words' && x.words ? x.words.map((w) => w.at) : [])]), -Infinity) : 0
+  const shift = from && Number.isFinite(latest) ? t - 1 - latest : 0
   // (a phrase's words move with it - each word keeps its place in the phrase)
   const steps = from ? from.timeline.map((x) => ({ ...x, at: x.at + shift, ...(x.event === 'words' && x.words ? { words: x.words.map((w) => ({ ...w, at: w.at + shift })) } : {}) }) as Step) : []
   const cap: Cap = {

@@ -80,7 +80,8 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
   let unavailable: string | undefined
   let live: WebSocket | null = null
   let lastUse = Date.now()
-  const owners = new Map<string, WebSocket>()   // capture -> the socket it came on, until its final (or drop)
+  // capture -> the socket it came on and the worker it began on, until its final (or drop)
+  const owners = new Map<string, { ws: WebSocket; w?: Worker }>()
 
   const idle = setInterval(() => {
     if (worker && owners.size === 0 && Date.now() - lastUse > (opts.idleMs ?? IDLE_MS)) { const w = worker; worker = null; ready = null; void w.terminate() }
@@ -110,16 +111,21 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
           if (m?.type === 'ready') { worker = w; settle(w) }
           else if (m?.type === 'unavailable') { unavailable = `the speech engine could not start: ${m.reason} - typed notes only`; void w.terminate(); settle(null) }
           else if (m?.type === 'words' || m?.type === 'final') {
-            const ws = owners.get(m.capture)
+            const o = owners.get(m.capture)
+            if (!o || o.w !== w) return   // not this worker's capture (any more)
             if (m.type === 'final') owners.delete(m.capture)
-            tell(ws, m)
+            tell(o.ws, m)
           }
         })
-        // a worker that dies takes its captures' words with it: each is told they may be incomplete
+        // a worker that dies takes ITS captures' words with it (each is told they may be incomplete) - a
+        // newer worker's captures are not its to end; error and exit both come, the first one counts
+        let down = false
         const gone = (why: string) => {
+          if (down) return
+          down = true
           if (worker === w) { worker = null; ready = null }
           if (!settled) { unavailable = `the speech engine stopped: ${why} - typed notes only`; settle(null); return }
-          for (const [id, ws] of [...owners]) { owners.delete(id); tell(ws, { type: 'final', capture: id, incomplete: true }) }
+          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
         }
         w.on('error', (err) => gone(err.message))
         w.on('exit', (code) => gone(`exit ${code}`))
@@ -168,11 +174,13 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
       const id: string = m.capture
       if (m.type === 'begin') {
         if (caps.has(id)) return
-        owners.set(id, ws)
+        const own: { ws: WebSocket; w?: Worker } = { ws }
+        owners.set(id, own)
         const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }
         c.gate = start().then((w) => {
-          if (!w) { tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
+          if (!w) { owners.delete(id); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
           if (closed || c.dropped || worker !== w) return null
+          own.w = w   // its words come from this worker only
           w.postMessage({ type: 'begin', capture: id })
           return w
         })
@@ -197,7 +205,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
       closed = true
       if (live === ws) live = null
       for (const [id, c] of caps) {
-        if (owners.get(id) === ws) owners.delete(id)
+        if (owners.get(id)?.ws === ws) owners.delete(id)
         c.dropped = true
         worker?.postMessage({ type: 'drop', capture: id })
       }

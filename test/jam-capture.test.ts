@@ -702,6 +702,9 @@ describe('captures: the first trial (Resume, Rename, the words)', () => {
     const moved = a.timeline.map((x: any) => ({ ...x, at: x.at + d, ...(x.words ? { words: x.words.map((w: any) => ({ ...w, at: w.at + d })) } : {}) }))
     const b = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...moved, { at: at + 5, event: 'note', text: 'and bold' }] })
     expect((await jam.capture(b)).ok).toBe(true)
+    // a word of the carried phrase after the resume is not a continuation (it would overlap new speech)
+    const over = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at: t0 + 600 + d } } as any, timeline: [...moved, { at: t0 + 600 + d + 5, event: 'note', text: 'x' }] })
+    expect((await jam.capture(over)).ok).toBe(false)
     // a word left on the old clock is not a continuation
     const stale = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...a.timeline.map((x: any) => ({ ...x, at: x.at + d })), { at: at + 5, event: 'note', text: 'x' }] })
     expect((await jam.capture(stale)).error).toMatch(/does not continue/)

@@ -107,6 +107,7 @@ interface Live {
   capture: string
   base: number                    // capture samples before this microphone opened (it opened late: the question answered later)
   from: number                    // the worklet sample the capture's audio starts at (-1 until the first mark)
+  sent: number                    // the capture sample just after the last one sent
   ctx: AudioContext
   stream: MediaStream
   node: AudioWorkletNode
@@ -202,6 +203,14 @@ const send = (capture: string, offset: number, pcm: Int16Array) => {
   ws.send(out)
 }
 
+/** A chunk of a live capture, from worklet sample `start` - its capture sample is the base plus where it
+ *  falls after the first mark; what was sent last is remembered (the end falls back on it). */
+function sendLive(l: Live, start: number, pcm: Int16Array) {
+  const offset = l.base + start - l.from
+  send(l.capture, offset, pcm)
+  l.sent = Math.max(l.sent, offset + pcm.length)
+}
+
 /** Open the microphone for `capture` (started at `t0` on the page clock). Every step checks the capture is
  *  still recording; ending or dropping it meanwhile cancels the opening, and whatever was opened closes. */
 async function listen(capture: string, t0: number) {
@@ -227,12 +236,12 @@ async function listen(capture: string, t0: number) {
     ctx.createMediaStreamSource(stream).connect(node)
     // the capture's sample clock: what was before the microphone opened counts too (silence, unheard)
     const base = Math.max(0, Math.round(((performance.timeOrigin + performance.now()) - t0) / 1000 * RATE))
-    const l: Live = { capture, base, from: -1, ctx, stream, node, closed: false }
+    const l: Live = { capture, base, from: -1, sent: base, ctx, stream, node, closed: false }
     node.port.onmessage = (e) => {
       if (l.closed) return
       const d = e.data as { start: number; pcm: Int16Array; mark?: number }
       if (l.from < 0) { if (d.mark !== undefined) l.from = d.mark; return }   // the first mark sets the start
-      if (d.mark === undefined) send(capture, l.base + d.start - l.from, d.pcm)
+      if (d.mark === undefined) sendLive(l, d.start, d.pcm)
     }
     s.send(JSON.stringify({ type: 'begin', capture }))
     node.port.postMessage('mark')
@@ -280,17 +289,20 @@ export async function voiceEnd(capture: string): Promise<boolean> {
     const t = setTimeout(() => res(null), 500)
     l.node.port.onmessage = (e) => {
       if ((e.data as any).mark !== undefined) { clearTimeout(t); res(e.data) }
-      else if (l.from >= 0) send(capture, l.base + e.data.start - l.from, e.data.pcm)
+      else if (l.from >= 0) sendLive(l, e.data.start, e.data.pcm)
     }
     l.node.port.postMessage('mark')
   })
-  const lastSample = cut && l.from >= 0 ? l.base + cut.mark - l.from : l.base
-  if (cut && l.from >= 0) send(capture, l.base + cut.start - l.from, cut.pcm)
+  // the cut: at the mark; without it (the worklet did not answer, or never marked the start) at what was
+  // sent - and the words may then be incomplete
+  const cleanCut = !!cut && l.from >= 0
+  if (cleanCut) sendLive(l, cut!.start, cut!.pcm)
+  const lastSample = cleanCut ? l.base + cut!.mark - l.from : l.sent
   close(l)   // nothing of it after the cut
   if (!ws || ws.readyState !== WebSocket.OPEN) return false
   const done = new Promise<boolean>((res) => {
     const t = setTimeout(() => { finals.delete(capture); res(false) }, FINAL_MS)
-    finals.set(capture, (complete) => { clearTimeout(t); res(complete) })
+    finals.set(capture, (complete) => { clearTimeout(t); res(complete && cleanCut) })
   })
   ws.send(JSON.stringify({ type: 'end', capture, lastSample }))
   return done

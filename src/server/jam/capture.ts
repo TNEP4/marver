@@ -180,7 +180,8 @@ export function continues(prev: CaptureRecord, next: CaptureRecord, at: number):
   const wordsMoved = (x: Step, y: Step): boolean => {
     const wx = (x as { words?: { at: number }[] }).words, wy = (y as { words?: { at: number }[] }).words
     if (!wx || !wy) return !wx && !wy
-    return wx.length === wy.length && wx.every((w, i) => near(wy[i].at - w.at, d))
+    // each word moved by d, and still before the resume
+    return wx.length === wy.length && wx.every((w, i) => near(wy[i].at - w.at, d) && wy[i].at < at)
   }
   for (let i = 0; i < a.length; i++) if (!near(b[i].at - a[i].at, d) || b[i].at >= at || bare(a[i]) !== bare(b[i]) || !wordsMoved(a[i], b[i])) return false
   return b.slice(a.length).every((x) => x.at > at)
