@@ -111,6 +111,24 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a capture made while a session record is open does not touch the record (records are improved by their own More work)', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    await jam.session({ action: 'start', id: SES })
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    await jam.tick()
+    const wc = card(jam, w.card!.id)
+    expect(wc.state).toBe('review')
+    const r = rec('add the open questions')
+    r.context.reviewing = { card: wc.id, batch: wc.batch, rev: wc.rev }
+    await jam.capture(r)
+    expect(card(jam, r.id).follows).toBeUndefined()
+    await jam.act(r.id, card(jam, r.id).rev, 'confirm')
+    expect(card(jam, wc.id).state).toBe('review')
+    jam.stop()
+    done()
+  })
+
   it('the session survives a restart of the dev server', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())

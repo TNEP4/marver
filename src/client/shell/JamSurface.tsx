@@ -282,7 +282,9 @@ function tileMenu(c: JamCard): MenuItem[] {
     case 'draft': return [open, item('Resume capture', <PlayIcon size={14} />, () => void resumeDraft(c.id)), rename,
       item('Add to queue', <ArrowUpIcon size={14} />, () => void decideDraft(c.id, 'confirm')), item('Keep, do not send', <NotebookIcon size={14} />, () => void decideDraft(c.id, 'keep')),
       item('Drop', <XIcon size={14} />, () => void decideDraft(c.id, 'drop'))]
-    case 'queued': return [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, () => act('first')), item('Keep, do not send', <NotebookIcon size={14} />, () => act('keep')), item('Drop', <XIcon size={14} />, () => act('drop'))]
+    case 'queued': return c.kind === 'capture'
+      ? [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, () => act('first')), item('Keep, do not send', <NotebookIcon size={14} />, () => act('keep')), item('Drop', <XIcon size={14} />, () => act('drop'))]
+      : [open, item('Drop', <XIcon size={14} />, () => act('drop'))]   // a queued record: open or drop it
     case 'review': return [open, ...reply, ...thread, rename]
     case 'asks': return [...reply, open, rename]
     case 'failed': return [item('Retry', <ReloadIcon size={14} />, () => act('retry')), open, ...thread, item('Drop', <XIcon size={14} />, () => act('drop'))]

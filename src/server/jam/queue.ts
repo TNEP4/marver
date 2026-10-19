@@ -663,7 +663,9 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
   const src = rs ? j.cards.find((c) => c.id === rs.id && c.kind === 'capture' && c.board === record.context.board) : undefined
   const prev = src?.state === 'draft' ? src : undefined
   const made = prev?.made ?? (madeOf(record.id) || now)
-  const r = record.context.reviewing ?? src?.reviewing
+  // a capture follows a capture's review only (never a session record, never a tag's card)
+  const r0 = record.context.reviewing ?? src?.reviewing
+  const r = r0 && j.cards.find((x) => x.id === r0.card)?.kind === 'capture' ? r0 : undefined
   const more = src?.payload?.edited !== undefined && rs ? wordsSince(record, rs.at) : ''
   const edited = src?.payload?.edited !== undefined ? [src.payload.edited.trim(), more].filter(Boolean).join('\n') : undefined
   const c: Card = {
@@ -730,7 +732,7 @@ export function endStep(j: Journal, c: Card, now = Date.now()): Settled[] {
     set(c, p.end ?? 'queued', now, p.end === 'kept' ? 'kept, not sent' : undefined)
     if (p.end !== 'kept' && c.reviewing) {
       const r = j.cards.find((x) => x.id === c.reviewing!.card)
-      if (r && r.state === 'review' && r.batch === c.reviewing.batch && r.rev === c.reviewing.rev) { r.verdict = 'more work'; set(r, 'done', now, 'more work') }
+      if (r && r.kind === 'capture' && r.state === 'review' && r.batch === c.reviewing.batch && r.rev === c.reviewing.rev) { r.verdict = 'more work'; set(r, 'done', now, 'more work') }
     }
     touchRun(j, now)
     return [{ card: c }]

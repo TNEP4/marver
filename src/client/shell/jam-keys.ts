@@ -156,7 +156,8 @@ interface Row { on(): boolean; keys: Record<string, () => void> }
 function reviewNow(): { card: string; batch: string; rev: number } | undefined {
   const ui = useJamUi.getState()
   const c = cardById(ui.panel?.id)
-  return ui.panel?.kind === 'review' && c?.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
+  // a capture's review only: a session record is improved through its own More work, never by a capture
+  return ui.panel?.kind === 'review' && c?.kind === 'capture' && c.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
 }
 
 const rows = (): Row[] => {
