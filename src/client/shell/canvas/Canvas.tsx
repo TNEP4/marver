@@ -265,9 +265,10 @@ export function Canvas() {
     if (!el) return
     const down = (e: PointerEvent) => {
       const t = e.target as HTMLElement | null
-      // anywhere on the canvas, a frame too: a lane tile selected with nothing open for it lets go (the
-      // lane's keys too) - a tile whose read-back or review is open stays selected with its panel
-      letGoOfTile()
+      // anywhere on the canvas, a frame too: the panel closes and its tile lets go - except on a comment's
+      // own controls (its pin, its card, its reply): opening one closes the panel there and keeps the
+      // tile when the thread is its own (JamSurface)
+      if (!t?.closest('.cm-layer, .cm-card, .cm-pin, .cm-stack')) letGoOfTile()
       if (t?.closest('.sh-node') || t?.closest('.sh-gcaption')) return
       const s = useStore.getState()
       if (s.selection.length || s.interact) s.select(null)

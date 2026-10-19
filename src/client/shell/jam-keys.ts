@@ -18,6 +18,7 @@
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
+import { clearMoreDraft } from './jam-panel.tsx'
 import { PUBLISHED, useStore } from './store.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
@@ -82,15 +83,21 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
 
 /** Resume a draft that ended too soon: its edit saves first (the resumed capture carries it on), the
  *  read-back closes, and recording goes on where it stopped. */
+/** Leave a field in the open panel (its words save on blur) - before anything takes the panel away. */
+const leavePanelField = () => { const a = document.activeElement; if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur() }
+
 export async function resumeDraft(id: string) {
+  leavePanelField()
   await saving.get(id)
   if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you resume'); return }
   const c = cardById(id)
   if (!c || c.state !== 'draft') return
   if (await useJamCapture.getState().resume(id)) {
-    // as the UI is NOW (the record loaded meanwhile - another panel may have opened): only what points at it
+    // as the UI is NOW (the record loaded meanwhile - another panel may have opened): only what points at
+    // it; words typed in its read-back while the record loaded save before it closes (the resumed capture
+    // carries the draft's edit when it seals)
     const ui = useJamUi.getState()
-    if (ui.panel?.id === id) ui.close()
+    if (ui.panel?.id === id) { leavePanelField(); ui.close() }
     // its tile has stepped aside: nothing points at it, and the lane gives its keys back
     if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
   }
@@ -184,7 +191,7 @@ const rows = (): Row[] => {
         b: () => ui.flip(),
         'Alt+ArrowLeft': () => ui.setTab(Math.max(0, ui.tab - 1)),
         'Alt+ArrowRight': () => ui.setTab(Math.min(Math.max(1, changedShots(panelCard?.shots).length) - 1, ui.tab + 1)),
-        Escape: () => (ui.moreOpen ? ui.setMoreOpen(false) : ui.close()),
+        Escape: () => { if (ui.moreOpen) { clearMoreDraft(panelCard!.id); ui.setMoreOpen(false) } else ui.close() },   // Esc leaves the composer: its words go
       },
     },
     { // the lane has the keyboard

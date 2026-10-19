@@ -12,6 +12,7 @@
  */
 import { frameLoaded, frameReady, onFrameMessage, stageNavigated } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
+import { letGoOfTile } from './jam-state.ts'
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
@@ -499,6 +500,7 @@ function PlayInner() {
       } else if (data.type === 'sh:frame-down') {
         const c = commentsStore()
         if (c.active) c.setActive(null)
+        letGoOfTile()   // a click in the prototype closes the review open over it, as on the canvas
       } else if (data.type === 'sh:laser-copy') {
         // laser click in the prototype: copy the element's address ([board ▸ scene] +
         // frame file + css path) and confirm in the frame's own hover label, like the canvas

@@ -35,7 +35,9 @@ const Marver = ({ size = 20 }: { size?: number }) => (
  *  its footer stays in view. `onClose` adds a quiet close button in its corner. */
 export function FocusPanel({ children, left, width = 580, onClose }: { children: ReactNode; left: number; width?: number; onClose?: () => void }) {
   // 580: the footer's "For Claude Code" and its four actions on one line; never wider than the window allows
-  const w = Math.max(360, Math.min(Math.max(580, width), (typeof window !== 'undefined' ? window.innerWidth : 1400) - left - 12))
+  // the window is the last word: a narrow one gets a narrower panel, never one past its edge
+  const room = (typeof window !== 'undefined' ? window.innerWidth : 1400) - left - 12
+  const w = Math.min(room, Math.max(360, Math.max(580, width)))
   return (
     <div className="jm-focus" data-jam-focus="" style={{ left, width: w, bottom: `calc(var(--edge) + ${LANE_H + 2}px)` }}>
       {children}
@@ -45,6 +47,10 @@ export function FocusPanel({ children, left, width = 580, onClose }: { children:
 }
 
 // ---- the timeline --------------------------------------------------------------------------------------
+
+/** More work words not sent yet, by card - they survive the panel closing on a click elsewhere. */
+const moreDrafts = new Map<string, string>()
+export const clearMoreDraft = (id: string) => { moreDrafts.delete(id) }
 
 const unquote = (s: string) => s.replace(/^"(.*)"$/s, '$1')
 const DEVICE: Record<string, string> = { phone: 'mobile', mobile: 'mobile', tablet: 'tablet', laptop: 'laptop', desktop: 'monitor', monitor: 'monitor', tv: 'tv' }
@@ -222,7 +228,7 @@ export function ReadBack({ title, of, onPrev, onNext, meta, lines, pictures, edi
  * `shots` are picture URLs per frame (`frames` names the tabs; it defaults to the shots' frames);
  * `alsoChanged` = shared files the job changed anyway.
  */
-export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab, view, onFlip, reply, shots, alsoChanged, agent, when, more, onMore, onMoreOpen, onGood, onLater, onOpenThread, style }: {
+export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab, view, onFlip, reply, shots, alsoChanged, agent, when, more, onMore, onMoreOpen, onGood, onLater, onOpenThread, style, draftKey }: {
   title: string
   of?: [number, number]
   onPrev?: () => void
@@ -243,14 +249,20 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
   onGood(): void
   onLater(): void
   onOpenThread?: () => void
+  /** the card the More work words belong to (kept across the panel closing) */
+  draftKey?: string
   style?: CSSProperties
 }) {
   const names = frames ?? shots.map((s) => s.frame)
   const shot = shots[active] ?? shots.find((s) => s.frame === names[active])
   const label = (f: string) => f.split('/').pop() ?? f
-  const [text, setText] = useState('')
+  // the More work words outlive the panel: a click elsewhere closes it, and the words wait for its return -
+  // they go only when sent, or when you leave the composer yourself (Esc)
+  const [text, setTextState] = useState(() => (draftKey ? moreDrafts.get(draftKey) ?? '' : ''))
+  const setText = (t: string) => { setTextState(t); if (draftKey) { if (t) moreDrafts.set(draftKey, t); else moreDrafts.delete(draftKey) } }
   const field = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => { if (more) field.current?.focus(); else setText('') }, [more])
+  useEffect(() => { if (draftKey && moreDrafts.get(draftKey) && !more) onMoreOpen(true) }, [])   // back with words waiting: the composer is open
+  useEffect(() => { if (more) field.current?.focus() }, [more])
   const send = () => { if (text.trim()) onMore(text.trim()) }
   return (
     <div className="jm-panel jm-review" data-jam-review="" style={style}>
@@ -289,7 +301,7 @@ export function ReviewDetail({ title, of, onPrev, onNext, frames, active, onTab,
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation()
-                if (e.key === 'Escape') { e.preventDefault(); onMoreOpen(false) }
+                if (e.key === 'Escape') { e.preventDefault(); setText(''); onMoreOpen(false) }
                 else if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) { e.preventDefault(); send() }
               }} />
             <button className="jm-send" disabled={!text.trim()} onClick={send}>Send <kbd>⏎</kbd></button>

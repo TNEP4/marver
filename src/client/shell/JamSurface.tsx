@@ -15,7 +15,7 @@ import { laneLine, timelineLines } from './jam-lines.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { letGoOfTile, useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
-import { EdgeRing } from './jam-panel.tsx'
+import { clearMoreDraft, EdgeRing } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
 import { HARNESS } from './Comments.tsx'
 import { PUBLISHED, useStore } from './store.ts'
@@ -159,7 +159,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           onGood={() => { void act(panelCard, 'good'); ui.close() }}
           onMore={(text) => void (async () => {
             // the composer and its words stay until the follow-up is really queued
-            if (await act(panelCard, 'more', text)) { ui.setMoreOpen(false); ui.close() }
+            if (await act(panelCard, 'more', text)) { clearMoreDraft(panelCard.id); ui.setMoreOpen(false); ui.close() }
             else useStore.getState().toast('your follow-up was not sent - try again')
           })()}
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
