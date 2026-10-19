@@ -74,6 +74,9 @@ export interface Speech {
   retry(): void
   /** Attach the socket's upgrade handler to the dev server's HTTP server. */
   attach(server: Server): void
+  /** A session ends: its talk still coming in is ended here, at the last sample received, and its last words
+   *  are awaited (3 s at most) - so the transcript is whole before a record is sealed, whichever tab ends it. */
+  finishTalk(session: string): Promise<void>
   stop(): void
 }
 
@@ -90,7 +93,9 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
   let live: WebSocket | null = null
   let lastUse = Date.now()
   // capture -> the socket it came on and the worker it began on, until its final (or drop)
-  const owners = new Map<string, { ws: WebSocket; w?: Worker; done?: () => void }>()
+  const owners = new Map<string, { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: () => void }>()
+  /** talk segments open on a socket: how to end each one from here */
+  const talk = new Map<string, () => Promise<void>>()
 
   const idle = setInterval(() => {
     if (worker && owners.size === 0 && Date.now() - lastUse > (opts.idleMs ?? IDLE_MS)) { const w = worker; worker = null; ready = null; void w.terminate() }
@@ -126,7 +131,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           else if (m?.type === 'words' || m?.type === 'final') {
             const o = owners.get(m.capture)
             if (!o || o.w !== w) return   // not this worker's capture (any more)
-            if (m.type === 'final') { owners.delete(m.capture); o.done?.() }
+            if (m.type === 'final') { owners.delete(m.capture); o.done?.(); o.onFinal?.() }
             // a session's talk: its words go to the transcript, here, on this Mac
             const t0 = talkT0.get(m.capture)
             if (m.type === 'words' && t0 !== undefined && Array.isArray(m.words)) {
@@ -144,7 +149,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
           down = true
           if (worker === w) { worker = null; ready = null }
           if (!settled) { unavailable = `the speech engine stopped: ${why} - typed notes only`; settle(null); return }
-          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); o.done?.(); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
+          for (const [id, o] of [...owners]) if (o.w === w) { owners.delete(id); o.done?.(); o.onFinal?.(); tell(o.ws, { type: 'final', capture: id, incomplete: true }) }
         }
         w.on('error', (err) => gone(err.message))
         w.on('exit', (code) => gone(`exit ${code}`))
@@ -163,7 +168,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
     // per capture, one gate: everything for it reaches the worker in the order it came, and only the
     // worker it began on (audio said while the model loads waits for it instead of being lost); a capture
     // ended, dropped or whose socket closed takes nothing more
-    interface Cap { gate: Promise<Worker | null>; ended: boolean; dropped: boolean }
+    interface Cap { gate: Promise<Worker | null>; ended: boolean; dropped: boolean; sent: number }
     const caps = new Map<string, Cap>()
     const then = (c: Cap, f: (w: Worker) => void, otherwise?: () => void) => {
       c.gate = c.gate.then((w) => {
@@ -184,6 +189,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         if (!c || c.ended || c.dropped) return
         const offset = buf.readUInt32LE(1 + n)
         const pcm = new Int16Array(buf.buffer.slice(buf.byteOffset + 1 + n + 4, buf.byteOffset + buf.length))
+        c.sent = Math.max(c.sent, offset + pcm.length)
         then(c, (w) => { if (!c.dropped) w.postMessage({ type: 'audio', capture: id, offset, pcm }, [pcm.buffer as ArrayBuffer]) })
         return
       }
@@ -197,12 +203,20 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const prev = caps.get(id)
         if (prev && !prev.ended && !prev.dropped && owners.has(id)) return
         if (prev) prev.dropped = true
-        const own: { ws: WebSocket; w?: Worker; done?: () => void } = { ws }
+        const own: { ws: WebSocket; w?: Worker; done?: () => void; onFinal?: () => void } = { ws }
         owners.set(id, own)
         if (id.startsWith('ses-') && Number.isFinite(m.t0)) talkT0.set(id, Number(m.t0))
-        const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false }
+        const c: Cap = { gate: Promise.resolve(null), ended: false, dropped: false, sent: 0 }
         // a segment that is over (final, dropped, or never started) is forgotten here
-        own.done = () => { if (caps.get(id) === c) caps.delete(id); talkT0.delete(id) }
+        own.done = () => { if (caps.get(id) === c) caps.delete(id); talkT0.delete(id); talk.delete(id) }
+        // a talk segment can be ended from here (the session ends in another tab): at the last sample received
+        if (id.startsWith('ses-')) talk.set(id, () => new Promise<void>((res) => {
+          if (c.ended || c.dropped) { res(); return }
+          c.ended = true
+          const t = setTimeout(res, 3_000)
+          own.onFinal = () => { clearTimeout(t); res() }
+          then(c, (w) => w.postMessage({ type: 'end', capture: id, lastSample: c.sent }), () => { clearTimeout(t); res() })
+        }))
         c.gate = start().then((w) => {
           if (!w) { owners.delete(id); own.done?.(); tell(ws, { type: 'unavailable', capture: id, reason: unavailable ?? 'the speech model is not ready - typed notes only' }); return null }
           if (closed || c.dropped || worker !== w) return null
@@ -255,6 +269,9 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       if (worker) return { state: 'ready' }
       void start()
       return unavailable ? { state: 'unavailable', reason: unavailable } : { state: 'loading' }
+    },
+    async finishTalk(session) {
+      await Promise.all([...talk].filter(([id]) => id.startsWith(`${session}~`)).map(([, end]) => end()))
     },
     attach(server) {
       server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {

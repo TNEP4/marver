@@ -36,7 +36,7 @@ import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor,
 import { captureFrames, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
-import { buildWrapup, readWrapup, SESSION_ID, storeWrapup } from './session.ts'
+import { buildWrapup, moreOf, readWrapup, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -403,6 +403,25 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   const runBatch = async (b: Batch) => {
     const packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket
+    // a session record's content comes from its seal, never from the packet file: checked, and written
+    // into the packet the agent reads right before it runs (a changed packet cannot point it elsewhere)
+    if (packet.members.some((m) => m.kind === 'wrapup')) {
+      const bad: string[] = []
+      for (const m of packet.members) {
+        if (m.kind !== 'wrapup') continue
+        const c = q.j.cards.find((x) => x.id === m.card)
+        const w = c && readWrapup(root, wrapupOf(c))
+        if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
+        m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
+      }
+      if (bad.length) {
+        await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') { c.state = 'failed'; c.note = 'the session record changed after it was written - write it again'; c.rev += 1; c.at = Date.now() } } q.persist() })
+        packet.members = packet.members.filter((m) => !bad.includes(m.card))
+        b.members = b.members.filter((m) => !bad.includes(m.card))
+        if (!packet.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); return }
+      }
+      writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+    }
     const cards = () => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     // Presence glow that FOLLOWS the work. Jam agents have no shell to run `marver work`, so the
     // daemon moves the glow itself: the reserved frames light up at once ("I heard you"), then as
@@ -546,16 +565,22 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (!words.trim()) return { ok: false, card: c0 && structuredClone(c0), error: 'say what more to do' }
     // a session record has no thread: More work is a new record job from the same content, your note added
     if (c0?.kind === 'wrapup') {
-      const r = await q.lock((j) => {
+      // your note is sealed and ledgered too, in a wrap-up of its own - from the first one's content, checked
+      const r = await q.lock((j, ctx) => {
         const c = j.cards.find((x) => x.id === id)
-        if (!c || c.state !== 'review' || c.rev !== rev || !c.payload) return null
-        const next = moreWrapup(j, c, words.trim())
+        if (!c || c.state !== 'review' || c.rev !== rev || !c.payload) return { error: 'the card changed - look again' }
+        const prev = readWrapup(root, c.id)
+        if (!prev || !wrapupIntact(ctx, c)) return { error: 'the session record changed after it was written - write it again' }
+        const w = moreOf(prev.wrapup, words.trim())
+        const hash = storeWrapup(root, w)
+        ledgerRecord(root, c.board, `wrapup:${w.id}:${hash}`)
+        const next = moreWrapup(j, c, w, hash)
         q.persist()
-        return structuredClone(next)
+        return { card: structuredClone(next) }
       })
-      if (!r) { const c = q.j.cards.find((x) => x.id === id); return { ok: false, card: c && structuredClone(c), error: 'the card changed - look again' } }
+      if ('error' in r) { const c = q.j.cards.find((x) => x.id === id); return { ok: false, card: c && structuredClone(c), error: r.error } }
       reserve(); queueChanged(); void pump()
-      return { ok: true, card: r }
+      return { ok: true, card: r.card }
     }
     const began = await q.lock((j) => {
       const c = j.cards.find((x) => x.id === id)
@@ -901,22 +926,26 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // the wrap-up: sealed at this moment (as of now), ledgered with its hash, a queued card - and the
       // session ends
       if (!/^[a-z0-9][a-z0-9-]*$/.test(op.board)) return { ok: false, error: 'bad board' }
-      const r = await q.lock((j) => {
-        if (j.session?.id !== op.id) return null
+      const r = await q.lock((j, ctx) => {
+        if (j.session?.id !== op.id) return { error: 'no such session runs' }
         const w = buildWrapup(j, root, {
           session: op.id, since: j.session.since, instructions: op.instructions, includeTalk: op.includeTalk, tags: Math.max(0, Math.floor(op.tags) || 0),
           title: (c) => (captureView(c) as { title?: string }).title ?? c.id, reply: (c) => resultFor(j, c),
+          intact: (c) => captureIntact(j, ctx, c.id),
         })
+        if ('error' in w) return { error: w.error }
+        const unsafe = recordPathProblem(root, w.file)
+        if (unsafe) return { error: `the record's file is not safe to write: ${unsafe}` }
         const hash = storeWrapup(root, w)
         ledgerRecord(root, op.board, `wrapup:${w.id}:${hash}`)
         const card = addWrapup(j, w, hash, op.board)
         endSession(j, op.id)
         q.persist()
-        return structuredClone(card)
+        return { card: structuredClone(card) }
       })
-      if (!r) return { ok: false, error: 'no such session runs' }
+      if ('error' in r) return { ok: false, error: r.error }
       reserve(); queueChanged(); void pump()
-      return { ok: true, session: null, card: r }
+      return { ok: true, session: null, card: r.card }
     },
     record(id) {
       const c = q.j.cards.find((x) => x.id === id && x.kind === 'wrapup')
@@ -924,7 +953,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (!c || !w) return null
       const file = w.wrapup.file
       let text: string | null = null
-      try { const p = join(root, file); if (!relative(root, p).startsWith('..')) text = readFileSync(p, 'utf8') } catch { text = null }
+      // read only the record's own file - never through a link, never outside the project
+      try { if (!recordPathProblem(root, file)) text = readFileSync(join(root, file), 'utf8').slice(0, 500_000) } catch { text = null }
       const reply = resultFor(q.j, c)
       return { file, text, ...(reply ? { reply } : {}) }
     },

@@ -113,7 +113,7 @@ export interface Card {
   exclusive?: string[]       // runs alone and may edit these shared files (a `shared` answer)
   name?: string              // a capture's title as you named it (Rename) - in place of its first words
   session?: string           // the session it was made in (a capture), or whose record it writes (a wrap-up)
-  wrapup?: string            // a More work record: the sealed wrap-up it writes from (the first record's)
+  verdict?: 'looks good' | 'more work'   // your verdict on its review (the session record copies it)
   /** a capture card: the sealed record's hash, your edit (with its hash, ledgered at confirm) and the
    *  reviewed run it followed - what every brief on its thread carries */
   payload?: { recordHash: string; edited?: string; editedHash?: string; reviewed?: Reviewed }

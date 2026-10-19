@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ROUTE } from '../const.ts'
 import { captureCounts, useJamCapture } from './jam-capture.ts'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
-import { PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
+import { holdsSessionMic, PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
 import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
 import { decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
@@ -84,7 +84,8 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // the session as the server holds it: a page opened (or reloaded) during one hears its talk again; one
   // ended elsewhere (another tab) stops the talk here
   useEffect(() => {
-    if (session && voiceSessionId() !== session.id) void voiceSession(session.id, performance.timeOrigin + performance.now())
+    // only the tab that holds the session's microphone hears its talk - another tab never takes it over
+    if (session && voiceSessionId() !== session.id && holdsSessionMic(session.id)) void voiceSession(session.id, performance.timeOrigin + performance.now())
     else if (!session && voiceSessionId()) void voiceSessionEnd()
   }, [session?.id])
 

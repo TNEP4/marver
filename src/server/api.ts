@@ -1028,6 +1028,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!b || typeof b.id !== 'string' || !['start', 'end', 'wrapup'].includes(b.action)) return json(res, 400, { error: 'expected { action, id }' })
         if (b.action === 'wrapup' && (typeof b.instructions !== 'string' || typeof b.board !== 'string')) return json(res, 400, { error: 'expected { instructions, board }' })
+        // the session's talk still coming in (in this tab or another) ends here first: the transcript the
+        // record reads is whole
+        if (b.action !== 'start') { const { speechLive } = await import('./jam/audio.ts'); await speechLive.svc?.finishTalk(b.id).catch(() => {}) }
         const r = await jamLive.session(b.action === 'wrapup'
           ? { action: 'wrapup', id: b.id, instructions: b.instructions, includeTalk: b.includeTalk !== false, tags: Number(b.tags) || 0, board: b.board }
           : { action: b.action, id: b.id })

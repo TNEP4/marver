@@ -19,7 +19,7 @@
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
-import { pressJ, startSession } from './jam-session.tsx'
+import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { PUBLISHED, useStore } from './store.ts'
 
@@ -167,7 +167,7 @@ const rows = (): Row[] => {
     { // a session sheet open: the start sheet's ⏎ starts; Esc closes either (the wrap-up's field keeps its own keys)
       on: () => ui.sheet === 'start' || ui.sheet === 'wrap',
       keys: {
-        ...(ui.sheet === 'start' ? { Enter: () => void startSession() } : {}),
+        Enter: () => { if (ui.sheet === 'start') void startSession(); else wrapWrite.current?.() },
         Escape: () => ui.setSheet(null),
       },
     },

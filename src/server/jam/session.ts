@@ -13,8 +13,8 @@
  * `design/sessions/` with no `context/`) and nothing else.
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeSync } from 'node:fs'
+import { dirname, join, relative, sep } from 'node:path'
 import { readCapture } from './capture.ts'
 import { speechLines } from '../../shared/speech.ts'
 import type { Card, CaptureRecord, Journal } from './types.ts'
@@ -82,26 +82,50 @@ export interface Wrapup {
   more?: string
 }
 
-/** The record's file: `context/sessions/<date>-<slug>.md`, or `design/sessions/` with no `context/`. */
-export function recordFile(root: string, since: number, slug = 'session'): string {
+/** The record's file: `context/sessions/<date>-<hhmm>-<session>.md`, or `design/sessions/` with no
+ *  `context/` - the session's own id in it, so two sessions never write one file. */
+export function recordFile(root: string, since: number, session = 'ses-0-session'): string {
   const d = new Date(since)
   const pad = (n: number) => String(n).padStart(2, '0')
   const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-  const s = (slug.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session')
-  const name = `${date}-${s}-${pad(d.getHours())}${pad(d.getMinutes())}.md`
+  const tail = (/^ses-\d+-([a-z0-9]+)$/.exec(session)?.[1] ?? 'session').slice(0, 12)
+  const name = `${date}-${pad(d.getHours())}${pad(d.getMinutes())}-session-${tail}.md`
   return existsSync(join(root, 'context')) ? `context/sessions/${name}` : `design/sessions/${name}`
 }
 
+/** Why a record path is not safe to write or read, or null: it must be a plain `.md` under
+ *  `context/sessions/` or `design/sessions/`, and no part of it that exists - the folders or the file -
+ *  may be a link (a link would send the agent's write, or the panel's read, somewhere else). */
+export function recordPathProblem(root: string, file: string): string | null {
+  if (!/^(context|design)\/sessions\/[a-z0-9][a-z0-9-]*\.md$/.test(file)) return 'not a session record path'
+  let rootReal: string
+  try { rootReal = realpathSync(root) } catch { return 'the project folder is not there' }
+  let at = root
+  for (const part of file.split('/')) {
+    at = join(at, part)
+    let st: ReturnType<typeof lstatSync>
+    try { st = lstatSync(at) } catch { break }          // not there yet: the agent makes it
+    if (st.isSymbolicLink()) return `${relative(root, at)} is a link`
+  }
+  // and where the folders that exist really are: inside the project
+  let probe = join(root, file)
+  while (!existsSync(probe) && probe !== root) probe = dirname(probe)
+  try { const real = realpathSync(probe); if (real !== rootReal && !real.startsWith(rootReal + sep)) return 'it leads outside the project' } catch { return 'it cannot be checked' }
+  return null
+}
+
 /** What the wrap-up says of the session, at this moment ("as of"). */
-export function buildWrapup(j: Journal, root: string, o: { session: string; since: number; instructions: string; includeTalk: boolean; tags: number; title?: (c: Card) => string; reply?: (c: Card) => string | undefined; now?: number }): Wrapup {
+export function buildWrapup(j: Journal, root: string, o: { session: string; since: number; instructions: string; includeTalk: boolean; tags: number; title?: (c: Card) => string; reply?: (c: Card) => string | undefined; intact?: (c: Card) => boolean; now?: number }): Wrapup | { error: string } {
   const now = o.now ?? Date.now()
   const caps: WrapupCapture[] = []
   for (const c of j.cards.filter((x) => x.kind === 'capture' && x.session === o.session).sort((a, b) => a.made - b.made)) {
     // drafts and dropped captures are left out: they were never sent, nor kept
     if (c.state === 'draft' || c.state === 'dropped' || c.state === 'confirming') continue
+    // only what was confirmed (or kept) as it was: a capture changed since is never sealed into the record
+    if (o.intact && !o.intact(c)) return { error: 'a capture of the session changed after it was confirmed - capture it again, then write the record' }
     const cap = readCapture(root, c.id)
-    if (!cap) continue
-    const verdict = c.state === 'done' && c.note === 'looks good' ? 'looks good' : c.ran?.length ? 'more work' : undefined
+    if (!cap) return { error: 'a capture of the session is gone - write the record again without it' }
+    const verdict = c.verdict
     caps.push({
       id: c.id, title: o.title?.(c) ?? c.name ?? c.id, state: c.state, ...(c.state === 'kept' ? { kept: true as const } : {}),
       record: cap.record, ...(c.payload?.edited !== undefined ? { edited: c.payload.edited } : {}),
@@ -112,9 +136,15 @@ export function buildWrapup(j: Journal, root: string, o: { session: string; sinc
   const id = `wrap-${now}-${randomBytes(4).toString('hex').slice(0, 6)}`
   return {
     format: 'marver.jam.wrapup', v: 1, id, session: o.session, since: o.since, until: now,
-    instructions: o.instructions.slice(0, 20_000), file: recordFile(root, o.since), captures: caps, tags: o.tags,
+    instructions: o.instructions.slice(0, 20_000), file: recordFile(root, o.since, o.session), captures: caps, tags: o.tags,
     ...(talk ? { talk } : {}),
   }
+}
+
+/** More work on a record: the same content - its captures, talk and file - with your note, as a wrap-up of
+ *  its own (sealed and ledgered like the first). */
+export function moreOf(prev: Wrapup, note: string, now = Date.now()): Wrapup {
+  return { ...prev, id: `wrap-${now}-${randomBytes(4).toString('hex').slice(0, 6)}`, more: note.slice(0, 20_000) }
 }
 
 /** Seal a wrap-up once (a second store of the same id is refused). Returns its hash. */

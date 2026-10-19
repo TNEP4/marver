@@ -40,9 +40,14 @@ export async function startSession(): Promise<boolean> {
   const ok = await post({ action: 'start', id })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }
   useJamUi.getState().setSheet(null)
+  // this tab holds the session's microphone (a reload of it takes it back; other tabs never take it)
+  try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ }
   void voiceSession(id, now())
   return true
 }
+/** The session whose microphone this tab holds (per tab: it survives a reload, not another tab). */
+export const MIC_OWNER = 'mv-jam-session-mic'
+export const holdsSessionMic = (id: string): boolean => { try { return sessionStorage.getItem(MIC_OWNER) === id } catch { return false } }
 
 /** End the session - with a record (the wrap-up's instructions and talk switch), or without one. */
 export async function endSession(write: { instructions: string; includeTalk: boolean } | null): Promise<boolean> {
@@ -159,6 +164,9 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
 
 // ---- the wrap-up ----------------------------------------------------------------------------------------------
 
+/** The open wrap-up sheet's Write the record (the key row calls it). */
+export const wrapWrite: { current: (() => void) | null } = { current: null }
+
 const STATE_NOTE: Partial<Record<JamCard['state'], string>> = {
   draft: 'to confirm', confirming: 'sending', queued: 'queued', working: 'with the agent', asks: 'asks you', review: 'to review',
   done: 'done', kept: 'kept - for the record', failed: 'failed',
@@ -180,6 +188,7 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   }, [])
   // the field grows with its words: three lines at least
   useEffect(() => { const el = field.current; if (el) { el.style.height = 'auto'; el.style.height = `${Math.max(el.scrollHeight, 66)}px` } }, [text])
+  useEffect(() => () => { wrapWrite.current = null }, [])
   if (!session) return null
   const minutes = Math.max(1, Math.round((Date.now() - session.since) / 60_000))
   // the session's captures - the lane's tiles - with where each stands
@@ -187,6 +196,8 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   const tags = tagsDuring(session)
   const name = agent ? HARNESS[agent] ?? agent : 'your agent'
   const write = async () => { if (busy) return; setBusy(true); await endSession({ instructions: text.trim(), includeTalk: talk }); setBusy(false) }
+  // ⏎ anywhere in the sheet writes the record - it never reaches a panel beneath it (jam-keys' sheet row)
+  wrapWrite.current = () => void write()
   const summary = caps.length
     ? `${caps.length} capture${caps.length === 1 ? '' : 's'} in ${minutes} min.`
     : `No captures in ${minutes} min.`
@@ -276,6 +287,7 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
             onChange={(e) => setNote(e.target.value)}
             onKeyDown={(e) => {
               e.stopPropagation()
+              if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (note.trim()) onMore(note.trim()) }
               if (e.key === 'Escape') { e.preventDefault(); setNote(''); onMoreOpen(false) }
             }} />
@@ -297,11 +309,14 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
 /** The run's captures as a counter beside the navigator, by where they stand; Q opens the lane. */
 export function PlayCounter({ cards, style }: { cards: JamCard[]; style?: CSSProperties }) {
   const n = (s: JamCard['state']) => cards.filter((c) => c.state === s).length
-  const pairs = (['asks', 'review', 'working', 'queued', 'draft'] as const).map((s) => [s, n(s)] as const).filter(([, k]) => k > 0)
-  if (!pairs.length) return null
+  // what needs you first, then what runs; what is settled counts as one more pair (the run still shows)
+  const pairs = (['asks', 'failed', 'review', 'draft', 'confirming', 'working', 'queued'] as const).map((s) => [s, n(s)] as const).filter(([, k]) => k > 0)
+  const settled = cards.filter((c) => c.state === 'done' || c.state === 'kept').length
+  if (!pairs.length && !settled) return null
   return (
     <div className="jm-count jm-stage" data-jam-counter="" style={style} onClick={() => useJamUi.getState().setLaneKeys(true)}>
       {pairs.map(([s, k]) => <span key={s}><JamStateIcon state={s as any} size={13} />{k}</span>)}
+      {settled > 0 && <span key="done"><JamStateIcon state="done" size={13} />{settled}</span>}
       <i className="sep" /><span className="q">Q</span>
     </div>
   )

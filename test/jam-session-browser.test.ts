@@ -93,6 +93,7 @@ beforeAll(async () => {
   browser = await Browser.launch()
   if (!browser) return
   s = await browser.tab({ width: 1400, height: 900 })
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));const ce=console.error;console.error=(...a)=>{__errs.push(a.map(String).join(' ').slice(0,400));ce(...a)}` }, s)
   await browser.go(s, `${ORIGIN}/#/b/main`)
   await until(`window.__mvStore?.getState().nodes.length === 2 && window.__mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvJamQueue && !!window.__mvJamVoice`, 45_000)
   // typed notes only here (no model): the microphone is not asked about
@@ -225,5 +226,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !document.querySelector('[data-jam-sheet]')`, 5000)
     expect((await cards()).filter((c: any) => c.kind === 'wrapup').length).toBe(before)
     expect(await browser!.eval(s, `document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button')`)).toBe('idle')
+    // and no component broke along the way
+    expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })
 })

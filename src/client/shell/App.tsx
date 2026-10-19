@@ -3,6 +3,7 @@ import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
 import { JamSurface, useLaneLift } from './JamSurface.tsx'
 import { JamButton } from './jam-session.tsx'
+import { useJamCapture } from './jam-capture.ts'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
@@ -345,6 +346,7 @@ export function App() {
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
   const laneLift = useLaneLift()
+  const recording = useJamCapture((st) => !!st.current)   // the collapsed toolbar keeps the recording dot
   const toasts = useStore((s) => s.toasts)
   const selection = useStore((s) => s.selection)
   const laser = useStore((s) => s.laser)
@@ -1047,7 +1049,7 @@ export function App() {
       </nav>
       <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
         <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
-          aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
+          aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} />{recording && <i className="jm-live-dot jm-fab-dot" />}</button>
       </Tip>
 
       <PlayOverlay />

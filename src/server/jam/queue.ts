@@ -19,7 +19,7 @@ import { fresh, readRaw, write } from './journal.ts'
 import { buildPacket, packetPath, sanitize, threadId } from './packet.ts'
 import type { Batch, Brief, Card, CardState, CaptureRecord, Journal, JournalV1, Member, Msg, PacketMember, Payload, Result } from './types.ts'
 import { captureFrames, captureWords, factsOf, hashOf, madeOf, readCapture, wordsSince } from './capture.ts'
-import { readWrapup, type Wrapup } from './session.ts'
+import { readWrapup, recordPathProblem, type Wrapup } from './session.ts'
 
 export const MENTION = /@marver\b/i
 /** A batch holds at most this many cards; the next waits for the next batch. */
@@ -198,7 +198,7 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
   if (!c) return { ok: false, error: 'no such card' }
   if (c.rev !== rev) return { ok: false, card: c, error: 'the card changed - look again' }
   const capture = c.kind === 'capture'
-  if (action === 'drop' && (c.state === 'queued' || (capture && (c.state === 'draft' || c.state === 'failed')))) {
+  if (action === 'drop' && (c.state === 'queued' || ((capture || c.kind === 'wrapup') && (c.state === 'draft' || c.state === 'failed')))) {
     set(c, 'dropped', now, 'dropped'); return { ok: true, card: c }
   }
   if (action === 'retry' && c.state === 'failed') return { ok: true, card: requeue(j, c, now) }
@@ -292,7 +292,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
   }
   if (c.kind === 'wrapup') {
     const w = readWrapup(ctx.root, wrapupOf(c))
-    if (w) brief.wrapup = { content: { ...w.wrapup, ...(c.payload?.edited ? { more: c.payload.edited } : {}) }, hash: w.hash }
+    if (w) brief.wrapup = { content: w.wrapup, hash: w.hash }
   }
   const followed = c.follows ? j.cards.find((x) => x.id === c.follows) : undefined
   // a run is named by its batch: the card's current one, or - requeued or merged since - its last in `ran`
@@ -330,7 +330,7 @@ export function wrapupIntact(ctx: Ctx, c: Card): boolean {
   return !!w && !!c.payload && w.hash === c.payload.recordHash && isOwned(ctx, c.board, `wrapup:${w.wrapup.id}:${w.hash}`)
 }
 /** The wrap-up content a card writes from (a More work card writes from the same, its note added). */
-export const wrapupOf = (c: Card): string => c.wrapup ?? c.id
+export const wrapupOf = (c: Card): string => c.id
 
 function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j?: Journal): boolean {
   if (c.capture && j && !captureIntact(j, ctx, c.capture)) {
@@ -345,6 +345,9 @@ function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j?: Jo
   if (c.kind === 'wrapup') {
     // its sealed content, as ledgered: changed after the seal, it never reaches the agent
     if (!wrapupIntact(ctx, c)) { set(c, 'failed', now, 'the session record changed after it was written - write it again'); return false }
+    const w = readWrapup(ctx.root, c.id)
+    const unsafe = w && recordPathProblem(ctx.root, w.wrapup.file)
+    if (unsafe) { set(c, 'failed', now, `the record's file is not safe to write: ${unsafe}`); return false }
     return true
   }
   if (c.kind !== 'comment') return true
@@ -727,13 +730,14 @@ export function endStep(j: Journal, c: Card, now = Date.now()): Settled[] {
     set(c, p.end ?? 'queued', now, p.end === 'kept' ? 'kept, not sent' : undefined)
     if (p.end !== 'kept' && c.reviewing) {
       const r = j.cards.find((x) => x.id === c.reviewing!.card)
-      if (r && r.state === 'review' && r.batch === c.reviewing.batch && r.rev === c.reviewing.rev) set(r, 'done', now, 'more work')
+      if (r && r.state === 'review' && r.batch === c.reviewing.batch && r.rev === c.reviewing.rev) { r.verdict = 'more work'; set(r, 'done', now, 'more work') }
     }
     touchRun(j, now)
     return [{ card: c }]
   }
   c.events = [...c.events, p.event.id]
   c.when = { ...c.when, [p.event.id]: p.event.ts }
+  c.verdict = 'more work'
   return [{ card: requeue(j, c, now, true) }]
 }
 
@@ -760,6 +764,7 @@ export function looksGood(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[],
     if (!frozen.has(e.id)) return e.type === 'reply'
     return textOf(ctx, c.board, events, e, true).rev !== frozen.get(e.id)
   })
+  c.verdict = 'looks good'
   set(c, 'done', now, 'looks good')
   touchRun(j, now)
   return { resolve: !!c.thread && !newer && !after }
@@ -791,14 +796,15 @@ export function addWrapup(j: Journal, w: Wrapup, hash: string, board: string, no
   touchRun(j, now)
   return c
 }
-/** More work on a record: a new wrap-up card writes from the same sealed content, your note added, and
- *  follows the record it improves (which is done). */
-export function moreWrapup(j: Journal, prev: Card, note: string, now = Date.now()): Card {
+/** More work on a record: a new record job from its own sealed wrap-up (the first's content, your note
+ *  added, the same file) follows the record it improves, which is done. */
+export function moreWrapup(j: Journal, prev: Card, w: Wrapup, hash: string, now = Date.now()): Card {
   const c: Card = {
-    id: `wrap-${now}-${randomUUID().replace(/-/g, '').slice(0, 6)}`, kind: 'wrapup', board: prev.board, frames: [], events: [], state: 'queued',
-    made: now, order: now, rev: 1, at: now, wrapup: wrapupOf(prev), follows: prev.id,
-    payload: { recordHash: prev.payload!.recordHash, edited: note.slice(0, 20_000) }, session: prev.session, name: 'Session record',
+    id: w.id, kind: 'wrapup', board: prev.board, frames: [], events: [], state: 'queued',
+    made: now, order: now, rev: 1, at: now, follows: prev.id,
+    payload: { recordHash: hash }, session: prev.session, name: 'Session record',
   }
+  prev.verdict = 'more work'
   set(prev, 'done', now, 'more work')
   j.cards.push(c)
   touchRun(j, now)

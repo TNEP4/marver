@@ -9,7 +9,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
-import { appendTalk, readTalk, recordFile, talkMinutes } from '../src/server/jam/session.ts'
+import { appendTalk, readTalk, recordFile, recordPathProblem, talkMinutes } from '../src/server/jam/session.ts'
+import { symlinkSync } from 'node:fs'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
@@ -42,6 +43,67 @@ const rec = (words: string, session?: string): CaptureRecord => ({
 })
 const card = (jam: { snapshot(): any }, id: string) => jam.snapshot().cards.find((c: any) => c.id === id)
 const packets = (root: string) => existsSync(join(root, 'packets-seen.jsonl')) ? readFileSync(join(root, 'packets-seen.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
+
+describe('sessions: review fixes', () => {
+  it('a capture changed after it was confirmed is never sealed into a record: the wrap-up is refused, the session goes on', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const r = rec('the outline', SES)
+    await jam.capture(r)
+    await jam.act(r.id, card(jam, r.id).rev, 'keep')
+    const f = join(root, 'design', '.local', 'jam', 'captures', `${r.id}.json`)
+    writeFileSync(f, readFileSync(f, 'utf8').replace('the outline', 'the filled'))
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w.ok).toBe(false)
+    expect(w.error).toMatch(/changed after it was confirmed/)
+    expect(jam.view().session?.id).toBe(SES)
+    jam.stop()
+    done()
+  })
+
+  it('the session survives a restart of the dev server', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, CFG, agent())
+    await jam.session({ action: 'start', id: SES })
+    jam.stop()
+    const again = createJam(root, CFG, agent())
+    expect(again.view().session?.id).toBe(SES)
+    expect((await again.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })).ok).toBe(true)
+    again.stop()
+    done()
+  })
+
+  it('a record path through a link is refused - at the wrap-up, never written or read through it', async () => {
+    const { root, done } = setup()
+    mkdirSync(join(root, 'context'))
+    const outside = mkdtempSync(join(tmpdir(), 'mv-outside-'))
+    symlinkSync(outside, join(root, 'context', 'sessions'))
+    expect(recordPathProblem(root, 'context/sessions/2026-10-19-1405-session-abcd12.md')).toMatch(/link/)
+    expect(recordPathProblem(root, '../x.md')).toMatch(/not a session record path/)
+    const jam = createJam(root, CFG, agent())
+    await jam.session({ action: 'start', id: SES })
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w.ok).toBe(false)
+    expect(w.error).toMatch(/not safe/)
+    jam.stop()
+    rmSync(outside, { recursive: true, force: true })
+    done()
+  })
+
+  it('a failed record can be dropped, and the run lets go; verdicts are what you said, not guessed from reruns', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { fail: true }))
+    await jam.session({ action: 'start', id: SES })
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    await jam.tick()
+    expect(card(jam, w.card!.id).state).toBe('failed')
+    expect((await jam.act(w.card!.id, card(jam, w.card!.id).rev, 'drop')).ok).toBe(true)
+    expect(jam.view().run).toBeUndefined()
+    jam.stop()
+    done()
+  })
+})
 
 describe('sessions: the server', () => {
   it('a session holds the run from its start; its captures carry it; one session at a time; ending it lets the run go when nothing is pending', async () => {
@@ -85,7 +147,7 @@ describe('sessions: the server', () => {
     expect(stored.captures.find((c: any) => c.id === kept.id).kept).toBe(true)
     expect(stored.talk).toBeUndefined()
     expect(stored.tags).toBe(2)
-    expect(stored.file).toBe(recordFile(root, stored.since))
+    expect(stored.file).toBe(recordFile(root, stored.since, SES))
     jam.stop()
     done()
   })
@@ -105,7 +167,7 @@ describe('sessions: the server', () => {
     const pk = packets(root).find((p) => p.members.some((m: any) => m.brief.wrapup))
     expect(pk.members[0].brief.wrapup.content.talk.map((l: any) => l.text)).toEqual(['and more'])
     const record = jam.record(w.card!.id)!
-    expect(record.file).toMatch(/^context\/sessions\/\d{4}-\d{2}-\d{2}-session-\d{4}\.md$/)
+    expect(record.file).toMatch(/^context\/sessions\/\d{4}-\d{2}-\d{2}-\d{4}-session-abcd12\.md$/)
     expect(record.text).toMatch(/file it as backlog/)
     expect((await jam.act(w.card!.id, card(jam, w.card!.id).rev, 'good')).ok).toBe(true)
     expect(card(jam, w.card!.id).state).toBe('done')
@@ -124,6 +186,10 @@ describe('sessions: the server', () => {
     const m = await jam.act(first, card(jam, first).rev, 'more', 'add the open questions')
     expect(m.ok).toBe(true)
     const next = (m.card as any).id
+    // the note is sealed in a wrap-up of its own, the same file as the first
+    const sealed = JSON.parse(readFileSync(join(root, 'design', '.local', 'jam', 'wrapups', `${next}.json`), 'utf8'))
+    expect(sealed.more).toBe('add the open questions')
+    expect(jam.record(next)!.file).toBe(jam.record(first)!.file)
     expect(card(jam, first).state).toBe('done')
     await jam.tick()
     expect(card(jam, next).state).toBe('review')
@@ -141,7 +207,9 @@ describe('sessions: the server', () => {
     const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
     await jam.session({ action: 'start', id: SES })
     const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
-    await new Promise((r) => setTimeout(r, 300))
+    void jam.tick()
+    await new Promise((r) => setTimeout(r, 800))
+    expect(card(jam, w.card!.id).state).toBe('working')                    // running when the server stops
     jam.stop()
     const f = join(root, 'design', '.local', 'jam', 'wrapups', `${w.card!.id}.json`)
     writeFileSync(f, readFileSync(f, 'utf8').replace('"x"', '"y"'))
@@ -153,11 +221,13 @@ describe('sessions: the server', () => {
     done()
   })
 
-  it('the record file: context/sessions/ when there is a context, else design/sessions/; the talk\'s length in minutes', () => {
+  it('the record file: context/sessions/ when there is a context, else design/sessions/, named for its session (two sessions in one minute never share one); the talk\'s length in minutes', () => {
     const { root, done } = setup()
-    expect(recordFile(root, new Date(2026, 9, 19, 14, 5).getTime())).toBe('design/sessions/2026-10-19-session-1405.md')
+    const t = new Date(2026, 9, 19, 14, 5).getTime()
+    expect(recordFile(root, t, SES)).toBe('design/sessions/2026-10-19-1405-session-abcd12.md')
     mkdirSync(join(root, 'context'))
-    expect(recordFile(root, new Date(2026, 9, 19, 14, 5).getTime())).toBe('context/sessions/2026-10-19-session-1405.md')
+    expect(recordFile(root, t, SES)).toBe('context/sessions/2026-10-19-1405-session-abcd12.md')
+    expect(recordFile(root, t, 'ses-1792399514739-zzzz99')).not.toBe(recordFile(root, t, SES))
     expect(talkMinutes([{ at: 0, text: 'a' }, { at: 26 * 60_000, text: 'b' }])).toBe(26)
     done()
   })
