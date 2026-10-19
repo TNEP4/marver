@@ -17,7 +17,7 @@ import { useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { JamStateIcon } from './jam-ui.tsx'
 import { Marver, moreDraftOf, setMoreDraft } from './jam-panel.tsx'
-import { useJamVoice, voiceSession, voiceSessionEnd } from './jam-voice.ts'
+import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId } from './jam-voice.ts'
 import { HARNESS } from './Comments.tsx'
 import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlashIcon, WarningIcon, WaveformIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
@@ -44,12 +44,13 @@ export async function startSession(): Promise<boolean> {
   const id = `ses-${Date.now()}-${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`
   // this tab holds the session's microphone (a reload of it takes it back; other tabs never take it) - from
   // the moment the server has it: the push of it may come before the refresh
-  const ok = await post({ action: 'start', id }, () => { try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ } })
+  // the talk starts once the queue shows the session - whichever comes first: the push (before the answer,
+  // or after it), or the refresh; a session ended meanwhile never gets the microphone
+  const hear = () => { if (useJamQueue.getState().session?.id === id && voiceSessionId() !== id) void voiceSession(id, now()) }
+  const ok = await post({ action: 'start', id }, () => { try { sessionStorage.setItem(MIC_OWNER, id) } catch { /* this page only */ } hear() })
   if (!ok) { useStore.getState().toast('the session could not start - look again'); return false }
   useJamUi.getState().setSheet(null)
-  // the talk starts once the queue shows the session: now, or when its view comes (a refresh that failed or
-  // is slow leaves that to the push); a session ended meanwhile never gets the microphone
-  if (useJamQueue.getState().session?.id === id) void voiceSession(id, now())
+  hear()
   return true
 }
 /** The session whose microphone this tab holds (per tab: it survives a reload, not another tab). */

@@ -320,6 +320,33 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
+  skippable('the push of a session before its start\'s answer, and the refresh held: its talk begins at the answer', async () => {
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.__release = null; window.fetch = async (u, o) => {
+      if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') {
+        window.__startId = JSON.parse(o.body).id
+        const r = await f(u, o)
+        // the answer waits until the push has shown the session here
+        const t0 = Date.now(); while (window.__mvJamQueue.getState().session?.id !== window.__startId && Date.now() - t0 < 5000) await new Promise((x) => setTimeout(x, 20))
+        window.__pushFirst = window.__mvJamQueue.getState().session?.id === window.__startId && window.__mvJamVoiceSession() !== window.__startId
+        window.__race = 1
+        return r
+      }
+      if (window.__race === 1 && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__race = 2; await new Promise((r) => { window.__release = r }) }
+      return f(u, o)
+    }; return 1 })()`)
+    try {
+      await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
+      await enter()
+      await until(`window.__race === 2`, 8000)
+      expect(await browser!.eval(s, `window.__pushFirst`)).toBe(true)            // the push came first, with no talk yet
+      await until(`window.__mvJamVoiceSession() === window.__startId`, 3000)     // the answer starts it, the refresh still held
+      await browser!.eval(s, `window.__release(), 1`)
+    } finally { await browser!.eval(s, `(window.fetch = window.__fetch0), 1`) }
+    await key('j'); await until(`!!document.querySelector('[data-jam-sheet="wrap"]')`, 5000)
+    await browser!.eval(s, `[...document.querySelectorAll('[data-jam-sheet="wrap"] .jm-btn')].find((b) => /End without a record/.test(b.textContent)).click(), 1`)
+    await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
+  })
+
   skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
