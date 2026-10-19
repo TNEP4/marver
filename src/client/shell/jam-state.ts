@@ -41,4 +41,12 @@ export const useJamUi = create<JamUi>((set, get) => ({
   follow() { set((s) => ({ followEnd: s.followEnd + 1 })) },
 }))
 
+/** A click somewhere else - the canvas, a frame, inside an interactive frame: a lane tile selected with
+ *  nothing open for it lets go, and the lane gives the keys back. A tile whose read-back or review is
+ *  open stays selected with its panel. */
+export function letGoOfTile() {
+  const s = useJamUi.getState()
+  if (!s.panel && (s.selected || s.laneKeys)) useJamUi.setState({ selected: null, laneKeys: false })
+}
+
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamUi = useJamUi

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from 'react-zoom-pan-pinch'
 import { CONFIG, useStore } from '../store.ts'
-import { useJamUi } from '../jam-state.ts'
+import { letGoOfTile } from '../jam-state.ts'
 import { bootHash, linkTargets } from '../hash.ts'
 import { revealFrame } from '../goto.ts'
 import { startPerf } from '../perf.ts'
@@ -267,8 +267,7 @@ export function Canvas() {
       const t = e.target as HTMLElement | null
       // anywhere on the canvas, a frame too: a lane tile selected with nothing open for it lets go (the
       // lane's keys too) - a tile whose read-back or review is open stays selected with its panel
-      const jam = useJamUi.getState()
-      if (!jam.panel && (jam.selected || jam.laneKeys)) { jam.select(null); jam.setLaneKeys(false) }
+      letGoOfTile()
       if (t?.closest('.sh-node') || t?.closest('.sh-gcaption')) return
       const s = useStore.getState()
       if (s.selection.length || s.interact) s.select(null)

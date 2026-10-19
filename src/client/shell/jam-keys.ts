@@ -90,7 +90,8 @@ export async function resumeDraft(id: string) {
   const ui = useJamUi.getState()
   if (await useJamCapture.getState().resume(id)) {
     if (ui.panel?.id === id) ui.close()
-    if (ui.selected === id) ui.select(null)   // its tile has stepped aside: nothing points at it
+    // its tile has stepped aside: nothing points at it, and the lane gives its keys back
+    if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
   }
 }
 
@@ -189,9 +190,10 @@ const rows = (): Row[] => {
       on: () => ui.laneKeys,
       keys: (() => {
         const list = lane()
-        const at = Math.max(0, list.findIndex((c) => c.id === ui.selected))
-        const sel = list[at]
-        const move = (d: number) => { const n = list[Math.min(list.length - 1, Math.max(0, at + d))]; if (n) ui.select(n.id) }
+        // acting keys act only on the tile you can see selected - never on a fallback
+        const i = list.findIndex((c) => c.id === ui.selected)
+        const sel = i >= 0 ? list[i] : undefined
+        const move = (d: number) => { const n = i < 0 ? list[list.length - 1] : list[Math.min(list.length - 1, Math.max(0, i + d))]; if (n) ui.select(n.id) }
         return {
           ArrowLeft: () => move(-1), ArrowRight: () => move(1),
           Enter: () => { if (sel) openTile(sel.id) },

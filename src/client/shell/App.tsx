@@ -1,5 +1,6 @@
 import { frameReady, onFrameMessage, recordCopy } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
+import { letGoOfTile } from './jam-state.ts'
 import { JamSurface, useLaneLift } from './JamSurface.tsx'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
@@ -668,6 +669,7 @@ export function App() {
         // them so an open thread card dismisses modal-style from anywhere
         const c = commentsStore()
         if (c.active) c.setActive(null)
+        letGoOfTile()   // and a lane tile selected with nothing open for it, as a canvas click does
       } else if (data.type === 'sh:picked') {
         // comment mode: the frame reports the picked element - stage the draft on
         // that node (picking while a thread is open replaces it, modal-style);

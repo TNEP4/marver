@@ -702,6 +702,22 @@ describe('captures in the browser: the first trial', () => {
       await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 }, s)
       await until(`window.__mvJamUi.getState().selected === null && !document.querySelector('.jm-lane .jm-card.focus')`, 3000)
     }
+    // inside an interactive frame too (its clicks never reach the shell's document - the frame says so)
+    const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/clicky').key`)
+    await browser!.eval(s, `(window.__mvStore.getState().setInteract(${JSON.stringify(k)}), window.__mvJamUi.getState().select(${JSON.stringify(a)}), 1)`)
+    await sleep(300)
+    const inside = await browser!.eval(s, `(() => { const f = document.querySelector('.sh-node[data-node="${k}"] iframe'); const b = f.contentDocument.querySelector('button').getBoundingClientRect(); const r = f.getBoundingClientRect(); const sx = r.width / f.clientWidth; return { x: r.left + (b.left + b.width / 2) * sx, y: r.top + (b.top + b.height / 2) * sx } })()`)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: inside.x, y: inside.y, button: 'left', clickCount: 1 }, s)
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: inside.x, y: inside.y, button: 'left', clickCount: 1 }, s)
+    await until(`window.__mvJamUi.getState().selected === null`, 3000)
+    await browser!.eval(s, `window.__mvStore.getState().setInteract(null), 1`)
+    // the lane's keys with nothing selected act on nothing: ⌫ drops no fallback tile
+    await browser!.eval(s, `(window.__mvJamUi.getState().select(null), window.__mvJamUi.getState().setLaneKeys(true), 1)`)
+    const bs = { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 }
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...bs }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...bs }, s)
+    await sleep(300)
+    expect(await browser!.eval(s, `[${JSON.stringify(a)}, ${JSON.stringify(b)}].map((id) => window.__mvJamQueue.getState().cards.find((c) => c.id === id).state)`)).toEqual(['draft', 'draft'])
+    await browser!.eval(s, `window.__mvJamUi.getState().setLaneKeys(false), 1`)
     for (const id of ids) await decide(id, 'drop')
   }, 120_000)
 })
