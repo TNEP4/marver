@@ -112,7 +112,11 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
         let settled = false
         const settle = (v: Worker | null) => { if (!settled) { settled = true; resolve(v) } }
         w.on('message', (m: any) => {
-          if (m?.type === 'ready') { worker = w; settle(w) }
+          if (m?.type === 'ready') {
+            // one worker at a time: a start that lost a race to another gives way to it
+            if (worker && worker !== w) { void w.terminate(); settle(worker); return }
+            worker = w; settle(w)
+          }
           else if (m?.type === 'unavailable') { unavailable = `the speech engine could not start: ${m.reason} - typed notes only`; void w.terminate(); settle(null) }
           else if (m?.type === 'words' || m?.type === 'final') {
             const o = owners.get(m.capture)
@@ -223,9 +227,9 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number } = {}): S
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 })
   return {
     retry() {
-      if (engineMissing() || worker) return
+      // only a start that FAILED is forgotten: one still under way (or a worker running) is left alone
+      if (engineMissing() || worker || ready) return
       unavailable = undefined
-      ready = null
     },
     async state() {
       const missing = engineMissing()

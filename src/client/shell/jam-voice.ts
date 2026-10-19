@@ -53,6 +53,8 @@ export const useJamVoice = create<VoiceStore>((set, get) => ({
   setChoice(c) {
     try { localStorage.setItem(CHOICE, c) } catch { /* this page only */ }
     set({ choice: c, ...(c === 'no' ? { asking: false } : {}) })
+    // no: a microphone opening is cancelled, one open is cut now - the words said so far are kept
+    if (c === 'no') stopListening()
     // yes: an engine that failed to start is tried again, then the microphone opens for the capture now
     if (c === 'yes') void get().retry().then(() => { if (get().server === 'ready' || get().server === 'loading') { set({ asking: false }); const cur = current; if (cur) void listen(cur.capture, cur.t0) } })
   },
@@ -230,7 +232,7 @@ async function listen(capture: string, t0: number) {
   if (v.choice !== 'yes' || (v.server !== 'ready' && v.server !== 'loading')) return
   const op = { capture, cancelled: false }
   opening = op
-  const stale = () => op.cancelled || current?.capture !== capture
+  const stale = () => op.cancelled || current?.capture !== capture || useJamVoice.getState().choice !== 'yes'
   let stream: MediaStream | null = null
   let ctx: AudioContext | null = null
   const undo = () => { stream?.getTracks().forEach((t) => t.stop()); void ctx?.close().catch(() => {}) }
@@ -284,19 +286,11 @@ export async function voiceBegin(capture: string, t0: number) {
   await listen(capture, t0)
 }
 
-/** A capture ends: the audio cut at this instant, its words awaited (3 s at most). Resolves true when the
- *  words are complete, false when they may not be. */
-export async function voiceEnd(capture: string): Promise<boolean> {
-  if (current?.capture === capture) current = null
-  if (opening?.capture === capture) opening.cancelled = true
-  useJamVoice.setState((st) => ({ asking: st.asking && st.choice === null ? false : st.asking }))
-  const wasBroken = broken.delete(capture)
-  const l = live
-  if (!l || l.capture !== capture) return !wasBroken
-  live = null
-  useJamVoice.setState({ hearing: null })
-  // the cut: the worklet's partial chunk and the sample count at this instant, then `end` - in order
-  const cut = await new Promise<{ start: number; pcm: Int16Array; mark: number } | null>((res) => {
+/** The microphone's cut for a live capture: the worklet's partial chunk and the sample count at this
+ *  instant, then `end` on the same socket - resolves whether its words came back complete. */
+async function cut(l: Live): Promise<boolean> {
+  const capture = l.capture
+  const mark = await new Promise<{ start: number; pcm: Int16Array; mark: number } | null>((res) => {
     const t = setTimeout(() => res(null), 500)
     l.node.port.onmessage = (e) => {
       if ((e.data as any).mark !== undefined) { clearTimeout(t); res(e.data) }
@@ -304,20 +298,49 @@ export async function voiceEnd(capture: string): Promise<boolean> {
     }
     l.node.port.postMessage('mark')
   })
-  // the cut: at the mark; without it (the worklet did not answer, or never marked the start) at what was
+  // without a clean mark (the worklet did not answer, or never marked the start) the end is what was
   // sent - and the words may then be incomplete
-  const cleanCut = !!cut && l.from >= 0
-  if (cleanCut) sendLive(l, cut!.start, cut!.pcm)
-  const lastSample = cleanCut ? l.base + cut!.mark - l.from : l.sent
+  const clean = !!mark && l.from >= 0
+  if (clean) sendLive(l, mark!.start, mark!.pcm)
+  const lastSample = clean ? l.base + mark!.mark - l.from : l.sent
   close(l)   // nothing of it after the cut
   if (!ws || ws.readyState !== WebSocket.OPEN) return false
   const done = new Promise<boolean>((res) => {
     const t = setTimeout(() => { finals.delete(capture); res(false) }, FINAL_MS)
-    // complete only if the server says so, the cut was clean, and nothing was lost on the way
-    finals.set(capture, (complete) => { clearTimeout(t); res(complete && cleanCut && !wasBroken) })
+    finals.set(capture, (complete) => { clearTimeout(t); res(complete && clean) })
   })
   ws.send(JSON.stringify({ type: 'end', capture, lastSample }))
   return done
+}
+
+/** Words cut early (you said no during the capture): what they come back as, awaited at E. */
+const cutEarly = new Map<string, Promise<boolean>>()
+
+/** Stop listening for the capture recording now (the microphone refused mid-capture): an opening is
+ *  cancelled, an open microphone is cut - its words so far still come back. */
+function stopListening() {
+  if (opening) opening.cancelled = true
+  const l = live
+  if (!l) return
+  live = null
+  useJamVoice.setState({ hearing: null })
+  cutEarly.set(l.capture, cut(l))
+}
+
+/** A capture ends: the audio cut at this instant, its words awaited (3 s at most). Resolves true when the
+ *  words are complete, false when they may not be (lost on the way, or no clean cut). */
+export async function voiceEnd(capture: string): Promise<boolean> {
+  if (current?.capture === capture) current = null
+  if (opening?.capture === capture) opening.cancelled = true
+  useJamVoice.setState((st) => ({ asking: st.asking && st.choice === null ? false : st.asking }))
+  const wasBroken = broken.delete(capture)
+  const early = cutEarly.get(capture)
+  cutEarly.delete(capture)
+  const l = live
+  if (!l || l.capture !== capture) return early ? (await early) && !wasBroken : !wasBroken
+  live = null
+  useJamVoice.setState({ hearing: null })
+  return (await cut(l)) && !wasBroken
 }
 
 /** A capture dropped: the microphone closes, and its audio is discarded - nothing of it is transcribed. */
@@ -326,6 +349,7 @@ export function voiceDrop(capture: string) {
   if (opening?.capture === capture) opening.cancelled = true
   accepting.delete(capture)
   broken.delete(capture)
+  cutEarly.delete(capture)
   useJamVoice.setState((st) => { const heard = { ...st.heard }; delete heard[capture]; return { heard, ...(st.hearing === capture ? { hearing: null } : {}) } })
   const l = live
   if (l && l.capture === capture) { close(l); live = null }

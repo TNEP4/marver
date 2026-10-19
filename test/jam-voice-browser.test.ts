@@ -152,6 +152,11 @@ describe.skipIf(!haveModel)('words in the browser', () => {
     await until(`!!window.__mvJamCapture.getState().current`)
     await until(`document.querySelector('[data-jam-mic]')?.getAttribute('data-jam-mic') === 'on'`, 20_000)
     expect(await browser.eval(s, `!!document.querySelector('[data-jam-voiceask]')`)).toBe(false)
+    // no, during the capture: the microphone closes at once (the tile shows it off)
+    await browser.eval(s, `window.__mvJamVoice.getState().setChoice('no'), 1`)
+    await until(`window.__mvJamVoice.getState().hearing === null && document.querySelector('[data-jam-mic]')?.getAttribute('data-jam-mic') === 'off'`, 5000)
+    await browser.eval(s, `window.__mvJamVoice.getState().setChoice('yes'), 1`)
+    await until(`document.querySelector('[data-jam-mic]')?.getAttribute('data-jam-mic') === 'on'`, 20_000)
     const esc = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }
     await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', ...esc }, s); await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', ...esc }, s)
     await until(`!window.__mvJamCapture.getState().current && window.__mvJamVoice.getState().hearing === null`, 5000)
