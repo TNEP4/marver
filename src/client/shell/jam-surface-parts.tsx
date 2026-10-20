@@ -9,8 +9,9 @@ import { Caption, FocusPanel, NotesCard, ReadBack, ReviewDetail, VoiceAsk } from
 import type { TimelineLine } from './jam-lines.ts'
 import type { JamCard } from './jam-queue.ts'
 
-export function CaptureLaneRow({ tiles, recording, between, selected, keyboard, followEnd, onOpen, onMenu, notes, ask, caption }: {
+export function CaptureLaneRow({ tiles, recording, between, selected, keyboard, followEnd, onOpen, onMenu, notes, ask, caption, doneOpen, onDoneOpen }: {
   tiles: LaneTile[]; recording?: LaneRecording; between?: LaneBetween; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string): void
+  doneOpen?: boolean; onDoneOpen?(open: boolean, doneIds: string[]): void
   onMenu?(e: React.MouseEvent, id: string): void
   notes?: { notes: { t: string; text: string }[]; draft: string; onDraft(t: string): void; onAdd(): void; onClose(): void }
   /** the microphone question (and the model's download), over the capture tile */
@@ -35,7 +36,7 @@ export function CaptureLaneRow({ tiles, recording, between, selected, keyboard, 
   const roomLeft = (at?.left ?? 10) - 8 >= 300
   return (
     <>
-      <Lane tiles={tiles} recording={recording} between={between} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} onMenu={onMenu} />
+      <Lane tiles={tiles} recording={recording} between={between} selected={selected} keyboard={keyboard} followEnd={followEnd} onOpen={onOpen} onMenu={onMenu} doneOpen={doneOpen} onDoneOpen={onDoneOpen} />
       {/* one lane up, over the capture tile: the question, then the notes card above it; the words just
           left of the notes card (bottoms aligned), or over the tile when it is closed */}
       {(notes || ask) && (
@@ -59,8 +60,8 @@ export function FocusPanelView(p: {
   left: number; kind: 'capture' | 'review' | 'wrapup'; card: JamCard; of: [number, number] | undefined; agent: string; reviewedTitle?: string
   lines: TimelineLine[]; pictures: { id: string; url: string; caption: string }[]
   shots: { frame: string; before?: string; after?: string; new?: boolean }[]; reply: string
-  view: 'after' | 'before'; tab: number; moreOpen: boolean
-  onTab(i: number): void; onFlip(): void; onMoreOpen(on: boolean): void; onClose(): void
+  view: 'both' | 'before' | 'after'; tab: number; moreOpen: boolean
+  onTab(i: number): void; onFlip(view: 'both' | 'before' | 'after'): void; onMoreOpen(on: boolean): void; onClose(): void
   onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void; onResume?: () => void
   onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
   onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void; locked?: boolean
@@ -72,6 +73,9 @@ export function FocusPanelView(p: {
   // a capture under review: its review, or the capture itself as it was read back (its pictures, its timeline)
   const [pane, setPane] = useState<'review' | 'capture'>('review')
   useEffect(() => { setPane('review') }, [c.id])
+  // the review asks for the width its pictures need (both at once, as big as the panel's height allows)
+  const [fit, setFit] = useState<number | undefined>(undefined)
+  useEffect(() => { setFit(undefined) }, [c.id])
   const head = p.kind === 'review' ? (
     <div className="jm-ftabs jm-panes" role="tablist" data-jam-panes="">
       {(['review', 'capture'] as const).map((v) => <button key={v} role="tab" aria-selected={v === pane} className={v === pane ? 'on' : undefined} onClick={() => setPane(v)}>{v === 'review' ? 'Review' : 'Capture'}</button>)}
@@ -84,10 +88,10 @@ export function FocusPanelView(p: {
     points ? `${points} point${points === 1 ? '' : 's'}` : '', p.pictures.length ? `${p.pictures.length} picture${p.pictures.length === 1 ? '' : 's'}` : '',
     notes ? `${notes} note${notes === 1 ? '' : 's'}` : ''].filter(Boolean)
   return (
-    <FocusPanel left={p.left} onClose={p.onClose}>
+    <FocusPanel left={p.left} onClose={p.onClose} width={p.kind === 'review' && pane === 'review' ? fit : undefined}>
       {p.kind === 'review' && pane === 'review' ? (
         <ReviewDetail key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
-          view={p.view} onFlip={() => p.onFlip()} reply={p.reply} shots={p.shots} agent={p.agent}
+          view={p.view} onFlip={(v) => p.onFlip(v)} onFit={setFit} reply={p.reply} shots={p.shots} agent={p.agent}
           more={p.moreOpen} draftKey={c.id} onMore={p.onMore} onMoreOpen={p.onMoreOpen} onGood={p.onGood} onLater={p.onLater} onOpenThread={p.onOpenThread} />
       ) : (
         <ReadBack key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}

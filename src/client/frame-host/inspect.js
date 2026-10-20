@@ -325,6 +325,9 @@ if (typeof window !== 'undefined') window.__mvAnchorCheck = checkTarget
 
 export function createInspect({ post, getId, onModeChange, onLaserPick }) {
   let laserOn = false, pickOn = false
+  // the laser as inspect (⌥L): every element outlined. Off, the laser is a pointer - the element under the cursor lit,
+  // as comment mode lights it
+  let inspectOn = false
   // quiet pick (⇧L laser comment off): clicks still anchor comments, but NO hover outline,
   // label, or lock lighting inside the artwork - the shell decides, the frame obeys
   let pickQuiet = false
@@ -343,14 +346,15 @@ export function createInspect({ post, getId, onModeChange, onLaserPick }) {
   // Both colour by the element's depth hue (--mv-hue lives in the always-on base sheet).
   const laserCss = () => {
     let rules = DEPTH_HUE               // depth hues live only while a mode is active
-    if (laserOn)
+    if (laserOn && inspectOn)
       rules += 'body *:not(script):not(style):not(#mv-laser-label):not(#mv-laser-label *) { outline: 1px solid hsl(var(--mv-hue) 85% 55% / .75); outline-offset: -1px }\n'
     if (pickOn || laserOn)
       rules += `body, body * { cursor: ${pickOn ? PICK_CURSOR : LASER_CURSOR} !important }\n`
     // comment mode: the hovered element pops in its OWN hue (outline + fill + ring), so it
     // reads as "the thing you'll comment on" in the same colour it wears in laser. Laser
     // keeps its lighter single outline so the whole board stays legible.
-    const hover = pickOn ? HUE_HL('[data-mv-hover]', '--mv-hue') : `
+    // the pointer laser lights the hovered element exactly as comment mode does; inspect keeps its lighter outline
+    const hover = pickOn || !inspectOn ? HUE_HL('[data-mv-hover]', '--mv-hue') : `
 body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-offset: -2px;
   background-image: linear-gradient(hsl(var(--mv-hue) 95% 50% / .08), hsl(var(--mv-hue) 95% 50% / .08)) }`
     return rules + hover + `
@@ -527,7 +531,8 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     if (e.origin && e.origin !== location.origin) return   // a navigated frame must not spoof shell commands
     const m = e?.data
     if (!m || typeof m !== 'object') return
-    if (m.type === 'sh:laser') { laserOn = !!m.on; applyModes(); onModeChange?.(laserOn, pickOn) }
+    // (a shell from before 0.26.1 sends no `inspect`: its laser is the outlined one)
+    if (m.type === 'sh:laser') { laserOn = !!m.on; inspectOn = laserOn && (m.inspect === undefined ? true : !!m.inspect); applyModes(); onModeChange?.(laserOn, pickOn) }
     else if (m.type === 'sh:pick') {
       pickOn = !!m.on; pickQuiet = !!m.quiet; applyModes()
       if (pickQuiet) clearHover()   // a hover lit before the toggle landed must not linger

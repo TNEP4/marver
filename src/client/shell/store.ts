@@ -506,7 +506,8 @@ interface State {
   gesture: boolean                    // a frame drag/resize is in progress - canvas panning is disabled
   /** the node a person resized last (a new object each time) - a measurement never sets it */
   resized: { key: string } | null
-  laser: boolean                      // laser/inspect mode: frames outline their structure
+  laser: boolean                      // laser mode: a pointer - the element under the cursor lit, a click copies its path
+  laserInspect: boolean               // the laser as inspect (⌥L): every element outlined, as the laser was before 0.26.1
   board: string                       // active board name; UNPLACED is the Not on a board view
   boardAuto: boolean                  // auto boards gain new frames on arrival; curated boards never do
   deviceView: string | null           // board-wide device preview (viewport name), null = free-form layout
@@ -556,7 +557,9 @@ interface State {
   setInteract(key: string | null): void
   setPlay(p: State['play']): void
   setGesture(g: boolean): void
-  setLaser(on: boolean): void
+  setLaser(on: boolean, inspect?: boolean): void
+  /** L (`inspect` false) or ⌥L (true): the same mode again turns the laser off; the other switches to it */
+  toggleLaser(inspect: boolean): void
   invalidateFrames(frameIds: string[], revision: string, docs?: { epoch?: string; docs?: Record<string, number> }): void
   setExternalLease(nodeKey: string, reason: 'laser' | 'comment', on: boolean): void
   /** A safe point (a lease ended, a gesture ended): stale nodes may reload now. */
@@ -1035,7 +1038,7 @@ export const useStore = create<State>((set, get) => {
   }
 
   return {
-    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, resized: null, laser: false,
+    manifest: null, nodes: [], selection: [], interact: null, viewTheme: initialViewTheme(), play: null, gesture: false, resized: null, laser: false, laserInspect: false,
     board: DATA?.default ?? UNPLACED, boardAuto: false, deviceView: null, sceneRows: null, layout: null, layoutRaw: undefined, baseLayout: null, laidOut: null, baseLaidOut: null,
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     externalLeases: {}, playUpdateRevision: null, stageShown: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
@@ -1573,12 +1576,18 @@ export const useStore = create<State>((set, get) => {
       get().flushFrameUpdates()   // A6: the frame just left interact is no longer leased
     },
     setPlay(play) { set({ play }) },
-    setLaser(laser) {
-      if (laser) { set({ laser }); return }
+    toggleLaser(inspect) {
+      const s = get()
+      if (s.laser && s.laserInspect === inspect) s.setLaser(false)
+      else s.setLaser(true, inspect)
+    },
+    setLaser(laser, inspect = false) {
+      if (laser) { set({ laser, laserInspect: inspect }); return }
       // leaving laser mode drops every laser engagement lease (the bridge stops reporting), but
       // keeps comment engagement; the freed frames may now flush a deferred update
       set((s) => ({
         laser,
+        laserInspect: false,
         externalLeases: Object.fromEntries(
           Object.entries(s.externalLeases).filter(([, v]) => v.comment).map(([k]) => [k, { comment: true as const }])),
       }))

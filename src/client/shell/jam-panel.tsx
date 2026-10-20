@@ -6,7 +6,7 @@
  * Presentational only: every component takes what it shows and calls back what was chosen. The shell
  * (jam-capture.ts, App) owns state, keys and the API.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { JamStateIcon } from './jam-ui.tsx'
 import type { TimelineLine } from './jam-lines.ts'
 import { speechLines } from '../../shared/speech.ts'
@@ -35,6 +35,9 @@ export const Marver = ({ size = 20 }: { size?: number }) => (
  *  shell passes it), `width` px wide (520 at least). The panel inside fills it; its middle scrolls and
  *  its footer stays in view. `onClose` adds a quiet close button in its corner. */
 export function FocusPanel({ children, left, width = 580, onClose }: { children: ReactNode; left: number; width?: number; onClose?: () => void }) {
+  // the window's width is the last word: follow it as it changes
+  const [, setTick] = useState(0)
+  useEffect(() => { const on = () => setTick((n) => n + 1); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   // 580: the footer's "For Claude Code" and its four actions on one line; never wider than the window allows
   // the window is the last word: a narrow one gets a narrower panel, never one past its edge
   const room = (typeof window !== 'undefined' ? window.innerWidth : 1400) - left - 12
@@ -138,12 +141,19 @@ function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; o
 }
 
 /** A picture, or the dashed "No picture" where a shot failed. */
-export const Shot = ({ url, cap, alt }: { url?: string; cap?: ReactNode; alt?: string }) => (
-  <div className="jm-shot">
-    {url ? <div className="pic"><img src={url} alt={alt ?? ''} draggable={false} /></div> : <div className="pic none"><ImagesSquareIcon size={13} />No picture</div>}
-    {cap && <span className="cap">{cap}</span>}
-  </div>
-)
+export function Shot({ url, cap, alt, onSize }: { url?: string; cap?: ReactNode; alt?: string; onSize?: (w: number, h: number) => void }) {
+  // a picture that cannot load (gone, refused) is "No picture" too - never a broken image
+  const [failed, setFailed] = useState<string | null>(null)
+  const ok = !!url && failed !== url
+  return (
+    <div className="jm-shot">
+      {ok ? <div className="pic"><img src={url} alt={alt ?? ''} draggable={false} onError={() => setFailed(url!)}
+        onLoad={onSize ? (e) => onSize(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight) : undefined} /></div>
+        : <div className="pic none"><ImagesSquareIcon size={13} />No picture</div>}
+      {cap && <span className="cap">{cap}</span>}
+    </div>
+  )
+}
 
 /** "1 of 3" with its arrows - the walk's ends disable the arrow that has nowhere to go. */
 const Walk = ({ of, onPrev, onNext }: { of?: [number, number]; onPrev?: () => void; onNext?: () => void }) => of ? (
@@ -287,7 +297,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
  * `shots` are picture URLs per frame (`frames` names the tabs; it defaults to the shots' frames);
  * `alsoChanged` = shared files the job changed anyway.
  */
-export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, onTab, view, onFlip, reply, shots, alsoChanged, agent, when, more, onMore, onMoreOpen, onGood, onLater, onOpenThread, style, draftKey }: {
+export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, onTab, view, onFlip, onFit, reply, shots, alsoChanged, agent, when, more, onMore, onMoreOpen, onGood, onLater, onOpenThread, style, draftKey }: {
   title: string
   /** beside the title: the Review | Capture switch */
   head?: ReactNode
@@ -297,8 +307,10 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   frames?: string[]
   active: number
   onTab(i: number): void
-  view: 'before' | 'after'
-  onFlip(view: 'before' | 'after'): void
+  view: 'both' | 'before' | 'after'
+  onFlip(view: 'both' | 'before' | 'after'): void
+  /** the panel width the pictures need (0.26.1): both at once, as big as the panel's height allows */
+  onFit?(width: number): void
   reply: ReactNode
   /** `new`: a frame the run made - nothing before it */
   shots: { frame: string; before?: string; after?: string; new?: boolean }[]
@@ -318,6 +330,36 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   const names = frames ?? shots.map((s) => s.frame)
   const shot = shots[active] ?? shots.find((s) => s.frame === names[active])
   const isNew = (f: string) => !!shots.find((s) => s.frame === f)?.new
+  // the frame's shape, from its pictures as they load (After's, else Before's): taller than wide (or square) side by
+  // side, wider than tall stacked - and the panel as wide as that needs (0.26.1, the owner's first real session)
+  const [sizes, setSizes] = useState<Record<string, number>>({})
+  const sized = (url?: string) => (url ? (w: number, h: number) => { if (w > 0 && h > 0) setSizes((m) => (m[url] === w / h ? m : { ...m, [url]: w / h })) } : undefined)
+  const aspect = (shot?.after && sizes[shot.after]) || (shot?.before && sizes[shot.before]) || undefined
+  const both = view === 'both' && !shot?.new && !!shot?.before && !!shot?.after
+  const side = (aspect ?? 1.6) <= 1.1
+  const big = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = big.current
+    if (!el || !onFit || !aspect) return
+    const ask = () => {
+      const panel = el.closest('.jm-panel') as HTMLElement | null
+      if (!panel) return
+      // the chrome around the pictures: the panel's width minus the well's; the well's height is what they get
+      const chrome = panel.getBoundingClientRect().width - el.getBoundingClientRect().width
+      const h = el.getBoundingClientRect().height - 20                 // the well's padding
+      const CAP = 18, GAP = 10
+      let well: number
+      if (both && side) well = 2 * (h - CAP) * aspect + GAP           // side by side: each the whole height
+      else if (both) well = ((h - GAP - 2 * CAP) / 2) * aspect        // stacked: each half of it
+      else well = h * aspect                                          // one picture
+      const want = Math.round(chrome + well + 20)
+      onFit(Math.round(want / 8) * 8)
+    }
+    ask()
+    const ro = new ResizeObserver(ask)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [aspect, both, side, onFit])
   const label = (f: string) => f.split('/').pop() ?? f
   // the More work words outlive the panel: a click elsewhere closes it, and the words wait for its return -
   // they go only when sent, or when you leave the composer yourself (Esc)
@@ -353,13 +395,18 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
           <span className="sp" />
           {/* a frame the run made has nothing before it: no switch */}
           {shot?.new ? <span className="dim" data-jam-new="">New frame</span> : (
-            <Tip side="bottom" label={<span>Before / After<kbd style={{ marginLeft: 8 }}>B</kbd></span>}>
-              <div className="jm-ftabs" data-jam-flip="">{(['before', 'after'] as const).map((v) => <button key={v} className={v === view ? 'on' : undefined} aria-pressed={v === view} onClick={() => onFlip(v)}>{v === 'before' ? 'Before' : 'After'}</button>)}</div>
+            <Tip side="bottom" label={<span>Both / Before / After<kbd style={{ marginLeft: 8 }}>B</kbd></span>}>
+              <div className="jm-ftabs" data-jam-flip="">{(['both', 'before', 'after'] as const).map((v) => <button key={v} className={v === view ? 'on' : undefined} aria-pressed={v === view} onClick={() => onFlip(v)}>{v === 'both' ? 'Both' : v === 'before' ? 'Before' : 'After'}</button>)}</div>
             </Tip>
           )}
         </div>
       )}
-      <div className="jm-big"><Shot url={view === 'before' && !shot?.new ? shot?.before : shot?.after} alt={`${label(names[active] ?? '')} ${shot?.new ? 'new' : view}`} /></div>
+      <div ref={big} className={`jm-big${both ? ` pair ${side ? 'side' : 'stack'}` : ''}`} data-jam-pair={both ? (side ? 'side' : 'stack') : 'one'}>
+        {both
+          ? <><Shot url={shot!.before} cap="Before" alt={`${label(names[active] ?? '')} before`} onSize={sized(shot!.before)} /><Shot url={shot!.after} cap="After" alt={`${label(names[active] ?? '')} after`} onSize={sized(shot!.after)} /></>
+          : <Shot url={view === 'before' && !shot?.new ? shot?.before : shot?.after} alt={`${label(names[active] ?? '')} ${shot?.new ? 'new' : view}`}
+              onSize={sized(view === 'before' && !shot?.new ? shot?.before : shot?.after)} />}
+      </div>
       {alsoChanged && alsoChanged.length > 0 && (
         <div className="jm-file"><FileCodeIcon size={14} /><span>Also changed {alsoChanged.map((f, i) => <span key={f}>{i > 0 && ', '}<code>{f.split('/').pop()}</code></span>)}</span></div>
       )}

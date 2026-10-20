@@ -89,15 +89,16 @@ function TipRows({ rows }: { rows: [string, string][] }) {
  *  since the two are one-at-a-time). */
 export function LaserButton() {
   const laser = useStore((s) => s.laser)
+  const laserInspect = useStore((s) => s.laserInspect)
   const showAnchor = useComments((s) => s.showAnchor)
   // stripped build: the paths are not in the bundle, so the button that would
   // copy them has nothing honest to offer
   if (!SOURCE_REVEALED) return null
   return (
-    <Tip side="bottom" label={<TipRows rows={[['Laser mode', 'L'], [showAnchor ? 'Hide laser comment' : 'Show laser comment', '⇧L']]} />}>
-      <button className={`sh-pill-btn${laser ? ' on' : ''}`} onClick={() => {
-        if (!laser) commentsStore().setMode(false)
-        useStore.getState().setLaser(!laser)
+    <Tip side="bottom" label={<TipRows rows={[['Laser', 'L'], ['Inspect', '⌥L'], [showAnchor ? 'Hide laser comment' : 'Show laser comment', '⇧L']]} />}>
+      <button className={`sh-pill-btn${laser ? ' on' : ''}`} data-laser={laser ? (laserInspect ? 'inspect' : 'pointer') : 'off'} onClick={(e) => {
+        commentsStore().setMode(false)
+        useStore.getState().toggleLaser(e.altKey)
       }}><LaserIcon size={16} /></button>
     </Tip>
   )

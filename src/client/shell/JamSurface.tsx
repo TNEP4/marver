@@ -16,7 +16,7 @@ import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { letGoOfTile, useJamUi } from './jam-state.ts'
+import { DONE_GROUP, doneFold, letGoOfTile, useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
 import { clearMoreDraft, EdgeRing } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
@@ -118,13 +118,18 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     if (sel?.thread === s.active) { if (st.panel) st.close() } else letGoOfTile()
   }), [])
   const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
-  const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean } }))
+  const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}), ...(c.state === 'done' && c.shots?.some((x) => !x.same) ? { frames: c.shots.filter((x) => !x.same).map((x) => x.frame) } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean; frames?: string[] } }))
   // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
   // each in its place by when it started, so one sealing late never swaps with a newer one
   const known = new Set(list.map((c) => c.id))
   for (const c of Object.values(cap.caps)) if (c.state === 'draining' && !known.has(c.id)) withMade.push({ made: made(c.id), tile: { id: c.id, state: 'confirming', title: 'Capture', line: 'Finishing' } })
   for (const id of cap.unsent) if (!known.has(id) && !cap.caps[id]) withMade.push({ made: made(id), tile: { id, state: 'confirming', title: 'Capture', line: 'Waiting to send' } })
   const tiles = withMade.sort((a, b) => a.made - b.made).map((x) => x.tile)
+  // a selected tile that became done while the Done group is folded: the group holds the selection now
+  const doneNow = doneFold(tiles, ui.doneOpen)
+  useEffect(() => {
+    if (doneNow.fold && !ui.doneOpen && ui.selected && doneNow.done.some((t) => t.id === ui.selected)) ui.select(DONE_GROUP)
+  }, [doneNow.fold, ui.doneOpen, ui.selected, doneNow.done.length])
   const recording = cap.current ? (() => {
     const c = cap.caps[cap.current!]
     const counts = captureCounts(c)
@@ -177,6 +182,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
       {shown && (
         <CaptureLaneRow
           tiles={folded ? [] : tiles} recording={recording} between={between} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
+          doneOpen={ui.doneOpen} onDoneOpen={(open, ids) => ui.setDoneOpen(open, ids)}
           onOpen={(id) => openTile(id)}
           onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c)) } else e.preventDefault() }}
           ask={voice.asking && cap.current ? voiceAsk(voice) : undefined}
@@ -214,7 +220,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           shots={changedShots(panelCard.shots).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after), ...(x.new ? { new: true } : {}) }))}
           reply={panelCard.reply ? replyText(panelCard) : ''}
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
-          onTab={(i) => ui.setTab(i)} onFlip={() => ui.flip()} onMoreOpen={(on) => ui.setMoreOpen(on)}
+          onTab={(i) => ui.setTab(i)} onFlip={(v) => ui.setView(v)} onMoreOpen={(on) => ui.setMoreOpen(on)}
           onClose={() => ui.close()}
           onEdit={(text) => saveEdit(panelCard, text)}
           onConfirm={() => void decideDraft(panelCard.id, 'confirm')}

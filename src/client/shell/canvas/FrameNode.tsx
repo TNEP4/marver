@@ -158,6 +158,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // laser mode rides the same rail; re-sent when a frame becomes ready
   // so late loaders join an already-lasered board
   const laser = useStore((s) => s.laser)
+  const laserInspect = useStore((s) => s.laserInspect)
   const commentMode = useComments((s) => s.commentMode)
   // a node hosting the OPEN thread card (or a draft composer) rises above its
   // neighbors - each node is a stacking context, so an overflowing card would
@@ -167,8 +168,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       t.id === s.active && !t.resolved && threadHostKey(t, useStore.getState().nodes) === node.key)) || s.draft?.nodeKey === node.key)
   useEffect(() => {
     if (node.status === 'ready' || !laser)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser }, location.origin)
-  }, [laser, node.status])
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser, inspect: laserInspect }, location.origin)
+  }, [laser, laserInspect, node.status])
   // comment mode = pick mode in the frame (late loaders join like laser does); quiet when
   // laser comment (⇧L) is off - clicks still anchor, no lighting in the artwork
   const showAnchor = useComments((s) => s.showAnchor)

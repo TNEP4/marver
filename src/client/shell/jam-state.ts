@@ -12,12 +12,16 @@ interface JamUi {
   selected: string | null
   /** the lane has the keyboard (Q) */
   laneKeys: boolean
-  /** the review: Before | After, the frame tab, the More work composer */
-  view: 'after' | 'before'
+  /** the review: Both (before and after at once - 0.26.1) | Before | After, the frame tab, the More work composer */
+  view: 'both' | 'before' | 'after'
   tab: number
   moreOpen: boolean
   /** bumps when the lane should come back to its right end (a new capture or draft) */
   followEnd: number
+  /** the lane's done tiles shown (the Done group opened) - folded into one tile by default (0.26.1) */
+  doneOpen: boolean
+  /** folding hands a selected done tile's selection to the group (`doneIds`: the tiles it folds) */
+  setDoneOpen(open: boolean, doneIds?: string[]): void
   /** the session's sheets (Part 5): the start sheet (J at rest), the wrap-up (J in a session) - or
    *  'wrap-pending': J pressed while a capture recorded, the wrap-up waits for its read-back to close */
   sheet: 'start' | 'wrap' | 'wrap-pending' | null
@@ -27,21 +31,27 @@ interface JamUi {
   setLaneKeys(on: boolean): void
   select(id: string | null): void
   flip(): void
+  /** a choice in the review's switch: Both, Before or After */
+  setView(view: JamUi['view']): void
   setTab(i: number): void
   setMoreOpen(on: boolean): void
   follow(): void
 }
 
 export const useJamUi = create<JamUi>((set, get) => ({
-  panel: null, selected: null, laneKeys: false, view: 'after', tab: 0, moreOpen: false, followEnd: 0, sheet: null,
+  panel: null, selected: null, laneKeys: false, view: 'both', tab: 0, moreOpen: false, followEnd: 0, sheet: null, doneOpen: false,
   setSheet(s) { set({ sheet: s }) },
-  // the next card opens on After, its first frame
-  open(panel) { set({ panel, selected: panel?.id ?? get().selected, view: 'after', tab: 0, moreOpen: false }) },
+  // the next card opens on Both, its first frame
+  open(panel) { set({ panel, selected: panel?.id ?? get().selected, view: 'both', tab: 0, moreOpen: false }) },
   close() { set({ panel: null, moreOpen: false }) },
   setLaneKeys(on) { set({ laneKeys: on }) },
+  // folding: a done tile that was selected hands its selection to the group
+  setDoneOpen(open, doneIds = []) { set((s) => ({ doneOpen: open, ...(!open && s.selected && doneIds.includes(s.selected) ? { selected: DONE_GROUP } : {}) })) },
   select(id) { set({ selected: id }) },
-  flip() { set((s) => ({ view: s.view === 'after' ? 'before' : 'after' })) },
+  // B: Both -> Before -> After -> Both
+  flip() { set((s) => ({ view: s.view === 'both' ? 'before' : s.view === 'before' ? 'after' : 'both' })) },
   setTab(i) { set({ tab: i }) },
+  setView(view) { set({ view }) },
   setMoreOpen(on) { set({ moreOpen: on }) },
   follow() { set((s) => ({ followEnd: s.followEnd + 1 })) },
 }))
@@ -59,3 +69,19 @@ export function letGoOfTile() {
 }
 
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamUi = useJamUi
+
+// ---- the Done fold (0.26.1): two or more done tiles fold into one, at the lane's left end ------------------
+
+/** The folded group's stop, and the collapse tile's when it is open. */
+export const DONE_GROUP = 'jam-done-group'
+export const DONE_CLOSE = 'jam-done-close'
+
+/** How the lane shows `items` (oldest first): two or more done ones fold into one group; open, they lead, behind a
+ *  collapse tile. `stops`: the lane's keyboard stops in that order. */
+export function doneFold<T extends { id: string; state: string }>(items: T[], open: boolean): { fold: boolean; done: T[]; rest: T[]; stops: string[] } {
+  const done = items.filter((t) => t.state === 'done')
+  const rest = items.filter((t) => t.state !== 'done')
+  const fold = done.length >= 2
+  const stops = !fold ? items.map((t) => t.id) : open ? [DONE_CLOSE, ...done.map((t) => t.id), ...rest.map((t) => t.id)] : [DONE_GROUP, ...rest.map((t) => t.id)]
+  return { fold, done, rest, stops }
+}

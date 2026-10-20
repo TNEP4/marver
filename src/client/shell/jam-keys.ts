@@ -18,7 +18,7 @@
  */
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { useJamUi } from './jam-state.ts'
+import { DONE_CLOSE, DONE_GROUP, doneFold, useJamUi } from './jam-state.ts'
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, useStore } from './store.ts'
@@ -209,6 +209,9 @@ function reviewNow(): { card: string; batch: string; rev: number } | undefined {
   return ui.panel?.kind === 'review' && c?.kind === 'capture' && c.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
 }
 
+/** Esc while a laser (pointer or inspect) is on turns it off, and that is all it does. */
+const laserOff = (): boolean => { const st = useStore.getState(); if (!st.laser) return false; st.setLaser(false); return true }
+
 /** Start a capture, as S does: one made while a capture's review is open follows that review (its run).
  *  `session`: the session it belongs to when the queue may not show it yet (a session's Start). */
 export const startCapture = (session?: string) => useJamCapture.getState().start(reviewNow(), session)
@@ -233,7 +236,8 @@ const rows = (): Row[] => {
         Enter: () => void decideDraft(panelCard!.id, 'confirm'),
         k: () => void decideDraft(panelCard!.id, 'keep'),
         r: () => void resumeDraft(panelCard!.id),
-        Escape: () => void decideDraft(panelCard!.id, 'drop'),
+        // a laser on: Esc turns it off first - never a drop by the way
+        Escape: () => { if (laserOff()) return; void decideDraft(panelCard!.id, 'drop') },
       },
     },
     { // the notes card open (in its field, the field handles its own keys)
@@ -249,10 +253,13 @@ const rows = (): Row[] => {
         e: () => cap.end(),
         s: () => cap.start(),                // one at a time: it says to end this one first
         // L: laser picks - a pick inside a capture is its pick (frames forward it while interacting)
-        l: () => { const st = useStore.getState(); if (!st.laser) void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); st.setLaser(!st.laser) },
+        // L: the pointer laser; ⌥L: inspect - a laser click inside a capture is its pick either way
+        l: () => { void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); useStore.getState().toggleLaser(false) },
+        'Alt+l': () => { void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); useStore.getState().toggleLaser(true) },
         n: () => { cap.setNoteOpen(true); window.dispatchEvent(new CustomEvent('mv-jam-note-focus')) },
         i: () => cap.picture(),
-        Escape: () => cap.drop(),
+        // a laser on: Esc turns it off first - the recording goes on
+        Escape: () => { if (laserOff()) return; cap.drop() },
       },
     },
     { // a review open
@@ -272,19 +279,33 @@ const rows = (): Row[] => {
       on: () => ui.laneKeys,
       keys: (() => {
         const list = lane()
+        // the stops as the lane shows them: done tiles folded into one group (two or more), or led by the collapse tile
+        const { stops, done } = doneFold(list, ui.doneOpen)
         // acting keys act only on the tile you can see selected - never on a fallback
-        const i = list.findIndex((c) => c.id === ui.selected)
-        const sel = i >= 0 ? list[i] : undefined
-        const move = (d: number) => { const n = i < 0 ? list[list.length - 1] : list[Math.min(list.length - 1, Math.max(0, i + d))]; if (n) ui.select(n.id) }
+        const i = ui.selected ? stops.indexOf(ui.selected) : -1
+        const sel = i >= 0 ? list.find((c) => c.id === stops[i]) : undefined
+        const move = (d: number) => { const n = i < 0 ? stops[stops.length - 1] : stops[Math.min(stops.length - 1, Math.max(0, i + d))]; if (n) ui.select(n) }
         return {
           ArrowLeft: () => move(-1), ArrowRight: () => move(1),
-          Enter: () => { if (sel) openTile(sel.id) },
+          Enter: () => {
+            if (stops[i] === DONE_GROUP) { ui.setDoneOpen(true); ui.select(done[0]?.id ?? DONE_CLOSE) }
+            else if (stops[i] === DONE_CLOSE) ui.setDoneOpen(false, done.map((c) => c.id))
+            else if (sel) openTile(sel.id)
+          },
           'Meta+Enter': () => { if (sel?.state === 'queued') void act(sel, 'first') },
           k: () => { if (sel?.state === 'draft') void decideDraft(sel.id, 'keep'); else if (sel?.state === 'queued') void act(sel, 'keep') },
           Backspace: () => { if (sel) void act(sel, 'drop') },
           Escape: () => ui.setLaneKeys(false),
         }
       })(),
+    },
+    { // a laser on (pointer or inspect): its keys work from inside a frame too - a laser click puts the focus there
+      on: () => useStore.getState().laser,
+      keys: {
+        l: () => useStore.getState().toggleLaser(false),
+        'Alt+l': () => useStore.getState().toggleLaser(true),
+        Escape: () => useStore.getState().setLaser(false),
+      },
     },
     { // always (no field focused) - only where Jam runs: with `jam: false` or no agent the server takes no
       // capture, and the toolbar shows no Jam button either
@@ -326,4 +347,6 @@ if (typeof window !== 'undefined' && !PUBLISHED) {
   useJamCapture.subscribe(syncOwned)
   useJamUi.subscribe(syncOwned)
   useJamQueue.subscribe(syncOwned)
+  // and the laser (its keys are owned while it is on)
+  useStore.subscribe((s, p) => { if (s.laser !== p.laser || s.laserInspect !== p.laserInspect) syncOwned() })
 }

@@ -22,9 +22,13 @@ export const composing = (e) => !!e.isComposing || e.keyCode === 229
 /** May a shortcut take this key at all? Not from a field, not mid-composition. */
 export const keyAllowed = (e) => !composing(e) && !inField(e.target)
 
+/** A key's name: a single character lowercased, else its name - and with Alt, a letter named by the key pressed
+ *  (Option on a Mac types a symbol: ⌥L is "¬"). */
+export const keyName = (e) => (e.altKey && /^Key[A-Z]$/.test(e.code ?? '') ? e.code.slice(3).toLowerCase() : e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key)
+
 /** The descriptor `sh:keys` speaks. */
 export function keyDescriptor(e) {
-  const k = e.key && e.key.length === 1 ? e.key.toLowerCase() : e.key
+  const k = keyName(e)
   return [e.ctrlKey && 'Ctrl', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', k].filter(Boolean).join('+')
 }
 
@@ -43,7 +47,7 @@ export function createKeys({ post, trusted }) {
     if (!owns(e)) return
     e.preventDefault()
     e.stopImmediatePropagation()
-    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
+    const key = keyName(e)
     post({ type: 'sh:key', key, code: e.code, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })
   }
   window.addEventListener('message', onMessage)

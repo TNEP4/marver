@@ -340,7 +340,8 @@ function PlayInner() {
 
   // laser / comment ride the same rail as canvas frames, broadcast to the stage iframe.
   // Re-sent on stage-ready (below) so a stage reload restores the mode.
-  useEffect(() => { postStage({ type: 'sh:laser', on: laser }) }, [laser])
+  const laserInspect = useStore((s) => s.laserInspect)
+  useEffect(() => { postStage({ type: 'sh:laser', on: laser, inspect: laserInspect }) }, [laser, laserInspect])
   useEffect(() => { postStage({ type: 'sh:pick', on: commentMode, quiet: !useComments.getState().showAnchor }) }, [commentMode, playShowAnchor])
 
   const exit = () => {
@@ -462,7 +463,7 @@ function PlayInner() {
           if (typeof data.at === 'string' && data.at !== p.at) postStage({ type: 'sh:stage-set', at: p.at })
           postStage({ type: 'sh:set-theme', theme: p.theme })
         }
-        postStage({ type: 'sh:laser', on: s.laser })
+        postStage({ type: 'sh:laser', on: s.laser, inspect: s.laserInspect })
         postStage({ type: 'sh:pick', on: commentsStore().commentMode, quiet: !commentsStore().showAnchor })
         setStageReady((n) => n + 1)            // a reload wiped the frame's lock; let PlayComments re-drive it
       } else if (data.type === 'sh:stage-shown') {

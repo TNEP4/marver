@@ -52,7 +52,7 @@ const REC: CaptureRecord = {
 
 function Scene() {
   const [sel, setSel] = useState<string | undefined>(scene === 'lane' ? 'b' : scene === 'review' ? 'b' : scene === 'readback' ? 'i' : undefined)
-  const [view, setView] = useState<'before' | 'after'>(q.get('view') === 'before' ? 'before' : 'after')
+  const [view, setView] = useState<'both' | 'before' | 'after'>(q.get('view') === 'before' ? 'before' : q.get('view') === 'after' ? 'after' : 'both')
   const [tab, setTab] = useState(0)
   const [more, setMore] = useState(q.get('more') === '1')
   const [draft, setDraft] = useState(q.get('draft') ?? '')

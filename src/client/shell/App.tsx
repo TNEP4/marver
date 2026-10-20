@@ -728,7 +728,9 @@ export function App() {
       const s = useStore.getState()
       if (s.play) return                       // play mode owns the keyboard (Play.tsx)
       // Jam's keys first (spec 27): the first state that takes the key; the rest falls through
-      if (!e.repeat && jamKey({ key: e.key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
+      // with Option a Mac types a symbol (⌥L is "¬"): an Alt shortcut is named by the key pressed
+      const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key
+      if (!e.repeat && jamKey({ key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setPillOpen((o) => !o); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
@@ -748,9 +750,11 @@ export function App() {
       if (e.key === 't') { animateLayout(); runTidy() }
       // laser and comment mode are one-at-a-time: comment mode already highlights
       // what you'd click, so stacking the full rainbow on top only adds noise
-      if (e.key === 'l' && SOURCE_REVEALED) {
-        if (!s.laser) commentsStore().setMode(false)
-        s.setLaser(!s.laser)
+      // L: the pointer laser (the element under the cursor); ⌥L: inspect (every element outlined)
+      if (key === 'l' && !e.shiftKey && SOURCE_REVEALED) {
+        e.preventDefault()
+        commentsStore().setMode(false)
+        s.toggleLaser(e.altKey)
       }
       // C = comment mode (the Figma/Miro convention) · Shift+C = hide/show
       // pins · Shift+P = copy file path(s) (P alone is play; D6, changelog 0.4.0)

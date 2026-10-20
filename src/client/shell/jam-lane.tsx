@@ -12,7 +12,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
 import { Tip } from './Tip.tsx'
-import { CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
+import { DONE_CLOSE, DONE_GROUP, doneFold } from './jam-state.ts'
+import { CaretIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
  *  above it and everything else on the bottom edge (the Update pill, toasts, notices) rises this much. */
@@ -27,6 +28,8 @@ export interface LaneTile {
   line: string
   /** an exclusive card wears a file glyph: it changes how the queue runs */
   exclusive?: boolean
+  /** a done tile: the frames it changed (not the ones it left as they were) - the Done group counts each frame once */
+  frames?: string[]
 }
 
 export interface LaneRecording {
@@ -87,8 +90,11 @@ export interface LaneBetween {
   onCapture(): void
 }
 
-export function Lane({ tiles, recording, between, selected, keyboard, onOpen, onMenu, followEnd }: {
+export function Lane({ tiles, recording, between, selected, keyboard, onOpen, onMenu, followEnd, doneOpen = false, onDoneOpen }: {
   tiles: LaneTile[]
+  /** two or more done tiles fold into one Done tile (0.26.1): shown open, or folded */
+  doneOpen?: boolean
+  onDoneOpen?(open: boolean, doneIds: string[]): void
   recording?: LaneRecording
   /** no capture recording in a session: its own tile, last */
   between?: LaneBetween
@@ -101,6 +107,18 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [fade, setFade] = useState<'' | 'l' | 'r' | 'lr'>('')
+  // done tiles: folded into one (two or more), or shown first behind the collapse tile
+  const { fold, done, rest } = doneFold(tiles, doneOpen)
+  const shown = fold ? (doneOpen ? [...done, ...rest] : rest) : tiles
+  const doneFrames = new Set(done.flatMap((t) => t.frames ?? [])).size
+  // opening shows the done tiles where they are (the lane's start); folding goes back to the newest end
+  const firstOpen = useRef(true)
+  useLayoutEffect(() => {
+    if (firstOpen.current) { firstOpen.current = false; return }
+    const el = ref.current
+    if (el) el.scrollLeft = doneOpen ? 0 : el.scrollWidth
+    measure()
+  }, [doneOpen])
   const measure = () => {
     const el = ref.current
     if (!el) return
@@ -138,12 +156,32 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
   }, [selected])
   return (
     <div className={`jm-lane${keyboard ? ' keyboard' : ''}`} data-jam-lane="">
-      <div ref={ref} className={`jm-lane-in${fade ? ' ' + fade.split('').map((c) => `fade-${c}`).join(' ') : ''}`}
+      {fade.includes('l') && <span className="jm-lane-edge l" aria-hidden="true" />}
+      {fade.includes('r') && <span className="jm-lane-edge r" aria-hidden="true" />}
+      <div ref={ref} className="jm-lane-in"
         onScroll={measure}
         onWheel={(e) => { const el = ref.current; if (el && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY }}>
-        {tiles.map((t) => (
+        {fold && !doneOpen && (
+          <button key={DONE_GROUP} data-tile={DONE_GROUP} data-state="done" data-jam-done="folded"
+            className={`jm-card done group${selected === DONE_GROUP ? ' focus' : ''}`}
+            onClick={() => onDoneOpen?.(true, done.map((t) => t.id))}>
+            <JamStateIcon state="done" />
+            <span className="tx">
+              <span className="t">Done</span>
+              <span className="m">{done.length} done{doneFrames ? ` · ${doneFrames} frame${doneFrames === 1 ? '' : 's'} changed` : ''}</span>
+            </span>
+          </button>
+        )}
+        {fold && doneOpen && (
+          <button key={DONE_CLOSE} data-tile={DONE_CLOSE} data-jam-done="open" aria-label="Fold the done captures"
+            className={`jm-card close${selected === DONE_CLOSE ? ' focus' : ''}`}
+            onClick={() => onDoneOpen?.(false, done.map((t) => t.id))}>
+            <CaretIcon size={12} style={{ transform: 'rotate(90deg)' }} /><span className="t">Done</span>
+          </button>
+        )}
+        {shown.map((t) => (
           <button key={t.id} data-tile={t.id} data-state={t.state}
-            className={`jm-card ${t.state}${selected === t.id ? ' focus' : ''}`}
+            className={`jm-card ${t.state}${selected === t.id ? ' focus' : ''}${fold && t.state === 'done' ? ' unfold' : ''}`}
             onClick={() => onOpen(t.id)} onContextMenu={onMenu ? (e) => onMenu(e, t.id) : undefined}>
             <JamStateIcon state={t.state} />
             <span className="tx">

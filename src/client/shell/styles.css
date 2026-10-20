@@ -1496,16 +1496,16 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
    much more transparent than the shell's glass, a strong backdrop blur so text reads over any frame, a
    glaze (top highlight + a thin light rim) and a teeny shadow. Colour lives in the state glyph only. ---- */
 .sh-app {
-  --jm-tile: rgba(255, 255, 255, .36);
-  --jm-tile-hover: rgba(255, 255, 255, .58);
+  --jm-tile: rgba(255, 255, 255, .6);
+  --jm-tile-hover: rgba(255, 255, 255, .78);
   --jm-tile-glaze: linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 255, 255, .08) 55%, rgba(255, 255, 255, 0));
   --jm-tile-blur: blur(18px) saturate(180%);
   --jm-tile-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .75), inset 0 1px 0 rgba(255, 255, 255, .9),
     0 0 0 .5px rgba(24, 24, 27, .09), 0 1px 1.5px rgba(24, 24, 27, .06), 0 3px 8px -4px rgba(24, 24, 27, .14);
   --jm-r: 11px }
 .sh-app.dark, .jm-stage {
-  --jm-tile: rgba(34, 34, 42, .42);
-  --jm-tile-hover: rgba(52, 52, 62, .6);
+  --jm-tile: rgba(34, 34, 42, .62);
+  --jm-tile-hover: rgba(52, 52, 62, .76);
   --jm-tile-glaze: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .015) 55%, rgba(255, 255, 255, 0));
   --jm-tile-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .1),
     0 0 0 .5px rgba(0, 0, 0, .4), 0 1px 1.5px rgba(0, 0, 0, .25), 0 3px 8px -4px rgba(0, 0, 0, .45) }
@@ -1522,9 +1522,15 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-lane-in { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; pointer-events: auto;
   padding: 6px 4px; margin: -6px -4px; scrollbar-width: none; overscroll-behavior-x: contain }   /* room for the tiles' shadow inside the scroller */
 .jm-lane-in::-webkit-scrollbar { display: none }
-.jm-lane-in.fade-r { -webkit-mask: linear-gradient(90deg, #000 calc(100% - 56px), transparent); mask: linear-gradient(90deg, #000 calc(100% - 56px), transparent) }
-.jm-lane-in.fade-l { -webkit-mask: linear-gradient(90deg, transparent, #000 56px); mask: linear-gradient(90deg, transparent, #000 56px) }
-.jm-lane-in.fade-l.fade-r { -webkit-mask: linear-gradient(90deg, transparent, #000 56px calc(100% - 56px), transparent); mask: linear-gradient(90deg, transparent, #000 56px calc(100% - 56px), transparent) }
+/* the edge fades: two strips BESIDE the scroller, never a mask on it - a masked ancestor is a backdrop root,
+   and every tile inside it would lose its blur (0.26.2: the lane was unreadable exactly when it was full).
+   Each strip blurs what is under it and tints it toward the ground, under its own mask (its own mask leaves
+   its own backdrop filter alone). */
+.jm-lane-edge { position: absolute; top: -6px; bottom: -6px; width: 56px; pointer-events: none; z-index: 1;
+  background: linear-gradient(90deg, var(--ground), transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  -webkit-mask: linear-gradient(90deg, #000, transparent); mask: linear-gradient(90deg, #000, transparent) }
+.jm-lane-edge.l { left: -4px }
+.jm-lane-edge.r { right: -4px; transform: scaleX(-1) }
 .jm-lane .jm-chip { flex: none }                           /* the recording tile: last, whole */
 
 /* ---- the toolbar's Jam button (between Laser and Tidy). No blue while a session runs: blue is hover and
@@ -1558,6 +1564,12 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums }
 .jm-card .x { flex: none; display: inline-flex; color: var(--glass-ink-3); margin-left: auto }
 .jm-card.review .m { color: var(--glass-ink-2) }
+/* the Done fold (0.26.1): the group tile, the narrow collapse tile that leads the opened done tiles, and their slide */
+.jm-card.close { width: auto; gap: 6px; padding: 0 12px; color: var(--glass-ink-2) }
+.jm-card.close .t { font: 600 12px -apple-system, system-ui, sans-serif }
+.jm-card.unfold { animation: jm-unfold .16s cubic-bezier(.2, .7, .3, 1) both }
+@keyframes jm-unfold { from { transform: translateX(-14px); opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .jm-card.unfold { animation: none } }
 .jm-card.queued .t, .jm-card.confirming .t { color: var(--glass-ink-2) }
 .jm-card.done .t, .jm-card.kept .t { color: var(--glass-ink-3) }
 .jm-card.held { color: var(--glass-ink-3) }
@@ -1801,7 +1813,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-focus { position: absolute; top: var(--edge); bottom: calc(var(--edge) + var(--jm-lane) + 2px); z-index: 31; display: flex }
 .jm-focus > .jm-panel { width: 100%; height: 100%; min-height: 0 }
 /* one big picture at a time: the frame tabs and a Before | After switch above it (B flips) */
-.jm-fbar { display: flex; align-items: center; gap: 8px }
+.jm-fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }   /* a narrow window wraps the switch under the tabs */
 .jm-fbar .sp { flex: 1 }
 .jm-fbar kbd { font: 500 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); background: none; border: 0; padding: 0 4px 0 2px; align-self: center }
 .jm-big { flex: 1; min-height: 0; display: flex }
@@ -1843,6 +1855,14 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-big .jm-shot .pic img { width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;
   box-shadow: 0 0 0 1px var(--glass-brd), 0 2px 10px -4px rgba(24, 24, 27, .18) }
 .jm-big .jm-shot .pic.none { border: 1px dashed var(--glass-ink-3); border-radius: 8px }
+/* before and after at once (0.26.1): side by side for a tall frame, stacked for a wide one - each a caption over its
+   picture, both at the frame's own proportions */
+.jm-big.pair { gap: 10px; align-items: stretch }
+.jm-big.pair.side { flex-direction: row }
+.jm-big.pair.stack { flex-direction: column }
+.jm-big.pair .jm-shot { flex: 1; min-width: 0; min-height: 0; height: auto; display: flex; flex-direction: column-reverse; gap: 4px }
+.jm-big.pair .jm-shot .pic { flex: 1; min-height: 0; height: auto }
+.jm-big.pair .jm-shot .cap { flex: none; height: 14px; font: 600 11px/14px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); text-align: center }
 /* the editable words: a quiet hover says "click to edit" */
 .jm-editable { margin: -6px -8px; padding: 6px 8px; border-radius: 10px; cursor: text }
 .jm-editable:hover { background: var(--glass-hover) }
