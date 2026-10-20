@@ -36,6 +36,7 @@ import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
 import { CAPTURE_ID, captureFrames, captureWords, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
+import { logJam } from '../perf-jam.ts'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
 
@@ -339,6 +340,24 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  nothing when the agent has no namer, the capture has no words, or the call fails (its first words stay). */
   const naming = new Set<string>()
   let namerDir: string | undefined
+  // Jam timings (spec 27a Part D), in memory only: when this daemon saw each card enter the queue (a card already
+  // queued when it started has no known wait), and each claimed batch's members' waits
+  const queuedSince = new Map<string, number>()
+  const atBoot = new Set<string>()
+  let scanned = false
+  const noteQueued = () => {
+    try {
+      const now = performance.now()
+      const queued = new Set<string>()
+      for (const c of q.j.cards) if (c.state === 'queued') {
+        queued.add(c.id)
+        if (!queuedSince.has(c.id)) { queuedSince.set(c.id, now); if (!scanned) atBoot.add(c.id) }
+      }
+      scanned = true
+      for (const k of [...queuedSince.keys()]) if (!queued.has(k)) { queuedSince.delete(k); atBoot.delete(k) }
+    } catch { /* the journal is not read yet */ }
+  }
+  const batchWaits = new Map<string, Map<string, number>>()
   const nameCapture = (id: string) => {
     const c0 = q.j.cards.find((x) => x.id === id)
     if (!adapter.namerArgs || cfg.names === false || !c0 || c0.kind !== 'capture' || c0.name || c0.autoName || naming.has(id)) return
@@ -354,15 +373,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // in a private folder of its own: no project instructions to read, nothing of the repo in reach
     namerDir ??= mkdtempSync(join(tmpdir(), 'marver-namer-'))
     const cwd = namerDir
+    const t0 = performance.now()
+    const timed = (ok: boolean) => logJam(root, { kind: 'name', capture: id, ms: performance.now() - t0, ok })
     try { child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), PWD: cwd } }) } catch { naming.delete(id); return }
     const to = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 45_000)
     child.stdout?.on('data', (d: Buffer) => { out += d.toString('utf8'); if (out.length > 4000) out = out.slice(0, 4000) })
-    child.on('error', () => { clearTimeout(to); naming.delete(id) })
+    child.on('error', () => { clearTimeout(to); naming.delete(id); timed(false) })
     child.on('close', (code) => {
       clearTimeout(to)
       naming.delete(id)
-      if (stopped || code !== 0) return
+      if (stopped || code !== 0) { if (!stopped) timed(false); return }
       const name = (out.split('\n').map((l) => l.trim()).find(Boolean) ?? '').replace(/^["'“”‘’`*#\s-]+|["'“”‘’`*.\s]+$/g, '').replace(/\s+/g, ' ').slice(0, 60).trim()
+      timed(!!name)
       if (!name) return
       void q.lock((j) => {
         const c = j.cards.find((x) => x.id === id)
@@ -443,7 +465,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // results still to be posted (the barrier, a retried delivery): no new hold until they settle
     jamReservations.settling = !ready || delivering.size > 0
   }
-  const queueChanged = () => { try { hooks.queue?.() } catch { /* a push is advisory */ } }
+  const queueChanged = () => { noteQueued(); try { hooks.queue?.() } catch { /* a push is advisory */ } }
   const settled = (out: Settled[]) => {
     for (const s of out) if (s.notice === 'failed') log(`  jam: ${s.card.id} failed - ${s.card.note}`)
   }
@@ -514,6 +536,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   const runBatch = async (b: Batch) => {
+    // its timing (spec 27a Part D): the pictures before and after, each agent attempt, the delivery; logged once, at its end
+    const timing: { beforeMs?: number; agentMs: number[]; afterMs?: number; deliverMs?: number } = { agentMs: [] }
+    const timeRun = (failure?: 'agent' | 'changed') => {
+      const waits = batchWaits.get(b.batchId)
+      batchWaits.delete(b.batchId)
+      logJam(root, { kind: 'run', batch: b.batchId, attempts: b.attempts, ...timing, ...(failure ? { failure } : {}),
+        members: b.members.map((m) => { const c = q.j.cards.find((x) => x.id === m.card); return { kind: c?.kind, waitMs: waits?.get(m.card), outcome: failure ? 'failed' : c?.state } }) })
+    }
     // a frame that appears during a run is this run's only if nothing else ran beside it (no other job could
     // have made it)
     const myStart = ++batchStarts
@@ -553,7 +583,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (bad.length) {
       await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') { c.state = 'failed'; c.note = c.kind === 'wrapup' ? 'the session record changed after it was written - write it again' : 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } q.persist() })
       b.members = b.members.filter((m) => !bad.includes(m.card))
-      if (!b.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); return }
+      if (!b.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); timeRun('changed'); return }
     }
     const packet = buildPacket(b.batchId, members, b.frames, b.exclusive ? [...new Set(cards0(b).flatMap((c) => c.exclusive ?? []))] : undefined)
     writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
@@ -605,7 +635,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (when === 'after') for (const s of shots) { if (s.before && s.after && samePicture(s.before, s.after)) s.same = true; else delete s.same }
       await q.lock(() => { b.shots = shots; q.persist() })
     }
-    if (!b.shots?.some((s) => s.before)) await shoot('before')   // a retry keeps the first attempt's
+    if (!b.shots?.some((s) => s.before)) { const t = performance.now(); await shoot('before'); if (capturing) timing.beforeMs = performance.now() - t }   // a retry keeps the first attempt's
     const followWork = () => {
       if (hooks.anyHold?.()) crowded = true
       void discover()
@@ -628,6 +658,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
         const beat = setInterval(followWork, 2_000)
         beat.unref?.()
+        const tAgent = performance.now()
         try {
           const one = b.members.length === 1 ? cards()[0] : undefined
           run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; q.persist() },
@@ -639,7 +670,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
               early = { body: text, asks, commentId: p.commentId, ts: p.ts }
               hooks.changed?.(one.board)
             } : undefined)
-        } finally { clearInterval(beat) }
+        } finally { clearInterval(beat); timing.agentMs.push(performance.now() - tAgent) }
         logRun(b.batchId, run.raw)
         if (run.ok) break
       }
@@ -650,11 +681,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         await q.lock((j) => { ownCreated(j, b); settled(fail(j, b, 'the agent could not finish - its run log is in design/.local/jam-logs')); q.persist() })
         queueChanged()
         log(`  jam: gave up on a batch of ${b.members.length} after ${b.attempts} attempts`)
+        timeRun('agent')
         return
       }
       // the last look for frames it made - before its after pictures, so a crash while they are taken keeps them
       if (!aloneAtStart || batchStarts !== myStart || crowded || hooks.anyHold?.()) { if (!b.crowded) await q.lock(() => { b.crowded = true; q.persist() }) }
       await discover()
+      const tAfter = performance.now()
       await shoot('after')
       // frames the run made (on its board): pictured as they are (new, nothing before) at their size on the board
       const one = b.members.length === 1 ? cards()[0] : undefined
@@ -673,6 +706,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (one!.thread && own.every((x) => x.same)) hosts = [{ member: b.members[0].id, frame: created[0] }]
         await q.lock(() => { b.shots = shots; q.persist() })
       }
+      if (capturing) timing.afterMs = performance.now() - tAfter
       // results first: every member's result in ONE journal write, before anything is posted
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
       const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt).map(([f]) => f) : []
@@ -691,7 +725,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         q.persist()
       })
       if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
+      const tDeliver = performance.now()
       await deliver(b)
+      timing.deliverMs = performance.now() - tDeliver
+      timeRun()
     } finally {
       unwatch()
       clearGlow()
@@ -825,6 +862,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       launch(b)
     }
     const started = await q.lock((j, ctx) => {
+      noteQueued()   // a card queued since the last change was seen: its wait starts no later than now
       const frames = new Set([...runningBatches.values()].flatMap((b) => b.frames))
       const { batches, exclusiveWaiting } = form(j, ctx, {
         free: Math.max(1, cfg.concurrency) - runningBatches.size,
@@ -836,6 +874,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       prune(j)
       q.persist()
       for (const b of batches) runningBatches.set(b.batchId, b)
+      // each member's wait, measured now (it leaves the queue as it is claimed)
+      const now = performance.now()
+      for (const b of batches) batchWaits.set(b.batchId, new Map(b.members.flatMap((m) => { const t = queuedSince.get(m.card); return t !== undefined && !atBoot.has(m.card) ? [[m.card, now - t] as [string, number]] : [] })))
       reserve(exclusiveWaiting)
       // a queued card that waits on a chat agent's hold: say so once, look again soon
       for (const c of j.cards) {
@@ -981,7 +1022,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     for (const { b } of leftover.filter((x) => x.results)) {
       await q.lock((j) => { redelivering(j, b); q.persist() })   // one a previous boot gave up on, too
       for (let n = 1; ; n++) {
-        try { await deliver(b); break } catch (err) {
+        const tDeliver = performance.now()
+        try { await deliver(b); logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, deliverMs: performance.now() - tDeliver }); break } catch (err) {
           if (n >= 4 || stopped) {
             log(`  jam: could not post a recovered batch - ${(err as Error).message}; its cards fail, Retry posts them`)
             await q.lock((j) => { settled(undelivered(j, b, 'its replies could not be posted - Retry posts them')); q.persist() })

@@ -51,7 +51,10 @@ export function tokensToWords(r: Recognized, phraseStart: number): Word[] {
   return out
 }
 
-interface Phrase { start: number; samples: Float32Array }
+interface Phrase { start: number; samples: Float32Array; queuedAt?: number; backlog?: number }
+/** A phrase's timing (spec 27a Part D), in ms: its audio, its wait for the recognizer, the transcription, and the audio
+ *  that was waiting when it was queued (the one being transcribed included). */
+export interface PhraseTiming { audioMs: number; waitMs: number; decodeMs: number; backlogMs: number }
 
 export class Segmenter {
   private pending = new Float32Array(0)       // a partial VAD window, kept for the next samples
@@ -70,8 +73,10 @@ export class Segmenter {
   private vad: VadLike
   private recognize: Recognize
   private onWords: (words: Word[]) => void
-  constructor(vad: VadLike, recognize: Recognize, onWords: (words: Word[]) => void) {
-    this.vad = vad; this.recognize = recognize; this.onWords = onWords
+  private onTiming?: (t: PhraseTiming) => void
+  private decoding = 0                        // samples of the phrase being transcribed now
+  constructor(vad: VadLike, recognize: Recognize, onWords: (words: Word[]) => void, onTiming?: (t: PhraseTiming) => void) {
+    this.vad = vad; this.recognize = recognize; this.onWords = onWords; this.onTiming = onTiming
   }
 
   /** The samples from `offset` on (the page numbers them; an overlap is skipped). A short gap is silence
@@ -130,6 +135,8 @@ export class Segmenter {
   }
 
   private enqueue(p: Phrase) {
+    p.queuedAt = performance.now()
+    p.backlog = this.waitingSamples + this.decoding
     this.waiting.push(p)
     // at most 30 s waits: the oldest waiting phrase goes, and the transcript says so where it was
     while (this.waiting.length > 1 && this.waiting.reduce((n, x) => n + x.samples.length, 0) > MAX_WAITING) {
@@ -146,7 +153,11 @@ export class Segmenter {
       while (this.waiting.length) {
         const p = this.waiting.shift()!
         let words: Word[] = []
+        const t0 = performance.now()
+        this.decoding = p.samples.length
         try { words = tokensToWords(await this.recognize(p.samples), p.start) } catch { words = [{ w: '[words lost]', at: p.start, lost: true }] }
+        this.decoding = 0
+        if (!this.cancelled) this.onTiming?.({ audioMs: (p.samples.length / RATE) * 1000, waitMs: t0 - (p.queuedAt ?? t0), decodeMs: performance.now() - t0, backlogMs: ((p.backlog ?? 0) / RATE) * 1000 })
         const kept = words.filter((x) => x.at <= this.last)
         if (kept.length && !this.cancelled) this.onWords(kept)
       }

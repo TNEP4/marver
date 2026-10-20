@@ -90,6 +90,8 @@ interface Cap {
   pictures: string[]
   probes: number                           // probe answers still out
   shots: number                            // picture requests still out
+  /** its timing (spec 27a Part D): when E was pressed, the wait for its last words, each picture's time, the missing ones */
+  timing?: { endAt?: number; wordsMs?: number; pics: number[]; late: number; failed: number }
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
@@ -530,11 +532,14 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   const size = atEnd ? { width: atEnd.w, height: atEnd.h } : onStage ? { width: onStage.w, height: onStage.h } : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
+  const t0 = performance.now()
   const done = (pid: string | null, late: boolean) => {
     mutate((s) => {
       const x = s.caps[id]
       if (!x) return
       x.shots -= 1
+      const tm = (x.timing ??= { pics: [], late: 0, failed: 0 })
+      if (pid) tm.pics.push(Math.round(performance.now() - t0)); else if (late) tm.late++; else tm.failed++
       if (pid) { x.pictures.push(pid); x.steps.push({ at, frame, event: 'picture', id: pid, why }) }
       else x.steps.push({ at, frame, event: 'missing', what: `no picture of ${frame} - ${late ? `it took over ${PICTURE_MS / 1000} s` : 'the render failed'}` })
     })
@@ -664,6 +669,7 @@ function drain(id: string) {
     const x = st.caps[id]
     if (!x) return
     x.state = 'draining'
+    ;(x.timing ??= { pics: [], late: 0, failed: 0 }).endAt = performance.now()
     // its frames' sizes as they are at E - a resize while it finishes is not part of it; and every instance as it
     // is at E, for a step that answers late (a hover still in flight names a frame then)
     x.endSizes = framesSizes(x)
@@ -680,11 +686,13 @@ function drain(id: string) {
   broadcast({ type: 'sh:capture', id, on: false })
   // the audio is cut at the key press, then its last words are awaited (3 s at most)
   mutate((st) => { const x = st.caps[id]; if (x) x.hearing = true })
+  const tWords = performance.now()
   void voiceEnd(id).then((complete) => {
     mutate((st) => {
       const x = st.caps[id]
       if (!x) return
       x.hearing = false
+      ;(x.timing ??= { pics: [], late: 0, failed: 0 }).wordsMs = Math.round(performance.now() - tWords)
       if (!complete) x.steps.push({ at: now(), event: 'missing', what: 'words may be incomplete' })
     })
     trySeal(id)
@@ -751,6 +759,19 @@ function sealedSizes(c: Cap): Record<string, { w: number; h: number; play?: true
   return out
 }
 
+/** Jam timings (spec 27a Part D): numbers only, to the dev server's local log - best effort, never in the way. */
+const perf = (body: Record<string, unknown>, keepalive = false) => {
+  try { void fetch(`${ROUTE}/api/perf/jam`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body), ...(keepalive ? { keepalive: true } : {}) }).catch(() => {}) } catch { /* never in the way */ }
+}
+/** A capture's timing as it seals: E to sealed (none when the page sealed it), the wait for its words, its pictures. */
+function timeCapture(c: Cap, interrupted: boolean) {
+  const t = c.timing
+  perf({ kind: 'capture', capture: c.id, ...(t?.endAt !== undefined && !interrupted ? { sealMs: performance.now() - t.endAt } : {}),
+    ...(t?.wordsMs !== undefined ? { wordsWaitMs: t.wordsMs } : {}),
+    pictures: { count: t?.pics.length ?? 0, ms: t?.pics ?? [], late: t?.late ?? 0, failed: t?.failed ?? 0 }, ...(interrupted ? { interrupted: true } : {}) }, interrupted)
+}
+const uploadTries = new Map<string, number>()
+
 /** A capture's sealed record: its steps in time order, internal fields stripped, its context, view, pictures and
  *  sizes. `interrupted`: sealed by its page leaving, as it stood. */
 function buildRecord(c: Cap, steps: Cap['steps'], interrupted = false): CaptureRecord {
@@ -772,6 +793,7 @@ function trySeal(id: string) {
   const c2 = capOf(id)
   if (!c2 || c2.shots > 0 || c2.hearing) return
   const record = buildRecord(c2, c2.steps)
+  timeCapture(c2, false)
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })
   forgetHeard(id)
@@ -795,6 +817,8 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   let r: Verdict | null = null
   try {
     // the workspace it was made in travels with it: another project served on this port refuses it
+    uploadTries.set(record.id, (uploadTries.get(record.id) ?? 0) + 1)
+    const tUp = performance.now()
     const payload = JSON.stringify({ record, workspace: CONFIG.workspace })
     // a page that is going sends with keepalive (64 kB at most) so the request outlives it; a bigger one, the next page
     const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && payload.length < 60_000 ? { keepalive: true } : {}) })
@@ -804,6 +828,7 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     // answer, a gate, a server error - is the server being away: keep it and try again
     r = res.ok && body?.ok === true && body.card?.id === record.id ? body
       : res.status === 400 && body && typeof body.error === 'string' ? body : null
+    if (r?.ok) { perf({ kind: 'upload', capture: record.id, ms: performance.now() - tUp, tries: uploadTries.get(record.id) ?? 1 }, leaving); uploadTries.delete(record.id) }
   } catch { r = null }
   if (!r) {
     if (!retryTimer) useStore.getState().toast('the capture is kept here and will be sent when marver dev answers')
@@ -855,6 +880,7 @@ export function sealOnLeave() {
     if (c.id === s.current && draft) steps.push({ at, event: 'note', text: draft })
     steps.push({ at, event: 'missing', what: c.state === 'recording' ? 'the page closed while it recorded' : 'the page closed before it finished' })
     records.push(buildRecord(c, steps, true))
+    timeCapture(c, true)
     // its frames stop recording, its microphone is let go; a late picture or word finds nothing to change
     broadcast({ type: 'sh:capture', id: c.id, on: false })
     voiceDrop(c.id)

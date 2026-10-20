@@ -288,9 +288,10 @@ cli
   })
 
 cli
-  .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle')
+  .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle; --jam: Jam\'s timings')
   .option('--root <dir>', 'Host repo root', { default: '.' })
-  .option('--minutes <n>', 'How far back to read (default 60)')
+  .option('--minutes <n>', 'How far back to read (default 60; 24 h with --jam)')
+  .option('--jam', 'Jam\'s timings: captures, pictures, words, naming, runs, shots - numbers only (design/.local/perf/jam.jsonl)')
   .option('--json', 'Machine-readable output')
   .action(async (opts) => {
     const { perfCommand } = await import('./perf.ts')

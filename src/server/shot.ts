@@ -24,6 +24,7 @@ import { join } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { Browser, CHROMES, findChrome, PROFILE_PREFIXES } from './cdp.ts'
 import { staleSurface } from './stale.ts'
+import { logJam } from './perf-jam.ts'
 
 export { findChrome }
 
@@ -36,8 +37,8 @@ export interface ShotRequest {
   clip?: string
 }
 export type ShotResult =
-  | { ok: true; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures: number }
-  | { ok: false; error: string }
+  | { ok: true; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures: number; ms?: number }
+  | { ok: false; error: string; ms?: number }
 
 const slug = (frameId: string) => frameId.replace(/\//g, '--')
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
@@ -119,7 +120,10 @@ export async function shootFrame(opts: {
   const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${randomBytes(6).toString('hex')}.tmp.png`)
   const req: ShotRequest = { url: frameUrl(origin, frame, theme), width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }
   const result = browser ? await captureIn(req, browser) : await capture(req)
-  if (!result.ok) { rmSync(tmp, { force: true }); return result }
+  // its timing, as a code and numbers (spec 27a Part D)
+  logJam(root, { kind: 'shot', frame: frameId, scale: result.ok ? result.scale : scale, ms: result.ms, ...(result.ok ? { recaptures: result.recaptures } : {}),
+    outcome: result.ok ? (/not checked for a stale surface/.test(result.note ?? '') ? 'unchecked' : 'ok') : result.error === STALE ? 'stale' : /timed out/.test(result.error) ? 'timeout' : 'error' })
+  if (!result.ok) { rmSync(tmp, { force: true }); return { ok: false, error: result.error } }
   const rel = relFor(result.scale)
   // rename, with the Windows replace fallback the boards writer uses; the temp never outlives this call
   try {
@@ -360,7 +364,15 @@ export const shotSeams: {
 const RETRY_LEFT = 3000
 const STALE = 'Chrome returned a stale surface (the picture came back tiled) - shoot it again'
 
-export async function captureIn({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
+/** One capture in a browser it may share; the result carries the capture's own time (`ms` - not its wait for a
+ *  browser slot), which `shootFrame` logs and never passes on. */
+export async function captureIn(req: ShotRequest, b: Browser): Promise<ShotResult> {
+  const t0 = performance.now()
+  const r = await captureOnce(req, b)
+  return { ...r, ms: Math.round(performance.now() - t0) }
+}
+
+async function captureOnce({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
   // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
   let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
   while (scale > 1 && !fits(width, height, scale)) scale--

@@ -74,7 +74,8 @@ for (const m of p.members) if (m.brief.wrapup) {
 }
 const F = '\`\`\`'
 const out = p.members.map((m) => F + 'marver-reply ' + m.id + '\\n' + (m.brief.wrapup ? 'The record lists ' + m.brief.wrapup.content.captures.length + ' captures.' : 'Done: ' + m.brief.asks.map((a) => a.body).join(' + ')) + '\\n' + F).join('\\n')
-process.stdout.write(JSON.stringify({ type: 'result', result: out }) + '\\n')
+// MV_FAKE_AGENT_DELAY_MS: a slow agent, to prove the waits hold a run that takes its time
+setTimeout(() => process.stdout.write(JSON.stringify({ type: 'result', result: out }) + '\\n'), Number(process.env.MV_FAKE_AGENT_DELAY_MS) || 0)
 `
 
 beforeAll(async () => {
@@ -100,7 +101,7 @@ beforeAll(async () => {
   browser = await Browser.launch()
   if (!browser) return
   s = await browser.tab({ width: 1400, height: 900 })
-  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));const ce=console.error;console.error=(...a)=>{__errs.push(a.map(String).join(' ').slice(0,400));ce(...a)}` }, s)
+  await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__realFetch=window.fetch;window.__errs=[];addEventListener('error',e=>__errs.push(String(e.message)));const ce=console.error;console.error=(...a)=>{__errs.push(a.map(String).join(' ').slice(0,400));ce(...a)}` }, s)
   await browser.go(s, `${ORIGIN}/#/b/main`)
   await until(`window.__mvStore?.getState().nodes.length === 2 && window.__mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvJamQueue && !!window.__mvJamVoice && window.__mvJamQueue.getState().agent === 'claude'`, 45_000)
   // typed notes only here (no model): the microphone is not asked about
@@ -118,11 +119,42 @@ afterAll(async () => {
   rmSync(bin, { recursive: true, force: true })
 })
 
-const skippable = (name: string, fn: () => Promise<void>, ms = 120_000) =>
+const skippable = (name: string, fn: () => Promise<void>, ms = 240_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); await fn() }, ms)
 
+/** The first four tests are one journey: each uses the session, capture, review and record the one before left. When
+ *  one fails, the rest of it is skipped - one failure reported as one, not as four. */
+let journeyBroken: string | null = null
+const journey = (name: string, fn: () => Promise<void>, ms = 240_000) =>
+  it(name, async (ctx) => {
+    if (!browser) return ctx.skip()
+    if (journeyBroken) return ctx.skip(`the journey stopped at: ${journeyBroken}`)
+    // MV_BREAK_JOURNEY: its first test made to fail, to prove the rest is skipped rather than failed
+    try { if (process.env.MV_BREAK_JOURNEY && !journeyBroken) throw new Error('broken on purpose (MV_BREAK_JOURNEY)'); await fn() } catch (err) { journeyBroken = name; throw err }
+  }, ms)
+
+/** A test that stands on its own starts from a clean page: no capture recording, no sheet or panel open, the page's
+ *  fetch its own again, and no session running (ended on the server as End without a record does). */
+const fresh = async () => {
+  await browser!.eval(s, `(async () => {
+    if (window.__realFetch) { window.fetch = window.__realFetch }
+    const c = window.__mvJamCapture.getState(); if (c.current) c.drop()
+    window.__mvJamUi.getState().close(); window.__mvJamUi.getState().setSheet(null)
+    const q = window.__mvJamQueue.getState(); const ses = q.session
+    if (ses) {
+      const csrf = (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || ''
+      await fetch('/__mv/api/jam/session', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf }, body: JSON.stringify({ action: 'end', id: ses.id }) }).catch(() => null)
+      q.forget(ses.id)
+    }
+    await q.load()
+    return 1
+  })()`)
+  await until(`!window.__mvJamQueue.getState().session && !window.__mvJamCapture.getState().current && !document.querySelector('[data-jam-sheet]')`, 10_000)
+}
+const alone = (name: string, fn: () => Promise<void>, ms = 240_000) => skippable(name, async () => { await fresh(); await fn() }, ms)
+
 describe('the Jam session in the browser', () => {
-  skippable('J opens the start sheet (the agent it hands work to, the keys in one tooltip); Esc closes it; ⏎ starts the session AND its first capture - the dot pulses and the edges glow for the whole session, its clock counts seconds, then minutes; between captures the lane says it is still on', async () => {
+  journey('J opens the start sheet (the agent it hands work to, the keys in one tooltip); Esc closes it; ⏎ starts the session AND its first capture - the dot pulses and the edges glow for the whole session, its clock counts seconds, then minutes; between captures the lane says it is still on', async () => {
     expect(await browser!.eval(s, `document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button')`)).toBe('idle')
     await key('j')
     await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
@@ -155,10 +187,10 @@ describe('the Jam session in the browser', () => {
     await pic('1b-between')
     await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 10_000)
     await enter()                                                              // confirm: the agent takes it
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 30_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 90_000)
   })
 
-  skippable('J during a capture ends it first and waits for its read-back; the wrap-up lists the session\'s captures with where they stand, says what was answered in threads, takes your instructions - ⏎ writes the record, the session ends', async () => {
+  journey('J during a capture ends it first and waits for its read-back; the wrap-up lists the session\'s captures with where they stand, says what was answered in threads, takes your instructions - ⏎ writes the record, the session ends', async () => {
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const k = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('an idea for later'), 1`)
@@ -184,7 +216,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !document.querySelector('[data-jam-sheet]')`, 10_000)
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.kind === 'wrapup')`, 10_000)
     // the record job: the run's last tile; it comes back to review
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.kind === 'wrapup' && c.state === 'review')`, 30_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.kind === 'wrapup' && c.state === 'review')`, 90_000)
     const w = (await cards()).find((c: any) => c.kind === 'wrapup')
     const tiles = await browser!.eval(s, `[...document.querySelectorAll('.jm-lane [data-tile]')].map((t) => t.dataset.tile)`)
     expect(tiles[tiles.length - 1]).toBe(w.id)
@@ -193,7 +225,7 @@ describe('the Jam session in the browser', () => {
     expect(readFileSync(join(root, w.file), 'utf8')).toMatch(/lead with the save button/)
   })
 
-  skippable('a capture under review: Review and Capture tabs - the capture as it was read back, its pictures and timeline; Before/After keeps its key in a tooltip', async () => {
+  journey('a capture under review: Review and Capture tabs - the capture as it was read back, its pictures and timeline; Before/After keeps its key in a tooltip', async () => {
     const c = (await cards()).find((x: any) => x.kind === 'capture' && x.state === 'review')
     await click(`.jm-lane [data-tile="${c.id}"]`)
     await until(`!!document.querySelector('[data-jam-review] [data-jam-panes]')`, 5000)
@@ -207,7 +239,7 @@ describe('the Jam session in the browser', () => {
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
   })
 
-  skippable('the record opens in the focus panel - the page the agent wrote, its reply; ⇧⏎ More work writes it again with your note; ⏎ Looks good', async () => {
+  journey('the record opens in the focus panel - the page the agent wrote, its reply; ⇧⏎ More work writes it again with your note; ⏎ Looks good', async () => {
     const w = (await cards()).find((c: any) => c.kind === 'wrapup' && c.state === 'review')
     await click(`.jm-lane [data-tile="${w.id}"]`)
     await until(`/Session record/.test(document.querySelector('[data-jam-record]')?.textContent ?? '') && /lead with the save button/.test(document.querySelector('[data-jam-record] .jm-record')?.textContent ?? '')`, 10_000)
@@ -218,7 +250,7 @@ describe('the Jam session in the browser', () => {
     await browser!.send('Input.insertText', { text: 'add the open questions' }, s)
     await enter()
     await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => c.kind === 'wrapup').length === 2`, 10_000)
-    await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => c.kind === 'wrapup' && c.state === 'review').length === 1 && (window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(w.id)})?.state === 'done'`, 30_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => c.kind === 'wrapup' && c.state === 'review').length === 1 && (window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(w.id)})?.state === 'done'`, 90_000)
     const next = (await cards()).find((c: any) => c.kind === 'wrapup' && c.state === 'review')
     expect(readFileSync(join(root, next.file), 'utf8')).toMatch(/More: add the open questions/)
     // V walks the reviews oldest first (the session's capture comes before it): the record's own tile
@@ -228,7 +260,7 @@ describe('the Jam session in the browser', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(next.id)})?.state === 'done'`, 10_000)
   })
 
-  skippable('End without a record ends the session and writes nothing; in play the Jam button sits in the play pill and the lane folds to a counter (Q opens it)', async () => {
+  alone('End without a record ends the session and writes nothing; in play the Jam button sits in the play pill and the lane folds to a counter (Q opens it)', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 3000)
     await enter(); await until(`!!window.__mvJamQueue.getState().session`, 5000)
     await until(`!!window.__mvJamCapture.getState().current`)                     // its first capture, at once
@@ -237,7 +269,7 @@ describe('the Jam session in the browser', () => {
     await key('e')
     await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 30_000)
     await enter()
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 30_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 90_000)
     // play
     await browser!.eval(s, `window.__mvStore.getState().enterPlay?.() ?? document.querySelector('.sh-pill .sh-pill-btn svg')?.closest('button') , 1`)
     await key('p')
@@ -257,7 +289,7 @@ describe('the Jam session in the browser', () => {
     expect(await browser!.eval(s, `document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button')`)).toBe('idle')
   })
 
-  skippable('a record job that failed says so in the focus panel, with why, Retry and Drop - never "queued"', async () => {
+  alone('a record job that failed says so in the focus panel, with why, Retry and Drop - never "queued"', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
     await enter()
     await until(`!!window.__mvJamQueue.getState().session && !document.querySelector('[data-jam-sheet]')`, 5000)
@@ -280,7 +312,7 @@ describe('the Jam session in the browser', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.id === ${JSON.stringify(f.id)})?.state === 'dropped' && !document.querySelector('[data-jam-record]')`, 5000)
   })
 
-  skippable('a session ended in another tab while this one was still starting it: this tab never hears its talk', async () => {
+  alone('a session ended in another tab while this one was still starting it: this tab never hears its talk', async () => {
     // the start lands, then (before this page hears back) another tab ends it
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.fetch = async (u, o) => {
       const r = await f(u, o)
@@ -302,7 +334,7 @@ describe('the Jam session in the browser', () => {
     await dropAuto()   // (Start began a capture all the same - it goes on its own; dropped here)
   })
 
-  skippable('a slow queue answer overtaken by the push of the session ending never brings the session (or its microphone) back', async () => {
+  alone('a slow queue answer overtaken by the push of the session ending never brings the session (or its microphone) back', async () => {
     // the start lands; the queue's answer (with the session) is held while another tab ends it and the push
     // of that arrives - then the old answer comes in
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
@@ -329,7 +361,7 @@ describe('the Jam session in the browser', () => {
     await dropAuto()   // (Start began a capture all the same - it goes on its own; dropped here)
   })
 
-  skippable('a session started while the queue answers slowly: its talk begins with the push, before that answer', async () => {
+  alone('a session started while the queue answers slowly: its talk begins with the push, before that answer', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.__release = null; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
       if (window.__race === 1 && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__race = 2; await new Promise((r) => { window.__release = r }) }
@@ -350,7 +382,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
-  skippable('the push of a session before its start\'s answer, and the refresh held: its talk begins at the answer', async () => {
+  alone('the push of a session before its start\'s answer, and the refresh held: its talk begins at the answer', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.__release = null; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') {
         window.__startId = JSON.parse(o.body).id
@@ -378,7 +410,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
-  skippable('a record refused while the queue answers slowly: at once the session goes on - its talk again, captures allowed, the reason said, Write again', async () => {
+  alone('a record refused while the queue answers slowly: at once the session goes on - its talk again, captures allowed, the reason said, Write again', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
     await enter()
     await until(`!!window.__mvJamQueue.getState().session && window.__mvJamVoiceSession() === window.__mvJamQueue.getState().session.id`, 5000)
@@ -412,7 +444,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
-  skippable('Write again while the first refused try still refreshes: the first finishing late never frees the second', async () => {
+  alone('Write again while the first refused try still refreshes: the first finishing late never frees the second', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
     await enter()
     await until(`!!window.__mvJamQueue.getState().session`, 5000)
@@ -448,7 +480,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
-  skippable('a session ended from here is gone at once - before any refresh or push, a capture started is not its', async () => {
+  alone('a session ended from here is gone at once - before any refresh or push, a capture started is not its', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
     await enter()
     await until(`!!window.__mvJamQueue.getState().session`, 5000)
@@ -473,7 +505,7 @@ describe('the Jam session in the browser', () => {
     expect(await browser!.eval(s, `window.__mvJamQueue.getState().session`)).toBeNull()
   })
 
-  skippable('a capture the server first hears of after the session ended (in another tab) goes on as a capture of its own, and says so', async () => {
+  alone('a capture the server first hears of after the session ended (in another tab) goes on as a capture of its own, and says so', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
     await enter()
     await until(`!!window.__mvJamQueue.getState().session`, 5000)
@@ -495,7 +527,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
-  skippable('a capture whose upload says it landed outside its session (it overtook its registration) says so too, once', async () => {
+  alone('a capture whose upload says it landed outside its session (it overtook its registration) says so too, once', async () => {
     await key('j'); await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
     await enter()
     await until(`!!window.__mvJamQueue.getState().session`, 5000)
@@ -522,7 +554,7 @@ describe('the Jam session in the browser', () => {
     await until(`!window.__mvJamQueue.getState().session && !window.__mvJamVoiceSession()`, 5000)
   })
 
-  skippable('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
+  alone('a session started while the queue cannot be read: its talk begins when the push of it comes', async () => {
     await browser!.eval(s, `(() => { const f = window.fetch; window.__fetch0 = f; window.__race = 0; window.fetch = async (u, o) => {
       if (String(u).includes('/api/jam/session') && o?.method === 'POST' && JSON.parse(o.body).action === 'start') { window.__startId = JSON.parse(o.body).id; window.__race = 1 }
       if (window.__race === 1 && String(u).includes('/api/jam/queue') && !(o?.method)) { window.__race = 2; throw new TypeError('offline') }
@@ -543,7 +575,7 @@ describe('the Jam session in the browser', () => {
     expect((await browser!.eval(s, `window.__errs`)).filter((e: string) => /error occurred in|Rendered (fewer|more) hooks|Minified React error/.test(e))).toEqual([])
   })
 
-  skippable('a capture with no session shows the dot too; Capture on the Jam on tile, over an open review, follows that review as S does', async () => {
+  alone('a capture with no session shows the dot too; Capture on the Jam on tile, over an open review, follows that review as S does', async () => {
     // no session: the dot while it records
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`, 3000)
     await until(`document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button') === 'rec' && !!document.querySelector('[data-jam-button] .jm-live-dot')`, 3000)
@@ -552,7 +584,7 @@ describe('the Jam session in the browser', () => {
     await key('e')
     await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 30_000)
     await enter()                                                                   // confirm: the agent takes it
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(c1)} && c.state === 'review')`, 30_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(c1)} && c.state === 'review')`, 90_000)
     // its review open, a session started: its first capture follows that review, as S would
     await click(`.jm-lane [data-tile="${c1}"]`)
     await until(`window.__mvJamUi.getState().panel?.kind === 'review' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(c1)}`, 5000)

@@ -89,6 +89,8 @@ export interface Speech {
 const IDLE_MS = 10 * 60_000
 
 export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: (t: TalkWords) => void
+  /** each phrase's timing, and the model's load time once a start - numbers only (spec 27a Part D) */
+  onTiming?: (t: { audioMs?: number; waitMs?: number; decodeMs?: number; backlogMs?: number; modelLoadMs?: number }) => void
   /** how long a session's ending waits for its last words (tests shorten it) */
   talkWaitMs?: number
   /** (tests) whether the model is there, and why the engine is missing - by default the real checks */
@@ -132,7 +134,9 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         let settled = false
         const settle = (v: Worker | null) => { if (!settled) { settled = true; resolve(v) } }
         w.on('message', (m: any) => {
+          if (m?.type === 'timing') { try { opts.onTiming?.({ audioMs: m.audioMs, waitMs: m.waitMs, decodeMs: m.decodeMs, backlogMs: m.backlogMs }) } catch { /* numbers only, never in the way */ } return }
           if (m?.type === 'ready') {
+            if (typeof m.modelLoadMs === 'number') try { opts.onTiming?.({ modelLoadMs: m.modelLoadMs }) } catch { /* never in the way */ }
             // one worker at a time: a start that lost a race to another gives way to it
             if (worker && worker !== w) { void w.terminate(); settle(worker); return }
             worker = w; settle(w)

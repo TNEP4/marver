@@ -75,7 +75,7 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
     const seen: number[] = []
     shotSeams.capture = (real, at) => { seen.push(at.attempt); return at.view ? tiledLike(real, at.view) : real }
     const r = await doc('never')
-    expect(r).toEqual({ ok: false, error: expect.stringMatching(/stale surface/) })
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/stale surface/) })
     expect(seen).toEqual([0, 1, 2, 3])
     expect(existsSync(join(dir, 'never.png'))).toBe(false)
   }, 60_000)
@@ -85,7 +85,7 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
     const seen: { attempt: number; view: { w: number; h: number } | null }[] = []
     shotSeams.capture = (real, at) => { seen.push({ attempt: at.attempt, view: at.view }); return at.view ? tiledLike(real, at.view) : real }
     const r = await capture({ url: `${base}/?h=800`, width: 1280, height: 800, out: join(dir, 'fixed-never.png'), scale: 2 })
-    expect(r).toEqual({ ok: false, error: expect.stringMatching(/stale surface/) })
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/stale surface/) })
     expect(seen.map((x) => x.attempt)).toEqual([0, 1, 2])
     // never resized: the view is still the window's own, smaller than the picture
     expect(seen.every((x) => x.view && (x.view.w < 2560 || x.view.h < 1600))).toBe(true)

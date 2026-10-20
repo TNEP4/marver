@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -901,6 +901,9 @@ describe('captures in the browser: the first trial', () => {
   })
 
   skippable('a note still saving when the capture is added to the queue goes with it (the decision waits for it)', async () => {
+    // a clean start: nothing recording, no panel open (a test before it that failed may have left one)
+    await browser!.eval(s, `(() => { const c = window.__mvJamCapture.getState(); if (c.current) c.drop(); window.__mvJamUi.getState().close(); return 1 })()`)
+    await until(`!window.__mvJamCapture.getState().current && !window.__mvJamUi.getState().panel`, 5000)
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('slow note test'), 1`)
@@ -1135,4 +1138,34 @@ describe('captures in the browser: the first trial', () => {
     await until(`!window.__mvJamCapture.getState().current`, 5000)
     await decide(id, 'drop')
   }, 120_000)
+
+  // ---- 0.26.1 D: Jam timings ------------------------------------------------------------------------------
+  skippable('a capture and its run each leave their timing - numbers and codes only, in design/.local/perf/jam.jsonl', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('TIMING-SENTINEL words'), 1`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().picture('spec/alpha'), 1`)
+    await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.pictures.length ?? 0) === 1`, 30_000)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    await decide(id, 'confirm')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 90_000)
+    const card = (await cardsNow()).find((c: any) => c.id === id)
+    const file = join(root, 'design', '.local', 'perf', 'jam.jsonl')
+    const lines = async () => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [])
+    let evs: any[] = []
+    for (let t0 = Date.now(); Date.now() - t0 < 10_000; await sleep(200)) { evs = await lines(); if (evs.some((e) => e.kind === 'run' && e.batch === card.batch)) break }
+    const cap = evs.find((e) => e.kind === 'capture' && e.capture === id)
+    expect(cap).toMatchObject({ v: 1, pictures: { count: 1 } })
+    expect(typeof cap.sealMs).toBe('number')
+    expect(evs.some((e) => e.kind === 'upload' && e.capture === id && typeof e.ms === 'number')).toBe(true)
+    const run = evs.find((e) => e.kind === 'run' && e.batch === card.batch)
+    expect(run).toMatchObject({ members: [{ kind: 'capture', outcome: 'review' }] })
+    expect(run.agentMs.length).toBeGreaterThanOrEqual(1)
+    expect(typeof run.beforeMs).toBe('number'); expect(typeof run.afterMs).toBe('number'); expect(typeof run.deliverMs).toBe('number')
+    expect(typeof run.members[0].waitMs).toBe('number')
+    expect(evs.some((e) => e.kind === 'shot' && e.frame === 'spec/alpha' && e.outcome === 'ok')).toBe(true)
+    expect(readFileSync(file, 'utf8')).not.toContain('TIMING-SENTINEL')
+    await decide(id, 'good')
+  }, 150_000)
 })

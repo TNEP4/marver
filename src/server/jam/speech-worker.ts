@@ -18,6 +18,7 @@ const paths = (workerData as { paths: ModelPaths }).paths
 
 let sherpa: any
 let recognizer: any
+const loadStart = performance.now()
 try {
   sherpa = createRequire(import.meta.url)('sherpa-onnx-node')
   recognizer = new sherpa.OfflineRecognizer({
@@ -27,7 +28,7 @@ try {
       tokens: paths.tokens, numThreads: 2, provider: 'cpu', modelType: 'nemo_transducer',
     },
   })
-  port.postMessage({ type: 'ready' })
+  port.postMessage({ type: 'ready', modelLoadMs: performance.now() - loadStart })
 } catch (err) {
   port.postMessage({ type: 'unavailable', reason: (err as Error).message })
 }
@@ -55,7 +56,7 @@ port.on('message', (m: any) => {
   if (!recognizer || !m || typeof m.capture !== 'string') return
   const id: string = m.capture
   if (m.type === 'begin') {
-    if (!captures.has(id)) captures.set(id, new Segmenter(vadFor(), recognize, (words) => port.postMessage({ type: 'words', capture: id, words })))
+    if (!captures.has(id)) captures.set(id, new Segmenter(vadFor(), recognize, (words) => port.postMessage({ type: 'words', capture: id, words }), (t) => port.postMessage({ type: 'timing', ...t })))
   } else if (m.type === 'audio') {
     const seg = captures.get(id)
     if (!seg || !(m.pcm instanceof Int16Array)) return

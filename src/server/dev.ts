@@ -413,7 +413,8 @@ async function boot(root: string, portFlag: number | undefined, instance: string
       const { createSpeech, speechLive } = await import('./jam/audio.ts')
       // a session's talk (what is said between its captures) goes to its transcript, on this Mac
       const { appendTalk } = await import('./jam/session.ts')
-      const speech = createSpeech({ onTalk: (t) => appendTalk(root, t.session, t.words) })
+      const { logJam } = await import('./perf-jam.ts')
+      const speech = createSpeech({ onTalk: (t) => appendTalk(root, t.session, t.words), onTiming: (t) => logJam(root, { kind: 'words', ...t }) })
       if (server.httpServer) speech.attach(server.httpServer as import('node:http').Server)
       speechLive.svc = speech
       const close = server.close.bind(server)

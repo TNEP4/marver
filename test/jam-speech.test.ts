@@ -64,6 +64,22 @@ describe('words: cutting phrases (no model)', () => {
     for (const n of phrases.slice(0, 2)) { expect(n).toBeGreaterThanOrEqual(MAX_PHRASE - WINDOW); expect(n).toBeLessThanOrEqual(MAX_PHRASE + WINDOW) }   // no pre-roll across a forced cut
   })
 
+  it('each phrase\'s timing is told (spec 27a Part D): its audio, its wait, its transcription, the audio waiting before it - numbers only', async () => {
+    const t: { audioMs: number; waitMs: number; decodeMs: number; backlogMs: number }[] = []
+    const seg = new Segmenter(new FakeVad(), async () => { await new Promise((r) => setTimeout(r, 30)); return { tokens: [' x'], timestamps: [0] } }, () => {}, (x) => t.push(x))
+    for (let o = 0; o < 40 * RATE; o += 1600) seg.push(o, speech(1600))
+    await seg.end(40 * RATE)
+    expect(t.length).toBe(3)
+    for (const x of t) {
+      expect(Object.keys(x).sort()).toEqual(['audioMs', 'backlogMs', 'decodeMs', 'waitMs'])
+      expect(x.audioMs).toBeGreaterThan(0)
+      expect(x.decodeMs).toBeGreaterThanOrEqual(25)
+      expect(x.waitMs).toBeGreaterThanOrEqual(0)
+    }
+    // the second phrase was queued while the first was being transcribed: that audio was waiting before it
+    expect(t[1].backlogMs).toBeGreaterThan(0)
+  })
+
   it('nothing waits beyond 30 s: while the recognizer is busy the oldest waiting phrase is dropped, and the words say so', async () => {
     let release!: () => void
     const hold = { wait: new Promise<void>((r) => { release = r }) }

@@ -357,6 +357,16 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         ;(await import('./perf.ts')).logReload(root, { kind: str(b.kind), tab: str(b.tab), node: str(b.node), frame: str(b.frame), cause: str(b.cause), shown: str(b.shown), ms: num(b.ms) })
         return json(res, 200, { ok: true })
       }
+      // Jam timings from the page (spec 27a Part D): a capture's and an upload's numbers - rebuilt from an allowlist
+      if (path === 'perf/jam' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!b || (b.kind !== 'capture' && b.kind !== 'upload')) return json(res, 400, { error: 'kind must be capture or upload' })
+        ;(await import('./perf-jam.ts')).logJam(root, b)
+        return json(res, 200, { ok: true })
+      }
       if (path === 'sizes' && req.method === 'GET') {
         const frames = readManifestFrames()
         if (!frames) return json(res, 200, { heights: {}, measuring: [] })
