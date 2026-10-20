@@ -269,6 +269,22 @@ describe('a thread Marver started stays on this machine', () => {
     // the human's thread syncs, even though Marver replied in it (that reply alone stays local)
     expect(set.has('human')).toBe(false)
   })
+
+  it('a capture\'s thread (your words) stays too: neither synced nor seeded into a published build - nor Marver\'s replies anywhere', async () => {
+    const { shareable } = await import('../src/server/comments.ts')
+    const evs = [
+      { id: '1', ts: 1, type: 'create', commentId: 'cap-cap-1', capture: 'cap-1', body: 'the checkout total is wrong' },
+      { id: '2', ts: 2, type: 'reply', commentId: 'r1', parentId: 'cap-cap-1', agent: true },
+      { id: '3', ts: 3, type: 'reply', commentId: 'r2', parentId: 'cap-cap-1', body: 'and the button' },
+      { id: '4', ts: 4, type: 'resolve', commentId: 'cap-cap-1' },
+      { id: '5', ts: 5, type: 'create', commentId: 'note', agent: true },
+      { id: '6', ts: 6, type: 'create', commentId: 'human' },
+      { id: '7', ts: 7, type: 'reply', commentId: 'r3', parentId: 'human', agent: true },
+      { id: '8', ts: 8, type: 'reply', commentId: 'r4', parentId: 'human' },
+    ] as any[]
+    expect([...localOnlyThreads(evs)].sort()).toEqual(['cap-cap-1', 'note', 'r1', 'r2'])
+    expect(shareable(evs).map((e) => e.id)).toEqual(['6', '8'])
+  })
 })
 
 describe('the live signal: which boards show the working frames', () => {

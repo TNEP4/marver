@@ -29,7 +29,7 @@ import { ALL_SCENES, buildTree, flatten, framesOn, isBoardName, type FolderRow, 
 import { PROPOSED_PUBLISH, type BoardType } from '../shared/board-types.ts'
 import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, readRegistry } from './boards.ts'
-import { appendEvents, legacyExposure, readLog } from './comments.ts'
+import { appendEvents, legacyExposure, readLog, shareable } from './comments.ts'
 import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
@@ -745,14 +745,17 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
     for (const n of publishedNames) {
       const f = join(commentsDir, `${n}.jsonl`)
       if (!existsSync(f)) continue
+      // Marver's notes and replies, and a Jam capture's thread (your words), stay on this machine
+      const events = shareable(readLog(commentsDir, n))
+      if (!events.length) continue
       mkdirSync(seedOut, { recursive: true })
-      cpSync(f, join(seedOut, `${n}.jsonl`))
+      appendEvents(seedOut, n, events)
       seeded++
     }
     // the old all-scenes log (spec 26): the threads whose frame ships, and nothing else
     const old = readLog(commentsDir, ALL_SCENES)
     const exposed = legacyExposure(old, rights, shows)
-    const kept = old.filter((e) => exposed(e).length)
+    const kept = shareable(old).filter((e) => exposed(e).length)
     if (kept.length) { appendEvents(seedOut, ALL_SCENES, kept); seeded++ }
     if (seeded) console.log(`  comments: ${seeded} board log${seeded === 1 ? '' : 's'} seeded${embedSeeds ? '' : ' (design/.dist-seeds, outside the web root)'}`)
     if (seeded && embedSeeds) console.log(

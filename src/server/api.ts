@@ -1005,9 +1005,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // POST: { download: true } starts the model's download; { retry: true } tries the engine again
         if (req.method === 'POST') {
           const raw = await readBody(req)
-          let b: any = {}; try { b = raw ? JSON.parse(raw) : {} } catch { b = {} }
+          if (raw == null) return json(res, 400, { error: 'body too large' })
+          let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+          // one explicit action: nothing else starts a 488 MB download
           if (b?.retry === true) speechLive.svc.retry()
-          else void downloadModels()
+          else if (b?.download === true) void downloadModels()
+          else return json(res, 400, { error: 'expected { download: true } or { retry: true }' })
         }
         const st = await speechLive.svc.state()
         return json(res, 200, { ...st, download: downloadState(), mb: DOWNLOAD_MB, busy: speechLive.svc.busy() })

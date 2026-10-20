@@ -172,7 +172,7 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, added, onAddNote, err, warn, style }: {
+export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, added, onAddNote, autoNamed, err, warn, style }: {
   title: string
   /** beside the title: the Review | Capture switch (a capture under review) */
   head?: ReactNode
@@ -202,6 +202,8 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
   onOpenThread?: () => void
   /** notes written here after it ended - under a divider, as the timeline shows its own */
   added?: { at: number; text: string }[]
+  /** the title came from Claude Haiku (jam.names): its tooltip says so, and where the words went */
+  autoNamed?: boolean
   /** a note added from here (a draft): resolves whether it saved */
   onAddNote?: (text: string, id: string) => Promise<boolean>
   err?: ReactNode
@@ -231,7 +233,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
     <div className="jm-panel jm-readback" data-jam-readback="" style={style}>
       <div className="top">
         <span className="jm-capglyph"><WaveformIcon size={14} /></span>
-        <Tip side="bottom" label={<span className="jm-tip-title">{title}</span>} only={cutShort}><h3>{title || 'Capture'}</h3></Tip>
+        <Tip side="bottom" label={<span className="jm-tip-title">{title}{autoNamed && <><br /><small>Named by Claude Haiku from its words, sent to Anthropic through Claude Code - <code>jam.names: false</code> turns it off</small></>}</span>} only={cutShort || autoNamed}><h3>{title || 'Capture'}</h3></Tip>
         {head}
         <Walk of={of} onPrev={onPrev} onNext={onNext} />
       </div>

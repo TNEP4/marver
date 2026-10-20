@@ -53,6 +53,12 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
   const pending = new Map()
   const removers = []
   const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); removers.push(() => target.removeEventListener(type, fn, opts)) }
+  // the page's listeners go on with the first capture the shell opens here - a published canvas never
+  // opens one, so nothing listens there; every handler does nothing without a capture anyway
+  const armers = []
+  const onArmed = (...args) => { armers.push(() => on(...args)) }
+  let armed = false
+  const arm = () => { if (armed) return; armed = true; for (const a of armers) a() }
 
   const send = (id, event, payload, frame = getFrame(), at = now()) => {
     if (!id) return
@@ -80,13 +86,13 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
     p.timer = setTimeout(() => sendField(el), FIELD_IDLE_MS)
     pending.set(el, p)
   }
-  on(document, 'input', onField, true)
-  on(document, 'change', onField, true)
-  on(document, 'focusout', (e) => { if (e.target instanceof Element) sendField(e.target) }, true)
+  onArmed(document, 'input', onField, true)
+  onArmed(document, 'change', onField, true)
+  onArmed(document, 'focusout', (e) => { if (e.target instanceof Element) sendField(e.target) }, true)
 
   // ---- clicks: passive - the click still happens; never while a pick mode is on -----------------
   let lastClickAt = 0
-  on(window, 'click', (e) => {
+  onArmed(window, 'click', (e) => {
     lastClickAt = Date.now()
     cancelHover()
     if (!captureId || window.__mvPick) return
@@ -100,7 +106,7 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
   let hoverFrom = null
   let lastHoverAt = 0
   const cancelHover = () => { clearTimeout(hoverTimer); hoverTimer = 0; hoverFrom = null }
-  on(document, 'mousemove', (e) => {
+  onArmed(document, 'mousemove', (e) => {
     if (!captureId || window.__mvPick) { cancelHover(); return }
     if (hoverFrom && Math.hypot(e.clientX - hoverFrom.x, e.clientY - hoverFrom.y) <= HOVER_SLOP) return
     cancelHover()
@@ -116,8 +122,8 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
       record('hover', { bundle: safeBundle(el, from), point: from }, frame)
     }, HOVER_MS)
   }, true)
-  on(document, 'mousedown', cancelHover, true)
-  on(document, 'mouseleave', cancelHover)
+  onArmed(document, 'mousedown', cancelHover, true)
+  onArmed(document, 'mouseleave', cancelHover)
 
   // ---- the final scroll ---------------------------------------------------------------------
   // the settle wait keeps the capture, frame, time and position it began with: `E` (or `S` -> `S`)
@@ -131,7 +137,7 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
     clearTimeout(scrollTimer)
     send(p.id, 'scroll', { y: p.y }, p.frame, p.at)
   }
-  on(window, 'scroll', () => {
+  onArmed(window, 'scroll', () => {
     if (!captureId) return
     clearTimeout(scrollTimer)
     pendingScroll = { id: captureId, frame: getFrame(), at: performance.timeOrigin + performance.now(), y: Math.round(window.scrollY) }
@@ -146,6 +152,7 @@ export function createRecorder({ post, getFrame, mode, trusted }) {
     if (m.type === 'sh:capture-hello' && typeof m.nonce === 'string') post({ type: 'sh:capture-hello', nonce: m.nonce, captureDoc })
     else if (m.type === 'sh:capture' && typeof m.id === 'string') {
       if (m.on) {
+        arm()
         if (captureId && captureId !== m.id) { flushFields(captureId); sendScroll(captureId) }   // `S` -> `S`: the first keeps its own
         captureId = m.id
       } else {

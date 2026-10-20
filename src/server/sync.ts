@@ -303,11 +303,12 @@ export async function connectToken(root: string, url: string, token: string): Pr
 /** The thread an event belongs to: a reply names its root; everything else names its comment. */
 const threadOf = (e: CommentEvent): string => e.parentId ?? e.commentId ?? ''
 
-/** Threads that live on this machine only: started by Marver (an agent's `comments new`). Every id
- *  that resolves to one - the thread, and each reply in it (an edit or reaction names the reply) - is
- *  in the set, so `threadOf` of any event in such a thread hits it. */
+/** Threads that live on this machine only: started by Marver (an agent's `comments new`) or by a Jam
+ *  capture (its words, spoken or typed - 0.26). Every id that resolves to one - the thread, and each reply
+ *  in it (an edit or reaction names the reply) - is in the set, so `threadOf` of any event in such a
+ *  thread hits it. */
 export function localOnlyThreads(events: CommentEvent[]): Set<string> {
-  return threadIds(events, (e) => !!e.agent)
+  return threadIds(events, (e) => !!e.agent || !!e.capture)
 }
 
 /** Every id that resolves to a thread whose root passes `root` - the thread, and each reply in it. */

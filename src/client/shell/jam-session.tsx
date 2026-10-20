@@ -22,7 +22,7 @@ import { HARNESS } from './Comments.tsx'
 import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlashIcon, WarningIcon, WaveformIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { useSessionClock } from './jam-lane.tsx'
-import { useStore } from './store.ts'
+import { CONFIG, useStore } from './store.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -186,7 +186,7 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
       <div className="rows">
         <button className="row" data-jam-mic-switch={mic ? 'on' : 'off'} onClick={() => voice.setChoice(mic ? 'no' : 'yes')}>
           {mic ? <MicrophoneIcon size={15} /> : <MicrophoneSlashIcon size={15} />}
-          <span>Microphone<br /><small>Transcribed on this Mac{name === 'Claude Code' ? ' · Haiku names each capture' : ''}</small></span>
+          <span>Microphone<br /><small>Transcribed on this Mac{CONFIG.jam?.names ? ' · Claude Haiku names each capture from its words, sent to Anthropic' : ''}</small></span>
           <span className="v">{mic ? 'On' : 'Off'}<i className={`jm-switch${mic ? ' on' : ''}`} /></span>
         </button>
         {name

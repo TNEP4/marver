@@ -103,3 +103,14 @@ export function legacyExposure(events: CommentEvent[], rights: Record<string, 'r
   // a reply names its thread in parentId; every other event targets the comment it names
   return (e) => boards.get(rootOf.get((e.type === 'reply' ? e.parentId : e.commentId) ?? '') ?? '') ?? []
 }
+
+/** What of a board's log may leave this machine (a published build's seeds): never an agent's event,
+ *  nor any event in a thread Marver started (a note) or a Jam capture started (its words, 0.26) - the
+ *  thread, each reply in it, and every edit, reaction or resolve naming one of them. Matches the
+ *  rule `marver comments sync` pushes by (sync.ts localOnlyThreads). */
+export function shareable(events: CommentEvent[]): CommentEvent[] {
+  const roots = new Set(events.filter((e) => e.type === 'create' && e.commentId && (e.agent || e.capture)).map((e) => e.commentId!))
+  const local = new Set(roots)
+  for (const e of events) if (e.type === 'reply' && e.parentId && roots.has(e.parentId) && e.commentId) local.add(e.commentId)
+  return events.filter((e) => !e.agent && !local.has(e.parentId ?? e.commentId ?? ''))
+}

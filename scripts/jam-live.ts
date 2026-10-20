@@ -4,8 +4,9 @@
  *   node scripts/jam-live.ts <claude|codex|cursor|droid|opencode|grok|pi> [jobs]
  *
  * Builds a throwaway workspace, plants an owner-ledgered @marver mention asking for one
- * file edit, runs the daemon until it replies, then verifies: the edit landed, the reply
- * posted with the right harness, and prints what the agent said. Needs the CLI installed
+ * edit to the frame it sits on (0.26: a job edits only the frames it reserves), runs the
+ * daemon until it replies, then verifies: the edit landed, the reply posted with the right
+ * harness, and prints what the agent said. Needs the CLI installed
  * AND logged in - this spends real tokens, which is the point: it proves the whole path
  * (spawn, jail, stream parse, reply) against the live tool, not a fixture.
  *
@@ -39,13 +40,15 @@ writeFileSync(join(root, 'design', '.local', 'profile.json'), JSON.stringify({ n
 const cfg: JamConfig = { agent: which, concurrency: 6, subagents: false, proactive: false, chime: true, capture: 'confirm', loc: true, names: true }
 const jam = createJam(root, cfg, adapters[which], (m) => console.log(' ', m.trim()))
 
+const frameFile = (i: number) => join(root, 'design', 'scenes', 'demo', `hero-${i}.tsx`)
+mkdirSync(join(root, 'design', 'scenes', 'demo'), { recursive: true })
 for (let i = 0; i < jobs; i++) {
-  writeFileSync(join(root, `headline-${i}.txt`), 'Welcome to the demo\n')
+  writeFileSync(frameFile(i), 'export default function Hero() {\n  return <h1>Welcome to the demo</h1>\n}\n')
   const id = randomUUID()
   const ev: CommentEvent = {
     id, ts: Date.now(), type: 'create', commentId: id, frame: `demo/hero-${i}`, nodeKey: `demo/hero-${i}`,
     author: { email: 'live@local', name: 'Live check' },
-    body: `Hey @marver: edit the file headline-${i}.txt in the workspace root so it says exactly "Design is live" (replace its content), then reply confirming.`,
+    body: `Hey @marver: change this frame's headline to exactly "Design is live", then reply confirming.`,
   }
   appendEvents(dir, 'home', [ev])
   record(root, 'home', id)
@@ -56,7 +59,7 @@ await jam.tick()
 jam.stop()
 
 const replies = replay(readLog(dir, 'home')).flatMap((t) => t.replies.filter((r) => r.agent))
-const edits = Array.from({ length: jobs }, (_, i) => readFileSync(join(root, `headline-${i}.txt`), 'utf8').includes('Design is live'))
+const edits = Array.from({ length: jobs }, (_, i) => readFileSync(frameFile(i), 'utf8').includes('Design is live'))
 const edited = edits.every(Boolean)
 const finals = replies.filter((r) => !/^jam-e\d+-/.test(r.id ?? ''))   // early acks have jam-e<attempt>- ids
 for (const r of replies) console.log(`  reply [${r.agentMeta?.harness}${r.agentMeta?.model ? '/' + r.agentMeta.model : ''}] ${(r.body ?? '').slice(0, 160)}`)

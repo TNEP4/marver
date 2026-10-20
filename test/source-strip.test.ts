@@ -51,6 +51,15 @@ beforeAll(async () => {
   mkdirSync(join(root, 'design', 'comments'), { recursive: true })
   writeFileSync(join(root, 'design', 'comments', 'all-scenes.jsonl'), [`${SECRET_DIR}/hello`, 'elsewhere/private'].map((frame, i) =>
     JSON.stringify({ id: `ev-seed-0${i}`, ts: 1_700_000_000_000, type: 'create', commentId: `t-seed-0${i}`, board: 'all-scenes', frame, body: 'old' })).join('\n') + '\n')
+  // the published board's log: a human thread ships; a Jam capture's thread (its words) and a note Marver
+  // pinned, with every reply in them, stay on this machine (0.26)
+  const ev = (id: string, x: object) => JSON.stringify({ id, ts: 1_700_000_000_000, board: 'main', frame: `${SECRET_DIR}/hello`, ...x })
+  writeFileSync(join(root, 'design', 'comments', 'main.jsonl'), [
+    ev('ev-human', { type: 'create', commentId: 't-human', body: 'human-words' }),
+    ev('ev-cap', { type: 'create', commentId: 't-cap', capture: 'cap-1', body: 'spoken-words' }),
+    ev('ev-cap-reply', { type: 'reply', commentId: 't-cap-r', parentId: 't-cap', body: 'reply-in-capture' }),
+    ev('ev-note', { type: 'create', commentId: 't-note', agent: true, body: 'marver-note' }),
+  ].join('\n') + '\n')
   // the built CLI, not the source module: packageDir() resolves the client
   // sources relative to the built file, exactly as a real `marver build` does
   execFileSync(process.execPath, [CLI, 'build', '--root', root], { stdio: 'pipe' })
@@ -100,6 +109,12 @@ describe('reveal.source off (the default) strips every repo path from the bundle
     const seed = readFileSync(join(root, 'design', '.dist-seeds', 'all-scenes.jsonl'), 'utf8')
     expect(seed).toContain('t-seed-00')
     expect(seed).not.toContain('t-seed-01')
+  })
+
+  it('a capture\'s thread and Marver\'s notes never reach the published seeds (0.26)', () => {
+    const seed = readFileSync(join(root, 'design', '.dist-seeds', 'main.jsonl'), 'utf8')
+    expect(seed).toContain('human-words')
+    for (const kept of ['spoken-words', 'reply-in-capture', 'marver-note']) expect(seed).not.toContain(kept)
   })
 
   it('meta.json names what each published board shows, by id - the old all-scenes log serves those threads (spec 26)', () => {

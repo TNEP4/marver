@@ -91,7 +91,7 @@ export function FocusPanelView(p: {
           more={p.moreOpen} draftKey={c.id} onMore={p.onMore} onMoreOpen={p.onMoreOpen} onGood={p.onGood} onLater={p.onLater} onOpenThread={p.onOpenThread} />
       ) : (
         <ReadBack key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}
-          added={c.added} onAddNote={c.state === 'draft' ? p.onAddNote : undefined}
+          added={c.added} onAddNote={c.state === 'draft' ? p.onAddNote : undefined} autoNamed={!!c.name && !c.named && title === c.name}
           readOnly={c.state !== 'draft'} locked={p.locked} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
           onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onResume={c.state === 'draft' ? p.onResume : undefined} onOpenThread={c.thread ? p.onOpenThread : undefined}

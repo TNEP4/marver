@@ -813,8 +813,22 @@ async function upload(record: CaptureRecord): Promise<void> {
   else if (r.outside) leftOutOfSession(record.id)
 }
 
+/** A capture still recording, or finishing (its pictures and words coming in), lives only in this page
+ *  until it seals - a sealed one is kept in localStorage until it lands. Leaving the page asks first. */
+let guarded = false
+function guardUnload() {
+  if (guarded || typeof window === 'undefined') return
+  guarded = true
+  window.addEventListener('beforeunload', (e) => {
+    if (!Object.keys(useJamCapture.getState().caps).length) return
+    e.preventDefault()
+    e.returnValue = ''
+  })
+}
+
 /** Records sealed in an earlier page that never reached the server: sent again at boot. */
 export function resendSealed() {
+  guardUnload()
   try {
     const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}') as Record<string, CaptureRecord>
     // a session's capture waiting to be sent is still open: the server is told again until it lands
