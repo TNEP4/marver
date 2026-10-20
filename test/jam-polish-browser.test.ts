@@ -28,6 +28,12 @@ const put = (rel: string, body: string | object) => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const until = (expr: string, ms = 20_000) => browser!.until(s, expr, ms)
 const ev = (expr: string) => browser!.eval(s, expr)
+/** with MARVER_SHOT_DIR set, a picture of the page */
+const pic = async (name: string) => {
+  if (!process.env.MARVER_SHOT_DIR) return
+  const out = await browser!.send('Page.captureScreenshot', { format: 'png' }, s)
+  writeFileSync(join(process.env.MARVER_SHOT_DIR, `polish-${name}.png`), Buffer.from(out.data, 'base64'))
+}
 
 const FAKE_CLAUDE = `#!/usr/bin/env node
 const fs = require('fs')
@@ -137,6 +143,7 @@ describe('the review shows before and after at once, by the frame\'s shape (0.26
     expect(shots.length).toBe(2)
     expect(Math.abs(shots[0].y - shots[1].y)).toBeLessThan(2)            // one row
     expect(shots[1].x).toBeGreaterThan(shots[0].x)                        // Before left, After right
+    await pic('review-phone')
     const caps = await ev(`[...document.querySelectorAll('[data-jam-review] .jm-big .cap')].map((e) => e.textContent)`)
     expect(caps).toEqual(['Before', 'After'])
     const panel = await rect('[data-jam-focus]')
@@ -156,6 +163,7 @@ describe('the review shows before and after at once, by the frame\'s shape (0.26
     const shots = await ev(`[...document.querySelectorAll('[data-jam-review] .jm-big .jm-shot')].map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y } })`)
     expect(Math.abs(shots[0].x - shots[1].x)).toBeLessThan(2)            // one column
     expect(shots[1].y).toBeGreaterThan(shots[0].y)                        // Before above, After below
+    await pic('review-laptop')
     const panel = await rect('[data-jam-focus]'), well = await rect('[data-jam-review] .jm-big')
     const want = (panel.w - well.w) + ((well.h - 20 - 10 - 36) / 2) * (1280 / 800) + 20
     expect(Math.abs(panel.w - Math.min(1600 - panel.x - 12, Math.max(580, want)))).toBeLessThan(24)
@@ -194,12 +202,15 @@ describe('the review shows before and after at once, by the frame\'s shape (0.26
     await ev(`(() => { const q = window.__mvJamQueue.getState(); return q.act(q.cards.find((c) => c.id === ${JSON.stringify(third)}), 'good') })()`)
     await until(`(window.__mvJamQueue.getState().cards ?? []).filter((c) => c.state === 'done').length >= 3`, 20_000)
     await until(`!!document.querySelector('[data-jam-done="folded"]')`, 5000)
+    await pic('done-folded')
     expect(await ev(`document.querySelector('[data-jam-done="folded"] .t').textContent`)).toBe('Done')
-    expect(await ev(`document.querySelector('[data-jam-done="folded"] .m').textContent`)).toMatch(/^3 done/)
+    // three captures that changed nothing (the fake agent edits no file): no frames counted
+    expect(await ev(`document.querySelector('[data-jam-done="folded"] .m').textContent`)).toBe('3 captures')
     for (const id of [phone, laptop, third]) expect(await ev(`!!document.querySelector('.jm-lane [data-tile="${id}"]')`)).toBe(false)
     // open, then fold back
     await ev(`document.querySelector('[data-jam-done="folded"]').click(), 1`)
     await until(`!!document.querySelector('[data-jam-done="open"]')`, 3000)
+    await sleep(300); await pic('done-open')
     for (const id of [phone, laptop, third]) expect(await ev(`!!document.querySelector('.jm-lane [data-tile="${id}"]')`)).toBe(true)
     await ev(`document.querySelector('[data-jam-done="open"]').click(), 1`)
     await until(`!!document.querySelector('[data-jam-done="folded"]')`, 3000)
@@ -239,6 +250,7 @@ describe('the lane is readable over whatever is under it (0.26.1)', () => {
       const mean = lum.reduce((a, b) => a + b, 0) / lum.length
       return Math.sqrt(lum.reduce((a, b) => a + (b - mean) ** 2, 0) / lum.length)
     }
+    await pic('lane-stripes')
     const under = await spread(tile)
     const open = await spread({ x: tile.x, y: (await ev(`innerHeight`)) - 240, width: tile.width, height: 6 })
     expect(open).toBeGreaterThan(80)          // the stripes themselves: black and white
@@ -271,6 +283,7 @@ describe('the laser points; inspect is its own mode (0.26.1)', () => {
     await hoverIn('spec/phone', '#h')
     await until(`(() => { const st = window.__mvStore.getState(); const k = st.nodes.find((n) => n.frame === 'spec/phone').key; const d = document.querySelector('.sh-node[data-node="' + k + '"] iframe')?.contentDocument; return !!d && d.querySelectorAll('[data-mv-hover]').length === 1 })()`, 5000)
     expect(await outline('spec/phone', '#p')).toBe('none')          // a sibling: not outlined
+    await pic('laser-pointer')
     // a click copies its path (outside a capture)
     await ev(`(window.__copies = [], window.addEventListener('message', (e) => { if (e.data && e.data.type === 'sh:laser-copy') window.__copies.push(e.data.path) }), 1)`)
     const at = await hoverIn('spec/phone', '#h')
@@ -281,6 +294,7 @@ describe('the laser points; inspect is its own mode (0.26.1)', () => {
     await until(`window.__mvStore.getState().laser && window.__mvStore.getState().laserInspect`, 3000)
     await sleep(200)
     expect(await outline('spec/phone', '#p')).toBe('solid')         // inspect: everything outlined
+    await pic('laser-inspect')
     await key('l')
     await sleep(200)
     await until(`window.__mvStore.getState().laser && !window.__mvStore.getState().laserInspect`, 3000)

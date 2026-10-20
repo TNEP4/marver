@@ -124,3 +124,13 @@ describe('marver perf --jam', () => {
     expect(s.outcomes).toEqual({ review: 1, failed: 1 })
   })
 })
+
+describe('the Done group\'s line (0.26.1)', () => {
+  it('captures and records apart, frames changed when known', async () => {
+    const { doneLine } = await import('../src/client/shell/jam-state.ts')
+    const t = (id: string, record = false) => ({ id, state: 'done' as const, title: id, line: '', ...(record ? { record: true } : {}) })
+    expect(doneLine([t('a'), t('b'), t('c')], 0)).toBe('3 captures')
+    expect(doneLine([t('a'), t('b'), t('r', true)], 4)).toBe('2 captures · 1 record · 4 frames changed')
+    expect(doneLine([t('a'), t('r', true)], 1)).toBe('1 capture · 1 record · 1 frame changed')
+  })
+})

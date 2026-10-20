@@ -85,3 +85,11 @@ export function doneFold<T extends { id: string; state: string }>(items: T[], op
   const stops = !fold ? items.map((t) => t.id) : open ? [DONE_CLOSE, ...done.map((t) => t.id), ...rest.map((t) => t.id)] : [DONE_GROUP, ...rest.map((t) => t.id)]
   return { fold, done, rest, stops }
 }
+
+/** What the Done group holds: "3 captures", "2 captures · 1 record", and "· 4 frames changed" when known. */
+export function doneLine(done: { record?: boolean }[], frames: number): string {
+  const records = done.filter((t) => t.record).length, captures = done.length - records
+  const parts = [captures ? `${captures} capture${captures === 1 ? '' : 's'}` : '', records ? `${records} record${records === 1 ? '' : 's'}` : '', frames ? `${frames} frame${frames === 1 ? '' : 's'} changed` : ''].filter(Boolean)
+  return parts.join(' · ')
+}
+

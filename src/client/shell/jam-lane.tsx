@@ -12,7 +12,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
 import { Tip } from './Tip.tsx'
-import { DONE_CLOSE, DONE_GROUP, doneFold } from './jam-state.ts'
+import { DONE_CLOSE, DONE_GROUP, doneFold, doneLine } from './jam-state.ts'
 import { CaretIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
@@ -30,6 +30,8 @@ export interface LaneTile {
   exclusive?: boolean
   /** a done tile: the frames it changed (not the ones it left as they were) - the Done group counts each frame once */
   frames?: string[]
+  /** a session record's tile (the Done group counts records apart from captures) */
+  record?: boolean
 }
 
 export interface LaneRecording {
@@ -168,7 +170,7 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
             <JamStateIcon state="done" />
             <span className="tx">
               <span className="t">Done</span>
-              <span className="m">{done.length} done{doneFrames ? ` · ${doneFrames} frame${doneFrames === 1 ? '' : 's'} changed` : ''}</span>
+              <span className="m">{doneLine(done, doneFrames)}</span>
             </span>
           </button>
         )}

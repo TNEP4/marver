@@ -118,7 +118,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     if (sel?.thread === s.active) { if (st.panel) st.close() } else letGoOfTile()
   }), [])
   const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
-  const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}), ...(c.state === 'done' && c.shots?.some((x) => !x.same) ? { frames: c.shots.filter((x) => !x.same).map((x) => x.frame) } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean; frames?: string[] } }))
+  const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}), ...(c.state === 'done' && c.shots?.some((x) => !x.same) ? { frames: c.shots.filter((x) => !x.same).map((x) => x.frame) } : {}), ...(c.kind === 'wrapup' ? { record: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean; frames?: string[]; record?: boolean } }))
   // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
   // each in its place by when it started, so one sealing late never swaps with a newer one
   const known = new Set(list.map((c) => c.id))
