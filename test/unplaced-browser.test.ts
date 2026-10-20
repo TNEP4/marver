@@ -38,7 +38,7 @@ beforeAll(async () => {
   put('package.json', { name: 'unplaced-fixture', private: true, type: 'module' })
   const repoRoot = join(import.meta.dirname, '..')
   mkdirSync(join(root, 'node_modules', '@marver-design'), { recursive: true })
-  for (const e of readdirSync(join(repoRoot, 'node_modules'))) { if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoRoot, 'node_modules', e), join(root, 'node_modules', e)) }
+  for (const e of readdirSync(join(repoRoot, 'node_modules'))) { if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver' && e !== '@marver-design') symlinkSync(join(repoRoot, 'node_modules', e), join(root, 'node_modules', e)) }
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/scenes/shop/cart.tsx', frame('Cart', '#0b5'))
   put('design/scenes/shop/pay.tsx', frame('Pay', '#05b'))

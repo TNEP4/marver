@@ -29,7 +29,7 @@ beforeAll(async () => {
   const repoRoot = join(import.meta.dirname, '..')
   const nm = join(root, 'node_modules')
   mkdirSync(nm)
-  for (const e of readdirSync(join(repoRoot, 'node_modules'))) { if (e !== '.bin' && e !== '.vite') symlinkSync(join(repoRoot, 'node_modules', e), join(nm, e)) }
+  for (const e of readdirSync(join(repoRoot, 'node_modules'))) { if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver') symlinkSync(join(repoRoot, 'node_modules', e), join(nm, e)) }
   mkdirSync(join(nm, '@marver-design'))
   symlinkSync(repoRoot, join(nm, '@marver-design', 'marver'))
   const frame = (title: string, bg: string) => `export const meta = { title: '${title}', viewport: 'mobile' }

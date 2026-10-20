@@ -148,7 +148,7 @@ describe('data-mv-loc: the dev server serves it, the published build never has i
     // so the repo's node_modules are linked in as the browser suites link them)
     const repoRoot = join(import.meta.dirname, '..'), repoNm = join(repoRoot, 'node_modules')
     mkdirSync(join(root, 'node_modules', '@marver-design'), { recursive: true })
-    for (const e of readdirSync(repoNm)) if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e))
+    for (const e of readdirSync(repoNm)) if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e))
     symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
     execFileSync(process.execPath, [join(repoRoot, 'dist', 'cli.mjs'), 'build', '--all-boards', '--no-textures', '--root', root], { stdio: 'pipe', env: { ...process.env, CI: '1' } })
     const dist = join(root, 'design', '.dist')

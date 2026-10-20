@@ -49,7 +49,7 @@ beforeAll(async () => {
   put('package.json', { name: 'calm-fixture', private: true, type: 'module', devDependencies: { tailwindcss: '^4.0.0' } })
   const repoRoot = join(import.meta.dirname, '..'), repoNm = join(repoRoot, 'node_modules')
   mkdirSync(join(root, 'node_modules', '@marver-design'), { recursive: true })
-  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
+  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   const tw = readdirSync(join(repoNm, '.pnpm')).find((d) => /^tailwindcss@4/.test(d))
   if (tw) symlinkSync(join(repoNm, '.pnpm', tw, 'node_modules', 'tailwindcss'), join(root, 'node_modules', 'tailwindcss'))

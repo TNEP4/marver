@@ -76,7 +76,7 @@ beforeAll(async () => {
   put('package.json', { name: 'jam-voice-fixture', private: true, type: 'module' })
   const repoRoot = join(import.meta.dirname, '..'), repoNm = join(repoRoot, 'node_modules')
   mkdirSync(join(root, 'node_modules', '@marver-design'), { recursive: true })
-  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
+  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/config.ts', "export default { jam: { agent: 'claude', concurrency: 1 } }\n")
   put('design/scenes/spec/alpha.tsx', 'export default () => <main><h1>alpha</h1></main>\n')

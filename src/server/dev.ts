@@ -210,6 +210,12 @@ async function boot(root: string, portFlag: number | undefined, instance: string
   const server = await createServer({
     configFile: false,
     root,
+    // Marver's own pre-bundle folder (#7). Vite's default, node_modules/.vite, is shared with every other Vite
+    // on this root (the app's own, a Vitest run, `vite --force`): when one of them optimizes it replaces deps/
+    // under the running canvas, and each pre-bundle not served yet - mermaid's lazily loaded diagram chunks, a
+    // first Md's marked - answers 504 "Outdated Optimize Dep" until a restart. Not under design/.local/: the
+    // file deny rule answers 403 there.
+    cacheDir: join(root, 'node_modules', '.vite-marver'),
     css: css as any,
     customLogger: logger,
     plugins,
@@ -272,6 +278,9 @@ async function boot(root: string, portFlag: number | undefined, instance: string
       include: [
         'react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime',
         `${PKG} > marked`, `${PKG} > mermaid`, `${PKG} > roughjs`, `${PKG} > html-to-image`,
+        // the chart runtime: imported from inside the excluded package, so never pre-bundled on its own - a
+        // first chart frame fetched ~600 separate echarts modules (40 with these)
+        `${PKG} > echarts/core`, `${PKG} > echarts/renderers`, `${PKG} > echarts/charts`, `${PKG} > echarts/components`,
         ...iconModules(root),   // the per-icon modules the design imports (icons.ts), bundled up front
       ],
       entries: [join(clientDir, 'frame-host', 'index.html'), 'design/**/*.{tsx,jsx}'],

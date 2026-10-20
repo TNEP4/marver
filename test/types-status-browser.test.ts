@@ -42,7 +42,7 @@ beforeAll(async () => {
   mkdirSync(join(root, 'node_modules', '@marver-design'), { recursive: true })
   // .vite stays out: each fixture's dev server keeps its own dependency cache - a shared one is rewritten
   // by a parallel suite's server while this one's page loads a lazy engine (mermaid, echarts) from it
-  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
+  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/scenes/app/home.tsx', `export const meta = { title: 'Home', viewport: 'mobile' }\nexport default () => <main><h1>Home</h1></main>\n`)
   put('design/boards/_folders.json', { version: 2, folders: [

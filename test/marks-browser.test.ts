@@ -58,7 +58,7 @@ beforeAll(async () => {
   put('package.json', { name: 'marks-fixture', private: true, type: 'module' })
   const repoRoot = join(import.meta.dirname, '..'), repoNm = join(repoRoot, 'node_modules')
   mkdirSync(join(root, 'node_modules', '@marver-design'), { recursive: true })
-  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
+  for (const e of readdirSync(repoNm)) { if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver' && e !== '@marver-design') symlinkSync(join(repoNm, e), join(root, 'node_modules', e)) }
   symlinkSync(repoRoot, join(root, 'node_modules', '@marver-design', 'marver'))
   put('design/config.ts', 'export default { jam: false }\n')      // a human reply in a Marver note must not start a real agent
   for (const f of ['alpha', 'bravo', 'charlie']) put(`design/scenes/spec/${f}.tsx`, frame(f))
