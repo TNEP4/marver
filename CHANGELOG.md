@@ -47,6 +47,16 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   in the same folder stops with "a canvas already runs here" and its link, instead of taking over
   the first one's record.
 
+### Fixed
+
+- **Marver's notes and replies stay on your machine when you publish.** The docs always said so, and
+  `marver comments sync` never pushed them, but `marver build` copied each board's whole comment log
+  into the published canvas. Now a build ships only people's threads: a note Marver pinned, its
+  replies in your threads, and every capture's thread stay local.
+- **An agent in a sandbox still looks at its work.** Codex runs with the network blocked, so
+  `marver shot` could not reach the canvas and it replied that it could not check the render; the
+  instructions now send it to the request file, which works in every sandbox.
+
 ### Upgrading
 
 `npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent
