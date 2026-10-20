@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { DONE_CLOSE, DONE_GROUP, doneFold, doneLine } from './jam-state.ts'
-import { CaretIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
+import { ArrowsInLineHorizontalIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
  *  above it and everything else on the bottom edge (the Update pill, toasts, notices) rises this much. */
@@ -179,7 +179,7 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
           <button key={DONE_CLOSE} data-tile={DONE_CLOSE} data-jam-done="open" aria-label="Fold the done captures"
             className={`jm-card close${selected === DONE_CLOSE ? ' focus' : ''}`}
             onClick={() => onDoneOpen?.(false, done.map((t) => t.id))}>
-            <CaretIcon size={12} style={{ transform: 'rotate(90deg)' }} /><span className="t">Done</span>
+            <ArrowsInLineHorizontalIcon size={15} /><span className="t">Done</span>
           </button>
         )}
         {shown.map((t) => (
