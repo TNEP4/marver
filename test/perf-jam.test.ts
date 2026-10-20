@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { chmodSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cleanJamEvent, flushJam, jamLog, logJam, readJam } from '../src/server/perf-jam.ts'
+import { cleanJamEvent, flushJam, jamLog, jamSeams, logJam, readJam } from '../src/server/perf-jam.ts'
 import { jamSummary, spread } from '../src/cli/perf.ts'
 
 /** Jam timings (spec 27a Part D): numbers and codes only, one buffered writer, read back by `marver perf --jam`. */
@@ -62,27 +61,24 @@ describe('the Jam timing log', () => {
 
   it('what is being written counts against the limit until it is written: an append held, then 1,000 more are dropped', async () => {
     const root = temp()
-    mkdirSync(join(root, 'design', '.local', 'perf'), { recursive: true })
-    // the log is a pipe: an append blocks until someone reads it - a held write, for real
-    execFileSync('mkfifo', [jamLog(root)])
-    for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `s/f${i}`, ms: i, outcome: 'ok' })
-    await new Promise((r) => setTimeout(r, 50))   // the writer has taken them and is held on the pipe
-    for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `t/f${i}`, ms: i, outcome: 'ok' })
-    // read the pipe until the writer has said how many it dropped (each append opens it anew)
-    let text = ''
-    for (let t0 = Date.now(); Date.now() - t0 < 25_000 && !text.includes('"dropped"');) {
-      await new Promise<void>((done) => {
-        const r = createReadStream(jamLog(root), { encoding: 'utf8' })
-        const t = setTimeout(() => { r.destroy(); done() }, 5_000)
-        r.on('data', (d) => { text += d }); r.on('end', () => { clearTimeout(t); done() }); r.on('error', () => { clearTimeout(t); done() })
-      })
-    }
-    await flushJam(root)
-    const evs = text.trim().split('\n').map((l) => JSON.parse(l))
+    // the append held open, as a slow disk would hold it
+    let release!: () => void
+    const held = new Promise<void>((r) => { release = r })
+    const { appendFile } = await import('node:fs/promises')
+    let first = true
+    jamSeams.append = async (file, data) => { if (first) { first = false; await held } await appendFile(file, data) }
+    try {
+      for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `s/f${i}`, ms: i, outcome: 'ok' })
+      await new Promise((r) => setTimeout(r, 50))   // the writer has taken them and is held
+      for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `t/f${i}`, ms: i, outcome: 'ok' })
+      release()
+      await flushJam(root)
+    } finally { delete jamSeams.append }
+    const evs = readJam(root).events
     expect(evs.filter((e) => e.kind === 'shot').length).toBe(1_000)
     expect(evs.find((e) => e.kind === 'dropped')?.count).toBe(1_000)
     rmSync(root, { recursive: true, force: true })
-  }, 60_000)
+  }, 30_000)
 
   it('past 1,000 waiting events new ones are dropped and counted - the count written once the writer catches up', async () => {
     const root = temp()

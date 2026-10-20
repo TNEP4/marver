@@ -15,6 +15,8 @@ import { join } from 'node:path'
 export const jamLog = (root: string) => join(root, 'design', '.local', 'perf', 'jam.jsonl')
 
 const MAX_FILE = 2_000_000          // past this the oldest half goes
+/** A test seam: how a batch of lines is appended (to hold an append open). Never set outside tests. */
+export const jamSeams: { append?: (file: string, data: string) => Promise<void> } = {}
 const MAX_EVENTS = 1_000, MAX_BYTES = 1_000_000
 
 // each id in its own generated format - free text never passes as an id
@@ -97,7 +99,7 @@ async function drain(root: string, w: Writer): Promise<void> {
     w.inFlight = lines.length
     if (w.dropped) { lines.push(JSON.stringify({ v: 1, ts: Date.now(), kind: 'dropped', count: w.dropped }) + '\n'); w.dropped = 0 }
     try {
-      await appendFile(file, lines.join(''))
+      await (jamSeams.append ?? appendFile)(file, lines.join(''))
       // now and then: past its size, the oldest half goes
       if (++w.writes % 50 === 0 && (await stat(file)).size > MAX_FILE) {
         const all = (await readFile(file, 'utf8')).split('\n')
