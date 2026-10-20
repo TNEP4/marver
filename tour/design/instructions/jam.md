@@ -1,4 +1,4 @@
-<!-- marver:managed 5602991c0ec591523cd19c29cba9f4f431ced06a8f902beda4af45f5dc7cda4a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 3ec85350a32a152313d58c807d458da9ad8eea1c65de4d0e4ee6b5587eb2e631 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Live Jam - acting on @marver comments
 
 The owner leaves a comment on the canvas and tags `@marver`. While `npx marver dev` runs,
@@ -169,9 +169,11 @@ full, not cropped. A frame tall enough to hit the capture cap comes back with
 printing one PNG path per line; a failed frame goes to stderr and the exit code is 1. After
 writing a scene, shoot the scene, not the frames. `--scale 4` is for a print-quality still -
 the human's "copy as image" on the canvas uses this same renderer, so you both see one
-picture. If it says the dev server cannot be reached - a sandbox that blocks the network
-blocks localhost too - drop a request file as above instead: it works in every sandbox. Never
-reply that you could not look.)
+picture. In a sandbox that blocks the network (localhost too) the command takes the picture
+through the file inbox by itself; if it still says the dev server cannot be reached, drop a
+request file as above. Never reply that you could not look. A picture that came back tiled
+from Chrome is taken again for you; a shot that fails with "stale surface" is worth one more
+try.)
 
 Verification is best-effort, not a gate. If your model cannot read images, or the result
 reports no Chrome on the machine, still act on `ok`/`error` - and say plainly in your reply
