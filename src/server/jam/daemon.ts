@@ -540,13 +540,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // its timing (spec 27a Part D): the pictures before and after, each agent attempt, the delivery; logged once, at its end
     const timing: { beforeMs?: number; agentMs: number[]; afterMs?: number; deliverMs?: number } = { agentMs: [] }
     let timed = false
+    // the members as the run began: one its setup turned away still counts (as failed - its card says so)
+    const members0 = [...b.members]
     const timeRun = (failure?: 'agent' | 'changed' | 'delivery' | 'other') => {
       if (timed) return
       timed = true
       const waits = batchWaits.get(b.batchId)
       batchWaits.delete(b.batchId)
       logJam(root, { kind: 'run', batch: b.batchId, attempts: b.attempts, ...timing, ...(failure ? { failure } : {}),
-        members: b.members.map((m) => { const c = q.j.cards.find((x) => x.id === m.card); return { kind: c?.kind, waitMs: waits?.get(m.card), outcome: failure ? 'failed' : c?.state } }) })
+        members: members0.map((m) => { const c = q.j.cards.find((x) => x.id === m.card); return { kind: c?.kind, waitMs: waits?.get(m.card), outcome: failure || !b.members.includes(m) ? 'failed' : c?.state } }) })
     }
     // every end writes its line - setup that threw included (any end not timed below is "other")
     try {
