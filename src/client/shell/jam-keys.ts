@@ -163,13 +163,19 @@ export function openTile(id: string) {
   if (!c) return
   if (c.state === 'asks' && c.thread) {
     ui.select(id)
-    // on another board: its link opens the board, then the thread (as a notification's does)
-    if (c.board !== useStore.getState().board) { location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`; return }
-    void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setActive(c.thread!))
+    openThread(c)
     return
   }
   ui.open({ kind: c.state === 'review' ? 'review' : c.kind === 'wrapup' ? 'wrapup' : 'capture', id })
   reveal(c)
+}
+
+/** Open a card's thread - on another board, its link opens that board, then the thread (as a
+ *  notification's does). */
+export function openThread(c: JamCard) {
+  if (!c.thread) return
+  if (c.board !== useStore.getState().board) { location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`; return }
+  void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setActive(c.thread!))
 }
 
 /** Bring a card's frames into view beside the panel - on its own board (a frame link lands there). */

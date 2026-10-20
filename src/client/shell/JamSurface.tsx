@@ -11,7 +11,7 @@ import { captureCounts, useJamCapture } from './jam-capture.ts'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
 import { holdsSessionMic, PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
 import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
-import { addNote, decideDraft, laneCards, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
+import { addNote, decideDraft, laneCards, openThread, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, timelineLines } from './jam-lines.ts'
@@ -271,12 +271,12 @@ function captionOf(heard: Heard[] | undefined): { old: string; live: string } | 
 /** Open a card's thread with the caret in its reply field - to add to the conversation. */
 function replyIn(c: JamCard) {
   if (!c.thread) return
-  useComments.getState().setActive(c.thread)
-  // once the thread's card has drawn
-  let tries = 0
+  openThread(c)
+  // once the thread's card has drawn (on another board, once that board has loaded)
+  const until = performance.now() + 3_000
   const focus = () => {
-    const el = document.querySelector<HTMLTextAreaElement>('.cm-card textarea')
-    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } else if (++tries < 20) requestAnimationFrame(focus)
+    const el = useComments.getState().active === c.thread ? document.querySelector<HTMLTextAreaElement>('.cm-card textarea') : null
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } else if (performance.now() < until) requestAnimationFrame(focus)
   }
   requestAnimationFrame(focus)
 }
@@ -291,7 +291,7 @@ function tileMenu(c: JamCard): MenuItem[] {
   const open = item(c.state === 'review' ? 'Review' : c.state === 'draft' ? 'Open read-back' : 'Open', c.state === 'review' ? <CheckSquareOffsetIcon size={14} /> : <EyeIcon size={14} />, () => openTile(c.id))
   const rename: MenuItem = { label: 'Rename', icon: <PencilSimpleIcon size={14} />, panel: (close) => <RenameField card={c} close={close} /> }
   const reply = c.thread ? [item('Reply in thread', <ArrowBendUpLeftIcon size={14} />, () => replyIn(c))] : []
-  const thread = c.thread ? [item('Open thread', <CommentIcon size={14} />, () => { useComments.getState().setActive(c.thread!) })] : []
+  const thread = c.thread ? [item('Open thread', <CommentIcon size={14} />, () => openThread(c))] : []
   switch (c.state) {
     case 'draft': return [open, item('Resume capture', <PlayIcon size={14} />, () => void resumeDraft(c.id)), rename,
       item('Add to queue', <ArrowUpIcon size={14} />, () => void decideDraft(c.id, 'confirm')), item('Keep, do not send', <NotebookIcon size={14} />, () => void decideDraft(c.id, 'keep')),
