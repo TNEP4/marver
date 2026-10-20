@@ -284,7 +284,10 @@ describe('the laser points; inspect is its own mode (0.26.1)', () => {
   /** the phone frame in view, nothing selected, no laser, nothing open - the focus on the shell (a click in a frame
    *  before left it there) */
   const phoneInView = async () => {
-    await ev(`(() => { const st = window.__mvStore.getState(); st.setLaser(false); st.select([]); window.__mvJamUi.getState().close(); window.__mvJamCanvas.fitNodes([st.nodes.find((n) => n.frame === 'spec/phone').key]); if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); window.focus(); return 1 })()`)
+    // closed first: a panel closing gives back the camera it held, which would undo the fit
+    await ev(`(() => { const st = window.__mvStore.getState(); st.setLaser(false); st.select([]); window.__mvJamUi.getState().close(); return 1 })()`)
+    await sleep(500)
+    await ev(`(() => { const st = window.__mvStore.getState(); window.__mvJamCanvas.fitNodes([st.nodes.find((n) => n.frame === 'spec/phone').key]); if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); window.focus(); return 1 })()`)
     await sleep(500)
   }
   const outline = (frameId: string, sel: string) => inFrame(frameId, `(d) => getComputedStyle(d.querySelector(${JSON.stringify(sel)})).outlineStyle`)
