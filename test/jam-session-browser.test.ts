@@ -125,12 +125,17 @@ const skippable = (name: string, fn: () => Promise<void>, ms = 240_000) =>
 /** The first four tests are one journey: each uses the session, capture, review and record the one before left. When
  *  one fails, the rest of it is skipped - one failure reported as one, not as four. */
 let journeyBroken: string | null = null
-const journey = (name: string, fn: () => Promise<void>, ms = 240_000) =>
+const journey = (name: string, fn: () => Promise<void>, ms = Number(process.env.MV_JOURNEY_MS) || 240_000) =>
   it(name, async (ctx) => {
     if (!browser) return ctx.skip()
     if (journeyBroken) return ctx.skip(`the journey stopped at: ${journeyBroken}`)
-    // MV_BREAK_JOURNEY: its first test made to fail, to prove the rest is skipped rather than failed
-    try { if (process.env.MV_BREAK_JOURNEY && !journeyBroken) throw new Error('broken on purpose (MV_BREAK_JOURNEY)'); await fn() } catch (err) { journeyBroken = name; throw err }
+    // however it fails - a throw, or the test's own timeout while something hangs - the journey stops here
+    ctx.onTestFailed(() => { journeyBroken ??= name })
+    // MV_BREAK_JOURNEY: its first test made to fail (`throw`) or to hang past its timeout (`hang`, with MV_JOURNEY_MS),
+    // to prove the rest is skipped rather than failed
+    if (process.env.MV_BREAK_JOURNEY === 'hang') await new Promise(() => {})
+    if (process.env.MV_BREAK_JOURNEY) throw new Error('broken on purpose (MV_BREAK_JOURNEY)')
+    await fn()
   }, ms)
 
 /** A test that stands on its own starts from a clean page: no capture recording, no sheet or panel open, the page's

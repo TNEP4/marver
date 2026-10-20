@@ -32,7 +32,8 @@ export interface VadLike {
   isDetected(): boolean
 }
 /** A recognizer's answer for one phrase: its tokens and each token's start in seconds from the phrase's start. */
-export interface Recognized { tokens: string[]; timestamps: number[] }
+/** `ms`: the transcription itself, timed by the recognizer after any wait for its turn (spec 27a Part D). */
+export interface Recognized { tokens: string[]; timestamps: number[]; ms?: number }
 export type Recognize = (samples: Float32Array) => Promise<Recognized> | Recognized
 
 /** A word and the sample it starts at (capture samples). `lost` marks dropped audio. */
@@ -75,8 +76,11 @@ export class Segmenter {
   private onWords: (words: Word[]) => void
   private onTiming?: (t: PhraseTiming) => void
   private decoding = 0                        // samples of the phrase being transcribed now
-  constructor(vad: VadLike, recognize: Recognize, onWords: (words: Word[]) => void, onTiming?: (t: PhraseTiming) => void) {
+  /** the audio waiting for the recognizer, in samples - this capture's alone, or (the worker's) every capture sharing it */
+  private backlog: () => number
+  constructor(vad: VadLike, recognize: Recognize, onWords: (words: Word[]) => void, onTiming?: (t: PhraseTiming) => void, backlog?: () => number) {
     this.vad = vad; this.recognize = recognize; this.onWords = onWords; this.onTiming = onTiming
+    this.backlog = backlog ?? (() => this.waitingSamples + this.decoding)
   }
 
   /** The samples from `offset` on (the page numbers them; an overlap is skipped). A short gap is silence
@@ -136,7 +140,7 @@ export class Segmenter {
 
   private enqueue(p: Phrase) {
     p.queuedAt = performance.now()
-    p.backlog = this.waitingSamples + this.decoding
+    p.backlog = this.backlog()
     this.waiting.push(p)
     // at most 30 s waits: the oldest waiting phrase goes, and the transcript says so where it was
     while (this.waiting.length > 1 && this.waiting.reduce((n, x) => n + x.samples.length, 0) > MAX_WAITING) {
@@ -155,9 +159,13 @@ export class Segmenter {
         let words: Word[] = []
         const t0 = performance.now()
         this.decoding = p.samples.length
-        try { words = tokensToWords(await this.recognize(p.samples), p.start) } catch { words = [{ w: '[words lost]', at: p.start, lost: true }] }
+        let decodeMs: number | undefined
+        try { const r = await this.recognize(p.samples); decodeMs = r.ms; words = tokensToWords(r, p.start) } catch { words = [{ w: '[words lost]', at: p.start, lost: true }] }
         this.decoding = 0
-        if (!this.cancelled) this.onTiming?.({ audioMs: (p.samples.length / RATE) * 1000, waitMs: t0 - (p.queuedAt ?? t0), decodeMs: performance.now() - t0, backlogMs: ((p.backlog ?? 0) / RATE) * 1000 })
+        // the transcription as the recognizer timed it (after its turn); everything before it, since queued, was waiting
+        const end = performance.now()
+        const dec = decodeMs ?? end - t0
+        if (!this.cancelled) this.onTiming?.({ audioMs: (p.samples.length / RATE) * 1000, waitMs: Math.max(0, end - dec - (p.queuedAt ?? t0)), decodeMs: dec, backlogMs: ((p.backlog ?? 0) / RATE) * 1000 })
         const kept = words.filter((x) => x.at <= this.last)
         if (kept.length && !this.cancelled) this.onWords(kept)
       }
@@ -174,6 +182,9 @@ export class Segmenter {
     this.waiting = []; this.pending = new Float32Array(0)
     if (!this.busy) for (const f of this.idle.splice(0)) f()
   }
+
+  /** The phrase being transcribed now, in samples. */
+  get decodingSamples(): number { return this.decoding }
 
   /** Audio given and not yet turned into words: phrases waiting, in samples (the worker's backlog). */
   get waitingSamples(): number { return this.waiting.reduce((n, x) => n + x.samples.length, 0) }

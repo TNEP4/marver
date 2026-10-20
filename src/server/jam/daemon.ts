@@ -374,7 +374,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     namerDir ??= mkdtempSync(join(tmpdir(), 'marver-namer-'))
     const cwd = namerDir
     const t0 = performance.now()
-    const timed = (ok: boolean) => logJam(root, { kind: 'name', capture: id, ms: performance.now() - t0, ok })
+    let named = false
+    const timed = (ok: boolean) => { if (named) return; named = true; logJam(root, { kind: 'name', capture: id, ms: performance.now() - t0, ok }) }
     try { child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), PWD: cwd } }) } catch { naming.delete(id); return }
     const to = setTimeout(() => { try { child.kill() } catch { /* gone */ } }, 45_000)
     child.stdout?.on('data', (d: Buffer) => { out += d.toString('utf8'); if (out.length > 4000) out = out.slice(0, 4000) })
@@ -538,7 +539,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const runBatch = async (b: Batch) => {
     // its timing (spec 27a Part D): the pictures before and after, each agent attempt, the delivery; logged once, at its end
     const timing: { beforeMs?: number; agentMs: number[]; afterMs?: number; deliverMs?: number } = { agentMs: [] }
-    const timeRun = (failure?: 'agent' | 'changed') => {
+    let timed = false
+    const timeRun = (failure?: 'agent' | 'changed' | 'delivery' | 'other') => {
+      if (timed) return
+      timed = true
       const waits = batchWaits.get(b.batchId)
       batchWaits.delete(b.batchId)
       logJam(root, { kind: 'run', batch: b.batchId, attempts: b.attempts, ...timing, ...(failure ? { failure } : {}),
@@ -726,12 +730,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       })
       if (changedShared.length) log(`  jam: also changed ${changedShared.map((f) => relative('design', f)).join(', ')}`)
       const tDeliver = performance.now()
-      await deliver(b)
+      try { await deliver(b) } catch (err) {
+        // its results are kept and posted again later (`redeliver`, which logs its own `redelivered` line)
+        timing.deliverMs = performance.now() - tDeliver
+        timeRun('delivery')
+        throw err
+      }
       timing.deliverMs = performance.now() - tDeliver
       timeRun()
     } finally {
       unwatch()
       clearGlow()
+      // any other end (a record changed under it, a thrown step): its line is written once, as "other"
+      if (!stopped) timeRun('other')
     }
   }
 
@@ -915,9 +926,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const t = setTimeout(() => {
       timers.delete(t)
       if (stopped) return
-      deliver(b).then(() => settleDelivery(b), async (err) => {
+      const tDeliver = performance.now()
+      deliver(b).then(() => { logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, deliverMs: performance.now() - tDeliver }); settleDelivery(b) }, async (err) => {
         log(`  jam: posting failed again - ${(err as Error).message}`)
         if (n < 5) return redeliver(b, n + 1)
+        logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, failure: 'delivery' })
         await q.lock((j) => { settled(undelivered(j, b, 'its replies could not be posted - Retry posts them')); q.persist() }).catch(() => {})
         settleDelivery(b)
       })

@@ -43,11 +43,13 @@ const vadFor = (): VadLike => new sherpa.Vad({
 const turn = () => new Promise<void>((r) => setImmediate(r))
 const recognize = async (samples: Float32Array): Promise<Recognized> => {
   await turn()
+  // timed after its turn: the wait for it is the phrase's wait, not its transcription
+  const t0 = performance.now()
   const s = recognizer.createStream()
   s.acceptWaveform({ sampleRate: RATE, samples })
   recognizer.decode(s)
   const r = recognizer.getResult(s)
-  return { tokens: r.tokens ?? [], timestamps: r.timestamps ?? [] }
+  return { tokens: r.tokens ?? [], timestamps: r.timestamps ?? [], ms: performance.now() - t0 }
 }
 
 const captures = new Map<string, Segmenter>()
@@ -56,7 +58,9 @@ port.on('message', (m: any) => {
   if (!recognizer || !m || typeof m.capture !== 'string') return
   const id: string = m.capture
   if (m.type === 'begin') {
-    if (!captures.has(id)) captures.set(id, new Segmenter(vadFor(), recognize, (words) => port.postMessage({ type: 'words', capture: id, words }), (t) => port.postMessage({ type: 'timing', ...t })))
+    // one recognizer for every capture: what waits for it is all of theirs
+    if (!captures.has(id)) captures.set(id, new Segmenter(vadFor(), recognize, (words) => port.postMessage({ type: 'words', capture: id, words }), (t) => port.postMessage({ type: 'timing', ...t }),
+      () => [...captures.values()].reduce((n, x) => n + x.waitingSamples + x.decodingSamples, 0)))
   } else if (m.type === 'audio') {
     const seg = captures.get(id)
     if (!seg || !(m.pcm instanceof Int16Array)) return

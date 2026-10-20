@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { capture, captureIn, findChrome, pool, shotSeams, withBrowser } from '../src/server/shot.ts'
+import { capture, captureIn, findChrome, pool, shotEvent, shotSeams, withBrowser } from '../src/server/shot.ts'
 import { staleSurface } from '../src/server/stale.ts'
 import { png } from './png-fixture.ts'
 
@@ -87,20 +87,24 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
     const r = await capture({ url: `${base}/?h=800`, width: 1280, height: 800, out: join(dir, 'fixed-never.png'), scale: 2 })
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/stale surface/) })
     expect(seen.map((x) => x.attempt)).toEqual([0, 1, 2])
+    // its timing line keeps the retakes it took, with the outcome
+    expect(shotEvent('spec/fixed', 2, r)).toMatchObject({ kind: 'shot', frame: 'spec/fixed', outcome: 'stale', recaptures: 2 })
     // never resized: the view is still the window's own, smaller than the picture
     expect(seen.every((x) => x.view && (x.view.w < 2560 || x.view.h < 1600))).toBe(true)
     expect(existsSync(join(dir, 'fixed-never.png'))).toBe(false)
   }, 60_000)
 
-  it('a retake starts only with 3 s of the deadline left - on either side of it', async () => {
+  it('a retake starts only with enough of the deadline left - on either side of it', async () => {
     let calls = 0
     shotSeams.capture = (real, at) => { calls++; return at.attempt === 0 && at.view ? tiledLike(real, at.view) : real }
-    shotSeams.watchdogMs = 3_200
+    // the boundary past the whole watchdog: no time is ever enough - it fails at once
+    shotSeams.retryLeftMs = 60 * 60_000
     const tight = await doc('tight')
     expect(tight.ok).toBe(false)
     expect(calls).toBe(1)
     calls = 0
-    shotSeams.watchdogMs = 12_000
+    // the real boundary (3 s): there is time - it retakes
+    delete shotSeams.retryLeftMs
     const room = await doc('room')
     expect(room.ok && room.recaptures).toBe(1)
     expect(calls).toBe(2)

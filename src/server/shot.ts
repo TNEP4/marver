@@ -38,7 +38,7 @@ export interface ShotRequest {
 }
 export type ShotResult =
   | { ok: true; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures: number; ms?: number }
-  | { ok: false; error: string; ms?: number }
+  | { ok: false; error: string; ms?: number; recaptures?: number }
 
 const slug = (frameId: string) => frameId.replace(/\//g, '--')
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
@@ -73,6 +73,12 @@ export function planShot(
   const vp = vpObj ?? fallback
   if (ow || oh) return { width: clamp(ow ?? vp.width, 120, 3840), initialHeight: clamp(oh ?? vp.height, 80, 2160), fullHeight: false }
   return { width: vp.width, initialHeight: vp.height, fullHeight: false }
+}
+
+/** A shot's timing line (spec 27a Part D): its frame, scale, time, retakes - kept on a failure too - and an outcome code. */
+export function shotEvent(frameId: string, askedScale: number, result: ShotResult): Record<string, unknown> {
+  return { kind: 'shot', frame: frameId, scale: result.ok ? result.scale : askedScale, ms: result.ms, recaptures: result.recaptures ?? 0,
+    outcome: result.ok ? (/not checked for a stale surface/.test(result.note ?? '') ? 'unchecked' : 'ok') : result.error === STALE ? 'stale' : /timed out/.test(result.error) ? 'timeout' : 'error' }
 }
 
 /** Resolve a frame from the manifest and screenshot it - the shared core behind BOTH
@@ -121,8 +127,7 @@ export async function shootFrame(opts: {
   const req: ShotRequest = { url: frameUrl(origin, frame, theme), width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }
   const result = browser ? await captureIn(req, browser) : await capture(req)
   // its timing, as a code and numbers (spec 27a Part D)
-  logJam(root, { kind: 'shot', frame: frameId, scale: result.ok ? result.scale : scale, ms: result.ms, ...(result.ok ? { recaptures: result.recaptures } : {}),
-    outcome: result.ok ? (/not checked for a stale surface/.test(result.note ?? '') ? 'unchecked' : 'ok') : result.error === STALE ? 'stale' : /timed out/.test(result.error) ? 'timeout' : 'error' })
+  logJam(root, shotEvent(frameId, scale, result))
   if (!result.ok) { rmSync(tmp, { force: true }); return { ok: false, error: result.error } }
   const rel = relFor(result.scale)
   // rename, with the Windows replace fallback the boards writer uses; the temp never outlives this call
@@ -357,6 +362,8 @@ export const shotSeams: {
   resize?: boolean
   onResize?: (windowId: number) => void
   watchdogMs?: number
+  /** the time left a retake needs (RETRY_LEFT): the boundary moved, to test both sides of it */
+  retryLeftMs?: number
   /** the window lookup fails, as on a Chrome that cannot name a tab's window */
   noWindow?: boolean
 } = {}
@@ -657,13 +664,14 @@ async function captureOnce({ url, width, height, out, fullHeight = false, timeou
     let shotNow = await take()
     let verdict = await judge(shotNow)
     let recaptures = 0
-    while (verdict === 'stale' && recaptures < 2 && left() > RETRY_LEFT) {
+    const retryLeft = shotSeams.retryLeftMs ?? RETRY_LEFT
+    while (verdict === 'stale' && recaptures < 2 && left() > retryLeft) {
       recaptures++
       await twoFrames()
       shotNow = await take()
       verdict = await judge(shotNow)
     }
-    if (verdict === 'stale' && fullHeight && scale > 1 && left() > RETRY_LEFT) {
+    if (verdict === 'stale' && fullHeight && scale > 1 && left() > retryLeft) {
       // a full-height frame at 1x: the same CSS box, a smaller surface - guarded too
       const was = scale
       await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: 1, mobile: false }, Math.max(1, Math.min(5000, left() - 1000)))
@@ -673,7 +681,7 @@ async function captureOnce({ url, width, height, out, fullHeight = false, timeou
       verdict = await judge(shotNow)
       if (verdict !== 'stale') { scale = 1; note = `${note ? note + '; ' : ''}came back tiled at ${was}x - captured at 1x` }
     }
-    if (verdict === 'stale') return { ok: false, error: STALE }
+    if (verdict === 'stale') return { ok: false, error: STALE, recaptures }
     if (verdict === 'unknown') note = `${note ? note + '; ' : ''}not checked for a stale surface`
     writeFileSync(out, shotNow.png)
     // Out of settle budget (under a wide batch, a slow image, a heavy chart): the capture still

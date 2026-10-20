@@ -17,8 +17,13 @@ export const jamLog = (root: string) => join(root, 'design', '.local', 'perf', '
 const MAX_FILE = 2_000_000          // past this the oldest half goes
 const MAX_EVENTS = 1_000, MAX_BYTES = 1_000_000
 
-const ID = /^[\w.:\/@-]{1,160}$/
-const id = (v: unknown) => (typeof v === 'string' && ID.test(v) ? v : undefined)
+// each id in its own generated format - free text never passes as an id
+const CAPTURE = /^cap-\d{10,16}-[a-z0-9]{4,12}$/
+const BATCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const FRAME = /^[a-z0-9][\w-]{0,79}(\/[a-z0-9][\w-]{0,79}){1,3}$/i
+const capId = (v: unknown) => (typeof v === 'string' && CAPTURE.test(v) ? v : undefined)
+const batchId = (v: unknown) => (typeof v === 'string' && BATCH.test(v) ? v : undefined)
+const frameId = (v: unknown) => (typeof v === 'string' && FRAME.test(v) ? v : undefined)
 const ms = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e9 ? Math.round(v) : undefined)
 const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1e6 ? v : undefined)
 const oneOf = <T extends string>(v: unknown, set: readonly T[]) => (typeof v === 'string' && (set as readonly string[]).includes(v) ? (v as T) : undefined)
@@ -35,28 +40,29 @@ export function cleanJamEvent(raw: Record<string, unknown>): Record<string, unkn
   switch (raw.kind) {
     case 'capture': {
       const p = (raw.pictures && typeof raw.pictures === 'object' ? raw.pictures : {}) as Record<string, unknown>
-      const capture = id(raw.capture)
+      const capture = capId(raw.capture)
       if (!capture) return null
       return prune({ kind: 'capture', capture, sealMs: ms(raw.sealMs), wordsWaitMs: ms(raw.wordsWaitMs),
         pictures: prune({ count: count(p.count), ms: msList(p.ms), late: count(p.late), failed: count(p.failed) }),
         interrupted: raw.interrupted === true ? true : undefined })
     }
-    case 'upload': { const capture = id(raw.capture); return capture ? prune({ kind: 'upload', capture, ms: ms(raw.ms), tries: count(raw.tries) }) : null }
-    case 'name': { const capture = id(raw.capture); return capture ? prune({ kind: 'name', capture, ms: ms(raw.ms), ok: raw.ok === true }) : null }
+    case 'upload': { const capture = capId(raw.capture); return capture ? prune({ kind: 'upload', capture, ms: ms(raw.ms), tries: count(raw.tries) }) : null }
+    case 'name': { const capture = capId(raw.capture); return capture ? prune({ kind: 'name', capture, ms: ms(raw.ms), ok: raw.ok === true }) : null }
     case 'words': return prune({ kind: 'words', audioMs: ms(raw.audioMs), waitMs: ms(raw.waitMs), decodeMs: ms(raw.decodeMs), backlogMs: ms(raw.backlogMs), modelLoadMs: ms(raw.modelLoadMs) })
     case 'run': {
-      const batch = id(raw.batch)
+      const batch = batchId(raw.batch)
       if (!batch) return null
       const members = Array.isArray(raw.members) ? raw.members.slice(0, 50).map((m: any) => prune({ kind: oneOf(m?.kind, KINDS), waitMs: ms(m?.waitMs), outcome: oneOf(m?.outcome, RUN_OUTCOMES) })) : undefined
       return prune({ kind: 'run', batch, members, beforeMs: ms(raw.beforeMs), agentMs: msList(raw.agentMs, 10), afterMs: ms(raw.afterMs), deliverMs: ms(raw.deliverMs),
         attempts: count(raw.attempts), failure: oneOf(raw.failure, FAILURES), redelivered: raw.redelivered === true ? true : undefined })
     }
-    case 'shot': return prune({ kind: 'shot', frame: id(raw.frame), scale: count(raw.scale), ms: ms(raw.ms), recaptures: count(raw.recaptures), outcome: oneOf(raw.outcome, SHOT_OUTCOMES) })
+    case 'shot': return prune({ kind: 'shot', frame: frameId(raw.frame), scale: count(raw.scale), ms: ms(raw.ms), recaptures: count(raw.recaptures), outcome: oneOf(raw.outcome, SHOT_OUTCOMES) })
     default: return null
   }
 }
 
-interface Writer { queue: string[]; bytes: number; dropped: number; busy: boolean; writes: number }
+/** `bytes` and the queue's length count what waits AND what is being appended - released once the append settles. */
+interface Writer { queue: string[]; bytes: number; inFlight: number; dropped: number; busy: boolean; writes: number }
 const writers = new Map<string, Writer>()
 /** Captures already logged, per root: a resent capture event is written once. */
 const seenCaptures = new Map<string, Set<string>>()
@@ -74,9 +80,9 @@ export function logJam(root: string, raw: Record<string, unknown>): void {
       if (seen.size > 5_000) seen.delete(seen.values().next().value as string)
     }
     const line = JSON.stringify({ v: 1, ts: Date.now(), ...ev }) + '\n'
-    const w = writers.get(root) ?? { queue: [], bytes: 0, dropped: 0, busy: false, writes: 0 }
+    const w = writers.get(root) ?? { queue: [], bytes: 0, inFlight: 0, dropped: 0, busy: false, writes: 0 }
     writers.set(root, w)
-    if (w.queue.length >= MAX_EVENTS || w.bytes + line.length > MAX_BYTES) { w.dropped++; return }
+    if (w.queue.length + w.inFlight >= MAX_EVENTS || w.bytes + line.length > MAX_BYTES) { w.dropped++; return }
     w.queue.push(line); w.bytes += line.length
     if (!w.busy) { w.busy = true; setImmediate(() => void drain(root, w)) }
   } catch { /* the log never stands in the way */ }
@@ -87,7 +93,8 @@ async function drain(root: string, w: Writer): Promise<void> {
   try { mkdirSync(join(file, '..'), { recursive: true }) } catch { /* the append says */ }
   while (w.queue.length || w.dropped) {
     const lines = w.queue.splice(0)
-    w.bytes = 0
+    const held = lines.reduce((n, l) => n + l.length, 0)
+    w.inFlight = lines.length
     if (w.dropped) { lines.push(JSON.stringify({ v: 1, ts: Date.now(), kind: 'dropped', count: w.dropped }) + '\n'); w.dropped = 0 }
     try {
       await appendFile(file, lines.join(''))
@@ -97,6 +104,9 @@ async function drain(root: string, w: Writer): Promise<void> {
         await writeFile(file, all.slice(Math.floor(all.length / 2)).join('\n'))
       }
     } catch { /* lost - the operation it measured is not */ }
+    // settled: what it held is free again
+    w.inFlight = 0
+    w.bytes = Math.max(0, w.bytes - held)
   }
   w.busy = false
 }

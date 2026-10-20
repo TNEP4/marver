@@ -1139,6 +1139,75 @@ describe('captures in the browser: the first trial', () => {
     await decide(id, 'drop')
   }, 120_000)
 
+  skippable('a sealed capture still uploading when the page goes is left as it is - the next page sends it, once', async () => {
+    // its upload never answers in this page
+    await browser!.eval(s, `(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/jam/capture') && o && o.method === 'POST' ? new Promise(() => {}) : f(u, o); return 1 })()`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('sealed, then the page went'), 1`)
+    await key('e')
+    await until(`window.__mvJamCapture.getState().unsent.includes(${JSON.stringify(id)})`, 30_000)
+    await reload()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    const rec = await getRecord(id)
+    // sealed before the page went: a whole capture, not an interrupted one
+    expect(rec.record.context.interrupted).toBeUndefined()
+    expect((await cardsNow()).filter((c: any) => c.id === id).length).toBe(1)
+    await decide(id, 'drop')
+  }, 120_000)
+
+  skippable('a resumed capture still recording when the page goes is sealed as it stood and takes its draft\'s place', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('first part'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 30_000)
+    await sleep(200)
+    await key('r')
+    await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 5000)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('second part'), 1`)
+    await reload()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(b)} && c.state === 'draft') && !(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(a)} && c.state === 'draft')`, 30_000)
+    const rec = await getRecord(b)
+    expect(rec.record.context.resumes?.id).toBe(a)
+    expect(rec.record.context.interrupted).toBe(true)
+    const notes = rec.record.timeline.filter((x: any) => x.event === 'note').map((x: any) => x.text)
+    expect(notes).toEqual(['first part', 'second part'])
+    await decide(b, 'drop')
+  }, 120_000)
+
+  skippable('after the page sealed it: the microphone and the frames are let go, a late picture changes nothing, a failed first send is sent again once', async () => {
+    let posts = 0
+    // count this capture's uploads; the first one fails (the network went with the page)
+    await browser!.eval(s, `(() => { const f = window.fetch; window.__fetchC = f; window.__posts = 0; window.__failFirst = true; window.__holdPic = null; window.fetch = (u, o) => {
+      if (String(u).includes('/api/jam/capture') && o && o.method === 'POST') { window.__posts++; if (window.__failFirst) { window.__failFirst = false; return Promise.reject(new TypeError('network gone')) } }
+      if (String(u).includes('/api/jam/picture') && o && o.method === 'POST') return new Promise((r) => { window.__holdPic = () => r(f(u, o)) })
+      return f(u, o) }; return 1 })()`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().picture('spec/alpha'), 1`)
+    await until(`!!window.__holdPic`, 5000)
+    await browser!.eval(s, `window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })), 1`)
+    // let go at once: no capture, the microphone hears nothing for it, the frames record nothing
+    expect(await browser!.eval(s, `JSON.stringify([window.__mvJamCapture.getState().current, Object.keys(window.__mvJamCapture.getState().caps).length, window.__mvJamVoice.getState().hearing])`)).toBe('[null,0,null]')
+    await click('[data-node-key] iframe').catch(() => {})
+    // the picture answers late: nothing of it lands anywhere
+    await browser!.eval(s, `(window.__holdPic(), 1)`)
+    await sleep(500)
+    expect(await browser!.eval(s, `Object.keys(window.__mvJamCapture.getState().caps).length`)).toBe(0)
+    // back: what is kept goes out again, once
+    await browser!.eval(s, `window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })), 1`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    await sleep(6_000)   // past the retry timer: no third send
+    posts = await browser!.eval(s, `window.__posts`)
+    expect(posts).toBe(2)
+    const rec = await getRecord(id)
+    expect(rec.record.pictures.length).toBe(0)
+    await browser!.eval(s, `(window.fetch = window.__fetchC, 1)`)
+    await decide(id, 'drop')
+  }, 120_000)
+
   // ---- 0.26.1 D: Jam timings ------------------------------------------------------------------------------
   skippable('a capture and its run each leave their timing - numbers and codes only, in design/.local/perf/jam.jsonl', async () => {
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)

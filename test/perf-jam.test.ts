@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cleanJamEvent, flushJam, jamLog, logJam, readJam } from '../src/server/perf-jam.ts'
@@ -8,37 +9,43 @@ import { jamSummary, spread } from '../src/cli/perf.ts'
 /** Jam timings (spec 27a Part D): numbers and codes only, one buffered writer, read back by `marver perf --jam`. */
 
 const SENTINEL = 'PURPLE-ELEPHANT-SECRET'
+const CAP = 'cap-1792483674182-bhfnus', CAP2 = 'cap-1792483674999-zzz111', BATCH = 'e751e77e-9727-4d58-835e-90af26e23f86'
 const temp = () => { const r = mkdtempSync(join(tmpdir(), 'mv-perfjam-')); mkdirSync(join(r, 'design', '.local'), { recursive: true }); return r }
 
 describe('the Jam timing log', () => {
   it('an event is rebuilt from the allowlist: words, notes, names, replies and free-text errors never get in', async () => {
     const root = temp()
-    logJam(root, { kind: 'capture', capture: 'cap-1-abc', sealMs: 812.4, words: SENTINEL, note: SENTINEL, title: SENTINEL, pictures: { count: 2, ms: [400, 900], late: 1, failed: 0, what: SENTINEL } })
-    logJam(root, { kind: 'run', batch: 'b-1', agentMs: [12000], failure: SENTINEL, reply: SENTINEL, members: [{ kind: 'capture', waitMs: 300, outcome: 'review', body: SENTINEL }] })
-    logJam(root, { kind: 'name', capture: 'cap-1-abc', ms: 3900, ok: true, name: SENTINEL })
+    logJam(root, { kind: 'capture', capture: CAP, sealMs: 812.4, words: SENTINEL, note: SENTINEL, title: SENTINEL, pictures: { count: 2, ms: [400, 900], late: 1, failed: 0, what: SENTINEL } })
+    logJam(root, { kind: 'run', batch: BATCH, agentMs: [12000], failure: SENTINEL, reply: SENTINEL, members: [{ kind: 'capture', waitMs: 300, outcome: 'review', body: SENTINEL }] })
+    logJam(root, { kind: 'name', capture: CAP, ms: 3900, ok: true, name: SENTINEL })
     logJam(root, { kind: 'shot', frame: 'demo/hero', ms: 640, outcome: 'ok', error: SENTINEL })
-    logJam(root, { kind: 'capture', capture: SENTINEL + ' with spaces' })   // not an id: dropped
+    logJam(root, { kind: 'capture', capture: SENTINEL })                    // not a capture id: dropped
+    logJam(root, { kind: 'run', batch: SENTINEL })                          // not a batch id: dropped
+    logJam(root, { kind: 'name', capture: 'nic@example.com', ms: 5, ok: true })   // not a capture id: dropped
+    logJam(root, { kind: 'shot', frame: SENTINEL, ms: 5, outcome: 'ok' })   // not a frame id: the frame is left out
     logJam(root, { kind: 'transcript', text: SENTINEL })                    // not an event kind: dropped
     await flushJam(root)
     const text = readFileSync(jamLog(root), 'utf8')
     expect(text).not.toContain(SENTINEL)
     const evs = readJam(root).events
-    expect(evs.map((e) => e.kind)).toEqual(['capture', 'run', 'name', 'shot'])
-    expect(evs[0]).toMatchObject({ v: 1, capture: 'cap-1-abc', sealMs: 812, pictures: { count: 2, ms: [400, 900], late: 1, failed: 0 } })
-    expect(evs[1]).toMatchObject({ batch: 'b-1', agentMs: [12000], members: [{ kind: 'capture', waitMs: 300, outcome: 'review' }] })
+    expect(evs.map((e) => e.kind)).toEqual(['capture', 'run', 'name', 'shot', 'shot'])
+    expect(evs[4].frame).toBeUndefined()
+    expect(text).not.toContain('nic@example.com')
+    expect(evs[0]).toMatchObject({ v: 1, capture: CAP, sealMs: 812, pictures: { count: 2, ms: [400, 900], late: 1, failed: 0 } })
+    expect(evs[1]).toMatchObject({ batch: BATCH, agentMs: [12000], members: [{ kind: 'capture', waitMs: 300, outcome: 'review' }] })
     expect(evs[1].failure).toBeUndefined()   // not one of the codes
     rmSync(root, { recursive: true, force: true })
   })
 
   it('a capture event sent twice (a resend) is written once; a value that cannot be known is left out, never 0', async () => {
     const root = temp()
-    logJam(root, { kind: 'capture', capture: 'cap-2-def', wordsWaitMs: 300 })
-    logJam(root, { kind: 'capture', capture: 'cap-2-def', wordsWaitMs: 300 })
+    logJam(root, { kind: 'capture', capture: CAP2, wordsWaitMs: 300 })
+    logJam(root, { kind: 'capture', capture: CAP2, wordsWaitMs: 300 })
     await flushJam(root)
     const evs = readJam(root).events
     expect(evs.length).toBe(1)
     expect('sealMs' in evs[0]).toBe(false)
-    expect(cleanJamEvent({ kind: 'run', batch: 'b', beforeMs: -5, deliverMs: Number.NaN })).toEqual({ kind: 'run', batch: 'b' })
+    expect(cleanJamEvent({ kind: 'run', batch: BATCH, beforeMs: -5, deliverMs: Number.NaN })).toEqual({ kind: 'run', batch: BATCH })
     rmSync(root, { recursive: true, force: true })
   })
 
@@ -52,6 +59,30 @@ describe('the Jam timing log', () => {
     expect(existsSync(jamLog(root))).toBe(false)
     rmSync(root, { recursive: true, force: true })
   })
+
+  it('what is being written counts against the limit until it is written: an append held, then 1,000 more are dropped', async () => {
+    const root = temp()
+    mkdirSync(join(root, 'design', '.local', 'perf'), { recursive: true })
+    // the log is a pipe: an append blocks until someone reads it - a held write, for real
+    execFileSync('mkfifo', [jamLog(root)])
+    for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `s/f${i}`, ms: i, outcome: 'ok' })
+    await new Promise((r) => setTimeout(r, 50))   // the writer has taken them and is held on the pipe
+    for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `t/f${i}`, ms: i, outcome: 'ok' })
+    // read the pipe until the writer has said how many it dropped (each append opens it anew)
+    let text = ''
+    for (let t0 = Date.now(); Date.now() - t0 < 10_000 && !text.includes('"dropped"');) {
+      await new Promise<void>((done) => {
+        const r = createReadStream(jamLog(root), { encoding: 'utf8' })
+        const t = setTimeout(() => { r.destroy(); done() }, 2_000)
+        r.on('data', (d) => { text += d }); r.on('end', () => { clearTimeout(t); done() }); r.on('error', () => { clearTimeout(t); done() })
+      })
+    }
+    await flushJam(root)
+    const evs = text.trim().split('\n').map((l) => JSON.parse(l))
+    expect(evs.filter((e) => e.kind === 'shot').length).toBe(1_000)
+    expect(evs.find((e) => e.kind === 'dropped')?.count).toBe(1_000)
+    rmSync(root, { recursive: true, force: true })
+  }, 30_000)
 
   it('past 1,000 waiting events new ones are dropped and counted - the count written once the writer catches up', async () => {
     const root = temp()

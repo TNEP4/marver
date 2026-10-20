@@ -1089,6 +1089,24 @@ describe('Jam V2: review round 5 fixes', () => {
   })
 })
 
+describe('0.26.1 D: a run whose replies cannot be posted still leaves its timing', () => {
+  it('its line says delivery failed, once; nothing of the reply is in it', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent(), undefined, { changed: () => { throw new Error('push failed') } })
+    say(root, dir, '@marver make the header SENTINEL-BLUE', { frame: 'demo/a' })
+    await jam.tick()
+    jam.stop()
+    const { flushJam, readJam } = await import('../src/server/perf-jam.ts')
+    await flushJam(root)
+    const runs = readJam(root).events.filter((e) => e.kind === 'run' && !e.redelivered)
+    expect(runs.length).toBe(1)
+    expect(runs[0]).toMatchObject({ failure: 'delivery', members: [{ kind: 'comment' }] })
+    expect(typeof runs[0].deliverMs).toBe('number')
+    expect(JSON.stringify(readJam(root).events)).not.toContain('SENTINEL')
+    done()
+  })
+})
+
 describe('Jam V2: review round 6 fixes', () => {
   it('a stopped daemon\'s pending retry never writes over the journal of the one that replaced it', async () => {
     const { root, dir, done } = setup()

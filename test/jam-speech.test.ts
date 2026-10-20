@@ -80,6 +80,25 @@ describe('words: cutting phrases (no model)', () => {
     expect(t[1].backlogMs).toBeGreaterThan(0)
   })
 
+  it('two captures sharing one recognizer: the one decoded second waited for the first - never counted as its transcription', async () => {
+    // the real recognizer yields a turn, then decodes synchronously: a 50 ms busy decode, timed after the turn
+    const recognize = async () => { await new Promise((r) => setImmediate(r)); const t = performance.now(); while (performance.now() - t < 50) { /* decoding */ } return { tokens: [' x'], timestamps: [0], ms: performance.now() - t } }
+    const segs: Segmenter[] = []
+    const shared = () => segs.reduce((n, x) => n + x.waitingSamples + x.decodingSamples, 0)
+    const ta: { waitMs: number; decodeMs: number; backlogMs: number }[] = [], tb: typeof ta = []
+    const a = new Segmenter(new FakeVad(), recognize, () => {}, (x) => ta.push(x), shared)
+    const b = new Segmenter(new FakeVad(), recognize, () => {}, (x) => tb.push(x), shared)
+    segs.push(a, b)
+    // one phrase each, said at the same time
+    for (const s of [a, b]) { for (let o = 0; o < 2 * RATE; o += 1600) s.push(o, speech(1600)); s.push(2 * RATE, silence(RATE)) }
+    await Promise.all([a.end(3 * RATE), b.end(3 * RATE)])
+    expect(ta.length).toBe(1); expect(tb.length).toBe(1)
+    for (const x of [...ta, ...tb]) { expect(x.decodeMs).toBeGreaterThanOrEqual(45); expect(x.decodeMs).toBeLessThan(80) }
+    // whichever went second waited about one decode; the waiting audio of both was counted
+    expect(Math.max(ta[0].waitMs, tb[0].waitMs)).toBeGreaterThanOrEqual(40)
+    expect(Math.max(ta[0].backlogMs, tb[0].backlogMs)).toBeGreaterThan(0)
+  })
+
   it('nothing waits beyond 30 s: while the recognizer is busy the oldest waiting phrase is dropped, and the words say so', async () => {
     let release!: () => void
     const hold = { wait: new Promise<void>((r) => { release = r }) }
