@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'vite'
@@ -64,13 +64,18 @@ describe('content frames keep their modules when another Vite optimizes the same
     }
     await crawl(entry!)
     expect(chunk, 'mermaid\'s lazily loaded state diagram chunk').toBeTruthy()
-    // the host app's Vite on the same root, optimizing its own deps from scratch
+    // the host app's Vite on the same root, optimizing its own deps from scratch - waited for until it has written its
+    // new metadata into the default cache folder (the one 0.26.0 shared), not for a fixed time
+    const meta = join(root, 'node_modules', '.vite', 'deps', '_metadata.json')
+    const before = existsSync(meta) ? statSync(meta).mtimeMs : 0
     const other = await createServer({ root, configFile: false, logLevel: 'silent', server: { port: 0 }, optimizeDeps: { include: ['react'], force: true } })
     await other.listen()
-    await (other as any).environments?.client?.depsOptimizer?.scanProcessing
-    await new Promise((r) => setTimeout(r, 1500))
+    for (const by = Date.now() + 20_000; Date.now() < by && !(existsSync(meta) && statSync(meta).mtimeMs > before);) await new Promise((r) => setTimeout(r, 100))
+    expect(existsSync(meta) && statSync(meta).mtimeMs > before, 'the other Vite wrote its pre-bundles').toBe(true)
     await other.close()
     const res = await fetch(base + chunk)
     expect(res.status).toBe(200)
+    expect(res.headers.get('content-type') ?? '').toMatch(/javascript/)
+    expect(await res.text()).toMatch(/export/)
   }, 60_000)
 })

@@ -23,6 +23,7 @@ import { availableParallelism, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
 import { Browser, CHROMES, findChrome, PROFILE_PREFIXES } from './cdp.ts'
+import { staleSurface } from './stale.ts'
 
 export { findChrome }
 
@@ -35,7 +36,7 @@ export interface ShotRequest {
   clip?: string
 }
 export type ShotResult =
-  | { ok: true; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string }
+  | { ok: true; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures?: number }
   | { ok: false; error: string }
 
 const slug = (frameId: string) => frameId.replace(/\//g, '--')
@@ -129,7 +130,7 @@ export async function shootFrame(opts: {
     }
   } catch (err) { return { ok: false, error: `could not write the shot - ${(err as Error).message}` } }
   finally { rmSync(tmp, { force: true }) }
-  return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.unsettled ? { unsettled: true } : {}), ...(result.note ? { note: result.note } : {}) }
+  return { ok: true, path: rel, width: result.width, height: result.height, scale: result.scale, ...(result.truncated ? { truncated: true } : {}), ...(result.unsettled ? { unsettled: true } : {}), ...(result.note ? { note: result.note } : {}), ...(result.recaptures ? { recaptures: result.recaptures } : {}) }
 }
 
 /** A frame as design/manifest.json lists it, or null. */
@@ -149,7 +150,7 @@ export const frameUrl = (origin: string, frame: ManifestFrame, theme: string) =>
 export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`
 
 export type FrameShot =
-  | { ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string }
+  | { ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures?: number }
   | { ok: false; error: string }
 
 /** What a batch asks for: explicit ids, one scene, or everything the manifest lists. */
@@ -339,6 +340,12 @@ const fits = (w: number, h: number, dsf: number) => w * dsf <= SURFACE && h * ds
 /** The tallest CSS height a full-height capture of `width` can hold at `dsf`. */
 const capFor = (width: number, dsf: number) => Math.max(1, Math.min(Math.floor(SURFACE / dsf), Math.floor(AREA / (width * dsf * dsf))))
 
+/** The windows live captures hold, per browser: a capture sizes its window only when no other capture is in it. */
+const heldWindows = new WeakMap<Browser, Map<number, number>>()
+/** A test seam: what a capture attempt returns, to inject Chrome's stale surface. Never set outside tests. */
+export const shotSeams: { capture?: (png: Buffer, at: { attempt: number; view: { w: number; h: number } | null; windowId?: number }) => Buffer } = {}
+const STALE = 'Chrome returned a stale surface (the picture came back tiled) - shoot it again'
+
 export async function captureIn({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
   // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
   let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
@@ -350,6 +357,7 @@ export async function captureIn({ url, width, height, out, fullHeight = false, t
   let watchdog: ReturnType<typeof setTimeout> | undefined
   let targetId: string | undefined
   let sessionId: string | undefined
+  let windowId: number | undefined
   let off = () => {}
   try {
     let lastException = ''
@@ -376,8 +384,43 @@ export async function captureIn({ url, width, height, out, fullHeight = false, t
     const RESERVE = 21_000
     const discretionary = () => hardBy - RESERVE - Date.now()
 
-    targetId = (await send('Target.createTarget', { url: 'about:blank' })).targetId as string
+    // its own window (#14): Chrome resizes the tab's native view to the capture at screenshot time and, when the copy
+    // wins that race, tiles the view's old surface - a window sized to the capture beforehand leaves nothing to resize
+    targetId = (await send('Target.createTarget', { url: 'about:blank', newWindow: true })).targetId as string
     sessionId = (await send('Target.attachToTarget', { targetId, flatten: true })).sessionId as string
+    // the native view, measured before any emulation: its CSS size, its DPR and the window's decoration around it -
+    // every attempt's view (what a stale surface is) is read from the window's bounds through these
+    let view: { dpr: number; decoW: number; decoH: number } | null = null
+    try {
+      const v = (await send('Runtime.evaluate', { expression: '[innerWidth, innerHeight, devicePixelRatio]', returnByValue: true }, sessionId))?.result?.value as number[] | undefined
+      const win = await send('Browser.getWindowForTarget', { targetId })
+      if (Array.isArray(v) && v.every((x) => typeof x === 'number' && x > 0) && typeof win?.windowId === 'number') {
+        windowId = win.windowId as number
+        view = { dpr: v[2], decoW: win.bounds.width - v[0], decoH: win.bounds.height - v[1] }
+        const held = heldWindows.get(b) ?? new Map<number, number>()
+        heldWindows.set(b, held)
+        held.set(windowId, (held.get(windowId) ?? 0) + 1)
+      }
+    } catch { view = null }
+    const viewNow = async (): Promise<{ w: number; h: number } | null> => {
+      if (!view || windowId === undefined) return null
+      const r = await send('Browser.getWindowBounds', { windowId }).catch(() => null)
+      const bw = r?.bounds?.width, bh = r?.bounds?.height
+      return typeof bw === 'number' && typeof bh === 'number' ? { w: Math.round((bw - view.decoW) * view.dpr), h: Math.round((bh - view.decoH) * view.dpr) } : null
+    }
+    // a fixed frame or a slide: its window sized to the capture, if the window is its own (full-height frames and
+    // clips keep the guard below only)
+    if (!fullHeight && !clip && view && windowId !== undefined && heldWindows.get(b)?.get(windowId) === 1) {
+      const cw = Math.round((width * scale) / view.dpr), ch = Math.round((height * scale) / view.dpr)
+      const ok = await send('Browser.setWindowBounds', { windowId, bounds: { width: cw + view.decoW, height: ch + view.decoH } }).then(() => true, () => false)
+      // bounded: the platform may clamp or refuse it - the guard decides then
+      for (const by = Date.now() + 500; ok && Date.now() < by;) {
+        const r = await send('Runtime.evaluate', { expression: '[innerWidth, innerHeight]', returnByValue: true }, sessionId).catch(() => null)
+        const v = r?.result?.value as number[] | undefined
+        if (v && v[0] === cw && v[1] === ch) break
+        await new Promise((r2) => setTimeout(r2, 20))
+      }
+    }
     // A throw in THIS frame, keyed by its session - a batch shares the browser, so an
     // unkeyed listener would report frame A's exception on frame B.
     off = b.on((m) => {
@@ -566,18 +609,53 @@ export async function captureIn({ url, width, height, out, fullHeight = false, t
     // clip in DIP + scale:1 so the PNG is exactly capW*deviceScaleFactor x capH*deviceScaleFactor;
     // captureBeyondViewport is a belt-and-suspenders for the clip. Deadline-bounded (a tall capture
     // is legitimately a few seconds) so a hung capture can't wedge the queue either.
-    const shot = await sendD('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: capX, y: capY, width: capW, height: capH, scale: 1 } }, 15000)
-    writeFileSync(out, Buffer.from(String(shot.data), 'base64'))
+    let attempt = 0
+    const take = async (): Promise<Buffer> => {
+      const shot = await sendD('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { x: capX, y: capY, width: capW, height: capH, scale: 1 } }, 15000)
+      const png = Buffer.from(String(shot.data), 'base64')
+      return shotSeams.capture ? shotSeams.capture(png, { attempt: attempt++, view: await viewNow(), windowId }) : (attempt++, png)
+    }
+    // the guard (#14, #24): a picture that is the view's old surface tiled is taken again - twice at most, only with
+    // time left - and never shipped as the frame
+    const twoFrames = () => sendD('Runtime.evaluate', { expression: 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', awaitPromise: true, returnByValue: true }, 1000).catch(() => null)
+    const judge = async (png: Buffer): Promise<'stale' | 'clean' | 'unknown'> => {
+      const v = await viewNow()
+      return v ? staleSurface(png, v.w, v.h, hardBy - 3000) : 'unknown'
+    }
+    let vp = await viewNow()
+    let png = await take()
+    let verdict = vp ? await staleSurface(png, vp.w, vp.h, hardBy - 3000) : 'unknown' as const
+    let recaptures = 0
+    while (verdict === 'stale' && recaptures < 2 && hardBy - Date.now() > 3000 + 15000) {
+      recaptures++
+      await twoFrames()
+      png = await take()
+      verdict = await judge(png)
+    }
+    if (verdict === 'stale' && fullHeight && scale > 1 && hardBy - Date.now() > 3000 + 15000 + 5000) {
+      // a full-height frame at 1x: the same CSS box, a smaller surface - guarded too
+      const was = scale
+      await sendD('Emulation.setDeviceMetricsOverride', { width: capW, height: capH, deviceScaleFactor: 1, mobile: false }, 5000)
+      await twoFrames()
+      recaptures++
+      png = await take()
+      verdict = await judge(png)
+      if (verdict !== 'stale') { scale = 1; note = `${note ? note + '; ' : ''}came back tiled at ${was}x - captured at 1x` }
+    }
+    if (verdict === 'stale') return { ok: false, error: STALE }
+    if (verdict === 'unknown') note = `${note ? note + '; ' : ''}not checked for a stale surface`
+    writeFileSync(out, png)
     // Out of settle budget (under a wide batch, a slow image, a heavy chart): the capture still
     // ships, but it SAYS so - an agent reading the JSON must not take a half-drawn frame as final.
     const unsettled = !settled
     if (unsettled) note = `${note ? note + '; ' : ''}captured before the frame settled - images, charts or diagrams may be missing; shoot it alone or lower MARVER_SHOT_CONCURRENCY`
-    return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(unsettled ? { unsettled: true } : {}), ...(note ? { note } : {}) }
+    return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(unsettled ? { unsettled: true } : {}), ...(note ? { note } : {}), ...(recaptures ? { recaptures } : {}) }
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   } finally {
     if (watchdog) clearTimeout(watchdog)
     off()
+    if (windowId !== undefined) { const held = heldWindows.get(b); const n = (held?.get(windowId) ?? 1) - 1; if (n > 0) held!.set(windowId, n); else held?.delete(windowId) }
     // Close THIS shot's tab; the browser belongs to the operation and closes with it. Bounded,
     // best-effort: a wedged target must not hold the batch, and the browser's own close is the
     // backstop for a Chrome that stopped answering. Then settle whatever this shot still has
