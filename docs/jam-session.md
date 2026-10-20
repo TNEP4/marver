@@ -16,7 +16,8 @@ dot. While it records, everything you do is part of it:
 
 - **what you say**, transcribed on this Mac (see [Words](#words-on-this-mac));
 - **what you point at**: a click on an element numbers it on the frame, and holding the
-  pointer still over one notes it too. `L` picks with the laser;
+  pointer still over one notes it too. `L` picks with the laser (`⌥L` for the inspect laser,
+  every element outlined);
 - **what you do in the prototype**: interactive mode on and off, every click and field, the
   screens you went to in play, the device and theme you switched to, what you copied;
 - **notes** you type (`N` opens the notes card) - a note often names what your words point at;
@@ -60,6 +61,10 @@ right - drafts, queued, working, ready to review, done. Each tile says where it 
 the lane the keyboard: `←` `→` move, `⏎` opens, `⌘⏎` runs a queued one next, `K` keeps,
 `⌫` drops, `Esc` hands the keys back. Right-click a tile to rename it.
 
+Once two or more captures are done, they fold into one **Done** tile at the left end - "4
+captures · 6 frames changed" - so the lane keeps its room for what still needs you. Click it
+(or `⏎` on it) to open them in place, behind a narrow collapse tile that folds them back.
+
 Your agent works on up to `jam.concurrency` captures at once (6 by default), each in its own
 run, but never two on the same frame: a capture about a frame another run holds waits for it
 ("Queued · next").
@@ -69,9 +74,11 @@ run, but never two on the same frame: a capture about a frame another run holds 
 When a run finishes, its tile turns to **Ready to review**, with a soft chime (`jam: { chime:
 false }` silences it). `V` opens the next one to review:
 
-- **Review** shows the agent's reply beside a picture of each frame it changed - `B` flips
-  between before and after; `⌥←` `⌥→` move between frames. A frame the run made is marked
-  **New**, with no before.
+- **Review** shows the agent's reply beside each frame it changed, **before and after at
+  once**: side by side for a tall frame (a phone), one above the other for a wide one (a
+  laptop), the panel as wide as that takes. **Both · Before · After** shows one alone; `B`
+  steps through them. `⌥←` `⌥→` move between frames. A frame the run made is marked **New**,
+  with no before.
 - **Capture** (the tab at the top) shows the capture as you made it: its pictures and timeline.
 
 `⏎` **Looks good** closes it; `⇧⏎` **More work** sends it back with what is still wrong;
@@ -159,10 +166,11 @@ A bad value says so at boot and takes the default; nothing here turns Jam off.
 | Where | Keys |
 |---|---|
 | Anywhere on the canvas | `S` capture · `J` session · `Q` the lane · `V` next to review |
-| A capture recording | `E` end · `N` note · `I` picture · `L` laser · `Esc` drop |
+| A capture recording | `E` end · `N` note · `I` picture · `L` laser · `⌥L` inspect · `Esc` drop |
 | A read-back | `⏎` add to queue · `K` keep · `R` resume · `Esc` drop |
-| A review | `⏎` looks good · `⇧⏎` more work · `→` later · `←` back · `B` before/after · `⌥←` `⌥→` frames · `Esc` leave |
-| The lane (`Q`) | `←` `→` move · `⏎` open · `⌘⏎` do next · `K` keep · `⌫` drop · `Esc` leave |
+| A review | `⏎` looks good · `⇧⏎` more work · `→` later · `←` back · `B` both/before/after · `⌥←` `⌥→` frames · `Esc` leave |
+| The lane (`Q`) | `←` `→` move · `⏎` open (or open/fold the Done tile) · `⌘⏎` do next · `K` keep · `⌫` drop · `Esc` leave |
+| A laser on | `L` pointer · `⌥L` inspect · `Esc` off (before it closes or drops anything) |
 
 The keys work inside frames too, in interactive mode and in play.
 

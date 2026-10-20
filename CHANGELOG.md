@@ -35,6 +35,21 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   and anything that went wrong lately. It reads `design/.local/perf/jam.jsonl`: numbers and fixed codes only, never
   your words, kept on your machine.
 
+### Changed
+
+From a first long real Jam session:
+
+- **Review shows before and after at once.** Side by side for a tall frame (a phone), one above the other for a wide
+  one (a laptop), and the panel grows as wide as that takes, up to the window. **Both · Before · After** shows one
+  alone; `B` steps through them.
+- **The lane stays readable when full.** Its tiles lost their frosted blur exactly when the lane scrolled (its edge
+  fades cut them off from what was behind); the fades are now strips of their own, and the tiles a touch more opaque.
+- **Done captures fold into one tile.** With two or more done, one **Done** tile - "4 captures · 6 frames changed" -
+  keeps the lane for what still needs you. Click it (or `⏎` with `Q`) to open them, a collapse tile folds them back.
+- **The laser is a pointer.** `L` now lights only the element under the cursor, as comment mode does; a click still
+  copies its path (or, in a capture, is its pick). The old laser, every element outlined, is **inspect**: `⌥L`, or
+  ⌥-click the laser button. `Esc` turns a laser off before it closes or drops anything.
+
 ### Upgrading
 
 `npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (a sandboxed agent
