@@ -21,8 +21,8 @@ dot. While it records, everything you do is part of it:
   screens you went to in play, the device and theme you switched to, what you copied;
 - **notes** you type (`N` opens the notes card) - a note often names what your words point at;
 - **pictures**: `I` takes one of the frame under the pointer, and the frames you touched are
-  pictured as the capture ends, at the size you were looking at them (a device, a width you
-  dragged, the play stage).
+  pictured as the capture ends - three at most - at the size you were looking at them (a
+  device, a width you dragged, the play stage). A capture holds twelve pictures in all.
 
 `E` ends it. `Esc` throws it away. One capture records at a time.
 
@@ -163,8 +163,15 @@ The keys work inside frames too, in interactive mode and in play.
 
 ## Where things are kept
 
-Everything Jam keeps sits in `design/.local/` (gitignored, never published): captures and
-their pictures under `design/.local/jam/`, the session transcript under
-`design/.local/jam/sessions/`, the queue in `design/.local/jam-jobs.json`. The session
-**record** your agent writes is the one thing meant to be committed. Published canvases carry
-none of it: no captures, no queue, no microphone.
+The capture itself sits in `design/.local/` (gitignored, never published): its full record
+and pictures under `design/.local/jam/`, the session transcript under
+`design/.local/jam/sessions/`, the queue in `design/.local/jam-jobs.json`.
+
+A capture you add to the queue or keep also becomes a **thread** on its board, like a
+comment: a short excerpt of its words (600 characters at most), then your agent's replies.
+Threads live in `design/comments/<board>.jsonl`, which is committed with the rest of
+`design/` - so what you said in a capture reaches your repository when you commit, as a
+comment would. They never reach a published canvas: `marver build` and `marver comments sync`
+leave capture threads (and Marver's notes and replies) on your machine. The session
+**record** your agent writes goes to `context/sessions/`, also meant to be committed.
+Published canvases carry none of Jam: no captures, no queue, no microphone.

@@ -233,7 +233,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
     <div className="jm-panel jm-readback" data-jam-readback="" style={style}>
       <div className="top">
         <span className="jm-capglyph"><WaveformIcon size={14} /></span>
-        <Tip side="bottom" label={<span className="jm-tip-title">{title}{autoNamed && <><br /><small>Named by Claude Haiku from its words, sent to Anthropic through Claude Code - <code>jam.names: false</code> turns it off</small></>}</span>} only={cutShort || autoNamed}><h3>{title || 'Capture'}</h3></Tip>
+        <Tip side="bottom" label={<span className="jm-tip-title">{title}{autoNamed && <><br /><small>Named by Claude Haiku from its words, sent to Anthropic through Claude Code - <code>jam.names: false</code> turns it off</small></>}</span>} only={autoNamed ? undefined : cutShort}><h3>{title || 'Capture'}</h3></Tip>
         {head}
         <Walk of={of} onPrev={onPrev} onNext={onNext} />
       </div>
