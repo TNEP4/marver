@@ -2,6 +2,58 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Added
+
+- **Captures: talk through the canvas.** Press `S`, point at things, click through the
+  prototype and say what is wrong, then `E`. A capture records your words, every click, pick
+  and note, the screens and devices you went through, and pictures of the frames you touched -
+  at the size you were looking at them - and your agent works from that one record. Its
+  read-back lets you fix a word, add a note after the fact, and decide: `⏎` add to queue,
+  `K` keep, `R` resume (it ended too soon), `Esc` drop
+  ([Jam sessions and captures](docs/jam-session.md)).
+- **A lane, and review with before and after.** Captures line up along the bottom of the canvas
+  in the order you made them - queued, working, ready to review. A soft chime says one is ready;
+  `V` opens it: the agent's reply beside each frame it changed, `B` flips before and after, a
+  frame it made is marked New, and a Capture tab shows what you recorded. `⏎` looks good, `⇧⏎`
+  sends it back with what is still wrong. When you asked for something new beside a frame, the
+  capture's thread moves onto the new frame.
+- **Sessions.** `J` runs a whole review as one session: it starts recording at once, keeps the
+  canvas lit with a clock while you work, and listens between captures. `J` again wraps up - you
+  say how to take it in, and your agent writes the record to `context/sessions/`: what was
+  asked, what was done, what is left, the decisions heard.
+- **Words, on this Mac.** What you say becomes words with NVIDIA's Parakeet v3, run locally:
+  Marver asks before the one 488 MB download, and the audio never leaves your machine or touches
+  the disk. Where the speech engine cannot install, captures keep typed notes.
+- **Captures name themselves.** With Claude Code, each capture gets a few-word name as soon as its
+  words are in, from Claude Haiku through your own login - a draft's words go to Anthropic for
+  this. A name you give wins; `jam: { names: false }` turns it off.
+- **Every element knows its source.** In `marver dev`, design elements carry `data-mv-loc` - the
+  file and line they were written at - so your agent goes straight to the code you pointed at
+  (`jam: { loc: false }` turns it off; never in a published build).
+
+### Changed
+
+- **Only a tag starts work** ([#5](https://github.com/TNEP4/marver/issues/5)). A plain reply in a
+  thread - even one answering Marver - is conversation and starts nothing; `npx marver marks`
+  lists it under "answered by you" for your chat agent. Each tag is a card answered in its own
+  thread, with the thread as it stood when you sent it.
+- **One job per frame.** Your agent still works on up to `jam.concurrency` jobs at once, but never
+  two on the same frame, and a job's results are posted before anything new starts. A job edits
+  only the frames it was given; one that needs a shared file (a kit, a layout) comes back to run
+  alone.
+- **One canvas per folder** ([#19](https://github.com/TNEP4/marver/issues/19)). A second `marver dev`
+  in the same folder stops with "a canvas already runs here" and its link, instead of taking over
+  the first one's record.
+
+### Upgrading
+
+`npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent
+instructions. On its first boot `marver dev` upgrades the jam journal and says what changed; a
+job that was running under 0.25 shows as failed with Retry. Replies you made before the upgrade
+are listed by `npx marver marks` as "earlier, maybe handled".
+
 ## 0.25.1 - 2026-10-17
 
 ### Fixed

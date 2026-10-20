@@ -8,7 +8,7 @@
 
 Screens, prototypes, specs, and now slide decks - all real code, all on one canvas, all shareable with people who sign in as themselves.
 
-[marver.design](https://marver.design) · [Boards and folders](docs/boards-and-folders.md) · [Context](docs/context.md) · [Slides](docs/slides.md) · [Sticky notes](docs/sticky-notes.md) · [Live Jam](docs/live-jam.md) · [Deploying a canvas](docs/publish.md) · [Sharing](docs/sharing.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
+[marver.design](https://marver.design) · [Boards and folders](docs/boards-and-folders.md) · [Context](docs/context.md) · [Slides](docs/slides.md) · [Sticky notes](docs/sticky-notes.md) · [Live Jam](docs/live-jam.md) · [Jam sessions](docs/jam-session.md) · [Deploying a canvas](docs/publish.md) · [Sharing](docs/sharing.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
 
 ## Quickstart
 
@@ -94,6 +94,8 @@ Publish a deck with `{ "boards": { "pitch": { "max": "read", "type": "slides", "
 Tag `@marver` in a comment and your own coding agent picks it up - reads the thread, edits the real frame source, replies with a receipt - while the frame wears a live working glow. Nothing to start and nothing to wire: it rides along with `marver dev`, on by default, armed with whichever agent CLI you have - Claude Code, Codex, Cursor, Factory's droid, opencode, grok, or pi, which also covers the apps built on them. The tool running the process wins, then whatever is on PATH, and `init` writes what it found into `design/config.ts` as `jam: { agent: "claude", concurrency: 6 }` - visible, one word to correct, `jam: false` to switch off.
 
 The trust boundary is hard: only comments written on the owner's machine trigger (a device-bound ledger - a drive-by comment on a published canvas cannot start work), the agent runs locked down (each CLI with its shell removed or OS-sandboxed - the per-agent table is in the guide), and every reply carries provenance: which agent ran it, as which dev user, on which model when the agent names one. Marver ships no AI; the agent that acts is the one you already run. The [Live Jam guide](docs/live-jam.md) has the config block, every agent's jail, and what to check when a mention does nothing.
+
+**Captures and sessions.** Or skip the typing: press `S`, point at things, click through the prototype and say what is wrong, then `E`. A capture records your words (transcribed on your machine - the audio never leaves it), every click, pick and note, and pictures of the frames you touched at the size you saw them, and your agent works from that. Captures line up in a lane along the bottom - queued, working, ready to review - and each comes back with before and after pictures: `⏎` looks good, `⇧⏎` more work. `J` runs a whole review as a session and ends with a written record of it in `context/sessions/`. The [Jam sessions guide](docs/jam-session.md) has the keys and the settings.
 
 ## Working state
 

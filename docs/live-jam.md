@@ -6,6 +6,15 @@ glow, the agent edits the real frame source, and its reply lands back in the sam
 No round trip to the terminal. Marver ships no AI: the agent that acts is the one you
 already run and pay for.
 
+**Only a tag starts work** (since 0.26). A plain reply in a thread - even one answering Marver -
+is conversation: it starts nothing, and `npx marver marks` lists it under "answered by you"
+for your chat agent. Each tag is a card, answered in its own thread; your agent works on up to
+`jam.concurrency` of them at once, never two on the same frame.
+
+To talk through the canvas instead of typing - point, click through the prototype, say what
+is wrong - use a capture (`S` ... `E`) or a whole session (`J`): see
+[Jam sessions and captures](jam-session.md).
+
 ## It arms itself
 
 Live Jam is on by default (since 0.9.0). Marver speaks seven agent CLIs - `claude`,
@@ -45,6 +54,10 @@ jam: { agent: "claude", concurrency: 6 },
 | `agent` | detected | The CLI the daemon spawns: `"claude"`, `"codex"`, `"cursor"`, `"droid"`, `"opencode"`, `"grok"`, or `"pi"` |
 | `concurrency` | `6` | Frames worked on at once (1-16). The same frame never gets two agents |
 | `subagents` | `true` | Inside one job, fan out one subagent per frame |
+| `capture` | `"confirm"` | A capture waits for its read-back, or `"at-once"` queues at `E` ([captures](jam-session.md#configuration)) |
+| `chime` | `true` | A soft chime when a capture is ready to review |
+| `names` | `true` | Name each capture with Claude Haiku through Claude Code - its words go to Anthropic (Claude Code only) |
+| `loc` | `true` | Stamp design elements with `data-mv-loc` (file and line, dev only) so the agent goes straight to the source |
 
 Shorthands: `jam: "codex"` names the agent and takes the rest of the defaults, `jam: true`
 is the default block, and **`jam: false` is the off switch**.
@@ -192,6 +205,10 @@ configuration speaking, and marver does not override it.
 
 - **It has to be your machine, your repo, with `marver dev` running.** That is the trust
   boundary above, working as intended.
+- **It has to tag `@marver`.** Since 0.26 a plain reply starts nothing, even in a thread
+  Marver started - tag it in the reply.
+- **One canvas per folder.** A second `marver dev` in the same folder stops with "a canvas
+  already runs here" and its link, so two servers never run the same jobs twice.
 - **The first boot after upgrading to 0.9.0 rebaselines the job journal**, because an
   existing journal predates the device stamp. Any `@marver` left unprocessed while the
   server was down is marked seen instead of run. Re-comment to pick it up.
