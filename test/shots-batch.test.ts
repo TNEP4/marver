@@ -186,6 +186,61 @@ describe.skipIf(!hasChrome)('a batch of shots is one operation', () => {
     expect(none.stderr).toMatch(/name the frames, one way/)
   }, 120_000)
 
+  it('the CLI inside a sandbox: it cannot reach the server, so the same shot goes through the file inbox - same output, same exit code', async () => {
+    const dev = join(root, 'design', '.local', 'dev.json')
+    const real = readFileSync(dev, 'utf8')
+    // a port nothing listens on: the connection is refused, as a sandbox's blocked network refuses it
+    const closed = await new Promise<number>((r) => { const t = createServer(); t.listen(0, '127.0.0.1', () => { const p = (t.address() as { port: number }).port; t.close(() => r(p)) }) })
+    writeFileSync(dev, JSON.stringify({ ...JSON.parse(real), port: closed }))
+    const inbox = join(root, 'design', '.local', 'shots')
+    const run = (args: string[], env: Record<string, string> = {}) => new Promise<{ status: number | null; stdout: string; stderr: string }>((done) => {
+      const p = spawn(process.execPath, [CLI, 'shot', '--root', root, ...args], { cwd: root, env: { ...process.env, ...env } })
+      let stdout = '', stderr = ''
+      p.stdout.on('data', (d) => { stdout += d }); p.stderr.on('data', (d) => { stderr += d })
+      p.on('close', (status) => done({ status, stdout, stderr }))
+    })
+    try {
+      const one = await run(['app/a'])
+      expect(one.status).toBe(0)
+      expect(one.stdout.trim()).toBe('design/.local/shots/app--a--light.png')
+      const two = await run(['app/a', 'app/b', '--json'])
+      expect(two.status).toBe(0)
+      expect(JSON.parse(two.stdout).results.map((r: any) => [r.frame, r.ok, r.path])).toEqual([['app/a', true, 'design/.local/shots/app--a--light.png'], ['app/b', true, 'design/.local/shots/app--b--light.png']])
+      const bad = await run(['app/a', 'app/throws'])
+      expect(bad.status).toBe(1)
+      expect(bad.stderr).toMatch(/^app\/throws: the frame rendered an error/m)
+      // an agent's own request in the inbox at the same time: each reads its own answer
+      writeFileSync(join(inbox, 'agent-own.request.json'), JSON.stringify({ frame: 'other/x' }))
+      const mine = await run(['app/c'])
+      expect(mine.stdout.trim()).toBe('design/.local/shots/app--c--light.png')
+      for (let t0 = Date.now(); Date.now() - t0 < 30_000 && !existsSync(join(inbox, 'agent-own.result.json'));) await wait(100)
+      expect(JSON.parse(readFileSync(join(inbox, 'agent-own.result.json'), 'utf8'))).toMatchObject({ ok: true, path: 'design/.local/shots/other--x--light.png' })
+      rmSync(join(inbox, 'agent-own.result.json'), { force: true })
+      // the CLI's own files are gone
+      expect(readdirSync(inbox).filter((f) => f.startsWith('cli-'))).toEqual([])
+    } finally { writeFileSync(dev, real) }
+  }, 180_000)
+
+  it('the CLI never falls back on an answer: the server refusing it (an unknown frame, 404) is an error, and nothing is dropped in the inbox', async () => {
+    const r = spawnSync(process.execPath, [CLI, 'shot', '--root', root, 'app/nope'], { cwd: root, encoding: 'utf8' })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/unknown frame/)
+    expect(readdirSync(join(root, 'design', '.local', 'shots')).filter((f) => f.startsWith('cli-'))).toEqual([])
+  }, 60_000)
+
+  it('the CLI stops waiting when nothing answers the inbox - and takes its unclaimed request back', async () => {
+    // a canvas whose server is "running" (this process) on a port nothing listens on, and no one watching its inbox
+    const lone = mkdtempSync(join(tmpdir(), 'mv-lone-'))
+    mkdirSync(join(lone, 'design', '.local', 'shots'), { recursive: true })
+    const closed = await new Promise<number>((r) => { const t = createServer(); t.listen(0, '127.0.0.1', () => { const p = (t.address() as { port: number }).port; t.close(() => r(p)) }) })
+    writeFileSync(join(lone, 'design', '.local', 'dev.json'), JSON.stringify({ port: closed, token: 't', pid: process.pid }))
+    const r = spawnSync(process.execPath, [CLI, 'shot', '--root', lone, 'app/a'], { cwd: lone, encoding: 'utf8', env: { ...process.env, MARVER_SHOT_INBOX_WAIT_MS: '1500' } })
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/stopped waiting/)
+    expect(readdirSync(join(lone, 'design', '.local', 'shots'))).toEqual([])
+    rmSync(lone, { recursive: true, force: true })
+  }, 60_000)
+
   it('the inbox takes a batch, writes the result atomically, and never deletes a request it did not process', async () => {
     const inbox = join(root, 'design', '.local', 'shots')
     writeFileSync(join(inbox, 'round.request.json'), JSON.stringify({ scene: 'other' }))
@@ -240,4 +295,19 @@ describe.skipIf(!hasChrome)('a batch of shots is one operation', () => {
     await inFlight
     server = null
   }, 30_000)
+})
+
+describe('which fetch failures move a shot to the file inbox', () => {
+  it('only a connection never made: refused, unreachable, or a sandbox forbidding it - dual stack included; never a reset, an answer, or nothing', async () => {
+    const { cannotConnect } = await import('../src/cli/shot.ts')
+    const failed = (cause: unknown) => Object.assign(new TypeError('fetch failed'), { cause })
+    expect(cannotConnect(failed({ code: 'ECONNREFUSED' }))).toBe(true)
+    expect(cannotConnect(failed({ code: 'EPERM' }))).toBe(true)
+    expect(cannotConnect(failed({ code: 'EACCES' }))).toBe(true)
+    expect(cannotConnect(failed(Object.assign(new AggregateError([]), { errors: [{ code: 'ECONNREFUSED' }, { code: 'EADDRNOTAVAIL' }] })))).toBe(true)
+    expect(cannotConnect(failed(Object.assign(new AggregateError([]), { errors: [{ code: 'ECONNREFUSED' }, { code: 'ECONNRESET' }] })))).toBe(false)
+    expect(cannotConnect(failed({ code: 'ECONNRESET' }))).toBe(false)
+    expect(cannotConnect(failed({ code: 'UND_ERR_HEADERS_TIMEOUT' }))).toBe(false)
+    expect(cannotConnect(new Error('no cause'))).toBe(false)
+  })
 })

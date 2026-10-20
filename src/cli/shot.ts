@@ -7,8 +7,50 @@
  * operation (one browser, several frames at a time), so shooting a scene costs about what
  * shooting a frame did. shot.ts (server) has the capture story.
  */
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { join } from 'node:path'
 import { readDevInfo } from '../server/work.ts'
 import { NAME } from './name.ts'
+
+/** The fetch never reached the server: refused, unreachable, or forbidden by a sandbox (Codex's blocks the network,
+ *  localhost included). Only these move a shot to the file inbox - never an HTTP answer, never a failure after the
+ *  request went out. */
+const CONNECT = new Set(['ECONNREFUSED', 'EPERM', 'EACCES', 'EHOSTUNREACH', 'ENETUNREACH', 'EADDRNOTAVAIL'])
+export function cannotConnect(err: unknown): boolean {
+  const cause = (err as { cause?: unknown })?.cause as { code?: string; errors?: { code?: string }[] } | undefined
+  if (!cause) return false
+  if (Array.isArray(cause.errors) && cause.errors.length) return cause.errors.every((e) => !!e?.code && CONNECT.has(e.code))
+  return !!cause.code && CONNECT.has(cause.code)
+}
+
+/** The same request through the file inbox the dev server watches (design/.local/shots): a name of its own, written
+ *  whole, its own result read and both files removed. Waiting stops at `ms` - it does not cancel; a request still
+ *  unclaimed then is removed, so it never runs later. */
+async function viaInbox(root: string, spec: Record<string, unknown>, ms: number): Promise<Record<string, unknown>> {
+  const inbox = join(root, 'design', '.local', 'shots')
+  const name = `cli-${randomBytes(8).toString('hex')}`
+  const request = join(inbox, `${name}.request.json`), result = join(inbox, `${name}.result.json`)
+  try {
+    const tmp = join(inbox, `.${name}.tmp`)
+    writeFileSync(tmp, JSON.stringify(spec))
+    renameSync(tmp, request)
+  } catch (err) {
+    throw new Error(`could not reach \`${NAME} dev\` (the network is blocked here) and could not write to design/.local/shots - ${(err as Error).message}`)
+  }
+  for (const by = Date.now() + ms; Date.now() < by;) {
+    if (existsSync(result)) {
+      try {
+        const data = JSON.parse(readFileSync(result, 'utf8')) as Record<string, unknown>
+        rmSync(result, { force: true })
+        return data
+      } catch { /* written whole by a rename: a read that fails is a race with nothing - read again */ }
+    }
+    await new Promise((r) => setTimeout(r, 150))
+  }
+  rmSync(request, { force: true })
+  throw new Error(`stopped waiting for \`${NAME} dev\` after ${Math.round(ms / 1000)} s (asked through design/.local/shots - the network is blocked here)`)
+}
 
 type Entry = { frame: string; ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures?: number } | { frame: string; ok: false; error: string }
 
@@ -21,23 +63,29 @@ export async function shotCommand(root: string, frames: string[], opts: { scene?
   const scale = opts.scale != null ? Number(opts.scale) : undefined
   const theme = opts.theme
   const single = frames.length === 1 && !opts.scene && !opts.all
-  let res: Response
+  const sel = single ? { frame: frames[0] } : opts.all ? { all: true } : opts.scene ? { scene: opts.scene } : { frames }
+  let data: { path?: string; error?: string; results?: Entry[] } & Record<string, unknown>
   try {
+    let res: Response
     if (single) {
       const qs = new URLSearchParams({ frame: frames[0], ...(theme ? { theme } : {}), ...(scale != null ? { scale: String(scale) } : {}) })
       res = await fetch(`http://localhost:${info.port}/__mv/api/shot?${qs}`, { headers: { 'x-mv-work': info.token } })
     } else {
-      const sel = opts.all ? { all: true } : opts.scene ? { scene: opts.scene } : { frames }
       res = await fetch(`http://localhost:${info.port}/__mv/api/shots`, {
         method: 'POST', headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
         body: JSON.stringify({ ...sel, ...(theme ? { theme } : {}), ...(scale != null ? { scale } : {}) }),
       })
     }
-  } catch {
-    throw new Error(`could not reach \`${NAME} dev\` on port ${info.port} - is it still running?`)
+    data = (await res.json().catch(() => ({}))) as typeof data
+    if (!res.ok) throw Object.assign(new Error(data.error ?? `shot failed (${res.status})`), { answered: true })
+  } catch (err) {
+    if ((err as { answered?: boolean }).answered) throw err
+    if (!cannotConnect(err)) throw new Error(`could not reach \`${NAME} dev\` on port ${info.port} - is it still running?`)
+    // a sandbox that blocks the network blocks localhost too: the same request through the file inbox
+    const waitMs = Number(process.env.MARVER_SHOT_INBOX_WAIT_MS) > 0 ? Number(process.env.MARVER_SHOT_INBOX_WAIT_MS) : single ? 120_000 : 600_000
+    data = await viaInbox(root, { ...sel, ...(theme ? { theme } : {}), ...(scale != null ? { scale } : {}) }, waitMs) as typeof data
+    if (data.ok === false) throw new Error(String(data.error ?? 'shot failed'))
   }
-  const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string; results?: Entry[] } & Record<string, unknown>
-  if (!res.ok) throw new Error(data.error ?? `shot failed (${res.status})`)
   // one shape for both doors: the single answer becomes a one-entry batch
   const one = data as { path?: string; width?: number; height?: number; scale?: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures?: number; error?: string }
   const results: Entry[] = single
