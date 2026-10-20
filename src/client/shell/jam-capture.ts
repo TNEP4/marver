@@ -751,6 +751,18 @@ function sealedSizes(c: Cap): Record<string, { w: number; h: number; play?: true
   return out
 }
 
+/** A capture's sealed record: its steps in time order, internal fields stripped, its context, view, pictures and
+ *  sizes. `interrupted`: sealed by its page leaving, as it stood. */
+function buildRecord(c: Cap, steps: Cap['steps'], interrupted = false): CaptureRecord {
+  const timeline = [...steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
+  return {
+    format: 'marver.jam.capture', v: 1, id: c.id,
+    context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}), ...(interrupted ? { interrupted: true as const } : {}) },
+    view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
+    timeline, pictures: c.pictures, ...(() => { const sizes = sealedSizes(c); return Object.keys(sizes).length ? { sizes } : {} })(),
+  }
+}
+
 function trySeal(id: string) {
   const c = capOf(id)
   if (!c || c.state !== 'draining' || c.flushWait.size || c.probes > 0) return
@@ -759,13 +771,7 @@ function trySeal(id: string) {
   if (!c.endShot) endPictures(id)
   const c2 = capOf(id)
   if (!c2 || c2.shots > 0 || c2.hearing) return
-  const timeline = [...c2.steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
-  const record: CaptureRecord = {
-    format: 'marver.jam.capture', v: 1, id,
-    context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}) },
-    view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
-    timeline, pictures: c2.pictures, ...(() => { const sizes = sealedSizes(c2); return Object.keys(sizes).length ? { sizes } : {} })(),
-  }
+  const record = buildRecord(c2, c2.steps)
   // sealed: drop everything for this id that arrives later
   useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })
   forgetHeard(id)
@@ -784,12 +790,14 @@ const pendingUploads = new Map<string, CaptureRecord>()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
  *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
-async function upload(record: CaptureRecord): Promise<void> {
+async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string; outside?: boolean }
   let r: Verdict | null = null
   try {
     // the workspace it was made in travels with it: another project served on this port refuses it
-    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ record, workspace: CONFIG.workspace }) })
+    const payload = JSON.stringify({ record, workspace: CONFIG.workspace })
+    // a page that is going sends with keepalive (64 kB at most) so the request outlives it; a bigger one, the next page
+    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && payload.length < 60_000 ? { keepalive: true } : {}) })
     const body = (await res.json().catch(() => null)) as Verdict | null
     // only an explicit verdict on THIS record is final: taken (200, naming its card) or refused as a
     // record (400, saying why). Anything else - jam not running yet, another workspace, an unreadable
@@ -813,8 +821,12 @@ async function upload(record: CaptureRecord): Promise<void> {
   else if (r.outside) leftOutOfSession(record.id)
 }
 
-/** A capture still recording, or finishing (its pictures and words coming in), lives only in this page
- *  until it seals - a sealed one is kept in localStorage until it lands. Leaving the page asks first. */
+/** A capture still recording, or finishing (its pictures and last words coming in), lives only in this page until it
+ *  seals; a sealed one is kept in localStorage until it lands. Leaving the page asks first - and if you leave anyway
+ *  (`pagehide`: a close, a reload, a navigation, the back-forward cache alike), every capture not sealed yet is sealed
+ *  at once, as it stood, for good: a missing step says so, the server keeps it as a draft, and it goes out like any
+ *  sealed record not sent yet - from the next page, or this one if it comes back. Carrying on is Resume, with a new id.
+ *  Best effort: a crash or a killed process fires nothing. */
 let guarded = false
 function guardUnload() {
   if (guarded || typeof window === 'undefined') return
@@ -824,6 +836,34 @@ function guardUnload() {
     e.preventDefault()
     e.returnValue = ''
   })
+  window.addEventListener('pagehide', () => sealOnLeave())
+  // back from the back-forward cache: what was kept goes out now (never amended, never dropped)
+  window.addEventListener('pageshow', (e) => { if (e.persisted) for (const r of pendingUploads.values()) void upload(r) })
+}
+
+/** Seal every capture not sealed yet, as it stands, and tear it down as a drop does - synchronously: the page is going. */
+export function sealOnLeave() {
+  const s = useJamCapture.getState()
+  const caps = Object.values(s.caps)
+  if (!caps.length) return
+  const draft = s.noteDraft.trim()
+  const records: CaptureRecord[] = []
+  for (const c of caps) {
+    const at = now()
+    const steps = [...c.steps]
+    // text written in the notes card and never added is the capture's last note, as at E
+    if (c.id === s.current && draft) steps.push({ at, event: 'note', text: draft })
+    steps.push({ at, event: 'missing', what: c.state === 'recording' ? 'the page closed while it recorded' : 'the page closed before it finished' })
+    records.push(buildRecord(c, steps, true))
+    // its frames stop recording, its microphone is let go; a late picture or word finds nothing to change
+    broadcast({ type: 'sh:capture', id: c.id, on: false })
+    voiceDrop(c.id)
+    forgetHeard(c.id)
+  }
+  cancelDwell()
+  unwatch?.(); unwatch = null
+  useJamCapture.setState((st) => ({ current: null, caps: {}, noteOpen: false, noteDraft: '', tick: st.tick + 1, sealed: [...st.sealed, ...records.map((r) => ({ id: r.id }))] }))
+  for (const r of records) { keepSealed(r); void upload(r, true) }
 }
 
 /** Records sealed in an earlier page that never reached the server: sent again at boot. */

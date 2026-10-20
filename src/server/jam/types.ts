@@ -86,7 +86,9 @@ export interface CaptureRecord {
   context: { canvas: string; board: string; session?: string; reviewing?: { card: string; batch: string; rev: number }
     /** a capture that continues a draft ended too soon: that draft's id, and when recording resumed
      *  (every step before it is the draft's, moved up to close the pause) */
-    resumes?: { id: string; at: number } }
+    resumes?: { id: string; at: number }
+    /** sealed by its page leaving (0.26.1): as it stood, with a missing step - always a draft, even with `jam.capture: 'at-once'` */
+    interrupted?: true }
   view: View; timeline: Step[]; pictures: string[]
   /** each frame it is about, at the size it was on screen (a device, or a custom width): its run is pictured
    *  before and after at that size */

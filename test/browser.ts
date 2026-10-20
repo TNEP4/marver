@@ -22,6 +22,11 @@ export class Browser {
     return this.cdp.send(method, params, sessionId)
   }
 
+  /** Subscribe to CDP events (a dialog opening, a navigation); returns the unsubscribe. */
+  on(fn: (m: any) => void): () => void {
+    return this.cdp.on(fn)
+  }
+
   private contexts = new Map<string, string>()   // sessionId -> browserContextId
 
   /** Grant browser permissions (e.g. clipboardReadWrite) to an origin in THIS tab's context -

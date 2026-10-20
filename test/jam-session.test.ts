@@ -47,6 +47,23 @@ const card = (jam: { snapshot(): any }, id: string) => jam.snapshot().cards.find
 const packets = (root: string) => existsSync(join(root, 'packets-seen.jsonl')) ? readFileSync(join(root, 'packets-seen.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
 
 describe('sessions: review fixes', () => {
+  it('a capture its page sealed as it left stays a draft, even with jam.capture at-once (0.26.1); a whole one is queued', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, capture: 'at-once', concurrency: 1 }, agent('ok', { hang: true }))
+    const cut = rec('the page closed on this one')
+    cut.context.interrupted = true
+    cut.timeline.push({ at: 1_002_000, event: 'missing', what: 'the page closed while it recorded' })
+    expect((await jam.capture(cut) as any).ok).toBe(true)
+    expect(card(jam, cut.id).state).toBe('draft')
+    // sent again (another page had it too): the same record, taken as landed
+    expect((await jam.capture(structuredClone(cut)) as any).ok).toBe(true)
+    const whole = rec('a whole one')
+    await jam.capture(whole)
+    expect(card(jam, whole.id).state).not.toBe('draft')
+    jam.stop()
+    done()
+  })
+
   it('a capture changed after it was confirmed is never sealed into a record: the wrap-up is refused, the session goes on', async () => {
     const { root, done } = setup()
     const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))

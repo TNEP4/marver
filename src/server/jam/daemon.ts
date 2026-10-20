@@ -1062,8 +1062,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
     const card = await q.lock((j) => { const c = addCapture(j, rec, stored.hash); q.persist(); return structuredClone(c) })
     queueChanged()
-    // `jam.capture: 'at-once'`: no read-back - queued as soon as it is sealed
-    if (cfg.capture === 'at-once' && card.state === 'draft') return confirm(card.id, card.rev, 'queued')
+    // `jam.capture: 'at-once'`: no read-back - queued as soon as it is sealed; one its page sealed as it left is
+    // unfinished, and waits for its read-back like any draft
+    if (cfg.capture === 'at-once' && card.state === 'draft' && !rec.context.interrupted) return confirm(card.id, card.rev, 'queued')
     return { ok: true, card }
   }
 

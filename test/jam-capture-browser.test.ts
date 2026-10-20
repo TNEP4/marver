@@ -1068,4 +1068,71 @@ describe('captures in the browser: the first trial', () => {
     expect(req).toMatchObject({ w: 600, h: 1100 })
     await decide(id, 'drop')
   })
+
+  // ---- 0.26.1 C1: a capture outlives its page -------------------------------------------------------------
+  const getRecord = (id: string) => browser!.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
+  const reload = async () => {
+    // the leave prompt (a capture is unsealed) is answered "leave", as a person who means it would
+    const off = browser!.on((m) => { if (m.method === 'Page.javascriptDialogOpening' && m.sessionId === s) void browser!.send('Page.handleJavaScriptDialog', { accept: true }, s) })
+    try {
+      await browser!.send('Page.reload', {}, s)
+      await until(`(window.__mvStore?.getState().nodes.length ?? 0) >= 4 && window.__mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvJamQueue`, 45_000)
+    } finally { off() }
+  }
+
+  skippable('a capture still recording when the page reloads is sealed as it stood - its note, a missing step - and comes back as a draft', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('the header overlaps the logo'), 1`)
+    await reload()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    const rec = await getRecord(id)
+    expect(rec.record.context.interrupted).toBe(true)
+    expect(rec.record.timeline.some((x: any) => x.event === 'note' && x.text === 'the header overlaps the logo')).toBe(true)
+    expect(rec.record.timeline.some((x: any) => x.event === 'missing' && /closed while it recorded/.test(x.what))).toBe(true)
+    // nothing records in the new page
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().current`)).toBeNull()
+    await decide(id, 'drop')
+  }, 120_000)
+
+  skippable('a capture finishing when the page reloads (a picture still out) keeps the pictures it had and says it did not finish', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().picture('spec/alpha'), 1`)
+    await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.pictures.length ?? 0) === 1`, 30_000)
+    // the next picture never answers: the capture cannot seal on its own
+    await browser!.eval(s, `(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/jam/picture') && o && o.method === 'POST' ? new Promise(() => {}) : f(u, o); return 1 })()`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().picture('spec/bravo'), 1`)
+    await key('e')
+    await until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.state === 'draining'`, 5000)
+    await reload()
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    const rec = await getRecord(id)
+    expect(rec.record.pictures.length).toBe(1)
+    expect(rec.record.timeline.some((x: any) => x.event === 'missing' && /closed before it finished/.test(x.what))).toBe(true)
+    await decide(id, 'drop')
+  }, 120_000)
+
+  skippable('leaving for the back-forward cache seals it for good: nothing records on return, the kept record goes out once, Resume is a new capture', async () => {
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('kept as it was'), 1`)
+    await browser!.eval(s, `window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })), 1`)
+    // torn down at once: no capture, nothing of it left to change
+    expect(await browser!.eval(s, `JSON.stringify([window.__mvJamCapture.getState().current, Object.keys(window.__mvJamCapture.getState().caps).length])`)).toBe('[null,0]')
+    await browser!.eval(s, `window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })), 1`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
+    const rec = await getRecord(id)
+    expect(rec.record.context.interrupted).toBe(true)
+    expect(rec.record.timeline.filter((x: any) => x.event === 'missing').length).toBe(1)
+    // carrying on is Resume: a new capture, the draft kept as it was
+    await browser!.eval(s, `window.__mvJamUi.getState().open({ kind: 'capture', id: ${JSON.stringify(id)} }), 1`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(id)}`, 5000)
+    await sleep(200)
+    await key('r')
+    await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(id)}`, 5000)
+    await browser!.eval(s, `window.__mvJamCapture.getState().drop(), 1`)
+    await until(`!window.__mvJamCapture.getState().current`, 5000)
+    await decide(id, 'drop')
+  }, 120_000)
 })
