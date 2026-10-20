@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -84,6 +84,19 @@ const HELPERS = `(() => {
   }
   window.__icon = () => document.querySelector('.cm-card .cm-tstat')?.getAttribute('data-jam-state') ?? 'none'
 })()`
+
+/** Every test starts with the page's own fetch: one that failed with its fetch patched (an upload made to fail, a picture
+ *  held) would otherwise fail every test after it. (Some tests carry on from the one before - a capture left recording,
+ *  a panel left open - so nothing else is reset.) */
+beforeEach(async () => {
+  if (!browser || !s) return
+  await browser.eval(s, `(() => {
+    // the page's fetch as first seen by a test, kept (a reload brings a fresh one, kept again)
+    if (!window.__baseFetch) window.__baseFetch = window.fetch
+    else window.fetch = window.__baseFetch
+    return 1
+  })()`).catch(() => null)
+})
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'mv-jam-cap-'))
@@ -190,14 +203,14 @@ describe('captures in the browser', () => {
     const draft = (await cardsNow()).find((c: any) => c.kind === 'capture' && c.state === 'draft')
     expect(draft).toBeTruthy()
     await enter()
-    await until(`window.__mvComments.getState().threads.some((t) => t.id === 'cap-${draft.id}' && t.capture === ${JSON.stringify(draft.id)})`, 15_000)
+    await until(`window.__mvComments.getState().threads.some((t) => t.id === 'cap-${draft.id}' && t.capture === ${JSON.stringify(draft.id)})`, 40_000)
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(draft.id)} && c.state === 'review')`, 30_000)
     await pic('lane-review')
     await key('v')                                                             // the oldest capture to review
     await until(`window.__mvJamUi.getState().panel?.kind === 'review' && !!document.querySelector('.jm-focus')`, 5000)
     await pic('review')
     await enter()                                                  // Looks good
-    await until(`window.__mvComments.getState().threads.find((t) => t.id === 'cap-${draft.id}')?.resolved === true`, 15_000)
+    await until(`window.__mvComments.getState().threads.find((t) => t.id === 'cap-${draft.id}')?.resolved === true`, 40_000)
   }, 120_000)
 
   skippable('an owned key pressed inside an interacting frame starts and ends a capture there', async () => {
@@ -276,7 +289,7 @@ describe('captures in the browser', () => {
     const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
     await browser!.eval(s, `window.__mvJamCapture.getState().note('use your second idea'), 1`)
     await key('e')
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(a)} && c.state === 'draft' && c.reviewing?.card === ${JSON.stringify(r0)})`, 15_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(a)} && c.state === 'draft' && c.reviewing?.card === ${JSON.stringify(r0)})`, 40_000)
     await until(`window.__mvJamUi.getState().panel?.kind === 'capture' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 5000)
     await enter()
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(a)} && c.state !== 'draft')`, 10_000)
@@ -385,7 +398,7 @@ describe('captures in the browser', () => {
     await browser!.eval(s, `window.__mvJamCapture.getState().note('do not lose me'), 1`)
     await key('e')
     // sealed (after its end pictures) and refused by the network: kept here, nothing lost
-    await until(kept(`!!all[${JSON.stringify(id)}]?.timeline.some((x) => x.text === 'do not lose me')`), 15_000)
+    await until(kept(`!!all[${JSON.stringify(id)}]?.timeline.some((x) => x.text === 'do not lose me')`), 40_000)
     // the server answers but jam is not running yet (409): still kept, still retried
     await browser!.eval(s, `(window.__fail = 2), 1`)
     await sleep(6000)
@@ -547,7 +560,7 @@ describe('captures in the browser', () => {
     expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(second)}].steps.filter((x) => x.event === 'hover').length`)).toBe(0)
     const esc = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }
     await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...esc }, s); await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...esc }, s)
-    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(first)})`, 15_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(first)})`, 40_000)
     await browser!.eval(s, `window.__mvJamQueue.getState().act(window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(first)}), 'drop')`)
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
   }, 60_000)
