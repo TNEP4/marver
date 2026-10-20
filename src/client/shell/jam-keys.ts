@@ -21,7 +21,7 @@ import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
-import { PUBLISHED, useStore } from './store.ts'
+import { CONFIG, PUBLISHED, useStore } from './store.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
 /** `[Ctrl+][Meta+][Alt+][Shift+]key`, a letter lowercase - the frames' descriptor (keys.js). */
@@ -163,6 +163,8 @@ export function openTile(id: string) {
   if (!c) return
   if (c.state === 'asks' && c.thread) {
     ui.select(id)
+    // on another board: its link opens the board, then the thread (as a notification's does)
+    if (c.board !== useStore.getState().board) { location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`; return }
     void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setActive(c.thread!))
     return
   }
@@ -278,8 +280,9 @@ const rows = (): Row[] => {
         }
       })(),
     },
-    { // always (no field focused)
-      on: () => !PUBLISHED,
+    { // always (no field focused) - only where Jam runs: with `jam: false` or no agent the server takes no
+      // capture, and the toolbar shows no Jam button either
+      on: () => !PUBLISHED && !!CONFIG.jam,
       keys: {
         s: () => startCapture(),
         j: () => pressJ(),
