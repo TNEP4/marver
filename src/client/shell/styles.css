@@ -1445,6 +1445,8 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .sh-panel .sub.mk-new, .sh-panel .sub.mk-new .nm { color: var(--mk-new); font-weight: 600 }
 .sh-panel .sub.mk-new .iicon, .sh-panel .sub.mk-new .chip { color: var(--mk-new); opacity: 1 }
 .sh-panel .sub.mk-ask .iicon, .sh-panel .sub.mk-ask .chip { color: var(--mk-ask); opacity: 1 }
+/* a selected variant's chip is filled with the accent: its letter stays white - the bubble carries the mark */
+.sh-panel .sub.mk-new .chip.on, .sh-panel .sub.mk-ask .chip.on { color: #fff }
 .sh-panel .it.board.mk-new { color: var(--mk-new) }
 .sh-panel .it.board.mk-new > .sh-live-ic svg, .sh-panel .it.board.mk-new > svg { color: var(--mk-new) }
 .sh-panel .it.board.mk-ask > .sh-live-ic svg, .sh-panel .it.board.mk-ask > svg { color: var(--mk-ask) }

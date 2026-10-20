@@ -507,6 +507,22 @@ describe('captures: review round 2 fixes', () => {
     expect(captureFrames(none)).toEqual(['demo/a', 'demo/b', 'demo/c'])
   })
 
+  it('a hover is the pointer resting: it names a frame only when nothing else was touched (trial 4 - a rest on a frame as a capture began held it from the next capture)', () => {
+    const r = rec({ timeline: [
+      { at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b', 'demo/c'] } },
+      { at: 2, frame: 'demo/a', event: 'hover', bundle: { tag: 'p' }, mode: 'canvas' },
+      { at: 3, frame: 'demo/b', event: 'click', point: 1, bundle: { tag: 'rect' }, mode: 'canvas' },
+      { at: 4, frame: 'demo/b', event: 'hover', bundle: { tag: 'div' }, mode: 'canvas' },
+    ] as any })
+    expect(captureFrames(r)).toEqual(['demo/b'])
+    const hovers = rec({ timeline: [
+      { at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b', 'demo/c'] } },
+      { at: 2, frame: 'demo/c', event: 'hover', bundle: { tag: 'p' }, mode: 'canvas' },
+      { at: 3, event: 'words', text: 'this paragraph' },
+    ] as any })
+    expect(captureFrames(hovers)).toEqual(['demo/c'])
+  })
+
   it('a resumed capture keeps the frames its first part was about, beside the new part\'s; one begun over empty canvas falls back on the first view that showed frames', () => {
     const first = [
       { at: 1, event: 'view', view: { frames: ['demo/a', 'demo/b'] } },
