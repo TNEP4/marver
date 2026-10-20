@@ -309,8 +309,8 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   onTab(i: number): void
   view: 'both' | 'before' | 'after'
   onFlip(view: 'both' | 'before' | 'after'): void
-  /** the panel width the pictures need (0.26.1): both at once, as big as the panel's height allows */
-  onFit?(width: number): void
+  /** the panel width the pictures need (0.26.1): both at once, as big as the panel's height allows; undefined: the default */
+  onFit?(width: number | undefined): void
   reply: ReactNode
   /** `new`: a frame the run made - nothing before it */
   shots: { frame: string; before?: string; after?: string; new?: boolean }[]
@@ -335,12 +335,15 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   const [sizes, setSizes] = useState<Record<string, number>>({})
   const sized = (url?: string) => (url ? (w: number, h: number) => { if (w > 0 && h > 0) setSizes((m) => (m[url] === w / h ? m : { ...m, [url]: w / h })) } : undefined)
   const aspect = (shot?.after && sizes[shot.after]) || (shot?.before && sizes[shot.before]) || undefined
-  const both = view === 'both' && !shot?.new && !!shot?.before && !!shot?.after
+  // both slots whenever the frame has a before at all (either may read "No picture") - a missing After never hides a Before
+  const both = view === 'both' && !!shot && !shot.new && !!(shot.before || shot.after)
   const side = (aspect ?? 1.6) <= 1.1
   const big = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const el = big.current
-    if (!el || !onFit || !aspect) return
+    if (!el || !onFit) return
+    // no picture of this one measured yet (loading, or none loads): the default width - never the last tab's
+    if (!aspect) { onFit(undefined); return }
     const ask = () => {
       const panel = el.closest('.jm-panel') as HTMLElement | null
       if (!panel) return
@@ -403,7 +406,7 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
       )}
       <div ref={big} className={`jm-big${both ? ` pair ${side ? 'side' : 'stack'}` : ''}`} data-jam-pair={both ? (side ? 'side' : 'stack') : 'one'}>
         {both
-          ? <><Shot url={shot!.before} cap="Before" alt={`${label(names[active] ?? '')} before`} onSize={sized(shot!.before)} /><Shot url={shot!.after} cap="After" alt={`${label(names[active] ?? '')} after`} onSize={sized(shot!.after)} /></>
+          ? <><Shot key={`b-${shot!.before ?? 'none'}`} url={shot!.before} cap="Before" alt={`${label(names[active] ?? '')} before`} onSize={sized(shot!.before)} /><Shot key={`a-${shot!.after ?? 'none'}`} url={shot!.after} cap="After" alt={`${label(names[active] ?? '')} after`} onSize={sized(shot!.after)} /></>
           : <Shot url={view === 'before' && !shot?.new ? shot?.before : shot?.after} alt={`${label(names[active] ?? '')} ${shot?.new ? 'new' : view}`}
               onSize={sized(view === 'before' && !shot?.new ? shot?.before : shot?.after)} />}
       </div>

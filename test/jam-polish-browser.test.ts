@@ -214,13 +214,26 @@ describe('the review shows before and after at once, by the frame\'s shape (0.26
     for (const id of [phone, laptop, third]) expect(await ev(`!!document.querySelector('.jm-lane [data-tile="${id}"]')`)).toBe(true)
     await ev(`document.querySelector('[data-jam-done="open"]').click(), 1`)
     await until(`!!document.querySelector('[data-jam-done="folded"]')`, 3000)
-    // the lane's keys: the folded group is one stop, ⏎ opens it
+    // the lane's keys, a round trip by keys alone: the folded group is one stop, ⏎ opens it (the selection to its
+    // first done tile), ← reaches the collapse tile, ⏎ folds them back (the selection to the group)
+    const left = () => keyEvent({ key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 })
+    const sel = () => ev(`window.__mvJamUi.getState().selected`)
     await key('q')
-    await ev(`window.__mvJamUi.getState().select('jam-done-group'), 1`)
+    await until(`window.__mvJamUi.getState().laneKeys`, 3000)
+    for (let i = 0; i < 12 && (await sel()) !== 'jam-done-group'; i++) await left()
+    expect(await sel()).toBe('jam-done-group')
     await enter()
     await until(`!!document.querySelector('[data-jam-done="open"]')`, 3000)
+    const first = await sel()
+    expect([phone, laptop, third]).toContain(first)
+    await left()
+    await until(`window.__mvJamUi.getState().selected === 'jam-done-close'`, 3000)
+    await enter()
+    await until(`!!document.querySelector('[data-jam-done="folded"]') && window.__mvJamUi.getState().selected === 'jam-done-group'`, 3000)
+    // the group, selected, is in view
+    const g = await rect('[data-jam-done="folded"]'), lane = await rect('.jm-lane-in')
+    expect(g!.x).toBeGreaterThanOrEqual(lane!.x - 1)
     await escape()
-    await ev(`window.__mvJamUi.getState().setDoneOpen(false), 1`)
     // the session ends (no record)
     await ev(`(async () => { const ses = window.__mvJamQueue.getState().session; const csrf = (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || ''; if (ses) { await fetch('/__mv/api/jam/session', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf }, body: JSON.stringify({ action: 'end', id: ses.id }) }); window.__mvJamQueue.getState().forget(ses.id) } await window.__mvJamQueue.getState().load(); return 1 })()`)
     await until(`!window.__mvJamQueue.getState().session`, 10_000)
@@ -268,9 +281,10 @@ describe('the laser points; inspect is its own mode (0.26.1)', () => {
     await mouse(at.x, at.y)
     return at
   }
-  /** the phone frame in view, nothing selected, no laser, nothing open */
+  /** the phone frame in view, nothing selected, no laser, nothing open - the focus on the shell (a click in a frame
+   *  before left it there) */
   const phoneInView = async () => {
-    await ev(`(() => { const st = window.__mvStore.getState(); st.setLaser(false); st.select([]); window.__mvJamUi.getState().close(); window.__mvJamCanvas.fitNodes([st.nodes.find((n) => n.frame === 'spec/phone').key]); return 1 })()`)
+    await ev(`(() => { const st = window.__mvStore.getState(); st.setLaser(false); st.select([]); window.__mvJamUi.getState().close(); window.__mvJamCanvas.fitNodes([st.nodes.find((n) => n.frame === 'spec/phone').key]); if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); window.focus(); return 1 })()`)
     await sleep(500)
   }
   const outline = (frameId: string, sel: string) => inFrame(frameId, `(d) => getComputedStyle(d.querySelector(${JSON.stringify(sel)})).outlineStyle`)
@@ -327,6 +341,41 @@ describe('the laser points; inspect is its own mode (0.26.1)', () => {
     await sleep(300)
     expect(await outline('spec/phone', '#p')).toBe('solid')
     await ev(`(() => { const st = window.__mvStore.getState(); const k = st.nodes.find((n) => n.frame === 'spec/phone').key; document.querySelector('.sh-node[data-node="' + k + '"] iframe').contentWindow.postMessage({ type: 'sh:laser', on: false }, location.origin); return 1 })()`)
+  })
+
+  skippable('Esc turns a laser off first - an open review stays open until the next Esc', async () => {
+    await phoneInView()
+    const anyCard = await ev(`(window.__mvJamQueue.getState().cards ?? []).find((c) => c.state === 'done' || c.state === 'review')?.id`)
+    await ev(`window.__mvJamUi.getState().open({ kind: 'review', id: ${JSON.stringify(anyCard)} }), 1`)
+    await until(`!!window.__mvJamUi.getState().panel`, 3000)
+    await key('l')
+    await until(`window.__mvStore.getState().laser`, 3000)
+    await escape()
+    await until(`!window.__mvStore.getState().laser`, 3000)
+    expect(await ev(`!!window.__mvJamUi.getState().panel`)).toBe(true)
+    await escape()
+    await until(`!window.__mvJamUi.getState().panel`, 3000)
+  })
+
+  skippable('in play: ⌥L is inspect and L the pointer - from the shell and from inside the stage', async () => {
+    await phoneInView()
+    await ev(`window.__mvStore.getState().setPlay({ at: 'spec/phone', device: 'mobile', theme: 'light' }), 1`)
+    await until(`window.__mvStore.getState().stageShown?.at === 'spec/phone'`, 20_000)
+    await optL()
+    await until(`window.__mvStore.getState().laser && window.__mvStore.getState().laserInspect`, 3000)
+    await key('l')
+    await until(`window.__mvStore.getState().laser && !window.__mvStore.getState().laserInspect`, 3000)
+    await key('l')
+    await until(`!window.__mvStore.getState().laser`, 3000)
+    // the stage has the focus: its ⌥L reaches the shell as inspect
+    await ev(`(document.querySelector('iframe[title="play"]').contentWindow.focus(), 1)`)
+    await sleep(100)
+    await optL()
+    await until(`window.__mvStore.getState().laser && window.__mvStore.getState().laserInspect`, 3000)
+    await escape()
+    await until(`!window.__mvStore.getState().laser`, 3000)
+    await ev(`window.__mvStore.getState().setPlay(null), 1`)
+    await until(`!document.querySelector('iframe[title="play"]')`, 5000)
   })
 })
 

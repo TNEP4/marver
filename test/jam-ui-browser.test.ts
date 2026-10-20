@@ -71,15 +71,19 @@ describe('Jam V2 gallery: the lane', () => {
     expect(await browser!.eval(s, `getComputedStyle(document.querySelector('.jm-live-dot')).backgroundColor`)).toBe('rgb(0, 210, 224)')   // teal (dark)
   })
 
-  skippable('past its width the lane scrolls to keep the newest in view - the earlier tiles go under the left fade', async () => {
+  skippable('past its width the lane scrolls to keep the newest in view - the earlier tiles go under the left edge', async () => {
+    // nine done tiles fold into one: the lane fits
     await open('scene=lane&many=1')
-    const st = await browser!.eval(s, `(() => { const e = document.querySelector('.jm-lane-in'); return { overflow: e.scrollWidth > e.clientWidth, atEnd: Math.abs(e.scrollLeft + e.clientWidth - e.scrollWidth) < 2, cls: e.className } })()`)
+    expect(await browser!.eval(s, `document.querySelectorAll('.jm-lane [data-jam-done=folded]').length`)).toBe(1)
+    // open, they overflow
+    await open('scene=lane&many=1&done=open')
+    const st = await browser!.eval(s, `(() => { const e = document.querySelector('.jm-lane-in'); return { overflow: e.scrollWidth > e.clientWidth, atEnd: Math.abs(e.scrollLeft + e.clientWidth - e.scrollWidth) < 2, l: !!document.querySelector('.jm-lane-edge.l'), r: !!document.querySelector('.jm-lane-edge.r') } })()`)
     expect(st.overflow).toBe(true)
     expect(st.atEnd).toBe(true)
-    expect(st.cls).toContain('fade-l')
-    expect(st.cls).not.toContain('fade-r')
+    expect(st.l).toBe(true)
+    expect(st.r).toBe(false)
     await browser!.eval(s, `(() => { const e = document.querySelector('.jm-lane-in'); e.scrollLeft = 200; e.dispatchEvent(new Event('scroll')); return 1 })()`)
-    await browser!.until(s, `document.querySelector('.jm-lane-in').className.includes('fade-r')`)
+    await browser!.until(s, `!!document.querySelector('.jm-lane-edge.r')`)
     await shot('lane-scrolled')
     // the recording tile is still whole at the right end once back at the end
     await open('scene=lane&many=1')
@@ -107,19 +111,24 @@ describe('Jam V2 gallery: the panels', () => {
     expect(await browser!.until(s, `document.querySelector('textarea.jm-edit')?.value`)).toContain('this card field never says which cards we take')
   })
 
-  skippable('the review shows one big picture at a time - After first, B flips to Before, tabs step the frames, a failed shot reads "No picture"; More work becomes a composer', async () => {
+  skippable('the review shows before and after at once - Both first, Before and After alone, tabs step the frames, a missing After reads "No picture" beside its Before; More work becomes a composer', async () => {
     for (const theme of ['light', 'dark']) {
       await open(`scene=review&theme=${theme}`)
       await shot(`review-${theme}`)
     }
-    const img = () => browser!.eval(s, `document.querySelector('.jm-big img')?.getAttribute('alt') ?? document.querySelector('.jm-big .pic.none')?.textContent`)
-    expect(await img()).toBe('confirm after')
-    await browser!.eval(s, `[...document.querySelectorAll('.jm-fbar .jm-ftabs')].pop().querySelector('button').click(), 1`)
-    await browser!.until(s, `document.querySelector('.jm-big img')?.getAttribute('alt') === 'confirm before'`)
+    const pics = () => browser!.eval(s, `[...document.querySelectorAll('.jm-big img, .jm-big .pic.none')].map((e) => e.getAttribute('alt') ?? e.textContent)`)
+    const choose = (i: number) => browser!.eval(s, `[...document.querySelectorAll('.jm-fbar .jm-ftabs')].pop().querySelectorAll('button')[${i}].click(), 1`)
+    expect(await pics()).toEqual(['confirm before', 'confirm after'])
+    await choose(1)   // Before
+    await browser!.until(s, `document.querySelectorAll('.jm-big img').length === 1 && document.querySelector('.jm-big img').getAttribute('alt') === 'confirm before'`)
     await browser!.eval(s, `document.querySelector('.jm-fbar [role=tab]:nth-child(2)').click(), 1`)
     await browser!.until(s, `document.querySelector('.jm-big img')?.getAttribute('alt') === 'plans before'`)
-    await browser!.eval(s, `[...document.querySelectorAll('.jm-fbar .jm-ftabs')].pop().querySelectorAll('button')[1].click(), 1`)
+    await choose(2)   // After: plans has none
     await browser!.until(s, `document.querySelector('.jm-big .pic.none')?.textContent === 'No picture'`)
+    // Both: the Before still shows, the missing After beside it says so
+    await choose(0)
+    await browser!.until(s, `document.querySelectorAll('.jm-big img').length === 1 && document.querySelectorAll('.jm-big .pic.none').length === 1`)
+    expect(await pics()).toEqual(['plans before', 'No picture'])
     await shot('review-nopicture')
     await browser!.eval(s, `[...document.querySelectorAll('.jm-review .actions button')].find((b) => b.textContent.startsWith('More work')).click(), 1`)
     await browser!.until(s, `document.activeElement?.matches('.jm-more textarea')`)

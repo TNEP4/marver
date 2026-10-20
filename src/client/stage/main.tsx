@@ -268,6 +268,8 @@ function Stage() {
       // comment/laser first, else exit) - the stage can't see review mode
       if (e.key === 'Escape') { post({ type: 'sh:stage-key', key: 'Escape', code: e.code }); return }
       if (!keyAllowed(e)) return   // the one guard: never from a field, an editable, an IME composition
+      // ⌥L (inspect): Option types a symbol on a Mac - named by the key pressed
+      if (e.altKey && e.code === 'KeyL') { post({ type: 'sh:stage-key', key: 'l', code: e.code, alt: true }); return }
       // every play shortcut belongs to the shell (it owns walk order + chrome) - forward.
       // l/c toggle laser/comment, C (shift+c) hides pins; the shell acts and broadcasts back.
       if (/^Digit[0-9]$/.test(e.code) || ['d', 'h', 'r', 'l', 'c', 'C', '[', ']', 'ArrowRight', 'ArrowLeft'].includes(e.key))

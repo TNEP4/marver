@@ -487,7 +487,7 @@ function PlayInner() {
         }
       } else if (data.type === 'sh:stage-key') {
         if (data.meta && data.key === '/') toggleCollapse()
-        else handleKey(String(data.key), String(data.code))
+        else handleKey(String(data.key), String(data.code), !!data.alt)
       } else if (data.type === 'sh:picked') {
         // comment pick from the stage: stage the draft on the walked frame (its canvas
         // node when one is on this board, so the thread also lands on the canvas). Stamp
@@ -523,7 +523,7 @@ function PlayInner() {
   }, [])
 
   // shared handler: keys arrive directly (focus in shell) or forwarded by the stage
-  const handleKey = (key: string, code: string) => {
+  const handleKey = (key: string, code: string, alt = false) => {
     if (key === 'Escape') {
       // a live review mode swallows Escape first (cancel), so it never ejects you from
       // the prototype mid-comment; a second Escape (nothing live) exits
@@ -540,7 +540,8 @@ function PlayInner() {
     if (key === ']') { switchVariant(1); return }
     if (key === 'r') { restart(); return }
     if (key === 'h') { toggleHideUI(); return }
-    if (key === 'l' && SOURCE_REVEALED) { const s = useStore.getState(); if (!s.laser) commentsStore().setMode(false); s.setLaser(!s.laser); return }
+    // L: the pointer laser; ⌥L: inspect
+    if (key === 'l' && SOURCE_REVEALED) { commentsStore().setMode(false); useStore.getState().toggleLaser(alt); return }
     if (key === 'c') { const c = commentsStore(); if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
     if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
     if (key === 'L') { const c = commentsStore(); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus
@@ -562,10 +563,12 @@ function PlayInner() {
     const onKey = (e: KeyboardEvent) => {
       if (!keyAllowed(e)) return   // the one key guard (frame-host/keys.js): never from a field, an editable, an IME composition
       // Jam's keys first - a review open takes the arrows before they step screens
-      if (!e.repeat && jamKey({ key: e.key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
+      // with Option a Mac types a symbol (⌥L is "¬"): an Alt shortcut is named by the key pressed
+      const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key
+      if (!e.repeat && jamKey({ key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); toggleCollapse(); return }
       if (e.metaKey || e.ctrlKey) return
-      handleKey(e.key, e.code)
+      handleKey(key, e.code, e.altKey)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

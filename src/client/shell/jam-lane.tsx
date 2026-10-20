@@ -118,7 +118,8 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
   useLayoutEffect(() => {
     if (firstOpen.current) { firstOpen.current = false; return }
     const el = ref.current
-    if (el) el.scrollLeft = doneOpen ? 0 : el.scrollWidth
+    // (folding with the group selected: the selection's own scroll shows the group)
+    if (el && (doneOpen || selected !== DONE_GROUP)) el.scrollLeft = doneOpen ? 0 : el.scrollWidth
     measure()
   }, [doneOpen])
   const measure = () => {

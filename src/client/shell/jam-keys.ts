@@ -21,7 +21,7 @@ import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { DONE_CLOSE, DONE_GROUP, doneFold, useJamUi } from './jam-state.ts'
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
-import { CONFIG, PUBLISHED, useStore } from './store.ts'
+import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
 /** `[Ctrl+][Meta+][Alt+][Shift+]key`, a letter lowercase - the frames' descriptor (keys.js). */
@@ -216,11 +216,25 @@ const laserOff = (): boolean => { const st = useStore.getState(); if (!st.laser)
  *  `session`: the session it belongs to when the queue may not show it yet (a session's Start). */
 export const startCapture = (session?: string) => useJamCapture.getState().start(reviewNow(), session)
 
+/** A laser on (pointer or inspect): its keys come first - Esc turns it off before it closes, drops or leaves anything -
+ *  and are owned, so they work from inside a frame too (a laser click puts the focus there). The one row a published
+ *  canvas has (where its source is revealed - the only place a laser exists there). */
+const laserRow: Row = {
+  on: () => useStore.getState().laser,
+  keys: {
+    l: () => useStore.getState().toggleLaser(false),
+    'Alt+l': () => useStore.getState().toggleLaser(true),
+    Escape: () => useStore.getState().setLaser(false),
+  },
+}
+const rowsNow = (): Row[] => (PUBLISHED ? (SOURCE_REVEALED ? [laserRow] : []) : rows())
+
 const rows = (): Row[] => {
   const cap = useJamCapture.getState()
   const ui = useJamUi.getState()
   const panelCard = cardById(ui.panel?.id)
   return [
+    laserRow,
     { // a session sheet open: the start sheet's ⏎ starts; Esc closes either (the wrap-up's field keeps its own keys)
       on: () => ui.sheet === 'start' || ui.sheet === 'wrap',
       keys: {
@@ -288,7 +302,7 @@ const rows = (): Row[] => {
         return {
           ArrowLeft: () => move(-1), ArrowRight: () => move(1),
           Enter: () => {
-            if (stops[i] === DONE_GROUP) { ui.setDoneOpen(true); ui.select(done[0]?.id ?? DONE_CLOSE) }
+            if (stops[i] === DONE_GROUP) ui.setDoneOpen(true, done.map((c) => c.id))
             else if (stops[i] === DONE_CLOSE) ui.setDoneOpen(false, done.map((c) => c.id))
             else if (sel) openTile(sel.id)
           },
@@ -298,14 +312,6 @@ const rows = (): Row[] => {
           Escape: () => ui.setLaneKeys(false),
         }
       })(),
-    },
-    { // a laser on (pointer or inspect): its keys work from inside a frame too - a laser click puts the focus there
-      on: () => useStore.getState().laser,
-      keys: {
-        l: () => useStore.getState().toggleLaser(false),
-        'Alt+l': () => useStore.getState().toggleLaser(true),
-        Escape: () => useStore.getState().setLaser(false),
-      },
     },
     { // always (no field focused) - only where Jam runs: with `jam: false` or no agent the server takes no
       // capture, and the toolbar shows no Jam button either
@@ -322,9 +328,8 @@ const rows = (): Row[] => {
 
 /** Apply Jam's key if a state takes it. True when it did - the caller stops there. */
 export function jamKey(k: KeyIn): boolean {
-  if (PUBLISHED) return false
   const d = descriptor(k)
-  for (const row of rows()) {
+  for (const row of rowsNow()) {
     if (!row.on()) continue
     const f = row.keys[d] ?? (d.length === 1 ? row.keys[d] : undefined)
     if (f) { f(); syncOwned(); return true }
@@ -334,19 +339,20 @@ export function jamKey(k: KeyIn): boolean {
 
 /** Mirror the keys owned right now into the frames. Called whenever a state may have changed. */
 export function syncOwned() {
-  if (PUBLISHED) return
   const owned = new Set<string>()
-  for (const row of rows()) if (row.on()) for (const k of Object.keys(row.keys)) owned.add(k)
+  for (const row of rowsNow()) if (row.on()) for (const k of Object.keys(row.keys)) owned.add(k)
   setOwnedKeys([...owned])
 }
 
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) void import('./canvas/ctl.ts').then(({ canvasCtl }) => { (window as any).__mvJamCanvas = canvasCtl })
 
-if (typeof window !== 'undefined' && !PUBLISHED) {
-  // the states live in three stores: any change may change what is owned
-  useJamCapture.subscribe(syncOwned)
-  useJamUi.subscribe(syncOwned)
-  useJamQueue.subscribe(syncOwned)
-  // and the laser (its keys are owned while it is on)
+if (typeof window !== 'undefined') {
+  if (!PUBLISHED) {
+    // the states live in three stores: any change may change what is owned
+    useJamCapture.subscribe(syncOwned)
+    useJamUi.subscribe(syncOwned)
+    useJamQueue.subscribe(syncOwned)
+  }
+  // and the laser (its keys are owned while it is on - on a published canvas too)
   useStore.subscribe((s, p) => { if (s.laser !== p.laser || s.laserInspect !== p.laserInspect) syncOwned() })
 }

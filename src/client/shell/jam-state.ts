@@ -46,7 +46,15 @@ export const useJamUi = create<JamUi>((set, get) => ({
   close() { set({ panel: null, moreOpen: false }) },
   setLaneKeys(on) { set({ laneKeys: on }) },
   // folding: a done tile that was selected hands its selection to the group
-  setDoneOpen(open, doneIds = []) { set((s) => ({ doneOpen: open, ...(!open && s.selected && doneIds.includes(s.selected) ? { selected: DONE_GROUP } : {}) })) },
+  // the selection follows the fold: folding, a selected done tile or the collapse tile hands it to the group; opening,
+  // a selected group hands it to the first done tile
+  setDoneOpen(open, doneIds = []) {
+    set((s) => ({
+      doneOpen: open,
+      ...(!open && s.selected && (s.selected === DONE_CLOSE || doneIds.includes(s.selected)) ? { selected: DONE_GROUP } : {}),
+      ...(open && s.selected === DONE_GROUP ? { selected: doneIds[0] ?? DONE_CLOSE } : {}),
+    }))
+  },
   select(id) { set({ selected: id }) },
   // B: Both -> Before -> After -> Both
   flip() { set((s) => ({ view: s.view === 'both' ? 'before' : s.view === 'before' ? 'after' : 'both' })) },
