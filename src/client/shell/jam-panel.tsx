@@ -434,7 +434,9 @@ export const Caption = ({ old, live, style }: { old?: string; live?: string; sty
   </div>
 )
 
-/** The one question words need (first `S` on a canvas), then the model's download if it is missing. */
+/** The one question words need (first `S` on a canvas), then the model's download if it is missing:
+ *  a header that says what is happening, a line on why, then what the model is (trial 3: "Words on this
+ *  Mac" said neither). */
 export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, style }: {
   step: 'ask' | 'download' | 'downloading' | 'checking' | 'failed' | 'unavailable'
   mb: number
@@ -443,22 +445,33 @@ export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, s
   onYes(): void; onNo(): void; onDownload(): void
   style?: CSSProperties
 }) {
+  const pct = Math.round((progress ?? 0) * 100)
+  const title = {
+    ask: 'Say it instead of typing?',
+    download: 'Add voice to Jam',
+    downloading: 'Downloading the voice model',
+    checking: 'Almost ready',
+    failed: 'The download stopped',
+    unavailable: 'Voice is not available here',
+  }[step]
   return (
     <div className="jm-panel jm-voiceask" data-jam-voiceask={step} style={style}>
-      <div className="top"><MicrophoneIcon size={14} style={{ color: 'var(--jm-rec)' }} /><h3>{step === 'ask' ? 'Say it instead of typing?' : 'Words on this Mac'}</h3></div>
-      <p className="dim">
-        {step === 'ask' && 'While a capture records, what you say becomes words in it - transcribed on this Mac. The audio is never kept or sent anywhere.'}
-        {step === 'download' && `One download first: the speech model, ${mb} MB, kept in ~/.marver/models for every canvas.`}
-        {step === 'downloading' && `Downloading the speech model - ${Math.round((progress ?? 0) * 100)}%. Captures keep recording; your words start with the next one.`}
-        {step === 'checking' && 'Checking the speech model...'}
-        {step === 'failed' && `The download did not finish: ${error ?? 'unknown error'}.`}
-        {step === 'unavailable' && (error ?? 'Words are not available here - typed notes only.')}
-      </p>
-      {(step === 'downloading' || step === 'checking') && <div className="jm-progress"><i style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} /></div>}
+      <div className="top"><MicrophoneIcon size={14} style={{ color: 'var(--jm-rec)' }} /><h3>{title}</h3></div>
+      {step === 'ask' && <p className="dim">While a capture records, what you say becomes words in it - transcribed on this Mac. The audio is never kept or sent anywhere.</p>}
+      {step === 'download' && <>
+        <p className="lead">Jam needs a speech-to-text model to turn what you say into words in each capture.</p>
+        <p className="dim">It is NVIDIA's Parakeet v3: small, fast and accurate, and it runs on this Mac, so your audio never leaves it. One {mb}{'\u00a0'}MB download, shared by every canvas.</p>
+      </>}
+      {step === 'downloading' && <p className="dim">{pct}% of {mb}{'\u00a0'}MB. Keep going: this capture records as usual, and your words start with the next one.</p>}
+      {step === 'checking' && <p className="dim">Checking the download, then voice is on.</p>}
+      {step === 'failed' && <p className="dim">{error ?? 'Unknown error'}. Try again, or keep going with typed notes.</p>}
+      {step === 'unavailable' && <p className="dim">{error ?? 'The speech engine could not start. Captures keep typed notes.'}</p>}
+      {step === 'downloading' && <div className="jm-progress"><i style={{ width: `${pct}%` }} /></div>}
+      {step === 'checking' && <div className="jm-progress busy"><i /></div>}
       <div className="actions">
         <span className="sp" />
         {step === 'ask' && <><button className="jm-btn ghost" onClick={onNo}>Not now</button><button className="jm-btn primary" onClick={onYes}>Use the microphone</button></>}
-        {(step === 'download' || step === 'failed') && <><button className="jm-btn ghost" onClick={onNo}>Typed notes only</button><button className="jm-btn primary" onClick={onDownload}>{step === 'failed' ? 'Try again' : `Download ${mb} MB`}</button></>}
+        {(step === 'download' || step === 'failed') && <><button className="jm-btn ghost" onClick={onNo}>Not now</button><button className="jm-btn primary" onClick={onDownload}>{step === 'failed' ? 'Try again' : `Download ${mb} MB`}</button></>}
         {step === 'unavailable' && <><button className="jm-btn ghost" onClick={onNo}>Typed notes only</button><button className="jm-btn primary" onClick={onYes}>Try again</button></>}
       </div>
     </div>

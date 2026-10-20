@@ -28,7 +28,9 @@ const rand = (n = 6) => Math.random().toString(36).slice(2, 2 + n).padEnd(n, '0'
 /** One recorder answers a flush within this; one that does not is noted in the record. */
 const FLUSH_MS = 500
 const PROBE_MS = 500
-const PICTURE_MS = 5_000
+/** A picture is a render on the server: two at once in a cold browser on a busy Mac (a model downloading,
+ *  words being transcribed) took 5-6 s in a trial, so the page waits long enough not to throw a good one away. */
+const PICTURE_MS = 20_000
 const MAX_PICTURES = 12
 
 // ---- mounted instances: one per canvas node, and the play stage ------------------------------------
@@ -528,13 +530,13 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   const size = atEnd ? { width: atEnd.w, height: atEnd.h } : onStage ? { width: onStage.w, height: onStage.h } : seen?.play && why !== 'key' ? { width: seen.w, height: seen.h } : n ? { width: n.w, height: n.h } : undefined
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
-  const done = (pid: string | null) => {
+  const done = (pid: string | null, late: boolean) => {
     mutate((s) => {
       const x = s.caps[id]
       if (!x) return
       x.shots -= 1
       if (pid) { x.pictures.push(pid); x.steps.push({ at, frame, event: 'picture', id: pid, why }) }
-      else x.steps.push({ at, frame, event: 'missing', what: `a picture of ${frame}` })
+      else x.steps.push({ at, frame, event: 'missing', what: `no picture of ${frame} - ${late ? `it took over ${PICTURE_MS / 1000} s` : 'the render failed'}` })
     })
     trySeal(id)
   }
@@ -542,7 +544,7 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   const timer = setTimeout(() => ctl.abort(), PICTURE_MS)
   // settled exactly once - a picture, or a missing one - whatever fails: the request, its body, the abort
   let settled = false
-  const finish = (pid: string | null) => { if (settled) return; settled = true; clearTimeout(timer); done(pid) }
+  const finish = (pid: string | null) => { if (settled) return; settled = true; clearTimeout(timer); done(pid, ctl.signal.aborted) }
   fetch(`${ROUTE}/api/jam/picture`, {
     method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
     body: JSON.stringify({ capture: id, frame, theme, ...(size ? { w: Math.round(size.width), h: Math.round(size.height) } : {}) }),
