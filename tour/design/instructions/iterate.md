@@ -1,4 +1,4 @@
-<!-- marver:managed 484f0d056c82ac6e357847503ab25a3ac01eb9fa14a22a3984d5b10bbb27465c - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 8749f94f5b731e380391f7285a36bb175d104894888e86daf5fae59c2ccdd0f9 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Iterate - versions are nearly free, so keep them
 
 Read this when you are about to CHANGE a frame the human has already seen, when
@@ -31,11 +31,14 @@ one frame of a scene; the human saying "iterate", "push this further", "next
 version", or asking for a change that is not a typo or a spacing polish. One
 substantial comment on one frame is NOT a round - that is a letter (above).
 
+This is for rounds a human starts in a chat session. A jam job (a spawned
+`@marver` job) never snapshots: it touches only the frames its packet reserves,
+and its record is its thread (instructions/jam.md).
+
 Before the first edit of a round, snapshot the scene. One snapshot per round,
 not per comment: if the newest `design/scenes/<scene>-v<N>/` is younger than
-every file in the live scene (nothing changed since it was taken - a sibling
-job or the previous comment took it minutes ago), the snapshot exists - skip
-to step 4.
+every file in the live scene (nothing changed since it was taken - the previous
+comment took it minutes ago), the snapshot exists - skip to step 4.
 
 1. **Copy the scene**: `design/scenes/<scene>/` → `design/scenes/<scene>-v<N>/`
    (`v1` the first time; then the next free number), `_layout.tsx`,
@@ -81,9 +84,8 @@ to step 4.
    depends on who started it: a thread the owner started (`comments reply`
    printed "as Marver") stays OPEN - the owner reviews your change on the
    canvas, in the thread, and resolves it; a collaborator's thread (the reply
-   printed "in your voice") you resolve with `--addressed-in <scene>/<frame>`;
-   from a comment-born jam job you never resolve - the owner does
-   (instructions/jam.md). A change that removes an anchored element: a
+   printed "in your voice") you resolve with `--addressed-in <scene>/<frame>`.
+   A change that removes an anchored element: a
    collaborator's thread is replied to and resolved FIRST, then the change
    (resolve first, restructure second); the owner's stays open - say in the
    reply what replaced the element (its pin joins the column at the frame's

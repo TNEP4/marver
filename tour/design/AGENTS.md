@@ -1,4 +1,4 @@
-<!-- marver:managed 2a5b7a68e6fde877f7087316b32eff797218c9858e2e71f2da3b2aeef662c4d3 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 071aac3f5c1845b5786abef759bf810eaa353d3ea0369fd498cb10cbe9d59b75 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -145,7 +145,13 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   new --thread <id>` on your own note), never a second note on the same subject. A note in the
   wrong place: `npx marver comments move <thread> --on "..."`, never a second copy. The chat keeps
   the summary and can say "question on the form". Never resolve your own notes: the human
-  resolves them as they review, and a reply in one comes back to you (Live Jam).
+  resolves them as they review.
+- **A plain reply in a Marver thread starts no job - only an `@marver` tag does.** The human
+  answers your notes and questions on the canvas, then tags the threads they want acted on, or
+  says "go through my replies": then run `npx marver marks` - its **answered by you** list is
+  every open thread where they answered Marver and nothing has acted yet. Act on each, then
+  reply in its thread (`npx marver comments reply <thread> --body "..."`); the reply takes it
+  off the list.
 - A comment-born (`@marver`) job hands back through its reply block alone
   (instructions/jam.md): no link, no CLI reply to its own thread.
 
@@ -273,7 +279,9 @@ creating a board, organising boards, or publishing anything, read instructions/b
 A round of feedback on a scene the human has already reviewed starts with a
 **version snapshot** (`design/scenes/<scene>-v<N>/` on the `archive` board) BEFORE
 the first edit - the human iterates fast knowing every version is one board away.
-instructions/iterate.md has the mechanics.
+instructions/iterate.md has the mechanics. This is for rounds a human starts in a chat
+session: a jam job never snapshots (it touches only the frames its packet reserves -
+instructions/jam.md).
 
 ## Upstream feedback (when marver itself misbehaves)
 
