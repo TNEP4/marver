@@ -1043,6 +1043,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         try { await deliver(b); logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, deliverMs: performance.now() - tDeliver }); break } catch (err) {
           if (n >= 4 || stopped) {
             log(`  jam: could not post a recovered batch - ${(err as Error).message}; its cards fail, Retry posts them`)
+            logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, failure: 'delivery' })
             await q.lock((j) => { settled(undelivered(j, b, 'its replies could not be posted - Retry posts them')); q.persist() })
             break
           }

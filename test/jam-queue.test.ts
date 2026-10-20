@@ -1012,14 +1012,15 @@ describe('Jam V2: review round 4 fixes', () => {
 })
 
 describe('Jam V2: review round 5 fixes', () => {
+  const B_U = '0e2bd1f4-6a4c-4c4e-9a59-2f0c6f1a7b3d'   // a batch id as the daemon makes them (a UUID)
   const withResults = (root: string, dir: string) => {
     const t = say(root, dir, '@marver go', { frame: 'demo/a' })
     const j = readJournal(root)
     j.baselined = true
     j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
     const now = Date.now()
-    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: t.commentId, events: [t.id], state: 'working', batch: 'b-u', made: t.ts, order: t.ts, rev: 2, at: now })
-    j.batches.push({ batchId: 'b-u', members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { body: 'Done, saved.', asks: false, reanchors: [] } } })
+    j.cards.push({ id: `c-${t.id}`, kind: 'comment', board: 'home', frames: ['demo/a'], thread: t.commentId, events: [t.id], state: 'working', batch: B_U, made: t.ts, order: t.ts, rev: 2, at: now })
+    j.batches.push({ batchId: B_U, members: [{ id: 'm1', card: `c-${t.id}`, board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now, results: { m1: { body: 'Done, saved.', asks: false, reanchors: [] } } })
     writeJournal(root, j)
     return t
   }
@@ -1035,6 +1036,10 @@ describe('Jam V2: review round 5 fixes', () => {
     await run
     const c = cardOf(jam, t)!
     expect([c.state, c.note]).toEqual(['failed', 'its replies could not be posted - Retry posts them'])
+    // and its timing says so: the recovered run gave up posting (spec 27a Part D)
+    const { flushJam, readJam } = await import('../src/server/perf-jam.ts')
+    await flushJam(root)
+    expect(readJam(root).events.filter((e) => e.kind === 'run' && e.batch === B_U && e.failure === 'delivery' && e.redelivered).length).toBe(1)
     expect(jam.snapshot().batches[0].state).toBe('claimed')
     failing = false
     const r = await jam.act(c.id, c.rev, 'retry')
