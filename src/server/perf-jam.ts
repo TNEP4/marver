@@ -62,7 +62,7 @@ export function cleanJamEvent(raw: Record<string, unknown>): Record<string, unkn
 }
 
 /** `bytes` and the queue's length count what waits AND what is being appended - released once the append settles. */
-interface Writer { queue: string[]; bytes: number; inFlight: number; dropped: number; busy: boolean; writes: number }
+interface Writer { queue: string[]; bytes: number; inFlight: number; dropped: number; busy: boolean; writes: number; draining?: Promise<void> }
 const writers = new Map<string, Writer>()
 /** Captures already logged, per root: a resent capture event is written once. */
 const seenCaptures = new Map<string, Set<string>>()
@@ -84,7 +84,7 @@ export function logJam(root: string, raw: Record<string, unknown>): void {
     writers.set(root, w)
     if (w.queue.length + w.inFlight >= MAX_EVENTS || w.bytes + line.length > MAX_BYTES) { w.dropped++; return }
     w.queue.push(line); w.bytes += line.length
-    if (!w.busy) { w.busy = true; setImmediate(() => void drain(root, w)) }
+    if (!w.busy) { w.busy = true; w.draining = new Promise<void>((done) => setImmediate(() => void drain(root, w).finally(done))) }
   } catch { /* the log never stands in the way */ }
 }
 
@@ -111,9 +111,14 @@ async function drain(root: string, w: Writer): Promise<void> {
   w.busy = false
 }
 
-/** Wait for every buffered event to be written (tests, and a server shutting down). */
-export async function flushJam(root: string): Promise<void> {
-  for (let i = 0; i < 200 && writers.get(root)?.busy; i++) await new Promise((r) => setTimeout(r, 10))
+/** Wait for every buffered event to be written (tests, and a server shutting down) - the writer's own drain, not a
+ *  fixed time; `ms` at most. */
+export async function flushJam(root: string, ms = 30_000): Promise<void> {
+  const by = Date.now() + ms
+  while (writers.get(root)?.busy && Date.now() < by) {
+    const w = writers.get(root)!
+    await Promise.race([w.draining, new Promise((r) => setTimeout(r, Math.max(1, by - Date.now())))])
+  }
 }
 
 /** The log read back from `since` (epoch ms): malformed lines skipped. */

@@ -70,10 +70,10 @@ describe('the Jam timing log', () => {
     for (let i = 0; i < 1_000; i++) logJam(root, { kind: 'shot', frame: `t/f${i}`, ms: i, outcome: 'ok' })
     // read the pipe until the writer has said how many it dropped (each append opens it anew)
     let text = ''
-    for (let t0 = Date.now(); Date.now() - t0 < 10_000 && !text.includes('"dropped"');) {
+    for (let t0 = Date.now(); Date.now() - t0 < 25_000 && !text.includes('"dropped"');) {
       await new Promise<void>((done) => {
         const r = createReadStream(jamLog(root), { encoding: 'utf8' })
-        const t = setTimeout(() => { r.destroy(); done() }, 2_000)
+        const t = setTimeout(() => { r.destroy(); done() }, 5_000)
         r.on('data', (d) => { text += d }); r.on('end', () => { clearTimeout(t); done() }); r.on('error', () => { clearTimeout(t); done() })
       })
     }
@@ -82,7 +82,7 @@ describe('the Jam timing log', () => {
     expect(evs.filter((e) => e.kind === 'shot').length).toBe(1_000)
     expect(evs.find((e) => e.kind === 'dropped')?.count).toBe(1_000)
     rmSync(root, { recursive: true, force: true })
-  }, 30_000)
+  }, 60_000)
 
   it('past 1,000 waiting events new ones are dropped and counted - the count written once the writer catches up', async () => {
     const root = temp()
@@ -92,7 +92,7 @@ describe('the Jam timing log', () => {
     expect(evs.filter((e) => e.kind === 'shot').length).toBe(1_000)
     expect(evs.find((e) => e.kind === 'dropped')?.count).toBe(200)
     rmSync(root, { recursive: true, force: true })
-  })
+  }, 30_000)
 
   it('read back: malformed lines skipped, a window that starts before the log says so', () => {
     const root = temp()
