@@ -199,7 +199,9 @@ export function factsOf(r: CaptureRecord): string {
 
 // ---- pictures ----------------------------------------------------------------------------------------
 
-export interface PictureEntry { file: string; frame: string; when: number; capture?: string; batch?: string }
+export interface PictureEntry { file: string; frame: string; when: number; capture?: string; batch?: string
+  /** the stale-surface guard could not read it (0.26.1): kept, but not known to be free of Chrome's tiling */
+  unchecked?: true }
 
 const readIndex = (root: string): Record<string, PictureEntry> => {
   try { const v = JSON.parse(readFileSync(indexFile(root), 'utf8')); return v && typeof v === 'object' ? v : {} } catch { return {} }

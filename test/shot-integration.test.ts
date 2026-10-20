@@ -184,7 +184,7 @@ describe.skipIf(!hasChrome)('shot capture - full-height path against real Chrome
     const r = await capture({ url: `${base}/?h=720`, width: 1280, height: 720, out: join(dir, 'fixed4.png'), fullHeight: false, scale: 4 })
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r).toEqual({ ok: true, width: 1280, height: 720, scale: 4 })
+    expect(r).toEqual({ ok: true, width: 1280, height: 720, scale: 4, recaptures: 0 })
     expect(pngSize(join(dir, 'fixed4.png'))).toEqual({ w: 5120, h: 2880 })
   }, 30_000)
 

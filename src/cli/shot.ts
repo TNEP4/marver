@@ -10,7 +10,7 @@
 import { readDevInfo } from '../server/work.ts'
 import { NAME } from './name.ts'
 
-type Entry = { frame: string; ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string } | { frame: string; ok: false; error: string }
+type Entry = { frame: string; ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures?: number } | { frame: string; ok: false; error: string }
 
 export async function shotCommand(root: string, frames: string[], opts: { scene?: string; all?: boolean; theme?: string; scale?: string | number; json?: boolean }): Promise<void> {
   const usage = `${NAME} shot <scene/frame ...> | --scene <name> | --all  [--theme <name>] [--scale 1-4] [--json]`
@@ -39,10 +39,10 @@ export async function shotCommand(root: string, frames: string[], opts: { scene?
   const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string; results?: Entry[] } & Record<string, unknown>
   if (!res.ok) throw new Error(data.error ?? `shot failed (${res.status})`)
   // one shape for both doors: the single answer becomes a one-entry batch
-  const one = data as { path?: string; width?: number; height?: number; scale?: number; truncated?: boolean; unsettled?: boolean; note?: string; error?: string }
+  const one = data as { path?: string; width?: number; height?: number; scale?: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures?: number; error?: string }
   const results: Entry[] = single
     ? [one.path
-      ? { frame: frames[0], ok: true, path: one.path, width: one.width!, height: one.height!, scale: one.scale!, ...(one.truncated ? { truncated: true } : {}), ...(one.unsettled ? { unsettled: true } : {}), ...(one.note ? { note: one.note } : {}) }
+      ? { frame: frames[0], ok: true, path: one.path, width: one.width!, height: one.height!, scale: one.scale!, ...(one.truncated ? { truncated: true } : {}), ...(one.unsettled ? { unsettled: true } : {}), ...(one.note ? { note: one.note } : {}), recaptures: one.recaptures ?? 0 }
       : { frame: frames[0], ok: false, error: one.error ?? 'shot failed' }]
     : data.results ?? []
   if (opts.json) { console.log(JSON.stringify({ results }, null, 2)); if (results.some((r) => !r.ok)) process.exitCode = 1; return }

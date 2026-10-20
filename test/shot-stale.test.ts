@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { capture, captureIn, findChrome, pool, shotSeams, withBrowser } from '../src/server/shot.ts'
@@ -42,7 +42,7 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
   }, 30_000)
   afterAll(() => { server?.close(); if (dir) rmSync(dir, { recursive: true, force: true }) })
-  afterEach(() => { delete shotSeams.capture })
+  afterEach(() => { for (const k of Object.keys(shotSeams)) delete (shotSeams as any)[k] })
 
   const doc = (name: string, extra: Partial<Parameters<typeof capture>[0]> = {}) =>
     capture({ url: `${base}/?h=1200&doc=1`, width: 1280, height: 960, out: join(dir, `${name}.png`), fullHeight: true, ...extra })
@@ -71,18 +71,39 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
     expect(size(readFileSync(join(dir, 'onex.png')))).toEqual({ w: r.width, h: r.height })
   }, 60_000)
 
-  it('a picture that stays tiled fails - "stale surface" - and writes nothing', async () => {
-    shotSeams.capture = (real, at) => (at.view ? tiledLike(real, at.view) : real)
+  it('a picture that stays tiled fails - "stale surface" - and writes nothing: a full-height frame after its 1x attempt', async () => {
+    const seen: number[] = []
+    shotSeams.capture = (real, at) => { seen.push(at.attempt); return at.view ? tiledLike(real, at.view) : real }
     const r = await doc('never')
     expect(r).toEqual({ ok: false, error: expect.stringMatching(/stale surface/) })
+    expect(seen).toEqual([0, 1, 2, 3])
+    expect(existsSync(join(dir, 'never.png'))).toBe(false)
   }, 60_000)
 
-  it('without time left for a retake it fails at once rather than racing the watchdog', async () => {
+  it('a fixed frame whose window could not be sized and stays tiled: two retakes, no 1x, it fails and writes nothing', async () => {
+    shotSeams.resize = false
+    const seen: { attempt: number; view: { w: number; h: number } | null }[] = []
+    shotSeams.capture = (real, at) => { seen.push({ attempt: at.attempt, view: at.view }); return at.view ? tiledLike(real, at.view) : real }
+    const r = await capture({ url: `${base}/?h=800`, width: 1280, height: 800, out: join(dir, 'fixed-never.png'), scale: 2 })
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/stale surface/) })
+    expect(seen.map((x) => x.attempt)).toEqual([0, 1, 2])
+    // never resized: the view is still the window's own, smaller than the picture
+    expect(seen.every((x) => x.view && (x.view.w < 2560 || x.view.h < 1600))).toBe(true)
+    expect(existsSync(join(dir, 'fixed-never.png'))).toBe(false)
+  }, 60_000)
+
+  it('a retake starts only with 3 s of the deadline left - on either side of it', async () => {
     let calls = 0
-    shotSeams.capture = (real, at) => { calls++; return at.view ? tiledLike(real, at.view) : real }
-    const r = await doc('late', { timeoutMs: 1000 })
-    expect(r.ok).toBe(false)
+    shotSeams.capture = (real, at) => { calls++; return at.attempt === 0 && at.view ? tiledLike(real, at.view) : real }
+    shotSeams.watchdogMs = 3_200
+    const tight = await doc('tight')
+    expect(tight.ok).toBe(false)
     expect(calls).toBe(1)
+    calls = 0
+    shotSeams.watchdogMs = 12_000
+    const room = await doc('room')
+    expect(room.ok && room.recaptures).toBe(1)
+    expect(calls).toBe(2)
   }, 60_000)
 
   it('a batch of mixed sizes: each capture in its own window, each fixed frame\'s view sized to its picture, every picture clean', async () => {
@@ -93,7 +114,8 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
       { name: 'slide', width: 1280, height: 720, fullHeight: false },
       { name: 'doc', width: 1280, height: 960, fullHeight: true },
     ]
-    shotSeams.capture = (real, at) => { seen.push({ name: String(at.windowId), view: at.view, windowId: at.windowId }); return real }
+    const views = new Map<string, { w: number; h: number } | null>()
+    shotSeams.capture = (real, at) => { seen.push({ name: String(at.windowId), view: at.view, windowId: at.windowId }); const { w, h } = size(real); views.set(`${w}x${h}`, at.view); return real }
     const results = await withBrowser('shot', (b) => pool(4, reqs, (q) =>
       captureIn({ url: `${base}/?h=${q.fullHeight ? 1200 : q.height}${q.fullHeight ? '&doc=1' : ''}`, width: q.width, height: q.height, out: join(dir, `mix-${q.name}.png`), fullHeight: q.fullHeight, scale: 2 }, b)))
     expect(results.every((r) => r.ok)).toBe(true)
@@ -103,9 +125,40 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
       if (!r.ok) continue
       const shipped = readFileSync(join(dir, `mix-${q.name}.png`))
       expect(size(shipped)).toEqual({ w: r.width * r.scale, h: r.height * r.scale })
-      expect(await staleSurface(shipped, 756, 469)).not.toBe('stale')
+      expect(r.recaptures).toBe(0)
+      // judged against the view it was taken with: clean, not merely "not stale"
+      const v = views.get(`${r.width * r.scale}x${r.height * r.scale}`)
+      expect(v).toBeTruthy()
+      expect(await staleSurface(shipped, v!.w, v!.h)).toBe('clean')
       // a fixed frame's view was its picture's size when it was taken
       if (!q.fullHeight) expect(seen.some((s) => s.view?.w === q.width * 2 && s.view?.h === q.height * 2)).toBe(true)
     }
   }, 120_000)
+
+  it('captures sharing a window (no window of their own) never resize it from under each other', async () => {
+    shotSeams.newWindow = false
+    const resized: number[] = []
+    const held: (number | undefined)[] = []
+    shotSeams.onResize = (w) => resized.push(w)
+    shotSeams.capture = (real, at) => { held.push(at.windowId); return real }
+    const reqs = [{ w: 1280, h: 800 }, { w: 390, h: 844 }]
+    const results = await withBrowser('shot', (b) => pool(2, reqs, (q, i) => captureIn({ url: `${base}/?h=${q.h}`, width: q.w, height: q.h, out: join(dir, `shared-${i}.png`), scale: 2 }, b)))
+    expect(results.every((r) => r.ok)).toBe(true)
+    // a window two captures were in was resized at most once (by the first, while it was alone in it)
+    for (const w of new Set(held)) if (held.filter((x) => x === w).length > 1) expect(resized.filter((x) => x === w).length).toBeLessThanOrEqual(1)
+  }, 60_000)
+
+  it('a capture whose window cannot be named: nothing is resized, and its picture says it was not checked', async () => {
+    shotSeams.resize = undefined
+    const resized: number[] = []
+    shotSeams.onResize = (w) => resized.push(w)
+    // the window lookup made to fail: the capture registers as unknown
+    shotSeams.newWindow = true
+    shotSeams.noWindow = true
+    const r = await capture({ url: `${base}/?h=800`, width: 1280, height: 800, out: join(dir, 'nowin.png'), scale: 2 })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(resized).toEqual([])
+    expect(r.note).toMatch(/not checked for a stale surface/)
+  }, 60_000)
 })

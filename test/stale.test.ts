@@ -65,6 +65,14 @@ describe('the stale-surface guard (#14, #24)', () => {
     expect(await staleSurface(interlaced, W0, H0)).toBe('unknown')
     expect(await staleSurface(Buffer.from('not a png at all, just bytes in a buffer'), W0, H0)).toBe('unknown')
     expect(await staleSurface(png(75, 50, tiled), 0, 0)).toBe('unknown')
+    // cut at the very end: no IEND, or half of it - the envelope is not whole
+    expect(await staleSurface(good.subarray(0, good.length - 12), W0, H0)).toBe('unknown')
+    expect(await staleSurface(good.subarray(0, good.length - 5), W0, H0)).toBe('unknown')
+    // IHDR methods Chrome never writes
+    const comp = Buffer.from(good); comp[8 + 8 + 10] = 1
+    expect(await staleSurface(comp, W0, H0)).toBe('unknown')
+    const filt = Buffer.from(good); filt[8 + 8 + 11] = 1
+    expect(await staleSurface(filt, W0, H0)).toBe('unknown')
   })
 
   it('a real picture, however tall, costs its first rows - it stops at the first row that breaks the repeat', async () => {

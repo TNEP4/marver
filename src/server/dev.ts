@@ -406,7 +406,7 @@ async function boot(root: string, portFlag: number | undefined, instance: string
         const r = await shootFrame({ root, viewports: config.viewports, frameId, theme, origin: `http://localhost:${port}`, ...(size ? { size } : {}) })
         if (!r.ok) return null
         const { addPicture } = await import('./jam/capture.ts')
-        return addPicture(root, r.path, { frame: frameId, ...entry })
+        return addPicture(root, r.path, { frame: frameId, ...entry, ...(/not checked for a stale surface/.test(r.note ?? '') ? { unchecked: true as const } : {}) })
       })
     if (jam) {
       // words on this Mac (spec 27 Part 4): the audio socket beside the canvas; the model loads on first use

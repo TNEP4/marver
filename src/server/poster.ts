@@ -90,6 +90,7 @@ async function ensurePosterNow(assetsDir: string, src: string, out: string): Pro
   try {
     const r = await capture({ url: pathToFileURL(page).href, width: 1920, height: 1080, scale: 1, out: tmp, fullHeight: false, clip: '#root video', timeoutMs: 20_000 }, 'poster')
     if (!r.ok) return { ok: false, error: `could not render a poster for ${basename(src)} - ${r.error}` }
+    if (r.note && /not checked for a stale surface/.test(r.note)) console.warn(`[marver] poster ${basename(src)}: ${r.note}`)
     // EXCLUSIVE install: a poster that appeared while we rendered (authored, or a sibling
     // request's) wins - COPYFILE_EXCL makes that atomic instead of a check-then-rename race
     try { copyFileSync(tmp, out, constants.COPYFILE_EXCL) } catch (err) {

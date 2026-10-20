@@ -23,7 +23,7 @@ export async function staleSurface(png: Buffer, w0: number, h0: number, deadline
   if (!(w0 > 0 && h0 > 0) || png.length < 33 || !png.subarray(0, 8).equals(SIG)) return 'unknown'
   // chunks, bounded: IHDR first, then the IDAT data in order
   let pos = 8
-  let w = 0, h = 0, channels = 0
+  let w = 0, h = 0, channels = 0, ended = false
   const idat: Buffer[] = []
   while (pos + 12 <= png.length) {
     const len = png.readUInt32BE(pos)
@@ -33,14 +33,15 @@ export async function staleSurface(png: Buffer, w0: number, h0: number, deadline
     if (pos === 8) {
       if (type !== 'IHDR' || len !== 13) return 'unknown'
       w = data.readUInt32BE(0); h = data.readUInt32BE(4)
-      const depth = data[8], colour = data[9], interlace = data[12]
-      if (depth !== 8 || (colour !== 2 && colour !== 6) || interlace !== 0 || !w || !h) return 'unknown'
+      const depth = data[8], colour = data[9], compression = data[10], filtering = data[11], interlace = data[12]
+      if (depth !== 8 || (colour !== 2 && colour !== 6) || compression !== 0 || filtering !== 0 || interlace !== 0 || !w || !h) return 'unknown'
       channels = colour === 6 ? 4 : 3
     } else if (type === 'IDAT') idat.push(data)
-    else if (type === 'IEND') break
+    else if (type === 'IEND') { ended = len === 0 && pos + 12 === png.length; break }
     pos += 12 + len
   }
-  if (!channels || !idat.length) return 'unknown'
+  // the whole envelope, to its IEND: a file cut short anywhere is not judged
+  if (!channels || !idat.length || !ended) return 'unknown'
   // no bigger than the view in either direction: nothing was tiled
   if (w <= w0 && h <= h0) return 'clean'
   const stride = w * channels
