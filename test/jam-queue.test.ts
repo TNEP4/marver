@@ -1107,6 +1107,22 @@ describe('0.26.1 D: a run whose replies cannot be posted still leaves its timing
   })
 })
 
+describe('0.26.1 D: a run that fails while it is set up still leaves its line', () => {
+  it('a step of its setup throws (lighting its frames): the line says "other", once', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, CFG, agent(), undefined, { work: () => { throw new Error('the glow broke') } })
+    say(root, dir, '@marver change it', { frame: 'demo/a' })
+    await jam.tick().catch(() => {})
+    jam.stop()
+    const { flushJam, readJam } = await import('../src/server/perf-jam.ts')
+    await flushJam(root)
+    const runs = readJam(root).events.filter((e) => e.kind === 'run')
+    expect(runs.length).toBe(1)
+    expect(runs[0].failure).toBe('other')
+    done()
+  })
+})
+
 describe('Jam V2: review round 6 fixes', () => {
   it('a stopped daemon\'s pending retry never writes over the journal of the one that replaced it', async () => {
     const { root, dir, done } = setup()

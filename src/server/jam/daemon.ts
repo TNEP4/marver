@@ -548,6 +548,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       logJam(root, { kind: 'run', batch: b.batchId, attempts: b.attempts, ...timing, ...(failure ? { failure } : {}),
         members: b.members.map((m) => { const c = q.j.cards.find((x) => x.id === m.card); return { kind: c?.kind, waitMs: waits?.get(m.card), outcome: failure ? 'failed' : c?.state } }) })
     }
+    // every end writes its line - setup that threw included (any end not timed below is "other")
+    try {
     // a frame that appears during a run is this run's only if nothing else ran beside it (no other job could
     // have made it)
     const myStart = ++batchStarts
@@ -741,7 +743,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     } finally {
       unwatch()
       clearGlow()
-      // any other end (a record changed under it, a thrown step): its line is written once, as "other"
+    }
+    } finally {
+      // any other end (setup that threw, a record changed under it, a thrown step): its line is written once, as "other"
       if (!stopped) timeRun('other')
     }
   }

@@ -77,7 +77,8 @@ export function jamSummary(events: Record<string, any>[]) {
   const outcomes: Record<string, number> = {}
   for (const r of runs) for (const m of r.members ?? []) outcomes[m.outcome ?? 'unknown'] = (outcomes[m.outcome ?? 'unknown'] ?? 0) + 1
   const problems = [
-    ...runs.filter((r) => r.failure).map((r) => ({ ts: r.ts, what: `run ${String(r.batch).slice(0, 8)} failed: ${r.failure}` })),
+    // every run line with a failure - a redelivery that gave up too (the counts above take first runs only)
+    ...of('run').filter((r) => r.failure).map((r) => ({ ts: r.ts, what: `run ${String(r.batch).slice(0, 8)} ${r.redelivered ? 'could not post its replies' : `failed: ${r.failure}`}` })),
     ...shots.filter((s) => s.outcome && s.outcome !== 'ok').map((s) => ({ ts: s.ts, what: `shot ${s.frame ?? '?'}: ${s.outcome}${s.recaptures ? ` after ${s.recaptures} retakes` : ''}` })),
     ...caps.filter((c) => c.pictures?.late || c.pictures?.failed).map((c) => ({ ts: c.ts, what: `capture ${c.capture}: ${c.pictures.late ?? 0} picture(s) too late, ${c.pictures.failed ?? 0} failed` })),
     ...of('name').filter((n) => !n.ok).map((n) => ({ ts: n.ts, what: `naming ${n.capture} gave no name` })),

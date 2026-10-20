@@ -116,12 +116,15 @@ describe('marver perf --jam', () => {
       { ts: 3, kind: 'run', batch: 'b2', agentMs: [8000], failure: 'agent', members: [{ kind: 'comment', outcome: 'failed' }] },
       { ts: 4, kind: 'shot', frame: 'a/b', ms: 600, outcome: 'stale', recaptures: 2 },
       { ts: 5, kind: 'run', batch: 'b1', redelivered: true, deliverMs: 40 },
+      { ts: 6, kind: 'run', batch: 'b3', redelivered: true, failure: 'delivery' },
     ])
     expect(s.steps['run: agent']).toEqual({ n: 3, median: 15_000, p90: 20_000, max: 20_000 })
     expect(s.steps['capture: a picture']).toMatchObject({ n: 2, max: 700 })
     expect(s.steps['run: delivery']).toMatchObject({ n: 1, max: 40 })
     expect(s.outcomes).toEqual({ review: 1, failed: 1 })
     expect(s.retakes).toBe(2)
-    expect(s.problems.map((p) => p.what)).toEqual(['shot a/b: stale after 2 retakes', 'run b2 failed: agent', 'capture c1: 1 picture(s) too late, 0 failed'])
+    expect(s.problems.map((p) => p.what)).toEqual(['run b3 could not post its replies', 'shot a/b: stale after 2 retakes', 'run b2 failed: agent', 'capture c1: 1 picture(s) too late, 0 failed'])
+    // a redelivery is no run of its own in the counts
+    expect(s.outcomes).toEqual({ review: 1, failed: 1 })
   })
 })

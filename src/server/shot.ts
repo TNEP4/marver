@@ -380,6 +380,8 @@ export async function captureIn(req: ShotRequest, b: Browser): Promise<ShotResul
 }
 
 async function captureOnce({ url, width, height, out, fullHeight = false, timeoutMs = 30_000, scale: wantScale = 2, clip }: ShotRequest, b: Browser): Promise<ShotResult> {
+  // retakes so far - kept on a failure too, a retake that threw included
+  let recaptures = 0
   // fixed-size frames: step the scale down until the bitmap fits the budget (never up)
   let scale = Math.min(4, Math.max(1, Math.round(wantScale)))
   while (scale > 1 && !fits(width, height, scale)) scale--
@@ -663,7 +665,6 @@ async function captureOnce({ url, width, height, out, fullHeight = false, timeou
     const judge = (a: { png: Buffer; view: { w: number; h: number } | null }) => (a.view ? staleSurface(a.png, a.view.w, a.view.h, hardBy - 1000) : Promise.resolve('unknown' as const))
     let shotNow = await take()
     let verdict = await judge(shotNow)
-    let recaptures = 0
     const retryLeft = shotSeams.retryLeftMs ?? RETRY_LEFT
     while (verdict === 'stale' && recaptures < 2 && left() > retryLeft) {
       recaptures++
@@ -690,7 +691,7 @@ async function captureOnce({ url, width, height, out, fullHeight = false, timeou
     if (unsettled) note = `${note ? note + '; ' : ''}captured before the frame settled - images, charts or diagrams may be missing; shoot it alone or lower MARVER_SHOT_CONCURRENCY`
     return { ok: true, width: capW, height: capH, scale, ...(truncated ? { truncated: true } : {}), ...(unsettled ? { unsettled: true } : {}), ...(note ? { note } : {}), recaptures }
   } catch (err) {
-    return { ok: false, error: (err as Error).message }
+    return { ok: false, error: (err as Error).message, ...(recaptures ? { recaptures } : {}) }
   } finally {
     if (watchdog) clearTimeout(watchdog)
     off()

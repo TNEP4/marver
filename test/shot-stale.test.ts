@@ -94,6 +94,13 @@ describe.skipIf(!hasChrome)('a stale surface never ships as the frame (#14, #24)
     expect(existsSync(join(dir, 'fixed-never.png'))).toBe(false)
   }, 60_000)
 
+  it('a retake that throws (a CDP call failing) keeps its count on the failure', async () => {
+    shotSeams.capture = (real, at) => { if (at.attempt === 1) throw new Error('Page.captureScreenshot timed out'); return at.view ? tiledLike(real, at.view) : real }
+    const r = await doc('throws')
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/timed out/), recaptures: 1 })
+    expect(shotEvent('spec/doc', 2, r)).toMatchObject({ outcome: 'timeout', recaptures: 1 })
+  }, 60_000)
+
   it('a retake starts only with enough of the deadline left - on either side of it', async () => {
     let calls = 0
     shotSeams.capture = (real, at) => { calls++; return at.attempt === 0 && at.view ? tiledLike(real, at.view) : real }
