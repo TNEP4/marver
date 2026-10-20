@@ -39,7 +39,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 `npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (a sandboxed agent
 now knows `marver shot` reaches the canvas through the file inbox). The first `marver dev` after the upgrade prepares
-its new `node_modules/.vite-marver` folder (a moment, once); the old `node_modules/.vite` can be deleted.
+its new `node_modules/.vite-marver` folder (a moment, once).
 
 ## 0.26.0 - 2026-10-20
 
