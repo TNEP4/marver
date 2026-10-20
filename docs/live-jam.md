@@ -130,6 +130,14 @@ obvious one:
   The canvas's **copy as image** (`i` / `⇧i`, the images-square toolbar button) is this same
   renderer with `format=png`, so what a designer pastes and what an agent shoots is one picture.
 
+- **Pictures that are what the frame shows** (0.26.1). Headless Chrome could copy its view before resizing it for the
+  picture and tile the old copy across the image. Each picture now has a window of its own (a fixed frame's or a
+  slide's sized to the picture first), and every picture is checked for that tiling: one that shows it is taken again
+  (`recaptures` in `--json` says how many times), and one that never comes out right fails with "stale surface"
+  rather than shipping.
+- **Inside a sandbox** (Codex blocks the network, localhost included), `marver shot` cannot reach the dev server: it
+  then drops the same request in the file inbox itself and waits for its answer - the same output, the same exit code.
+
 The generated jam instructions tell every agent to shoot and LOOK before replying "done".
 A frame that never mounts, or a dev server that isn't reachable, comes back as an honest
 `{"ok":false,"error":...}` carrying the real cause - never a blank that reads as success.

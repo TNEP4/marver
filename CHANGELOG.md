@@ -2,6 +2,45 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Fixed
+
+- **Pictures are what the frame shows** ([#14](https://github.com/TNEP4/marver/issues/14),
+  [#24](https://github.com/TNEP4/marver/issues/24)). About one picture in thirty at 2x - and a very tall frame almost
+  every time - came back as the frame's top-left corner repeated across the image, with nothing to say it was wrong.
+  Headless Chrome copied its view before resizing it for the picture and tiled the old copy. Each picture now gets a
+  window of its own, and a fixed-size frame or a slide has its window sized to the picture first, so there is nothing
+  left to resize: in 900 pictures, none came back tiled (31 did before). Every picture - a tall content frame's too - is
+  also checked for that tiling; one that still shows it is taken again (a tall one at 1x if need be), and if it never
+  comes out right the shot fails instead of shipping a wrong picture. This covers `marver shot`, your agent's
+  pictures, copy as image, video posters and Jam's before and after pictures.
+- **Content frames keep their diagrams** ([#7](https://github.com/TNEP4/marver/issues/7)). A state, sequence, gantt or
+  pie diagram - or a first `Md` - could fail with "Failed to fetch dynamically imported module" until `marver dev`
+  restarted. Another Vite server on the same project (your app's own, for one) was replacing the files the canvas had
+  prepared. The canvas now keeps its own folder for them, `node_modules/.vite-marver`. The first chart frame also loads
+  much faster: its chart library is prepared up front (about 40 requests instead of 600).
+- **A capture outlives its page.** Closing or reloading the tab while a capture was recording or finishing used to
+  lose it. Now it is kept as it stood - with your notes, and a line saying the page closed before it finished - and
+  comes back as a draft to read, resume or drop. It never goes to your agent on its own, even with
+  `jam: { capture: "at-once" }`.
+- **`marver shot` works inside a sandbox.** An agent whose sandbox blocks the network (Codex) could not reach the
+  canvas and said it could not look at its work. The command now takes the same picture through the canvas's file
+  inbox when it cannot connect, with the same output.
+
+### Added
+
+- **`npx marver perf --jam`** shows how long each step of Jam takes on your machine - a capture sealing, its pictures,
+  your words, naming, the queue, your agent, the pictures before and after, the reply - with the median, the slowest
+  and anything that went wrong lately. It reads `design/.local/perf/jam.jsonl`: numbers and fixed codes only, never
+  your words, kept on your machine.
+
+### Upgrading
+
+`npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (a sandboxed agent
+now knows `marver shot` reaches the canvas through the file inbox). The first `marver dev` after the upgrade prepares
+its new `node_modules/.vite-marver` folder (a moment, once); the old `node_modules/.vite` can be deleted.
+
 ## 0.26.0 - 2026-10-20
 
 ### Added

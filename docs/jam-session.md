@@ -26,6 +26,11 @@ dot. While it records, everything you do is part of it:
 
 `E` ends it. `Esc` throws it away. One capture records at a time.
 
+Closing or reloading the tab asks first while a capture is recording or finishing. If you leave anyway, the capture
+is kept as it stood - its words and notes so far, and a line saying the page closed before it finished - and comes
+back as a draft to read, resume or drop; it never goes to your agent on its own. (Best effort: a crash gives the page
+no chance to keep it.)
+
 A capture is about the frames you **touched** - selected, clicked, typed in, scrolled,
 resized, pictured, or zoomed to alone - not every frame that happened to be on screen. Those
 are the frames its run may edit, and the frames pictured before and after it.
@@ -162,6 +167,10 @@ A bad value says so at boot and takes the default; nothing here turns Jam off.
 The keys work inside frames too, in interactive mode and in play.
 
 ## Where things are kept
+
+How long each step takes on your machine - a capture sealing, its pictures, your words, naming, the queue, your agent,
+the pictures before and after - is in `npx marver perf --jam` (median, slowest, and what went wrong lately), read from
+`design/.local/perf/jam.jsonl`: numbers and fixed codes only, never your words.
 
 The capture itself sits in `design/.local/` (gitignored, never published): its full record
 and pictures under `design/.local/jam/`, the session transcript under
