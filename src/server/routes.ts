@@ -2,6 +2,7 @@ import type { Connect, ViteDevServer } from 'vite'
 import { readFileSync, realpathSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { ROUTE } from '../cli/name.ts'
+import { proofHeaders, type DocProof } from './proof.ts'
 
 /**
  * Serves the package's own pages. transformIndexHtml does not map URLs - we do (spec §3).
@@ -12,7 +13,7 @@ import { ROUTE } from '../cli/name.ts'
  *  every frame's - stamps may lag the code a document runs, never lead it. */
 export interface Stamps { doc(id: string): string; docs(): { epoch: string; doc: Record<string, number> } | null }
 
-export function routesMiddleware(server: ViteDevServer, clientDir: string, stamps?: Stamps): Connect.NextHandleFunction {
+export function routesMiddleware(server: ViteDevServer, clientDir: string, stamps?: Stamps, proof?: DocProof): Connect.NextHandleFunction {
   const page = (dir: string) => {
     const html = readFileSync(join(clientDir, dir, 'index.html'), 'utf8')
     const entry = '/@fs/' + join(clientDir, dir, 'main.tsx').split('\\').join('/')
@@ -72,6 +73,12 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string, stamp
       // never cache the host pages: a stale frame-host document pins an outdated module
       // graph inside an iframe, which no reload of the PARENT can flush (friction log #20)
       res.setHeader('cache-control', 'no-store')
+      // spec 28 A1.4: the app's nonce gets the shell's document signed - the proof rides the very response
+      // the app commits, so the check and the load can never reach different listeners. The shell's
+      // document only (the shell is hash-routed: `/` and `/index.html` are all of it); frame-host and stage
+      // pages, Vite's own fallback and every other path never carry one, and a failed transform is never signed
+      const signed = dir === 'shell' && req.method === 'GET' ? proofHeaders(proof, req.headers['x-mv-nonce']) : null
+      if (signed) for (const [k, v] of Object.entries(signed)) res.setHeader(k, v)
       res.end(html)
     } catch (err) {
       res.statusCode = 500

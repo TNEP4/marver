@@ -209,7 +209,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   let css: Record<string, unknown> | undefined
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
 
-  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup: t }), iconsPlugin(root))
+  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup: t, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
   if (opts.at) {
     // the test seam's probe: its `options` runs inside Vite's environment initialisation (once per
     // environment - said once), its configureServer after Marver's (which is `enforce: 'pre'`)

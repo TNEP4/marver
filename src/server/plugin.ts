@@ -18,6 +18,7 @@ import { routesMiddleware } from './routes.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
+import type { DocProof } from './proof.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
 const VIRTUAL_CONFIG = 'virtual:sh-config'
@@ -34,6 +35,9 @@ export interface PluginCtx {
   /** spec 28 A1.1, dev only: the start this server belongs to - what configureServer makes (watchers,
    *  sweeps, timers) is closed with it when the start fails before Vite ever listens */
   startup?: { defer(close: () => unknown): void }
+  /** spec 28 A1.4, dev only: what signs the shell's document for the app - this run's instance, the slot
+   *  file's key and port. Never logged, never served */
+  proof?: DocProof
 }
 
 export function marverPlugin(ctx: PluginCtx): Plugin[] {
@@ -270,7 +274,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       server.middlewares.use(routesMiddleware(server, clientDir, {
         doc: (id) => docRev(root, manifest.frames, id),
         docs: () => docRevs(root, manifest.frames),
-      }))
+      }, ctx.proof))
 
       devServer = server   // the update hooks send sh:frame-invalidated through it
       guardUpdates(server, root, () => manifest, hooks)
