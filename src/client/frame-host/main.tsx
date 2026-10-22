@@ -20,6 +20,18 @@ document.documentElement.dataset.theme = theme
 document.documentElement.classList.toggle('dark', theme === 'dark')
 
 const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
+// this document's id, set by the bridge (imported first, above) before anything is posted - and the URL revision the
+// shell gave it: every ready and error carries both (spec 28 A1.7)
+const docId = () => (window as { __mvBoot?: string }).__mvBoot
+const gen = params.get('r') ?? ''
+/** An error's first three stack lines (Chrome's "at …", else "fn@url:line:col"), when it has them - as the bridge's. */
+const stackOf = (err: unknown) => {
+  const st = (err as Error | undefined)?.stack
+  if (typeof st !== 'string') return undefined
+  const lines = st.split('\n'), chrome = lines.filter((l) => /^\s*at /.test(l))
+  const out = (chrome.length ? chrome : lines.filter((l) => /@.*:\d+(:\d+)?$/.test(l.trim()))).slice(0, 3).map((l) => l.trim().slice(0, 200))
+  return out.length ? out : undefined
+}
 
 // A render failure posts sh:error to the shell, but a HEADLESS screenshot has no shell to
 // hear it - so also stamp the error on the document, where the shot capture can read it.
@@ -27,9 +39,9 @@ const post = (msg: Record<string, unknown>) => { if (window.parent !== window) w
 // agent that cannot see the PNG (only the JSON), instead of a clean-looking ok:true.
 const markError = (message: string) => { (window as any).__mvFrameError = message }
 
-function fail(message: string) {
+function fail(message: string, err?: unknown) {
   markError(message)
-  post({ type: 'sh:error', id, message })
+  post({ type: 'sh:error', id, gen, boot: docId(), message, stack: stackOf(err) })
   document.getElementById('root')!.innerHTML =
     `<div style="font-family:ui-monospace,monospace;font-size:12px;padding:16px;color:#b42318">
        <div style="font-weight:700;margin-bottom:8px">frame failed</div>
@@ -43,7 +55,7 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt
 class Boundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }
   static getDerivedStateFromError(err: Error) { return { err } }
-  componentDidCatch(err: Error) { markError(err.message); post({ type: 'sh:error', id, message: err.message }) }
+  componentDidCatch(err: Error) { markError(err.message); post({ type: 'sh:error', id, gen, boot: docId(), message: err.message, stack: stackOf(err) }) }
   render() {
     if (!this.state.err) return this.props.children
     return createElement('div', { style: { fontFamily: 'ui-monospace,monospace', fontSize: 12, padding: 16, color: '#b42318' } },
@@ -100,10 +112,10 @@ async function boot() {
     // sh:ready on the first COMMIT, stamped with the URL revision so the shell can drop a ready queued
     // by a superseded document (one it auto-renavigated past) - a WindowProxy survives navigation, so
     // a stale ready could otherwise mark a reloading frame ready. Mirrors the sh:measure generation guard.
-    const ready = () => { phases.commit = Math.round(performance.now()); post({ type: 'sh:ready', id, gen: params.get('r') ?? '', doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '', meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined, phases }) }
+    const ready = () => { phases.commit = Math.round(performance.now()); post({ type: 'sh:ready', id, gen, boot: docId(), doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '', meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined, phases }) }
     createRoot(document.getElementById('root')!).render(createElement(Boundary, null, createElement(Committed, { onCommit: ready }, tree)))
   } catch (err) {
-    fail((err as Error).message)
+    fail((err as Error).message, err)
   }
 }
 

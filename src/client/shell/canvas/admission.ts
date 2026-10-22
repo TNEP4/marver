@@ -43,9 +43,16 @@ const SETTLE = 350   // the board fit animates ~250 ms from 60 ms after mount: r
 /** The frame is done booting (ready, error, gone, or its watchdog took over): free the slot, or
  *  leave the queue if it never started. */
 export function release(key: string): void {
-  waiting.delete(key)
+  const was = waiting.delete(key) || active.has(key)
   if (active.delete(key)) { primed = true; schedule(0) }
+  if (was && admissionIdle()) for (const fn of idle) { try { fn() } catch { /* a listener never stops the queue */ } }
 }
+
+const idle = new Set<() => void>()
+/** Nothing queued, nothing booting: a board load settles only then (spec 28 A1.7). */
+export const admissionIdle = (): boolean => !waiting.size && !active.size
+/** Called each time the last frame lets go of its slot or leaves the queue; returns the unsubscribe. */
+export function onAdmissionIdle(fn: () => void): () => void { idle.add(fn); return () => { idle.delete(fn) } }
 
 function schedule(ms: number): void {
   if (scheduled) return

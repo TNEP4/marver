@@ -11,6 +11,7 @@ import { primeCameraFor } from './camera-broadcast.ts'
 import { sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
+import { recorder } from '../recorder.ts'
 import { noteId, sceneNoteHost } from '../notes.ts'
 import { slideSize, stageFit } from '../../const.ts'
 import { FrameSlot, toneOf, useFrameMark } from '../marks-ui.tsx'
@@ -116,6 +117,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       if (n.status !== 'loading') setStatus(node.key, 'loading')   // a returning frame boots under the watchdog like any other
       admittedRef.current = true
       setSrc(frameUrl(f, n.theme))
+      recorder.admitted(node.key)
     }
     admit({ key: node.key, rank, start })
     return () => release(node.key)
@@ -271,7 +273,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // boot slot - its boot is still running - and gives it back after a second silence.
   useEffect(() => {
     if (!admitted || node.status !== 'loading' || !frame || node.missing) return
-    const t = setTimeout(() => { if (shouldArmReadyWatch(node, true)) reloadRef.current(true); else release(node.key) }, 10_000)
+    // the second silence gives the slot back, and is the recorder's never-ready (spec 28 A1.7) - the frame stays
+    // loading, never a red card
+    const t = setTimeout(() => { if (shouldArmReadyWatch(node, true)) reloadRef.current(true); else { release(node.key); recorder.neverReady(node.key) } }, 10_000)
     return () => clearTimeout(t)
     // depend on the frame's stable SIGNATURE, not the manifest object - that object is replaced on
     // every manifest reconcile, so depending on it would reset the budget on unrelated frames during
@@ -446,7 +450,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           className="sh-live"
           src={src}
           title={frame.id}
-          onLoad={() => { registerWin(); frameLoaded(node.key, iframeRef.current) }}
+          onLoad={() => { registerWin(); frameLoaded(node.key, iframeRef.current); recorder.loaded(node.key) }}
           style={{ ...iframeBox(stage, node), display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { admit, HEAD_MS, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+import { admissionIdle, admit, HEAD_MS, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -56,5 +56,23 @@ describe('admission', () => {
     expect(started).toEqual(['b'])
     ask('b', 1); await settle()
     expect(started).toEqual(['b'])
+  })
+  it('says when it is idle - the last slot given back, or the last queued frame gone - and only then (spec 28 A1.7)', async () => {
+    let heard = 0
+    const off = onAdmissionIdle(() => heard++)
+    ask('a', 1); ask('b', 2)
+    await settle()
+    expect(admissionIdle()).toBe(false)
+    release('b')             // queued, never started: one is still booting
+    expect(heard).toBe(0)
+    release('nobody')        // not a frame it holds: nothing changes
+    expect(heard).toBe(0)
+    release('a')
+    expect([heard, admissionIdle()]).toEqual([1, true])
+    release('a')             // already gone: no second word
+    expect(heard).toBe(1)
+    ask('c', 1); release('c')   // a frame that only queued and left
+    expect(heard).toBe(2)
+    off()
   })
 })

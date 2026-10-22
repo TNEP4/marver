@@ -49,6 +49,8 @@ const keyOf = (k: SleepKey) => `${k.frame}|${k.theme}|${Math.round(k.w)}|${Math.
 
 /** What a node's DOCUMENT is asleep under, published only once its override is INSTALLED. */
 const asleep = new Map<string, { key: string; doc: Document }>()
+/** How many frames are asleep now (the recorder's weight of a settled load, spec 28 A1.7). */
+export const sleepingCount = (): number => asleep.size
 /** The node's current request, so a stale answer (a newer sleep, a wake in between) is dropped. */
 const pending = new Map<string, number>()
 let seq = 0

@@ -1,34 +1,24 @@
 /**
- * B0.4: canvas performance instrumentation. Zero cost unless explicitly enabled.
+ * Gesture timing (B0.4; spec 28 A1.7). Frame intervals are sampled ONLY while a gesture runs - a canvas pan or zoom
+ * (`sh-camera` on #sh-world) or a layout animation (`sh-preset`) - and no frame is scheduled at rest: the camera
+ * observer (canvas/camera-broadcast.ts) says when one starts and stops, and the rAF loop runs between the two. Each
+ * gesture ends in one `gesture` record for the recorder (recorder.ts, dev only): the intervals as they are - p50,
+ * p95, max, and the counts over 17 ms and over 33 ms - and the long animation frames that started inside it
+ * (`longtask` entries where the browser has no long-animation-frame). No median-relative "missed" count: it would call
+ * a steady half-rate gesture smooth.
  *
- * Enabled in dev, or in ANY build (incl. packed/published - the gate is dev AND
- * publish) via `?mvperf` in the URL or `localStorage.mvPerf==='1'`. So publish-side gate
- * measurement is possible without shipping an always-on probe.
- *
- * Two honest signals, sampled ONLY while a gesture is active (the `#sh-world.sh-gesturing`
- * class every gesture path already sets):
- *  - frame INTERVALS (rAF deltas). A healthy 60Hz frame is ~16.7ms, so the interval is NOT
- *    "main-thread work" - we report its p50/p95/max and, as the jank signal, `dropped` =
- *    intervals over 32ms (a missed refresh).
- *  - long-task durations (PerformanceObserver 'longtask', >50ms by spec) landing during a
- *    gesture: actual main-thread work that blew the budget. 0 long-tasks = smooth.
- *
- * Read it live:  __mvPerf.report()  /  __mvPerf.reset()
- * perfMark(name) + counters are the plug points Stages 2-3 use (blank-frame / warm-latency).
+ * Sampled in dev, or in ANY build (a published one too) with `?mvperf` in the URL or `localStorage.mvPerf==='1'` - read
+ * it live:  __mvPerf.report()  /  __mvPerf.reset()
+ * perfMark(name) + counters are the plug points later stages use (blank-frame / warm-latency).
  */
+import { onMotion, type Motion } from './canvas/camera-broadcast.ts'
+import { recorder } from './recorder.ts'
+import { gestureStats } from './recorder-core.ts'
 
-// "in motion" = a pan/zoom/drag gesture OR a device-sweep/tidy preset animation - both are the
-// windows where jank matters and the perf gate is measured.
-const GESTURING = () => {
-  const w = document.getElementById('sh-world')
-  return !!w && (w.classList.contains('sh-camera') || w.classList.contains('sh-preset'))
-}
-
-const frames: number[] = []   // inter-frame intervals (ms) during gestures
-const tasks: number[] = []    // long-task durations (ms) during gestures
+const LOAF = typeof PerformanceObserver !== 'undefined' && (PerformanceObserver.supportedEntryTypes ?? []).includes('long-animation-frame')
+const frames: number[] = []   // inter-frame intervals (ms) across gestures, for report()
+const longs: number[] = []    // the long frames (or long tasks) that started inside a gesture, their durations (ms), for report()
 const MAX = 1200
-let last = 0
-let raf = 0
 
 const counters: Record<string, number> = { blankFrames: 0 }
 const marks: { name: string; t: number }[] = []
@@ -41,52 +31,73 @@ const enabled = (): boolean => {
   } catch { return false }
 }
 
-const tick = (t: number) => {
-  if (last && GESTURING()) { const dt = t - last; frames.push(dt); if (frames.length > MAX) frames.shift() }
-  last = t
-  raf = requestAnimationFrame(tick)
+interface Run { t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; longs: number[]; obs?: PerformanceObserver; raf: number }
+/** the gesture running now */
+let g: Run | null = null
+
+function note(m: Motion) {
+  if (!g) return
+  if (m.camera) { if (document.body.classList.contains('sh-panning')) g.pan = true; else g.zoom = true }
+  if (m.preset) g.layout = true
 }
 
-const pct = (sorted: number[], p: number): number => {
-  if (!sorted.length) return 0
-  const i = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
-  return Math.round(sorted[i] * 100) / 100
+function begin(m: Motion) {
+  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0 }
+  g = run
+  note(m)
+  try {
+    run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) run.longs.push(e.duration) })
+    run.obs.observe({ type: LOAF ? 'long-animation-frame' : 'longtask', buffered: false })
+  } catch { /* neither entry type (Safari): the intervals still sample */ }
+  // this gesture's own loop: a frame of an earlier one that is still queued finds another run and stops
+  const tick = (t: number) => {
+    if (g !== run) return
+    if (run.last) run.dts.push(t - run.last)
+    run.last = t
+    run.raf = requestAnimationFrame(tick)
+  }
+  run.raf = requestAnimationFrame(tick)
 }
-const top = (sorted: number[]): number => (sorted.length ? Math.round(sorted[sorted.length - 1] * 100) / 100 : 0)
-const frac = (n: number, d: number): number => (d ? Math.round((n / d) * 1000) / 1000 : 0)
+
+function end() {
+  const run = g!
+  g = null
+  cancelAnimationFrame(run.raf)
+  const t1 = performance.now()
+  for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.longs.push(e.duration)
+  run.obs?.disconnect()
+  for (const d of run.dts) { frames.push(d); if (frames.length > MAX) frames.shift() }
+  for (const d of run.longs) { longs.push(d); if (longs.length > MAX) longs.shift() }
+  if (run.dts.length < 2) return   // a press that never moved the camera
+  recorder.gesture({ type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.longs.length) })
+}
 
 /** One-shot event later stages record (e.g. a blank frame, or warm-promotion latency). */
 export const perfMark = (name: string): void => {
   counters[name] = (counters[name] ?? 0) + 1
-  marks.push({ name, t: last })
+  marks.push({ name, t: performance.now() })
   if (marks.length > 400) marks.shift()
 }
 
-/** Start the sampler. Idempotent; a no-op unless enabled() (dev, ?mvperf, or localStorage). */
+let started = false
+/** Watch for gestures. Idempotent; a no-op unless enabled() (dev, ?mvperf, or localStorage). */
 export function startPerf(): void {
-  if (raf || !enabled()) return
-  raf = requestAnimationFrame(tick)
-  try {
-    const obs = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) if (GESTURING()) { tasks.push(e.duration); if (tasks.length > MAX) tasks.shift() }
-    })
-    obs.observe({ type: 'longtask', buffered: false })
-  } catch { /* longtask entry type unsupported (e.g. Safari) - frame intervals still sample */ }
+  if (started || !enabled()) return
+  started = true
+  onMotion((m) => {
+    const moving = m.camera || m.preset
+    if (moving && !g) begin(m)
+    else if (!moving && g) end()
+    else note(m)
+  })
   ;(window as unknown as { __mvPerf: unknown }).__mvPerf = {
+    // the intervals as they are, and the main thread's own work: long frames (> 50 ms) that started in a gesture,
+    // how many, their p95 and the longest (the same nearest-rank rule)
     report() {
-      const fi = [...frames].sort((a, b) => a - b)
-      const tw = [...tasks].sort((a, b) => a - b)
-      const dropped = fi.filter((d) => d > 32).length
-      return {
-        gestureFrames: fi.length,
-        frameP50: pct(fi, 50), frameP95: pct(fi, 95), frameMax: top(fi),
-        dropped, droppedFrac: frac(dropped, fi.length),
-        // actual main-thread work during gestures (long tasks >50ms). 0 = smooth.
-        longTasks: tw.length, longTaskP95: pct(tw, 95), longTaskMax: top(tw),
-        counters: { ...counters },
-      }
+      const s = gestureStats(frames, longs.length), l = gestureStats(longs, 0)
+      return { gestureFrames: s.frames, frameP50: s.p50, frameP95: s.p95, frameMax: s.max, over17ms: s.over17ms, over33ms: s.over33ms, longFrames: s.longFrames, longFrameP95: l.p95, longFrameMax: l.max, counters: { ...counters } }
     },
-    reset() { frames.length = 0; tasks.length = 0; marks.length = 0; for (const k in counters) counters[k] = 0 },
+    reset() { frames.length = 0; longs.length = 0; marks.length = 0; for (const k in counters) counters[k] = 0 },
     marks: () => [...marks],
   }
 }

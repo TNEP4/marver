@@ -22,6 +22,7 @@ import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } 
 import { touchedFrames } from '../../shared/capture-frames.ts'
 import { onStageSize, stageSize } from './stage-size.ts'
 import { api, beforeResume } from './api.ts'
+import { bytesOf } from './recorder-core.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -807,6 +808,10 @@ function trySeal(id: string) {
 /** Kept per workspace: another project served later on the same port never receives this one's captures. */
 const KEPT = `mv-jam-sealed:${CONFIG.workspace ?? 'unknown'}`
 const syncUnsent = () => useJamCapture.setState({ unsent: [...pendingUploads.keys()] })
+/** A capture is still open (a page that goes seals and sends it), or sealed and not taken by the server yet (waiting,
+ *  or on its way): the recorder leaves a page's keepalive allowance to it (spec 28 A1.7). By state, not by the order
+ *  the pagehide listeners run in. */
+export const capturesPending = (): boolean => { const s = useJamCapture.getState(); return s.unsent.length > 0 || Object.keys(s.caps).length > 0 }
 const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r); syncUnsent() }
 const forgetSealed = (id: string) => { pendingUploads.delete(id); syncUnsent(); try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
 const pendingUploads = new Map<string, CaptureRecord>()
@@ -821,8 +826,9 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     uploadTries.set(record.id, (uploadTries.get(record.id) ?? 0) + 1)
     const tUp = performance.now()
     const payload = JSON.stringify({ record, workspace: CONFIG.workspace })
-    // a page that is going sends with keepalive (64 kB at most) so the request outlives it; a bigger one, the next page
-    const res = await api('jam/capture', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && payload.length < 60_000 ? { keepalive: true } : {}) })
+    // a page that is going sends with keepalive (64 kB at most, counted in UTF-8 bytes as the body carries it - not
+    // `.length`: notes in another script are wider) so the request outlives it; a bigger one, the next page
+    const res = await api('jam/capture', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && bytesOf(payload) < 60_000 ? { keepalive: true } : {}) })
     const body = (await res.json().catch(() => null)) as Verdict | null
     // only an explicit verdict on THIS record is final: taken (200, naming its card) or refused as a
     // record (400, saying why). Anything else - jam not running yet, another workspace, an unreadable

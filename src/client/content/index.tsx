@@ -77,6 +77,9 @@ export function Doc({ layout = 'document', children }: { layout?: 'document' | '
         // drops echoes that don't match the iframe's current src)
         frame: params.get('id') ?? '',
         gen: params.get('r') ?? '',
+        // and THIS document's id (the frame bridge sets it; absent where no bridge ran - the stage, a headless shot):
+        // the shell's recorder counts a settled report only from the document there now (spec 28 A1.7)
+        boot: (window as { __mvBoot?: string }).__mvBoot,
         ownWidth: CONTENT_WIDTH[layout] ?? CONTENT_WIDTH.document,
         measuredWidth: window.innerWidth,          // the width this height is TRUE at (r3 #1)
         height: height(),
