@@ -765,38 +765,11 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // once Vite is done with it (closed half-made, Vite would go on making it; closed while it binds, Vite's close, which
   // runs once, would find nothing bound and leave the socket open): Vite's close of the old server is then refused, so
   // the new one is never put in place, and one already in place never binds (its listen fails, above). The close returns
-  // once every restart is over (`restarts`), to its last cleanup - what a server that could not be made made, closed.
-  // That reading of Vite is Vite's, not a contract - package.json takes any vite 8 - and a Vite that restarts otherwise
-  // must never hang a canvas: its close of the old server, un-said, would be the start's end, which waits on the
-  // restart, which waits on that close. So a close un-said while a restart's Vite run is on its way is asked who awaits
-  // it. V8 lists, under the frames that call, every async function awaiting the call, and Marver's restart run
-  // (`marverRestartRun`) is among them only when the restart itself asks - never a timer its making set off, an embedding
-  // caller or a signal. Asked so before the new server is in place, it is Vite's close of the old server - Vite puts the
-  // new one in place once the old one is closed, its order since Vite 2 - taken as above, so the restart completes and
-  // the canvas serves on; asked after, it is the start's end, which never waits on the restart asking it. Any other close
-  // still waits for every restart to its last cleanup - that restart does not await it, so the wait ends - but never past
-  // RESTART_WAIT: a Vite whose restart awaits the close through what V8 cannot follow (a callback, a timer of its own)
-  // would hang there. Cut, the start has given everything back already, and the restart closes what it made once Vite
-  // is done with it (its new server never binds, above): the canvas ends, cleanly, instead of hanging. Not every un-said
-  // close ended at once without waiting - on such a Vite every .env edit would end the canvas, and here a close during a
-  // restart would return before that restart's cleanup - nor every one taken for Vite's - a close a person asked for
-  // would be lost, the canvas serving on. Either fallback says so, once: a Vite that restarts otherwise is seen, not silent.
-  const RESTART_WAIT = 10_000
-  let differs = false
-  const differently = () => {
-    if (differs) return
-    differs = true
-    console.warn('  marver: this Vite version restarts differently - restart marver dev if the canvas stops answering')
-  }
-  /** every restart but `self` over, to its last cleanup - waited for RESTART_WAIT at most */
-  const restartsOver = async (self?: Replacing) => {
-    const waits = [...restarts].filter((x) => x !== self).map((x) => x.over)
-    if (!waits.length) return
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const cut = await Promise.race([Promise.all(waits).then(() => false), new Promise<boolean>((res) => { timer = setTimeout(() => res(true), RESTART_WAIT) })])
-    clearTimeout(timer)
-    if (cut) differently()
-  }
+  // once every restart is over (`restarts`), to its last cleanup - what a server that could not be made made, closed -
+  // however long that takes: no restart awaits that close, so the wait ends. The one close a restart awaits is its own
+  // end when its new server cannot listen, which never waits on that restart. That reading of Vite's restart is Vite
+  // 8.2's, not a contract: package.json takes vite ~8.2 only, and a test reads Vite's restart for the order above
+  // (startup.test.ts) - re-check this step before widening that range.
   const end = (self?: Replacing): Promise<void> => {
     ending ??= (async () => {
       const r = replacing
@@ -804,31 +777,20 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       if (made) { made.withdraw?.(); made.withdraw = null; made.left = true }
       await t.close()
     })()
-    // never a restart's own end waiting on that restart: it waits on this close
-    return ending.then(() => restartsOver(self))
+    // every restart over, to its last cleanup - never a restart's own end waiting on that restart: it waits on this close
+    return ending.then(() => Promise.all([...restarts].filter((x) => x !== self).map((x) => x.over))).then(() => {})
   }
   /** Vite's own close and restart of the server on this object: the first server's, then those each restart put in place */
   const live = { close: server.close, restart: server.restart }
-  /** Vite's close of the old server: that server alone - refused once the start has ended, so the new one is never put in
-   *  place and Vite's restart ends there */
-  const closeOld = () => ending ? Promise.reject(new Error('the canvas has closed')) : live.close.call(server)
-  /** the restart's own Vite run awaits this call: its run is among the async frames under the caller */
-  const askedByRestart = (): boolean => {
-    const limit = Error.stackTraceLimit
-    try { Error.stackTraceLimit = 200 } catch { /* fixed: read as it is */ }
-    const stack = new Error().stack ?? ''
-    try { Error.stackTraceLimit = limit } catch { /* fixed */ }
-    return /\bat async marverRestartRun\b/.test(stack)
-  }
   const close = (() => {
     const r = replacing
-    if (r?.oldClose) { r.oldClose = false; return closeOld() }
-    if (r && askedByRestart()) { differently(); return r.handed ? end(r) : closeOld() }
+    // Vite's close of the old server: that server alone - refused once the start has ended, so the new one is never put
+    // in place and Vite's restart ends there
+    if (r?.oldClose) { r.oldClose = false; return ending ? Promise.reject(new Error('the canvas has closed')) : live.close.call(server) }
     return end()
   }) as typeof server.close
   let restarting: Promise<void> | null = null
-  // named: askedByRestart finds it among a close's async frames
-  const restart = ((forceOptimize?: boolean) => restarting ??= (async function marverRestartRun() {
+  const restart = ((forceOptimize?: boolean) => restarting ??= (async () => {
     if (ending) return   // the start has ended: nothing to restart
     let failed: unknown
     let over = () => {}
