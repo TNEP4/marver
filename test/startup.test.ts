@@ -11,8 +11,9 @@ import { portInUse } from '../src/server/exclusive.ts'
 /**
  * Startup as one transaction (spec 28 A1.1): a start that fails at any step - inside Vite's environment
  * initialisation, in configureServer, between createServer and listen, after listening - or is stopped
- * by a signal while it is there, leaves no dev.lock, no slot file, no dev.json, no listening server and
- * nothing of Marver's still running (watchers, sweeps, timers). `dev()` rejects with a DevStartError and
+ * by a signal while it is there, leaves no dev.lock, no slot file, no dev.json, no listening server,
+ * nothing of Marver's still running (watchers, sweeps, timers) and nothing of Vite's (its watcher, socket,
+ * environments, SIGTERM handler): the process ends on its own, never told to. `dev()` rejects with a DevStartError and
  * never ends the process itself; the CLI does, with a message. A Vite restart (an .env edit) is no way out: it
  * keeps all of that, and replaces only the server and the watchers that belong to it.
  *
@@ -53,7 +54,7 @@ const freshHome = () => { const h = realpathSync(mkdtempSync(join(tmpdir(), 'mv-
 const local = (f: string) => join(root, 'design', '.local', f)
 const runningIn = (home: string) => existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : []
 
-interface State { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[] }
+interface State { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[]; signals: number }
 interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; restarted?: boolean; before?: State; now?: State }
 
 const CHILD = `import { existsSync, readdirSync, writeFileSync } from 'node:fs'
@@ -62,6 +63,9 @@ import { join } from 'node:path'
 const o = JSON.parse(process.env.MV_START)
 const { dev, DevStartError } = await import(o.devModule)
 const { portInUse } = await import(o.exclusiveModule)
+// the signal listeners a package installs as it loads (signal-exit) are there before any start: counted from here
+const listening = () => ['SIGINT', 'SIGTERM', 'SIGHUP'].reduce((n, s) => n + process.listenerCount(s), 0)
+const loaded = listening()
 const home = process.env.MARVER_HOME
 let port = null
 const steps = [], blockers = []
@@ -76,6 +80,8 @@ const at = async (step, info) => {
 const state = async () => ({
   lock: existsSync(join(o.root, 'design', '.local', 'dev.lock')), devJson: existsSync(join(o.root, 'design', '.local', 'dev.json')),
   running: existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : [], inUse: port ? await portInUse(port) : null, live: globalThis.__marverLive(),
+  // whoever a start left listening for a signal (its own hooks, Vite's SIGTERM handler): a later signal would run it
+  signals: listening() - loaded,
 })
 const say = (v) => process.stdout.write('@@' + JSON.stringify(v) + '\\n')
 try {
@@ -107,7 +113,9 @@ try {
   for (const s of blockers) await new Promise((r) => s.close(r))
   say({ ok: false, typed: err instanceof DevStartError, message: err.message, port, steps, after: await state() })
 }
-process.exit(0)`
+// Nothing forces the end: this process ends once nothing runs in it. Whatever a start left open - Vite's watcher, its
+// socket, a timer, any package's handle - keeps it alive, and after 10 s it says what and exits 3.
+setTimeout(() => { process.stdout.write('@!' + JSON.stringify(process.getActiveResourcesInfo()) + '\\n'); process.exit(3) }, 10_000).unref()`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
 function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean }, home = freshHome()) {
@@ -136,35 +144,45 @@ const waitFor = async (ok: () => boolean, ms = 30_000) => {
   for (const by = Date.now() + ms; Date.now() < by; await new Promise((r) => setTimeout(r, 50))) if (ok()) return
   throw new Error('timed out')
 }
-const clean = { lock: false, devJson: false, running: [], live: [] }
+const clean = { lock: false, devJson: false, running: [], live: [], signals: 0 }
+/** The start's process ended on its own, nothing left running in it (else what still ran, as it said). */
+const endsAlone = async (s: { exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; out: () => string }) => {
+  const how = await Promise.race([s.exited, new Promise<null>((r) => setTimeout(() => r(null), 20_000))])
+  expect(how, s.out()).toEqual({ code: 0, signal: null })
+}
 
 describe('a start that fails leaves nothing behind (A1.1)', () => {
   for (const step of STEPS) {
     it(`a failure at "${step}": dev() rejects, typed, after closing what it made and giving back what it held`, async () => {
-      const { report } = start({ fail: step })
-      const r = await report
+      const s = start({ fail: step })
+      const r = await s.report
       expect(r.ok).toBe(false)
       expect(r.typed).toBe(true)
       expect(r.message).toMatch(new RegExp(`^the canvas could not start: .*injected at ${step}`))
       expect(r.steps.at(-1)).toBe(step)
       expect(r.after).toEqual({ ...clean, inUse: step === 'locked' ? null : false })
+      await endsAlone(s)
     }, 60_000)
   }
 
   it('another program takes the port between the check and the bind: named, and nothing is left', async () => {
-    const r = await start({ race: true }).report
+    const s = start({ race: true })
+    const r = await s.report
     expect(r.ok).toBe(false)
     expect(r.typed).toBe(true)
     expect(r.message).toBe(`port ${r.port} was just taken by another program - start again`)
     expect(r.steps).toEqual(['locked', 'claimed', 'env', 'configure', 'created'])
     expect(r.after).toEqual({ ...clean, inUse: false })
+    await endsAlone(s)
   }, 60_000)
 
-  it('a full start, then close: the same - nothing of Marver\'s still runs', async () => {
-    const r = await start({}).report
+  it('a full start, then close: the same - nothing of Marver\'s still runs, nor of Vite\'s', async () => {
+    const s = start({})
+    const r = await s.report
     expect(r.ok).toBe(true)
     expect(r.steps).toEqual([...STEPS])
     expect(r.after).toEqual({ ...clean, inUse: false })
+    await endsAlone(s)
   }, 60_000)
 })
 
@@ -218,7 +236,7 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(r.ok).toBe(true)
     expect(r.restarted).toBe(true)
     const slot = `slot-${r.port! - Number(BASE)}.json`
-    for (const st of [r.before!, r.now!]) expect({ ...st, live: [] }).toEqual({ lock: true, devJson: true, running: [slot], inUse: true, live: [] })
+    for (const { live: _live, signals: _signals, ...st } of [r.before!, r.now!]) expect(st).toEqual({ lock: true, devJson: true, running: [slot], inUse: true })
     expect(JSON.parse(readFileSync(join(s.home, 'running', slot), 'utf8')).state).toBe('ready')
     // the new server's watchers in place of the old one's, the start's own untouched: board sync, the shot inbox,
     // the comment watcher, and the sweeps
@@ -246,12 +264,14 @@ describe('a Vite restart is no way out (A1.1)', () => {
   }, 90_000)
 
   it('a close after a restart: nothing of Marver\'s still runs, the new server\'s watchers included', async () => {
-    const r = await start({ restart: true }).report
+    const s = start({ restart: true })
+    const r = await s.report
     expect(r.ok).toBe(true)
     expect(r.restarted).toBe(true)
     expect(kept(r.before!).length).toBeGreaterThan(0)
     expect(kept(r.now!)).toEqual(kept(r.before!))
     expect(r.after).toEqual({ ...clean, inUse: false })
+    await endsAlone(s)
   }, 60_000)
 
   it('a restart that cannot listen ends the start: said, and everything given back', async () => {
@@ -261,6 +281,7 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(r.restarted).toBe(true)
     expect(r.now).toEqual({ ...clean, inUse: false })
     expect(s.out()).toContain(`the canvas stopped: it could not restart on port ${r.port}`)
+    await endsAlone(s)
   }, 60_000)
 })
 

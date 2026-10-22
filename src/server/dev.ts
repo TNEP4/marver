@@ -1,4 +1,4 @@
-import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
+import { createLogger, createServer, searchForWorkspaceRoot, type DevEnvironment, type ResolvedConfig, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { existsSync, mkdirSync, realpathSync, statSync, watch as fsWatch } from 'node:fs'
 import { homedir } from 'node:os'
@@ -287,6 +287,55 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
 
   plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup: t, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
+  // 3. Vite's server belongs to the start from the moment it holds anything, never from the moment it is handed
+  // back: Vite makes its file watcher and HMR socket, then initialises its environments (each plugin's `options`
+  // runs there), then installs a SIGTERM handler and runs every configureServer hook - and a throw at any of those
+  // leaves what it made to an embedding caller. So each environment is taken as Vite makes it, with the watcher and
+  // the socket it is given, and closed on a way out; from its first configureServer hook, before any other (Marver's
+  // own, a host's) can fail, the server itself is, by its full close, awaited - the close of the server serving
+  // then (a restart replaces it, step 6).
+  let closeVite: () => Promise<void> = async () => {}
+  let owned = false
+  const partial = { envs: new Set<DevEnvironment>(), closers: new Set<{ close(): unknown }>() }
+  let withdrawPartial: (() => void) | null = null
+  const closePartial = async () => {
+    await Promise.allSettled([...partial.envs].map(async (env) => {
+      // an environment whose initialisation failed has no plugin container, and its close throws before the rest
+      try { await env.close() } catch { await env.depsOptimizer?.close() }
+    }))
+    await Promise.allSettled([...partial.closers].map(async (c) => c.close()))
+  }
+  plugins.unshift({
+    name: 'marver:startup-owns-server',
+    configResolved(resolved: ResolvedConfig) {
+      if (owned) return   // a restart resolves again: the server it makes is the restart's (step 6)
+      for (const env of Object.values(resolved.environments)) {
+        const make = env.dev?.createEnvironment
+        if (!make) continue
+        env.dev.createEnvironment = async (name, config, context) => {
+          const made = await make(name, config, context)
+          if (owned) return made
+          withdrawPartial ??= t.defer(closePartial)
+          partial.envs.add(made)
+          if (context.ws) partial.closers.add(context.ws)
+          const init = made.init.bind(made)
+          made.init = (o) => { if (o?.watcher) partial.closers.add(o.watcher); return init(o) }
+          return made
+        }
+      }
+    },
+    configureServer: {
+      order: 'pre',
+      handler(vite: ViteDevServer) {
+        if (owned) return   // a restart's new server: the restart wrap takes it on (step 6)
+        owned = true
+        closeVite = vite.close.bind(vite)
+        // the whole server now: its close closes the environments, the watcher and the socket with the rest
+        withdrawPartial?.()
+        t.defer(() => closeVite())
+      },
+    },
+  })
   if (opts.at) {
     // the test seam's probe: its `options` runs inside Vite's environment initialisation (once per
     // environment - said once), its configureServer after Marver's (which is `enforce: 'pre'`)
@@ -389,10 +438,6 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     logLevel: 'info',
   })
 
-  // 3. Vite's full close, awaited, if anything after this fails - the close of the server serving then (a
-  // restart replaces it, step 6)
-  let closeVite = server.close.bind(server)
-  t.defer(() => closeVite())
   /** what holds the HTTP server itself, put back on the new one after a restart (step 6) */
   const onRestart: (() => void)[] = []
   await opts.at?.('created')
