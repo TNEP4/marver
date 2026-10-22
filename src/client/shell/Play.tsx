@@ -26,7 +26,7 @@ import { withWs } from './api.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { recorder } from './recorder.ts'
-import { revealFrame } from './goto.ts'
+import { revealFrame, switchFor } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
@@ -149,8 +149,9 @@ async function switchPlayBoard(name: string) {
   const s = useStore.getState()
   if (name === s.board) return
   const device = s.play?.device               // the device is the viewer's choice - it survives the switch
-  await s.switchBoard(name)
-  if (useStore.getState().board !== name) return
+  // a navigation like any other: a link still reading its board gives way to it, and it to a newer one - which then
+  // has the board, the stage and the camera
+  if (!await switchFor(name)) return
   const dev = device && device !== 'slide' ? { device } : undefined   // the deck's own size does not follow to a prototype
   if (playsAsSlides(name)) enterSlides(device ? { device } : undefined)
   else enterPlay(dev)

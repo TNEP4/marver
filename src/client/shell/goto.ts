@@ -59,7 +59,8 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
 /** Navigation supersedes any goto or reveal still on its way - its board lookup (gotoSeq) AND a board
  *  switch it already started (a switch to the board on screen cancels any pending one: store.ts) - so
  *  a slow lookup can never yank the view away from where the human has gone since. Every entry point
- *  calls it: a pasted link, back/forward, a goto, a reveal, a board picked in the sidebar. */
+ *  calls it, the published shell's too: a pasted link, back/forward, a goto, a reveal, a board picked in
+ *  the sidebar or the play pill, a notification's View - and switches boards only through switchFor. */
 export function navigated(): number {
   const s = useStore.getState()
   if (s.board) void s.switchBoard(s.board)
@@ -67,6 +68,15 @@ export function navigated(): number {
 }
 /** Is this still the latest navigation - nothing newer since `navigated()` handed it out? */
 export const isLatest = (seq: number): boolean => seq === gotoSeq
+/** The one way a navigation changes boards - a link, a goto, a reveal, a board picked in the sidebar or the play pill, a
+ *  notification's View: the switch is navigation `nav`'s (a new one, unless the caller took it at its own start, before
+ *  a lookup), and true only once it landed with nothing newer since. What the caller does on the board - select, set a
+ *  mode, enter play, move the camera - waits for true: a switch a newer navigation cancelled comes back too, and may
+ *  find the board it asked for, the newer one's by then. */
+export async function switchFor(board: string, nav: number = navigated()): Promise<boolean> {
+  await useStore.getState().switchBoard(board)
+  return isLatest(nav) && useStore.getState().board === board
+}
 /** The camera to a node once it is drawn - unless a newer navigation has it by then. */
 const fitLater = (key: string, seq: number) => setTimeout(() => { if (isLatest(seq)) canvasCtl.fitNode(key) }, 50)
 
@@ -74,7 +84,7 @@ const fitLater = (key: string, seq: number) => setTimeout(() => { if (isLatest(s
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
 async function landOn(home: string, target: string, carry: boolean, seq: number, from: string) {
   if (seq !== gotoSeq || useStore.getState().board !== from) return
-  await useStore.getState().switchBoard(home)
+  if (!await switchFor(home, seq)) return
   for (let i = 0; i < 12; i++) {                     // the board commits async - retry like viewNote
     if (seq !== gotoSeq) return
     const st = useStore.getState()
@@ -95,17 +105,17 @@ async function landOn(home: string, target: string, carry: boolean, seq: number,
  *  not show, the way back from a focus link): this board, else the first board that shows it
  *  (archive boards last), else - a frame on no board - the Not on a board view. Unlike a goto it
  *  never spawns - opening a link must not edit a board. */
-export async function revealFrame(target: string): Promise<void> {
+export async function revealFrame(target: string, nav?: number): Promise<void> {   // `nav`: a caller's navigation, else its own
   const s = useStore.getState()
   const here = s.nodes.find((n) => n.frame === target && !n.missing)
   if (here) {
-    const seq = navigated()
+    const seq = nav ?? navigated()
     s.select(here.key)
     fitLater(here.key, seq)
     return
   }
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
-  const seq = navigated()
+  const seq = nav ?? navigated()
   const from = s.board
   let home: string | null = null
   try {

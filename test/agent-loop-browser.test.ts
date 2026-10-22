@@ -209,6 +209,35 @@ describe('a link that lands on the work', () => {
     } finally { await held.stop() }
   }, 60_000)
 
+  it('a board picked in play wins over a link whose board read comes back after it: the stage stays up', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/big', 1)
+    const held = await holdBoard(browser, s, 'flow')
+    try {
+      // a link to a frame on flow, its board read held
+      await browser.eval(s, `(location.hash = '#/b/flow?f=shop/pay'), 1`)
+      for (let i = 0; i < 100 && held.held() < 1; i++) await wait(50)
+      expect(held.held()).toBe(1)
+      // play on big, the board still shown; then flow picked from the play pill's board menu
+      await browser.press(s, 'p')
+      await browser.until(s, `window.__mvStore.getState().play?.at === 'other/far'`, 10_000)
+      await browser.eval(s, `document.querySelector('.sh-play-pill .sh-pill-btn.bd').click(), 1`)
+      await browser.until(s, `[...document.querySelectorAll('.sh-menu button')].some((b) => b.textContent.trim() === 'Flow')`, 10_000)
+      await browser.eval(s, `[...document.querySelectorAll('.sh-menu button')].find((b) => b.textContent.trim() === 'Flow').click(), 1`)
+      for (let i = 0; i < 100 && held.held() < 2; i++) await wait(50)
+      expect(held.held()).toBe(2)
+      // the pick's board arrives first: flow, playing from its start
+      await held.newest()
+      await browser.until(s, `(() => { const st = window.__mvStore.getState(); return st.board === 'flow' && st.play?.at === 'shop/cart' })()`, 20_000)
+      // then the link's: its switch was cancelled - it must not close the stage, select its frame or move the camera
+      await held.oldest()
+      await wait(1500)
+      const st = await browser.eval(s, `(() => { const st = window.__mvStore.getState(); return { board: st.board, at: st.play?.at ?? null, sel: st.selection, stage: !!document.querySelector('.sh-play'), hash: location.hash } })()`)
+      expect(st).toMatchObject({ board: 'flow', at: 'shop/cart', sel: [], stage: true })
+      expect(st.hash).toMatch(/^#\/p\/flow\b/)
+    } finally { await held.stop() }
+  }, 60_000)
+
   it('a goto right after a link on the board shown keeps the camera: the link\'s fit, still due, gives way', async () => {
     if (!browser) return
     const s = await open(browser, '#/b/flow')

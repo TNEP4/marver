@@ -15,6 +15,7 @@ import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play
 import { UNPLACED, bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
+import { isLatest, navigated, switchFor } from './goto.ts'
 
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }
@@ -96,10 +97,9 @@ export function App() {
 
   // back/forward + pasted links, within what the lock allows
   useEffect(() => {
-    let popSeq = 0
     const onPop = async () => {
-      // a lookup newer navigation overtook - a link, a step on the stage - is dropped
-      const mine = ++popSeq, was = useStore.getState()
+      // a lookup newer navigation overtook - a link, a goto, a step on the stage - is dropped
+      const nav = navigated(), was = useStore.getState()
       const parsed = parseHash()
       const raw = parsed.board === UNPLACED ? {} : parsed   // dev's view, and what it names: not here
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
@@ -107,11 +107,11 @@ export function App() {
       const h = r.hash
       const board = h.board ?? (h.focus ? undefined : await landingBoard())
       const s = useStore.getState()
-      if (mine !== popSeq || s.board !== was.board || s.play?.at !== was.play?.at) return
+      if (!isLatest(nav) || s.board !== was.board || s.play?.at !== was.play?.at) return
       if (r.notice) s.toast(r.notice)
       if (h.c) pendingThread = h.c
       if (board && board !== s.board) {
-        await s.switchBoard(board)
+        if (!await switchFor(board, nav)) return         // failed, or a newer navigation's board and stage by now
         useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
         if (h.play?.slides) enterSlides(h.play)
         else if (h.play) enterPlay(h.play)

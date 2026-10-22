@@ -23,7 +23,7 @@ import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board
 import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
-import { goTo, isLatest, navigated, revealFrame } from './goto.ts'
+import { goTo, isLatest, navigated, revealFrame, switchFor } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
@@ -488,15 +488,15 @@ export function App() {
       let s = useStore.getState()
       if (h.board && h.board !== s.board) {
         if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
-        const switched = s.switchBoard(h.board)
+        const switched = switchFor(h.board, nav)
         const mine = routing = { hash: raw, switches: switchCount() }
-        await switched
+        const landed = await switched
         if (routing === mine) routing = null
+        // the switch failed (the projection effect re-syncs the URL), or a newer navigation came while this one's board
+        // was read - a link, a goto, a board picked - and may have landed on this same board first: the board is the
+        // newer one's then, and so are the selection, the mode and the camera
+        if (!landed) return
         s = useStore.getState()
-        if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
-        // a newer navigation came while this one's board was read - a link, a goto, a board picked - and may have landed
-        // on this same board first: the board is the newer one's, and so are the selection, the mode and the camera
-        if (!isLatest(nav)) return
       }
       // the thread an old link names (Comments.tsx opens every other link's): now, or once the new board's comments load
       if (legacy && h.c) { if (s.board !== at) parkThread(h.c); else revealThread(h.c) }
@@ -1158,10 +1158,12 @@ function JamAvatar({ author }: { author: { name?: string; avatar?: string; id?: 
 async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void) {
   if (revealThread(note.threadId)) { dismiss(); return }
   const s = useStore.getState()
+  // a navigation: a link still finding its board gives way to it - and it to a newer one, wherever this one has got to
+  const nav = navigated()
   // a thread in the old all-scenes log has no board of its own: its frame's board shows it (spec 26)
-  if (note.board === ALL_SCENES) { if (note.frame) await revealFrame(note.frame) }
-  else if (note.board && s.board !== note.board) await s.switchBoard(note.board)
-  for (let i = 0; i < 12; i++) {
+  if (note.board === ALL_SCENES) { if (note.frame) await revealFrame(note.frame, nav) }
+  else if (note.board && s.board !== note.board && !await switchFor(note.board, nav)) return
+  for (let i = 0; i < 12 && isLatest(nav); i++) {
     if (revealThread(note.threadId)) { dismiss(); return }
     await new Promise((r) => setTimeout(r, 250))
   }
