@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
@@ -14,13 +14,14 @@ import { workspaceId } from '../src/server/workspace.ts'
 
 /**
  * The slots, end to end (spec 28 A1.3, A1.10): real `marver dev` starts from dist/ on a registry of
- * their own, with the twenty slots moved to 49005-49024. Two projects take slots 1 and 2 and get them
- * back; a canvas killed hard is reclaimed; a busy port of its own falls back to a slot and a held port in
- * the range stops the start; the published slot file signs the shell's document (A1.4); and what runs
- * against a canvas - work, link, shot, Live Jam's audio socket and a capture - works on a slot.
+ * their own, with the twenty slots moved to the suite's own in the run's block (test/global-setup.ts).
+ * Two projects take slots 1 and 2 and get them back; a canvas killed hard is reclaimed; a busy port of
+ * its own falls back to a slot and a held port in the range stops the start; the published slot file
+ * signs the shell's document (A1.4); and what runs against a canvas - work, link, shot, Live Jam's audio
+ * socket (across a Vite restart too) and a capture - works on a slot.
  */
 
-const BASE = 49004
+const BASE = inject('marverSlotBases').slotsDev
 let home = ''
 const env = (extra: NodeJS.ProcessEnv = {}) => ({ MARVER_HOME: home, MARVER_SLOT_BASE: String(BASE), ...extra })
 const roots: string[] = []
@@ -95,9 +96,10 @@ describe('two projects on the slots (A1.3)', () => {
     expect(res.headers.get('x-mv-proof')).toBe(createHmac('sha256', Buffer.from(f.key, 'base64url')).update(`doc|${nonce}|${f.port}`).digest('base64url'))
     const plain = await fetch(`${devA.origin}/`)
     expect(plain.headers.get('x-mv-proof')).toBeNull()
-    // the registry itself is never served, whatever the path
+    // the registry itself is never served, whatever the path - refused by the registry's own guard, which runs
+    // before Vite's (this home is outside the canvas's allowed folders, so Vite would refuse it too)
     const leak = await fetch(`${devA.origin}/@fs${running('slot-1.json')}`)
-    expect(await leak.text()).not.toContain(f.key)
+    expect([leak.status, await leak.text()]).toEqual([403, 'the canvas registry (~/.marver) is never served'])
   })
 
   it('marver ls lists them both, without their keys', async () => {
@@ -218,7 +220,7 @@ describe('the registry is never served (A1.13 #5)', () => {
 })
 
 describe('Live Jam on a slot (A1.10)', () => {
-  it('the audio socket opens with a ticket, and a capture carrying the project\'s workspace passes its check', async () => {
+  it('the audio socket opens with a ticket - after a Vite restart too - and a capture carrying the project\'s workspace passes its check', async () => {
     const bin = mkdtempSync(join(tmpdir(), 'mv-slots-bin-'))
     roots.push(bin)
     writeFileSync(join(bin, 'claude'), '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ type: "result", result: "" }) + "\\n")\n')
@@ -227,16 +229,25 @@ describe('Live Jam on a slot (A1.10)', () => {
     const d = await start(r, [], { PATH: `${bin}:${process.env.PATH}` })
     expect(d.port).toBe(BASE + 1)
     const owner = { 'content-type': 'application/json', cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: d.origin }
-    const t = await fetch(`${d.origin}/__mv/api/jam/audio-ticket`, { method: 'POST', headers: owner, body: '{}' })
-    expect(t.status).toBe(200)
-    const { ticket } = await t.json()
-    const opened = await new Promise<boolean>((resolve) => {
-      const ws = new WebSocket(`ws://localhost:${d.port}/__mv/api/jam/audio?ticket=${ticket}`, { headers: { origin: d.origin, cookie: 'mv_c=tok' } })
-      ws.once('open', () => { ws.close(); resolve(true) })
-      ws.once('error', () => resolve(false))
-      ws.once('unexpected-response', () => resolve(false))
-    })
-    expect(opened).toBe(true)
+    const audio = async () => {
+      const t = await fetch(`${d.origin}/__mv/api/jam/audio-ticket`, { method: 'POST', headers: owner, body: '{}' })
+      expect(t.status).toBe(200)
+      const { ticket } = await t.json()
+      return new Promise<boolean>((resolve) => {
+        const ws = new WebSocket(`ws://localhost:${d.port}/__mv/api/jam/audio?ticket=${ticket}`, { headers: { origin: d.origin, cookie: 'mv_c=tok' } })
+        ws.once('open', () => { ws.close(); resolve(true) })
+        ws.once('error', () => resolve(false))
+        ws.once('unexpected-response', () => resolve(false))
+        setTimeout(() => { ws.terminate(); resolve(false) }, 10_000)   // an upgrade nobody handles is never answered
+      })
+    }
+    expect(await audio()).toBe(true)
+    // an .env edit restarts Vite in place: the socket goes with the new server, and the slot stays the canvas's
+    writeFileSync(join(r, '.env'), 'MV_RESTART=1\n')
+    for (let by = Date.now() + 30_000; Date.now() < by && !/server restarted/.test(d.out()); await new Promise((res) => setTimeout(res, 100)));
+    expect(d.out()).toMatch(/server restarted/)
+    expect(await audio()).toBe(true)
+    expect(record('slot-1.json')).toMatchObject({ state: 'ready', pid: d.proc.pid })
     const capture = (workspace: string) => fetch(`${d.origin}/__mv/api/jam/capture`, { method: 'POST', headers: owner, body: JSON.stringify({ workspace, record: {} }) })
       .then(async (res) => ({ status: res.status, json: await res.json() }))
     const own = await capture(workspaceId(r))

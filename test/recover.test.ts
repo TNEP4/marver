@@ -1,7 +1,8 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync, mkdtempSync, realpathSync } from 'node:fs'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fixtureRoot, runDev, startDev, type Dev } from './dev-server.ts'
@@ -14,10 +15,10 @@ import { workspaceId } from '../src/server/workspace.ts'
  * a workspace key. --recover lists the addresses a project ran on - newest first, then the one 0.26 gave
  * the folder - and starts on exactly one of them: its port, its workspace key, never another address; it
  * never rewrites the preference file. Real `marver dev` starts from dist/, a registry of their own and
- * the slots on 49105-49124.
+ * the slots on the suite's own twenty in the run's block (test/global-setup.ts).
  */
 
-const BASE = 49104
+const BASE = inject('marverSlotBases').recover
 let home = ''
 const env = () => ({ MARVER_HOME: home, MARVER_SLOT_BASE: String(BASE) })
 const roots: string[] = []
@@ -49,6 +50,12 @@ const capture = (d: Dev, workspace: string) => fetch(`${d.origin}/__mv/api/jam/c
   headers: { 'content-type': 'application/json', cookie: 'mv_c=tok', 'x-mv-c': 'tok', origin: d.origin },
 }).then(async (r) => ({ status: r.status, json: await r.json() }))
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16)
+/** Does anything accept a connection at host:port? */
+const connects = (host: string, port: number) => new Promise<boolean>((resolve) => {
+  const s = connect({ host, port })
+  s.once('connect', () => { s.destroy(); resolve(true) })
+  s.once('error', () => resolve(false))
+})
 
 describe('--recover: the addresses a project ran on (A1.6)', () => {
   let p = ''
@@ -87,14 +94,25 @@ describe('--recover: the addresses a project ran on (A1.6)', () => {
     expect(readdirSync(running())).toEqual([])
   }, 60_000)
 
-  it('--recover 2 binds exactly that address, and leaves the preference file as it was', async () => {
+  it('--recover 2 binds exactly that address - its port and its bound address - and leaves the preference file as it was', async () => {
+    // the entry recorded on the other loopback family: a recovery that dropped the bound address (Vite's
+    // default, `localhost`) would bind the family this Mac resolves first
+    const pref = JSON.parse(readFileSync(preferOf(p), 'utf8'))
+    const recorded: string = pref.history[1].bind
+    const v6 = recorded.startsWith('http://[::1]:')
+    const other = v6 ? `http://127.0.0.1:${BASE + 2}` : `http://[::1]:${BASE + 2}`
+    writeFileSync(preferOf(p), JSON.stringify({ ...pref, history: pref.history.map((a: any, i: number) => i === 1 ? { ...a, bind: other } : a) }))
     const before = readFileSync(preferOf(p), 'utf8')
     const d = await start(p, ['--recover', '2'])
     expect(d.port).toBe(BASE + 2)
-    expect(d.out()).toContain(`recovering: open http://localhost:${BASE + 2}/ in the browser that made the capture`)
-    expect(JSON.parse(readFileSync(running('slot-2.json'), 'utf8'))).toMatchObject({ slot: 2, state: 'ready', ws: workspaceId(p) })
+    expect(d.out()).toContain(`recovering: open http://localhost:${BASE + 2}/ in the browser that made the capture (the app loads ${other})`)
+    expect(JSON.parse(readFileSync(running('slot-2.json'), 'utf8'))).toMatchObject({ slot: 2, state: 'ready', ws: workspaceId(p), origin: other })
+    // ...and only there: the family it was not given answers nothing on that port
+    expect(await connects(v6 ? '::1' : '127.0.0.1', BASE + 2)).toBe(false)
+    expect(await connects(v6 ? '127.0.0.1' : '::1', BASE + 2)).toBe(true)
     await stop(d)
     expect(readFileSync(preferOf(p), 'utf8')).toBe(before)
+    writeFileSync(preferOf(p), JSON.stringify(pref))
   }, 60_000)
 
   it('...under the workspace key that address used: the page, the registry and the capture check all read it', async () => {
