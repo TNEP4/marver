@@ -117,6 +117,30 @@ async function holder(s: string, patterns: string[]): Promise<Held> {
     stop: off,
   }
 }
+/** This tab's record sends (POST /api/perf/page) in order, each answered by `answer(n)` - a status, or undefined to let
+ *  it reach the server - with the records it carried; the request cookie's primer (GET /api/work) among them. */
+async function sends(s: string, answer: (n: number) => number | undefined) {
+  const seen: { url: string; at: number; status?: number; records?: Record<string, any>[] }[] = []
+  let n = 0
+  const off = browser!.on((m) => {
+    if (m.method !== 'Fetch.requestPaused' || m.sessionId !== s) return
+    const { requestId, request } = m.params
+    const post = /\/api\/perf\/page/.test(request.url)
+    if (!post && !/\/api\/work\b/.test(request.url)) return
+    const status = post ? answer(n++) : undefined
+    seen.push({ url: request.url, at: Date.now(), ...(status ? { status } : {}), ...(post ? { records: JSON.parse(request.postData ?? '{}').records ?? [] } : {}) })
+    if (status === undefined) void browser!.send('Fetch.continueRequest', { requestId }, s).catch(() => {})
+    else void browser!.send('Fetch.fulfillRequest', { requestId, responseCode: status, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from('{"error":"not here"}').toString('base64') }, s).catch(() => {})
+  })
+  await browser!.send('Fetch.enable', { patterns: ['*/api/perf/page*', '*/api/work*'].map((urlPattern) => ({ urlPattern, requestStage: 'Request' })) }, s)
+  return { seen, posts: () => seen.filter((x) => x.records), stop: off }
+}
+/** Nothing waits to be sent, nothing is on its way. */
+const drained = (s: string) => browser!.until(s, `(() => { const r = window.__mvRecorder.state(); return r.queued === 0 && !r.sending })()`, 15_000)
+const shellError = (s: string, message: string) => browser!.eval(s, `setTimeout(() => { throw new Error(${JSON.stringify(message)}) }), 1`)
+/** How many records a batch stood for: one each, a dropped record as many as it says. */
+const worth = (records: Record<string, any>[]) => records.reduce((n, r) => n + (r.kind === 'dropped' ? r.n : 1), 0)
+
 /** Run in a frame's own realm (its window), as the document there would. */
 const inFrame = (s: string, key: string, code: string) =>
   browser!.eval(s, `document.querySelector('[data-node="${key}"] iframe').contentWindow.eval(${JSON.stringify(code)})`)
@@ -166,6 +190,7 @@ beforeAll(async () => {
   board('never', [{ key: 'k-hang', frame: 'kit/hang', x: 0, y: 0 }, { key: 'k-nope', frame: 'kit/nope', x: 600, y: 0, w: 390, h: 844 }])
   board('pair', [{ key: 'k-ph', frame: 'kit/hifi', x: 0, y: 0 }, { key: 'k-pg', frame: 'kit/hang', x: 600, y: 0 }])
   board('html', [{ key: 'k-p', frame: 'pages/p', x: 0, y: 0 }])
+  board('send', [{ key: 'k-s', frame: 'kit/hifi', x: 0, y: 0 }])
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d; const m = log.match(/→ (http:\/\/localhost:\d+)\//); if (m) ORIGIN = m[1] })
   server.stderr?.on('data', (d) => { log += d })
@@ -430,6 +455,77 @@ describe('the page recorder: gestures, errors, the log', () => {
     expect(await leave(true)).toEqual([])
     expect(await leave(false)).toHaveLength(1)
   }, 120_000)
+})
+
+describe('the page recorder: sending', () => {
+  it('a send the server fails is tried twice more, 2 s apart; what never landed is counted in the next batch', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/send')
+    await ended(page, 'send')
+    await drained(s)
+    const net = await sends(s, (n) => (n < 3 ? 500 : undefined))
+    await shellError(s, 'lost on the way')
+    await until(() => net.posts().length >= 3, 20_000, 'three attempts')
+    await drained(s)
+    const [a, b, c] = net.posts()
+    expect([a.status, b.status, c.status]).toEqual([500, 500, 500])
+    expect(b.at - a.at).toBeGreaterThanOrEqual(1900)
+    expect(c.at - b.at).toBeGreaterThanOrEqual(1900)
+    expect(b.records!.map((r) => r.seq)).toEqual(a.records!.map((r) => r.seq))   // the same batch each time
+    expect(c.records!.map((r) => r.seq)).toEqual(a.records!.map((r) => r.seq))
+    expect(a.records!.some((r) => r.kind === 'error' && r.message === 'lost on the way')).toBe(true)
+    const lost = worth(a.records!)
+    await shellError(s, 'after the outage')
+    const d = await until(() => lines().find((r) => r.page === page && r.kind === 'dropped' && !r.reason), 15_000, 'the dropped record')
+    expect(d.n).toBe(lost)
+    expect(lines().some((r) => r.page === page && r.kind === 'error' && r.message === 'after the outage')).toBe(true)
+    expect(lines().some((r) => r.page === page && r.kind === 'error' && r.message === 'lost on the way')).toBe(false)
+    expect(net.posts()).toHaveLength(4)
+    net.stop()
+  }, 60_000)
+
+  it('a 403 primes the request cookie once and the same batch goes again; a 409 is final', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/send')
+    await ended(page, 'send')
+    await drained(s)
+    const net = await sends(s, (n) => (n === 0 ? 403 : n === 2 ? 409 : undefined))
+    await shellError(s, 'primed')
+    await until(() => lines().some((r) => r.page === page && r.kind === 'error' && r.message === 'primed'), 15_000, 'the primed batch')
+    const [a, b] = net.posts()
+    expect(a.status).toBe(403)
+    expect(b.status).toBeUndefined()
+    expect(b.records!.map((r) => r.seq)).toEqual(a.records!.map((r) => r.seq))
+    const at = (x: object) => net.seen.indexOf(x as (typeof net.seen)[number])
+    expect(net.seen.some((x) => !x.records && at(x) > at(a) && at(x) < at(b)), 'GET /api/work between the two').toBe(true)
+    await shellError(s, 'refused')
+    await until(() => net.posts().length >= 3, 15_000, 'the refused send')
+    await wait(4500)
+    expect(net.posts()).toHaveLength(3)   // never tried again
+    const refused = net.posts()[2]
+    expect(refused.status).toBe(409)
+    await shellError(s, 'next')
+    const d = await until(() => lines().find((r) => r.page === page && r.kind === 'dropped' && !r.reason), 15_000, 'the dropped record')
+    expect(d.n).toBe(worth(refused.records!))
+    expect(lines().some((r) => r.page === page && r.kind === 'error' && r.message === 'refused')).toBe(false)
+    net.stop()
+  }, 60_000)
+
+  it('past its bound the oldest records go, and a dropped record says how many: none lost unsaid', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/send')
+    const l = await ended(page, 'send')
+    await drained(s)
+    // 2,100 moves of no known cause, at once: more than the queue holds (2,000 records or 256 KB)
+    await browser.eval(s, `(() => { const st = window.__mvStore; for (let i = 0; i < 2100; i++) st.setState({ nodes: st.getState().nodes.map((n) => ({ ...n, x: n.x + 1 })) }); return 1 })()`)
+    await until(() => lines().some((r) => r.page === page && r.kind === 'dropped'), 20_000, 'the dropped record')
+    await drained(s)
+    const mine = lines().filter((r) => r.page === page && r.load === l.load.request)
+    const moved = new Set(mine.filter((r) => r.kind === 'move' && r.cause === 'unknown' && r.late).map((r) => r.seq)).size
+    const dropped = mine.filter((r) => r.kind === 'dropped' && !r.reason).reduce((n, r) => n + r.n, 0)
+    expect(dropped).toBeGreaterThan(0)
+    expect(moved + dropped).toBe(2100)
+  }, 60_000)
 })
 
 describe('the page recorder: frame identity', () => {
