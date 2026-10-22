@@ -87,6 +87,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   restarts: the canvas keeps its slot and its line in `marver ls`, and Live Jam its microphone.
 - **A link, back or forward reads its board once.** Each fires two browser events (popstate and hashchange), and the
   second started the switch to the board over: the board was read twice.
+- **The demo frames show their bottom button whole.** In a new canvas, `welcome` and `dark` ran past the frame's
+  height (a full-height page with padding around it), so their button was cut off at the bottom.
 - **A frame's error card comes from the document it shows.** An error sent late by a document the frame has since
   replaced is ignored, as its ready already was.
 - **The dev server never serves `~/.marver`.** It holds the running canvases' keys and the collaboration credentials;
