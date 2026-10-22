@@ -48,6 +48,9 @@ let capturesPending = (): boolean => false
 let sealCaptures = (): void => {}
 /** requested, not committed (or cut) yet */
 const pending = new Map<string, Load>()
+/** requests cut before they committed that may mount all the same (their deadline passed, the page hid or went): a
+ *  few, newest last - one that mounts owns the geometry from then, its moves late, with no commit of its own */
+const lapsed = new Map<string, Load>()
 /** the load that owns the geometry: the last one committed */
 let owner: Load | null = null
 /** node key -> what its live document said (page-level: a reload of the same board keeps its documents) */
@@ -114,6 +117,7 @@ export function startRecorder(opts: { capturesPending: () => boolean; sealCaptur
   document.addEventListener('visibilitychange', guard(() => {
     if (document.visibilityState !== 'hidden') return
     if (owner && !owner.done) cut(owner, 'hidden')
+    cutPending('hidden')
     if (!capturesPending()) void send()   // a capture still to send has the way out first
   }))
   addEventListener('pagehide', guard(leave))
@@ -137,20 +141,43 @@ function request(board: string, cause: LoadCause): string {
   pending.set(L.id, L)
   // `load`, its uncommitted `cut` and its `commit` carry the request's own id (the load's, once it commits)
   rec('load', L.id, { board, cause, request: L.id, ...(cause === 'boot' ? { sinceNav: Math.round(t0) } : {}) })
+  // the deadline runs from the request: a load not settled 120 s after it was asked for is cut, committed or not - a
+  // board fetch that never answers included
+  L.timeout = setTimeout(guard(() => expire(L)), LOAD_MAX_MS)
   return L.id
 }
 
-function cutRequest(id: string, reason: RequestCut): void {
-  const L = pending.get(id)
-  if (!L) return
-  pending.delete(id)
-  rec('cut', id, { reason, request: id, ms: Math.round(performance.now() - L.t0) })
+function expire(L: Load): void {
+  L.timeout = undefined
+  if (pending.has(L.id)) cutRequest(L.id, 'timeout')
+  else if (L === owner && !L.done) cut(L, 'timeout')
 }
 
-function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
+/** A request ends before it commits: superseded, failed, edited or unsaved (the store says), or its deadline passed,
+ *  the page hid or went (the recorder knows). */
+function cutRequest(id: string, reason: RequestCut | 'timeout' | 'hidden'): void {
   const L = pending.get(id)
   if (!L) return
   pending.delete(id)
+  clearTimeout(L.timeout)
+  L.timeout = undefined
+  L.done = 'cut'
+  rec('cut', id, { reason, request: id, ms: Math.round(performance.now() - L.t0) })
+  // its fetch may still answer and mount it
+  if (reason === 'timeout' || reason === 'hidden') {
+    lapsed.set(id, L)
+    if (lapsed.size > 8) lapsed.delete(lapsed.keys().next().value!)
+  }
+}
+/** Every request still waiting, cut: the page hid or went. */
+const cutPending = (reason: 'hidden') => { for (const id of [...pending.keys()]) cutRequest(id, reason) }
+
+function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
+  const L = pending.get(id) ?? lapsed.get(id)
+  if (!L) return
+  const late = !pending.has(id)
+  pending.delete(id)
+  lapsed.delete(id)
   // the load that was up ends here, its board's nodes still in the store
   if (owner && !owner.done) cut(owner, owner.board === L.board ? 'reload' : 'switch')
   owner = L
@@ -159,9 +186,10 @@ function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   baseline = new Map(nodes.map((n) => [n.key, { x: n.x, y: n.y, w: n.w, h: n.h }]))
   const keys = new Set(nodes.map((n) => n.key))
   for (const k of [...tracks.keys()]) if (!keys.has(k)) tracks.delete(k)
+  // a request already cut mounts all the same: its board's geometry is its own from here, every move late
+  if (late) return
   rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest) })
   L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
-  L.timeout = setTimeout(guard(() => cut(L, 'timeout')), Math.max(0, LOAD_MAX_MS - (L.committedAt - L.t0)))
   // a page hidden already: cut once the set that mounts this load has run - its nodes, not the board it replaces
   if (document.visibilityState === 'hidden') queueMicrotask(guard(() => { if (L === owner) cut(L, 'hidden') }))
 }
@@ -434,6 +462,7 @@ async function send(): Promise<void> {
  *  the recorder sends nothing. Else its last records with keepalive, 16 KB at most, the cut first; the rest counted. */
 function leave(): void {
   if (owner && !owner.done) cut(owner, 'hidden')
+  cutPending('hidden')
   clearTimeout(sendTimer)
   sendTimer = undefined
   sealCaptures()

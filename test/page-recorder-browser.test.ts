@@ -73,13 +73,21 @@ const PRE = `(() => {
   }
 })()`
 
+// the recorder's 120 s deadline, run 80 times faster (1.5 s): its own timers that long, no other
+const FAST_DEADLINE = `(() => {
+  if (window.parent !== window) return
+  const orig = window.setTimeout
+  window.setTimeout = function (fn, ms, ...a) { if (ms >= 60000 && /recorder\\.ts/.test(new Error().stack ?? '')) ms = ms / 80; return orig.call(this, fn, ms, ...a) }
+})()`
+
 const opened: string[] = []
-/** A fresh tab (its page's first load is a `boot`), requests matching `hold` held until released. */
-async function open(hash: string, hold: string[] = []): Promise<{ s: string; page: string; held: Held }> {
+/** A fresh tab (its page's first load is a `boot`), requests matching `hold` held until released; `pre`, more scripts
+ *  to run in it before the page's own. */
+async function open(hash: string, hold: string[] = [], pre: string[] = []): Promise<{ s: string; page: string; held: Held }> {
   for (const t of opened.splice(0)) await browser!.go(t, 'about:blank').catch(() => {})
   const s = await browser!.tab({ width: 1440, height: 900 })
   opened.push(s)
-  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: PRE }, s)
+  for (const source of [PRE, ...pre]) await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source }, s)
   const held = await holder(s, hold)
   await browser!.go(s, `${ORIGIN}/${hash}`)
   const page = await browser!.until(s, `window.__mvRecorder?.page`, 30_000)
@@ -358,6 +366,59 @@ describe('the page recorder: board loads', () => {
     expect(lines().find((r) => r.page === page && r.kind === 'cut' && r.reason === 'error')).toBeTruthy()
     off(); held.stop()
   }, 90_000)
+
+  it('a board fetch that never answers is cut at the deadline, counted from the request; if it answers after all, the board owns its geometry with no commit', async () => {
+    if (!browser) return
+    const { s, page, held } = await open('#/b/hifi', ['*/api/boards/hifi*'], [FAST_DEADLINE])
+    const req = await until(() => lines().find((r) => r.page === page && r.kind === 'load' && r.board === 'hifi'), 20_000, 'the request')
+    const cut = await until(() => lines().find((r) => r.page === page && r.kind === 'cut' && r.request === req.request), 15_000, 'the request\'s cut')
+    expect(cut).toMatchObject({ reason: 'timeout', load: req.request })
+    expect(cut.ms).toBeGreaterThanOrEqual(1400)
+    expect((await R(s)).pending).toEqual([])
+    // the fetch answers at last: the board mounts, owned by that request - late, with no commit
+    await held.release('*/api/boards/hifi*')
+    await browser.until(s, `(() => { const o = window.__mvRecorder.state().owner; return o && o.board === 'hifi' && o.done === 'cut' })()`, 20_000)
+    expect((await R(s)).owner.id).toBe(req.request)
+    await drained(s)
+    expect(lines().filter((r) => r.page === page && r.kind === 'commit')).toEqual([])
+    held.stop()
+  }, 60_000)
+
+  it('a request that waits is cut the moment it is superseded, the page hides or goes - never left open', async () => {
+    if (!browser) return
+    const waiting = async () => {
+      const t = await open('#/b/still')
+      await ended(t.page, 'still')
+      await t.held.add('*/api/boards/switch-b*')
+      await browser!.eval(t.s, `void window.__mvStore.getState().switchBoard('switch-b'), 1`)
+      await until(() => t.held.paused('*/api/boards/switch-b*') > 0, 20_000, 'the switch to ask for its board')
+      const req = await until(() => lines().find((r) => r.page === t.page && r.kind === 'load' && r.board === 'switch-b'), 10_000, 'the request')
+      const cutOf = () => lines().find((r) => r.page === t.page && r.kind === 'cut' && r.request === req.request)
+      return { ...t, req, cutOf }
+    }
+    // superseded: another switch - while the first one's board is still on its way
+    const a = await waiting()
+    await browser.eval(a.s, `void window.__mvStore.getState().switchBoard('hifi'), 1`)
+    expect(await until(a.cutOf, 10_000, 'the superseded cut')).toMatchObject({ reason: 'superseded' })
+    expect(a.held.paused('*/api/boards/switch-b*')).toBe(1)
+    await ended(a.page, 'hifi')
+    a.held.stop()
+    // hidden: the request is cut; its board arriving later mounts with no commit
+    const b = await waiting()
+    await browser.eval(b.s, `Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), 1`)
+    expect(await until(b.cutOf, 10_000, 'the hidden cut')).toMatchObject({ reason: 'hidden' })
+    await b.held.release('*/api/boards/switch-b*')
+    await browser.until(b.s, `window.__mvStore.getState().board === 'switch-b' && window.__mvRecorder.state().owner?.id === ${JSON.stringify(b.req.request)}`, 20_000)
+    await drained(b.s)
+    expect(lines().filter((r) => r.page === b.page && r.kind === 'commit' && r.request === b.req.request)).toEqual([])
+    b.held.stop()
+    // the page goes: its last send carries the cut
+    const c = await waiting()
+    await drained(c.s)
+    await browser.go(c.s, 'about:blank')
+    expect(await until(c.cutOf, 10_000, 'the cut on the way out')).toMatchObject({ reason: 'hidden' })
+    c.held.stop()
+  }, 120_000)
 
   it('a frame reloaded mid-load reports the new document\'s generation', async () => {
     if (!browser) return

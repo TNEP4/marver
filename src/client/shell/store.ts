@@ -719,6 +719,9 @@ export const useStore = create<State>((set, get) => {
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
   let firstLoad = true                               // the page's first boot() is its boot; every later one reads the board from disk again
+  // the recorder's requests in flight (spec 28 A1.7): a newer boot, a newer switch, or a switch that commits supersedes
+  // them the moment it does - not when their fetch answers, which may be never
+  let bootRequest = '', switchRequest = ''
   // While a board file is being renamed or rewritten by a structural write (rename, the
   // sidebar's tree arrange), autosave must not fire against it (a mustExist PUT would
   // 409-gone and clear dirty, losing the in-flight edit; a stale baseHash would 409 and
@@ -1130,9 +1133,10 @@ export const useStore = create<State>((set, get) => {
 
     async boot(mayCommit) {
       const seq = ++loadSeq
+      recorderHooks.cut(bootRequest, 'superseded')
       const boardName = get().board
       // the recorder's request (spec 28 A1.7): the page's first load, else the open board read from disk again
-      const request = recorderHooks.request(boardName, firstLoad ? 'boot' : 'disk-reload')
+      const request = bootRequest = recorderHooks.request(boardName, firstLoad ? 'boot' : 'disk-reload')
       firstLoad = false
       const revAtStart = editRev, scenesAtStart = scenesRev
       const loaded = await loadBoardState(boardName)
@@ -1156,11 +1160,12 @@ export const useStore = create<State>((set, get) => {
 
     async switchBoard(name) {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
+      recorderHooks.cut(switchRequest, 'superseded')
       const scenesAtStart = scenesRev
       if (name === get().board) return
       // the recorder's request (spec 28 A1.7): the wait starts here, the flush included; the board still mounted
       // owns the geometry until this one commits
-      const request = recorderHooks.request(name, 'switch')
+      const request = switchRequest = recorderHooks.request(name, 'switch')
       // a resize held across a switch: settle THIS board (retidy if it has a recipe)
       // before the flush, so the torn mid-gesture state is never what reaches disk
       if (resizedInGesture) {
@@ -1184,6 +1189,7 @@ export const useStore = create<State>((set, get) => {
       if (get().dirty) { recorderHooks.cut(request, 'unsaved'); get().toast('current board could not be saved - staying here'); return }
       clearTimeout(saveTimer)                  // a scheduled-but-clean timer must not fire against the new board
       ++loadSeq                                // invalidate any in-flight boot of the old board
+      recorderHooks.cut(bootRequest, 'superseded')
       const live = get().manifest              // a WS manifest update may have landed mid-load
       installSizes(loaded.sizes)               // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
