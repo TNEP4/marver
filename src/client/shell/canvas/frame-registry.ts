@@ -11,8 +11,15 @@
 export interface FrameReg { key: string; iframe: HTMLIFrameElement }
 
 const byWindow = new WeakMap<WindowProxy, FrameReg>()
+const byKey = new Map<string, HTMLIFrameElement>()
 
-export const registerFrame = (win: WindowProxy, reg: FrameReg): void => { byWindow.set(win, reg) }
-export const unregisterFrame = (win: WindowProxy): void => { byWindow.delete(win) }
+export const registerFrame = (win: WindowProxy, reg: FrameReg): void => { byWindow.set(win, reg); byKey.set(reg.key, reg.iframe) }
+export const unregisterFrame = (win: WindowProxy): void => {
+  const reg = byWindow.get(win)
+  byWindow.delete(win)
+  if (reg && byKey.get(reg.key) === reg.iframe) byKey.delete(reg.key)
+}
+/** The iframe a node shows now - the recorder reads its live document's id off it (spec 28 A1.7). */
+export const iframeOf = (key: string): HTMLIFrameElement | undefined => byKey.get(key)
 export const frameByWindow = (win: unknown): FrameReg | undefined =>
   win ? byWindow.get(win as WindowProxy) : undefined
