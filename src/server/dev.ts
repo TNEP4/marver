@@ -465,8 +465,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // projects can never be confused (a tab bookmarked to one silently serving the other)
   if (placed.fellBackFrom) console.log(`\n  port ${placed.fellBackFrom} is in use - serving "${projectName}" on slot ${claim.slot} instead`)
   console.log(`\n  ${NAME} · ${projectName} → http://localhost:${port}/\n`)
-  // where it ran before (A1.6): an unsent Jam capture waits at that address, in that browser. A --recover
-  // run replays an entry, so it records nothing
+  // where it ran before (A1.6): a Jam capture left unsent - if one was - waits at that address, in that browser.
+  // Nothing here knows whether one was, so the hint says if. A --recover run replays an entry, so it records nothing
   const address: RunAddress = { slot: claim.slot, url: claim.url, bind: origin, ws: run.ws }
   if (opts.recover) console.log(`  recovering: open ${opts.recover.url} in the browser that made the capture (the app loads ${opts.recover.bind}) - with Live Jam on, a capture waiting there sends itself; then stop this canvas (Ctrl-C)\n`)
   else {
@@ -475,9 +475,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       t.claim(() => stopPrefer(run.id, address))
       if (first && claim.slot) {
         const old = legacyPort(root)
-        console.log(`  ports are now fixed slots: this canvas is at ${claim.url}${old !== port ? `\n  0.26 served it at http://localhost:${old}/ - a Jam capture left unsent there: npx ${NAME} dev --recover` : ''}\n`)
+        console.log(`  ports are now fixed slots: this canvas is at ${claim.url}${old !== port ? `\n  0.26 served this canvas at http://localhost:${old}/ - if a Jam capture was left unsent there, \`npx ${NAME} dev --recover\` gets it back` : ''}\n`)
       } else if (previous && (previous.url !== address.url || previous.bind !== address.bind || previous.ws !== address.ws)) {
-        console.log(`  last run was at ${previous.url} (bound ${previous.bind}) - a Jam capture left unsent there: npx ${NAME} dev --recover\n`)
+        console.log(`  last run was at ${previous.url} (bound ${previous.bind}) - if a Jam capture was left unsent there, \`npx ${NAME} dev --recover\` gets it back\n`)
       }
     } catch (err) { console.warn(`[${NAME}] could not record this canvas's address (${(err as Error).message}) - it runs; next time it may take another slot`) }
   }

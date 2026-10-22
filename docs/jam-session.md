@@ -204,7 +204,7 @@ browser's storage, under that page's address (`http://localhost:<port>`), and go
 and a later start lands on another slot when its own is taken. `marver dev` says so as it starts:
 
 ```
-  last run was at http://localhost:4806/ (bound http://[::1]:4806) - a Jam capture left unsent there: npx marver dev --recover
+  last run was at http://localhost:4806/ (bound http://[::1]:4806) - if a Jam capture was left unsent there, `npx marver dev --recover` gets it back
 ```
 
 `--recover` starts the canvas there again. Stop the canvas first if it runs (`Ctrl-C`): one canvas runs per folder, so
@@ -229,8 +229,8 @@ Open the link it prints in the browser that made the capture; the captures waiti
 holds it - it stops and says why; it never moves elsewhere. A recovery leaves the canvas's list of addresses as it was.
 
 **The list always holds the address 0.26 gave this folder** (or would have given it), last unless this canvas has run
-there since. It only matters coming from 0.26. The first 0.27 start names it too ("0.26 served it at
-http://localhost:5329/ - a Jam capture left unsent there"). If 0.26 had moved to another port when you made the capture
+there since. It only matters coming from 0.26. The first 0.27 start names it too ("0.26 served this canvas at
+http://localhost:5329/ - if a Jam capture was left unsent there, ..."). If 0.26 had moved to another port when you made the capture
 (it said "port ... is in use - serving ... instead" as it started), name that port:
 `npx marver dev --recover --port <that port>`.
 

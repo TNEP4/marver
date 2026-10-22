@@ -70,7 +70,7 @@ describe('--recover: the addresses a project ran on (A1.6)', () => {
     hold(2)
     const second = await start(p)
     expect(second.port).toBe(BASE + 3)
-    expect(second.out()).toContain(`last run was at http://localhost:${BASE + 2}/`)
+    expect(second.out()).toMatch(new RegExp(`last run was at http://localhost:${BASE + 2}/ \\(bound [^)]+\\) - if a Jam capture was left unsent there, \`npx marver dev --recover\` gets it back`))
     await stop(second)
     unlinkSync(running('slot-1.json'))
     unlinkSync(running('slot-2.json'))

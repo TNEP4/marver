@@ -85,6 +85,8 @@ describe('two projects on the slots (A1.3)', () => {
     }
     expect(statSync(running()).mode & 0o777).toBe(0o700)
     expect(devA.out()).toContain(`ports are now fixed slots: this canvas is at http://localhost:${BASE + 1}/`)
+    // where 0.26 put it, and what --recover is for - said as a maybe: nothing here knows whether a capture was left
+    expect(devA.out()).toMatch(/0\.26 served this canvas at http:\/\/localhost:\d+\/ - if a Jam capture was left unsent there, `npx marver dev --recover` gets it back/)
   })
 
   it('the shell\'s document, asked for with a nonce, is signed with the slot file\'s key (A1.4)', async () => {
@@ -162,7 +164,7 @@ describe('two projects on the slots (A1.3)', () => {
     writeFileSync(running('slot-1.json'), JSON.stringify({ v: 1, state: 'ready', pid: fake, instance: 'fake', slot: 1, port: BASE + 1, origin: null, url: `http://localhost:${BASE + 1}/`, root: '/tmp/x', name: 'x', version: '0', features: [], ws: 'd'.repeat(16), startedAt: Date.now(), key: '' }))
     devA = await start(a)
     expect(devA.port).toBe(BASE + 2)
-    expect(devA.out()).toMatch(new RegExp(`last run was at http://localhost:${BASE + 1}/ \\(bound http://[^)]+\\) - a Jam capture left unsent there: npx marver dev --recover`))
+    expect(devA.out()).toMatch(new RegExp(`last run was at http://localhost:${BASE + 1}/ \\(bound http://[^)]+\\) - if a Jam capture was left unsent there, \`npx marver dev --recover\` gets it back`))
     await stop(devA)
     rmSync(running('slot-1.json'))
   }, 120_000)
