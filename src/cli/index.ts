@@ -82,6 +82,11 @@ for (const [name, desc] of [
 }
 
 cli
+  .command('ls', 'The canvases running on this Mac: slot, link, name, folder, version, state, uptime (no repo needed)')
+  .option('--json', 'Machine-readable output (never a canvas\'s key)')
+  .action(async (opts) => { (await import('./ls.ts')).lsCommand({ json: opts.json === true }) })
+
+cli
   .command('build', 'Static export → design/.dist (what ships comes from design/publish.json - publishing is default-closed)')
   .option('--boards <names>', 'Publish only these boards (comma-separated); overrides the publish policy')
   .option('--all-boards', 'Publish every board - the loud override for the default-closed policy')
