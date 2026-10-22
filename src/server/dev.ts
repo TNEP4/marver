@@ -304,11 +304,20 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     /** what Marver's plugin made for this server (its HTTP server's close takes them, and one that never listened never closes) */
     mine: Set<() => unknown>
     withdraw: (() => void) | null
+    /** every configureServer hook has run: Vite has the server */
+    made: boolean
+    /** the start ended while this one was a restart's: the restart closes it as it settles, never the start (step 6) */
+    left: boolean
   }
   const constructions = new WeakMap<ResolvedConfig, Construction>()
   let latest: Construction | null = null
   let closeVite: () => Promise<void> = async () => {}
   let inPlace = false   // the start's place for the server serving: taken by the first server
+  /** the start's end, once asked for (step 6) */
+  let ending: Promise<void> | null = null
+  /** a restart on its way (step 6): the construction serving when it began, whether Vite has asked to close that server
+   *  yet, and the restart's end */
+  let replacing: { from: Construction | null; taken: boolean; over: Promise<void> } | null = null
   const dispose = async (c: Construction) => {
     if (c.close) await c.close().catch(() => { /* closing what failed */ })
     else {
@@ -320,13 +329,15 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     }
     for (const fn of [...c.mine].reverse()) { try { await fn() } catch { /* closing what failed */ } }
   }
-  const own = (c: Construction) => { c.withdraw ??= t.defer(() => dispose(c)) }
-  /** A construction is over: its server serves (the start's place closes it from now), or it threw (closed now). */
-  const settle = async (c: Construction, serves: boolean) => {
+  // a restart's construction the start has left - or one begun once the start has ended - is the restart's to close
+  const own = (c: Construction) => { if (!c.left && !ending) c.withdraw ??= t.defer(() => dispose(c)) }
+  /** A construction is over: its server serves (the start's place closes it from now - at once, in this turn), or it
+   *  never will - it threw, or the start ended while a restart made it (closed now). */
+  const settle = (c: Construction, serves: boolean): Promise<void> | void => {
     c.withdraw?.()
     c.withdraw = null
     if (serves) c.mine.clear()   // the start holds them, and the server's own close takes them
-    else await dispose(c)
+    else return dispose(c)
   }
   /** what Marver's plugin hands the start: kept until the start ends - or, named for a server, until that server goes */
   const startup = {
@@ -345,7 +356,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     name: 'marver:startup-owns-server',
     configResolved(resolved: ResolvedConfig) {
       // each construction resolves its own config: the start's, and each restart's
-      const c: Construction = { envs: new Set(), parts: new Set(), close: null, mine: new Set(), withdraw: null }
+      const c: Construction = { envs: new Set(), parts: new Set(), close: null, mine: new Set(), withdraw: null, made: false, left: false }
       constructions.set(resolved, c)
       latest = c
       for (const env of Object.values(resolved.environments)) {
@@ -370,12 +381,27 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
         // the whole server now: its close closes the environments, the watcher, the socket and its SIGTERM handler with the rest
         c.close = vite.close.bind(vite)
         own(c)
-        if (inPlace) return   // a restart's: its own until the restart settles it (step 6)
+        // a server binds only while the start lasts: a restart's that Vite puts in place after the start has ended fails
+        // its listen - said as a listen error, which ends that restart - and never holds the port (step 6)
+        const http = vite.httpServer as { listen: (...args: unknown[]) => unknown; emit(event: 'error', err: Error): boolean } | null
+        if (http) {
+          const listen = http.listen
+          http.listen = function (this: unknown, ...args: unknown[]) {
+            if (!ending) return listen.apply(this, args)
+            process.nextTick(() => http.emit('error', new Error('the canvas has closed')))
+            return this
+          }
+        }
+        // after every configureServer hook, a host's and the probe's: Vite has the server, and in a restart its next step,
+        // in this same turn, is to close the old one (step 6)
+        const made = () => { c.made = true }
+        if (inPlace) return made   // a restart's: its own until the restart settles it (step 6)
         inPlace = true
         closeVite = c.close
         c.withdraw?.()
         c.withdraw = null
         t.defer(() => closeVite())
+        return made
       },
     },
   })
@@ -483,7 +509,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
 
   // the start's server: it serves, and the start's place closes it
   const first = constructions.get(server.config)
-  if (first) await settle(first, true)
+  if (first) settle(first, true)
   /** what holds the HTTP server itself, put back on the new one after a restart (step 6) */
   const onRestart: (() => void)[] = []
   await opts.at?.('created')
@@ -655,47 +681,78 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     // deliberate, and a bad `jam.agent` already printed its own reason: both stay quiet.
     console.log(`  jam: no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and tag @${NAME} in a comment\n`)
   }
-  // 6. from here every way out is a close: Marver's things newest first, Vite's server, then the files.
-  // Vite's own SIGTERM and stdin-end paths call this same `close` (they read the property when they run); on
-  // a signal the start's hook has given the claims back first, synchronously, and the signal it raises again
-  // ends the process before that close is done (Vite listens `once`).
+  // 6. from here every way out is a close: Marver's things newest first, Vite's server, then the files - the start's one
+  // end (`end`), however it is asked for. Vite's own SIGTERM and stdin-end paths call this same `close` (they read the
+  // property when they run); on a signal the start's hook has given the claims back first, synchronously, and the
+  // signal it raises again ends the process before that close is done (Vite listens `once`).
   // A restart is no way out. Vite restarts in place when an .env file changes: it makes the new server (Marver's
   // configureServer runs for it), closes the old one through this same `close`, copies the new one's methods -
   // `close` and `restart` among them - over this object, and listens on the same port. So `restart` is wrapped
   // too: the one close it asks for closes the old Vite alone (Marver's watchers go with its HTTP server), the
   // claims, dev.json, the slot file and the process hooks stay, and both wraps go back on the new server.
+  // That close is told from anyone else's by when it comes: the first once the new server is made (`made`, after its
+  // last configureServer hook) - Vite asks for it in that same turn, the rest of the server's making synchronous, so
+  // no signal, request or timer can come between. Any other close while a restart is on its way is the start's end,
+  // as at any time: it closes what the start holds at once - the serving server, Marver's things, then the claims and
+  // the process hooks - but not the server being made, which the restart closes as soon as it is made or has failed
+  // (closed half-made, Vite would go on making it): Vite's close of the old server is then refused, so the new one is
+  // never put in place, and one Vite is already putting in place never binds (its listen fails, above). The close
+  // returns once that server is closed too - unless Vite had already asked to close the old one: that restart is then
+  // waiting on a close, and a close that waited on it could be waiting on itself; it ends a moment later all the same.
+  const end = (): Promise<void> => ending ??= (async () => {
+    const r = replacing
+    const made = r && latest !== r.from ? latest : null
+    if (made) { made.withdraw?.(); made.withdraw = null; made.left = true }
+    const wait = r && !r.taken ? r.over : null
+    await t.close()
+    await wait
+  })()
   const wrap = () => {
     const vite = { close: server.close.bind(server), restart: server.restart.bind(server) }
     closeVite = vite.close
-    let armed = false   // the restart's own close is next
     let restarting: Promise<void> | null = null
     const close = (() => {
-      if (!armed) return t.close()
-      armed = false
-      return vite.close()
+      const r = replacing
+      if (r && !r.taken && latest !== r.from && latest?.made) {
+        r.taken = true
+        // the start ended while the new server was made: it is never put in place - refused, Vite's restart ends here
+        if (ending) return Promise.reject(new Error('the canvas has closed'))
+        return vite.close()
+      }
+      return end()
     }) as typeof server.close
     server.close = close
     server.restart = ((forceOptimize?: boolean) => restarting ??= (async () => {
+      if (ending) return   // the start has ended: nothing to restart
       let failed: unknown
-      const before = latest
-      armed = true
-      try { await vite.restart(forceOptimize) } catch (err) { failed = err ?? new Error('restart failed') } finally { armed = false; restarting = null }
-      // the server this restart began to make, if it got as far as resolving its config
-      const made = latest !== before ? latest : null
-      if (server.close === close) {
-        // Vite could not make the new server (it says why): the old one serves on, as it was, and what the new one
-        // made before it threw - environments, watcher, socket, a SIGTERM handler, Marver's watchers for it - closes now
-        if (made) await settle(made, false)
-        if (failed !== undefined) throw failed
-        return
-      }
-      if (made) await settle(made, true)   // the server now: the start's place closes it (wrap)
-      wrap()
-      if (failed === undefined) { for (const f of onRestart) f(); return }
-      // the old server is closed and the new one could not listen: the canvas is down, so the start ends here
-      console.error(`\n  the canvas stopped: it could not restart on port ${port} (${(failed as Error)?.message ?? failed}) - start it again\n`)
-      await t.close()
-      throw failed
+      let over = () => {}
+      const r = replacing = { from: latest, taken: false, over: new Promise<void>((res) => { over = res }) }
+      try {
+        try { await vite.restart(forceOptimize) } catch (err) { failed = err ?? new Error('restart failed') } finally { restarting = null; replacing = null }
+        // the server this restart began to make, if it got as far as resolving its config
+        const made = latest !== r.from ? latest : null
+        if (ending) {
+          // the start ended while this restart ran: what it made closes now - refused its place, or put in place and
+          // never bound - and the restart ends with it, nothing to say: the close is what was asked for
+          if (made) await settle(made, false)
+          return
+        }
+        if (server.close === close) {
+          // Vite could not make the new server (it says why): the old one serves on, as it was, and what the new one
+          // made before it threw - environments, watcher, socket, a SIGTERM handler, Marver's watchers for it - closes now
+          if (made) await settle(made, false)
+          if (failed !== undefined) throw failed
+          return
+        }
+        // the server now: the start's place closes it (wrap) - in this same turn, so no close finds it in neither
+        if (made) settle(made, true)
+        wrap()
+        if (failed === undefined) { for (const f of onRestart) f(); return }
+        // the old server is closed and the new one could not listen: the canvas is down, so the start ends here
+        console.error(`\n  the canvas stopped: it could not restart on port ${port} (${(failed as Error)?.message ?? failed}) - start it again\n`)
+        await end()
+        throw failed
+      } finally { over() }
     })()) as typeof server.restart
   }
   wrap()
