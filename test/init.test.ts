@@ -111,6 +111,26 @@ describe('init: Live Jam scaffolding', () => {
     }
     expect(read('AGENTS.md')).toContain('npx marver perf --loads --json')
   })
+  it('0.27: a canvas the agent starts dies with its job - ls first, the person\'s own terminal, else detached; in a sandbox, ask', () => {
+    init(root, OPTS)
+    const tpl = (rel: string) => readFileSync(join(__dirname, '..', 'templates', rel), 'utf8')
+    const flat = (rel: string) => tpl(rel).replace(/\s+/g, ' ')
+    // both templates say it in the same words
+    const section = (rel: string) => flat(rel).match(/\*\*Keeping the canvas up\.\*\*.*?still work there\./)?.[0]
+    expect(section('AGENTS-studio.md')).toBeTruthy()
+    expect(section('AGENTS-embedded.md')).toBe(section('AGENTS-studio.md'))
+    for (const rel of ['AGENTS-embedded.md', 'AGENTS-studio.md']) {
+      const t = flat(rel)
+      expect(t, rel).toContain('A canvas you start dies with the job that started it: Claude Code stops a background job after 10 minutes, and a headless session never exits while one runs.')
+      expect(t, rel).toContain('So `npx marver ls` first - one may already run for this folder. None: ask the person to run `npx marver dev` in their own terminal.')
+      expect(t, rel).toContain('start it detached so it outlives you - `mkdir -p design/.local && nohup npx marver dev > design/.local/dev.log 2>&1 &` - then read its link from `npx marver ls`.')
+      expect(t, rel).toContain('In a sandbox where it cannot start ("cannot watch this folder") or cannot be reached ("cannot be reached from here"), ask the person to run it: `npx marver shot`, `marks`, `ls` and `perf --loads` still work there.')
+      // the hand-back no longer ends by starting a canvas that dies with the agent
+      expect(t, rel).not.toContain('End with `npx marver dev` instead')
+    }
+    expect(read('AGENTS.md').replace(/\s+/g, ' ')).toContain('nohup npx marver dev > design/.local/dev.log 2>&1 &')
+    expect(flat('instructions/welcome.md')).toContain('Ask the person to run `npx marver dev` in their own terminal - a canvas you start dies with your job - or start it detached')
+  })
   it('creates a root CLAUDE.md that @-imports design/AGENTS.md (Claude reads CLAUDE.md)', () => {
     init(root, OPTS)
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toContain('@design/AGENTS.md')

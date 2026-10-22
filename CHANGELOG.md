@@ -22,6 +22,12 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **A start that fails leaves nothing behind.** The folder's lock, the slot, a half-made server and Marver's watchers
   are all given back, it says what failed, and `marver dev` exits with 1. A program that takes the port between the
   check and the start is said: "port 4806 was just taken by another program - start again".
+- **Your agent keeps the canvas up.** A canvas an agent starts dies with its job - Claude Code stops a background job
+  after 10 minutes, and the link the agent handed you goes dead with it. The agent instructions now say: `npx marver
+  ls` first; none running, ask you to run `npx marver dev` in your own terminal; started by the agent, detached so it
+  outlives it (`nohup npx marver dev > design/.local/dev.log 2>&1 &`), its link read from `npx marver ls`. In a
+  sandbox where the canvas cannot start or be reached, the agent asks you to run it - `marver shot`, `marks`, `ls`
+  and `perf --loads` still work from there.
 - **`marver dev` says when it stops.** Ctrl-C (or a kill) prints "canvas stopped - open tabs keep their edits and save
   when it is back".
 - **One identity per project.** The page, the capture check, the registry and the slot preference all read one key,
@@ -112,8 +118,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Upgrading
 
-`npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (they start the
-canvas without a port, find it with `npx marver ls`, and read `npx marver perf --loads`). **Before you upgrade**,
+`npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (they find the
+canvas with `npx marver ls`, ask you to start it in your own terminal or start it so it outlives them - never with a
+port - and read `npx marver perf --loads`). **Before you upgrade**,
 open each canvas once in the browser you make captures in, with its old version still running and Live Jam on: a
 capture left unsent there sends itself. One left behind comes back with `npx marver dev --recover`. On its first
 start each canvas moves to a slot and says where; a bookmark to its old address no longer reaches it (`marver ls`
