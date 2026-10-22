@@ -15,7 +15,7 @@
  */
 import { create } from 'zustand'
 import { slideSize } from '../const.ts'
-import { CONFIG, SLIDE_INTRINSIC, useStore, type Node } from './store.ts'
+import { CONFIG, SLIDE_INTRINSIC, stoppedFor, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
@@ -949,11 +949,14 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   lastEnded: null,
   settling: null,
   async resume(draft, ready) {
+    if (stoppedFor('Jam needs the canvas running')) return false   // spec 28 A1.11: nothing to take it
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
     if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return false }
     return resumeNow(draft, ready)
   },
   start(reviewing, session) {
+    // the canvas stopped (spec 28 A1.11): a new capture waits for it - one recording goes on, and is kept
+    if (!get().current && stoppedFor('Jam needs the canvas running')) return
     // one capture at a time: the one recording is ended or dropped first
     if (get().current) { useStore.getState().toast('a capture is recording - press E to end it first'); return }
     if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return }

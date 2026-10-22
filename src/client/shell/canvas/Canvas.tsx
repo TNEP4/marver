@@ -10,6 +10,7 @@ import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 import { attachCanvas, recorder } from '../recorder.ts'
 import { sleepingCount } from './sleep.ts'
+import { keepOverResume, resumed } from '../api.ts'
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.
@@ -216,6 +217,11 @@ export function Canvas() {
       inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
+    // a page that reloads itself when its canvas comes back (spec 28 A1.11) opens where the person was looking
+    const unkeep = keepOverResume(() => {
+      const t = ref.current?.instance.transformState
+      return t ? { board: useStore.getState().board, camera: { x: t.positionX, y: t.positionY, scale: t.scale } } : {}
+    })
     canvasCtl.view = () => {
       const el = wrap(), inst = ref.current
       if (!el || !inst) return null
@@ -234,6 +240,7 @@ export function Canvas() {
       // the reflow commits before the next frame; an anchor nothing consumed must never steer a later change
       requestAnimationFrame(() => { if (heldView === held) heldView = null })
     }
+    return unkeep
   }, [])
 
   // first load opens on the whole board (same as ⇧1) - the default 100% transform is an
@@ -245,12 +252,20 @@ export function Canvas() {
     if (booted.current || nodes.length === 0) return
     let revealed = false
     booted.current = true
+    // the page before this one reloaded itself when its canvas came back: its camera, on the board it showed
+    const cam = resumed?.camera && resumed.board === useStore.getState().board ? resumed.camera : null
     const fit = () => {
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
         useStore.setState({ selection: keys })
         const st = useStore.getState()   // a link opened is a look (marks not in yet: their first load acknowledges it)
         st.look(keys)
+      }
+      const el = document.querySelector('.sh-canvas') as HTMLElement | null
+      if (cam && el && ref.current) {
+        recorder.placed({ x: -cam.x / cam.scale, y: -cam.y / cam.scale, w: el.clientWidth / cam.scale, h: el.clientHeight / cam.scale })
+        ref.current.setTransform(cam.x, cam.y, cam.scale, 0)
+      } else if (keys.length) {
         canvasCtl.fitNodes(keys)
       } else {
         canvasCtl.fitAll()

@@ -42,12 +42,20 @@ const refused = async (r: Response) => {
   expect(r.headers.get('set-cookie')).toBeNull()   // nothing of this server ran: not even the cookie prime
   expect(await r.json()).toEqual({ error: 'another workspace' })
 }
-const anotherCanvas = async (r: Response) => {
+const anotherCanvas = async (r: Response, theme: 'light' | 'dark' = 'light') => {
   expect(r.status).toBe(409)
   expect(r.headers.get('content-type')).toMatch(/text\/html/)
   const html = await r.text()
-  expect(html).toContain('This frame belongs to another canvas')
+  // a title, then what happened and the way back
+  expect(html).toContain(`<h1>This frame's canvas stopped</h1>`)
+  expect(html).toContain('Another project runs on this address now')
+  expect(html).toContain('<code>npx marver dev</code>')
+  expect(html).toContain('<meta name="mv-elsewhere" content="1">')   // how the shell finds it
   expect(html).not.toMatch(/<script/i)   // no Vite client: a frame that lands here stops reloading itself
+  // the frame's own theme, never the system's: a light frame stays light on a Mac in dark mode
+  expect(html).toContain(`<meta name="color-scheme" content="${theme}">`)
+  expect(html).not.toContain('light dark')
+  expect(html).toContain(theme === 'dark' ? 'background:#0f1015' : 'background:#ffffff')
 }
 
 describe('the workspace guard', () => {
@@ -82,6 +90,10 @@ describe('the workspace guard', () => {
     await anotherCanvas(await at(`/__mv/frame/?id=app/home&theme=light&r=1&ws=${OTHER}`))
     await anotherCanvas(await at(`/design/scenes/app/page.html?theme=light&r=1&ws=${OTHER}`))
     await anotherCanvas(await at(`/__mv/stage/?at=app/home&theme=light&ws=${OTHER}`))
+    // in the frame's theme: from its URL - a custom theme named dark is dark, none at all is light
+    await anotherCanvas(await at(`/__mv/frame/?id=app/home&theme=dark&r=1&ws=${OTHER}`), 'dark')
+    await anotherCanvas(await at(`/__mv/stage/?at=app/home&theme=brand-dark&ws=${OTHER}`), 'dark')
+    await anotherCanvas(await at(`/design/scenes/app/page.html?ws=${OTHER}`), 'light')
     // an <img> (a Jam picture) names it in its URL too: under the API, the JSON refusal
     await refused(await at(`/__mv/api/jam/picture?id=x&ws=${OTHER}`))
   })

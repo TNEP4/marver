@@ -9,8 +9,16 @@ const WS_KEY = /^[0-9a-f]{16}$/
 export const ELSEWHERE_HEADER = 'x-mv-elsewhere'
 
 /** What a frame gets when its URL names another workspace: no script, nothing of this project. The
- *  `mv-elsewhere` meta is how the shell, back on its own canvas, finds the frames to reload (shell/api.ts). */
-export const ANOTHER_CANVAS_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="mv-elsewhere" content="1"><meta name="color-scheme" content="light dark"><title>Another canvas</title><style>html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center;font:500 13px/1.45 -apple-system,system-ui,sans-serif;color:#71717a}</style></head><body><p>This frame belongs to another canvas.<br>Its canvas stopped, and another project answers on this address now.</p></body></html>`
+ *  `mv-elsewhere` meta is how the shell, back on its own canvas, finds the frames to reload, and draws its own
+ *  quiet placeholder over them meanwhile (shell/api.ts) - so this page is read on its own: a frame's address
+ *  opened in a tab. It wears the frame's own theme (its URL's `theme`; a name with "dark" in it is dark), never
+ *  the system's: a light frame stays light on a Mac in dark mode. */
+export function anotherCanvasPage(theme: string | null): string {
+  const dark = /dark/i.test(theme ?? '')
+  // text >= 4.5:1 on its ground in both: #52525b on #fff is 7.7:1, #a1a1aa on #0f1015 is 7.4:1
+  const [bg, ink, dim, code] = dark ? ['#0f1015', '#ececf1', '#a1a1aa', '#1d1e26'] : ['#ffffff', '#18181b', '#52525b', '#f0f0f2']
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="mv-elsewhere" content="1"><meta name="color-scheme" content="${dark ? 'dark' : 'light'}"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Another canvas</title><style>html,body{height:100%;margin:0;background:${bg}}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;font:400 13px/1.5 -apple-system,system-ui,sans-serif;color:${dim}}main{max-width:340px}h1{margin:0 0 6px;font-size:15px;font-weight:600;line-height:1.35;color:${ink}}p{margin:0}code{font:500 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:${ink};background:${code};padding:1px 5px;border-radius:5px;white-space:nowrap}</style></head><body><main><h1>This frame's canvas stopped</h1><p>Another project runs on this address now. To bring this frame back, stop that project, run <code>npx marver dev</code> in this frame's own project, then reload.</p></main></body></html>`
+}
 
 /**
  * The first middleware of every dev server (spec 28 A1.11). A page left open after its canvas
@@ -44,7 +52,7 @@ export function guardMiddleware(workspace: string): Connect.NextHandleFunction {
       res.setHeader('content-type', 'text/html; charset=utf-8')
       res.setHeader('cache-control', 'no-store')
       res.setHeader(ELSEWHERE_HEADER, '1')
-      return res.end(ANOTHER_CANVAS_HTML)
+      return res.end(anotherCanvasPage(url.searchParams.get('theme')))
     }
     if (url.pathname === `${ROUTE}/api/hello` && req.method === 'GET') {
       res.setHeader('content-type', 'application/json')

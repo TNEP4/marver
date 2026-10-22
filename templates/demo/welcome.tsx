@@ -4,7 +4,7 @@ import { fx } from './_fixtures.ts'
 export const meta = { title: 'Demo - welcome', viewport: 'mobile' }
 
 const s = {
-  wrap: { fontFamily: 'system-ui', minHeight: '100vh', display: 'flex', flexDirection: 'column', padding: 24, gap: 12, background: 'var(--background, #fff)', color: 'var(--foreground, #111)' },
+  wrap: { fontFamily: 'system-ui', minHeight: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', padding: 24, gap: 12, background: 'var(--background, #fff)', color: 'var(--foreground, #111)' },
   h: { fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', margin: 0 },
   p: { color: '#667085', margin: 0, lineHeight: 1.5 },
   btn: { marginTop: 'auto', padding: '12px 16px', borderRadius: 8, border: 0, background: '#111', color: '#fff', fontWeight: 600, fontSize: 15, cursor: 'pointer' },

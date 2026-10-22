@@ -905,7 +905,7 @@ body.sh-hide-ui .sh-fab,
 body.sh-hide-ui .sh-ctx,
 body.sh-hide-ui .sh-update,
 body.sh-hide-ui .sh-toasts,
-body.sh-hide-ui .sh-banner,
+body.sh-hide-ui .sh-banner:not(.sh-stopped),   /* a stopped canvas stays said: the page holds what only it has */
 body.sh-hide-ui .sh-play-nav { display: none !important }
 
 /* the prototype pill reuses the shared pill LAYOUT but wears the discreet DARK skin of the
@@ -1888,8 +1888,31 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .sh-app.jm-lane-on .sh-update { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-toasts { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-banner { bottom: calc(var(--edge) + 56px) }
-/* the canvas stopped (spec 28 A1.11): top centre, above play and focus - the page is holding unsaved work */
-.sh-app .sh-banner.sh-stopped { top: var(--edge); bottom: auto; left: 50%; right: auto; transform: translateX(-50%); z-index: 40; width: max-content }
+/* the canvas stopped (spec 28 A1.11): on the toolbar's centre line in the gap between the sidebar and the
+   toolbar, or just below the toolbar row - placed by the shell (App.tsx placeBanner), which measures both; above
+   play and focus. The fallback before it measures: top centre, on the line (34px tall, the row 46px) */
+.sh-app .sh-banner.sh-stopped { top: calc(var(--edge) + 6px); bottom: auto; left: 50%; right: auto; transform: translateX(-50%);
+  z-index: 40; width: max-content; max-width: none; white-space: nowrap; text-align: center; text-wrap: balance; pointer-events: auto }
+.sh-banner.sh-stopped code { font: 500 11.5px/14px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 5px;
+  background: color-mix(in srgb, currentColor 11%, transparent); white-space: nowrap }
+.sh-banner.sh-stopped .kept { color: var(--glass-ink-2) }
+.sh-banner.sh-stopped:is([data-at="stack"], [data-at="below"]) .dot { display: none }
+.sh-banner.sh-stopped:is([data-at="stack"], [data-at="below"]) .kept { display: block }
+/* over play and focus: the play chrome's dark skin (its pills, the navigator), warm light text - 13:1 */
+.sh-banner.sh-stopped.dark { background: rgba(18, 18, 24, .86); border-color: rgba(255, 255, 255, .1); color: #ffd9a0;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 2px 10px rgba(0, 0, 0, .35) }   /* tight: never a smudge on the stage under it */
+.sh-banner.sh-stopped.dark::after { display: none }
+.sh-banner.sh-stopped.dark .kept { color: rgba(245, 245, 247, .78) }
+/* a frame (or the stage) whose canvas is away shows another project's "another canvas" page: one calm line over
+   it, in the frame's own theme - the banner says what happened, once. Screen-size text, never wider than its frame */
+.sh-stranded { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 8%; container-type: size;
+  background: var(--node-bg, var(--pdev-bg, #fff)); color: color-mix(in srgb, var(--head-ink, #18181b) 64%, var(--node-bg, #fff));
+  pointer-events: none; text-align: center }
+.sh-stranded span { font-family: -apple-system, system-ui, sans-serif; font-weight: 500; font-size: min(calc(12px * var(--sh-inv, 1)), 7cqi); line-height: 1.35 }
+.sh-play .dev .sh-stranded { --node-bg: #fff; --head-ink: #18181b }
+.sh-play .dev[data-theme="dark"] .sh-stranded { --node-bg: #0f1015; --head-ink: #ececf1 }
+/* the tools that need the server, while the canvas is stopped: quiet, their tooltip says why */
+.sh-pill-btn[data-stopped], .sh-pill-btn[data-stopped]:hover { opacity: .38; background: none; cursor: default }
 
 
 /* ---- words on this Mac (spec 27 Part 4): the live caption over the capture tile, the one question ---- */
