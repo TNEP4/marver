@@ -305,7 +305,7 @@ cli
   .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--minutes <n>', 'How far back to read (default 60; 24 h with --jam)')
-  .option('--loads', 'Board loads, from the page: time to the visible frames ready, all ready, quiet, the last move and settled (or why it was cut, and how many frames were ready by then), how many moves and their causes, the slowest frames, errors (design/.local/perf/page.jsonl)')
+  .option('--loads', 'Board loads, from the page: time to the visible frames ready, all ready, quiet, the last move and settled (or why it was cut, and how many frames were ready by then), how many moves and their causes, when the first frame started, the slowest frames and how long each waited for its turn to start, errors (design/.local/perf/page.jsonl)')
   .option('--jam', 'Jam\'s timings: captures, pictures, words, naming, runs, shots - numbers only (design/.local/perf/jam.jsonl)')
   .option('--json', 'Machine-readable output')
   .action(async (opts) => {

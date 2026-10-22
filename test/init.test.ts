@@ -106,6 +106,7 @@ describe('init: Live Jam scaffolding', () => {
       expect(tpl(rel), rel).toContain('localhost:4805-4824, usually the same one next time')
       expect(tpl(rel), rel).toContain('`npx marver ls` lists the canvases running on')
       expect(tpl(rel), rel).toContain('`npx marver perf --loads --json` says what each board load did')
+      expect(tpl(rel).replace(/\s+/g, ' '), rel).toContain('A slow frame\'s `admittedMs` is when its turn to start came: a long wait is the queue, not the frame (`ms - admittedMs` is the frame\'s own).')
       expect(tpl(rel), rel).toMatch(/Frames cannot register a service worker on the local canvas/)
       expect(tpl(rel), rel).not.toContain('5199')
     }

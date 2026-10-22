@@ -64,7 +64,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **`npx marver perf --loads`** says what each board load did, from the page: how long until the frames in view were
   ready, until all were, until the board first held still, when it last moved and when it settled - or why it was
   cut, and how many frames were ready by then; how many moves, how far and why (a height that came late, a re-flow,
-  a drag); the five slowest frames; errors, and frames that never answered or are missing. `--json` for agents;
+  a drag); the five slowest frames, each with how long it waited for its turn to start and then took (a long wait is
+  the queue, not the frame), and when the first frame started; errors, and frames that never answered or are
+  missing. `--json` for agents;
   plain `marver perf` adds one line per load. The page records it in `design/.local/perf/page.jsonl`: frame names,
   node keys and numbers, and error messages that can hold file paths - so it stays on your machine. It costs nothing
   at rest: no timer or frame callback of its own while nothing loads and nothing waits to be sent
