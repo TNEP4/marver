@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
 import { makeProject, startDev, stopDev, workspaceOf, type Dev } from './project.ts'
@@ -10,7 +11,9 @@ import { makeProject, startDev, stopDev, workspaceOf, type Dev } from './project
  * its port; A comes back. The old tab keeps what it holds and says the canvas stopped, sends nothing to
  * B but the question "is my canvas back?", is never reloaded into B, and its frames and play stage never
  * run B's code. When A answers again the same document saves the move, then reloads. Along the way,
- * every request the shell sends names its workspace. Skips without Chrome.
+ * every request the shell sends names its workspace. A page that cannot reload when A answers (a capture
+ * recording, words not sent) works as live meanwhile, still sees the next stop, and reloads once nothing
+ * holds it. Skips without Chrome.
  */
 
 const PORT = 8700 + Math.floor(Math.random() * 300)
@@ -131,6 +134,9 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
     await wait(1200)   // past the save's debounce: it holds, the edit stays dirty here
     expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
+    // and leaving it by hand (a reload, a close) asks first: the edits are only here
+    const asks = `(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented })()`
+    expect(await browser.eval(s, asks)).toBe(true)
 
     // ---- B takes the port: refused, never reloaded into it, its broadcasts never reach the page ---------
     const away = record(browser, s)
@@ -174,10 +180,29 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(fromShell.length).toBeGreaterThan(0)
     expect([...new Set(fromShell.map((r) => r.path))]).toEqual(['/__mv/api/hello'])
 
+    // ---- the race a save can lose: one sent as the socket dropped reaches B, and B's marked refusal comes back
+    // through the helper as "stopped" - never as the board save's own 409, which would load B's board here ----
+    const raced = record(browser, s)
+    const race = await browser.eval(s, `(async () => {
+      __mvLink.setState({ link: 'live' })
+      const st = __mvStore.getState()
+      st.moveNode('n-home', st.nodes.find((n) => n.key === 'n-home').x + 30, 0)
+      const want = __mvStore.getState().nodes.find((n) => n.key === 'n-home').x
+      const ok = await __mvStore.getState().save()
+      const after = __mvStore.getState(), l = __mvLink.getState()
+      return { ok, dirty: after.dirty, kept: after.nodes.find((n) => n.key === 'n-home').x === want, x: want, disk: after.toasts.some((t) => /changed on disk/.test(t.text)), link: l.link, shown: l.shown }
+    })()`)
+    raced.stop()
+    expect(raced.sent.some((r) => r.frame === main && r.method === 'PUT' && r.path === '/__mv/api/boards/main' && r.headers['x-mv-ws'] === WS_A), 'the save reached B').toBe(true)
+    expect(race).toEqual({ ok: false, dirty: true, kept: true, x: expect.any(Number), disk: false, link: 'elsewhere', shown: true })
+    expect(race.x).toBeCloseTo(x1 + 150, 0)
+    expect(await browser.eval(s, `document.querySelector('.sh-stopped')?.textContent`)).toBe(BANNER)
+    expect(readFileSync(join(rootB, 'design', 'boards', 'main.json'), 'utf8')).toBe(boardB)
+
     // ---- A is back: the same document saves the move, then reloads ---------------------------------
     await stopDev(b, PORT); b = null
     a = await startDev(rootA, PORT)
-    const moved = x1 + 120
+    const moved = race.x
     const t0 = Date.now()
     let saved = -1
     while (Date.now() - t0 < 15_000) {
@@ -189,11 +214,82 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
     await browser.until(s, `!document.querySelector('.sh-stopped') && __mvLink.getState().link === 'live'`, 5_000)
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(moved))
+    expect(await browser.eval(s, asks)).toBe(false)
     await browser.until(s, `document.querySelector('[data-node="n-page"] iframe')?.contentDocument?.getElementById('who')?.textContent === 'A'`, 30_000)
     await browser.until(p, `window.__mark === undefined && document.querySelector('.sh-play iframe')?.contentDocument?.getElementById('who')?.textContent === 'A'`, 30_000)
 
     // ---- and no service worker ever registers on a canvas -------------------------------------------
     const sw = await browser.eval(s, `navigator.serviceWorker.register('/sw.js').then(() => 'registered', (e) => 'refused: ' + e.message)`)
     expect(sw).toMatch(/^refused: .*403/)
+  }, 240_000)
+
+  it('back while a capture records: the page works as live, still sees a stop, brings its frames back, and reloads once nothing holds it', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const s = await browser.tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/main`)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
+    await browser.eval(s, `__mvJamCapture.getState().start()`)
+    await browser.until(s, `!!__mvJamCapture.getState().current`, 5_000)
+    await browser.eval(s, `window.__mark = 2`)
+
+    // the canvas restarts under the recording: it comes back, saves - and the page stays, saying it will reload
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `__mvLink.getState().link === 'live' && !document.querySelector('.sh-stopped') && __mvStore.getState().toasts.some((t) => t.text.includes('reloads once nothing is in progress'))`, 15_000)
+    await wait(2500)
+    expect(await browser.eval(s, `window.__mark`)).toBe(2)
+    expect(await browser.eval(s, `!!__mvJamCapture.getState().current`)).toBe(true)
+    // live meanwhile: an edit reaches the disk
+    const x = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
+    await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x} + 40, 0)`)
+    const onDisk = () => JSON.parse(readFileSync(join(rootA, 'design', 'boards', 'main.json'), 'utf8')).nodes.find((n: any) => n.key === 'n-home').x
+    const t0 = Date.now()
+    while (Date.now() - t0 < 10_000 && onDisk() !== Math.round(x + 40)) await wait(200)
+    expect(onDisk()).toBe(Math.round(x + 40))
+
+    // a second stop is seen though Vite's socket never came back: the banner, and saves held
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && document.querySelector('.sh-stopped')?.textContent === ${JSON.stringify(BANNER)}`, 8_000)
+    expect(await browser.eval(s, `__mvStore.getState().save()`)).toBe(false)
+    // another project takes the port meanwhile: the frames' own Vite client reloads them into its "another
+    // canvas" page, which runs no script - nothing brings them back by itself
+    b = await startDev(rootB, PORT)
+    await browser.until(s, `__mvLink.getState().link === 'elsewhere'`, 5_000)
+    const stranded = `['n-home', 'n-page'].every((k) => (document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? '').includes('belongs to another canvas'))`
+    await browser.until(s, stranded, 10_000)
+    await stopDev(b, PORT); b = null
+    // something takes the port and never answers (a server half up, hung): the question it gets is a miss
+    // after 2 s, so none hangs for good - the page still sees its canvas come back
+    const held: Socket[] = []
+    const hung = createServer((c) => { held.push(c) })
+    await new Promise<void>((r) => hung.listen({ port: PORT, host: '::' }, () => r()))
+    try {
+      await wait(3000)
+      expect(held.length, 'the page asked the hung server').toBeGreaterThan(0)
+      expect(await browser.eval(s, `!!document.querySelector('.sh-stopped')`)).toBe(true)
+      hung.close()   // no longer listening; the connections it took stay open, unanswered
+      await wait(300)
+      a = await startDev(rootA, PORT)
+      await browser.until(s, `__mvLink.getState().link === 'live' && !document.querySelector('.sh-stopped')`, 15_000)
+    } finally { for (const c of held) c.destroy(); hung.close() }
+    expect(await browser.eval(s, `window.__mark`)).toBe(2)
+    // the page stays, so it brings its stranded frames back itself: reloaded in place, on A
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 15_000)
+
+    // words typed and not sent (a comment, a Jam edit - here a field of the page's own) hold the reload too
+    await browser.eval(s, `(() => { const t = document.createElement('textarea'); t.id = 'typed'; document.body.appendChild(t); t.value = 'not sent yet'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    // the capture ends and seals: what still holds the page is the words
+    await browser.eval(s, `__mvJamCapture.getState().end()`)
+    await browser.until(s, `!Object.keys(__mvJamCapture.getState().caps).length`, 60_000)
+    await wait(2500)
+    expect(await browser.eval(s, `window.__mark`)).toBe(2)
+    // sent (the field empties): nothing holds the page any more, and it reloads on its own canvas
+    await browser.eval(s, `(() => { const t = document.getElementById('typed'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    await browser.until(s, `__mvLink.getState().link === 'live' && !document.querySelector('.sh-stopped')`, 5_000)
+    expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 40))
   }, 240_000)
 })
