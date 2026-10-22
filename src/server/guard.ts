@@ -8,8 +8,9 @@ const WS_KEY = /^[0-9a-f]{16}$/
 /** Marks the workspace refusal, so the page tells it from every other 409 without reading the body. */
 export const ELSEWHERE_HEADER = 'x-mv-elsewhere'
 
-/** What a frame gets when its URL names another workspace: no script, nothing of this project. */
-export const ANOTHER_CANVAS_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>Another canvas</title><style>html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center;font:500 13px/1.45 -apple-system,system-ui,sans-serif;color:#71717a}</style></head><body><p>This frame belongs to another canvas.<br>Its canvas stopped, and another project answers on this address now.</p></body></html>`
+/** What a frame gets when its URL names another workspace: no script, nothing of this project. The
+ *  `mv-elsewhere` meta is how the shell, back on its own canvas, finds the frames to reload (shell/api.ts). */
+export const ANOTHER_CANVAS_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="mv-elsewhere" content="1"><meta name="color-scheme" content="light dark"><title>Another canvas</title><style>html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;text-align:center;font:500 13px/1.45 -apple-system,system-ui,sans-serif;color:#71717a}</style></head><body><p>This frame belongs to another canvas.<br>Its canvas stopped, and another project answers on this address now.</p></body></html>`
 
 /**
  * The first middleware of every dev server (spec 28 A1.11). A page left open after its canvas

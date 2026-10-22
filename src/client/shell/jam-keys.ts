@@ -22,6 +22,7 @@ import { DONE_CLOSE, DONE_GROUP, doneFold, useJamUi } from './jam-state.ts'
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
+import { beforeResume } from './api.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
 /** `[Ctrl+][Meta+][Alt+][Shift+]key`, a letter lowercase - the frames' descriptor (keys.js). */
@@ -70,6 +71,9 @@ export function saveEdit(c: JamCard, text: string) {
  *  keeps a note once, whatever answer was lost; a different note never takes a failed one's place. */
 type PendingNote = { id: string; text: string; failed: boolean; order: number }
 const unsavedNotes = new Map<string, PendingNote[]>()
+// spec 28 A1.11: a page whose canvas came back reloads only once every edit and note of a read-back has saved -
+// one that failed while the canvas was away waits for the read-back's own retry (a decision saves it first)
+beforeResume(async () => !unsaved.size && !unsavedNotes.size)
 const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
   n.failed = false
   const before = saving.get(c.id) ?? Promise.resolve(true)

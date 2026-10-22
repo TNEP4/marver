@@ -2035,13 +2035,21 @@ useStore.subscribe((s, prev) => {
 })
 
 // spec 28 A1.11: the canvas answered again on this address - what this page holds is saved before it reloads
+// (never mid-drag: a frame held by the pointer is asked about again a second later)
 beforeResume(async () => {
   const s = () => useStore.getState()
+  if (s().gesture) return false
   for (let i = 0; i < 5 && s().dirty; i++) if (!(await s().save())) break
   await flushHeights()
-  return !s().dirty
+  return !s().dirty && !s().gesture
 })
 onLinkNotice((text) => useStore.getState().toast(text))
+// a stopped page holds edits only it has: leaving it (a reload by hand, a close) asks first
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', (e) => {
+  if (!canvasStopped() || !useStore.getState().dirty) return
+  e.preventDefault()
+  e.returnValue = ''
+})
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)
 if (import.meta.env.DEV) (window as unknown as { __mvStore: unknown }).__mvStore = useStore

@@ -44,6 +44,10 @@ export function mvFetch(url: string, init: RequestInit = {}): Promise<Response> 
     if (r.status !== 409 || r.headers.get('x-mv-elsewhere') !== '1') return r
     lost('elsewhere')
     return stoppedAnswer()
+  }, (e: unknown) => {
+    // the live socket is gone, so nothing else would say so: a request that reaches nothing stops the page
+    if (hmrLost && (e as Error)?.name !== 'AbortError') lost('down')
+    throw e
   })
 }
 /** A request under /__mv/api/: `api('boards/main', { method: 'PUT', ... })`. */
@@ -51,8 +55,9 @@ export const api = (path: string, init?: RequestInit) => mvFetch(`${ROUTE}/api/$
 
 // ---- the link: losing the canvas, and getting it back --------------------------------------------------
 
-/** What must happen before a resumed page reloads (the board save, the heights; no capture recording).
- *  Each answers true when the page may reload now. */
+/** What must happen before a resumed page reloads (the board save, the heights; no capture recording,
+ *  nothing typed and not sent). Each answers true when the page may reload now; asked again each second
+ *  while a reload is owed, so each is cheap when there is nothing to do. */
 const flushers = new Set<() => Promise<boolean>>()
 export const beforeResume = (fn: () => Promise<boolean>) => { flushers.add(fn); return () => { flushers.delete(fn) } }
 /** Told when a resumed page stays (a flusher said no): the store's toast, registered by store.ts. */
@@ -68,10 +73,11 @@ function lost(why: 'down' | 'elsewhere') {
   probeTimer ??= setTimeout(probe, 0)
 }
 
-/** Once a second while stopped: is this canvas back on this address? */
+/** Once a second while stopped, and while a reload is owed: is this canvas (still) on this address? */
 async function probe() {
   let r: Response | null = null
-  try { r = await fetch(`${ROUTE}/api/hello`, { headers: { 'x-mv-ws': WS }, cache: 'no-store' }) } catch { r = null }
+  // a server that takes the connection and never answers (half up, hung, paused) is no answer: a miss
+  try { r = await fetch(`${ROUTE}/api/hello`, { headers: { 'x-mv-ws': WS }, cache: 'no-store', signal: AbortSignal.timeout(2000) }) } catch { r = null }
   const ours = !!r?.ok && (await r.json().catch(() => null))?.ws === WS
   probeTimer = null
   if (ours) return void resume()
@@ -82,14 +88,37 @@ async function probe() {
 }
 
 async function resume() {
-  useLink.setState({ link: 'resuming' })        // requests flow again: the flushers use them
+  const back = useLink.getState().link !== 'live'      // from a stop; 'live' is a page that owes a reload
+  if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
   for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
-  if (useLink.getState().link !== 'resuming') return   // lost again while saving: the probe goes on
-  // a fresh document on the canvas that answered: live updates again (Vite's own reload, a moment later)
+  const now = useLink.getState().link
+  if (now !== 'resuming' && now !== 'live') return     // lost again while saving: the probe goes on
+  // a fresh document on the canvas that answered: live updates again
   if (hmrLost && ok) return void location.reload()
-  useLink.setState({ link: 'live', shown: false })
-  if (hmrLost) say('marver dev is back - reload this page when you are ready')
+  if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
+  if (!hmrLost) return
+  // Vite's socket never comes back (its client waits on the listener below), so this page owes a reload:
+  // until nothing holds it (a capture recording, words not sent) it works as live, keeps asking - a stop
+  // is seen again - and reloads the moment it may
+  if (back) { say('marver dev is back - this page reloads once nothing is in progress'); unstrand() }
+  probeTimer ??= setTimeout(probe, 1000)
+}
+
+/** Frames another project answered while this canvas was away show its "another canvas" page, which runs no
+ *  script - no Vite client to bring them back. A page that stays reloads them in place, on its own canvas. */
+function unstrand() {
+  for (const f of document.querySelectorAll('iframe')) {
+    try { if (f.contentDocument?.querySelector('meta[name="mv-elsewhere"]')) f.contentWindow?.location.reload() } catch { /* not ours to read */ }
+  }
+}
+
+// words a person typed into the page and has not sent (a comment, a Jam edit, a name): a reload would drop them
+const typed = new WeakSet<EventTarget>()
+const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=password]'
+if (WS) {
+  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target) }, true)
+  beforeResume(async () => ![...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== ''))
 }
 
 // Vite's client awaits every `vite:ws:disconnect` listener before it pings the server and reloads the

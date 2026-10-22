@@ -18,6 +18,7 @@ import {
 import { LANE_H } from './jam-lane.tsx'
 import { Tip } from './Tip.tsx'
 import { useJamQueue } from './jam-queue.ts'
+import { beforeResume } from './api.ts'
 
 /** A heading cut short by its ellipsis: its tooltip shows it whole (one that fits shows none). */
 const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
@@ -57,6 +58,8 @@ const moreDrafts = new Map<string, string>()
 export const clearMoreDraft = (id: string) => { moreDrafts.delete(id) }
 export const moreDraftOf = (id: string): string => moreDrafts.get(id) ?? ''
 export const setMoreDraft = (id: string, t: string) => { if (t) moreDrafts.set(id, t); else moreDrafts.delete(id) }
+// spec 28 A1.11: a page whose canvas came back reloads only once no such words wait (a reload would drop them)
+beforeResume(async () => !moreDrafts.size)
 
 const unquote = (s: string) => s.replace(/^"(.*)"$/s, '$1')
 const DEVICE: Record<string, string> = { phone: 'mobile', mobile: 'mobile', tablet: 'tablet', laptop: 'laptop', desktop: 'monitor', monitor: 'monitor', tv: 'tv' }
