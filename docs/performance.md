@@ -14,8 +14,10 @@ agent. A published canvas records nothing.
 
 `design/.local/` is gitignored, and `marver dev` never serves it. The perf folder is yours alone: mode 700,
 each file 600 from the moment it is made - and files an earlier version made are tightened when `marver dev`
-starts. At start, each log loses its lines older than 14 days, and past 2 MB its oldest half; a log that
-passes 2 MB while the canvas runs loses its oldest half too.
+starts. At start, each log loses its lines older than 14 days, and past its cap its oldest half; a log that
+passes its cap while the canvas runs loses its oldest half too. The cap is 2 MB, and 8 MB for `page.jsonl`:
+one load of a 120-frame board writes about 140 KB there, most of it moves, so 2 MB held about fourteen such
+loads - hours of work, not days. 8 MB holds four times as many.
 
 `page.jsonl` holds frame names, node keys and numbers. Error messages and stack lines can hold file paths,
 so, like the rest, they stay on this Mac.

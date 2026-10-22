@@ -8,10 +8,14 @@
  *    errors. Each record is rebuilt from its kind's allowlist; `npx marver perf --loads` reads them back.
  */
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { checkRealDirs } from './boards.ts'
 
 const MAX = 2_000_000   // past this the oldest half goes: the log answers "what happened lately"
+/** page.jsonl's: one load of a 120-frame board writes ~140 KB (two thirds of it moves), so 2 MB held about fourteen
+ *  such loads - hours, not the 14 days the lines may stay. 8 MB holds four times as many. */
+const PAGE_MAX = 8_000_000
+const maxOf = (file: string) => (basename(file) === 'page.jsonl' ? PAGE_MAX : MAX)
 const KEEP_MS = 14 * 86_400_000
 /** The logs whose lines age out and whose size is held at start (spec 28 A1.7, A1.13): every one with a `ts` per line. */
 const AGED = ['reloads.jsonl', 'page.jsonl', 'runs.jsonl', 'jam.jsonl']
@@ -24,7 +28,7 @@ export const pageLog = (root: string) => join(perfDir(root), 'page.jsonl')
 const unsafe = (root: string) => checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', '.local'), 'design/.local'], [perfDir(root), 'design/.local/perf']])
 
 /** One append to a perf log: the directory 700 and the file 600 from their creation, never through a link, the
- *  oldest half gone past MAX. Throws - callers swallow. */
+ *  oldest half gone past its cap (maxOf). Throws - callers swallow. */
 function appendLog(root: string, file: string, text: string): void {
   const why = unsafe(root)
   if (why) throw new Error(why)
@@ -32,7 +36,7 @@ function appendLog(root: string, file: string, text: string): void {
   mkdirSync(perfDir(root), { recursive: true, mode: 0o700 })
   if (existsSync(file)) {
     if (!lstatSync(file).isFile()) throw new Error('not a regular file')
-    if (statSync(file).size > MAX) {
+    if (statSync(file).size > maxOf(file)) {
       const lines = readFileSync(file, 'utf8').split('\n')
       writeFileSync(file, lines.slice(Math.floor(lines.length / 2)).join('\n'))
     }
@@ -154,8 +158,8 @@ export function logPage(root: string, raws: unknown[]): number {
 
 /** At start (spec 28 A1.7): design/.local/perf/ is the owner's alone - the directory 700 and every file in it 600,
  *  those earlier versions created without modes included - and the logs whose lines age out lose the ones older than
- *  14 days and, still past 2 MB, their oldest half. Synchronous, before the server listens: no append of this
- *  process interleaves. Best effort; a link is never followed. */
+ *  14 days and, still past their cap (2 MB; page.jsonl 8 MB), their oldest half. Synchronous, before the server
+ *  listens: no append of this process interleaves. Best effort; a link is never followed. */
 export function tidyPerfDir(root: string, now = Date.now()): void {
   try {
     if (unsafe(root)) return
@@ -172,7 +176,7 @@ export function tidyPerfDir(root: string, now = Date.now()): void {
         if (!AGED.includes(name)) continue
         const text = readFileSync(f, 'utf8')
         let lines = text.split('\n').filter((l) => { try { const e = JSON.parse(l); return typeof e?.ts === 'number' && e.ts >= now - KEEP_MS } catch { return false } })
-        if (Buffer.byteLength(lines.join('\n')) > MAX) lines = lines.slice(Math.floor(lines.length / 2))
+        if (Buffer.byteLength(lines.join('\n')) > maxOf(name)) lines = lines.slice(Math.floor(lines.length / 2))
         const next = lines.length ? lines.join('\n') + '\n' : ''
         if (next === text) continue
         const tmp = `${f}.${process.pid}.tmp`

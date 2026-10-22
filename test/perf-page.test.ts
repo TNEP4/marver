@@ -9,7 +9,7 @@ import { cleanPageRecord, logPage, logReload, pageLog, perfDir, readPage, reload
 /**
  * The recorder's page half, its server side (spec 28 A1.7): every record rebuilt from its kind's allowlist, the log
  * the owner's alone (700/600 from creation, existing files tightened at start), aged out after 14 days and held
- * under 2 MB, and the owner-gated route that takes a page's batch. The page's own half is page-recorder-browser.test.ts.
+ * under 8 MB (the other logs 2 MB), and the owner-gated route that takes a page's batch. The page's own half is page-recorder-browser.test.ts.
  */
 
 const SENTINEL = 'PURPLE-ELEPHANT-SECRET'
@@ -106,14 +106,25 @@ describe('the page log', () => {
     if (posix) expect(mode(reloadLog(root))).toBe(0o600)
   })
 
-  it('past 2 MB the oldest half goes', () => {
+  it('the page log holds 8 MB before its oldest half goes; the reload log 2 MB', () => {
     mkdirSync(perfDir(root), { recursive: true })
     const line = JSON.stringify(cleanPageRecord(env('quiet', VALID.quiet))) + '\n'
+    // past 2 MB, under 8: a heavy board's loads are kept whole
     writeFileSync(pageLog(root), line.repeat(Math.ceil(2_100_000 / line.length)))
     logPage(root, [env('dropped', VALID.dropped, 9)])
+    expect(statSync(pageLog(root)).size).toBeGreaterThan(2_100_000)
+    // past 8 MB: the oldest half goes
+    writeFileSync(pageLog(root), line.repeat(Math.ceil(8_100_000 / line.length)))
+    logPage(root, [env('dropped', VALID.dropped, 9)])
     const size = statSync(pageLog(root)).size
-    expect(size).toBeLessThan(1_200_000)
+    expect(size).toBeGreaterThan(3_900_000)
+    expect(size).toBeLessThan(4_200_000)
     expect(readPage(root).at(-1)!.kind).toBe('dropped')
+    // the reload log keeps its 2 MB
+    const reload = JSON.stringify({ ts: Date.now(), kind: 'ready', frame: 'kit/a' }) + '\n'
+    writeFileSync(reloadLog(root), reload.repeat(Math.ceil(2_100_000 / reload.length)))
+    logReload(root, { kind: 'shell-boot' })
+    expect(statSync(reloadLog(root)).size).toBeLessThan(1_200_000)
   })
 
   it('never writes through a linked design/.local', () => {
@@ -157,14 +168,24 @@ describe('the perf directory at start', () => {
     expect(readFileSync(join(perfDir(root), 'keep.json'), 'utf8')).toBe(JSON.stringify({ ts: old }))   // not a log of lines
   })
 
-  it('a log still past 2 MB loses its oldest half', () => {
+  it('a log still past its cap loses its oldest half: 2 MB, and 8 MB for the page log', () => {
     mkdirSync(perfDir(root), { recursive: true })
     const line = JSON.stringify({ ts: Date.now(), kind: 'x', pad: 'p'.repeat(200) })
-    writeFileSync(pageLog(root), (line + '\n').repeat(Math.ceil(2_500_000 / line.length)))
+    const fill = (f: string, bytes: number) => writeFileSync(join(perfDir(root), f), (line + '\n').repeat(Math.ceil(bytes / line.length)))
+    const size = (f: string) => statSync(join(perfDir(root), f)).size
+    fill('reloads.jsonl', 2_500_000)
+    fill('jam.jsonl', 2_500_000)
+    fill('page.jsonl', 2_500_000)
     tidyPerfDir(root)
-    const size = statSync(pageLog(root)).size
-    expect(size).toBeGreaterThan(1_100_000)
-    expect(size).toBeLessThan(1_400_000)
+    for (const f of ['reloads.jsonl', 'jam.jsonl']) {
+      expect(size(f), f).toBeGreaterThan(1_100_000)
+      expect(size(f), f).toBeLessThan(1_400_000)
+    }
+    expect(size('page.jsonl')).toBeGreaterThan(2_400_000)   // under its 8 MB: whole
+    fill('page.jsonl', 8_500_000)
+    tidyPerfDir(root)
+    expect(size('page.jsonl')).toBeGreaterThan(4_000_000)
+    expect(size('page.jsonl')).toBeLessThan(4_500_000)
   })
 
   it.skipIf(!posix)('a link inside perf/ is neither followed nor changed; no perf/ yet - nothing is made', () => {

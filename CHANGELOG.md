@@ -93,7 +93,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   a request whose real path lands there is refused, even when your project's workspace root is your home folder.
 - **The perf logs are yours alone.** `design/.local/perf/` is made mode 700 and its files 600 - those an earlier
   version made are tightened at start - and at start every log there, `jam.jsonl` included, loses its lines older
-  than 14 days, and past 2 MB its oldest half.
+  than 14 days, and past 2 MB its oldest half. `page.jsonl`, new, keeps 8 MB: one load of a 120-frame board writes
+  about 140 KB to it, and 2 MB held only hours of those.
 
 ### Upgrading
 
