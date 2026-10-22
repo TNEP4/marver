@@ -21,13 +21,14 @@
  * twenty ports, for the test suite alone. Both are read on every call, so a test can point a call
  * elsewhere.
  */
-import { chmodSync, mkdirSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { asHolder, pidRuns, portInUse, readJson, takeExclusive } from './exclusive.ts'
 import { legacyWorkspace, workspaceId } from './workspace.ts'
+import { NAME } from '../cli/name.ts'
 
 export const SLOTS = 20
 
@@ -256,6 +257,19 @@ export const legacyPort = (root: string): number => {
   return 5200 + (Math.abs(h) % 200)
 }
 
+/** What every `marver dev` since 0.24 writes in design/.local as it starts and keeps once it stops: the sidebar
+ *  marks (changes.json, seen.json - the dev server their only writer, at every start), the daily update check,
+ *  the Jam queue, the reload log. No other command writes them, and dev.lock and dev.json go when a canvas stops. */
+const DEV_TRACES = ['changes.json', 'seen.json', 'update-check.json', 'jam-jobs.json', join('perf', 'reloads.jsonl')]
+/** Did a `marver dev` run in this folder before? Read before this start writes any of them: with none, a project
+ *  with no preference file is new, not one 0.26 served - and its first start has nothing to say about 0.26. */
+export const ranDevBefore = (root: string): boolean => DEV_TRACES.some((f) => existsSync(join(root, 'design', '.local', f)))
+/** A start that found none of them and failed (a sandbox, a port just taken) takes back those it wrote - the marks
+ *  (with their deps.json) and the rest - so the folder still reads as one no canvas ran in. */
+export const forgetDevTraces = (root: string): void => {
+  for (const f of [...DEV_TRACES, 'deps.json']) { try { rmSync(join(root, 'design', '.local', f), { force: true }) } catch { /* not ours to fight */ } }
+}
+
 // ---- the preference file ------------------------------------------------------------------------
 
 /** One address a project ran on: `url` the link people open (the browser's storage origin), `bind` the
@@ -326,6 +340,47 @@ export function recoverEntries(root: string): RecoverEntry[] {
   const history: RecoverEntry[] = readPrefer(workspaceId(root))?.history ?? []
   const legacy = legacyEntry(root)
   return history.some((h) => h.url === legacy.url && h.ws === legacy.ws) ? history : [...history, legacy]
+}
+
+/** What a start knows about where this canvas ran before. */
+export interface Before {
+  root: string
+  /** this run's address, and its port */
+  run: RunAddress
+  port: number
+  /** notePrefer's answer: this project's first 0.27 run, and the address it ran on last */
+  first: boolean
+  previous: Address | null
+  /** ranDevBefore, read before this start wrote anything */
+  ranBefore: boolean
+}
+
+/** What a start says about where this canvas ran before (A1.6) - nothing, when nothing a person could have open
+ *  there has moved:
+ *  - its first 0.27 start on a slot, only when a `marver dev` ran in this folder before: a new project has no 0.26
+ *    address to name;
+ *  - another link than last time (its slot taken, a port of its own given up): where it was, who runs there now
+ *    when a canvas does, and how to run there again. A tab still open there keeps its unsaved edits until this
+ *    canvas answers there, and a Jam capture left unsent waits there too. The link alone counts: the address a run
+ *    bound (`[::1]` or `127.0.0.1`) is what the Mac app loads, and a browser at the link reaches either. */
+export function startedWhere(b: Before): string[] {
+  if (b.first) {
+    if (!b.ranBefore || !b.run.slot) return []
+    const old = legacyPort(b.root)
+    return [`ports are now fixed slots: this canvas is at ${b.run.url}`,
+      ...(old !== b.port ? [`0.26 served this canvas at http://localhost:${old}/ - if a Jam capture was left unsent there, \`npx ${NAME} dev --recover\` gets it back`] : [])]
+  }
+  const p = b.previous
+  if (!p || p.url === b.run.url) return []
+  const holder = readRunning().find((r) => r.url === p.url && r.pid !== process.pid)
+  const who = holder ? `"${holder.name || '?'}"` : null
+  // its place in --recover's list: this run is the newest, the address before it next
+  const n = recoverEntries(b.root).findIndex((e) => e.url === p.url && e.bind === p.bind && e.ws === p.ws) + 1
+  return [
+    `last run was at ${p.url}${who ? ` - ${who} runs there now` : ''}`,
+    'a tab still open there keeps its unsaved edits until this canvas runs there again (a Jam capture left unsent there waits too):',
+    `stop ${who ? `${who} and ` : ''}this canvas, then \`npx ${NAME} dev --recover${n ? ` ${n}` : ''}\``,
+  ]
 }
 
 export function recoverTarget(e: RecoverEntry): Recover {

@@ -6,7 +6,7 @@
  * and the workspace key that run used - never another one. Alone it lists them: the project's recorded
  * addresses, newest first, then the one 0.26 gave the folder.
  */
-import { dev, DevStartError } from '../server/dev.ts'
+import { dev, DevStartError, type DevOptions } from '../server/dev.ts'
 import { legacyEntry, recoverEntries, recoverTarget, type RecoverEntry } from '../server/slots.ts'
 import { workspaceId } from '../server/workspace.ts'
 import { NAME } from './name.ts'
@@ -30,11 +30,11 @@ export function formatEntries(root: string, entries: RecoverEntry[]): string[] {
 }
 
 /** `--recover` alone (cac hands over `true`), `--recover <n>` (a number or its string), or `--recover --port <p>`. */
-export async function recoverCommand(root: string, which: unknown, port?: number): Promise<void> {
+export async function recoverCommand(root: string, which: unknown, port?: number, with_: Pick<DevOptions, 'onFail'> = {}): Promise<void> {
   const listOnly = which === true || which === ''
   if (!listOnly && port !== undefined) throw new DevStartError('give --recover <n>, or --recover --port <p> - not both')
   // 0.26 moved off its hash port when that was taken, and said so: that port, with 0.26's key
-  if (port !== undefined) { await dev(root, { recover: recoverTarget(legacyEntry(root, port)) }); return }
+  if (port !== undefined) { await dev(root, { ...with_, recover: recoverTarget(legacyEntry(root, port)) }); return }
   const entries = recoverEntries(root)
   if (listOnly) {
     console.log(`\n${formatEntries(root, entries).map((l) => `  ${l}`).join('\n')}\n`)
@@ -43,5 +43,5 @@ export async function recoverCommand(root: string, which: unknown, port?: number
   const n = Number(which)
   const entry = Number.isInteger(n) && n >= 1 ? entries[n - 1] : undefined
   if (!entry) throw new DevStartError(`no address ${String(which)} - npx ${NAME} dev --recover lists them`)
-  await dev(root, { recover: recoverTarget(entry) })
+  await dev(root, { ...with_, recover: recoverTarget(entry) })
 }

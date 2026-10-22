@@ -103,25 +103,41 @@ export function resolveLink(root: string, targets: string[], board?: string): Re
   return { ...t, board: links[0]?.board, links, hash: links[0]?.hash, unplaced, hints: unplacedHint(m, unplaced), nodesOf }
 }
 
-/** The dev server's origin when it is running in this repo and answers like `marver dev` - else null. */
-export async function devOrigin(root: string): Promise<string | null> {
+/** Where `marver dev` is for this repo: answering like `marver dev` (`origin`); running but out of reach - its
+ *  dev.json names a process that lives, and asking it fails from here (a sandbox that keeps an agent off localhost:
+ *  Codex's); or not running (null). */
+export type DevFound = { origin: string } | { unreachable: { pid: number; port: number } } | null
+export async function findDev(root: string): Promise<DevFound> {
   const info = readDevInfo(root)
   if (!info) return null
   try {
     const res = await fetch(`http://localhost:${info.port}/__mv/api/work`, { headers: { 'x-mv-work': info.token }, signal: AbortSignal.timeout(1500) })
     const data = await res.json().catch(() => null) as { frames?: unknown } | null
-    return res.ok && Array.isArray(data?.frames) ? `http://localhost:${info.port}/` : null
-  } catch { return null }
+    return res.ok && Array.isArray(data?.frames) ? { origin: `http://localhost:${info.port}/` } : null
+  } catch { return info.pid !== undefined ? { unreachable: { pid: info.pid, port: info.port } } : null }
 }
+
+/** The dev server's origin when it is running in this repo and answers like `marver dev` - else null. */
+export async function devOrigin(root: string): Promise<string | null> {
+  const found = await findDev(root)
+  return found && 'origin' in found ? found.origin : null
+}
+
+/** A canvas that runs where this command cannot reach it: said so, never "start it" - a second start would only find
+ *  the first one's lock. */
+export const unreachable = (pid: number): string => `\`${NAME} dev\` runs (pid ${pid}) but cannot be reached from here - a sandbox?`
 
 const NOT_RUNNING = `\`${NAME} dev\` is not running in this repo - start it (\`npx ${NAME} dev\`), then run this again: the link carries its port`
 
 export async function linkCommand(root: string, targets: string[], opts: { board?: string }): Promise<void> {
   const r = resolveLink(root, targets, opts.board)
   if (!r.links.length) throw new Error(r.hints.join('\n'))
-  const origin = await devOrigin(root)
-  if (!origin) throw new Error(NOT_RUNNING)
+  const found = await findDev(root)
+  if (!found) throw new Error(NOT_RUNNING)
+  // a link needs only the port, and dev.json has it: out of reach from here, the canvas still serves the person's browser
+  const origin = 'origin' in found ? found.origin : `http://localhost:${found.unreachable.port}/`
   for (const l of r.links) console.log(`${origin}${l.hash}`)
+  if ('unreachable' in found) console.error(`  ${unreachable(found.unreachable.pid)} The link is its port, from design/.local/dev.json - the person's browser reaches it`)
   for (const h of r.hints) console.error(`  ${h}`)
 }
 

@@ -1,7 +1,7 @@
 import { createLogger, createServer, searchForWorkspaceRoot, type DevEnvironment, type ResolvedConfig, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { existsSync, mkdirSync, realpathSync, statSync, watch as fsWatch } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, statSync, watch as fsWatch, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,7 +12,7 @@ import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { iconModules, iconsPlugin } from './icons.ts'
 import { locPlugin } from './loc.ts'
 import { Startup } from './startup.ts'
-import { legacyPort, marverHome, notePrefer, originOf, place, stopPrefer, type Recover, type RunAddress } from './slots.ts'
+import { forgetDevTraces, marverHome, notePrefer, originOf, place, ranDevBefore, startedWhere, stopPrefer, type Recover, type RunAddress } from './slots.ts'
 import { runIdentity } from './workspace.ts'
 import { installedVersion } from './update.ts'
 
@@ -218,7 +218,45 @@ export interface DevOptions {
    *  that never settles pauses it. 'env' runs inside Vite's environment initialisation, 'configure'
    *  after Marver's configureServer */
   at?: (step: StartStep, info?: { port: number }) => unknown
+  /** the canvas ended on its own once it served - a file watcher failed: called once everything is closed (the CLI
+   *  prints it and exits 1). Without it, the line is printed */
+  onFail?: (err: DevStartError) => void
 }
+
+/** The line for a file watcher that fails: `fs.watch` in a sandbox (Codex's: every one fails with EMFILE), or a
+ *  system's watch limit. */
+export const cannotWatch = (err: unknown): string =>
+  `${NAME} dev cannot watch this folder (${(err as Error)?.message ?? err}) - in a sandbox? ask the person to run npx ${NAME} dev in their own terminal`
+
+/** What becomes of the start's file watchers' errors. Each watcher the start makes - Vite's, and every one of
+ *  Marver's - is handed here as it is made; without a listener, its error would end the process with Node's own
+ *  "Unhandled 'error' event". The first error fails the start at its next step, through the Startup like any
+ *  failure (nothing left, exit 1); once the canvas serves, it ends the canvas (its one close), then says so. */
+interface WatchGuard {
+  add<W extends { on(event: 'error', fn: (err: Error) => void): unknown }>(w: W): W
+  /** a watcher has failed: the start fails here */
+  check(): void
+  /** the start is done: a failure from now on closes the canvas */
+  serving(close: () => Promise<void>): void
+}
+function watchGuard(onFail?: (err: DevStartError) => void): WatchGuard {
+  let failed: DevStartError | null = null
+  let close: (() => Promise<void>) | null = null
+  const seen = new WeakSet<object>()
+  const fail = (err: Error) => {
+    if (failed) return
+    const e = failed = new DevStartError(cannotWatch(err), { cause: err })
+    if (close) void close().catch(() => { /* closing what failed */ }).then(() => (onFail ?? ((x) => console.error(`\n  ${x.message}\n`)))(e))
+  }
+  return {
+    add(w) { if (!seen.has(w)) { seen.add(w); w.on('error', fail) } return w },
+    check() { if (failed) throw failed },
+    serving(c) { close = c },
+  }
+}
+
+/** Said when a signal (Ctrl-C, a kill) stops a canvas that served: an open tab holds its edits until it is back. */
+const STOPPED = 'canvas stopped - open tabs keep their edits and save when it is back'
 
 /**
  * Start the canvas (spec 28 A1.1): 1. dev.lock, 2. an address - a slot, a port of its own, or
@@ -231,22 +269,36 @@ export async function dev(root: string, opts: DevOptions = {}) {
   const t = new Startup()
   // every way out gives back what is held by then - a failed start, a close, an exit, Ctrl-C or a kill
   t.hookProcess()
+  // did a canvas run in this folder before? - read before this start writes anything there
+  const ranBefore = ranDevBefore(root)
+  const watch = watchGuard(opts.onFail)
+  let locked = false
   try {
     // 1. one canvas per folder (#19): the lock comes first, so a second `marver dev` never starts a server
     const { takeDevLock } = await import('./dev-lock.ts')
     const lock = await takeDevLock(root, { onTaken: (release) => t.claim(release) })
     if (!lock.ok) throw new DevLockError(lock.message)
+    locked = true
     await opts.at?.('locked')
-    return await boot(root, opts, lock.instance, t)
+    const server = await boot(root, opts, lock.instance, t, { ranBefore, watch })
+    // a watcher that failed during the start's last steps fails the start; one that fails from now on ends the canvas
+    watch.check()
+    watch.serving(() => server.close())
+    // a stop by a signal says so, at once - before the claims go back and the signal ends the process
+    t.onSignal(() => { try { writeSync(1, `\n  ${STOPPED}\n\n`) } catch { /* no terminal to say it to */ } })
+    return server
   } catch (err) {
     // newest first: the server if there is one, Marver's watchers, then the files
     await t.close()
+    // the folder was this start's alone, and no canvas had run in it: it still reads so (its next start is its first)
+    if (locked && !ranBefore) forgetDevTraces(root)
     if (err instanceof DevStartError) throw err
     throw new DevStartError(`the canvas could not start: ${(err as Error)?.message ?? err}`, { cause: err })
   }
 }
 
-async function boot(root: string, opts: DevOptions, instance: string, t: Startup) {
+async function boot(root: string, opts: DevOptions, instance: string, t: Startup, ctx: { ranBefore: boolean; watch: WatchGuard }) {
+  const { watch } = ctx
   const config = await loadConfig(root)
   const host = detectHost(root)
   const pkgDir = packageDir()
@@ -351,7 +403,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       return () => { c.mine.delete(once); withdraw() }
     },
   }
-  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
+  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup: { ...startup, watch: watch.add }, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
   plugins.unshift({
     name: 'marver:startup-owns-server',
     configResolved(resolved: ResolvedConfig) {
@@ -368,7 +420,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
           c.envs.add(made)
           if (context.ws) c.parts.add(context.ws)
           const init = made.init.bind(made)
-          made.init = (o) => { if (o?.watcher) c.parts.add(o.watcher); return init(o) }
+          // Vite's file watcher: its error is the start's (watchGuard), never Node's unhandled one
+          made.init = (o) => { if (o?.watcher) { c.parts.add(o.watcher); watch.add(o.watcher) } return init(o) }
           return made
         }
       }
@@ -509,6 +562,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   /** what holds the HTTP server itself, put back on the new one after a restart (step 6) */
   const onRestart: (() => void)[] = []
   await opts.at?.('created')
+  watch.check()
 
   // 4. listen. A failure here ends the start: no retry inside the process (A1.1)
   try { await server.listen() } catch (err) {
@@ -518,6 +572,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     throw err
   }
   await opts.at?.('listening')
+  watch.check()
   const port = claim.port
   const origin = originOf(server.httpServer?.address()) ?? `http://localhost:${port}`
 
@@ -528,25 +583,23 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   t.claim(() => removeDevInfo(root, instance))
   writeDevInfo(root, port, instance)
   await opts.at?.('published')
+  watch.check()
 
   // name the project on every boot, and say loudly when a port of its own was taken - so two concurrent
   // projects can never be confused (a tab bookmarked to one silently serving the other)
   if (placed.fellBackFrom) console.log(`\n  port ${placed.fellBackFrom} is in use - serving "${projectName}" on slot ${claim.slot} instead`)
   console.log(`\n  ${NAME} · ${projectName} → http://localhost:${port}/\n`)
-  // where it ran before (A1.6): a Jam capture left unsent - if one was - waits at that address, in that browser.
-  // Nothing here knows whether one was, so the hint says if. A --recover run replays an entry, so it records nothing
+  // where it ran before (A1.6): a tab still open at another address holds its unsaved edits until this canvas runs
+  // there again, and a Jam capture left unsent - if one was - waits there, in that browser. Nothing here knows
+  // whether one was, so the hint says if. A --recover run replays an entry, so it records nothing
   const address: RunAddress = { slot: claim.slot, url: claim.url, bind: origin, ws: run.ws }
   if (opts.recover) console.log(`  recovering: open ${opts.recover.url} in the browser that made the capture (the app loads ${opts.recover.bind}) - with Live Jam on, a capture waiting there sends itself; then stop this canvas (Ctrl-C)\n`)
   else {
     try {
       const { first, previous } = notePrefer(run.id, address)
       t.claim(() => stopPrefer(run.id, address))
-      if (first && claim.slot) {
-        const old = legacyPort(root)
-        console.log(`  ports are now fixed slots: this canvas is at ${claim.url}${old !== port ? `\n  0.26 served this canvas at http://localhost:${old}/ - if a Jam capture was left unsent there, \`npx ${NAME} dev --recover\` gets it back` : ''}\n`)
-      } else if (previous && (previous.url !== address.url || previous.bind !== address.bind || previous.ws !== address.ws)) {
-        console.log(`  last run was at ${previous.url} (bound ${previous.bind}) - if a Jam capture was left unsent there, \`npx ${NAME} dev --recover\` gets it back\n`)
-      }
+      const lines = startedWhere({ root, run: address, port, first, previous, ranBefore: ctx.ranBefore })
+      if (lines.length) console.log(`${lines.map((l) => `  ${l}`).join('\n')}\n`)
     } catch (err) { console.warn(`[${NAME}] could not record this canvas's address (${(err as Error).message}) - it runs; next time it may take another slot`) }
   }
   if (fromConfig !== undefined && !placed.fellBackFrom) console.log(`  this canvas keeps its own port (${fromConfig} in design/config.ts); remove it to use the slots\n`)
@@ -626,12 +679,12 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     const due = new Map<string, ReturnType<typeof setTimeout>>()
     try {
       mkdirSync(dir, { recursive: true })   // so the watcher attaches before the first comment
-      const w = fsWatch(dir, { persistent: false }, (_e, file) => {
+      const w = watch.add(fsWatch(dir, { persistent: false }, (_e, file) => {
         const m = typeof file === 'string' ? file.match(/^([a-z0-9][a-z0-9-]*)\.jsonl$/) : null
         if (!m) return
         clearTimeout(due.get(m[1]))
         due.set(m[1], setTimeout(() => { due.delete(m[1]); server.ws.send('sh:jam-comment', { board: m[1] } as any) }, 120))
-      })
+      }))
       t.defer(() => { w.close(); for (const x of due.values()) clearTimeout(x) })
     } catch { /* the 30s poll is the backstop */ }
   }
@@ -656,7 +709,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
         if (!r.ok) return null
         const { addPicture } = await import('./jam/capture.ts')
         return addPicture(root, r.path, { frame: frameId, ...entry, ...(/not checked for a stale surface/.test(r.note ?? '') ? { unchecked: true as const } : {}) })
-      })
+      },
+      watch.add)
     if (jam) {
       t.defer(() => jam.stop())
       // words on this Mac (spec 27 Part 4): the audio socket beside the canvas; the model loads on first use

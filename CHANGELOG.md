@@ -10,8 +10,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   folder's path (5200-5399). It takes one of twenty fixed ports - the one this project had last time when it is free,
   else the first free one - and prints its link, so a project usually gets the same address back. A port another
   program holds is skipped, and said. All twenty taken? It stops before starting, lists them, and says how to free
-  one. The first start of each canvas says where it moved: "ports are now fixed slots: this canvas is at
-  http://localhost:4806/". `npx marver ls` lists the canvases running on your Mac.
+  one. The first start of a canvas that ran before says where it moved: "ports are now fixed slots: this canvas is at
+  http://localhost:4806/" - a new project, which never had another address, hears nothing of it. `npx marver ls` lists
+  the canvases running on your Mac.
 - **A port you chose stays yours.** `--port <n>`, or a `port` in `design/config.ts` other than the 5199 every canvas
   was scaffolded with, is tried first, as before; when it is taken, the canvas takes a slot and says so (0.26 moved
   within its own 5200-5399). A port inside 4805-4824 claims exactly that slot: when another canvas or program holds
@@ -21,6 +22,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **A start that fails leaves nothing behind.** The folder's lock, the slot, a half-made server and Marver's watchers
   are all given back, it says what failed, and `marver dev` exits with 1. A program that takes the port between the
   check and the start is said: "port 4806 was just taken by another program - start again".
+- **`marver dev` says when it stops.** Ctrl-C (or a kill) prints "canvas stopped - open tabs keep their edits and save
+  when it is back".
 - **One identity per project.** The page, the capture check, the registry and the slot preference all read one key,
   made from the folder's real path. For a canvas started with `npx marver dev` it is the key 0.26 used, so a capture
   waiting in a page keeps it; only the address moved.
@@ -47,8 +50,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **`npx marver dev --recover`** starts a canvas on an address it ran on before - exactly its port, the address it
   bound and the project key that run used, never another - so a Jam capture left unsent in that browser sends itself.
   Alone it lists them, newest first, then the one 0.26 gave the folder; `--recover <n>` starts on one;
-  `--recover --port <p>` on the port 0.26 moved to. When a canvas starts on another address than last time,
-  `marver dev` says where it was, with this hint
+  `--recover --port <p>` on the port 0.26 moved to. When a canvas starts on another address than last time - its slot
+  taken - `marver dev` says where it was, which canvas runs there now, and that a tab still open there keeps its
+  unsaved edits (and a capture left unsent there waits) until this canvas runs there again: "stop "atlas" and this
+  canvas, then `npx marver dev --recover 2`"
   ([A capture left on an old address](docs/jam-session.md#a-capture-left-on-an-old-address)).
 - **`npx marver perf --loads`** says what each board load did, from the page: how long until the frames in view were
   ready, until all were, until the board first held still, when it last moved and when it settled - or why it was
@@ -91,6 +96,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   replaced is ignored, as its ready already was.
 - **The dev server never serves `~/.marver`.** It holds the running canvases' keys and the collaboration credentials;
   a request whose real path lands there is refused, even when your project's workspace root is your home folder.
+- **In a sandbox, `marver dev` says why it cannot start.** Where every file watcher fails (Codex's sandbox: `EMFILE:
+  too many open files, watch`), it ended with Node's own unhandled error. It now says "marver dev cannot watch this
+  folder (EMFILE: too many open files, watch) - in a sandbox? ask the person to run npx marver dev in their own
+  terminal" and exits with 1, leaving nothing behind; a watcher that fails once the canvas runs ends it the same way.
+- **A canvas out of reach is not "not running".** In a sandbox that keeps an agent off localhost, `marver link` said
+  the canvas was not running, and `work` could not reach it - an invitation to start a second one. When
+  `design/.local/dev.json` names a process that runs, `link` prints the link from it (it needs only the port) and
+  says "`marver dev` runs (pid 123) but cannot be reached from here - a sandbox?"; `work start` and `work done` say the
+  same, and that `link` still gives the link.
 - **The perf logs are yours alone.** `design/.local/perf/` is made mode 700 and its files 600 - those an earlier
   version made are tightened at start - and at start every log there, `jam.jsonl` included, loses its lines older
   than 14 days, and past 2 MB its oldest half. `page.jsonl`, new, keeps 8 MB: one load of a 120-frame board writes

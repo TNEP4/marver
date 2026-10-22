@@ -173,7 +173,7 @@ describe('dev.json names its server', () => {
     const token = writeDevInfo(root, 5300, 'me')
     const v = JSON.parse(readFileSync(local(root, 'dev.json'), 'utf8'))
     expect(v).toMatchObject({ port: 5300, token, pid: process.pid, instance: 'me' })
-    expect(readDevInfo(root)).toEqual({ port: 5300, token })
+    expect(readDevInfo(root)).toEqual({ port: 5300, token, pid: process.pid })
     writeFileSync(local(root, 'dev.json'), JSON.stringify({ ...v, pid: await deadPid() }))
     expect(readDevInfo(root)).toBe(null)
   })

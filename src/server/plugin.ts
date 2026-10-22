@@ -37,7 +37,11 @@ export interface PluginCtx {
    *  sweeps, timers) is closed with it when the start fails before Vite ever listens, and, named for the
    *  server it was made for, when that server's construction throws (a restart's, which Vite survives);
    *  what this plugin keeps across Vite restarts, only when the start ends. `defer` answers a withdrawal */
-  startup?: { defer(close: () => unknown, server?: ViteDevServer): () => void }
+  startup?: {
+    defer(close: () => unknown, server?: ViteDevServer): () => void
+    /** each file watcher Marver's plugin makes, as it is made: its error is the start's to say (dev.ts watchGuard) */
+    watch?: <W extends { on(event: 'error', fn: (err: Error) => void): unknown }>(w: W) => W
+  }
   /** spec 28 A1.4, dev only: what signs the shell's document for the app - this run's instance, the slot
    *  file's key and port. Never logged, never served */
   proof?: DocProof
@@ -47,6 +51,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const { root, clientDir, config } = ctx
   // the run's workspace (A1.6): CONFIG.workspace, the capture check and every request's check read this one value
   const ws = ctx.workspace ?? workspaceId(root)
+  /** a watcher this plugin makes, handed to the start (its error is said, not Node's crash) - as it is, outside one */
+  const guarded = <W extends { on(event: 'error', fn: (err: Error) => void): unknown }>(w: W): W => ctx.startup?.watch?.(w) ?? w
 
   // the project's line in the manifest; re-read from design/config.ts when that file changes
   // (the rest of the config still needs a restart - only the two orientation fields are live)
@@ -434,7 +440,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         // coalesced `sh:boards` per burst, so the sidebar re-reads its tree - deletions too,
         // which the content broadcast below cannot carry (nothing left to hash)
         let listTimer: ReturnType<typeof setTimeout> | undefined
-        const watcher = watch(boardsDir, (_event, file) => {
+        const watcher = guarded(watch(boardsDir, (_event, file) => {
           // the size cache (sizes.ts) is no board and no folder: the shell that wrote it already
           // holds every height in it - a sidebar re-read per settled Doc would be pure churn
           if (!file || !file.endsWith('.json') || file === SIZES_FILE || file === `${ALL_SCENES}.json`) return
@@ -453,7 +459,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
             badBoards.delete(file)
             server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
           }, 120))
-        })
+        }))
         onClose(() => { watcher.close(); clearTimeout(listTimer); for (const t of timers.values()) clearTimeout(t) })
       } catch { /* watch unsupported here - sync degrades to the 409 path */ }
 
@@ -526,7 +532,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         // events on some filesystems (macOS temp/FSEvents, network mounts) - the same reason
         // the comments daemon pairs its watcher with a rescan. Without it, an agent's request
         // file could sit unprocessed forever on exactly the machines where watching is flaky.
-        const inboxWatcher = watch(inbox, { persistent: false }, (_e, file) => { if (file) processRequest(file) })
+        const inboxWatcher = guarded(watch(inbox, { persistent: false }, (_e, file) => { if (file) processRequest(file) }))
         const sweep = setInterval(() => {
           try { for (const f of readdirSync(inbox)) processRequest(f) } catch { /* dir vanished */ }
         }, 1000)

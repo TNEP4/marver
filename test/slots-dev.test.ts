@@ -39,11 +39,12 @@ afterAll(async () => {
 })
 
 const FRAME = `export const meta = { title: 'One', viewport: 'mobile' }\nexport default () => <main style={{ padding: 24 }}><h1>One</h1></main>\n`
-const project = (prefix: string, config = 'export default { jam: false }\n') => {
+const project = (prefix: string, config = 'export default { jam: false }\n', more: Record<string, string> = {}) => {
   const r = fixtureRoot(prefix, {
     'design/config.ts': config,
     'design/scenes/demo/one.tsx': FRAME,
     'design/boards/main.json': JSON.stringify({ version: 1, name: 'main', order: 0, auto: false, nodes: [{ key: 'n-one', frame: 'demo/one', x: 0, y: 0, w: 390, h: 844 }] }),
+    ...more,
   })
   roots.push(r)
   return r
@@ -69,7 +70,8 @@ describe('two projects on the slots (A1.3)', () => {
   let devA: Dev, devB: Dev
   beforeAll(async () => {
     a = project('mv-slots-a-')
-    b = project('mv-slots-b-')
+    // b ran `marver dev` before 0.27: the sidebar marks every start since 0.24 leaves in design/.local
+    b = project('mv-slots-b-', undefined, { 'design/.local/seen.json': '{"version":2,"epoch":"abc","frames":{}}\n', 'design/.local/changes.json': '{"version":2,"epoch":"abc","rev":0,"frames":{}}\n' })
     devA = await start(a)
     devB = await start(b)
   }, 120_000)
@@ -84,9 +86,13 @@ describe('two projects on the slots (A1.3)', () => {
       expect(statSync(running(`slot-${n}.json`)).mode & 0o777).toBe(0o600)
     }
     expect(statSync(running()).mode & 0o777).toBe(0o700)
-    expect(devA.out()).toContain(`ports are now fixed slots: this canvas is at http://localhost:${BASE + 1}/`)
-    // where 0.26 put it, and what --recover is for - said as a maybe: nothing here knows whether a capture was left
-    expect(devA.out()).toMatch(/0\.26 served this canvas at http:\/\/localhost:\d+\/ - if a Jam capture was left unsent there, `npx marver dev --recover` gets it back/)
+    // a project an earlier `marver dev` ran in: where it is now, where 0.26 put it, and what --recover is for - said as
+    // a maybe: nothing here knows whether a capture was left
+    expect(devB.out()).toContain(`ports are now fixed slots: this canvas is at http://localhost:${BASE + 2}/`)
+    expect(devB.out()).toMatch(/0\.26 served this canvas at http:\/\/localhost:\d+\/ - if a Jam capture was left unsent there, `npx marver dev --recover` gets it back/)
+    // a brand-new one never ran on 0.26: nothing about it
+    expect(devA.out()).not.toContain('ports are now fixed slots')
+    expect(devA.out()).not.toContain('0.26 served this canvas')
   })
 
   it('the shell\'s document, asked for with a nonce, is signed with the slot file\'s key (A1.4)', async () => {
@@ -129,6 +135,8 @@ describe('two projects on the slots (A1.3)', () => {
     await stop(devA)
     await stop(devB)
     expect(readdirSync(running())).toEqual([])
+    // Ctrl-C says the canvas stopped, and what becomes of an open tab
+    expect(devA.out()).toContain('canvas stopped - open tabs keep their edits and save when it is back')
     devB = await start(b)
     devA = await start(a)
     expect([devA.port, devB.port]).toEqual([BASE + 1, BASE + 2])
@@ -158,16 +166,107 @@ describe('two projects on the slots (A1.3)', () => {
     await stop(devC)
   }, 120_000)
 
-  it('a project whose slot is taken moves, and says where it was last', async () => {
+  it('a project whose slot is taken moves, and says where it was last, who runs there now and how to run there again', async () => {
     await stop(devA)
     const fake = sleeper()
     writeFileSync(running('slot-1.json'), JSON.stringify({ v: 1, state: 'ready', pid: fake, instance: 'fake', slot: 1, port: BASE + 1, origin: null, url: `http://localhost:${BASE + 1}/`, root: '/tmp/x', name: 'x', version: '0', features: [], ws: 'd'.repeat(16), startedAt: Date.now(), key: '' }))
     devA = await start(a)
     expect(devA.port).toBe(BASE + 2)
-    expect(devA.out()).toMatch(new RegExp(`last run was at http://localhost:${BASE + 1}/ \\(bound http://[^)]+\\) - if a Jam capture was left unsent there, \`npx marver dev --recover\` gets it back`))
+    expect(devA.out()).toContain([
+      `  last run was at http://localhost:${BASE + 1}/ - "x" runs there now`,
+      '  a tab still open there keeps its unsaved edits until this canvas runs there again (a Jam capture left unsent there waits too):',
+      '  stop "x" and this canvas, then `npx marver dev --recover 2`',
+    ].join('\n'))
+    expect(devA.out()).not.toContain('(bound ')
     await stop(devA)
+    // --recover 2 is that address: this run the newest, the one before it next
+    const { out } = await runDev(a, { args: ['--recover'], env: env() })
+    expect(out).toMatch(new RegExp(`^\\s+2\\s+http://localhost:${BASE + 1}/`, 'm'))
     rmSync(running('slot-1.json'))
   }, 120_000)
+})
+
+describe('a canvas in a sandbox', () => {
+  // a sandbox where fs.watch fails as Codex's does - every watcher is made, and its EMFILE comes a moment later - loaded
+  // before the CLI (`--import`): all of them (`all`), or those whose path holds MV_WATCH_FAIL, after MV_WATCH_FAIL_MS
+  const preload = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mv-slots-sandbox-'))
+    roots.push(dir)
+    const file = join(dir, 'watch-fails.mjs')
+    writeFileSync(file, [
+      "import fs from 'node:fs'",
+      "import { syncBuiltinESMExports } from 'node:module'",
+      "import { EventEmitter } from 'node:events'",
+      'const which = process.env.MV_WATCH_FAIL, delay = Number(process.env.MV_WATCH_FAIL_MS || 0), real = fs.watch',
+      'fs.watch = function (path, ...rest) {',
+      "  if (which !== 'all' && !String(path).includes(which)) return real.call(this, path, ...rest)",
+      '  const w = new EventEmitter()',
+      '  w.close = () => {}; w.ref = () => w; w.unref = () => w',
+      "  setTimeout(() => w.emit('error', Object.assign(new Error('EMFILE: too many open files, watch'), { errno: -24, code: 'EMFILE', syscall: 'watch', filename: null })), delay)",
+      '  return w',
+      '}',
+      'syncBuiltinESMExports()',
+    ].join('\n'))
+    return `--import=${file}`
+  }
+  const LINE = 'marver dev cannot watch this folder (EMFILE: too many open files, watch) - in a sandbox? ask the person to run npx marver dev in their own terminal'
+  const left = (r: string) => ({
+    registry: readdirSync(running()).filter((f) => { try { return record(f).root === r } catch { return true } }),
+    local: ['dev.lock', 'dev.json'].filter((f) => existsSync(join(r, 'design', '.local', f))),
+  })
+
+  it('every watcher failing at start: Marver says so, not Node - exit 1, and nothing left', async () => {
+    const r = project('mv-slots-nowatch-')
+    const { code, out } = await runDev(r, { env: env({ NODE_OPTIONS: preload(), MV_WATCH_FAIL: 'all' }), timeoutMs: 60_000 })
+    expect(code, out).toBe(1)
+    expect(out).toContain(`\n  ${LINE}\n`)
+    expect(out).not.toMatch(/Unhandled 'error' event|Emitted 'error' event/)
+    expect(out).not.toMatch(/→ http:\/\/localhost:/)   // it never said it serves
+    expect(left(r)).toEqual({ registry: [], local: [] })
+    // failed before it recorded an address, and took back the marks it wrote: its next start is still its first, of a
+    // project no canvas ran in - nothing about 0.26
+    expect(existsSync(join(home, 'prefer', `${workspaceId(r)}.json`))).toBe(false)
+    expect(['changes.json', 'seen.json', 'deps.json'].filter((f) => existsSync(join(r, 'design', '.local', f)))).toEqual([])
+    const d = await start(r)
+    expect(d.out()).not.toMatch(/ports are now fixed slots|0\.26 served/)
+    await stop(d)
+  }, 90_000)
+
+  it('a watcher failing once the canvas serves: the canvas ends with the same line - exit 1, nothing left', async () => {
+    const r = project('mv-slots-latewatch-')
+    // the comments watcher is made after the canvas is published
+    const { code, out } = await runDev(r, { env: env({ NODE_OPTIONS: preload(), MV_WATCH_FAIL: join('design', 'comments'), MV_WATCH_FAIL_MS: '1000' }), timeoutMs: 60_000 })
+    expect(code, out).toBe(1)
+    expect(out).toMatch(/→ http:\/\/localhost:\d+\//)
+    expect(out.indexOf(LINE)).toBeGreaterThan(out.search(/→ http:\/\/localhost:/))
+    expect(out).not.toMatch(/Unhandled 'error' event|Emitted 'error' event/)
+    expect(left(r)).toEqual({ registry: [], local: [] })
+  }, 90_000)
+
+  it('link and work, when dev.json names a canvas that runs but cannot be reached: the link from dev.json, and no "start it"', async () => {
+    const r = project('mv-slots-unreach-')
+    const port = await freePort(47_000)   // nothing answers there: a sandbox that keeps the agent off localhost
+    const pid = sleeper()
+    mkdirSync(join(r, 'design', '.local'), { recursive: true })
+    writeFileSync(join(r, 'design', '.local', 'dev.json'), JSON.stringify({ port, token: 't', pid, instance: 'i', ts: Date.now() }))
+    const link = await cli(['link', 'demo/one'], r)
+    expect(link.code, link.out).toBe(0)
+    expect(link.out).toContain(`http://localhost:${port}/#/b/main?f=demo/one`)
+    expect(link.out).toContain(`\`marver dev\` runs (pid ${pid}) but cannot be reached from here - a sandbox?`)
+    expect(link.out).not.toContain('start it')
+    for (const args of [['work', 'start', 'demo/one'], ['work', 'done', 'demo/one']]) {
+      const w = await cli(args, r)
+      expect(w.code, w.out).toBe(1)
+      expect(w.out).toContain(`\`marver dev\` runs (pid ${pid}) but cannot be reached from here - a sandbox? The working glow needs it; the canvas itself is fine - \`npx marver link <scene/frame>\` still prints its link`)
+    }
+    // its process gone: not running, and the way to start it
+    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+    await new Promise((res) => dead.once('exit', res))
+    writeFileSync(join(r, 'design', '.local', 'dev.json'), JSON.stringify({ port, token: 't', pid: dead.pid, instance: 'i', ts: Date.now() }))
+    const gone = await cli(['link', 'demo/one'], r)
+    expect(gone.code).toBe(1)
+    expect(gone.out).toContain('`marver dev` is not running in this repo - start it')
+  }, 60_000)
 })
 
 describe('ports of their own (A1.3)', () => {

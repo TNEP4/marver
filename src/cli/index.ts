@@ -71,10 +71,12 @@ for (const [name, desc] of [
         if (Number.isInteger(n) && n > 0 && n < 65536) port = n
         else console.warn(`[${NAME}] ignoring invalid --port "${opts.port}"`)
       }
+      // a canvas that ends on its own once it served (a file watcher failed) has closed everything by then: say why, exit 1
+      const onFail = (err: InstanceType<typeof DevStartError>) => { console.error(`\n  ${err.message}\n`); process.exit(1) }
       // a start that fails has already given back everything it held (spec 28 A1.1); the process ends here
       try {
-        if (opts.recover !== undefined && opts.recover !== false) await (await import('./recover.ts')).recoverCommand(resolve(opts.root), opts.recover, port)
-        else await dev(resolve(opts.root), { port })
+        if (opts.recover !== undefined && opts.recover !== false) await (await import('./recover.ts')).recoverCommand(resolve(opts.root), opts.recover, port, { onFail })
+        else await dev(resolve(opts.root), { port, onFail })
       } catch (err) {
         if (!(err instanceof DevStartError)) throw err
         console.error(`\n  ${err.message}\n`)
