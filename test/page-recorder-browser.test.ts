@@ -546,19 +546,45 @@ describe('the page recorder: sending', () => {
 describe('the page recorder: frame identity', () => {
   it('a delayed ready or error from an old document never counts; the live document\'s does', async () => {
     if (!browser) return
-    const { s, held } = await open('#/b/pair', ['*kit/hang.tsx*'])
+    const { s, page, held } = await open('#/b/pair', ['*kit/hang.tsx*'])
     await browser.until(s, `!!document.querySelector('[data-node="k-pg"] iframe')?.contentWindow?.__mvBoot`, 20_000)
+    await browser.until(s, `window.__mvRecorder.state().nodes['k-ph'] === 'ready'`, 20_000)
     const gen = await genOf(s, 'k-pg')
     const post = (type: string, boot: string) => inFrame(s, 'k-pg', `parent.postMessage({ type: '${type}', id: 'kit/hang', gen: '${gen}', boot: ${boot}, message: 'late' }, location.origin), 1`)
+    // what the shell itself holds of the node: its status, and whether its admission slot is still taken
+    const shell = () => browser!.eval(s, `({ status: __mvStore.getState().nodes.find((n) => n.key === 'k-pg').status, idle: window.__mvRecorder.state().admissionIdle })`)
+    expect(await shell()).toEqual({ status: 'loading', idle: false })
     await post('sh:ready', `'old-doc'`)
     await wait(300)
     expect((await R(s)).nodes['k-pg']).toBeNull()
+    expect(await shell()).toEqual({ status: 'loading', idle: false })
     await post('sh:error', `'old-doc'`)
     await wait(300)
     expect((await R(s)).nodes['k-pg']).toBeNull()
+    expect(await shell()).toEqual({ status: 'loading', idle: false })
     await post('sh:ready', 'window.__mvBoot')
     await browser.until(s, `window.__mvRecorder.state().nodes['k-pg'] === 'ready'`, 5_000)
+    expect(await shell()).toEqual({ status: 'ready', idle: true })
+    // and the old document's error was never recorded
+    await drained(s)
+    const l = await ended(page, 'pair')
+    expect(l.of('error')).toEqual([])
     held.stop()
+
+    // a measure from an old document moves nothing and keeps nothing
+    const b = await open('#/b/still')
+    await browser.until(b.s, `window.__mvRecorder.state().nodes['k-sb'] === 'settled'`, 20_000)
+    const box = () => browser!.eval(b.s, `(() => { const n = __mvStore.getState().nodes.find((n) => n.key === 'k-sb'); return { w: n.w, h: n.h } })()`)
+    const before = await box()
+    const g = await genOf(b.s, 'k-sb')
+    await inFrame(b.s, 'k-sb', `parent.postMessage({ type: 'sh:measure', frame: 'docs/b', gen: '${g}', boot: 'old-doc', ownWidth: ${before.w}, measuredWidth: ${before.w}, height: 4321, settled: true }, '*'), 1`)
+    await wait(2500)   // past the heights' 1.5 s write
+    expect(await box()).toEqual(before)
+    const sizes = await browser.eval(b.s, `fetch('/__mv/api/sizes').then((r) => r.json())`)
+    expect(Object.values(sizes.heights ?? {})).not.toContain(4321)
+    // the live document's same report is taken
+    await inFrame(b.s, 'k-sb', `parent.postMessage({ type: 'sh:measure', frame: 'docs/b', gen: '${g}', boot: window.__mvBoot, ownWidth: ${before.w}, measuredWidth: ${before.w}, height: 4321, settled: true }, '*'), 1`)
+    await browser.until(b.s, `__mvStore.getState().nodes.find((n) => n.key === 'k-sb').h === 4321`, 5_000)
   }, 60_000)
 
   it('a same-URL reload sends a settled node back to pending as soon as its live document changes, before its load', async () => {

@@ -13,7 +13,7 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { api, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { frameByWindow } from './canvas/frame-registry.ts'
+import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
@@ -631,10 +631,10 @@ export function App() {
 
       if (data.type === 'sh:ready') {
         // a WindowProxy survives navigation, so a ready queued by a SUPERSEDED document (one the
-        // ready-watchdog auto-renavigated past) can arrive here; drop it by generation like
-        // sh:measure does, so a stale ready never marks a reloading frame ready.
-        const gen = el.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
-        if (String(data.gen ?? '') !== gen) return
+        // ready-watchdog auto-renavigated past, or a same-URL reload's predecessor) can arrive here;
+        // dropped by generation and document before it touches anything, so a stale ready never marks
+        // a reloading frame ready, frees its admission slot or counts as seen
+        if (!fromLiveDocument(el, data)) return
         // a document that loaded again on its own (a full reload) is a new source revision: the
         // sleeping override of the previous document must not be trusted for this one
         if (s.nodes.find((n) => n.key === nodeKey)?.status === 'ready') s.bumpRev(nodeKey)
@@ -647,9 +647,8 @@ export function App() {
         if (typeof data.doc === 'string') s.setShown(nodeKey, data.doc)
         logReload({ kind: 'ready', cause: takeReloadCause(nodeKey) ?? (before === undefined ? 'first' : 'self'), node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
       } else if (data.type === 'sh:error') {
-        // the same generation guard as sh:ready: an error from a document since replaced fails nothing
-        const gen = el.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
-        if (String(data.gen ?? '') !== gen) return
+        // the same guard as sh:ready: an error from a document since replaced fails nothing and is not recorded
+        if (!fromLiveDocument(el, data)) return
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
         recorder.frameError(nodeKey, data)
       } else if (data.type === 'sh:boot') {
@@ -661,12 +660,11 @@ export function App() {
       } else if (data.type === 'sh:hmr') {
         s.bumpRev(nodeKey)
       } else if (data.type === 'sh:measure') {
-        // Generation guard: the sender echoes ITS document's URL rev; a
+        // Generation and document guard: the sender echoes ITS document's URL rev and id; a
         // WindowProxy survives navigation, so a stale pre-navigation message would
-        // otherwise route as if it came from the current document. Compare against
-        // the iframe's CURRENT src - mismatched generations are dropped.
-        const gen = el.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
-        if (String(data.gen ?? '') !== gen) return
+        // otherwise route as if it came from the current document. Compared against
+        // the iframe's CURRENT src and document - a stale one moves and keeps nothing.
+        if (!fromLiveDocument(el, data)) return
         // measureNode does the rest of the admission (content frames only,
         // frame-id match, finite positive, clamped)
         const took = s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height),

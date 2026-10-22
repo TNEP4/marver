@@ -23,3 +23,22 @@ export const unregisterFrame = (win: WindowProxy): void => {
 export const iframeOf = (key: string): HTMLIFrameElement | undefined => byKey.get(key)
 export const frameByWindow = (win: unknown): FrameReg | undefined =>
   win ? byWindow.get(win as WindowProxy) : undefined
+
+/** The id of the document an iframe shows now, as its frame bridge set it (`__mvBoot`, spec 28 A1.7) - absent while a
+ *  new document has not run its bridge yet, or when the frame was navigated off this origin (the read throws). */
+export function bootOf(iframe: HTMLIFrameElement | undefined): string | undefined {
+  try {
+    const b = (iframe?.contentWindow as { __mvBoot?: unknown } | null | undefined)?.__mvBoot
+    return typeof b === 'string' ? b : undefined
+  } catch { return undefined }
+}
+
+/** A frame's message comes from the document its iframe shows now: the URL revision the shell gave that document
+ *  (`gen`, against the iframe's src) and the document's own id (`boot`, against the live one). A WindowProxy survives
+ *  navigation, and a same-URL reload keeps `gen`, so only both tell the document there now from one since replaced
+ *  whose message was still on its way. Asked before a message changes anything. */
+export function fromLiveDocument(iframe: HTMLIFrameElement, data: { gen?: unknown; boot?: unknown }): boolean {
+  const gen = iframe.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
+  if (String(data.gen ?? '') !== gen) return false
+  return typeof data.boot === 'string' && data.boot !== '' && data.boot === bootOf(iframe)
+}

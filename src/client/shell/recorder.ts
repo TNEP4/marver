@@ -14,7 +14,7 @@ import { api, isStopped } from './api.ts'
 import { CONFIG, PUBLISHED, geometryCause, knownHeight, recorderHooks, reflowIdle, settleRule, useStore, type LoadCause, type Manifest, type MeasureResult, type Node, type RequestCut } from './store.ts'
 import { admissionIdle, onAdmissionIdle } from './canvas/admission.ts'
 import { canvasCtl } from './canvas/ctl.ts'
-import { iframeOf } from './canvas/frame-registry.ts'
+import { bootOf, iframeOf } from './canvas/frame-registry.ts'
 import { adopt, bound, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, outcomeOf, QUIET_MS, SEND_MS, stackLines, type Kind, type Outcome, type PerfRecord, type Track } from './recorder-core.ts'
 
 /** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). */
@@ -81,12 +81,7 @@ const rel = (L: Load, at?: number) => (at === undefined || at < L.t0 ? undefined
 const node = (key: string) => useStore.getState().nodes.find((n) => n.key === key)
 /** The document a node's iframe shows now, by the id its bridge set - absent while a new document has not run its
  *  bridge yet, or when the frame was navigated off this origin (the read throws). */
-function liveBoot(key: string): string | undefined {
-  try {
-    const b = (iframeOf(key)?.contentWindow as { __mvBoot?: unknown } | null | undefined)?.__mvBoot
-    return typeof b === 'string' ? b : undefined
-  } catch { return undefined }
-}
+const liveBoot = (key: string): string | undefined => bootOf(iframeOf(key))
 /** the URL revision the node's iframe was given */
 const genOf = (key: string) => iframeOf(key)?.src.match(/[?&]r=(\d+)/)?.[1]
 function trackOf(n: Node): Track {
@@ -456,7 +451,7 @@ function state() {
   const s = useStore.getState()
   return {
     owner: owner && { id: owner.id, board: owner.board, cause: owner.cause, committed: owner.committedAt !== undefined, done: owner.done ?? null, cohort: owner.cohort ? [...owner.cohort] : null },
-    pending: [...pending.keys()], queued: outbox.size, sending, motion,
+    pending: [...pending.keys()], queued: outbox.size, sending, motion, admissionIdle: admissionIdle(),
     nodes: Object.fromEntries(s.nodes.map((n) => [n.key, outcomeNow(n, s.manifest)])),
   }
 }
@@ -491,6 +486,8 @@ export const recorder = {
   }),
   /** sh:error, after the shell's generation check: recorded, and the node's outcome when it is its live document's. */
   frameError: guard((key: string, data: { id?: unknown; boot?: unknown; gen?: unknown; message?: unknown; stack?: unknown }) => {
+    // an error from a document since replaced is no error of this page's (the shell drops it before here too)
+    if (typeof data.boot !== 'string' || data.boot !== liveBoot(key)) return
     const n = node(key)
     logError({ source: 'frame', frame: bound(data.id) ?? n?.frame, message: data.message, stack: data.stack })
     if (!n) return
