@@ -1,6 +1,5 @@
 import { createLogger, createServer, searchForWorkspaceRoot, type DevEnvironment, type ResolvedConfig, type ViteDevServer } from 'vite'
 import react from '@vitejs/plugin-react'
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync, mkdirSync, realpathSync, statSync, watch as fsWatch } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
@@ -208,7 +207,7 @@ export class DevStartError extends Error {}
 export class DevLockError extends DevStartError {}
 
 /** The steps of a start, as `DevOptions.at` sees them. */
-export type StartStep = 'locked' | 'claimed' | 'env' | 'configure' | 'created' | 'listening' | 'published'
+export type StartStep = 'locked' | 'claimed' | 'env' | 'configure' | 'created' | 'listening' | 'published' | 'dispose'
 export interface DevOptions {
   /** --port: a port of its own; inside the slot range it claims exactly that slot (spec 28 A1.3) */
   port?: number
@@ -216,7 +215,8 @@ export interface DevOptions {
   recover?: Recover
   /** tests only (startup.test.ts): called at each step of the start - a throw fails it there, a promise
    *  that never settles pauses it. 'env' runs inside Vite's environment initialisation, 'configure'
-   *  after Marver's configureServer */
+   *  after Marver's configureServer, 'dispose' as what a server that never serves made begins to close
+   *  (a failed start's, a failed or left restart's) - a promise there holds that close */
   at?: (step: StartStep, info?: { port: number }) => unknown
 }
 
@@ -308,17 +308,30 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     /** the start ended while this one was a restart's: the restart closes it as it settles, never the start (step 6) */
     left: boolean
   }
-  interface Replacing { from: Construction | null; handed: boolean; over: Promise<void> }
+  interface Replacing {
+    /** the construction latest when it began */
+    from: Construction | null
+    /** Vite has put the new server in place on the start's server object */
+    handed: boolean
+    /** Vite has said it is about to close the old server - once a restart, at most (step 6) */
+    armed: boolean
+    /** the next close, in this same turn, is Vite's of the old server */
+    oldClose: boolean
+    /** the restart's end - its last cleanup included */
+    over: Promise<void>
+  }
   const constructions = new WeakMap<ResolvedConfig, Construction>()
   let latest: Construction | null = null
   let closeVite: () => Promise<void> = async () => {}
   let inPlace = false   // the start's place for the server serving: taken by the first server
   /** the start's end, once asked for (step 6) */
   let ending: Promise<void> | null = null
-  /** a restart on its way (step 6): the construction serving when it began, whether Vite has put the new server in place
-   *  on the start's server object yet, and the restart's end */
+  /** the restart whose Vite run is on its way (step 6): its new server being made, put in place, listening */
   let replacing: Replacing | null = null
+  /** every restart not over yet, from its start to its last cleanup - a failed construction's close included (step 6) */
+  const restarts = new Set<Replacing>()
   const dispose = async (c: Construction) => {
+    if (opts.at) await opts.at('dispose')
     if (c.close) await c.close().catch(() => { /* closing what failed */ })
     else {
       await Promise.allSettled([...c.envs].map(async (env) => {
@@ -686,32 +699,34 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // copying its methods over this object (Object.assign), then listens on the same port. So `close` and `restart` are
   // Marver's on this object for good, whatever Vite copies: accessors, whose setters take what Vite assigns - the new
   // server's own close and restart, kept aside (`live`) - and whose getters always answer Marver's. Vite's close of the
-  // old server is told from anyone else's by where it is asked from: inside that restart's own run (`restarts`), before
-  // the new server is in place. It closes the old server alone (Marver's watchers go with its HTTP server); the claims,
-  // dev.json, the slot file and the process hooks stay. Any other close, at any point of a restart, is the start's end:
-  // it closes what the start holds at once - the server serving, which is the old one until the new one listens,
-  // Marver's things, then the claims and the process hooks - but not the new server, which the restart closes once Vite
-  // is done with it (closed half-made, Vite would go on making it; closed while it binds, Vite's close, which runs once,
-  // would find nothing bound and leave the socket open): Vite's close of the old server is then refused, so the new one
-  // is never put in place, and one already in place never binds (its listen fails, above). The close returns once that
-  // server is closed too.
-  const restarts = new AsyncLocalStorage<Replacing>()
-  const end = (): Promise<void> => ending ??= (async () => {
+  // old server is told from anyone else's by what Vite does just before it: once the new server is made, Vite clears
+  // its CLI shortcuts state on this object (`server._shortcutsState = void 0`) and asks for the close in the very next
+  // statement, in the same turn. So that property is an accessor too, kept as it was, and its setter, the first time a
+  // restart's new server is made and not in place yet, says the next close is Vite's (`oldClose`) - that one close, and
+  // only until that turn ends (a test reads Vite's restart for that order: startup.test.ts). It closes the old server
+  // alone (Marver's watchers go with its HTTP server); the claims, dev.json, the slot file and the process hooks stay.
+  // Any other close, at any point of a restart - a timer set off while the new server was made among them - is the
+  // start's end: it closes what the start holds at once - the server serving, which is the old one until the new one
+  // listens, Marver's things, then the claims and the process hooks - but not the new server, which the restart closes
+  // once Vite is done with it (closed half-made, Vite would go on making it; closed while it binds, Vite's close, which
+  // runs once, would find nothing bound and leave the socket open): Vite's close of the old server is then refused, so
+  // the new one is never put in place, and one already in place never binds (its listen fails, above). The close returns
+  // once every restart is over (`restarts`), to its last cleanup - what a server that could not be made made, closed.
+  const end = (self?: Replacing): Promise<void> => ending ??= (async () => {
     const r = replacing
-    // never waiting on a restart from inside its own run: that restart would be waiting on this close
-    const wait = r && restarts.getStore() !== r ? r.over : null
     const made = r && latest !== r.from ? latest : null
     if (made) { made.withdraw?.(); made.withdraw = null; made.left = true }
     await t.close()
-    await wait
+    // never a restart's own end waiting on that restart: it waits on this close
+    await Promise.all([...restarts].filter((x) => x !== self).map((x) => x.over))
   })()
   /** Vite's own close and restart of the server on this object: the first server's, then those each restart put in place */
   const live = { close: server.close, restart: server.restart }
   const close = (() => {
     const r = replacing
-    // Vite's close of the old server, from inside its restart: that server alone - refused once the start has ended,
-    // so the new one is never put in place and Vite's restart ends there
-    if (r && !r.handed && restarts.getStore() === r) return ending ? Promise.reject(new Error('the canvas has closed')) : live.close.call(server)
+    // Vite's close of the old server: that server alone - refused once the start has ended, so the new one is never put
+    // in place and Vite's restart ends there
+    if (r?.oldClose) { r.oldClose = false; return ending ? Promise.reject(new Error('the canvas has closed')) : live.close.call(server) }
     return end()
   }) as typeof server.close
   let restarting: Promise<void> | null = null
@@ -719,12 +734,12 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     if (ending) return   // the start has ended: nothing to restart
     let failed: unknown
     let over = () => {}
-    const r: Replacing = replacing = { from: latest, handed: false, over: new Promise<void>((res) => { over = res }) }
+    const r: Replacing = replacing = { from: latest, handed: false, armed: false, oldClose: false, over: new Promise<void>((res) => { over = res }) }
+    restarts.add(r)
     try {
-      try { await restarts.run(r, () => live.restart.call(server, forceOptimize)) } catch (err) { failed = err ?? new Error('restart failed') } finally {
+      try { await live.restart.call(server, forceOptimize) } catch (err) { failed = err ?? new Error('restart failed') } finally {
         restarting = null
         replacing = null
-        restarts.disable()   // tracked only while a restart runs: no async context kept on every promise in between
       }
       // the server this restart began to make, if it got as far as resolving its config
       const made = latest !== r.from ? latest : null
@@ -747,13 +762,23 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       if (failed === undefined) { for (const f of onRestart) f(); return }
       // the old server is closed and the new one could not listen: the canvas is down, so the start ends here
       console.error(`\n  the canvas stopped: it could not restart on port ${port} (${(failed as Error)?.message ?? failed}) - start it again\n`)
-      await end()
+      await end(r)
       throw failed
-    } finally { over() }
+    } finally { restarts.delete(r); over() }
   })()) as typeof server.restart
   Object.defineProperty(server, 'close', { configurable: true, enumerable: true, get: () => close,
     set: (fn: typeof live.close) => { live.close = fn; if (replacing) replacing.handed = true } })
   Object.defineProperty(server, 'restart', { configurable: true, enumerable: true, get: () => restart,
     set: (fn: typeof live.restart) => { live.restart = fn } })
+  let shortcuts = (server as unknown as { _shortcutsState?: unknown })._shortcutsState
+  Object.defineProperty(server, '_shortcutsState', { configurable: true, enumerable: true, get: () => shortcuts,
+    set: (v: unknown) => {
+      shortcuts = v
+      const r = replacing
+      // Vite's restart, its new server made: it clears this, then closes the old server in its next statement
+      if (!r || r.handed || r.armed || v !== undefined) return
+      r.armed = r.oldClose = true
+      queueMicrotask(() => { r.oldClose = false })
+    } })
   return server
 }
