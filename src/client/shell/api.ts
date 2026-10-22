@@ -114,14 +114,16 @@ async function resume() {
   const had = held()                                   // what only this page held: saved below, or the page stays
   if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
-  for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
+  lostOnResume = null
+  flushing = true
+  try { for (const fn of flushers) ok = (await fn().catch(() => false)) && ok } finally { flushing = false }
   const now = useLink.getState().link
   if (now !== 'resuming' && now !== 'live') return     // lost again while saving: the probe goes on
   // asked here, with nothing awaited between the answer and the reload: words typed or an edit made while a
   // flusher waited on the server hold it too
   if (ok && held()) ok = false
   // a fresh document on the canvas that answered: live updates again
-  if (hmrLost && ok) { keepOverReload(back && had); return void location.reload() }
+  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (back && had ? 'saved' : null)); return void location.reload() }
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
   if (!hmrLost) return
   // Vite's socket never comes back (its client waits on the listener below), so this page owes a reload:
@@ -142,28 +144,39 @@ export function stranded(f: HTMLIFrameElement | null): boolean {
   try { return !!f?.contentDocument?.querySelector('meta[name="mv-elsewhere"]') } catch { return false /* not ours to read */ }
 }
 
-// ---- over the resume's own reload: where the person was looking, and whether it saved ------------------------
+// ---- over the resume's own reload: where the person was looking, and what its save came to --------------------
+
+/** What the resume's save came to, said by the page after its reload: 'saved' - what only this tab held reached the
+ *  disk; 'disk' - the board's file changed on disk meanwhile and won, the tab's board edits dropped; 'gone' - the board
+ *  was renamed or removed meanwhile and is not created again; null - there was nothing to save. */
+export type ResumeOutcome = 'saved' | 'disk' | 'gone' | null
+let flushing = false
+let lostOnResume: 'disk' | 'gone' | null = null
+/** The board save, while the resume's flushers run: what this tab held did not reach the disk (store.ts) - the page
+ *  after the reload says what happened instead, never that the edits were saved. */
+export function lostInResume(why: 'disk' | 'gone') { if (flushing) lostOnResume = why }
 
 const RESUMED = 'mv-resumed'
 const keepers = new Set<() => Record<string, unknown>>()
 /** What a resumed page carries over its own reload, read back by the next page (the canvas keeps its camera). */
 export const keepOverResume = (fn: () => Record<string, unknown>) => { keepers.add(fn); return () => { keepers.delete(fn) } }
-function keepOverReload(saved: boolean) {
-  const rec: Record<string, unknown> = { at: Date.now(), saved }
+function keepOverReload(outcome: ResumeOutcome) {
+  const rec: Record<string, unknown> = { at: Date.now(), outcome }
   for (const fn of keepers) { try { Object.assign(rec, fn()) } catch { /* the rest still goes */ } }
   try { sessionStorage.setItem(scoped(RESUMED), JSON.stringify(rec)) } catch { /* storage off: the page boots as any other */ }
 }
+const OUTCOMES: readonly ResumeOutcome[] = ['saved', 'disk', 'gone', null]
 /** What the page before this one left when it reloaded itself on its canvas's return - this tab only, read once
- *  at load, and only a fresh one (a reload by hand later on boots as any other). `saved`: it saved edits only it
- *  held; the page says so. */
-export const resumed: { saved: boolean; board?: string; camera?: { x: number; y: number; scale: number } } | null = (() => {
+ *  at load, and only a fresh one (a reload by hand later on boots as any other). `outcome`: what its save came to;
+ *  the page says so. */
+export const resumed: { outcome: ResumeOutcome; board?: string; camera?: { x: number; y: number; scale: number } } | null = (() => {
   if (!WS) return null
   try {
     const raw = sessionStorage.getItem(scoped(RESUMED))
     if (raw === null) return null
     sessionStorage.removeItem(scoped(RESUMED))
     const r = JSON.parse(raw)
-    return r && typeof r.at === 'number' && Date.now() - r.at < 30_000 ? r : null
+    return r && typeof r.at === 'number' && Date.now() - r.at < 30_000 ? { ...r, outcome: OUTCOMES.includes(r.outcome) ? r.outcome : null } : null
   } catch { return null }
 })()
 

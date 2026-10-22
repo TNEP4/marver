@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -15,7 +15,8 @@ import { makeProject, startDev, stopDev, workspaceOf, type Dev } from './project
  * recording, words not sent) works as live meanwhile, still sees the next stop, and reloads once nothing
  * holds it. While stopped the banner says what happened and the way back - the kept edits only when there are
  * some - and stays through Hide UI; comment mode and Jam captures wait; stranded frames show one quiet line.
- * Back, the reloaded page opens on the camera it had and says its edits were saved. Skips without Chrome.
+ * Back, the reloaded page opens on the camera it had and says its edits were saved - or, when the board's file changed
+ * on disk meanwhile or the board was removed, that the file won or the board is gone. Skips without Chrome.
  */
 
 const PORT = 8700 + Math.floor(Math.random() * 300)
@@ -387,5 +388,55 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.eval(s, `(() => { const t = document.getElementById('typed-late'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
     await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 70))
+  }, 240_000)
+
+  it('back after the board changed on disk meanwhile: the file wins, and the reloaded page says so - never that its edits were saved; a board removed meanwhile, the same', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const s = await browser.tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/main`)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
+    const said = (text: string) => `__mvStore.getState().toasts.some((t) => t.text === ${JSON.stringify(text)})`
+    const saidBack = `__mvStore.getState().toasts.some((t) => t.text.startsWith('Back'))`
+    const onDisk = (board: string, key: string) => JSON.parse(readFileSync(join(rootA, 'design', 'boards', `${board}.json`), 'utf8')).nodes.find((n: any) => n.key === key).x
+
+    // the canvas stops with a move only this tab holds; an agent writes the board meanwhile
+    await browser.eval(s, `window.__mark = 5`)
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    const x = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
+    await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x} + 90, 0)`)
+    expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
+    const file = join(rootA, 'design', 'boards', 'main.json')
+    const agent = JSON.parse(readFileSync(file, 'utf8'))
+    agent.nodes.find((n: any) => n.key === 'n-page').x = 1700
+    writeFileSync(file, JSON.stringify(agent, null, 2) + '\n')
+    // back: the save meets the changed file, the file wins, and the page reloads saying so
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    await browser.until(s, said('board changed on disk - canvas layout reloaded'), 5_000)
+    await wait(500)
+    expect(await browser.eval(s, saidBack)).toBe(false)
+    // the tab's move never reached the disk; the agent's is there, and the page shows the file
+    expect(onDisk('main', 'n-home')).toBe(Math.round(x))
+    expect(onDisk('main', 'n-page')).toBe(1700)
+    expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x))
+
+    // a board removed while the canvas was stopped: its edits are not saved into a board created again, and said so
+    await browser.eval(s, `location.hash = '#/b/other'`)
+    await browser.until(s, `__mvStore.getState().board === 'other' && document.querySelectorAll('.sh-node').length === 1 && !__mvStore.getState().dirty`, 20_000)
+    await browser.eval(s, `window.__mark = 6`)
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    const o = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'o-home').x`)
+    await browser.eval(s, `__mvStore.getState().moveNode('o-home', ${o} + 60, 0)`)
+    rmSync(join(rootA, 'design', 'boards', 'other.json'))
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore`, 15_000)
+    await browser.until(s, said('this board was renamed or removed - not recreating it'), 5_000)
+    await wait(500)
+    expect(await browser.eval(s, saidBack)).toBe(false)
+    expect(existsSync(join(rootA, 'design', 'boards', 'other.json'))).toBe(false)
   }, 240_000)
 })

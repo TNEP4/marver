@@ -95,8 +95,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   play stage and pictures may still ask for pages and images, and another project refuses those), and it is never
   reloaded into another project. When its own canvas answers again, it saves, then reloads on the view you had, and
   says "Back - your edits were saved" when it saved some. If the board's file changed on disk meanwhile (your agent
-  edited it, for one), the file wins, as it always has, and the tab's unsaved board edits are lost; a board renamed
-  or removed meanwhile is not created again. If something holds the reload - a capture recording, finishing or still
+  edited it, for one), the file wins, as it always has, the tab's unsaved board edits are lost, and the reloaded tab
+  says "board changed on disk - canvas layout reloaded" instead; a board renamed or removed meanwhile is not created
+  again, and that is what it says. If something holds the reload - a capture recording, finishing or still
   on its way to the canvas, words typed and not sent, an unsaved Jam edit or note, a frame mid-drag - it works as
   live, says "marver dev is back - this page reloads once nothing is in progress", and reloads once nothing does.
   Leaving a stopped tab with unsaved board edits asks first.

@@ -4,7 +4,7 @@ import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
 import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
-import { api, beforeResume, canvasStopped, holdsReload, mvFetch, noteUnsaved, onLinkNotice, scoped, STOPPED_WAY, withWs } from './api.ts'
+import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, scoped, STOPPED_WAY, withWs } from './api.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -718,6 +718,11 @@ export function frameIsLeased(frameId: string, s: State): boolean {
       (s.gesture && s.selection.includes(n.key)) ||
       !!s.externalLeases[n.key]))
 }
+
+/** What a board save says when the board's file changed on disk meanwhile: the file wins, the board is read again. */
+export const DISK_WON = 'board changed on disk - canvas layout reloaded'
+/** What a board save says when the board was renamed or removed meanwhile: it is not created again. */
+export const BOARD_GONE = 'this board was renamed or removed - not recreating it'
 
 export const useStore = create<State>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -2114,11 +2119,12 @@ export const useStore = create<State>((set, get) => {
             if (info?.gone) {
               // renamed/deleted externally - drop the write, don't recreate it or loop
               set({ dirty: false })
-              get().toast('this board was renamed or removed - not recreating it')
+              get().toast(BOARD_GONE)
+              lostInResume('gone')   // a resume's save: the page after its reload says this, not "saved"
               return true
             }
             const reloaded = await get().boot()   // hash advances only when the authoritative reload commits
-            if (reloaded) get().toast('board changed on disk - canvas layout reloaded')
+            if (reloaded) { get().toast(DISK_WON); lostInResume('disk') }
             return reloaded   // false keeps dirty set; the next debounce retries once edits settle
           }
           if (res.ok) {

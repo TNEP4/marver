@@ -6,7 +6,7 @@ import { JamButton } from './jam-session.tsx'
 import { useJamCapture } from './jam-capture.ts'
 import { useJamQueue } from './jam-queue.ts'
 import { Component, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
+import { useStore, BOARD_GONE, CONFIG, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
@@ -405,8 +405,11 @@ export function App() {
       }
       const ok = await boot()
       if (notice) toast(notice)
-      // the page before this one reloaded itself when its canvas came back, after saving what only it held (A1.11)
-      if (ok && resumed?.saved) toast('Back - your edits were saved')
+      // the page before this one reloaded itself when its canvas came back (A1.11): what its save came to - saved, or
+      // the board's file won on disk, or the board was gone
+      if (ok && resumed?.outcome === 'saved') toast('Back - your edits were saved')
+      else if (resumed?.outcome === 'disk') toast(DISK_WON)
+      else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here
