@@ -915,7 +915,7 @@ export function resendSealed() {
 
 // the canvas answered again after it stopped (spec 28 A1.11): the page reloads only when no capture is
 // recording or finishing - a sealed one waits in localStorage and goes out from the next page
-beforeResume(async () => !Object.keys(useJamCapture.getState().caps).length)
+beforeResume(async () => !capturesPending())
 
 /** Resume's work, while the caller holds `settling`: load the record, let the caller settle, start. */
 async function resumeNow(draft: string, ready?: () => Promise<boolean>): Promise<boolean> {

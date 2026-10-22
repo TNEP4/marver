@@ -10,7 +10,7 @@
  * bridge). It reaches the canvas only through its dependency-free modules (ctl, admission, the frame registry), never
  * Canvas.tsx or FrameNode.tsx: a locked bundle (no canvas) imports it through the stage.
  */
-import { ROUTE } from '../const.ts'
+import { api, isStopped } from './api.ts'
 import { CONFIG, PUBLISHED, geometryCause, knownHeight, recorderHooks, reflowIdle, settleRule, useStore, type LoadCause, type Manifest, type MeasureResult, type Node, type RequestCut } from './store.ts'
 import { admissionIdle, onAdmissionIdle } from './canvas/admission.ts'
 import { canvasCtl } from './canvas/ctl.ts'
@@ -390,9 +390,9 @@ function logError(e: { source: 'shell' | 'frame' | 'stage'; frame?: string; comp
 
 const armSend = () => { if (!sending && sendTimer === undefined && outbox.size) sendTimer = setTimeout(() => { sendTimer = undefined; void send() }, SEND_MS) }
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
-const post = (records: PerfRecord[], keepalive = false) => fetch(`${ROUTE}/api/perf/page`, {
+const post = (records: PerfRecord[], keepalive = false) => api('perf/page', {
   method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-mv-c': csrf(), 'x-mv-ws': ws },
+  headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
   body: JSON.stringify({ records }),
   ...(keepalive ? { keepalive: true } : {}),
 })
@@ -422,9 +422,9 @@ async function send(): Promise<void> {
       if (attempt) await wait(SEND_MS)
       try {
         let r = await post(batch)
-        if (r.status === 403) { await fetch(`${ROUTE}/api/work`, { headers: { 'x-mv-ws': ws } }).catch(() => {}); r = await post(batch) }
+        if (r.status === 403) { await api('work').catch(() => {}); r = await post(batch) }
         if (r.ok) ok = true
-        else if (r.status < 500) break   // refused (not this workspace's, a bad batch): trying again cannot help
+        else if (r.status < 500 || isStopped(r)) break   // refused (a bad batch), or this canvas stopped: trying again cannot help
       } catch { /* the network: again */ }
     }
   } catch { /* never in the way: what it held is counted below */ }
