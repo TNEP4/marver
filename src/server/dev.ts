@@ -312,8 +312,12 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     logLevel: 'info',
   })
 
-  // 3. Vite's full close, awaited, if anything after this fails
-  t.defer(server.close.bind(server))
+  // 3. Vite's full close, awaited, if anything after this fails - the close of the server serving then (a
+  // restart replaces it, step 6)
+  let closeVite = server.close.bind(server)
+  t.defer(() => closeVite())
+  /** what holds the HTTP server itself, put back on the new one after a restart (step 6) */
+  const onRestart: (() => void)[] = []
   await opts.at?.('created')
 
   // 4. listen. A failure here ends the start: no retry inside the process (A1.1)
@@ -471,7 +475,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       const { appendTalk } = await import('./jam/session.ts')
       const { logJam } = await import('./perf-jam.ts')
       const speech = createSpeech({ onTalk: (t) => appendTalk(root, t.session, t.words), onTiming: (t) => logJam(root, { kind: 'words', ...t }) })
-      if (server.httpServer) speech.attach(server.httpServer as import('node:http').Server)
+      const attach = () => { if (server.httpServer) speech.attach(server.httpServer as import('node:http').Server) }
+      attach()
+      onRestart.push(attach)
       speechLive.svc = speech
       t.defer(() => { speech.stop(); speechLive.svc = undefined })
     }
@@ -482,7 +488,37 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     console.log(`  jam: no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and tag @${NAME} in a comment\n`)
   }
   // 6. from here every way out is a close: Marver's things newest first, Vite's server, then the files.
-  // Vite's own SIGTERM path calls this same `close` (it reads the property when it runs)
-  server.close = (() => t.close()) as typeof server.close
+  // Vite's own SIGTERM path calls this same `close` (it reads the property when it runs).
+  // A restart is no way out. Vite restarts in place when an .env file changes: it makes the new server (Marver's
+  // configureServer runs for it), closes the old one through this same `close`, copies the new one's methods -
+  // `close` and `restart` among them - over this object, and listens on the same port. So `restart` is wrapped
+  // too: the one close it asks for closes the old Vite alone (Marver's watchers go with its HTTP server), the
+  // claims, dev.json, the slot file and the process hooks stay, and both wraps go back on the new server.
+  const wrap = () => {
+    const vite = { close: server.close.bind(server), restart: server.restart.bind(server) }
+    closeVite = vite.close
+    let armed = false   // the restart's own close is next
+    let restarting: Promise<void> | null = null
+    const close = (() => {
+      if (!armed) return t.close()
+      armed = false
+      return vite.close()
+    }) as typeof server.close
+    server.close = close
+    server.restart = ((forceOptimize?: boolean) => restarting ??= (async () => {
+      let failed: unknown
+      armed = true
+      try { await vite.restart(forceOptimize) } catch (err) { failed = err ?? new Error('restart failed') } finally { armed = false; restarting = null }
+      // Vite could not make the new server (it says why): the old one serves on, as it was
+      if (server.close === close) return
+      wrap()
+      if (failed === undefined) { for (const f of onRestart) f(); return }
+      // the old server is closed and the new one could not listen: the canvas is down, so the start ends here
+      console.error(`\n  the canvas stopped: it could not restart on port ${port} (${(failed as Error)?.message ?? failed}) - start it again\n`)
+      await t.close()
+      throw failed
+    })()) as typeof server.restart
+  }
+  wrap()
   return server
 }

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { WebSocket } from 'ws'
 import { init } from '../src/cli/init.ts'
 import { portInUse } from '../src/server/exclusive.ts'
 
@@ -12,7 +13,8 @@ import { portInUse } from '../src/server/exclusive.ts'
  * initialisation, in configureServer, between createServer and listen, after listening - or is stopped
  * by a signal while it is there, leaves no dev.lock, no slot file, no dev.json, no listening server and
  * nothing of Marver's still running (watchers, sweeps, timers). `dev()` rejects with a DevStartError and
- * never ends the process itself; the CLI does, with a message.
+ * never ends the process itself; the CLI does, with a message. A Vite restart (an .env edit) is no way out: it
+ * keeps all of that, and replaces only the server and the watchers that belong to it.
  *
  * Each start runs in a child of its own (they hold process-wide hooks and get signals), on a registry of
  * its own and the slots moved to 48705-48724; the child preloads a recorder of the handles Marver's code
@@ -50,7 +52,8 @@ const freshHome = () => { const h = realpathSync(mkdtempSync(join(tmpdir(), 'mv-
 const local = (f: string) => join(root, 'design', '.local', f)
 const runningIn = (home: string) => existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : []
 
-interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[] } }
+interface State { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[] }
+interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; restarted?: boolean; before?: State }
 
 const CHILD = `import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -76,9 +79,18 @@ const state = async () => ({
 const say = (v) => process.stdout.write('@@' + JSON.stringify(v) + '\\n')
 try {
   const server = await dev(o.root, { at })
-  if (o.hold) { say({ ok: true, port, steps }); await new Promise(() => {}) }
+  let restart = {}
+  if (o.restart) {
+    // an .env edit: Vite restarts in place - a new HTTP server on this same object, listening on the same port
+    const before = await state(), http = server.httpServer
+    writeFileSync(join(o.root, '.env'), 'MV_RESTART=' + Date.now() + '\\n')
+    for (let i = 0; i < 600 && !(server.httpServer !== http && server.httpServer.listening); i++) await new Promise((r) => setTimeout(r, 50))
+    await new Promise((r) => setTimeout(r, 500))   // the old server's watchers closed, the wraps back on
+    restart = { restarted: server.httpServer !== http, before }
+  }
+  if (o.hold) { say({ ok: true, port, steps, ...restart, ...(o.restart ? { after: await state() } : {}) }); await new Promise(() => {}) }
   await server.close()
-  say({ ok: true, port, steps, after: await state() })
+  say({ ok: true, port, steps, ...restart, after: await state() })
 } catch (err) {
   for (const s of blockers) await new Promise((r) => s.close(r))
   say({ ok: false, typed: err instanceof DevStartError, message: err.message, port, steps, after: await state() })
@@ -86,7 +98,7 @@ try {
 process.exit(0)`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
-function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean }, home = freshHome()) {
+function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean }, home = freshHome()) {
   const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
@@ -181,6 +193,53 @@ describe('a signal at any step gives back what is held (A1.1)', () => {
       expect(await portInUse(r.port!)).toBe(false)
     }, 60_000)
   }
+})
+
+describe('a Vite restart is no way out (A1.1)', () => {
+  /** What of Marver's own keeps running: its watchers and its sweeps (a timeout comes and goes). */
+  const kept = (s: State) => s.live.filter((l) => /^(fs\.watch|setInterval)/.test(l)).sort()
+  afterEach(() => rmSync(join(root, '.env'), { force: true }))
+
+  it('an .env edit: the claims, dev.json, the slot file and Marver\'s watchers stay, a frame edit still reaches the pages, and a SIGTERM still gives everything back', async () => {
+    const s = start({ restart: true, hold: true })
+    const r = await s.report
+    expect(r.ok).toBe(true)
+    expect(r.restarted).toBe(true)
+    const slot = `slot-${r.port! - Number(BASE)}.json`
+    for (const st of [r.before!, r.after!]) expect({ ...st, live: [] }).toEqual({ lock: true, devJson: true, running: [slot], inUse: true, live: [] })
+    expect(JSON.parse(readFileSync(join(s.home, 'running', slot), 'utf8')).state).toBe('ready')
+    // the new server's watchers in place of the old one's, the start's own untouched: board sync, the shot inbox,
+    // the comment watcher, and the sweeps
+    expect(kept(r.after!)).toEqual(kept(r.before!))
+    for (const w of [['design', 'boards'], ['design', '.local', 'shots'], ['design', 'comments']]) expect(kept(r.after!).some((l) => l.startsWith(`fs.watch ${join(root, ...w)} `)), w.join('/')).toBe(true)
+    // calm updates still flow: the change that restarted Vite never lands, and never holds the next one for good
+    const token = (await (await fetch(`http://localhost:${r.port}/@vite/client`)).text()).match(/const wsToken = "([^"]+)"/)?.[1]
+    expect(token).toBeTruthy()
+    const ws = new WebSocket(`ws://localhost:${r.port}/?token=${token}`, 'vite-hmr', { headers: { origin: `http://localhost:${r.port}` } })
+    const invalidated = new Promise<string[]>((res) => ws.on('message', (m) => {
+      const p = JSON.parse(String(m))
+      if (p.type === 'custom' && p.event === 'sh:frame-invalidated') res(p.data.frameIds)
+    }))
+    await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej) })
+    const frame = join(root, 'design', 'scenes', 'demo', 'welcome.tsx')
+    writeFileSync(frame, `${readFileSync(frame, 'utf8')}\n// edited after a restart ${Date.now()}\n`)
+    expect(await Promise.race([invalidated, new Promise<never>((_, j) => setTimeout(() => j(new Error('no sh:frame-invalidated after the restart')), 25_000))])).toContain('demo/welcome')
+    ws.close()
+    s.child.kill('SIGTERM')
+    await Promise.race([s.exited, new Promise((_, j) => setTimeout(() => j(new Error(`still running after SIGTERM\n${s.out()}`)), 15_000))])
+    expect(existsSync(local('dev.lock'))).toBe(false)
+    expect(existsSync(local('dev.json'))).toBe(false)
+    expect(runningIn(s.home)).toEqual([])
+    expect(await portInUse(r.port!)).toBe(false)
+  }, 90_000)
+
+  it('a close after a restart: nothing of Marver\'s still runs, the new server\'s watchers included', async () => {
+    const r = await start({ restart: true }).report
+    expect(r.ok).toBe(true)
+    expect(r.restarted).toBe(true)
+    expect(kept(r.before!).length).toBeGreaterThan(0)
+    expect(r.after).toEqual({ ...clean, inUse: false })
+  }, 60_000)
 })
 
 describe('the CLI ends the process (A1.1, A1.3)', () => {

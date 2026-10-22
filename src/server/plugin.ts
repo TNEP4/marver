@@ -33,8 +33,9 @@ export interface PluginCtx {
    *  Default: the project's own (workspace.ts). */
   workspace?: string
   /** spec 28 A1.1, dev only: the start this server belongs to - what configureServer makes (watchers,
-   *  sweeps, timers) is closed with it when the start fails before Vite ever listens */
-  startup?: { defer(close: () => unknown): void }
+   *  sweeps, timers) is closed with it when the start fails before Vite ever listens; what this plugin
+   *  keeps across Vite restarts, only when the start ends. `defer` answers a withdrawal */
+  startup?: { defer(close: () => unknown): () => void }
   /** spec 28 A1.4, dev only: what signs the shell's document for the app - this run's instance, the slot
    *  file's key and port. Never logged, never served */
   proof?: DocProof
@@ -51,6 +52,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const projectInfo = () => project
   let manifest: Manifest = scanFrames(root, projectInfo())
   let devServer: ViteDevServer | null = null
+  let served = 0   // servers configured: more than one is a Vite restart
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
   const pendingInv = new Set<string>()
@@ -100,6 +102,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     }, 10_000)
     inFlight.set(file, f)
   }
+  // this state outlives a server: a Vite restart (an .env edit) re-runs configureServer below on it, and the
+  // change that caused the restart lands nowhere - its safety timer is its way out. So it stops with the start,
+  // never with one server (A1.1)
+  ctx.startup?.defer(() => { flushInv.cancel(); for (const f of inFlight.values()) clearTimeout(f.timer) })
   const landed = (file: string) => {
     const owed = late.get(file)
     if (owed) { if (owed > 1) late.set(file, owed - 1); else late.delete(file); return }   // a timed-out event's hook
@@ -217,14 +223,17 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     },
 
     configureServer(server: ViteDevServer) {
-      // A1.1: what is made here closes with the server - or, when the start fails before Vite listens
-      // (Vite then skips its HTTP server's close, so 'close' never comes), with the start that made it
+      // A1.1: what is made here closes with the server - a Vite restart closes the old one and keeps the start
+      // - or, when the start fails before Vite listens (Vite then skips its HTTP server's close, so 'close'
+      // never comes), with the start that made it
       const closers: (() => void)[] = []
       const onClose = (fn: () => void) => { closers.push(fn) }
       const closeAll = () => { for (const fn of closers.splice(0).reverse()) { try { fn() } catch { /* already closed */ } } }
-      server.httpServer?.once('close', closeAll)
-      ctx.startup?.defer(closeAll)
-      onClose(() => { flushInv.cancel(); for (const f of inFlight.values()) clearTimeout(f.timer) })
+      const withdraw = ctx.startup?.defer(closeAll)
+      server.httpServer?.once('close', () => { withdraw?.(); closeAll() })
+      // a restart: Vite runs this for the new server, then closes the old one, cancelling its pending rescan and
+      // its look at the marks - both are taken up here
+      if (served++) { manifest = scanFrames(root, projectInfo()); observeLater() }
       let bakeGen = Date.now()   // the source generation (see bumpGen): unique per server start
       // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
       // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static

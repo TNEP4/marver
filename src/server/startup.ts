@@ -8,6 +8,7 @@
  *   socket has closed, so a starter never finds a slot free while its port is still bound.
  * - closers: what runs (Marver's watchers, sweeps and timers, the Vite server). Closed, awaited, on a
  *   failed start or a close; an exit or a signal ends them with the process.
+ * A Vite restart (an .env edit) is no way out: it replaces the server and keeps the start (dev.ts).
  */
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
 
@@ -19,8 +20,12 @@ export class Startup {
 
   /** A file held: given back on every way out. */
   claim(release: () => void): void { this.claims.push(release) }
-  /** Something running: closed on a failed start or a close. */
-  defer(close: () => unknown): void { this.closers.push(close) }
+  /** Something running: closed on a failed start or a close. The answer withdraws it, for what has closed on
+   *  its own first - the Vite server a restart replaced, and the watchers that went with it. */
+  defer(close: () => unknown): () => void {
+    this.closers.push(close)
+    return () => { const i = this.closers.indexOf(close); if (i >= 0) this.closers.splice(i, 1) }
+  }
 
   /** Give back every claim, newest first. Synchronous; each runs once. */
   release(): void {
