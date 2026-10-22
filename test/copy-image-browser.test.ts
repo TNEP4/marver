@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
+import { workspaceOf } from './project.ts'
 
 /**
  * Copy-as-image, proven where it matters: a REAL dev server, a REAL browser, the clipboard
@@ -14,7 +15,9 @@ import { Browser } from './browser.ts'
  * Skips, never fails, without Chrome - the same rule as every browser suite here.
  */
 
-const PORT = 5297 + Math.floor(Math.random() * 400)
+// off 5200-5399, where running canvases sit (0.26's per-project ports): a busy port falls back, and this
+// suite would drive the canvas that answers there
+const PORT = 9300 + Math.floor(Math.random() * 400)
 const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
 // the dev server binds `localhost` (::1 on this OS), so the origin must be localhost too
 const ORIGIN = `http://localhost:${PORT}`
@@ -283,10 +286,24 @@ describe('copy frame as image - real dev server, real browser, real clipboard', 
     // an earlier test's canvas may already have asked for it (the feature at work) - start clean
     rmSync(posterFile, { force: true })
     const s = await browser!.tab({ width: 390, height: 844 })
-    await browser!.go(s, `${ORIGIN}/__mv/frame/?id=app/noposter&theme=light`)
+    await browser!.send('Network.enable', {}, s)
+    const asked: { method: string; path: string; ws: string | null }[] = []
+    const off = browser!.on((m) => {
+      if (m.sessionId !== s || m.method !== 'Network.requestWillBeSent' || !m.params.request.url.includes('/__mv/api/')) return
+      const h = Object.fromEntries(Object.entries(m.params.request.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]))
+      asked.push({ method: m.params.request.method, path: new URL(m.params.request.url).pathname, ws: h['x-mv-ws'] ?? null })
+    })
+    // the frame URL as the canvas makes it: it names the workspace (spec 28 A1.11)
+    const ws = workspaceOf(root)
+    await browser!.go(s, `${ORIGIN}/__mv/frame/?id=app/noposter&theme=light&ws=${ws}`)
     // the poster <img> 404s -> the primitive asks /api/poster -> the file lands -> the img reloads and decodes
     await browser!.until(s, `(() => { const im = document.querySelector('.mv-video img'); return !!im && im.complete && im.naturalWidth > 0 })()`, 40_000)
+    off()
     expect(existsSync(posterFile)).toBe(true)
+    // one POST, and every request the frame made names its workspace - read from its own URL
+    expect(asked.filter((r) => r.path === '/__mv/api/poster')).toEqual([{ method: 'POST', path: '/__mv/api/poster', ws }])
+    expect(asked.length).toBeGreaterThan(1)   // the cookie primer went first, in a fresh context
+    for (const r of asked) expect(r.ws, `${r.method} ${r.path}`).toBe(ws)
     const b = readFileSync(posterFile)
     expect([b.readUInt32BE(16), b.readUInt32BE(20)]).toEqual([320, 180])   // the clip's own size
     expect(await browser!.eval(s, `document.querySelector('.mv-video img').naturalWidth`)).toBe(320)
