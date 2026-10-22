@@ -75,20 +75,23 @@ export class Outbox {
   }
 }
 
-/** For a page that is going: `first` (its cut, when there is one), then the oldest of `rest` while the whole body
- *  `{"records":[…]}` stays within `maxBytes` with `reserve` left for a `dropped` record. The others are `lost`. */
+/** For a page that is going: as many of `first` (the cuts) as fit, in their order, then the oldest of `rest`, while
+ *  the whole body `{"records":[…]}` stays within `maxBytes` with `reserve` left for a `dropped` record - the limit
+ *  holds for the cuts too, however many a stalled send left waiting. The others, cuts included, are `lost`. */
 export function fitWithin(first: readonly PerfRecord[], rest: readonly PerfRecord[], maxBytes = KEEPALIVE_BYTES, reserve = 160): { fit: PerfRecord[]; lost: number } {
-  const fit = [...first]
-  let size = bytesOf({ records: [] }) + reserve + first.reduce((n, r, i) => n + bytesOf(r) + (i ? 1 : 0), 0)
-  let taken = 0
-  for (const r of rest) {
+  const fit: PerfRecord[] = []
+  let size = bytesOf({ records: [] }) + reserve
+  const take = (r: PerfRecord) => {
     const add = bytesOf(r) + (fit.length ? 1 : 0)
-    if (size + add > maxBytes) break
+    if (size + add > maxBytes) return false
     size += add
     fit.push(r)
-    taken++
+    return true
   }
-  return { fit, lost: rest.length - taken }
+  let lost = 0
+  for (const r of first) if (!take(r)) lost++
+  for (let i = 0; i < rest.length; i++) if (!take(rest[i])) { lost += rest.length - i; break }
+  return { fit, lost }
 }
 
 /** A gesture's frame intervals as they are: nearest-rank percentiles (cli/perf.ts `spread`'s rule), one decimal; the

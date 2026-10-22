@@ -459,7 +459,7 @@ async function send(): Promise<void> {
 
 /** The page is going. The load in flight is cut; captures go first - a capture still open is sealed here (whichever
  *  pagehide listener runs first), and while one waits to be sent or is on its way the keepalive allowance is its:
- *  the recorder sends nothing. Else its last records with keepalive, 16 KB at most, the cut first; the rest counted. */
+ *  the recorder sends nothing. Else its last records with keepalive, 16 KB at most, the cuts first; the rest counted. */
 function leave(): void {
   if (owner && !owner.done) cut(owner, 'hidden')
   cutPending('hidden')
@@ -470,7 +470,8 @@ function leave(): void {
   // a send on its way may not outlive the page: its records again (the report drops a duplicate by its seq)
   const all = [...inFlight, ...outbox.takeAll()]
   if (!all.length) return
-  const { fit, lost } = fitWithin(all.filter((r) => r.kind === 'cut'), all.filter((r) => r.kind !== 'cut'), KEEPALIVE_BYTES)
+  // the cuts first, newest first: the load this page leaves in flight ends in the last of them
+  const { fit, lost } = fitWithin(all.filter((r) => r.kind === 'cut').reverse(), all.filter((r) => r.kind !== 'cut'), KEEPALIVE_BYTES)
   try { void post([...fit, ...droppedNow(lost)], true).catch(() => {}) } catch { /* going anyway */ }
 }
 

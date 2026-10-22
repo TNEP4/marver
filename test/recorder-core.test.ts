@@ -70,6 +70,19 @@ describe('the last send of a page that is going', () => {
     const big = rec('error', { source: 'shell', message: 'x'.repeat(20_000) })
     expect(fitWithin([cut], [big])).toEqual({ fit: [cut], lost: 1 })
   })
+
+  it('cuts past the limit are held to it too: those that do not fit are lost, and counted', () => {
+    // a stalled send left many loads' cuts waiting: together they are more than the page's last send may carry
+    const cuts = Array.from({ length: 400 }, (_, i) => rec('cut', { reason: 'superseded', request: `r${String(i).padStart(11, '0')}`, ms: 1000 + i }))
+    const rest = [rec('error', { source: 'shell', message: 'y'.repeat(1_000) })]   // no room left for it
+    expect(bytesOf({ records: cuts })).toBeGreaterThan(KEEPALIVE_BYTES)
+    const { fit, lost } = fitWithin(cuts, rest)
+    expect(bytesOf({ records: fit }) + 160).toBeLessThanOrEqual(KEEPALIVE_BYTES)
+    expect(fit).toEqual(cuts.slice(0, fit.length))   // in their order, from the first
+    expect(fit.length).toBeGreaterThan(0)
+    expect(lost).toBe(cuts.length - fit.length + rest.length)
+    expect(fit.length + lost).toBe(cuts.length + rest.length)
+  })
 })
 
 describe('a gesture', () => {
