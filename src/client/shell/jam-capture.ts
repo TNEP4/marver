@@ -21,7 +21,7 @@ import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.t
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
 import { touchedFrames } from '../../shared/capture-frames.ts'
 import { onStageSize, stageSize } from './stage-size.ts'
-import { api, beforeResume } from './api.ts'
+import { api, holdsReload } from './api.ts'
 import { bytesOf } from './recorder-core.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -915,7 +915,7 @@ export function resendSealed() {
 
 // the canvas answered again after it stopped (spec 28 A1.11): the page reloads only when no capture is
 // recording or finishing - a sealed one waits in localStorage and goes out from the next page
-beforeResume(async () => !capturesPending())
+holdsReload(() => capturesPending())
 
 /** Resume's work, while the caller holds `settling`: load the record, let the caller settle, start. */
 async function resumeNow(draft: string, ready?: () => Promise<boolean>): Promise<boolean> {

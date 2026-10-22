@@ -292,4 +292,47 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.until(s, `__mvLink.getState().link === 'live' && !document.querySelector('.sh-stopped')`, 5_000)
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 40))
   }, 240_000)
+
+  it('words typed while the resume save waits on the server hold the reload: asked again right before it', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const s = await browser.tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/main`)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
+    await browser.eval(s, `window.__mark = 3`)
+    // the canvas stops with an edit only this tab holds
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    const x = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
+    await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x} + 70, 0)`)
+    // the board save the resume makes waits on the server until the test lets it through
+    await browser.eval(s, `(() => {
+      const real = window.fetch.bind(window)
+      let open; const gate = new Promise((r) => { open = r }); window.__open = open
+      window.fetch = (url, init) => {
+        if (init?.method === 'PUT' && String(url).includes('/api/boards/main')) { window.__held = true; return gate.then(() => real(url, init)) }
+        return real(url, init)
+      }
+      return 1
+    })()`)
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `window.__held === true && __mvLink.getState().link === 'resuming'`, 15_000)
+    // typed meanwhile - after the words were last asked about, before the save answers
+    await browser.eval(s, `(() => { const t = document.createElement('textarea'); t.id = 'typed-late'; document.body.appendChild(t); t.value = 'typed while it saved'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await browser.eval(s, `window.__open()`)
+    const onDisk = () => JSON.parse(readFileSync(join(rootA, 'design', 'boards', 'main.json'), 'utf8')).nodes.find((n: any) => n.key === 'n-home').x
+    const t0 = Date.now()
+    while (Date.now() - t0 < 10_000 && onDisk() !== Math.round(x + 70)) await wait(200)
+    expect(onDisk()).toBe(Math.round(x + 70))
+    // saved, and the page stays: the words are still here
+    await wait(2500)
+    expect(await browser.eval(s, `window.__mark`)).toBe(3)
+    expect(await browser.eval(s, `document.getElementById('typed-late')?.value`)).toBe('typed while it saved')
+    expect(await browser.eval(s, `__mvLink.getState().link`)).toBe('live')
+    // sent (the field empties): nothing holds it, and it reloads on its own canvas
+    await browser.eval(s, `(() => { const t = document.getElementById('typed-late'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 70))
+  }, 240_000)
 })

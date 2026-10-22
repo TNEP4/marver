@@ -55,11 +55,17 @@ export const api = (path: string, init?: RequestInit) => mvFetch(`${ROUTE}/api/$
 
 // ---- the link: losing the canvas, and getting it back --------------------------------------------------
 
-/** What must happen before a resumed page reloads (the board save, the heights; no capture recording,
- *  nothing typed and not sent). Each answers true when the page may reload now; asked again each second
- *  while a reload is owed, so each is cheap when there is nothing to do. */
+/** What must be done before a resumed page reloads (the board save, the heights). Each answers true when
+ *  the page may reload now; asked again each second while a reload is owed, so each is cheap when there is
+ *  nothing to do. */
 const flushers = new Set<() => Promise<boolean>>()
 export const beforeResume = (fn: () => Promise<boolean>) => { flushers.add(fn); return () => { flushers.delete(fn) } }
+/** What holds a reload while it answers true: an edit not saved, a capture recording, words typed and not
+ *  sent. Synchronous, and asked right before the reload, after every flusher has finished - so what a person
+ *  does while the flushers wait on the server holds it as surely as what was there before they began. */
+const holds = new Set<() => boolean>()
+export const holdsReload = (fn: () => boolean) => { holds.add(fn); return () => { holds.delete(fn) } }
+const held = () => [...holds].some((h) => { try { return h() } catch { return true } })
 /** Told when a resumed page stays (a flusher said no): the store's toast, registered by store.ts. */
 let say: (text: string) => void = () => {}
 export const onLinkNotice = (fn: (text: string) => void) => { say = fn }
@@ -94,6 +100,9 @@ async function resume() {
   for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
   const now = useLink.getState().link
   if (now !== 'resuming' && now !== 'live') return     // lost again while saving: the probe goes on
+  // asked here, with nothing awaited between the answer and the reload: words typed or an edit made while a
+  // flusher waited on the server hold it too
+  if (ok && held()) ok = false
   // a fresh document on the canvas that answered: live updates again
   if (hmrLost && ok) return void location.reload()
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
@@ -118,7 +127,7 @@ const typed = new WeakSet<EventTarget>()
 const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=password]'
 if (WS) {
   document.addEventListener('input', (e) => { if (e.target) typed.add(e.target) }, true)
-  beforeResume(async () => ![...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== ''))
+  holdsReload(() => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== ''))
 }
 
 // Vite's client awaits every `vite:ws:disconnect` listener before it pings the server and reloads the

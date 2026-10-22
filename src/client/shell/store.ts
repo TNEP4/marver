@@ -4,7 +4,7 @@ import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
 import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
-import { api, beforeResume, canvasStopped, mvFetch, onLinkNotice, scoped, withWs } from './api.ts'
+import { api, beforeResume, canvasStopped, holdsReload, mvFetch, onLinkNotice, scoped, withWs } from './api.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -2113,6 +2113,8 @@ beforeResume(async () => {
   await flushHeights()
   return !s().dirty && !s().gesture
 })
+// and an edit made, or a drag begun, while that save was on its way holds the reload as well
+holdsReload(() => { const s = useStore.getState(); return s.dirty || !!s.gesture })
 onLinkNotice((text) => useStore.getState().toast(text))
 // a stopped page holds edits only it has: leaving it (a reload by hand, a close) asks first
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', (e) => {
