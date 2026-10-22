@@ -1369,8 +1369,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
  *  activity set (work.ts) - the `marver work` CLI writes the same set, so the canvas shows
  *  one merged glow, and its holds are also reservations (reserve.ts), restored here before
  *  anything is scheduled. Returns null when the adapter is unavailable or another dev server
- *  already holds the repo lock (that one runs the loop; this one watches without it). */
-export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor'], onQueue?: () => void, shoot?: JamHooks['shoot']): JamDaemon | null {
+ *  already holds the repo lock (that one runs the loop; this one watches without it). `watched` takes the comments
+ *  watcher as it is made, so its error is the dev server's to say (dev.ts watchGuard), never Node's unhandled one. */
+export function startJam(root: string, cfg: JamConfig, log: (m: string) => void = () => {}, onChanged: (board: string) => void = () => {}, anchor?: JamHooks['anchor'], onQueue?: () => void, shoot?: JamHooks['shoot'], watched?: (w: FSWatcher) => unknown): JamDaemon | null {
   const adapter: JamAdapter | null = adapters[cfg.agent] ?? null
   if (!adapter) { log(`  jam: the "${cfg.agent}" adapter is not available yet; Live Jam is off`); return null }
   if (!acquireLock(root)) { log('  jam: another marver dev holds the repo lock; this server watches without the daemon'); return null }
@@ -1396,7 +1397,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   const schedule = () => { if (!scheduled && !stopped) scheduled = setTimeout(() => { scheduled = null; void core.poke() }, 150) }
 
   let watcher: FSWatcher | null = null
-  try { watcher = fsWatch(commentsDir, { persistent: false }, schedule) } catch { /* rescan is the backstop */ }
+  try { watcher = fsWatch(commentsDir, { persistent: false }, schedule); watched?.(watcher) } catch { /* rescan is the backstop */ }
   const interval = setInterval(() => void core.poke(), RESCAN_MS)
   interval.unref?.()
   // stale-glow expiry (a dead job's lease) is swept by the dev server, which owns the shared set

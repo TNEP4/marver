@@ -59,21 +59,26 @@ board loads, last 60 min - design/.local/perf/page.jsonl
 
   3:41:36 PM  Checkout (boot)                          settled 2.1 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 0 opened at a known height
-    visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 1.1 s · last move 1.1 s · settled 2.1 s
+    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 1.1 s · last move 1.1 s · settled 2.1 s
     5 moves, 1650 px: measure-height 3, reflow:measured 2
-    slowest: checkout/risks 0.7 s, checkout/flows 0.6 s, checkout/brief 0.6 s
+    slowest: checkout/risks 0.7 s (waited 0.42 s, then 0.28 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.6 s (waited 0.36 s, then 0.24 s)
 
   3:42:03 PM  Checkout (boot)                          settled 1.0 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 3 opened at a known height
-    visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 0.0 s · settled 1.0 s
+    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 0.0 s · settled 1.0 s
     0 moves
-    slowest: checkout/risks 0.6 s, checkout/flows 0.6 s, checkout/brief 0.5 s
+    slowest: checkout/risks 0.6 s (waited 0.42 s, then 0.18 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.5 s (waited 0.36 s, then 0.14 s)
 ```
 
 The first load opened each frame at a guess: each reported its height (`measure-height`) and the frames
 below moved with the re-flow (`reflow:measured`) - five moves, the last at 1.1 s, settled at 2.1 s. The
 second opened at the known heights: nothing moved (so no last move), and it settled at 1.0 s, the
 one-second floor.
+
+Each slowest frame says how long it waited for its turn to start, then how long it took once started. The canvas
+starts a board's frames a few at a time: the first alone, once the first camera fit has settled - about 0.35 s after
+the board mounts, `first frame started` - then up to four at once, those in view first. Here every frame took a
+quarter of a second or less of its own; most of the time before them was the wait.
 
 `quiet` and `last move` agree here. On a heavy board they part: one that held still for its first second
 and then moved again as late frames reported their heights says `quiet 1.8 s · last move 15.0 s`. `quiet`
@@ -98,8 +103,14 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   counts them) and the moves go, as above. Commit it with the rest of `design/`, and every clone and the
   published canvas open at them too.
 - **`slowest`** names the frames that held the load longest, of those that finished. Look at those first:
-  what they load, how much they render. A load cut before its frames finished counts the rest apart; cut
-  at 120 s (`timeout`), the board is too heavy to finish - split it, or lighten what its frames load.
+  what they load, how much they render - the time after `then` is the frame's own. A load cut before its frames
+  finished counts the rest apart; cut at 120 s (`timeout`), the board is too heavy to finish - split it, or
+  lighten what its frames load.
+- **A frame that waits long to start: the queue, not the frame.** `waited` (and `first frame started`) is the
+  time before its turn came; nothing in the frame shortens it. On a board of many frames the last wait for those
+  before them: fewer frames on the board, or lighter ones that hand their turn on sooner. The first frame's wait,
+  about 0.35 s, is the canvas's own and the same on every board - a one-frame board that settles at 1.0 s has no
+  lever left in the project.
 - **Never ready, missing, errors** are broken frames, not slow ones: fix them first. A missing frame's
   file was deleted or renamed.
 - **The weight** (`settled.weight`) says how heavy the settled board is: elements in the page and its
@@ -205,7 +216,8 @@ got there:
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
   causes of the moves after the load ended, settled or cut);
 - `slowest`: the five slowest frames that finished (`node`, `frame`, `ms` - when it settled, or was ready -
-  and `outcome`);
+  `outcome`, `admittedMs` - when it started: its turn to boot - and `readyMs`; `ms - admittedMs` is its own time);
+- `firstStartedMs`: when the load's first frame started;
 - `errors` (each once, every one, `late` marked), `errorsNotRecorded`, `neverReady`, `missing`,
   `unfinished` (frames still on their way when it was cut: they never finished);
 - on a load cut after it mounted, `framesAtCut` - the frames on its board when it was cut, those placed while it

@@ -14,6 +14,7 @@
  */
 import { readDevInfo, WORK_TTL_DEFAULT, WORK_TTL_MAX } from '../server/work.ts'
 import { NAME } from './name.ts'
+import { unreachable } from './link.ts'
 
 interface WorkOpts { ttl?: string; all?: boolean }
 
@@ -29,6 +30,8 @@ export async function workCommand(root: string, action: string, frames: string[]
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
     } catch {
+      // its process lives: the canvas runs, out of this command's reach (a sandbox that blocks localhost)
+      if (info.pid !== undefined) throw new Error(`${unreachable(info.pid)} The working glow needs it; the canvas itself is fine - \`npx ${NAME} link <scene/frame>\` still prints its link`)
       throw new Error(`could not reach \`${NAME} dev\` on port ${info.port} - is it still running?`)
     }
     const data = await res.json().catch(() => ({}))

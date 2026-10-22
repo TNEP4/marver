@@ -107,7 +107,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 |---|---|
 | `npx marver init [--kind product\|knowledge]` | Scaffold `design/` in this repo (safe to re-run; refreshes managed files); a fresh canvas gets the kind's typed folders |
 | `npx marver dev` / `canvas` | Start the local canvas - hot reload, comments, Live Jam armed. It takes a free slot, localhost:4805-4824, usually the same one next time, and prints its link (`--port <n>`: a port of its own) |
-| `npx marver ls [--json]` | The canvases running on this Mac: slot, link, name, folder, version, state, uptime - no repo needed |
+| `npx marver ls [--json]` | The canvases running on this Mac: slot, link, name, version, state, uptime, folder - no repo needed |
 | `npx marver dev --recover [n]` | Start the canvas on an address it ran on before, so a Jam capture left unsent in that browser sends itself; alone it lists them ([Jam sessions](docs/jam-session.md#a-capture-left-on-an-old-address)) |
 | `npx marver build` | Static export → `design/.dist`; what ships comes from `design/publish.json` (default-closed) |
 | `npx marver serve` | Serve the export; `MARVER_ID_ISSUER` or `MARVER_PASSWORD` gates it, `MARVER_DATA_DIR` persists comments + accounts |

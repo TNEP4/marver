@@ -17,6 +17,10 @@ export class Startup {
   private closers: (() => unknown)[] = []
   private closing: Promise<void> | null = null
   private hooked: { exit: () => void; signal: (sig: NodeJS.Signals) => void } | null = null
+  private say: (() => void) | null = null
+
+  /** What a signal says before it ends the process (dev.ts: once the canvas serves, that it stopped). Synchronous. */
+  onSignal(say: () => void): void { this.say = say }
 
   /** A file held: given back on every way out. */
   claim(release: () => void): void { this.claims.push(release) }
@@ -48,7 +52,10 @@ export class Startup {
   hookProcess(): void {
     if (this.hooked) return
     const exit = () => this.release()
-    const signal = (sig: NodeJS.Signals) => { this.release(); this.unhook(); process.kill(process.pid, sig) }
+    const signal = (sig: NodeJS.Signals) => {
+      try { this.say?.() } catch { /* saying it never holds the way out */ }
+      this.release(); this.unhook(); process.kill(process.pid, sig)
+    }
     process.once('exit', exit)
     for (const s of SIGNALS) process.once(s, signal)
     this.hooked = { exit, signal }

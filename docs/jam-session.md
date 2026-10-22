@@ -201,10 +201,14 @@ Published canvases carry none of Jam: no captures, no queue, no microphone.
 A capture the page could not send - the canvas was away, or the page closed before its send landed - waits in that
 browser's storage, under that page's address (`http://localhost:<port>`), and goes out the next time the canvas opens
 **at that address** with Live Jam on. When the canvas moves, the capture stays behind: 0.27 moved canvases to slots,
-and a later start lands on another slot when its own is taken. `marver dev` says so as it starts:
+and a later start lands on another slot when its own is taken. So does a tab still open there with edits it could not
+save: it keeps them until its own canvas answers at that address again. `marver dev` says so as it starts - where it
+was, which canvas runs there now (when one does), and the `--recover` number of that address:
 
 ```
-  last run was at http://localhost:4806/ (bound http://[::1]:4806) - if a Jam capture was left unsent there, `npx marver dev --recover` gets it back
+  last run was at http://localhost:4806/ - "atlas" runs there now
+  a tab still open there keeps its unsaved edits until this canvas runs there again (a Jam capture left unsent there waits too):
+  stop "atlas" and this canvas, then `npx marver dev --recover 2`
 ```
 
 `--recover` starts the canvas there again. Stop the canvas first if it runs (`Ctrl-C`): one canvas runs per folder, so
@@ -229,8 +233,9 @@ Open the link it prints in the browser that made the capture; the captures waiti
 holds it - it stops and says why; it never moves elsewhere. A recovery leaves the canvas's list of addresses as it was.
 
 **The list always holds the address 0.26 gave this folder** (or would have given it), last unless this canvas has run
-there since. It only matters coming from 0.26. The first 0.27 start names it too ("0.26 served this canvas at
-http://localhost:5329/ - if a Jam capture was left unsent there, ..."). If 0.26 had moved to another port when you made the capture
+there since. It only matters coming from 0.26. The first 0.27 start of a canvas that ran before names it too ("0.26
+served this canvas at http://localhost:5329/ - if a Jam capture was left unsent there, ..."); a new project's first
+start says nothing of it. If 0.26 had moved to another port when you made the capture
 (it said "port ... is in use - serving ... instead" as it started), name that port:
 `npx marver dev --recover --port <that port>`.
 

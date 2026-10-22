@@ -71,10 +71,12 @@ for (const [name, desc] of [
         if (Number.isInteger(n) && n > 0 && n < 65536) port = n
         else console.warn(`[${NAME}] ignoring invalid --port "${opts.port}"`)
       }
+      // a canvas that ends on its own once it served (a file watcher failed) has closed everything by then: say why, exit 1
+      const onFail = (err: InstanceType<typeof DevStartError>) => { console.error(`\n  ${err.message}\n`); process.exit(1) }
       // a start that fails has already given back everything it held (spec 28 A1.1); the process ends here
       try {
-        if (opts.recover !== undefined && opts.recover !== false) await (await import('./recover.ts')).recoverCommand(resolve(opts.root), opts.recover, port)
-        else await dev(resolve(opts.root), { port })
+        if (opts.recover !== undefined && opts.recover !== false) await (await import('./recover.ts')).recoverCommand(resolve(opts.root), opts.recover, port, { onFail })
+        else await dev(resolve(opts.root), { port, onFail })
       } catch (err) {
         if (!(err instanceof DevStartError)) throw err
         console.error(`\n  ${err.message}\n`)
@@ -86,7 +88,7 @@ for (const [name, desc] of [
 }
 
 cli
-  .command('ls', 'The canvases running on this Mac: slot, link, name, folder, version, state, uptime (no repo needed)')
+  .command('ls', 'The canvases running on this Mac: slot, link, name, version, state, uptime, folder (no repo needed)')
   .option('--json', 'Machine-readable output (never a canvas\'s key)')
   .action(async (opts) => { (await import('./ls.ts')).lsCommand({ json: opts.json === true }) })
 
@@ -303,7 +305,7 @@ cli
   .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--minutes <n>', 'How far back to read (default 60; 24 h with --jam)')
-  .option('--loads', 'Board loads, from the page: time to the visible frames ready, all ready, quiet, the last move and settled (or why it was cut, and how many frames were ready by then), how many moves and their causes, the slowest frames, errors (design/.local/perf/page.jsonl)')
+  .option('--loads', 'Board loads, from the page: time to the visible frames ready, all ready, quiet, the last move and settled (or why it was cut, and how many frames were ready by then), how many moves and their causes, when the first frame started, the slowest frames and how long each waited for its turn to start, errors (design/.local/perf/page.jsonl)')
   .option('--jam', 'Jam\'s timings: captures, pictures, words, naming, runs, shots - numbers only (design/.local/perf/jam.jsonl)')
   .option('--json', 'Machine-readable output')
   .action(async (opts) => {

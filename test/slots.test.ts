@@ -6,8 +6,8 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import {
-  formatRunning, legacyEntry, legacyPort, notePrefer, place, readPrefer, readRunning, recoverEntries, recoverTarget,
-  slotBase, slotOfPort, slotPort, stopPrefer, type PlaceInput,
+  forgetDevTraces, formatRunning, legacyEntry, legacyPort, notePrefer, place, ranDevBefore, readPrefer, readRunning, recoverEntries, recoverTarget,
+  slotBase, slotOfPort, slotPort, startedWhere, stopPrefer, type PlaceInput,
 } from '../src/server/slots.ts'
 import { legacyWorkspace, workspaceId } from '../src/server/workspace.ts'
 
@@ -143,7 +143,7 @@ describe('the slots: claims (A1.3)', () => {
     if (r.ok) return
     const lines = r.message.split('\n').map((l) => l.trim())
     expect(lines[0]).toBe('all 20 slots are taken:')
-    expect(lines[1]).toMatch(/^slot\s+link\s+name\s+folder\s+version\s+state\s+up$/)
+    expect(lines[1]).toMatch(/^slot\s+link\s+name\s+version\s+state\s+up\s+folder$/)
     for (let n = 1; n <= 20; n++) expect(r.message).toContain(`http://localhost:${BASE + n}/  project-${n}`)
     expect(lines.at(-1)).toBe('stop one (Ctrl-C in its terminal), or start this one with --port <n>')
     expect(readdirSync(running()).filter((f) => !/^slot-\d+\.json$/.test(f))).toEqual([])
@@ -323,6 +323,62 @@ describe('--recover\'s entries (A1.6)', () => {
   })
 })
 
+describe('what a start says about where it ran before (A1.6)', () => {
+  const root = '/Users/someone/where'
+  const id = workspaceId(root)
+  const at = (port: number, bind = `http://[::1]:${port}`) => ({ slot: slotOfPort(port), url: `http://localhost:${port}/`, bind, ws: id })
+  const say = (run: ReturnType<typeof at>, ranBefore = true) => { const { first, previous } = notePrefer(id, run); return startedWhere({ root, run, port: Number(new URL(run.url).port), first, previous, ranBefore }) }
+
+  it('a first start names 0.26\'s address only when a canvas ran in the folder before', () => {
+    expect(say(at(BASE + 1), false)).toEqual([])
+    rmSync(join(home, 'prefer'), { recursive: true, force: true })
+    expect(say(at(BASE + 1))).toEqual([
+      `ports are now fixed slots: this canvas is at http://localhost:${BASE + 1}/`,
+      `0.26 served this canvas at http://localhost:${legacyPort(root)}/ - if a Jam capture was left unsent there, \`npx marver dev --recover\` gets it back`,
+    ])
+  })
+
+  it('another link: where, who runs there now, and --recover\'s number for it - never the bound address alone', () => {
+    say(at(BASE + 1), false)
+    // the same link, bound on the other family: a browser at the link reaches either - nothing to say
+    expect(say(at(BASE + 1, `http://127.0.0.1:${BASE + 1}`))).toEqual([])
+    // moved, nothing running there now (a program's port, a config port given up)
+    expect(say(at(BASE + 2))).toEqual([
+      `last run was at http://localhost:${BASE + 1}/`,
+      'a tab still open there keeps its unsaved edits until this canvas runs there again (a Jam capture left unsent there waits too):',
+      'stop this canvas, then `npx marver dev --recover 2`',
+    ])
+    // moved, and a canvas holds the old one: it is named
+    const pid = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+    children.push(pid)
+    mkdirSync(running(), { recursive: true })
+    writeFileSync(join(running(), 'slot-2.json'), JSON.stringify({ v: 1, state: 'ready', pid: pid.pid, instance: 'other', slot: 2, port: BASE + 2, origin: null, url: `http://localhost:${BASE + 2}/`, root: '/tmp/atlas', name: 'atlas', version: '0.27.0', features: [], ws: 'e'.repeat(16), startedAt: 1, key: '' }))
+    const lines = say(at(BASE + 3))
+    expect(lines[0]).toBe(`last run was at http://localhost:${BASE + 2}/ - "atlas" runs there now`)
+    expect(lines[2]).toBe('stop "atlas" and this canvas, then `npx marver dev --recover 2`')
+    expect(recoverEntries(root)[1].url).toBe(`http://localhost:${BASE + 2}/`)
+    expect(lines.join('\n')).not.toContain('bound')
+  })
+
+  it('the traces an earlier marver dev leaves in design/.local, and a failed first start taking back its own', () => {
+    const r = realpathSync(mkdtempSync(join(tmpdir(), 'mv-traces-')))
+    try {
+      expect(ranDevBefore(r)).toBe(false)
+      mkdirSync(join(r, 'design', '.local', 'perf'), { recursive: true })
+      // dev.lock and dev.json go with every stop, and shots/ comes from `marver shot` too: no trace
+      for (const f of ['dev.lock', 'dev.json', 'shots']) writeFileSync(join(r, 'design', '.local', f), '{}')
+      expect(ranDevBefore(r)).toBe(false)
+      for (const f of ['changes.json', 'seen.json', 'update-check.json', 'jam-jobs.json', 'perf/reloads.jsonl']) {
+        writeFileSync(join(r, 'design', '.local', f), '{}')
+        expect(ranDevBefore(r), f).toBe(true)
+        forgetDevTraces(r)
+        expect(ranDevBefore(r), f).toBe(false)
+      }
+      expect(existsSync(join(r, 'design', '.local', 'shots'))).toBe(true)
+    } finally { rmSync(r, { recursive: true, force: true }) }
+  })
+})
+
 describe('ports and the list', () => {
   it('0.26\'s hash port, pinned', () => {
     expect(legacyPort('/Users/someone/atlas-app')).toBe(5200 + (Math.abs([...'/Users/someone/atlas-app'].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 0)) % 200))
@@ -347,6 +403,6 @@ describe('ports and the list', () => {
     expect(list[0]).not.toHaveProperty('key')
     expect(list[0]).not.toHaveProperty('instance')
     const lines = formatRunning(list, list[0].startedAt + 3_723_000)
-    expect(lines[1]).toMatch(new RegExp(`^ {3}2  http://localhost:${BASE + 2}/  project-2  /tmp/project-2  0.27.0   ready  1h 2m$`))
+    expect(lines[1]).toMatch(new RegExp(`^ {3}2  http://localhost:${BASE + 2}/  project-2  0.27.0   ready  1h 2m  /tmp/project-2$`))
   })
 })

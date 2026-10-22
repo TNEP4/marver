@@ -56,12 +56,13 @@ export function removeDevInfo(root: string, instance: string | undefined = writt
   } catch { /* gone or unreadable - not ours to touch */ }
 }
 
-export function readDevInfo(root: string): { port: number; token: string } | null {
+/** The running server's dev.json: its port and token, and its pid (a file from before 0.26 has none). */
+export function readDevInfo(root: string): { port: number; token: string; pid?: number } | null {
   try {
     const v = JSON.parse(readFileSync(infoPath(root), 'utf8'))
     // a server that died without cleaning up (kill -9, a crash) left its file behind: not a canvas
     if (v?.pid !== undefined && !pidRuns(v.pid)) return null
-    return typeof v?.port === 'number' && typeof v?.token === 'string' ? { port: v.port, token: v.token } : null
+    return typeof v?.port === 'number' && typeof v?.token === 'string' ? { port: v.port, token: v.token, ...(typeof v.pid === 'number' ? { pid: v.pid } : {}) } : null
   } catch { return null }
 }
 

@@ -6,6 +6,15 @@ the canvas so the human has a live one - first session, or on request - is the o
 allowed touch: `npx marver dev`, never with a port. It takes a free slot,
 localhost:4805-4824, usually the same one next time, and prints its link.)
 
+**Keeping the canvas up.** A canvas you start dies with the job that started it: Claude Code
+stops a background job after 10 minutes, and a headless session never exits while one runs.
+So `npx marver ls` first - one may already run for this folder. None: ask the person to run
+`npx marver dev` in their own terminal. If you start it yourself, start it detached so it
+outlives you - `mkdir -p design/.local && nohup npx marver dev > design/.local/dev.log 2>&1 &` -
+then read its link from `npx marver ls`. In a sandbox where it cannot start ("cannot watch
+this folder") or cannot be reached ("cannot be reached from here"), ask the person to run it:
+`npx marver shot`, `marks`, `ls` and `perf --loads` still work there.
+
 ## Before the method: a project with no `context/`
 
 This repository has no `context/` directory? Then **every reply in which you made, specced or changed
@@ -128,8 +137,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   on several) with them selected and in view -
   the human finds the work at once on a board of fifty frames. Never a full-screen focus link
   (`#/f/...`) unless they ask for full screen. `npx marver ls` lists the canvases running on
-  this Mac and their links; none for this folder? End with `npx marver dev` instead - the link
-  carries its port.
+  this Mac and their links; none for this folder? End by asking the person to run
+  `npx marver dev` in their own terminal (or start it detached: "Keeping the canvas up") - the
+  link carries its port.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame. A reply that asks them
@@ -228,7 +238,8 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   ("you have not looked at the checkout frames since I changed them").
 - **Performance.** `npx marver perf --loads --json` says what each board load did - time to
   settled, how many moves and why, the slowest frames, errors. To make a board faster, name
-  the lever, change it, compare the next load.
+  the lever, change it, compare the next load. A slow frame's `admittedMs` is when its turn to
+  start came: a long wait is the queue, not the frame (`ms - admittedMs` is the frame's own).
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,

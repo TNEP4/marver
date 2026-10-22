@@ -29,13 +29,14 @@ function fixture(now = Date.now()) {
     rec(P1, A, 'move', 30 * min - 900, { node: 'k-1', dx: 0, dy: 0, dw: 0, dh: 300, cause: 'measure-height' }),
     rec(P1, A, 'move', 30 * min - 1300, { node: 'k-2', dx: 0, dy: 300, dw: 0, dh: 0, cause: 'reflow:measured' }),
     rec(P1, A, 'move', 30 * min - 1300, { node: 'k-3', dx: 0, dy: 400, dw: 0, dh: 0, cause: 'reflow:measured' }),
-    rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-1', frame: 'docs/a', ready: 700, firstMeasure: 800, settled: 1600, outcome: 'settled' }),
+    // admitted: its turn in the admission queue; a frame with none (docs/b, docs/c) shows no wait
+    rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-1', frame: 'docs/a', admitted: 350, ready: 700, firstMeasure: 800, settled: 1600, outcome: 'settled' }),
     rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-2', frame: 'docs/b', ready: 600, settled: 1200, outcome: 'settled' }),
     rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-3', frame: 'docs/c', ready: 650, settled: 1100, outcome: 'settled' }),
-    rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-4', frame: 'kit/f1', ready: 500, outcome: 'ready' }),
+    rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-4', frame: 'kit/f1', admitted: 360, ready: 500, outcome: 'ready' }),
     rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-5', frame: 'kit/f2', ready: 900, outcome: 'ready' }),
     // k-5 again: its document was replaced and reported later - the last record wins
-    rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-5', frame: 'kit/f2', ready: 1900, outcome: 'ready' }),
+    rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-5', frame: 'kit/f2', admitted: 1500, ready: 1900, outcome: 'ready' }),
     rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-6', frame: 'kit/f3', outcome: 'never-ready' }),
     rec(P1, A, 'frame', 30 * min - 1000, { node: 'k-7', frame: 'kit/old', outcome: 'missing' }),
     rec(P1, A, 'error', 30 * min - 1100, { source: 'frame', frame: 'kit/f4', message: 'Cannot read properties of undefined' }),
@@ -95,6 +96,9 @@ describe('board loads (marver perf --loads)', () => {
     expect(a).toMatchObject({ committed: true, commitMs: 400, frames: 7, measuring: 3, savedHeights: 2, visible: 4, visibleReadyMs: 900, allReadyMs: 1900, quietMs: 1300, lastMoveMs: 1300, settledMs: 3200 })
     expect(a.moves).toEqual({ count: 3, distance: 1000, causes: [['reflow:measured', 2], ['measure-height', 1]], late: { count: 2, causes: [['drag', 1], ['measure-height', 1]] } })
     expect(a.slowest.map((f) => [f.frame, f.ms])).toEqual([['kit/f2', 1900], ['docs/a', 1600], ['docs/b', 1200], ['docs/c', 1100], ['kit/f1', 500]])
+    // when each started (its turn in the admission queue) and was ready - the last record's, as its outcome is
+    expect(a.slowest.map((f) => [f.frame, f.admittedMs, f.readyMs])).toEqual([['kit/f2', 1500, 1900], ['docs/a', 350, 700], ['docs/b', undefined, 600], ['docs/c', undefined, 650], ['kit/f1', 360, 500]])
+    expect(a.firstStartedMs).toBe(350)
     expect(a.errors).toEqual([
       { source: 'frame', frame: 'kit/f4', message: 'Cannot read properties of undefined' },
       { source: 'shell', message: 'ResizeObserver loop completed with undelivered notifications', late: true },
@@ -112,7 +116,8 @@ describe('board loads (marver perf --loads)', () => {
     // a cut load: how many frames were ready by the cut, of the frames it had then; the slowest only of those that finished
     expect(b.readyByCut).toBe(1)
     expect(b.framesAtCut).toBe(2)
-    expect(b.slowest).toEqual([{ node: 'k-b2', frame: 'docs/y', ms: 900, outcome: 'settled' }])
+    expect(b.slowest).toEqual([{ node: 'k-b2', frame: 'docs/y', ms: 900, outcome: 'settled', readyMs: 500 }])
+    expect(b.firstStartedMs).toBeUndefined()   // no frame of it says when it started
     expect(loads.find((l) => l.load === A)!.readyByCut).toBeUndefined()
     expect(c.readyByCut).toBeUndefined()
     expect(c).toMatchObject({ state: 'cut', cut: { reason: 'superseded', request: true }, committed: false })
@@ -157,6 +162,8 @@ describe('marver perf, printed', () => {
     expect(j.loads.map((l: any) => l.board)).toEqual(['start-here', 'docs', 'notes', '~unplaced'])
     expect(j.loads.map((l: any) => l.lastMoveMs)).toEqual([1300, 700, undefined, undefined])
     expect(j.loads.map((l: any) => [l.readyByCut, l.unfinished])).toEqual([[undefined, 0], [1, 1], [undefined, 0], [undefined, 0]])
+    expect(j.loads.map((l: any) => l.firstStartedMs)).toEqual([350, undefined, undefined, undefined])
+    expect(j.loads[0].slowest[1]).toEqual({ node: 'k-1', frame: 'docs/a', ms: 1600, outcome: 'settled', admittedMs: 350, readyMs: 700 })
     expect(j.unowned.gestures).toBe(1)
     expect(j.dropped).toBe(5)
     out = []
@@ -169,11 +176,12 @@ describe('marver perf, printed', () => {
     const text = out.join('\n')
     expect(text).toMatch(/Start Here \(boot\)\s+settled 3\.2 s/)
     expect(text).toContain('committed 0.4 s · 7 frames (3 hi-fi, 3 content, 1 html) · 3 measure, 2 opened at a known height')
-    expect(text).toContain('visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · last move 1.3 s · settled 3.2 s')
+    expect(text).toContain('first frame started 0.35 s · visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · last move 1.3 s · settled 3.2 s')
     expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n {4}1 of 2 ready · last move 0\.7 s\n.*\n {4}slowest: docs\/y 0\.9 s · 1 never finished\n/)
     expect(text).not.toContain('docs/x')
     expect(text).toContain('3 moves, 1000 px: reflow:measured 2, measure-height 1 · late, after it settled: 2 (drag 1, measure-height 1)')
-    expect(text).toContain('slowest: kit/f2 1.9 s, docs/a 1.6 s, docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s')
+    // how long each waited for its turn to start, then took once started: a long wait is the queue, not the frame
+    expect(text).toContain('slowest: kit/f2 1.9 s (waited 1.50 s, then 0.40 s), docs/a 1.6 s (waited 0.35 s, then 1.25 s), docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s (waited 0.36 s, then 0.14 s)')
     expect(text).toContain('never ready: kit/f3 · missing: kit/old')
     expect(text).toContain('error (frame kit/f4): Cannot read properties of undefined')
     expect(text).toContain('late error (shell): ResizeObserver loop completed with undelivered notifications')
@@ -311,6 +319,7 @@ describe('marver perf --help', () => {
     const loads = help.split('\n').find((l) => l.includes('--loads'))
     expect(loads).toContain('how many moves and their causes')
     expect(loads).toContain('the last move')
+    expect(loads).toContain('how long each waited for its turn to start')
     expect(loads).not.toContain('frames that moved')
   })
 })

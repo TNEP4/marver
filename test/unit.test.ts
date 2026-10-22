@@ -1499,7 +1499,7 @@ describe('working-state rail (activity leases + dev handshake)', async () => {
   it('dev.json round-trips port + token and removes cleanly', () => {
     const root = mkdtempSync(join(tmpdir(), 'sh-work-'))
     const token = writeDevInfo(root, 5240)
-    expect(readDevInfo(root)).toEqual({ port: 5240, token })
+    expect(readDevInfo(root)).toEqual({ port: 5240, token, pid: process.pid })
     expect(token.length).toBeGreaterThan(20)
     removeDevInfo(root)
     expect(readDevInfo(root)).toBe(null)
