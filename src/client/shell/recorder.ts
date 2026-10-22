@@ -166,7 +166,8 @@ function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest) })
   L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
   L.timeout = setTimeout(guard(() => cut(L, 'timeout')), Math.max(0, LOAD_MAX_MS - (L.committedAt - L.t0)))
-  if (document.visibilityState === 'hidden') cut(L, 'hidden')
+  // a page hidden already: cut once the set that mounts this load has run - its nodes, not the board it replaces
+  if (document.visibilityState === 'hidden') queueMicrotask(guard(() => { if (L === owner) cut(L, 'hidden') }))
 }
 
 /** What a load mounts: its frames by kind (Marver has no image frame kind), how many measure, and how many of those
@@ -235,8 +236,10 @@ function move(L: Load, key: string, dx: number, dy: number, dw: number, dh: numb
 function outcomeNow(n: Node, m: Manifest | null): Outcome | null {
   const rule = settleRule(n, m)
   const t = tracks.get(n.key)
-  return outcomeOf(rule, t?.frame === n.frame ? t : undefined, rule === 'missing' ? undefined : liveBoot(n.key), n)
+  return outcomeOf(rule, t?.frame === n.frame ? t : undefined, rule === 'missing' ? undefined : liveBoot(n.key), { w: n.w, nav: n.nav, gen: genOf(n.key) })
 }
+/** What a message says of its document, for its track: its URL revision, and the navigation it arrived under. */
+const docOf = (n: Node, data: { gen?: unknown }) => ({ gen: data.gen, nav: n.nav })
 const said = (n: Node, o: Outcome | 'cut') => `${o}:${tracks.get(n.key)?.boot ?? ''}`
 
 /** A node of the load in flight may have reached its outcome: its frame record, once per outcome and document. */
@@ -454,22 +457,22 @@ export const recorder = {
   /** A node's mount got its boot slot (FrameNode). */
   admitted: guard((key: string) => { const n = node(key); if (n) trackOf(n).admittedAt = performance.now() }),
   /** A frame document started (sh:boot): its node's story starts over - before its `load`, without polling. */
-  booted: guard((key: string, data: { boot?: unknown }) => { const n = node(key); if (n) adopt(trackOf(n), data.boot, liveBoot(key)) }),
+  booted: guard((key: string, data: { boot?: unknown; gen?: unknown }) => { const n = node(key); if (n) adopt(trackOf(n), data.boot, liveBoot(key), docOf(n, data)) }),
   /** sh:ready, after the shell's own generation check. */
-  ready: guard((key: string, data: { boot?: unknown }) => {
+  ready: guard((key: string, data: { boot?: unknown; gen?: unknown }) => {
     const n = node(key)
     if (!n) return
     const t = trackOf(n)
-    if (!adopt(t, data.boot, liveBoot(key))) return   // a document since replaced never counts
+    if (!adopt(t, data.boot, liveBoot(key), docOf(n, data))) return   // a document since replaced never counts
     t.readyAt ??= performance.now()
     progress(n)
   }),
   /** sh:measure, with what the store took: only a settled report taken at the node's width settles it. */
-  measured: guard((key: string, data: { boot?: unknown; settled?: unknown }, took: MeasureResult) => {
+  measured: guard((key: string, data: { boot?: unknown; gen?: unknown; settled?: unknown }, took: MeasureResult) => {
     const n = node(key)
     if (!n) return
     const t = trackOf(n)
-    if (!adopt(t, data.boot, liveBoot(key))) return
+    if (!adopt(t, data.boot, liveBoot(key), docOf(n, data))) return
     t.firstMeasureAt ??= performance.now()
     // the first settled report at a width is when the node settled there
     if (data.settled === true && took.took === 'fit' && took.w !== undefined && t.settled?.w !== took.w) t.settled = { at: performance.now(), w: took.w }
@@ -477,12 +480,12 @@ export const recorder = {
     progress(n)
   }),
   /** sh:error, after the shell's generation check: recorded, and the node's outcome when it is its live document's. */
-  frameError: guard((key: string, data: { id?: unknown; boot?: unknown; message?: unknown; stack?: unknown }) => {
+  frameError: guard((key: string, data: { id?: unknown; boot?: unknown; gen?: unknown; message?: unknown; stack?: unknown }) => {
     const n = node(key)
     logError({ source: 'frame', frame: bound(data.id) ?? n?.frame, message: data.message, stack: data.stack })
     if (!n) return
     const t = trackOf(n)
-    if (adopt(t, data.boot, liveBoot(key))) { t.errorAt ??= performance.now(); progress(n) }
+    if (adopt(t, data.boot, liveBoot(key), docOf(n, data))) { t.errorAt ??= performance.now(); progress(n) }
   }),
   /** The ready watchdog's second silence (FrameNode): never-ready for this navigation. The frame stays loading. */
   neverReady: guard((key: string) => {

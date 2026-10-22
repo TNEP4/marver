@@ -108,6 +108,28 @@ describe('a node\'s outcome, from its live document', () => {
     expect(outcomeOf('measure', { frame: 'a/b', boot: 'd1', errorAt: 3 }, 'd1', node)).toBe('error')
     expect(outcomeOf('measure', { frame: 'a/b', boot: 'd1', errorAt: 3 }, 'd2', node)).toBeNull()
   })
+  it('a reload the shell asked for sends the node back to pending while the document it replaces is still there', () => {
+    const t: Track = { frame: 'a/b' }
+    expect(adopt(t, 'd1', 'd1', { gen: '3', nav: 0 })).toBe(true)
+    t.readyAt = 5
+    expect(t).toMatchObject({ boot: 'd1', gen: '3', nav: 0 })
+    expect(outcomeOf('ready', t, 'd1', { w: 760, nav: 0, gen: '3' })).toBe('ready')
+    // reloadFrame: the node's nav moved on before its iframe got the new URL - d1 is still the live document
+    expect(outcomeOf('ready', t, 'd1', { w: 760, nav: 1, gen: '3' })).toBeNull()
+    expect(outcomeOf('ready', t, 'd1', { w: 760, nav: 1, gen: '4' })).toBeNull()
+    // a file swap: a new URL with no new nav
+    expect(outcomeOf('ready', t, 'd1', { w: 760, nav: 0, gen: '4' })).toBeNull()
+    // a late message from d1 after the reload began is still d1's: it does not move d1 onto the new navigation
+    expect(adopt(t, 'd1', 'd1', { gen: '3', nav: 1 })).toBe(true)
+    expect(outcomeOf('ready', t, 'd1', { w: 760, nav: 1, gen: '4' })).toBeNull()
+    expect(outcomeOf('measure', { ...t, settled: { at: 6, w: 760 } }, 'd1', { w: 760, nav: 1, gen: '4' })).toBeNull()
+    expect(outcomeOf('ready', { ...t, errorAt: 7 }, 'd1', { w: 760, nav: 1, gen: '4' })).toBeNull()
+    // the new document: its own story, on the new navigation
+    expect(adopt(t, 'd2', 'd2', { gen: '4', nav: 1 })).toBe(true)
+    expect(outcomeOf('ready', t, 'd2', { w: 760, nav: 1, gen: '4' })).toBeNull()
+    t.readyAt = 9
+    expect(outcomeOf('ready', t, 'd2', { w: 760, nav: 1, gen: '4' })).toBe('ready')
+  })
   it('missing whatever the documents; never-ready holds for its navigation, and a live message replaces it', () => {
     expect(outcomeOf('missing', undefined, undefined, node)).toBe('missing')
     const t: Track = { frame: 'a/b', neverReady: { at: 20_000, nav: 0 } }

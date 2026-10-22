@@ -111,6 +111,9 @@ export interface Track {
   frame: string
   /** the document these facts belong to */
   boot?: string
+  /** that document's URL revision (its own `r`), and the node's navigation when it was adopted */
+  gen?: string
+  nav?: number
   /** when the node's mount was admitted - not per document (a reload keeps its slot) */
   admittedAt?: number
   readyAt?: number
@@ -123,22 +126,32 @@ export interface Track {
 }
 
 /** A message from document `boot`: kept only when that document is the one there now. A new live document starts
- *  the node's story over, and a message from a live document supersedes the watchdog's verdict. */
-export function adopt(t: Track, boot: unknown, live: string | undefined): boolean {
+ *  the node's story over - noting its own URL revision (`gen`, from the message) and the node's navigation (`nav`) -
+ *  and a message from a live document supersedes the watchdog's verdict. */
+export function adopt(t: Track, boot: unknown, live: string | undefined, doc?: { gen?: unknown; nav?: number }): boolean {
   if (typeof boot !== 'string' || !boot || boot !== live) return false
-  if (t.boot !== boot) { t.boot = boot; delete t.readyAt; delete t.firstMeasureAt; delete t.settled; delete t.errorAt }
+  if (t.boot !== boot) {
+    t.boot = boot
+    delete t.gen; delete t.nav; delete t.readyAt; delete t.firstMeasureAt; delete t.settled; delete t.errorAt
+    if (doc) t.nav = doc.nav ?? 0
+  }
+  if (typeof doc?.gen === 'string') t.gen = doc.gen
   delete t.neverReady
   return true
 }
 
 /** The node's outcome now, or null (pending). An outcome a document reported counts only while that document is the
- *  live one - a document since replaced, or one still booting (no live boot yet), sends it back to pending.
+ *  live one, on the navigation the shell asked for last - a document since replaced, one still booting (no live boot
+ *  yet), or one a reload is replacing (the node's `nav` moved on, or its iframe was sent to another revision `gen`,
+ *  while the old document is still there until the new one commits) sends it back to pending.
  *  `missing` and `never-ready` have no document and are exempt: missing while the frame is absent from the manifest,
  *  never-ready for the navigation the watchdog gave up on, until a new navigation or a live message replaces it. */
-export function outcomeOf(rule: Rule, t: Track | undefined, live: string | undefined, node: { w: number; nav?: number }): Outcome | null {
+export function outcomeOf(rule: Rule, t: Track | undefined, live: string | undefined, node: { w: number; nav?: number; gen?: string }): Outcome | null {
   if (rule === 'missing') return 'missing'
   if (!t) return null
   const current = !!live && t.boot === live
+    && (t.nav === undefined || t.nav === (node.nav ?? 0))
+    && (t.gen === undefined || node.gen === undefined || t.gen === node.gen)
   if (current && t.errorAt !== undefined) return 'error'
   if (current && rule === 'ready' && t.readyAt !== undefined) return 'ready'
   if (current && rule === 'measure' && t.settled && t.settled.w === Math.round(node.w)) return 'settled'

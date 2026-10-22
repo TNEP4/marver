@@ -87,20 +87,25 @@ async function open(hash: string, hold: string[] = []): Promise<{ s: string; pag
 }
 const R = (s: string) => browser!.eval(s, 'window.__mvRecorder.state()')
 
-type Held = { paused: (pattern: string) => number; release: (pattern: string) => Promise<void>; stop: () => void }
+type Held = { paused: (pattern: string) => number; release: (pattern: string) => Promise<void>; add: (pattern: string) => Promise<void>; stop: () => void }
 const glob = (p: string) => new RegExp('^' + p.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$')
-/** Hold this tab's requests that match the patterns (Fetch interception) until each pattern is released. */
+/** Hold this tab's requests that match the patterns (Fetch interception) until each pattern is released; `add` holds
+ *  one more from then on. */
 async function holder(s: string, patterns: string[]): Promise<Held> {
+  const all = [...patterns]
   const waiting: { id: string; url: string }[] = []
   const freed = new Set<string>()
-  const off = patterns.length ? browser!.on((m) => {
+  const off = browser!.on((m) => {
     if (m.method !== 'Fetch.requestPaused' || m.sessionId !== s) return
     const { requestId, request } = m.params
+    if (!all.some((p) => glob(p).test(request.url))) return   // another interceptor's
     if ([...freed].some((p) => glob(p).test(request.url))) void browser!.send('Fetch.continueRequest', { requestId }, s).catch(() => {})
     else waiting.push({ id: requestId, url: request.url })
-  }) : () => {}
-  if (patterns.length) await browser!.send('Fetch.enable', { patterns: patterns.map((urlPattern) => ({ urlPattern, requestStage: 'Request' })) }, s)
+  })
+  const enable = () => browser!.send('Fetch.enable', { patterns: all.map((urlPattern) => ({ urlPattern, requestStage: 'Request' })) }, s)
+  if (all.length) await enable()
   return {
+    async add(p) { all.push(p); await enable() },
     paused: (p) => waiting.filter((w) => glob(p).test(w.url)).length,
     async release(p) {
       freed.add(p)
@@ -313,6 +318,47 @@ describe('the page recorder: board loads', () => {
     expect(next).not.toBe(first)
     held.stop()
   }, 90_000)
+
+  it('a reload that has begun sends its node back to pending while the document it replaces is still there', async () => {
+    if (!browser) return
+    const { s, page, held } = await open('#/b/pair', ['*kit/hang.tsx*'])   // the other frame keeps the load open
+    await browser.until(s, `window.__mvRecorder.state().nodes['k-ph'] === 'ready'`, 20_000)
+    const old = await inFrame(s, 'k-ph', 'window.__mvBoot')
+    const first = await genOf(s, 'k-ph')
+    await held.add('*/frame/?id=kit%2Fhifi*')   // the new document waits until released
+    await browser.eval(s, `window.__mvStore.getState().reloadFrame('k-ph'), 1`)
+    expect((await R(s)).nodes['k-ph']).toBeNull()
+    await until(() => held.paused('*/frame/?id=kit%2Fhifi*') > 0, 10_000, 'the reload to ask for its document')
+    const next = await genOf(s, 'k-ph')
+    expect(next).not.toBe(first)
+    expect(await inFrame(s, 'k-ph', 'window.__mvBoot')).toBe(old)   // still there, and what it said no longer counts
+    expect((await R(s)).nodes['k-ph']).toBeNull()
+    await held.release('*kit/hang.tsx*')
+    await browser.until(s, `window.__mvRecorder.state().nodes['k-pg'] === 'ready'`, 20_000)
+    await wait(2000)
+    expect((await R(s)).owner.done).toBeNull()
+    expect((await R(s)).nodes['k-ph']).toBeNull()
+    await held.release('*/frame/?id=kit%2Fhifi*')
+    const l = await ended(page, 'pair')
+    expect(l.of('settled')).toHaveLength(1)
+    expect(l.frame('k-ph')).toMatchObject({ outcome: 'ready', gen: next })
+    expect(l.frame('k-ph')!.boot).not.toBe(old)
+    held.stop()
+  }, 60_000)
+
+  it('a board mounted while the page is hidden is cut at once - with its own frames, not those of the board it replaced', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/still')
+    await ended(page, 'still')
+    // hidden, as a background tab is (the recorder is the shell's only listener)
+    await browser.eval(s, `Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), 1`)
+    await browser.eval(s, `void window.__mvStore.getState().switchBoard('hifi'), 1`)
+    const l = await ended(page, 'hifi')
+    expect(l.of('cut')).toMatchObject([{ reason: 'hidden' }])
+    expect(l.of('commit')[0]).toMatchObject({ frames: 1 })
+    expect(l.of('frame').map((f) => f.node)).toEqual(['k-h'])
+    expect(l.of('settled')).toEqual([])
+  }, 60_000)
 })
 
 describe('the page recorder: gestures, errors, the log', () => {
