@@ -140,6 +140,43 @@ describe('the workspace guard', () => {
     expect(found).toEqual([])
   })
 
+  it('every URL of the API, a frame or the stage is built where it names the workspace: inside api(), mvFetch() or withWs()', () => {
+    // an <img src>, an iframe's src or a socket's URL is no fetch(): the audit above never sees it. Each
+    // literal must sit directly inside one of the helpers, or be an exception that says why it may
+    const allowed: Record<string, RegExp[]> = {
+      'shell/comments-store.ts': [/new EventSource\(`\$\{ROUTE\}\/api\/events`\)/],              // published only: never opened in dev
+      'shell/jam-voice.ts': [/new WebSocket\(.*\/api\/jam\/audio\?ticket=/],                      // bound by its single-use ticket, asked through api()
+      'content/video.tsx': [/\bfetch\(`\$\{ROUTE\}\/api\/(policy|poster)`, \{.*headers: named\(/],   // a frame: names the workspace from its URL
+    }
+    const dir = join(import.meta.dirname, '..', 'src', 'client')
+    // comments blanked in place (offsets kept): a comment may name a route, and its parentheses are not code
+    const blank = (src: string) => src
+      .replace(/(^|[\s{])\/\*[\s\S]*?\*\//g, (m, lead: string) => lead + m.slice(lead.length).replace(/[^\n]/g, ' '))
+      .replace(/(^|\s)\/\/[^\n]*/g, (m, lead: string) => lead + ' '.repeat(m.length - lead.length))
+    /** the name called with the innermost parenthesis still open at `at` */
+    const enclosing = (src: string, at: number) => {
+      for (let i = at - 1, depth = 0; i >= 0; i--) {
+        if (src[i] === ')') depth++
+        else if (src[i] === '(' && depth-- === 0) return /([\w$.]+)\s*$/.exec(src.slice(Math.max(0, i - 40), i))?.[1] ?? ''
+      }
+      return ''
+    }
+    const found: string[] = []
+    for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
+      const file = rel.split('\\').join('/')
+      if (!/\.(ts|tsx|js)$/.test(file) || file === 'shell/api.ts') continue
+      const raw = readFileSync(join(dir, rel), 'utf8')
+      const src = blank(raw)
+      for (const m of src.matchAll(/\$\{ROUTE\}\/(?:api|frame|stage)\/|\/__mv\/(?:api|frame|stage)\//g)) {
+        const call = enclosing(src, m.index)
+        if (call === 'api' || call === 'mvFetch' || call === 'withWs') continue
+        const line = raw.slice(raw.lastIndexOf('\n', m.index) + 1, raw.indexOf('\n', m.index))
+        if (!(allowed[file] ?? []).some((re) => re.test(line))) found.push(`${file}:${raw.slice(0, m.index).split('\n').length}: ${line.trim().slice(0, 120)}`)
+      }
+    }
+    expect(found).toEqual([])
+  })
+
   it('/api/poster is a POST: the GET is gone, the POST is owner-gated and checks its clip', async () => {
     const get = await at('/__mv/api/poster?src=clip.mp4')
     expect(get.status).toBe(404)
