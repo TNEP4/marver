@@ -8,14 +8,14 @@
 
 Screens, prototypes, specs, and now slide decks - all real code, all on one canvas, all shareable with people who sign in as themselves.
 
-[marver.design](https://marver.design) · [Boards and folders](docs/boards-and-folders.md) · [Context](docs/context.md) · [Slides](docs/slides.md) · [Sticky notes](docs/sticky-notes.md) · [Live Jam](docs/live-jam.md) · [Jam sessions](docs/jam-session.md) · [Deploying a canvas](docs/publish.md) · [Sharing](docs/sharing.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
+[marver.design](https://marver.design) · [Boards and folders](docs/boards-and-folders.md) · [Context](docs/context.md) · [Slides](docs/slides.md) · [Sticky notes](docs/sticky-notes.md) · [Live Jam](docs/live-jam.md) · [Jam sessions](docs/jam-session.md) · [Performance](docs/performance.md) · [Deploying a canvas](docs/publish.md) · [Sharing](docs/sharing.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
 
 ## Quickstart
 
 ```bash
 npm i -D @marver-design/marver
 npx marver init   # scaffolds design/ (detects shadcn, Tailwind, your router)
-npx marver dev    # canvas at localhost:5199 (npx marver canvas works too - same thing)
+npx marver dev    # the canvas, on a free slot (localhost:4805-4824) - it prints the link (npx marver canvas works too)
 ```
 
 Then, to your agent:
@@ -106,7 +106,9 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | Command | What it does |
 |---|---|
 | `npx marver init [--kind product\|knowledge]` | Scaffold `design/` in this repo (safe to re-run; refreshes managed files); a fresh canvas gets the kind's typed folders |
-| `npx marver dev` / `canvas` | Start the local canvas - hot reload, comments, Live Jam armed (`--port`, default 5199) |
+| `npx marver dev` / `canvas` | Start the local canvas - hot reload, comments, Live Jam armed. It takes a free slot, localhost:4805-4824, usually the same one next time, and prints its link (`--port <n>`: a port of its own) |
+| `npx marver ls [--json]` | The canvases running on this Mac: slot, link, name, folder, version, state, uptime - no repo needed |
+| `npx marver dev --recover [n]` | Start the canvas on an address it ran on before, so a Jam capture left unsent in that browser sends itself; alone it lists them ([Jam sessions](docs/jam-session.md#a-capture-left-on-an-old-address)) |
 | `npx marver build` | Static export → `design/.dist`; what ships comes from `design/publish.json` (default-closed) |
 | `npx marver serve` | Serve the export; `MARVER_ID_ISSUER` or `MARVER_PASSWORD` gates it, `MARVER_DATA_DIR` persists comments + accounts |
 | `npx marver share …` | The roster (owner): `add <who> [--role]` · `remove` · `block` / `unblock` · `general <mode>` · `list` · `requests` · `explain <who>` · `who` |
@@ -114,10 +116,13 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` (prints the canvas link) · `list` |
 | `npx marver link <scene/frame \| scene ...>` | The canvas link that lands on those frames - their board, selected and in view (needs `dev` running) |
 | `npx marver shot <frame ...> \| --scene <name> \| --all [--scale 1-4] [--json]` | Render frames headless and print the PNG paths (needs `dev` running); a scene is one browser, several frames at a time; 2x by default |
+| `npx marver perf [--loads \| --jam] [--json]` | What the canvas did lately: each edit's reloads; `--loads` each board load (time to settled, how many moves and why, the slowest frames, errors); `--jam` Jam's timings ([Performance](docs/performance.md)) |
 | `npx marver boards [--json]` | The sidebar as the files say it is: folders and sub-folders, boards in reading order with their title, type, status, `order` and description, the landing board; a board file that is not valid JSON says why, with line and column |
 | `npx marver boards new <name> [--folder f] [--type t]` | A board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board rendering `context/` |
 | `npx marver folders add <module ...>` | Add a typed folder: `start`, `features`, `surfaces`, `projects`, `feedback`, `context`, `decks`, `archive` |
 | `npx marver context init \| check \| index` | Set up `context/`; check it (exit 0 / 1 / 2; `--base`, `--body-file` for a pull request); regenerate the index's capability table |
+
+**Where the canvas runs.** Each canvas on your Mac takes one of twenty fixed ports, localhost:4805 to localhost:4824 - usually the same one each time - and prints its link; `npx marver ls` lists them all. `--port <n>`, or a `port` in `design/config.ts` (other than the old 5199), gives a canvas a port of its own instead. Because an address is reused by whichever canvas starts there next, a tab left open after its canvas stopped says so and keeps your unsaved edits until its own canvas is back, and a local canvas runs no service workers.
 
 ## Shortcuts
 

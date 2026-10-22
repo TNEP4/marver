@@ -108,8 +108,9 @@ without narrating into the void; your next message is the reveal.
 
 Deliver conversationally when the first draft is ready - a short guided
 message, not a manual. Start `npx marver dev` if it is not already running
-(allowed for this purpose) and ALWAYS hand a deep link to the board you
-prepared, using the port the dev server PRINTED:
+(allowed for this purpose; never with a port) and ALWAYS hand a deep link to
+the board you prepared, using the port the dev server PRINTED (already
+running? `npx marver ls` lists it):
 `http://localhost:<port>/#/b/<board>` - never the bare root URL. The link goes
 at the BOTTOM of the message, on its own line: the human reads through, then
 clicks. The human has already played with the hosted tour by now, so keep it

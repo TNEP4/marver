@@ -2,8 +2,9 @@
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
 Never drive or automate the canvas UI; read and write files only. (Starting
-`npx marver dev` so the human has a live canvas - first session, or on request -
-is the one allowed touch.)
+the canvas so the human has a live one - first session, or on request - is the one
+allowed touch: `npx marver dev`, never with a port. It takes a free slot,
+localhost:4805-4824, usually the same one next time, and prints its link.)
 
 ## Before the method: a project with no `context/`
 
@@ -126,8 +127,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   scene ...>` for any set. Each opens a board they sit on (one link per board when they sit
   on several) with them selected and in view -
   the human finds the work at once on a board of fifty frames. Never a full-screen focus link
-  (`#/f/...`) unless they ask for full screen. No `marver dev` running? End with
-  `npx marver dev` instead - the link carries its port.
+  (`#/f/...`) unless they ask for full screen. `npx marver ls` lists the canvases running on
+  this Mac and their links; none for this folder? End with `npx marver dev` instead - the link
+  carries its port.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame. A reply that asks them
@@ -224,6 +226,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   waiting on them (your notes and replies they have not resolved - the ones that ask first) and
   the frames new since they last looked. When it bears on the work, say so in your first message
   ("you have not looked at the checkout frames since I changed them").
+- **Performance.** `npx marver perf --loads --json` says what each board load did - time to
+  settled, how many moves and why, the slowest frames, errors. To make a board faster, name
+  the lever, change it, compare the next load.
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,
@@ -247,6 +252,8 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 - Do not import from "design/" inside src/ or app/. The arrow points one way.
 - Do not add network calls, app stores, or auth to frames. Mocked data only.
 - Keep each frame self-sufficient: it must render from its file + fixtures + ui imports alone.
+- Frames cannot register a service worker on the local canvas (it refuses the script): a PWA
+  prototype shows its screens, not its offline behaviour.
 - A scene may not be named "components" or "screens".
 
 ## Promotion (when a design is approved)

@@ -98,6 +98,19 @@ describe('init: Live Jam scaffolding', () => {
     }
     expect(read('AGENTS.md')).toContain('A plain reply in a Marver thread starts no job')
   })
+  it('0.27 (spec 28 A1.9): both AGENTS templates start the canvas without a port, find it with marver ls, and read perf --loads', () => {
+    init(root, OPTS)
+    const tpl = (rel: string) => readFileSync(join(__dirname, '..', 'templates', rel), 'utf8')
+    for (const rel of ['AGENTS-embedded.md', 'AGENTS-studio.md']) {
+      expect(tpl(rel), rel).toContain('`npx marver dev`, never with a port')
+      expect(tpl(rel), rel).toContain('localhost:4805-4824, usually the same one next time')
+      expect(tpl(rel), rel).toContain('`npx marver ls` lists the canvases running on')
+      expect(tpl(rel), rel).toContain('`npx marver perf --loads --json` says what each board load did')
+      expect(tpl(rel), rel).toMatch(/Frames cannot register a service worker on the local canvas/)
+      expect(tpl(rel), rel).not.toContain('5199')
+    }
+    expect(read('AGENTS.md')).toContain('npx marver perf --loads --json')
+  })
   it('creates a root CLAUDE.md that @-imports design/AGENTS.md (Claude reads CLAUDE.md)', () => {
     init(root, OPTS)
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toContain('@design/AGENTS.md')

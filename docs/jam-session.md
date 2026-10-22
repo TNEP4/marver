@@ -32,6 +32,9 @@ is kept as it stood - its words and notes so far, and a line saying the page clo
 back as a draft to read, resume or drop; it never goes to your agent on its own. (Best effort: a crash gives the page
 no chance to keep it.)
 
+A capture the page could not send waits in this browser, for this address, and sends itself the next time the canvas
+opens there - see [A capture left on an old address](#a-capture-left-on-an-old-address).
+
 A capture is about the frames you **touched** - selected, clicked, typed in, scrolled,
 resized, pictured, or zoomed to alone - not every frame that happened to be on screen. Those
 are the frames its run may edit, and the frames pictured before and after it.
@@ -178,7 +181,7 @@ The keys work inside frames too, in interactive mode and in play.
 
 How long each step takes on your machine - a capture sealing, its pictures, your words, naming, the queue, your agent,
 the pictures before and after - is in `npx marver perf --jam` (median, slowest, and what went wrong lately), read from
-`design/.local/perf/jam.jsonl`: numbers and fixed codes only, never your words.
+`design/.local/perf/jam.jsonl`: numbers and fixed codes only, never your words ([Performance](performance.md)).
 
 The capture itself sits in `design/.local/` (gitignored, never published): its full record
 and pictures under `design/.local/jam/`, the session transcript under
@@ -192,3 +195,46 @@ comment would. They never reach a published canvas: `marver build` and `marver c
 leave capture threads (and Marver's notes and replies) on your machine. The session
 **record** your agent writes goes to `context/sessions/`, also meant to be committed.
 Published canvases carry none of Jam: no captures, no queue, no microphone.
+
+## A capture left on an old address
+
+A capture the page could not send - the canvas was away, or the page closed before its send landed - waits in that
+browser's storage, under that page's address (`http://localhost:<port>`), and goes out the next time the canvas opens
+**at that address** with Live Jam on. When the canvas moves, the capture stays behind: 0.27 moved canvases to slots,
+and a later start lands on another slot when its own is taken. `marver dev` says so as it starts:
+
+```
+  last run was at http://localhost:4806/ (bound http://[::1]:4806) - a Jam capture left unsent there: npx marver dev --recover
+```
+
+`--recover` starts the canvas there again. Stop the canvas first if it runs (`Ctrl-C`): one canvas runs per folder, so
+a recovery started beside it stops with "a canvas already runs here". The list works either way:
+
+```bash
+npx marver dev --recover      # the addresses this canvas ran on, newest first
+npx marver dev --recover 2    # start on exactly that one
+```
+
+```
+  addresses this canvas ran on, newest first:
+     1  http://localhost:4807/  bound http://[::1]:4807  22 Oct 15:40 - 22 Oct 17:02
+     2  http://localhost:4806/  bound http://[::1]:4806  21 Oct 09:12 - 21 Oct 18:30
+     3  http://localhost:5329/  the address 0.26 gave it
+  start on one: npx marver dev --recover <n> - then open its link in the browser that made the capture
+```
+
+A recovery runs on exactly that entry's port, the address it bound, and the project key that run used - never another.
+Open the link it prints in the browser that made the capture; the captures waiting there send themselves. Then stop it
+(`Ctrl-C`) and start the canvas as usual. If the port or the address cannot be had - another canvas or another program
+holds it - it stops and says why; it never moves elsewhere. A recovery leaves the canvas's list of addresses as it was.
+
+**The list always holds the address 0.26 gave this folder** (or would have given it), last unless this canvas has run
+there since. It only matters coming from 0.26. The first 0.27 start names it too ("0.26 served it at
+http://localhost:5329/ - a Jam capture left unsent there"). If 0.26 had moved to another port when you made the capture
+(it said "port ... is in use - serving ... instead" as it started), name that port:
+`npx marver dev --recover --port <that port>`.
+
+**When it cannot come back** - an address that can no longer be had, or a browser profile that is gone - Marver cannot
+send the capture. It is still readable by hand: in the browser's developer tools, under Local storage for that address,
+the key `mv-jam-sealed:<project key>` holds it as JSON; copy what you said into a new capture's notes. A capture only
+waits like this when it could not reach its canvas before the page closed.

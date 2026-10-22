@@ -106,7 +106,9 @@ screen first; a frame off screen waits until you scroll to it, and one you are u
 drawing a laser, commenting) waits until you are done. A content frame keeps its height while it
 reloads, so the rows below stay still; if heights did change, the board moves once. The canvas page
 itself never reloads for a design edit. `npx marver perf` shows what each edit reloaded and how long
-it took (from `design/.local/perf/reloads.jsonl`).
+it took (from `design/.local/perf/reloads.jsonl`), and `npx marver perf --loads` what each board load
+did: how long until it settled, how many moves it took on the way, and why
+([Performance](performance.md)).
 
 ## In the files
 
