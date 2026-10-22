@@ -7,7 +7,8 @@
  * Dev only - off on a published canvas - and nothing at rest: no timer or frame of its own while no load is in flight
  * and nothing waits to be sent. The store tells it about loads and moves through its hooks (store.ts recorderHooks,
  * withCause); a frame's outcome counts only from the document its iframe shows now (`__mvBoot`, set by the frame
- * bridge). Kept free of the canvas's own modules: a locked bundle (no canvas) imports it through the stage.
+ * bridge). It reaches the canvas only through its dependency-free modules (ctl, admission, the frame registry), never
+ * Canvas.tsx or FrameNode.tsx: a locked bundle (no canvas) imports it through the stage.
  */
 import { ROUTE } from '../const.ts'
 import { CONFIG, PUBLISHED, geometryCause, knownHeight, recorderHooks, reflowIdle, settleRule, useStore, type LoadCause, type Manifest, type MeasureResult, type Node, type RequestCut } from './store.ts'
