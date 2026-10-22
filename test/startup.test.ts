@@ -15,12 +15,12 @@ import { portInUse } from '../src/server/exclusive.ts'
  * never ends the process itself; the CLI does, with a message.
  *
  * Each start runs in a child of its own (they hold process-wide hooks and get signals), on a registry of
- * its own and the slots moved to 49205-49224; the child preloads a recorder of the handles Marver's code
+ * its own and the slots moved to 48705-48724; the child preloads a recorder of the handles Marver's code
  * opens (fixtures/marver-handles.mjs) and is stepped through the `at` seam.
  */
 
 const repo = join(import.meta.dirname, '..')
-const BASE = '49204'
+const BASE = '48704'
 const STEPS = ['locked', 'claimed', 'env', 'configure', 'created', 'listening', 'published'] as const
 let root = ''
 const homes: string[] = []

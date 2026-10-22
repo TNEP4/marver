@@ -1,9 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
+import { dev } from '../src/server/dev.ts'
+import { marverHome, readRunning } from '../src/server/slots.ts'
 import { ROUTE } from '../src/cli/name.ts'
 import { legacyWorkspace, runIdentity, workspaceId } from '../src/server/workspace.ts'
 
@@ -73,4 +75,29 @@ describe('one workspace identity (A1.6)', () => {
     expect(await capture(real, { workspace: 'feedfacefeedface', record: {} }, { workspace: 'feedfacefeedface' })).toEqual({ status: 409, json: { error: 'jam is not running here' } })
     expect(await capture(real, { workspace: workspaceId(real), record: {} }, { workspace: 'feedfacefeedface' })).toEqual({ status: 409, json: { error: 'this capture was made in another workspace' } })
   })
+})
+
+describe('the same workspace everywhere (A1.6)', () => {
+  it('a canvas started through a symlink: the page, the slot file and the preference file all name the real path\'s key', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const repo = join(import.meta.dirname, '..')
+    const nm = join(real, 'node_modules')
+    mkdirSync(nm, { recursive: true })
+    for (const e of readdirSync(join(repo, 'node_modules'))) if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver') symlinkSync(join(repo, 'node_modules', e), join(nm, e))
+    writeFileSync(join(real, 'package.json'), JSON.stringify({ name: 'ws-fixture', private: true, type: 'module' }))
+    writeFileSync(join(real, 'design', 'config.ts'), 'export default { jam: false }\n')
+    const server = await dev(link)   // the suite's own registry and slots (test/global-setup.ts)
+    try {
+      const port = (server.httpServer!.address() as { port: number }).port
+      const id = workspaceId(real)
+      expect(await (await fetch(`http://localhost:${port}/@id/__x00__virtual:sh-config`)).text()).toContain(`"workspace":"${id}"`)
+      const mine = readRunning().find((r) => r.pid === process.pid && r.port === port)
+      expect(mine).toMatchObject({ ws: id, root: realpathSync(real), name: 'project', state: 'ready' })
+      expect(existsSync(join(marverHome(), 'prefer', `${id}.json`))).toBe(true)
+    } finally {
+      await server.close()
+      log.mockRestore()
+    }
+    expect(readRunning().filter((r) => r.pid === process.pid)).toEqual([])
+  }, 120_000)
 })

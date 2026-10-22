@@ -62,6 +62,7 @@ for (const [name, desc] of [
     .command(name, desc)
     .option('--root <dir>', 'Host repo root', { default: '.' })
     .option('--port <port>', 'A port of its own (default: a free slot, localhost:4805-4824 - usually the same one next time; a port in that range takes exactly that slot)')
+    .option('--recover [n]', 'Run on an address this canvas had before, where an unsent Jam capture waits: alone it lists them; with a number it starts on that one; --recover --port <p>: the port 0.26 used')
     .action(async (opts) => {
       const { dev, DevStartError, DevLockError } = await import('../server/dev.ts')
       let port: number | undefined
@@ -71,7 +72,10 @@ for (const [name, desc] of [
         else console.warn(`[${NAME}] ignoring invalid --port "${opts.port}"`)
       }
       // a start that fails has already given back everything it held (spec 28 A1.1); the process ends here
-      try { await dev(resolve(opts.root), { port }) } catch (err) {
+      try {
+        if (opts.recover !== undefined && opts.recover !== false) await (await import('./recover.ts')).recoverCommand(resolve(opts.root), opts.recover, port)
+        else await dev(resolve(opts.root), { port })
+      } catch (err) {
         if (!(err instanceof DevStartError)) throw err
         console.error(`\n  ${err.message}\n`)
         // an unforeseen failure keeps its stack; the named ones (a held lock, all slots taken, a port just taken) say enough
