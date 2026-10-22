@@ -146,6 +146,81 @@ describe('a link that lands on the work', () => {
     expect(await browser.eval(s, VIEW)).toMatchObject({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'] })
   }, 30_000)
 
+  /** Hold this tab's reads of `board` (GET /api/boards/<board>), each released on its own, newest or oldest first. */
+  async function holdBoard(b: Browser, s: string, board: string) {
+    const waiting: string[] = []
+    const off = b.on((m) => {
+      if (m.method !== 'Fetch.requestPaused' || m.sessionId !== s) return
+      if (new URL(m.params.request.url).pathname.endsWith(`/api/boards/${board}`)) waiting.push(m.params.requestId)
+      else void b.send('Fetch.continueRequest', { requestId: m.params.requestId }, s).catch(() => {})
+    })
+    await b.send('Fetch.enable', { patterns: [{ urlPattern: `*/api/boards/${board}*`, requestStage: 'Request' }] }, s)
+    const free = (id: string | undefined) => id ? b.send('Fetch.continueRequest', { requestId: id }, s) : Promise.reject(new Error('no read held'))
+    return {
+      held: () => waiting.length,
+      newest: () => free(waiting.pop()),
+      oldest: () => free(waiting.shift()),
+      stop: async () => { off(); for (const id of waiting.splice(0)) await free(id).catch(() => {}); await b.send('Fetch.disable', {}, s) },
+    }
+  }
+  /** Post a goto from inside a frame, as its data-goto link does. */
+  const gotoFrom = (node: string, target: string) => `document.querySelector('[data-node="${node}"] iframe').contentWindow.eval(${JSON.stringify(`parent.postMessage({ type: 'sh:go', target: ${JSON.stringify(target)} }, '*')`)}), 1`
+
+  it('a newer link to the same board wins over an older one whose board read comes back last', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/big', 1)
+    const held = await holdBoard(browser, s, 'flow')
+    try {
+      await browser.eval(s, `(location.hash = '#/b/flow?f=shop/cart'), 1`)
+      for (let i = 0; i < 100 && held.held() < 1; i++) await wait(50)
+      expect(held.held()).toBe(1)
+      await browser.eval(s, `(location.hash = '#/b/flow?f=shop/pay'), 1`)
+      for (let i = 0; i < 100 && held.held() < 2; i++) await wait(50)
+      expect(held.held()).toBe(2)
+      // the newer link's board arrives first: flow, its frame selected
+      await held.newest()
+      await browser.until(s, `(() => { const st = window.__mvStore.getState(); return st.board === 'flow' && st.selection.join() === 'f-pay' })()`, 20_000)
+      // then the older one's: its switch was cancelled - and it must not select, or move the camera, after the newer
+      await held.oldest()
+      await wait(1500)
+      const v = await browser.until(s, `(() => { const v = ${VIEW}; return v.visible.length === 1 && v })()`, 10_000)
+      expect(v).toEqual({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'], visible: ['f-pay'] })
+    } finally { await held.stop() }
+  }, 60_000)
+
+  it('a goto wins over a link whose board read comes back after it', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/big', 1)
+    const held = await holdBoard(browser, s, 'flow')
+    try {
+      await browser.eval(s, `(location.hash = '#/b/flow?f=shop/cart'), 1`)
+      for (let i = 0; i < 100 && held.held() < 1; i++) await wait(50)
+      expect(held.held()).toBe(1)
+      // a data-goto in the frame on screen follows shop/pay to its board, flow - the same board the link is reading
+      await browser.eval(s, gotoFrom('b-far', 'shop/pay'))
+      for (let i = 0; i < 100 && held.held() < 2; i++) await wait(50)
+      expect(held.held()).toBe(2)
+      await held.newest()
+      await browser.until(s, `(() => { const st = window.__mvStore.getState(); return st.board === 'flow' && st.selection.join() === 'f-pay' })()`, 20_000)
+      await held.oldest()
+      await wait(1500)
+      const v = await browser.until(s, `(() => { const v = ${VIEW}; return v.visible.length === 1 && v })()`, 10_000)
+      expect(v).toEqual({ hash: '#/b/flow?n=f-pay', sel: ['f-pay'], visible: ['f-pay'] })
+    } finally { await held.stop() }
+  }, 60_000)
+
+  it('a goto right after a link on the board shown keeps the camera: the link\'s fit, still due, gives way', async () => {
+    if (!browser) return
+    const s = await open(browser, '#/b/flow')
+    await wait(1000)
+    // one event (the router's own hashchange) selects shop/cart and fits it in 60 ms; a goto from the frame on screen,
+    // a moment later, selects shop/pay and fits it in 50 - first
+    await browser.eval(s, `(() => { history.replaceState(null, '', '#/b/flow?f=shop/cart'); window.dispatchEvent(new HashChangeEvent('hashchange')); return ${gotoFrom('f-cart', 'shop/pay')} })()`)
+    await wait(1500)
+    const v = await browser.until(s, `(() => { const v = ${VIEW}; return v.visible.length === 1 && v })()`, 10_000)
+    expect(v).toMatchObject({ sel: ['f-pay'], visible: ['f-pay'] })
+  }, 30_000)
+
   it('a link followed while a Doc above its frame is still growing lands on the frame - the rows move after the camera does', async () => {
     if (!browser) return
     const s = await open(browser, '#/b/stack')

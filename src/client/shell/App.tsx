@@ -494,6 +494,9 @@ export function App() {
         if (routing === mine) routing = null
         s = useStore.getState()
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
+        // a newer navigation came while this one's board was read - a link, a goto, a board picked - and may have landed
+        // on this same board first: the board is the newer one's, and so are the selection, the mode and the camera
+        if (!isLatest(nav)) return
       }
       // the thread an old link names (Comments.tsx opens every other link's): now, or once the new board's comments load
       if (legacy && h.c) { if (s.board !== at) parkThread(h.c); else revealThread(h.c) }
@@ -511,7 +514,7 @@ export function App() {
         useStore.setState({ selection: keys })
         s.look(keys)   // a link opened is a look
         if (!keys.length && h.f?.length) void revealFrame(h.f[0])   // not on this board - where it lives
-        else setTimeout(() => (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()), 60)
+        else setTimeout(() => { if (isLatest(nav)) (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()) }, 60)   // unless a newer navigation has the camera
       }
     }
     // hashchange too: pasting a link into the same tab or editing the URL bar changes

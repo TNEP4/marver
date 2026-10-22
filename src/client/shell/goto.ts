@@ -13,10 +13,10 @@ export function goTo(target: string, carry = false): void {
   const s = useStore.getState()
   const existing = s.nodes.find((n) => n.frame === target && !n.missing)
   if (existing) {
-    navigated()                                // a local goto supersedes any cross-board one in flight
+    const seq = navigated()                    // a local goto supersedes any cross-board one in flight
     s.select(existing.key)
     if (carry) s.setInteract(existing.key)
-    setTimeout(() => canvasCtl.fitNode(existing.key), 50)
+    fitLater(existing.key, seq)
   } else void gotoAcrossBoards(target, carry)
 }
 
@@ -50,7 +50,7 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
     if (!node) return st.toast(`unknown goto target "${target}"`)
     st.select(node.key)
     if (carry) st.setInteract(node.key)
-    setTimeout(() => canvasCtl.fitNode(node.key), 50)
+    fitLater(node.key, seq)
     return
   }
   await landOn(home, target, carry, seq, from)
@@ -67,6 +67,8 @@ export function navigated(): number {
 }
 /** Is this still the latest navigation - nothing newer since `navigated()` handed it out? */
 export const isLatest = (seq: number): boolean => seq === gotoSeq
+/** The camera to a node once it is drawn - unless a newer navigation has it by then. */
+const fitLater = (key: string, seq: number) => setTimeout(() => { if (isLatest(seq)) canvasCtl.fitNode(key) }, 50)
 
 /** Switch to `home` and select + fit `target` there once the board commits - unless the human has
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
@@ -81,7 +83,7 @@ async function landOn(home: string, target: string, carry: boolean, seq: number,
       if (node) {
         st.select(node.key)
         if (carry) st.setInteract(node.key)
-        setTimeout(() => canvasCtl.fitNode(node.key), 50)
+        fitLater(node.key, seq)
         return
       }
     }
@@ -97,9 +99,9 @@ export async function revealFrame(target: string): Promise<void> {
   const s = useStore.getState()
   const here = s.nodes.find((n) => n.frame === target && !n.missing)
   if (here) {
-    navigated()
+    const seq = navigated()
     s.select(here.key)
-    setTimeout(() => canvasCtl.fitNode(here.key), 50)
+    fitLater(here.key, seq)
     return
   }
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
