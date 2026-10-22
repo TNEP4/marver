@@ -59,15 +59,20 @@ function fixture(now = Date.now()) {
     rec(P2, D, 'commit', 10 * min - 200, { request: D, ms: 200, frames: 1, byKind: { hifi: 1, content: 0, html: 0 }, measuring: 0, savedHeights: 0 }),
     rec(P2, D, 'settled', 10 * min - 1500, { ms: 1500, moves: 0, distance: 0, causes: {}, allReadyMs: 600, visibleReadyMs: 600, missing: 0, neverReady: 0, errors: 0 }),
   )
-  // a retried send whose first attempt landed: the same records again
-  records.push(...records.slice(-3).map((r) => ({ ...r })))
+  // a retried send whose first attempt landed: its records again - moves (two of them late), a frame, errors, the
+  // gesture before any board, a load's end
+  const again = (r: Record<string, any>) => (r.load === A && ['move', 'error'].includes(r.kind)) || (r.load === B && r.kind === 'frame') || r.kind === 'gesture' || (r.load === D && r.kind === 'settled')
+  records.push(...records.filter(again).map((r) => ({ ...r })))
+  // another page's record with the same seq is its own: it counts
+  const twin = records.find((r) => r.load === A && r.kind === 'move' && !('late' in r))!
+  records.push({ ...twin, page: P2, load: D })
   // two hours old: outside the default window
   const old = { v: 1, ws: WS, page: 'eeeeeeeeeee1', load: 'e00000000001', seq: 0, ts: now - 120 * min, kind: 'load', board: 'old', cause: 'boot', request: 'e00000000001' }
   return [old, ...records]
 }
 
 describe('board loads (marver perf --loads)', () => {
-  it('groups by workspace, page and load, in time order; a retried send counts once', () => {
+  it('groups by workspace, page and load, in time order', () => {
     const loads = loadsSummary(fixture())
     expect(loads.map((l) => [l.board, l.cause, l.state])).toEqual([
       ['old', 'boot', 'open'], ['start-here', 'boot', 'settled'], ['docs', 'switch', 'cut'], ['notes', 'switch', 'cut'], ['~unplaced', 'boot', 'settled'],
@@ -97,6 +102,18 @@ describe('board loads (marver perf --loads)', () => {
 
   it('what came before any board committed is apart', () => {
     expect(unownedOf(fixture())).toEqual({ errors: [], gestures: 1 })
+  })
+
+  it('a retried send counts once (same ws, page and seq); the same seq on another page is that page\'s own', () => {
+    const records = fixture()
+    expect(records.filter((r) => r.kind === 'move' && r.page === P1 && r.load === A)).toHaveLength(10)   // five, each twice
+    const loads = loadsSummary(records)
+    const a = loads.find((l) => l.load === A)!, b = loads.find((l) => l.load === B)!, d = loads.find((l) => l.load === D)!
+    expect(a.moves).toMatchObject({ count: 3, distance: 1000, late: { count: 2 } })
+    expect(b.unfinished).toBe(1)
+    expect(unownedOf(records).gestures).toBe(1)
+    expect(d.moves).toMatchObject({ count: 1, distance: 300 })
+    expect(d.settledMs).toBe(1500)
   })
 })
 
