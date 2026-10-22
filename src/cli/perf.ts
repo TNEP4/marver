@@ -75,6 +75,9 @@ export interface LoadSummary {
   commitMs?: number; frames?: number; byKind?: Record<string, number>; measuring?: number; savedHeights?: number
   visible?: number; visibleAssumed?: true; visibleMs?: number
   visibleReadyMs?: number; allReadyMs?: number; quietMs?: number; settledMs?: number
+  /** when the board last moved before the load ended (settled or cut); none while nothing moved. `quietMs` is the
+   *  first second it held still after the commit - moves can come after it */
+  lastMoveMs?: number
   /** the move records (a drag or a resize merged per node while unsent), their distance in px, the top causes;
    *  `late` = after settled */
   moves: { count: number; distance: number; causes: Ranked; late: { count: number; causes: Ranked } }
@@ -148,6 +151,7 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       ...(visible ? { visible: visible.nodes, visibleMs: visible.ms, ...(visible.assumed ? { visibleAssumed: true as const } : {}) } : {}),
       ...(settled ? { visibleReadyMs: settled.visibleReadyMs, allReadyMs: settled.allReadyMs, settledMs: settled.ms, weight: settled.weight } : {}),
       ...(quiet ? { quietMs: quiet.ms } : {}),
+      ...(typeof (settled ?? cut)?.lastMove === 'number' ? { lastMoveMs: (settled ?? cut)!.lastMove } : {}),
       moves: { count: moves.count, distance: Math.round(moves.distance), causes: ranked(moves.causes), late: { count: late.count, causes: ranked(late.causes) } },
       slowest, errors, errorsNotRecorded: notRecorded(g),
       neverReady: frames.filter((f) => f.outcome === 'never-ready').map(name),
@@ -212,6 +216,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
       ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),
       ...(l.allReadyMs !== undefined ? [`all ready ${secs(l.allReadyMs)}`] : []),
       ...(l.quietMs !== undefined ? [`quiet ${secs(l.quietMs)}`] : []),
+      ...(l.lastMoveMs !== undefined ? [`last move ${secs(l.lastMoveMs)}`] : []),
       ...(l.settledMs !== undefined ? [`settled ${secs(l.settledMs)}`] : []),
     ]
     if (times.length) console.log(`    ${times.join(' · ')}`)

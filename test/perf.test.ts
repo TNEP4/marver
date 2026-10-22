@@ -40,7 +40,7 @@ function fixture(now = Date.now()) {
     rec(P1, A, 'error', 30 * min - 1100, { source: 'frame', frame: 'kit/f4', message: 'Cannot read properties of undefined' }),
     rec(P1, A, 'error', 30 * min - 1200, { source: 'frame', frame: 'kit/f4', message: 'Cannot read properties of undefined' }),
     rec(P1, A, 'quiet', 30 * min - 2300, { ms: 1300 }),
-    rec(P1, A, 'settled', 30 * min - 3200, { ms: 3200, moves: 3, distance: 1000, causes: { 'measure-height': 1, 'reflow:measured': 2 }, visibleReadyMs: 900, allReadyMs: 1900, missing: 1, neverReady: 1, errors: 0, weight: { domNodes: 3000, iframes: 6, awake: 2, asleep: 4 } }),
+    rec(P1, A, 'settled', 30 * min - 3200, { ms: 3200, moves: 3, distance: 1000, causes: { 'measure-height': 1, 'reflow:measured': 2 }, lastMove: 1300, visibleReadyMs: 900, allReadyMs: 1900, missing: 1, neverReady: 1, errors: 0, weight: { domNodes: 3000, iframes: 6, awake: 2, asleep: 4 } }),
     rec(P1, A, 'move', 29 * min, { node: 'k-2', dx: 40, dy: 0, dw: 0, dh: 0, cause: 'drag', late: true }),
     rec(P1, A, 'move', 29 * min, { node: 'k-3', dx: 0, dy: 0, dw: 0, dh: 20, cause: 'measure-height', late: true }),
     // load B: a switch requested, committed, then cut by another switch (its request C never commits)
@@ -53,7 +53,7 @@ function fixture(now = Date.now()) {
     rec(P1, C, 'load', 20 * min - 1000, { board: 'notes', cause: 'switch', request: C }),
     rec(P1, C, 'cut', 20 * min - 1100, { reason: 'superseded', request: C, ms: 100 }),
     rec(P1, B, 'frame', 20 * min - 1400, { node: 'k-b1', frame: 'docs/x', ready: 800, outcome: 'cut' }),
-    rec(P1, B, 'cut', 20 * min - 1400, { reason: 'switch', ms: 1400 }),
+    rec(P1, B, 'cut', 20 * min - 1400, { reason: 'switch', ms: 1400, lastMove: 700 }),
     // the Not on a board view on another page of the same canvas: both are `boot`, and never mix
     rec(P2, D, 'load', 10 * min, { board: '~unplaced', cause: 'boot', request: D }),
     rec(P2, D, 'commit', 10 * min - 200, { request: D, ms: 200, frames: 1, byKind: { hifi: 1, content: 0, html: 0 }, measuring: 0, savedHeights: 0 }),
@@ -89,7 +89,7 @@ describe('board loads (marver perf --loads)', () => {
 
   it('a settled load: its times, moves (late ones apart), the slowest frames, errors once, what never came', () => {
     const a = loadsSummary(fixture()).find((l) => l.load === A)!
-    expect(a).toMatchObject({ committed: true, commitMs: 400, frames: 7, measuring: 3, savedHeights: 2, visible: 4, visibleReadyMs: 900, allReadyMs: 1900, quietMs: 1300, settledMs: 3200 })
+    expect(a).toMatchObject({ committed: true, commitMs: 400, frames: 7, measuring: 3, savedHeights: 2, visible: 4, visibleReadyMs: 900, allReadyMs: 1900, quietMs: 1300, lastMoveMs: 1300, settledMs: 3200 })
     expect(a.moves).toEqual({ count: 3, distance: 1000, causes: [['reflow:measured', 2], ['measure-height', 1]], late: { count: 2, causes: [['drag', 1], ['measure-height', 1]] } })
     expect(a.slowest.map((f) => [f.frame, f.ms])).toEqual([['kit/f2', 1900], ['docs/a', 1600], ['docs/b', 1200], ['docs/c', 1100], ['kit/f1', 500]])
     expect(a.errors).toEqual([
@@ -104,9 +104,10 @@ describe('board loads (marver perf --loads)', () => {
   it('a load cut by a switch, and a request that never committed', () => {
     const loads = loadsSummary(fixture())
     const b = loads.find((l) => l.load === B)!, c = loads.find((l) => l.load === C)!
-    expect(b).toMatchObject({ state: 'cut', cut: { reason: 'switch', ms: 1400 }, committed: true, unfinished: 1 })
+    expect(b).toMatchObject({ state: 'cut', cut: { reason: 'switch', ms: 1400 }, committed: true, unfinished: 1, lastMoveMs: 700 })
     expect(b.moves.count).toBe(1)
     expect(c).toMatchObject({ state: 'cut', cut: { reason: 'superseded', request: true }, committed: false })
+    expect(c.lastMoveMs).toBeUndefined()
   })
 
   it('what came before any board committed is apart', () => {
@@ -145,6 +146,7 @@ describe('marver perf, printed', () => {
     const j = JSON.parse(out.join('\n'))
     expect(j.minutes).toBe(60)
     expect(j.loads.map((l: any) => l.board)).toEqual(['start-here', 'docs', 'notes', '~unplaced'])
+    expect(j.loads.map((l: any) => l.lastMoveMs)).toEqual([1300, 700, undefined, undefined])
     expect(j.unowned.gestures).toBe(1)
     expect(j.dropped).toBe(5)
     out = []
@@ -157,7 +159,8 @@ describe('marver perf, printed', () => {
     const text = out.join('\n')
     expect(text).toMatch(/Start Here \(boot\)\s+settled 3\.2 s/)
     expect(text).toContain('committed 0.4 s · 7 frames (3 hi-fi, 3 content, 1 html) · 3 measure, 2 opened at a known height')
-    expect(text).toContain('visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · settled 3.2 s')
+    expect(text).toContain('visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · last move 1.3 s · settled 3.2 s')
+    expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n\s+last move 0\.7 s\n/)
     expect(text).toContain('3 moves, 1000 px: reflow:measured 2, measure-height 1 · late: 2 (drag 1, measure-height 1)')
     expect(text).toContain('slowest: kit/f2 1.9 s, docs/a 1.6 s, docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s')
     expect(text).toContain('never ready: kit/f3 · missing: kit/old')

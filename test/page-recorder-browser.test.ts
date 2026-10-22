@@ -233,6 +233,10 @@ describe('the page recorder: board loads', () => {
     expect(moves.some((m) => m.node === 'k-b' && m.cause === 'reflow:measured' && m.seq > tall!.seq), JSON.stringify(moves)).toBe(true)
     expect(moves.filter((m) => m.cause !== 'unknown').length / moves.length).toBeGreaterThanOrEqual(0.9)
     expect(l.of('settled')[0].causes['reflow:measured']).toBeGreaterThan(0)
+    // the last move, from the page: no sooner than quiet's (the first second it held still), a second before settled
+    const { lastMove, ms } = l.of('settled')[0]
+    expect(lastMove).toBeGreaterThanOrEqual(l.of('quiet')[0].ms)
+    expect(lastMove).toBeLessThanOrEqual(ms - 1000)
     for (const k of ['k-a', 'k-b']) expect(l.frame(k)).toMatchObject({ outcome: 'settled', frame: k === 'k-a' ? 'docs/a' : 'docs/b' })
     expect(l.of('visible')[0].nodes).toBeGreaterThan(0)
   }, 90_000)
@@ -246,6 +250,7 @@ describe('the page recorder: board loads', () => {
     expect(l.of('move'), JSON.stringify(l.of('move'))).toEqual([])
     expect(l.of('quiet')).toHaveLength(1)
     expect(l.of('settled')[0]).toMatchObject({ moves: 0, missing: 0, neverReady: 0, errors: 0 })
+    expect(l.of('settled')[0].lastMove).toBeUndefined()   // nothing moved: no last move (the commit is none)
     expect(l.of('commit')[0]).toMatchObject({ measuring: 1, savedHeights: 1 })
     expect(l.frame('k-sb')!.outcome).toBe('settled')
     expect(l.frame('k-sh')!.outcome).toBe('ready')
@@ -327,7 +332,7 @@ describe('the page recorder: board loads', () => {
     await held.release('*/api/boards/switch-b*')
     const b = await ended(page, 'switch-b')
     const a = lines().filter((r) => r.page === page && r.load === A)
-    expect(a.find((r) => r.kind === 'cut'), JSON.stringify(a)).toMatchObject({ reason: 'switch' })
+    expect(a.find((r) => r.kind === 'cut'), JSON.stringify(a)).toMatchObject({ reason: 'switch', lastMove: expect.any(Number) })
     expect(a.find((r) => r.kind === 'move' && r.node === 'k-sa' && r.cause === 'drag')).toMatchObject({ dx: 500, dy: 500 })
     expect(a.filter((r) => r.kind === 'frame' && r.node === 'k-sa').at(-1)).toMatchObject({ outcome: 'cut' })
     expect(b.load.request).not.toBe(A)

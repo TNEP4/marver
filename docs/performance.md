@@ -30,11 +30,14 @@ read again because its file changed on disk (`disk-reload`) - the page follows i
    measure their own height, and how many of those open at a height already known.
 3. **Visible.** The frames the first camera fit shows - the ones you see first.
 4. **Each frame's outcome** - [below](#frames).
-5. **Quiet.** When the board last moved, written once a second has passed with nothing moving.
+5. **Quiet.** The first second after it mounts with nothing moving, written as that second ends: it says
+   when the move before it came (the mount itself, when nothing had moved yet). It is not when the board
+   stopped moving - a frame that reports its height later moves it again. That is the **last move**, on
+   the record that ends the load, settled or cut.
 6. **Settled.** Every frame at its outcome, no re-flow pending or held, no frame booting or waiting its
    turn to, the camera still, and a second with no move - so a load never settles in under a second. It says
-   how many moves and why, when the visible frames and all the frames were ready, and how heavy the board
-   is: elements, frames awake and asleep, the heap (in Chrome).
+   how many moves and why, when the last one came, when the visible frames and all the frames were ready,
+   and how heavy the board is: elements, frames awake and asleep, the heap (in Chrome).
 
 Or **cut**: another board (`switch`), the same board loaded again (`reload`), the page hidden (`hidden`),
 or 120 s without settling (`timeout`). A request that never mounted is cut too: a newer load
@@ -52,7 +55,7 @@ board loads, last 60 min - design/.local/perf/page.jsonl
 
   3:41:36 PM  Checkout (boot)                          settled 2.1 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 0 opened at a known height
-    visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 1.1 s · settled 2.1 s
+    visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 1.1 s · last move 1.1 s · settled 2.1 s
     5 moves, 1650 px: measure-height 3, reflow:measured 2
     slowest: checkout/risks 0.7 s, checkout/flows 0.6 s, checkout/brief 0.6 s
 
@@ -64,8 +67,13 @@ board loads, last 60 min - design/.local/perf/page.jsonl
 ```
 
 The first load opened each frame at a guess: each reported its height (`measure-height`) and the frames
-below moved with the re-flow (`reflow:measured`) - five moves, settled at 2.1 s. The second opened at
-the known heights: nothing moved, and it settled at 1.0 s, the one-second floor.
+below moved with the re-flow (`reflow:measured`) - five moves, the last at 1.1 s, settled at 2.1 s. The
+second opened at the known heights: nothing moved (so no last move), and it settled at 1.0 s, the
+one-second floor.
+
+`quiet` and `last move` agree here. On a heavy board they part: one that held still for its first second
+and then moved again as late frames reported their heights says `quiet 1.8 s · last move 15.0 s`. `quiet`
+is the first still second; `last move` is when it stopped moving.
 
 A load can also say `never ready: ...`, `missing: ...`, how many frames were not done when it was cut, its
 errors (`late error` for one after it settled), how many errors past the first 50 went unrecorded, and its
@@ -160,9 +168,9 @@ owns the board then; `-` before the first), `seq` (its place in the page's order
 | `visible` | the first camera fit after it | `nodes`, `ms`; `assumed` when no fit came before the load ended (the frames the camera showed then) |
 | `frame` | a frame reaches its outcome, or the load ends | `node`, `frame`, `gen` (the URL revision), `boot` (the document's id), `admitted` (its turn to boot), `ready`, `firstMeasure`, `settled`, `outcome`, `kept` |
 | `move` | a frame's place or size changes | `node`, `dx`, `dy`, `dw`, `dh` (px), `cause`, `late` |
-| `quiet` | a second after the last move | `ms`: when the board last moved |
-| `settled` | the load settled | `ms`, `moves`, `distance` (px), `causes`, `visibleReadyMs`, `allReadyMs`, `missing`, `neverReady`, `errors`, `weight` (`domNodes`, `iframes`, `awake`, `asleep`, `heapMB`) |
-| `cut` | a load, or a request, ended early | `reason`, `ms`; `request` for one that never mounted |
+| `quiet` | the first second after the commit with no move | `ms`: when the move before that second came (the commit, when none had) |
+| `settled` | the load settled | `ms`, `moves`, `distance` (px), `causes`, `lastMove` (when the last move came; absent when nothing moved), `visibleReadyMs`, `allReadyMs`, `missing`, `neverReady`, `errors`, `weight` (`domNodes`, `iframes`, `awake`, `asleep`, `heapMB`) |
+| `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); `request` for one that never mounted |
 | `gesture` | a pan, zoom or layout animation ends | `type` (`pan` / `zoom` / `layout`), `ms`, `frames`, `p50`, `p95`, `max`, `over17ms`, `over33ms`, `longFrames` |
 | `error` | an error the page sees | `source` (`shell` / `frame` / `stage`), `frame`, `component`, `message`, `stack`, `late` |
 | `dropped` | records were lost | `n`; `reason: "errors"` for errors past a load's 50 - with no reason, a full queue or a failed send |
@@ -178,7 +186,8 @@ got there:
 
 - `cut`: `reason`, `ms`, and `request: true` when it never mounted;
 - the commit: `commitMs`, `frames`, `byKind`, `measuring`, `savedHeights`;
-- `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs`, `quietMs`, `settledMs`;
+- `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs`, `quietMs`, `lastMoveMs` (settled or cut),
+  `settledMs`;
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
   causes);
 - `slowest`: the five slowest frames (`node`, `frame`, `ms` - when it settled, or was ready - and

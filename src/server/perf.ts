@@ -4,8 +4,8 @@
  *  - reloads.jsonl, the reload log (spec 26 Part 1): the server's view (an edit and the frames it reached, a full
  *    reload sent or dropped) and the page's (each document that actually booted, and how long it took);
  *  - page.jsonl, the recorder's page half (spec 28 A1.7): what each board load did, from the page - its request and
- *    commit, each frame's outcome, every move and why, quiet and settled - plus gestures and errors. Each record is
- *    rebuilt from its kind's allowlist; `npx marver perf --loads` reads them back.
+ *    commit, each frame's outcome, every move and why, quiet, the last move and settled - plus gestures and
+ *    errors. Each record is rebuilt from its kind's allowlist; `npx marver perf --loads` reads them back.
  */
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -108,13 +108,13 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
     if (ms(r.ms) === undefined) return null
     const w = obj(r.weight)
     return {
-      ms: ms(r.ms), moves: count(r.moves), distance: count(r.distance),
+      ms: ms(r.ms), moves: count(r.moves), distance: count(r.distance), lastMove: ms(r.lastMove),
       causes: Object.fromEntries(Object.entries(obj(r.causes)).slice(0, 32).flatMap(([k, n]) => (cause(k) && count(n) !== undefined ? [[k, n]] : []))),
       visibleReadyMs: ms(r.visibleReadyMs), allReadyMs: ms(r.allReadyMs), missing: count(r.missing), neverReady: count(r.neverReady), errors: count(r.errors),
       weight: prune({ domNodes: count(w.domNodes), iframes: count(w.iframes), awake: count(w.awake), asleep: count(w.asleep), heapMB: tenth(w.heapMB) }),
     }
   },
-  cut: (r) => { const reason = oneOf(r.reason, CUT_REASONS); return reason ? { reason, request: id(r.request), ms: ms(r.ms) } : null },
+  cut: (r) => { const reason = oneOf(r.reason, CUT_REASONS); return reason ? { reason, request: id(r.request), ms: ms(r.ms), lastMove: ms(r.lastMove) } : null },
   gesture: (r) => {
     const type = oneOf(r.type, GESTURES)
     return type ? { type, ms: ms(r.ms), frames: count(r.frames), p50: tenth(r.p50), p95: tenth(r.p95), max: tenth(r.max), over17ms: count(r.over17ms), over33ms: count(r.over33ms), longFrames: count(r.longFrames) } : null

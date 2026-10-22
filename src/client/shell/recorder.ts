@@ -29,6 +29,8 @@ interface Load {
   committedAt?: number
   /** the last move of this load (the commit counts as one): quiet is a second after it */
   lastMoveAt: number
+  /** the last move itself, never the commit - none while nothing moved: the settled or cut record's `lastMove` */
+  movedAt?: number
   quietSent: boolean
   /** the visible cohort: the nodes the first camera placement after the commit showed */
   cohort?: Set<string>
@@ -238,7 +240,7 @@ function move(L: Load, key: string, dx: number, dy: number, dw: number, dh: numb
     L.moves++
     L.distance += Math.hypot(dx, dy) + Math.abs(dw) + Math.abs(dh)
     L.causes[cause] = (L.causes[cause] ?? 0) + 1
-    L.lastMoveAt = performance.now()
+    L.lastMoveAt = L.movedAt = performance.now()
     clearTimeout(L.quietTimer)
     L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
   }
@@ -328,7 +330,7 @@ function settle(L: Load, s: State, outs: Outcome[]): void {
   }
   if (!L.quietSent) { L.quietSent = true; rec('quiet', L.id, { ms: Math.round(L.lastMoveAt - L.t0) }) }
   rec('settled', L.id, {
-    ms: Math.round(performance.now() - L.t0), moves: L.moves, distance: Math.round(L.distance), causes: L.causes,
+    ms: Math.round(performance.now() - L.t0), moves: L.moves, distance: Math.round(L.distance), causes: L.causes, lastMove: rel(L, L.movedAt),
     visibleReadyMs: lastReady(s.nodes.filter((n) => L.cohort?.has(n.key))), allReadyMs: lastReady(s.nodes),
     missing: outs.filter((o) => o === 'missing').length, neverReady: outs.filter((o) => o === 'never-ready').length, errors: outs.filter((o) => o === 'error').length,
     weight: weight(),
@@ -347,7 +349,7 @@ function cut(L: Load, reason: 'switch' | 'reload' | 'hidden' | 'timeout'): void 
     if (!o) frameRecord(L, n, 'cut')
     else if (L.reported.get(n.key) !== said(n, o)) frameRecord(L, n, o)
   }
-  rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0) })
+  rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt) })
   finish(L, 'cut')
 }
 
