@@ -4,8 +4,10 @@
  * route middleware, and glob-from-node_modules - on the tarball, not the working tree -
  * and the slots: a canvas started without a port takes one, `marver ls` lists it, and a
  * stop gives it back. The canvases run on a registry of their own (MARVER_HOME), never
- * this Mac's ~/.marver; MARVER_SLOT_BASE, when set, moves the slot range as it does for
- * the tests.
+ * this Mac's ~/.marver - and so on slot ports of their own too (MARVER_SLOT_BASE,
+ * 48805-48824 unless set): a registry that cannot see the owner's canvases must not hold a
+ * real slot port one of them may start on meanwhile, pushing it to another slot (another
+ * origin, its unsent captures stranded). The real range is the default slots.test checks.
  * Usage: node scripts/smoke.mjs   (from the package root)
  */
 import { execSync, spawn } from 'node:child_process'
@@ -17,7 +19,8 @@ const tmp = join(pkgRoot, 'tmp-smoke')
 const app = join(tmp, 'app')
 const PORT = 5533
 const home = join(tmp, 'home')
-const env = { ...process.env, MARVER_HOME: home, BROWSER: 'none' }
+const base = Number(process.env.MARVER_SLOT_BASE) || 48804
+const env = { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: String(base), BROWSER: 'none' }
 let server = null
 const fail = (msg) => { console.error(`SMOKE FAIL: ${msg}`); cleanup(); process.exit(1) }
 const ok = (msg) => console.log(`  ✓ ${msg}`)
@@ -105,7 +108,6 @@ ok('live add reached manifest < 3s')
 const stopped = new Promise((r) => server.once('exit', r))
 cleanup()
 await stopped
-const base = Number(process.env.MARVER_SLOT_BASE) || 4804
 server = spawn('npx', ['marver', 'dev'], { cwd: app, stdio: 'pipe', env })
 let out = ''
 server.stdout.on('data', (d) => { out += d })

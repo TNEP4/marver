@@ -70,8 +70,12 @@ const cfgPath = join(root, 'design', 'config.ts')
 writeFileSync(cfgPath, readFileSync(cfgPath, 'utf8').replace(/jam:\s*(\{[^}]*\}|false|true|"[^"]*"),/, `jam: { agent: ${JSON.stringify(agent)}, concurrency: 3 },`))
 
 // 4. boot the real dev server; capture the jam line to confirm it armed the right agent
-// a registry of its own (inside the throwaway root): a verify run never records itself in this Mac's ~/.marver
-const dev = spawn(process.execPath, [CLI, 'dev'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MARVER_HOME: join(root, '.marver-home') } })
+// a registry of its own - outside the root, so its writes never reach Vite's watcher - and slot ports off
+// 4805-4824: a verify run never records itself in this Mac's ~/.marver, and since it cannot see that registry,
+// it must never hold a slot port one of the owner's canvases may start on meanwhile
+const home = mkdtempSync(join(tmpdir(), `mv-verify-${agent}-home-`))
+const dev = spawn(process.execPath, [CLI, 'dev'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: process.env.MARVER_SLOT_BASE || '48804' } })
+const done = (code: number, keep = false) => { dev.kill('SIGKILL'); rmSync(home, { recursive: true, force: true }); if (!keep) rmSync(root, { recursive: true, force: true }); process.exit(code) }
 let devOut = ''
 const ready = new Promise<boolean>((res) => {
   const to = setTimeout(() => res(false), 40_000)
@@ -83,7 +87,7 @@ const jamLine = (devOut.match(/jam: [^\n]+/) ?? ['(no jam line)'])[0]
 console.log(`[${agent}] ${jamLine.trim()}`)
 if (!armed || !new RegExp(`jam: on \\(${agent}\\)`).test(devOut)) {
   console.log(`[${agent}] JAM-VERIFY FAIL: dev did not arm ${agent} (see boot line above)`)
-  dev.kill('SIGKILL'); rmSync(root, { recursive: true, force: true }); process.exit(1)
+  done(1)
 }
 await new Promise((r) => setTimeout(r, 2000))   // let the first manifest scan settle
 
@@ -127,9 +131,9 @@ const ok = !!reply && sawVisible && !sawHidden && shotOk
 
 if (ok) {
   console.log(`[${agent}] JAM-VERIFY PASS - screenshotted and correctly read the VISIBLE word`)
-  dev.kill('SIGKILL'); rmSync(root, { recursive: true, force: true }); process.exit(0)
+  done(0)
 } else {
   console.log(`[${agent}] JAM-VERIFY FAIL: reply=${!!reply} sawVisible=${sawVisible} sawHidden=${sawHidden} shot=${shotOk}`)
   console.log(`[${agent}] workspace kept: ${root}`)
-  dev.kill('SIGKILL'); process.exit(1)
+  done(1, true)
 }
