@@ -24,6 +24,7 @@ import { isNoteAnchor } from './notes.ts'
 import { ROUTE, slideSize } from '../const.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
+import { recorder } from './recorder.ts'
 import { revealFrame } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
@@ -483,6 +484,7 @@ function PlayInner() {
         else {
           useStore.setState({ stageShown: null })   // an error card holds the stage now: nothing on it counts as seen
           s.toast(`play: ${String(data.message ?? 'frame error')}`)
+          recorder.error({ source: 'stage', message: data.message })
           if (s.playNav && !s.stageShown) useStore.setState({ playUpdateRevision: 'retry' })   // an Update that failed: offer it again
         }
       } else if (data.type === 'sh:stage-key') {

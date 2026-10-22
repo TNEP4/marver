@@ -7,7 +7,9 @@ import { revealFrame } from '../goto.ts'
 import { startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
-import { startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
+import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
+import { attachCanvas, recorder } from '../recorder.ts'
+import { sleepingCount } from './sleep.ts'
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.
@@ -144,7 +146,8 @@ export function Canvas() {
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   const scaleTimer = useRef(0)
 
-  useEffect(() => { startPerf(); startCameraBroadcast() }, [])   // B0.4: frame-time sampler + image-LOD camera signal
+  // B0.4: frame-time sampler + image-LOD camera signal; the recorder hears when the camera stops and what sleeps (spec 28 A1.7)
+  useEffect(() => { startPerf(); startCameraBroadcast(); return attachCanvas({ onMotion, sleeping: sleepingCount }) }, [])
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
@@ -167,7 +170,10 @@ export function Canvas() {
         px = Math.max(Math.min((vw - w * scale) / 2, vw - p.right - w * scale), p.left)
         py = Math.max(Math.min((vh - h * scale) / 2, vh - p.bottom - h * scale), p.top)
       }
-      ref.current.setTransform(px - x * scale, py - y * scale, scale, 320, 'easeOut')
+      const tx = px - x * scale, ty = py - y * scale
+      // where this fit lands, in world px: the first one after a board's commit shows its visible cohort (spec 28 A1.7)
+      recorder.placed({ x: -tx / scale, y: -ty / scale, w: vw / scale, h: vh / scale })
+      ref.current.setTransform(tx, ty, scale, 320, 'easeOut')
     }
     const fitKeys = (keys: string[], focus: boolean) => {
       const st = useStore.getState()
@@ -210,6 +216,12 @@ export function Canvas() {
       inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
+    canvasCtl.view = () => {
+      const el = wrap(), inst = ref.current
+      if (!el || !inst) return null
+      const { positionX, positionY, scale } = inst.instance.transformState
+      return { x: -positionX / scale, y: -positionY / scale, w: el.clientWidth / scale, h: el.clientHeight / scale }
+    }
     canvasCtl.holdView = () => {
       heldView = null
       const el = wrap(), inst = ref.current

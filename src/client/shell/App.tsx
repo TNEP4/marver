@@ -13,6 +13,7 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
+import { recorder } from './recorder.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
@@ -69,6 +70,10 @@ function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onCo
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }
   static getDerivedStateFromError(err: Error) { return { err } }
+  // the recorder's (spec 28 A1.7): the error, and the component it came from
+  componentDidCatch(err: Error, info: { componentStack?: string | null }) {
+    recorder.error({ source: 'shell', message: err.message, stack: err.stack, component: /\bat (\w+)/.exec(info.componentStack ?? '')?.[1] })
+  }
   render() {
     if (!this.state.err) return this.props.children
     return (
@@ -632,6 +637,7 @@ export function App() {
         // sleeping override of the previous document must not be trusted for this one
         if (s.nodes.find((n) => n.key === nodeKey)?.status === 'ready') s.bumpRev(nodeKey)
         s.setStatus(nodeKey, 'ready')
+        recorder.ready(nodeKey, data)
         frameReady(nodeKey)
         // the revision this document was served with (spec 26): a look counts up to it, and one older
         // than the frame's last edit reloads
@@ -639,7 +645,13 @@ export function App() {
         if (typeof data.doc === 'string') s.setShown(nodeKey, data.doc)
         logReload({ kind: 'ready', cause: takeReloadCause(nodeKey) ?? (before === undefined ? 'first' : 'self'), node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
       } else if (data.type === 'sh:error') {
+        // the same generation guard as sh:ready: an error from a document since replaced fails nothing
+        const gen = el.src.match(/[?&]r=(\d+)/)?.[1] ?? ''
+        if (String(data.gen ?? '') !== gen) return
         s.setStatus(nodeKey, 'error', String(data.message ?? 'unknown error'))
+        recorder.frameError(nodeKey, data)
+      } else if (data.type === 'sh:boot') {
+        recorder.booted(nodeKey, data)   // a new document: its node's outcome starts over (spec 28 A1.7)
       } else if (data.type === 'sh:exit-interact') {
         if (s.interact === nodeKey) setInteract(null)
       } else if (data.type === 'sh:theme-applied') {
@@ -655,8 +667,9 @@ export function App() {
         if (String(data.gen ?? '') !== gen) return
         // measureNode does the rest of the admission (content frames only,
         // frame-id match, finite positive, clamped)
-        s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height),
+        const took = s.measureNode(nodeKey, String(data.frame ?? ''), Number(data.ownWidth), Number(data.measuredWidth), Number(data.height),
           typeof data.settled === 'boolean' ? data.settled : undefined)
+        recorder.measured(nodeKey, data, took)
       } else if (data.type === 'sh:laser-copy') {
         // laser click = copy the element's full address for the agent: WHERE it lives on
         // the canvas ([board ▸ scene]) + frame source file + css path (+ jsx source loc)

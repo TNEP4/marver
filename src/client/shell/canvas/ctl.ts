@@ -29,4 +29,6 @@ export const canvasCtl = {
   /** Is the camera mid-flight (a fit, a zoom)? A content-driven reflow waits for it to land: a fit
    *  aimed at the frames a link names must not land on where they were before the rows moved. */
   cameraBusy(): boolean { return false },
+  /** What the camera shows now, in world px (null with no canvas) - a load's visible cohort when no fit landed. */
+  view(): { x: number; y: number; w: number; h: number } | null { return null },
 }
