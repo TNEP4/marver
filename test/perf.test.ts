@@ -170,7 +170,7 @@ describe('marver perf, printed', () => {
     expect(text).toContain('visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · last move 1.3 s · settled 3.2 s')
     expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n {4}1 of 2 ready · last move 0\.7 s\n.*\n {4}slowest: docs\/y 0\.9 s · 1 never finished\n/)
     expect(text).not.toContain('docs/x')
-    expect(text).toContain('3 moves, 1000 px: reflow:measured 2, measure-height 1 · late: 2 (drag 1, measure-height 1)')
+    expect(text).toContain('3 moves, 1000 px: reflow:measured 2, measure-height 1 · late, after it settled: 2 (drag 1, measure-height 1)')
     expect(text).toContain('slowest: kit/f2 1.9 s, docs/a 1.6 s, docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s')
     expect(text).toContain('never ready: kit/f3 · missing: kit/old')
     expect(text).toContain('error (frame kit/f4): Cannot read properties of undefined')
@@ -222,6 +222,29 @@ describe('marver perf, printed', () => {
     out = []
     perfCommand(root, { json: true })
     expect(JSON.parse(out.join('\n')).loads[0]).toMatchObject({ errors: 20 })
+  })
+
+  it('a load cut at 120 s goes on loading: its moves after the cut are late, and --loads says after it was cut', () => {
+    const now = Date.now()
+    const T = 'f00000000001', P4 = 'aaaaaaaaaaa4'
+    let seq = 0
+    const rec = (kind: string, body: Record<string, unknown> = {}) => ({ v: 1, ws: WS, page: P4, load: T, seq: seq++, ts: now - 300_000 + seq * 1000, kind, ...body })
+    const records = [
+      rec('load', { board: 'archive', cause: 'boot', request: T }),
+      rec('commit', { request: T, ms: 100, frames: 2, byKind: { hifi: 0, content: 2, html: 0 }, measuring: 2, savedHeights: 0 }),
+      rec('move', { node: 'k-1', dx: 0, dy: 0, dw: 0, dh: 300, cause: 'measure-height' }),
+      rec('frame', { node: 'k-1', frame: 'docs/a', ready: 900, settled: 1500, outcome: 'settled' }),
+      rec('frame', { node: 'k-2', frame: 'docs/b', outcome: 'cut' }),
+      rec('cut', { reason: 'timeout', ms: 120_000, lastMove: 1400 }),
+      rec('move', { node: 'k-2', dx: 0, dy: 0, dw: 0, dh: 200, cause: 'measure-height', late: true }),
+      rec('move', { node: 'k-3', dx: 0, dy: 200, dw: 0, dh: 0, cause: 'reflow:measured', late: true }),
+    ]
+    writeFileSync(pageLog(root), records.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    perfCommand(root, { loads: true, json: true })
+    expect(JSON.parse(out.join('\n')).loads[0]).toMatchObject({ state: 'cut', cut: { reason: 'timeout' }, moves: { count: 1, late: { count: 2 } } })
+    out = []
+    perfCommand(root, { loads: true })
+    expect(out.join('\n')).toContain('1 move, 300 px: measure-height 1 · late, after it was cut: 2 (measure-height 1, reflow:measured 1)')
   })
 
   it('nothing in the window says so', () => {

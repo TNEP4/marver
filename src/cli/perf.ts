@@ -79,7 +79,7 @@ export interface LoadSummary {
    *  first second it held still after the commit - moves can come after it */
   lastMoveMs?: number
   /** the move records (a drag or a resize merged per node while unsent), their distance in px, the top causes;
-   *  `late` = after settled */
+   *  `late` = after the load ended, settled or cut (a board cut at 120 s stays open and goes on loading) */
   moves: { count: number; distance: number; causes: Ranked; late: { count: number; causes: Ranked } }
   /** the five slowest frames that reached an outcome: settled, else ready, in ms from the load's request (a document
    *  kept from before it has none) - a frame still on its way when the load was cut is `unfinished`, never here */
@@ -226,7 +226,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     ]
     if (times.length) console.log(`    ${times.join(' · ')}`)
     const m = l.moves
-    console.log(`    ${plural(m.count, 'move')}${m.count ? `, ${m.distance} px: ${list(m.causes)}` : ''}${m.late.count ? ` · late: ${m.late.count} (${list(m.late.causes)})` : ''}`)
+    console.log(`    ${plural(m.count, 'move')}${m.count ? `, ${m.distance} px: ${list(m.causes)}` : ''}${m.late.count ? ` · late, after it ${l.state === 'settled' ? 'settled' : l.state === 'cut' ? 'was cut' : 'ended'}: ${m.late.count} (${list(m.late.causes)})` : ''}`)
     // the slowest of the frames that finished; those a cut left on their way, counted apart
     const slow = [...(l.slowest.length ? [`slowest: ${l.slowest.map((f) => `${f.frame ?? f.node} ${secs(f.ms)}`).join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} never finished`] : [])]
     if (slow.length) console.log(`    ${slow.join(' · ')}`)

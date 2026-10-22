@@ -80,9 +80,9 @@ is the first still second; `last move` is when it stopped moving.
 A load that was cut has no ready times to give; it says how many of its frames were ready by the cut
 instead - `69 of 121 ready` - and, after its slowest, how many never finished (`52 never finished`):
 `slowest` lists only frames that finished. A load can also say `never ready: ...`, `missing: ...`, its
-errors (`late error` for one after it settled), how many errors past the first 50 went unrecorded, and its
-gestures (how many, the worst p95, the frames over 33 ms). The last line says how many records never reached
-the log, when any did.
+errors (`late error` for one after it ended, settled or cut), how many errors past the first 50 went
+unrecorded, and its gestures (how many, the worst p95, the frames over 33 ms). The last line says how many
+records never reached the log, when any did.
 
 ## Making a board faster
 
@@ -101,8 +101,9 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   file was deleted or renamed.
 - **The weight** (`settled.weight`) says how heavy the settled board is: elements in the page and its
   frames, frames awake and asleep, the heap.
-- **Late moves** came after the load settled; **`unknown`** is a move with no cause named. Both say
-  something moved the board after it looked done - worth a look, or an
+- **Late moves** came after the load ended - settled, or cut. After a cut at 120 s, or while the page was
+  hidden, they are the board still loading. After it settled - and any **`unknown`** move, with no cause
+  named - they say something moved the board after it looked done: worth a look, or an
   [issue](https://github.com/TNEP4/marver/issues).
 
 ## Frames
@@ -141,7 +142,10 @@ Every change to a frame's place or size is a `move`, with its cause:
 | `spawn` | a frame added to the board on the canvas |
 | `unknown` | a change with no cause named |
 
-A move after the load settled is `late`.
+A move after the load ended - it settled, or it was cut (a board cut at 120 s, or while the page was hidden,
+stays open and goes on loading) - is `late`. A load owns its board for as long as the board stays open, so
+its late moves are its own; `perf --loads` counts them apart: `late, after it settled` or `late, after it
+was cut`.
 
 ## Gestures
 
@@ -172,7 +176,7 @@ owns the board then; `-` before the first), `seq` (its place in the page's order
 | `commit` | the board mounts | `request`, `ms`, `frames`, `byKind` (`hifi`, `content`, `html`), `measuring`, `savedHeights` |
 | `visible` | the first camera fit after it | `nodes`, `ms`; `assumed` when no fit came before the load ended (the frames the camera showed then) |
 | `frame` | a frame reaches its outcome, or the load ends | `node`, `frame`, `gen` (the URL revision), `boot` (the document's id), `admitted` (its turn to boot), `ready`, `firstMeasure`, `settled`, `outcome`, `kept` |
-| `move` | a frame's place or size changes | `node`, `dx`, `dy`, `dw`, `dh` (px), `cause`, `late` |
+| `move` | a frame's place or size changes | `node`, `dx`, `dy`, `dw`, `dh` (px), `cause`, `late` (after the load ended, settled or cut) |
 | `quiet` | the first second after the commit with no move | `ms`: when the move before that second came (the commit, when none had) |
 | `settled` | the load settled | `ms`, `moves`, `distance` (px), `causes`, `lastMove` (when the last move came; absent when nothing moved), `visibleReadyMs`, `allReadyMs`, `missing`, `neverReady`, `errors`, `weight` (`domNodes`, `iframes`, `awake`, `asleep`, `heapMB`) |
 | `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); `request` for one that never mounted |
@@ -194,7 +198,7 @@ got there:
 - `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs`, `quietMs`, `lastMoveMs` (settled or cut),
   `settledMs`;
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
-  causes);
+  causes of the moves after the load ended, settled or cut);
 - `slowest`: the five slowest frames that finished (`node`, `frame`, `ms` - when it settled, or was ready -
   and `outcome`);
 - `errors` (each once, every one, `late` marked), `errorsNotRecorded`, `neverReady`, `missing`,

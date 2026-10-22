@@ -384,8 +384,11 @@ describe('the page recorder: board loads', () => {
     await held.release('*/api/boards/hifi*')
     await browser.until(s, `(() => { const o = window.__mvRecorder.state().owner; return o && o.board === 'hifi' && o.done === 'cut' })()`, 20_000)
     expect((await R(s)).owner.id).toBe(req.request)
+    // the board it mounts stays open: a move now is the cut load's, late - after the load ended
+    await browser.eval(s, `window.__mvStore.getState().moveNode('k-h', 120, 80), 1`)
     await drained(s)
     expect(lines().filter((r) => r.page === page && r.kind === 'commit')).toEqual([])
+    expect(lines().filter((r) => r.page === page && r.kind === 'move')).toMatchObject([{ load: req.request, node: 'k-h', cause: 'drag', late: true }])
     held.stop()
   }, 60_000)
 
