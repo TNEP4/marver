@@ -21,6 +21,7 @@ import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.t
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
 import { touchedFrames } from '../../shared/capture-frames.ts'
 import { onStageSize, stageSize } from './stage-size.ts'
+import { bytesOf } from './recorder-core.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -824,8 +825,9 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     uploadTries.set(record.id, (uploadTries.get(record.id) ?? 0) + 1)
     const tUp = performance.now()
     const payload = JSON.stringify({ record, workspace: CONFIG.workspace })
-    // a page that is going sends with keepalive (64 kB at most) so the request outlives it; a bigger one, the next page
-    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && payload.length < 60_000 ? { keepalive: true } : {}) })
+    // a page that is going sends with keepalive (64 kB at most, counted in UTF-8 bytes as the body carries it - not
+    // `.length`: notes in another script are wider) so the request outlives it; a bigger one, the next page
+    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && bytesOf(payload) < 60_000 ? { keepalive: true } : {}) })
     const body = (await res.json().catch(() => null)) as Verdict | null
     // only an explicit verdict on THIS record is final: taken (200, naming its card) or refused as a
     // record (400, saying why). Anything else - jam not running yet, another workspace, an unreadable
