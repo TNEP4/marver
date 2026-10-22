@@ -501,6 +501,10 @@ export const recorderHooks = {
   reflowIdle: (): void => {},
 }
 let reflowIdleNow: () => boolean = () => true   // set inside the store
+/** switchBoard's calls so far - each switch, and each cancel (a switch to the board on screen): the router tells the
+ *  second event of one navigation from a new one by nothing having switched since the first (App.tsx). */
+let switchCalls = 0
+export const switchCount = (): number => switchCalls
 /** No reflow pending, no height held, none owed. */
 export const reflowIdle = (): boolean => reflowIdleNow()
 /** What a node waits for before its load settles (recorder.ts): a content frame that measures (renders a Doc) - a
@@ -1160,6 +1164,7 @@ export const useStore = create<State>((set, get) => {
 
     async switchBoard(name) {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
+      switchCalls++
       recorderHooks.cut(switchRequest, 'superseded')
       const scenesAtStart = scenesRev
       if (name === get().board) return

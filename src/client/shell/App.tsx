@@ -6,7 +6,7 @@ import { JamButton } from './jam-session.tsx'
 import { useJamCapture } from './jam-capture.ts'
 import { useJamQueue } from './jam-queue.ts'
 import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
+import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
@@ -454,7 +454,15 @@ export function App() {
   // selection against the newly loaded state. writeHash skips identical hashes, so
   // restores never echo back into history.
   useEffect(() => {
+    // the switch a navigation started, while it may still run: back/forward, a pasted link and `location.hash =` each
+    // fire popstate AND hashchange, and a second switch to the same board would supersede the first - a second board
+    // fetch, and a load that never committed in perf --loads
+    let routing: { hash: string; switches: number } | null = null
     const onPop = async () => {
+      // the same hash, and no switch or cancel since this router started its own (a board picked, a goto, a newer
+      // navigation): the second event of the navigation the first is carrying through - board, frame and view
+      if (routing && routing.hash === location.hash && routing.switches === switchCount()) return
+      const raw = location.hash
       const nav = navigated()                  // a reveal still looking up its board must not land after this
       // a lookup below still running when newer navigation lands - a link, a board picked, a step in play - is dropped
       const at = useStore.getState().board, step = useStore.getState().play?.at
@@ -480,7 +488,10 @@ export function App() {
       let s = useStore.getState()
       if (h.board && h.board !== s.board) {
         if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
-        await s.switchBoard(h.board)
+        const switched = s.switchBoard(h.board)
+        const mine = routing = { hash: raw, switches: switchCount() }
+        await switched
+        if (routing === mine) routing = null
         s = useStore.getState()
         if (s.board !== h.board) return        // switch failed; the projection effect will re-sync the URL
       }
@@ -506,7 +517,8 @@ export function App() {
     // hashchange too: pasting a link into the same tab or editing the URL bar changes
     // the hash WITHOUT a popstate - ignoring it let the projection rewrite the URL back.
     // Our own writeHash never fires either event (history API), so there is no echo;
-    // back/forward fires both, and the handler is idempotent under the double call.
+    // back/forward fires both: the second finds the first's switch on its way and leaves it
+    // be (above) - without a switch, the handler is idempotent under the double call.
     window.addEventListener('popstate', onPop)
     window.addEventListener('hashchange', onPop)
     return () => { window.removeEventListener('popstate', onPop); window.removeEventListener('hashchange', onPop) }

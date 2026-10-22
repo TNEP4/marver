@@ -84,6 +84,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   changes, and 0.26 took that for a stop: Live Jam stopped, the working glow and comments written from the terminal
   no longer reached the page at once, and `marver shot`, `work` and `link` lost the canvas. Now only the server
   restarts: the canvas keeps its slot and its line in `marver ls`, and Live Jam its microphone.
+- **A link, back or forward reads its board once.** Each fires two browser events (popstate and hashchange), and the
+  second started the switch to the board over: the board was read twice.
 - **A frame's error card comes from the document it shows.** An error sent late by a document the frame has since
   replaced is ignored, as its ready already was.
 - **The dev server never serves `~/.marver`.** It holds the running canvases' keys and the collaboration credentials;

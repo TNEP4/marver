@@ -468,6 +468,49 @@ describe('the page recorder: board loads', () => {
     held.stop()
   }, 60_000)
 
+  it('one hash navigation is one load and one board fetch - location.hash =, back, forward, a link that names a frame; a hash that selects a frame on the board shown loads nothing', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/hifi')
+    await ended(page, 'hifi')
+    // every board this tab fetches (GET /api/boards/<name>)
+    const fetched: string[] = []
+    const off = browser.on((m) => {
+      if (m.method !== 'Fetch.requestPaused' || m.sessionId !== s) return
+      const { requestId, request } = m.params
+      if (request.method === 'GET') fetched.push(new URL(request.url).pathname.replace(/^.*\/api\/boards\//, ''))
+      void browser!.send('Fetch.continueRequest', { requestId }, s).catch(() => {})
+    })
+    await browser.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/boards/*', requestStage: 'Request' }] }, s)
+    const mine = (kind: string) => lines().filter((r) => r.page === page && r.kind === kind)
+    // a navigation, its board's load settled, and long enough after for a second event's switch to show
+    const go = async (code: string, b: string) => {
+      const loads = mine('load').length, fetches = fetched.length
+      await browser!.eval(s, `${code}, 1`)
+      await until(() => { const l = loadOf(page, b); return l && mine('load').length > loads && l.of('settled').length ? l : null }, 30_000, `${b} to settle`)
+      await wait(1000)
+      await drained(s)
+      return { loads: mine('load').slice(loads).map((r) => r.board), fetched: fetched.slice(fetches) }
+    }
+    expect(await go(`location.hash = '#/b/switch-b'`, 'switch-b')).toEqual({ loads: ['switch-b'], fetched: ['switch-b'] })
+    expect(await go('history.back()', 'hifi')).toEqual({ loads: ['hifi'], fetched: ['hifi'] })
+    expect(await go('history.forward()', 'switch-b')).toEqual({ loads: ['switch-b'], fetched: ['switch-b'] })
+    // the frame a link names is selected once its board is up: the first event carries the whole hash
+    expect(await go(`location.hash = '#/b/hifi?f=kit/hifi'`, 'hifi')).toEqual({ loads: ['hifi'], fetched: ['hifi'] })
+    await browser.until(s, `JSON.stringify(window.__mvStore.getState().selection) === '["k-h"]'`, 10_000)
+    expect(mine('cut').filter((r) => r.reason === 'superseded'), 'no request superseded by its own navigation').toEqual([])
+    // the board shown: a frame selected, nothing loaded
+    const loads = mine('load').length, fetches = fetched.length
+    await browser.eval(s, `history.back(), 1`)
+    await browser.until(s, `window.__mvStore.getState().board === 'switch-b'`, 20_000)
+    await browser.eval(s, `location.hash = '#/b/switch-b?n=k-sw', 1`)
+    await browser.until(s, `JSON.stringify(window.__mvStore.getState().selection) === '["k-sw"]'`, 10_000)
+    await wait(1000)
+    await drained(s)
+    expect(mine('load').slice(loads).map((r) => r.board)).toEqual(['switch-b'])   // the back, only
+    expect(fetched.slice(fetches)).toEqual(['switch-b'])
+    off()
+  }, 120_000)
+
   it('a board mounted while the page is hidden is cut at once - with its own frames, not those of the board it replaced', async () => {
     if (!browser) return
     const { s, page } = await open('#/b/still')
