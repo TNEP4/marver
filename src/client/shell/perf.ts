@@ -17,6 +17,7 @@ import { gestureStats } from './recorder-core.ts'
 
 const LOAF = typeof PerformanceObserver !== 'undefined' && (PerformanceObserver.supportedEntryTypes ?? []).includes('long-animation-frame')
 const frames: number[] = []   // inter-frame intervals (ms) across gestures, for report()
+const longs: number[] = []    // the long frames (or long tasks) that started inside a gesture, their durations (ms), for report()
 const MAX = 1200
 
 const counters: Record<string, number> = { blankFrames: 0 }
@@ -30,7 +31,7 @@ const enabled = (): boolean => {
   } catch { return false }
 }
 
-interface Run { t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; long: number; obs?: PerformanceObserver; raf: number }
+interface Run { t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; longs: number[]; obs?: PerformanceObserver; raf: number }
 /** the gesture running now */
 let g: Run | null = null
 
@@ -41,11 +42,11 @@ function note(m: Motion) {
 }
 
 function begin(m: Motion) {
-  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, long: 0, raf: 0 }
+  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0 }
   g = run
   note(m)
   try {
-    run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) run.long++ })
+    run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) run.longs.push(e.duration) })
     run.obs.observe({ type: LOAF ? 'long-animation-frame' : 'longtask', buffered: false })
   } catch { /* neither entry type (Safari): the intervals still sample */ }
   // this gesture's own loop: a frame of an earlier one that is still queued finds another run and stops
@@ -63,11 +64,12 @@ function end() {
   g = null
   cancelAnimationFrame(run.raf)
   const t1 = performance.now()
-  for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.long++
+  for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.longs.push(e.duration)
   run.obs?.disconnect()
   for (const d of run.dts) { frames.push(d); if (frames.length > MAX) frames.shift() }
+  for (const d of run.longs) { longs.push(d); if (longs.length > MAX) longs.shift() }
   if (run.dts.length < 2) return   // a press that never moved the camera
-  recorder.gesture({ type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.long) })
+  recorder.gesture({ type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.longs.length) })
 }
 
 /** One-shot event later stages record (e.g. a blank frame, or warm-promotion latency). */
@@ -89,11 +91,13 @@ export function startPerf(): void {
     else note(m)
   })
   ;(window as unknown as { __mvPerf: unknown }).__mvPerf = {
+    // the intervals as they are, and the main thread's own work: long frames (> 50 ms) that started in a gesture,
+    // how many, their p95 and the longest (the same nearest-rank rule)
     report() {
-      const s = gestureStats(frames, 0)
-      return { gestureFrames: s.frames, frameP50: s.p50, frameP95: s.p95, frameMax: s.max, over17ms: s.over17ms, over33ms: s.over33ms, counters: { ...counters } }
+      const s = gestureStats(frames, longs.length), l = gestureStats(longs, 0)
+      return { gestureFrames: s.frames, frameP50: s.p50, frameP95: s.p95, frameMax: s.max, over17ms: s.over17ms, over33ms: s.over33ms, longFrames: s.longFrames, longFrameP95: l.p95, longFrameMax: l.max, counters: { ...counters } }
     },
-    reset() { frames.length = 0; marks.length = 0; for (const k in counters) counters[k] = 0 },
+    reset() { frames.length = 0; longs.length = 0; marks.length = 0; for (const k in counters) counters[k] = 0 },
     marks: () => [...marks],
   }
 }
