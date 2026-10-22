@@ -566,6 +566,41 @@ describe('the page recorder: board loads', () => {
     expect(l.of('frame').map((f) => f.node)).toEqual(['k-h'])
     expect(l.of('settled')).toEqual([])
   }, 60_000)
+
+  it('a load cut while it loads counts its ready frames of the frames it had then - those added while it loaded in, those removed out', async () => {
+    if (!browser) return
+    const HIDE = `Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), 1`
+    const status = (key: string) => `window.__mvStore.getState().nodes.find((n) => n.key === ${key})?.status`
+    // added: one slow Doc still loading, two hi-fi frames placed on it while it does and ready, then the page hides
+    {
+      const { s, page, held } = await open('#/b/slow', ['*slow.png*'])
+      await until(() => held.paused('*slow.png*') > 0, 20_000, 'the image to be asked for')
+      const keys = await browser.eval(s, `(() => { const st = window.__mvStore.getState(); return [st.spawn('kit/hifi').key, st.spawn('kit/hifi').key] })()`)
+      for (const k of keys) await browser.until(s, `${status(JSON.stringify(k))} === 'ready'`, 20_000)
+      const A = (await R(s)).owner.id
+      await browser.eval(s, HIDE)
+      await drained(s)
+      const a = lines().filter((r) => r.page === page && r.load === A)
+      expect(a.find((r) => r.kind === 'commit')).toMatchObject({ frames: 1 })
+      expect(a.find((r) => r.kind === 'cut')).toMatchObject({ reason: 'hidden', frames: 3, ready: 2 })
+      expect(loadsSummary(a)[0]).toMatchObject({ framesAtCut: 3, readyByCut: 2, unfinished: 1 })
+      held.stop()
+    }
+    // removed: a hi-fi frame ready and a frame still booting; the ready one removed, then the page hides
+    {
+      const { s, page, held } = await open('#/b/pair', ['*kit/hang.tsx*'])
+      await browser.until(s, `${status(`'k-ph'`)} === 'ready'`, 20_000)
+      const A = (await R(s)).owner.id
+      await until(() => lines().some((r) => r.page === page && r.load === A && r.kind === 'frame' && r.node === 'k-ph' && r.outcome === 'ready'), 15_000, 'k-ph ready')
+      await browser.eval(s, `window.__mvStore.getState().removeNode('k-ph'), 1`)
+      await browser.eval(s, HIDE)
+      await drained(s)
+      const a = lines().filter((r) => r.page === page && r.load === A)
+      expect(a.find((r) => r.kind === 'cut')).toMatchObject({ reason: 'hidden', frames: 1, ready: 0 })
+      expect(loadsSummary(a)[0]).toMatchObject({ framesAtCut: 1, readyByCut: 0 })
+      held.stop()
+    }
+  }, 90_000)
 })
 
 describe('the page recorder: gestures, errors, the log', () => {

@@ -56,7 +56,7 @@ function fixture(now = Date.now()) {
     // a frame ready but not yet settled when the cut came - unfinished, never among the slowest - and one that settled
     rec(P1, B, 'frame', 20 * min - 900, { node: 'k-b2', frame: 'docs/y', ready: 500, settled: 900, outcome: 'settled' }),
     rec(P1, B, 'frame', 20 * min - 1400, { node: 'k-b1', frame: 'docs/x', ready: 1350, outcome: 'cut' }),
-    rec(P1, B, 'cut', 20 * min - 1400, { reason: 'switch', ms: 1400, lastMove: 700 }),
+    rec(P1, B, 'cut', 20 * min - 1400, { reason: 'switch', ms: 1400, lastMove: 700, frames: 2, ready: 1 }),
     // the Not on a board view on another page of the same canvas: both are `boot`, and never mix
     rec(P2, D, 'load', 10 * min, { board: '~unplaced', cause: 'boot', request: D }),
     rec(P2, D, 'commit', 10 * min - 200, { request: D, ms: 200, frames: 1, byKind: { hifi: 1, content: 0, html: 0 }, measuring: 0, savedHeights: 0 }),
@@ -109,8 +109,9 @@ describe('board loads (marver perf --loads)', () => {
     const b = loads.find((l) => l.load === B)!, c = loads.find((l) => l.load === C)!
     expect(b).toMatchObject({ state: 'cut', cut: { reason: 'switch', ms: 1400 }, committed: true, unfinished: 1, lastMoveMs: 700 })
     expect(b.moves.count).toBe(1)
-    // a cut load: how many frames were ready by the cut; the slowest only of those that finished
+    // a cut load: how many frames were ready by the cut, of the frames it had then; the slowest only of those that finished
     expect(b.readyByCut).toBe(1)
+    expect(b.framesAtCut).toBe(2)
     expect(b.slowest).toEqual([{ node: 'k-b2', frame: 'docs/y', ms: 900, outcome: 'settled' }])
     expect(loads.find((l) => l.load === A)!.readyByCut).toBeUndefined()
     expect(c.readyByCut).toBeUndefined()
@@ -246,6 +247,28 @@ describe('marver perf, printed', () => {
     out = []
     perfCommand(root, { loads: true })
     expect(out.join('\n')).toContain('1 move, 300 px: measure-height 1 · late, after it was cut: 2 (measure-height 1, reflow:measured 1)')
+  })
+
+  it('a load cut while it loads: ready by the cut, of the frames on its board then - two added and ready, one removed', () => {
+    const now = Date.now()
+    const K = 'f00000000003', P6 = 'aaaaaaaaaaa6'
+    let seq = 0
+    const rec = (kind: string, body: Record<string, unknown> = {}) => ({ v: 1, ws: WS, page: P6, load: K, seq: seq++, ts: now - 300_000 + seq * 1000, kind, ...body })
+    const records = [
+      rec('load', { board: 'slow', cause: 'boot', request: K }),
+      rec('commit', { request: K, ms: 100, frames: 2, byKind: { hifi: 1, content: 1, html: 0 }, measuring: 1, savedHeights: 0 }),
+      // the hi-fi frame it opened with: ready, then removed
+      rec('frame', { node: 'k-gone', frame: 'kit/hifi', ready: 400, outcome: 'ready' }),
+      // two frames placed while it loads, both ready
+      rec('frame', { node: 'k-n1', frame: 'kit/hifi', ready: 900, outcome: 'ready' }),
+      rec('frame', { node: 'k-n2', frame: 'kit/hifi', ready: 950, outcome: 'ready' }),
+      rec('frame', { node: 'k-doc', frame: 'docs/slow', ready: 300, outcome: 'cut' }),
+      rec('cut', { reason: 'hidden', ms: 4000, frames: 3, ready: 2 }),
+    ]
+    expect(loadsSummary(records)[0]).toMatchObject({ frames: 2, framesAtCut: 3, readyByCut: 2 })
+    writeFileSync(pageLog(root), records.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    perfCommand(root, { loads: true })
+    expect(out.join('\n')).toContain('2 of 3 ready')
   })
 
   it('a request cut while the page was hidden whose board mounts after all: its cut kept, its mount said, its moves late', () => {

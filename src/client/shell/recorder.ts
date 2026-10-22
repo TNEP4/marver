@@ -349,17 +349,20 @@ function settle(L: Load, s: State, outs: Outcome[]): void {
 }
 
 /** The load ended before it settled: another board, a reload of this one, the page hidden, or 120 s. What its nodes
- *  had reached goes with it; the others are `cut`. */
+ *  had reached goes with it; the others are `cut`. The cut says how many frames the board had then and how many of
+ *  those were ready - one count of one set: frames added while it loaded are in it, frames removed are not. */
 function cut(L: Load, reason: 'switch' | 'reload' | 'hidden' | 'timeout'): void {
   if (L.done) return
   const s = useStore.getState()
   ensureVisible(L)
+  let ready = 0
   for (const n of s.nodes) {
     const o = outcomeNow(n, s.manifest)
+    if (o === 'settled' || o === 'ready') ready++
     if (!o) frameRecord(L, n, 'cut')
     else if (L.reported.get(n.key) !== said(n, o)) frameRecord(L, n, o)
   }
-  rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt) })
+  rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt), frames: s.nodes.length, ready })
   finish(L, 'cut')
 }
 

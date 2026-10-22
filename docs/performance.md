@@ -80,7 +80,8 @@ and then moved again as late frames reported their heights says `quiet 1.8 s · 
 is the first still second; `last move` is when it stopped moving.
 
 A load that was cut has no ready times to give; it says how many of its frames were ready by the cut
-instead - `69 of 121 ready` - and, after its slowest, how many never finished (`52 never finished`):
+instead - `69 of 121 ready`, of the frames on the board then (those placed while it loaded included, those
+removed not) - and, after its slowest, how many never finished (`52 never finished`):
 `slowest` lists only frames that finished. A load can also say `never ready: ...`, `missing: ...`, its
 errors (`late error` for one after it ended, settled or cut), how many errors past the first 50 went
 unrecorded, and its gestures (how many, the worst p95, the frames over 33 ms). The last line says how many
@@ -181,7 +182,7 @@ owns the board then; `-` before the first), `seq` (its place in the page's order
 | `move` | a frame's place or size changes | `node`, `dx`, `dy`, `dw`, `dh` (px), `cause`, `late` (after the load ended, settled or cut) |
 | `quiet` | the first second after the commit with no move | `ms`: when the move before that second came (the commit, when none had) |
 | `settled` | the load settled | `ms`, `moves`, `distance` (px), `causes`, `lastMove` (when the last move came; absent when nothing moved), `visibleReadyMs`, `allReadyMs`, `missing`, `neverReady`, `errors`, `weight` (`domNodes`, `iframes`, `awake`, `asleep`, `heapMB`) |
-| `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); `request` for a request cut before it mounted |
+| `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); on a load that mounted, `frames` (on its board then) and `ready` (how many of those were settled or ready); `request` for a request cut before it mounted |
 | `gesture` | a pan, zoom or layout animation ends | `type` (`pan` / `zoom` / `layout`), `ms`, `frames`, `p50`, `p95`, `max`, `over17ms`, `over33ms`, `longFrames` |
 | `error` | an error the page sees | `source` (`shell` / `frame` / `stage`), `frame`, `component`, `message`, `stack`, `late` |
 | `dropped` | records were lost | `n`; `reason: "errors"` for errors past a load's 50 - with no reason, a full queue or a failed send |
@@ -207,8 +208,9 @@ got there:
   and `outcome`);
 - `errors` (each once, every one, `late` marked), `errorsNotRecorded`, `neverReady`, `missing`,
   `unfinished` (frames still on their way when it was cut: they never finished);
-- on a load cut after it mounted, `readyByCut`: how many of its `frames` were ready (settled, or ready) by
-  the cut (absent on one cut before it mounted);
+- on a load cut after it mounted, `framesAtCut` - the frames on its board when it was cut, those placed while it
+  loaded included, those removed not - and `readyByCut`, how many of them were ready (settled, or ready) by
+  then (both absent on one cut before it mounted);
 - `gestures` (`n`, `worstP95`, `over33ms`) and `weight`.
 
 `unowned` holds what a page recorded before its first board mounted (its errors, how many gestures);

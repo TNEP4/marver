@@ -28,7 +28,7 @@ const VALID: Record<string, Record<string, unknown>> = {
   move: { node: 'k-b', dx: 0, dy: 812.4, dw: 0, dh: 0, cause: 'reflow:cramped+measured', late: true },
   quiet: { ms: 2100 },
   settled: { ms: 3200, moves: 7, distance: 1840, causes: { 'reflow:measured': 4, 'measure-height': 3 }, lastMove: 2150.6, visibleReadyMs: 900, allReadyMs: 1800, missing: 1, neverReady: 1, errors: 1, weight: { domNodes: 4000, iframes: 12, awake: 4, asleep: 8, heapMB: 81.27 } },
-  cut: { reason: 'timeout', request: LOAD, ms: 120_000, lastMove: 118_400 },
+  cut: { reason: 'timeout', request: LOAD, ms: 120_000, lastMove: 118_400, frames: 121, ready: 69 },
   gesture: { type: 'layout', ms: 500, frames: 15, p50: 33, p95: 33.04, max: 33, over17ms: 15, over33ms: 0, longFrames: 0 },
   error: { source: 'frame', frame: 'kit/boom', message: 'boom', stack: ['at Boom (x.tsx:1:2)', 'at y', 'at z', 'at w'], late: true },
   dropped: { n: 4, reason: 'errors' },
@@ -44,7 +44,7 @@ describe('a page record', () => {
     }
     expect(cleanPageRecord(env('load', VALID.load))).toMatchObject({ sinceNav: 413 })
     expect(cleanPageRecord(env('settled', VALID.settled))).toMatchObject({ weight: { heapMB: 81.3 }, causes: { 'reflow:measured': 4 }, lastMove: 2151 })
-    expect(cleanPageRecord(env('cut', VALID.cut))).toMatchObject({ reason: 'timeout', ms: 120_000, lastMove: 118_400 })
+    expect(cleanPageRecord(env('cut', VALID.cut))).toMatchObject({ reason: 'timeout', ms: 120_000, lastMove: 118_400, frames: 121, ready: 69 })
     expect(cleanPageRecord(env('error', VALID.error))!.stack).toHaveLength(3)
     expect(cleanPageRecord(env('error', VALID.error))).toMatchObject({ late: true })
     expect(cleanPageRecord(env('dropped', VALID.dropped))).toMatchObject({ n: 4, reason: 'errors' })

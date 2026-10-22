@@ -87,8 +87,9 @@ export interface LoadSummary {
   /** the five slowest frames that reached an outcome: settled, else ready, in ms from the load's request (a document
    *  kept from before it has none) - a frame still on its way when the load was cut is `unfinished`, never here */
   slowest: { node: string; frame?: string; ms: number; outcome: string }[]
-  /** a load cut after it mounted: how many of its frames were ready (settled, or ready) by the cut - of `frames` */
-  readyByCut?: number
+  /** a load cut after it mounted: the frames on its board when it was cut (those added while it loaded included,
+   *  those removed not), and how many of them were ready (settled, or ready) by then - both the page's, of one set */
+  framesAtCut?: number; readyByCut?: number
   /** each error once, every one (one after the load ended is `late`: the load owns the board for as long as it stays
    *  open) - the printed report shows the first ERRORS_SHOWN and says how many more */
   errors: { source: string; frame?: string; component?: string; message: string; late?: true }[]
@@ -162,7 +163,7 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       ...(quiet ? { quietMs: quiet.ms } : {}),
       ...(typeof (settled ?? cut)?.lastMove === 'number' ? { lastMoveMs: (settled ?? cut)!.lastMove } : {}),
       moves: { count: moves.count, distance: Math.round(moves.distance), causes: ranked(moves.causes), late: { count: late.count, causes: ranked(late.causes) } },
-      slowest, ...(cut && !settled && commit && !cutFirst ? { readyByCut: frames.filter((f) => f.outcome === 'settled' || f.outcome === 'ready').length } : {}),
+      slowest, ...(cut && !settled && commit && !cutFirst && typeof cut.frames === 'number' && typeof cut.ready === 'number' ? { framesAtCut: cut.frames, readyByCut: cut.ready } : {}),
       errors, errorsNotRecorded: notRecorded(g),
       neverReady: frames.filter((f) => f.outcome === 'never-ready').map(name),
       missing: frames.filter((f) => f.outcome === 'missing').map(name),
@@ -224,7 +225,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     const kinds = Object.entries(l.byKind ?? {}).filter(([, n]) => n).map(([k, n]) => `${n} ${k === 'hifi' ? 'hi-fi' : k}`)
     console.log(`    ${l.mountedAfterCut ? 'mounted after its cut' : 'committed'} ${secs(l.commitMs)} · ${plural(l.frames ?? 0, 'frame')}${kinds.length ? ` (${kinds.join(', ')})` : ''}${l.measuring ? ` · ${l.measuring} measure, ${l.savedHeights ?? 0} opened at a known height` : ''}`)
     const times = [
-      ...(l.readyByCut !== undefined ? [`${l.readyByCut} of ${l.frames ?? '?'} ready`] : []),
+      ...(l.readyByCut !== undefined ? [`${l.readyByCut} of ${l.framesAtCut} ready`] : []),
       ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),
       ...(l.allReadyMs !== undefined ? [`all ready ${secs(l.allReadyMs)}`] : []),
       ...(l.quietMs !== undefined ? [`quiet ${secs(l.quietMs)}`] : []),
