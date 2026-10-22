@@ -5,8 +5,8 @@
  * failed). A card that fails raises one notice; nothing else here interrupts.
  */
 import { create } from 'zustand'
-import { ROUTE } from '../const.ts'
 import { PUBLISHED } from './store.ts'
+import { api } from './api.ts'
 
 export type JamAction = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename' | 'note'
 export type JamCardState = 'draft' | 'confirming' | 'queued' | 'working' | 'asks' | 'review' | 'done' | 'kept' | 'failed' | 'dropped'
@@ -72,7 +72,7 @@ export const useJamQueue = create<QueueState>((set, get) => {
     async load() {
       if (PUBLISHED) return
       try {
-        const res = await fetch(`${ROUTE}/api/jam/queue`, { headers: { 'x-mv-c': csrf() } })
+        const res = await api('jam/queue', { headers: { 'x-mv-c': csrf() } })
         if (res.ok) get().apply(await res.json())
       } catch { /* no queue: no icons */ }
     },
@@ -113,7 +113,7 @@ export const useJamQueue = create<QueueState>((set, get) => {
       if (get().session?.id === session) set({ session: null })
     },
     async act(card, action, body) {
-      const res = await fetch(`${ROUTE}/api/jam/card`, {
+      const res = await api('jam/card', {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
         body: JSON.stringify({ id: card.id, rev: card.rev, action, ...(body !== undefined ? { body } : {}) }),
       }).catch(() => null)

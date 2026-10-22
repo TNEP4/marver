@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
+import { api } from './api.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
@@ -21,7 +22,7 @@ import { TagStatus } from './jam-ui.tsx'
 import { CaptureBlock } from './jam-panel.tsx'
 import { useJamQueue } from './jam-queue.ts'
 import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
-import { ROUTE, slideSize, stageFit } from '../const.ts'
+import { slideSize, stageFit } from '../const.ts'
 import type { AgentMeta, Thread } from '../../shared/events.ts'
 
 /** Tint the pin / composer / thread card EDGES (border, outline, focus ring) in the anchored
@@ -901,7 +902,7 @@ export function IdentityDialog() {
   // an invite link knows WHO it's for - show it (the token is the proof of holding)
   useEffect(() => {
     if (!needs || !invite) return setInvitedAs('')
-    fetch(`${ROUTE}/api/invite-info?token=${encodeURIComponent(invite)}`)
+    api(`invite-info?token=${encodeURIComponent(invite)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d?.email && setInvitedAs(d.email))
       .catch(() => { /* chip just stays hidden */ })

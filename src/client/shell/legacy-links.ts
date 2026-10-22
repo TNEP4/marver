@@ -17,7 +17,7 @@ import { stableNodeKey } from './keys.ts'
 import { UNPLACED, type HashState } from './hash.ts'
 import { ALL_SCENES_KEYS, boardLabel, fetchMembership, PUBLISHED } from './store.ts'
 import { useComments } from './comments-store.ts'
-import { ROUTE } from '../const.ts'
+import { api } from './api.ts'
 
 export const isLegacyLink = (h: HashState): boolean => h.board === ALL_SCENES
 
@@ -44,7 +44,7 @@ export async function landLegacy(h: HashState): Promise<{ hash: HashState; notic
     const byKey = new Map([...live.map((id) => [stableNodeKey(ALL_SCENES, id, 0), id] as const), ...Object.entries(ALL_SCENES_KEYS)])
     if (!PUBLISHED) {
       try {
-        const leftover = (await (await fetch(`${ROUTE}/api/boards/${ALL_SCENES}`)).json())?.board as { nodes?: { key?: unknown; frame?: unknown }[] } | null
+        const leftover = (await (await api(`boards/${ALL_SCENES}`)).json())?.board as { nodes?: { key?: unknown; frame?: unknown }[] } | null
         for (const node of Array.isArray(leftover?.nodes) ? leftover.nodes : []) if (typeof node?.key === 'string' && typeof node.frame === 'string') byKey.set(node.key, node.frame)
       } catch { /* no leftover, or not JSON: the minted keys stand */ }
     }

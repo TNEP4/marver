@@ -10,7 +10,6 @@
  * crossed microphone without one); a teal dot only while a capture records. Blue only on hover and press.
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { ROUTE } from '../const.ts'
 import { setSessionEnding, useJamCapture } from './jam-capture.ts'
 import { laneCards, startCapture } from './jam-keys.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
@@ -23,6 +22,7 @@ import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlas
 import { Tip } from './Tip.tsx'
 import { useSessionClock } from './jam-lane.tsx'
 import { CONFIG, useStore } from './store.ts'
+import { api } from './api.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -32,7 +32,7 @@ const now = () => performance.timeOrigin + performance.now()
 /** Why the last session move was refused (the server's words), for the one line that says so. */
 let lastError: string | undefined
 async function post(body: Record<string, unknown>, onAnswer?: (ok: boolean) => void): Promise<boolean> {
-  const r = await fetch(`${ROUTE}/api/jam/session`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) }).catch(() => null)
+  const r = await api('jam/session', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) }).catch(() => null)
   lastError = r && !r.ok ? ((await r.json().catch(() => null)) as { error?: string } | null)?.error : r ? undefined : 'marver dev did not answer'
   // what the server's answer settles happens at once, never behind the refresh (which may be slow, and a push
   // may come first)
@@ -226,7 +226,7 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   const [busy, setBusy] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
-    fetch(`${ROUTE}/api/jam/session`, { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then((b) => { setTalkMin(b?.talkMinutes ?? 0); setTags(b?.tags ?? 0); setFolder(typeof b?.folder === 'string' ? b.folder : null) }, () => {})
+    api('jam/session', { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then((b) => { setTalkMin(b?.talkMinutes ?? 0); setTags(b?.tags ?? 0); setFolder(typeof b?.folder === 'string' ? b.folder : null) }, () => {})
     requestAnimationFrame(() => field.current?.focus())
   }, [])
   // the field grows with its words: three lines at least
@@ -309,7 +309,7 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
   const [rec, setRec] = useState<{ file: string; text: string | null; reply?: string } | null>(null)
   useEffect(() => {
     let live = true
-    fetch(`${ROUTE}/api/jam/record?id=${encodeURIComponent(card.id)}`, { headers: { 'x-mv-c': csrf() } })
+    api(`jam/record?id=${encodeURIComponent(card.id)}`, { headers: { 'x-mv-c': csrf() } })
       .then((r) => (r.ok ? r.json() : null)).then((b) => { if (live && b) setRec(b) }, () => {})
     return () => { live = false }
   }, [card.id, card.state, card.rev])

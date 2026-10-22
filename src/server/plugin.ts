@@ -15,6 +15,7 @@ import { logReload } from './perf.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
+import { guardMiddleware } from './guard.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
@@ -234,6 +235,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // a restart: Vite runs this for the new server, then closes the old one, cancelling its pending rescan and
       // its look at the marks - both are taken up here
       if (served++) { manifest = scanFrames(root, projectInfo()); observeLater() }
+      // spec 28 A1.11: the first middleware - a request naming another workspace, or a service worker's
+      // script, is answered before anything of this project is read, written or served (guard.ts).
+      // Must stay first: ahead of /api/update, the API, the frame-host route and Vite's own.
+      server.middlewares.use(guardMiddleware(ws))
       let bakeGen = Date.now()   // the source generation (see bumpGen): unique per server start
       // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
       // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static

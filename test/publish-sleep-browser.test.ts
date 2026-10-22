@@ -206,4 +206,27 @@ describe('textures at publish time, in a real published browser', () => {
     await until(`${DOC}?.documentElement.getAttribute('data-theme') === 'dark' && ${ASLEEP} && ${TEXTURES} === 3`, 30_000)
     expect(await ev(`${DOC}.getElementById('mv-sleep').textContent.includes('/__mv/bakes/')`)).toBe(true)
   })
+  skippable('a published canvas names no workspace: no request carries one, and the viewer preferences keep their bare keys (spec 28 A1.11)', async () => {
+    await browser!.send('Network.enable', {}, tab)
+    const named: string[] = []
+    let seen = 0
+    const stop = browser!.on((m) => {
+      if (m.sessionId !== tab || m.method !== 'Network.requestWillBeSent') return
+      seen++
+      const { url, headers } = m.params.request as { url: string; headers?: Record<string, string> }
+      if (Object.keys(headers ?? {}).some((k) => k.toLowerCase() === 'x-mv-ws') || /[?&]ws=/.test(url)) named.push(url)
+    })
+    try {
+      await open()
+      // the theme and the notes: two of the five preferences a canvas in dev keeps per workspace
+      await ev(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }))`)
+      await ev(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))`)
+      await wait(1000)
+    } finally { stop() }
+    expect(seen).toBeGreaterThan(5)
+    expect(named).toEqual([])
+    const keys = (await ev(`Object.keys(localStorage)`)) as string[]
+    expect(keys).toEqual(expect.arrayContaining(['mv-view-theme', 'mv-notes']))
+    expect(keys.filter((k) => /^mv-(view-theme|notes|folders-closed|mention-seen|update-seen):/.test(k))).toEqual([])
+  })
 })

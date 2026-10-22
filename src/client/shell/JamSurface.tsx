@@ -22,10 +22,12 @@ import { clearMoreDraft, EdgeRing } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
 import { HARNESS } from './Comments.tsx'
 import { PUBLISHED, useStore } from './store.ts'
+import { api, withWs } from './api.ts'
 import type { CaptureRecord } from '../../server/jam/types.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
-const picture = (id?: string) => (id ? `${ROUTE}/api/jam/picture?id=${encodeURIComponent(id)}` : undefined)
+/** An <img> cannot send a header: its URL names the workspace, which the server's guard reads (A1.11). */
+const picture = (id?: string) => (id ? withWs(`${ROUTE}/api/jam/picture?id=${encodeURIComponent(id)}`) : undefined)
 
 /** Is the lane showing? While a run lasts with a capture in it, or a capture records. */
 export function useLaneShown(): boolean {
@@ -44,7 +46,7 @@ function useRecord(id: string | undefined) {
   useEffect(() => {
     if (!id || rec?.id === id) return
     let live = true
-    fetch(`${ROUTE}/api/jam/capture?id=${encodeURIComponent(id)}`, { headers: { 'x-mv-c': csrf() } })
+    api(`jam/capture?id=${encodeURIComponent(id)}`, { headers: { 'x-mv-c': csrf() } })
       .then((r) => (r.ok ? r.json() : null)).then((r) => { if (live && r?.record) setRec({ id, record: r.record, edited: r.edited }) }, () => {})
     return () => { live = false }
   }, [id])

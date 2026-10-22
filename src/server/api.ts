@@ -851,9 +851,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       // ---- poster: render `<clip>.poster.png` for a local video that has none (the Video
       // primitive asks when its conventional poster 404s). Owner-gated like shot: it spawns a
       // browser and writes into design/assets/. Idempotent - an existing file is never redone.
-      if (path === 'poster' && req.method === 'GET') {
+      // A POST (spec 28 A1.11): a GET that wrote was how a page left open could reach another project.
+      if (path === 'poster' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
-        const src = url.searchParams.get('src') ?? ''
+        const raw = await readBody(req, 4096)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const src = typeof b?.src === 'string' ? b.src : ''
         const { ensurePoster, isLocalClip } = await import('./poster.ts')
         const { isLocalAssetRef } = await import('./build.ts')
         if (!isLocalAssetRef(src) || !isLocalClip(src)) return json(res, 400, { error: 'src must be a clip under design/assets/' })

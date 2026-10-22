@@ -27,6 +27,7 @@
  */
 import { ROUTE } from '../../const.ts'
 import { BAKES, PUBLISHED } from '../store.ts'
+import { api } from '../api.ts'
 import { readOwn, sleepRule } from '../../../shared/sleep-rule.ts'
 
 /** `doc`: the revision the document shows (spec 26) - the compiler refuses a document behind its frame */
@@ -95,7 +96,7 @@ function ask(key: SleepKey): Promise<Answer> {
       const index = PUBLISHED ? await staticAnswers() : null
       if (!index) {
         try {
-          const r = await fetch(`${ROUTE}/api/bakes`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ asks }) })
+          const r = await api('bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ asks }) })
           data = r.ok ? await r.json() : null
         } catch { data = null }
       }

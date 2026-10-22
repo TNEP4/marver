@@ -18,6 +18,7 @@
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { CONFIG, useStore } from './store.ts'
+import { api } from './api.ts'
 
 export const RATE = 16_000
 const FINAL_MS = 3_000
@@ -68,20 +69,20 @@ export const useJamVoice = create<VoiceStore>((set, get) => ({
   },
   async refresh() {
     try {
-      const r = await fetch(`${ROUTE}/api/jam/voice`, { headers: { 'x-mv-c': csrf() } })
+      const r = await api('jam/voice', { headers: { 'x-mv-c': csrf() } })
       if (!r.ok) { set({ server: 'unavailable', reason: 'jam is not running here' }); return }
       const b = await r.json()
       set({ server: b.state, reason: b.reason, download: b.download ?? null, mb: b.mb ?? 490 })
     } catch { set({ server: 'unavailable', reason: 'marver dev did not answer' }) }
   },
   async startDownload() {
-    try { await fetch(`${ROUTE}/api/jam/voice`, { method: 'POST', headers: { 'x-mv-c': csrf(), 'content-type': 'application/json' }, body: JSON.stringify({ download: true }) }) } catch { /* the poll says */ }
+    try { await api('jam/voice', { method: 'POST', headers: { 'x-mv-c': csrf(), 'content-type': 'application/json' }, body: JSON.stringify({ download: true }) }) } catch { /* the poll says */ }
     poll()
   },
   async retry() {
     toldUnavailable = false
     try {
-      const r = await fetch(`${ROUTE}/api/jam/voice`, { method: 'POST', headers: { 'x-mv-c': csrf(), 'content-type': 'application/json' }, body: JSON.stringify({ retry: true }) })
+      const r = await api('jam/voice', { method: 'POST', headers: { 'x-mv-c': csrf(), 'content-type': 'application/json' }, body: JSON.stringify({ retry: true }) })
       if (r.ok) { const b = await r.json(); set({ server: b.state, reason: b.reason, download: b.download ?? null, mb: b.mb ?? 490 }); return }
     } catch { /* below */ }
     await get().refresh()
@@ -168,7 +169,8 @@ function socket(reclaim = false): Promise<WebSocket | null> {
   if (wsOpen) return wsOpen
   wsOpen = (async () => {
     try {
-      const r = await fetch(`${ROUTE}/api/jam/audio-ticket`, { method: 'POST', headers: { 'x-mv-c': csrf() } })
+      // the ticket names this canvas's workspace like every request (A1.11); the socket it opens is bound by it
+      const r = await api('jam/audio-ticket', { method: 'POST', headers: { 'x-mv-c': csrf() } })
       if (!r.ok) return null
       const { ticket } = await r.json()
       const s = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${ROUTE}/api/jam/audio?ticket=${encodeURIComponent(ticket)}${reclaim ? '&reclaim=1' : ''}`)
@@ -242,7 +244,7 @@ function takeBackLater() {
   waitingBack = setInterval(async () => {
     if (!session || (mic && !mic.closed)) { clearInterval(waitingBack!); waitingBack = null; return }
     try {
-      const r = await fetch(`${ROUTE}/api/jam/voice`, { headers: { 'x-mv-c': csrf() } })
+      const r = await api('jam/voice', { headers: { 'x-mv-c': csrf() } })
       const b = r.ok ? await r.json() : null
       if (b && b.busy === false) { clearInterval(waitingBack!); waitingBack = null; reclaiming = true; void reconcile() }
     } catch { /* ask again */ }
