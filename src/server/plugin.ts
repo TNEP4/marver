@@ -34,9 +34,10 @@ export interface PluginCtx {
    *  Default: the project's own (workspace.ts). */
   workspace?: string
   /** spec 28 A1.1, dev only: the start this server belongs to - what configureServer makes (watchers,
-   *  sweeps, timers) is closed with it when the start fails before Vite ever listens; what this plugin
-   *  keeps across Vite restarts, only when the start ends. `defer` answers a withdrawal */
-  startup?: { defer(close: () => unknown): () => void }
+   *  sweeps, timers) is closed with it when the start fails before Vite ever listens, and, named for the
+   *  server it was made for, when that server's construction throws (a restart's, which Vite survives);
+   *  what this plugin keeps across Vite restarts, only when the start ends. `defer` answers a withdrawal */
+  startup?: { defer(close: () => unknown, server?: ViteDevServer): () => void }
   /** spec 28 A1.4, dev only: what signs the shell's document for the app - this run's instance, the slot
    *  file's key and port. Never logged, never served */
   proof?: DocProof
@@ -226,11 +227,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     configureServer(server: ViteDevServer) {
       // A1.1: what is made here closes with the server - a Vite restart closes the old one and keeps the start
       // - or, when the start fails before Vite listens (Vite then skips its HTTP server's close, so 'close'
-      // never comes), with the start that made it
+      // never comes), with the start that made it, and when a restart's server is never made, with it
       const closers: (() => void)[] = []
       const onClose = (fn: () => void) => { closers.push(fn) }
       const closeAll = () => { for (const fn of closers.splice(0).reverse()) { try { fn() } catch { /* already closed */ } } }
-      const withdraw = ctx.startup?.defer(closeAll)
+      const withdraw = ctx.startup?.defer(closeAll, server)
       server.httpServer?.once('close', () => { withdraw?.(); closeAll() })
       // a restart: Vite runs this for the new server, then closes the old one, cancelling its pending rescan and
       // its look at the marks - both are taken up here
@@ -291,7 +292,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         docs: () => docRevs(root, manifest.frames),
       }, ctx.proof))
 
-      devServer = server   // the update hooks send sh:frame-invalidated through it
+      // the update hooks send sh:frame-invalidated through it - and through the one before it again, should this
+      // server go while that one serves on (a restart whose new server could not be made)
+      const before = devServer
+      devServer = server
+      onClose(() => { if (devServer === server) devServer = before })
       guardUpdates(server, root, () => manifest, hooks)
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       // Broadcast only when the FRAMES changed - plain content edits ride HMR alone (spec

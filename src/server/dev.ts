@@ -286,40 +286,78 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   let css: Record<string, unknown> | undefined
   if (host.tailwind === 3) css = (await tailwind3Css(root)) ?? undefined
 
-  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup: t, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
   // 3. Vite's server belongs to the start from the moment it holds anything, never from the moment it is handed
-  // back: Vite makes its file watcher and HMR socket, then initialises its environments (each plugin's `options`
-  // runs there), then installs a SIGTERM handler and runs every configureServer hook - and a throw at any of those
-  // leaves what it made to an embedding caller. So each environment is taken as Vite makes it, with the watcher and
-  // the socket it is given, and closed on a way out; from its first configureServer hook, before any other (Marver's
-  // own, a host's) can fail, the server itself is, by its full close, awaited - the close of the server serving
-  // then (a restart replaces it, step 6).
-  let closeVite: () => Promise<void> = async () => {}
-  let owned = false
-  const partial = { envs: new Set<DevEnvironment>(), closers: new Set<{ close(): unknown }>() }
-  let withdrawPartial: (() => void) | null = null
-  const closePartial = async () => {
-    await Promise.allSettled([...partial.envs].map(async (env) => {
-      // an environment whose initialisation failed has no plugin container, and its close throws before the rest
-      try { await env.close() } catch { await env.depsOptimizer?.close() }
-    }))
-    await Promise.allSettled([...partial.closers].map(async (c) => c.close()))
+  // back - the first one, and each one a restart makes (step 6). Vite makes its file watcher and HMR socket, then
+  // initialises its environments (each plugin's `options` runs there), then installs a SIGTERM handler and runs every
+  // configureServer hook - and a throw at any of those leaves what it made behind: at the start to an embedding
+  // caller, and in a restart, which Vite survives by saying so and serving on with the old server, to the canvas until
+  // its process ends. So each construction is owned on its own, from its resolved config: each environment as Vite
+  // makes it, with the watcher and the socket it is given; from its first configureServer hook, before any other
+  // (Marver's own, a host's) can fail, the server itself, by its full close; and what Marver's plugin makes for that
+  // server. One that throws is closed whole - at the start with the rest of the start, in a restart at once. The server
+  // that serves is closed in the start's one place for it, `closeVite`: the close of the server serving then.
+  interface Construction {
+    envs: Set<DevEnvironment>
+    parts: Set<{ close(): unknown }>
+    /** the server's full close, from its first configureServer hook */
+    close: (() => Promise<void>) | null
+    /** what Marver's plugin made for this server (its HTTP server's close takes them, and one that never listened never closes) */
+    mine: Set<() => unknown>
+    withdraw: (() => void) | null
   }
+  const constructions = new WeakMap<ResolvedConfig, Construction>()
+  let latest: Construction | null = null
+  let closeVite: () => Promise<void> = async () => {}
+  let inPlace = false   // the start's place for the server serving: taken by the first server
+  const dispose = async (c: Construction) => {
+    if (c.close) await c.close().catch(() => { /* closing what failed */ })
+    else {
+      await Promise.allSettled([...c.envs].map(async (env) => {
+        // an environment whose initialisation failed has no plugin container, and its close throws before the rest
+        try { await env.close() } catch { await env.depsOptimizer?.close() }
+      }))
+      await Promise.allSettled([...c.parts].map(async (p) => p.close()))
+    }
+    for (const fn of [...c.mine].reverse()) { try { await fn() } catch { /* closing what failed */ } }
+  }
+  const own = (c: Construction) => { c.withdraw ??= t.defer(() => dispose(c)) }
+  /** A construction is over: its server serves (the start's place closes it from now), or it threw (closed now). */
+  const settle = async (c: Construction, serves: boolean) => {
+    c.withdraw?.()
+    c.withdraw = null
+    if (serves) c.mine.clear()   // the start holds them, and the server's own close takes them
+    else await dispose(c)
+  }
+  /** what Marver's plugin hands the start: kept until the start ends - or, named for a server, until that server goes */
+  const startup = {
+    defer(fn: () => unknown, vite?: ViteDevServer): () => void {
+      const c = vite ? constructions.get(vite.config) : undefined
+      if (!c) return t.defer(fn)
+      let done = false
+      const once = () => { if (done) return; done = true; c.mine.delete(once); return fn() }
+      c.mine.add(once)
+      const withdraw = t.defer(once)
+      return () => { c.mine.delete(once); withdraw() }
+    },
+  }
+  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
   plugins.unshift({
     name: 'marver:startup-owns-server',
     configResolved(resolved: ResolvedConfig) {
-      if (owned) return   // a restart resolves again: the server it makes is the restart's (step 6)
+      // each construction resolves its own config: the start's, and each restart's
+      const c: Construction = { envs: new Set(), parts: new Set(), close: null, mine: new Set(), withdraw: null }
+      constructions.set(resolved, c)
+      latest = c
       for (const env of Object.values(resolved.environments)) {
         const make = env.dev?.createEnvironment
         if (!make) continue
         env.dev.createEnvironment = async (name, config, context) => {
           const made = await make(name, config, context)
-          if (owned) return made
-          withdrawPartial ??= t.defer(closePartial)
-          partial.envs.add(made)
-          if (context.ws) partial.closers.add(context.ws)
+          own(c)
+          c.envs.add(made)
+          if (context.ws) c.parts.add(context.ws)
           const init = made.init.bind(made)
-          made.init = (o) => { if (o?.watcher) partial.closers.add(o.watcher); return init(o) }
+          made.init = (o) => { if (o?.watcher) c.parts.add(o.watcher); return init(o) }
           return made
         }
       }
@@ -327,20 +365,25 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     configureServer: {
       order: 'pre',
       handler(vite: ViteDevServer) {
-        if (owned) return   // a restart's new server: the restart wrap takes it on (step 6)
-        owned = true
-        closeVite = vite.close.bind(vite)
-        // the whole server now: its close closes the environments, the watcher and the socket with the rest
-        withdrawPartial?.()
+        const c = constructions.get(vite.config)
+        if (!c) return
+        // the whole server now: its close closes the environments, the watcher, the socket and its SIGTERM handler with the rest
+        c.close = vite.close.bind(vite)
+        own(c)
+        if (inPlace) return   // a restart's: its own until the restart settles it (step 6)
+        inPlace = true
+        closeVite = c.close
+        c.withdraw?.()
+        c.withdraw = null
         t.defer(() => closeVite())
       },
     },
   })
   if (opts.at) {
     // the test seam's probe: its `options` runs inside Vite's environment initialisation (once per
-    // environment - said once), its configureServer after Marver's (which is `enforce: 'pre'`)
+    // environment - said once per server made, a restart's too), its configureServer after Marver's (which is `enforce: 'pre'`)
     let env = false
-    plugins.push({ name: 'marver:startup-probe', async options() { if (!env) { env = true; await opts.at!('env') } }, async configureServer() { await opts.at!('configure') } })
+    plugins.push({ name: 'marver:startup-probe', configResolved() { env = false }, async options() { if (!env) { env = true; await opts.at!('env') } }, async configureServer() { await opts.at!('configure') } })
   }
 
   // ~35 lines of "Sourcemap for react-zoom-pan-pinch points to missing sources" per boot
@@ -438,6 +481,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     logLevel: 'info',
   })
 
+  // the start's server: it serves, and the start's place closes it
+  const first = constructions.get(server.config)
+  if (first) await settle(first, true)
   /** what holds the HTTP server itself, put back on the new one after a restart (step 6) */
   const onRestart: (() => void)[] = []
   await opts.at?.('created')
@@ -631,10 +677,19 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     server.close = close
     server.restart = ((forceOptimize?: boolean) => restarting ??= (async () => {
       let failed: unknown
+      const before = latest
       armed = true
       try { await vite.restart(forceOptimize) } catch (err) { failed = err ?? new Error('restart failed') } finally { armed = false; restarting = null }
-      // Vite could not make the new server (it says why): the old one serves on, as it was
-      if (server.close === close) { if (failed !== undefined) throw failed; return }
+      // the server this restart began to make, if it got as far as resolving its config
+      const made = latest !== before ? latest : null
+      if (server.close === close) {
+        // Vite could not make the new server (it says why): the old one serves on, as it was, and what the new one
+        // made before it threw - environments, watcher, socket, a SIGTERM handler, Marver's watchers for it - closes now
+        if (made) await settle(made, false)
+        if (failed !== undefined) throw failed
+        return
+      }
+      if (made) await settle(made, true)   // the server now: the start's place closes it (wrap)
       wrap()
       if (failed === undefined) { for (const f of onRestart) f(); return }
       // the old server is closed and the new one could not listen: the canvas is down, so the start ends here

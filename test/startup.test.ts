@@ -67,11 +67,12 @@ const { portInUse } = await import(o.exclusiveModule)
 const listening = () => ['SIGINT', 'SIGTERM', 'SIGHUP'].reduce((n, s) => n + process.listenerCount(s), 0)
 const loaded = listening()
 const home = process.env.MARVER_HOME
-let port = null
+let port = null, restarting = false
 const steps = [], blockers = []
 const at = async (step, info) => {
   steps.push(step)
   if (info && info.port) port = info.port
+  if (restarting && step === o.restartThrows) throw new Error('injected in the restart at ' + step)
   // another program takes the port between the check and the bind - on both loopbacks, so whichever Vite binds is taken
   if (o.race && step === 'claimed') for (const h of ['127.0.0.1', '::1']) await new Promise((r, j) => { const s = createServer(); blockers.push(s); s.once('error', j); s.listen(port, h, () => r()) })
   if (step === o.fail) throw new Error('injected at ' + step)
@@ -90,20 +91,30 @@ try {
   if (o.restart) {
     // an .env edit: Vite restarts in place - a new HTTP server on this same object, listening on the same port
     const before = await state(), http = server.httpServer
-    if (o.restartFails) {
-      // the new server's listen fails: another program took the port as the old server let it go
-      const { Server } = await import('node:net')
-      const listen = Server.prototype.listen
-      Server.prototype.listen = function () {
-        Server.prototype.listen = listen
-        process.nextTick(() => this.emit('error', Object.assign(new Error('listen EADDRINUSE: address already in use'), { code: 'EADDRINUSE' })))
-        return this
+    if (o.restartThrows) {
+      // the new server's construction throws - in its environments' initialisation, or a configureServer hook: Vite
+      // says so and the old server serves on. Called as Vite's own .env handler calls it, so it is awaited whole -
+      // a moment after the start, as an edit comes (the start's one-off sweep has run by then, as it has for the rest)
+      await new Promise((r) => setTimeout(r, 200))
+      restarting = true
+      await server.restart()
+      restarting = false
+    } else {
+      if (o.restartFails) {
+        // the new server's listen fails: another program took the port as the old server let it go
+        const { Server } = await import('node:net')
+        const listen = Server.prototype.listen
+        Server.prototype.listen = function () {
+          Server.prototype.listen = listen
+          process.nextTick(() => this.emit('error', Object.assign(new Error('listen EADDRINUSE: address already in use'), { code: 'EADDRINUSE' })))
+          return this
+        }
       }
+      writeFileSync(join(o.root, '.env'), 'MV_RESTART=' + Date.now() + '\\n')
+      const lock = join(o.root, 'design', '.local', 'dev.lock')
+      for (let i = 0; i < 600 && !(server.httpServer !== http && (server.httpServer.listening || !existsSync(lock))); i++) await new Promise((r) => setTimeout(r, 50))
+      await new Promise((r) => setTimeout(r, 500))   // the old server's watchers closed, the wraps back on
     }
-    writeFileSync(join(o.root, '.env'), 'MV_RESTART=' + Date.now() + '\\n')
-    const lock = join(o.root, 'design', '.local', 'dev.lock')
-    for (let i = 0; i < 600 && !(server.httpServer !== http && (server.httpServer.listening || !existsSync(lock))); i++) await new Promise((r) => setTimeout(r, 50))
-    await new Promise((r) => setTimeout(r, 500))   // the old server's watchers closed, the wraps back on
     restart = { restarted: server.httpServer !== http, before, now: await state() }
   }
   if (o.hold) { say({ ok: true, port, steps, ...restart }); await new Promise(() => {}) }
@@ -118,7 +129,7 @@ try {
 setTimeout(() => { process.stdout.write('@!' + JSON.stringify(process.getActiveResourcesInfo()) + '\\n'); process.exit(3) }, 10_000).unref()`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
-function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean }, home = freshHome()) {
+function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure' }, home = freshHome()) {
   const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
@@ -145,6 +156,21 @@ const waitFor = async (ok: () => boolean, ms = 30_000) => {
   throw new Error('timed out')
 }
 const clean = { lock: false, devJson: false, running: [], live: [], signals: 0 }
+/** A frame edit reaches a page of the canvas as a calm update: the frames it names. */
+const frameEditArrives = async (port: number, when: string) => {
+  const token = (await (await fetch(`http://localhost:${port}/@vite/client`)).text()).match(/const wsToken = "([^"]+)"/)?.[1]
+  expect(token).toBeTruthy()
+  const ws = new WebSocket(`ws://localhost:${port}/?token=${token}`, 'vite-hmr', { headers: { origin: `http://localhost:${port}` } })
+  const invalidated = new Promise<string[]>((res) => ws.on('message', (m) => {
+    const p = JSON.parse(String(m))
+    if (p.type === 'custom' && p.event === 'sh:frame-invalidated') res(p.data.frameIds)
+  }))
+  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej) })
+  const frame = join(root, 'design', 'scenes', 'demo', 'welcome.tsx')
+  writeFileSync(frame, `${readFileSync(frame, 'utf8')}\n// edited ${when} ${Date.now()}\n`)
+  try { return await Promise.race([invalidated, new Promise<never>((_, j) => setTimeout(() => j(new Error(`no sh:frame-invalidated ${when}`)), 25_000))]) }
+  finally { ws.close() }
+}
 /** The start's process ended on its own, nothing left running in it (else what still ran, as it said). */
 const endsAlone = async (s: { exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; out: () => string }) => {
   const how = await Promise.race([s.exited, new Promise<null>((r) => setTimeout(() => r(null), 20_000))])
@@ -243,18 +269,7 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(kept(r.now!)).toEqual(kept(r.before!))
     for (const w of [['design', 'boards'], ['design', '.local', 'shots'], ['design', 'comments']]) expect(kept(r.now!).some((l) => l.startsWith(`fs.watch ${join(root, ...w)} `)), w.join('/')).toBe(true)
     // calm updates still flow: the change that restarted Vite never lands, and never holds the next one for good
-    const token = (await (await fetch(`http://localhost:${r.port}/@vite/client`)).text()).match(/const wsToken = "([^"]+)"/)?.[1]
-    expect(token).toBeTruthy()
-    const ws = new WebSocket(`ws://localhost:${r.port}/?token=${token}`, 'vite-hmr', { headers: { origin: `http://localhost:${r.port}` } })
-    const invalidated = new Promise<string[]>((res) => ws.on('message', (m) => {
-      const p = JSON.parse(String(m))
-      if (p.type === 'custom' && p.event === 'sh:frame-invalidated') res(p.data.frameIds)
-    }))
-    await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej) })
-    const frame = join(root, 'design', 'scenes', 'demo', 'welcome.tsx')
-    writeFileSync(frame, `${readFileSync(frame, 'utf8')}\n// edited after a restart ${Date.now()}\n`)
-    expect(await Promise.race([invalidated, new Promise<never>((_, j) => setTimeout(() => j(new Error('no sh:frame-invalidated after the restart')), 25_000))])).toContain('demo/welcome')
-    ws.close()
+    expect(await frameEditArrives(r.port!, 'after a restart')).toContain('demo/welcome')
     s.child.kill('SIGTERM')
     await Promise.race([s.exited, new Promise((_, j) => setTimeout(() => j(new Error(`still running after SIGTERM\n${s.out()}`)), 15_000))])
     expect(existsSync(local('dev.lock'))).toBe(false)
@@ -282,6 +297,43 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(r.now).toEqual({ ...clean, inUse: false })
     expect(s.out()).toContain(`the canvas stopped: it could not restart on port ${r.port}`)
     await endsAlone(s)
+  }, 60_000)
+})
+
+describe('a restart whose new server cannot be made leaves nothing of it (A1.1)', () => {
+  /** What of Marver's own keeps running: its watchers and its sweeps (a timeout comes and goes). */
+  const kept = (s: State) => s.live.filter((l) => /^(fs\.watch|setInterval)/.test(l)).sort()
+  const held = ({ live, ...st }: State) => ({ ...st, kept: kept({ live } as State) })
+
+  for (const step of ['env', 'configure'] as const) {
+    it(`the new server throws at "${step}": the old one serves on, what the new one made is closed at once, and a close leaves nothing`, async () => {
+      const s = start({ restart: true, restartThrows: step })
+      const r = await s.report
+      expect(r.ok).toBe(true)
+      expect(r.restarted).toBe(false)
+      expect(r.steps.filter((x) => x === step), 'the restart reached the step').toHaveLength(2)
+      // the same claims, the same server, the same watchers of Marver's - none made for the server that never was
+      expect(held(r.now!)).toEqual(held(r.before!))
+      expect(r.now!.inUse).toBe(true)
+      // and the close closes everything: no watcher, socket, environment or SIGTERM handler of the new server's
+      expect(r.after).toEqual({ ...clean, inUse: false })
+      await endsAlone(s)
+    }, 60_000)
+  }
+
+  it('thrown after Marver\'s configureServer: a frame edit still reaches the pages through the old server, and a SIGTERM gives everything back', async () => {
+    const s = start({ restart: true, restartThrows: 'configure', hold: true })
+    const r = await s.report
+    expect(r.ok).toBe(true)
+    expect(r.restarted).toBe(false)
+    expect(r.now!.signals).toBe(r.before!.signals)
+    expect(await frameEditArrives(r.port!, 'after a failed restart')).toContain('demo/welcome')
+    s.child.kill('SIGTERM')
+    await Promise.race([s.exited, new Promise((_, j) => setTimeout(() => j(new Error(`still running after SIGTERM\n${s.out()}`)), 15_000))])
+    expect(existsSync(local('dev.lock'))).toBe(false)
+    expect(existsSync(local('dev.json'))).toBe(false)
+    expect(runningIn(s.home)).toEqual([])
+    expect(await portInUse(r.port!)).toBe(false)
   }, 60_000)
 })
 
