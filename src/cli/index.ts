@@ -86,7 +86,7 @@ for (const [name, desc] of [
 }
 
 cli
-  .command('ls', 'The canvases running on this Mac: slot, link, name, folder, version, state, uptime (no repo needed)')
+  .command('ls', 'The canvases running on this Mac: slot, link, name, version, state, uptime, folder (no repo needed)')
   .option('--json', 'Machine-readable output (never a canvas\'s key)')
   .action(async (opts) => { (await import('./ls.ts')).lsCommand({ json: opts.json === true }) })
 

@@ -361,10 +361,11 @@ export const uptime = (ms: number): string => {
   return d ? `${d}d ${h % 24}h` : h ? `${h}h ${m % 60}m` : m ? `${m}m` : `${s}s`
 }
 
-/** The list as `marver ls` prints it: slot, link, name, folder, version, state, uptime. */
+/** The list as `marver ls` prints it: slot, link, name, version, state, uptime, then the folder - last, its length
+ *  its own, so the columns before it stay on the line. */
 export function formatRunning(list: Running[], now: number = Date.now()): string[] {
-  const rows = [['slot', 'link', 'name', 'folder', 'version', 'state', 'up'],
-    ...list.map((r) => [r.slot === null ? '-' : String(r.slot), r.url, r.name, tilde(r.root), r.version, r.state, uptime(now - r.startedAt)])]
+  const rows = [['slot', 'link', 'name', 'version', 'state', 'up', 'folder'],
+    ...list.map((r) => [r.slot === null ? '-' : String(r.slot), r.url, r.name, r.version, r.state, uptime(now - r.startedAt), tilde(r.root)])]
   const widths = rows[0].map((_, c) => Math.max(...rows.map((r) => r[c].length)))
   return rows.map((r) => r.map((cell, c) => c === 0 ? cell.padStart(widths[c]) : cell.padEnd(widths[c])).join('  ').trimEnd())
 }

@@ -46,9 +46,13 @@ describe('marver ls (A1.5)', () => {
     expect(code).toBe(0)
     const rows = out.split('\n').map((l) => l.trim()).filter(Boolean)
     expect(rows).toHaveLength(3)
-    expect(rows[0]).toMatch(/^slot\s+link\s+name\s+folder\s+version\s+state\s+up$/)
-    expect(rows[1]).toMatch(/^2\s+http:\/\/localhost:4806\/\s+atlas-app\s+~\/atlas-app\s+0\.27\.0\s+ready\s+2m$/)
-    expect(rows[2]).toMatch(/^-\s+http:\/\/localhost:5298\/\s+canvas\s+\/tmp\/platform\/canvas\s+0\.27\.0\s+ready\s+2m$/)
+    // the folder last, with ~ for the home folder: the columns before it stay on the line however long it is
+    expect(rows[0]).toMatch(/^slot\s+link\s+name\s+version\s+state\s+up\s+folder$/)
+    expect(rows[1]).toMatch(/^2\s+http:\/\/localhost:4806\/\s+atlas-app\s+0\.27\.0\s+ready\s+2m\s+~\/atlas-app$/)
+    expect(rows[2]).toMatch(/^-\s+http:\/\/localhost:5298\/\s+canvas\s+0\.27\.0\s+ready\s+2m\s+\/tmp\/platform\/canvas$/)
+    // a row before its folder is the same width on every line - the folder starts in one column
+    const at = out.split('\n').filter((l) => /^\s+(slot|\d|-)\s/.test(l)).map((l) => l.search(/(folder|~\/atlas-app|\/tmp\/platform)/))
+    expect(new Set(at).size).toBe(1)
     expect(out).not.toContain('SECRET')
   }, 30_000)
 

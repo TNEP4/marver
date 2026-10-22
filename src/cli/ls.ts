@@ -1,6 +1,6 @@
 /**
  * `marver ls` (spec 28 A1.5): the canvases running on this Mac, read from the registry
- * (~/.marver/running/) - slot, link, name, folder, version, state, uptime. Dead holders are hidden.
+ * (~/.marver/running/) - slot, link, name, version, state, uptime, folder. Dead holders are hidden.
  * No repo needed. `--json` for agents prints the public fields only: never a canvas's key or instance.
  */
 import { formatRunning, readRunning } from '../server/slots.ts'

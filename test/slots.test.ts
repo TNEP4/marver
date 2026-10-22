@@ -143,7 +143,7 @@ describe('the slots: claims (A1.3)', () => {
     if (r.ok) return
     const lines = r.message.split('\n').map((l) => l.trim())
     expect(lines[0]).toBe('all 20 slots are taken:')
-    expect(lines[1]).toMatch(/^slot\s+link\s+name\s+folder\s+version\s+state\s+up$/)
+    expect(lines[1]).toMatch(/^slot\s+link\s+name\s+version\s+state\s+up\s+folder$/)
     for (let n = 1; n <= 20; n++) expect(r.message).toContain(`http://localhost:${BASE + n}/  project-${n}`)
     expect(lines.at(-1)).toBe('stop one (Ctrl-C in its terminal), or start this one with --port <n>')
     expect(readdirSync(running()).filter((f) => !/^slot-\d+\.json$/.test(f))).toEqual([])
@@ -347,6 +347,6 @@ describe('ports and the list', () => {
     expect(list[0]).not.toHaveProperty('key')
     expect(list[0]).not.toHaveProperty('instance')
     const lines = formatRunning(list, list[0].startedAt + 3_723_000)
-    expect(lines[1]).toMatch(new RegExp(`^ {3}2  http://localhost:${BASE + 2}/  project-2  /tmp/project-2  0.27.0   ready  1h 2m$`))
+    expect(lines[1]).toMatch(new RegExp(`^ {3}2  http://localhost:${BASE + 2}/  project-2  0.27.0   ready  1h 2m  /tmp/project-2$`))
   })
 })
