@@ -12,7 +12,7 @@ import { ALL_SCENES } from '../shared/board-tree.ts'
 import { contentOnly } from '../shared/frames.ts'
 import { docRev, docRevs, initMarks, observe, recordChanged } from './marks.ts'
 import { guardUpdates, updatesPlugin, type Touched, type UpdateHooks } from './updates.ts'
-import { logReload } from './perf.ts'
+import { logReload, tidyPerfDir } from './perf.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
@@ -256,6 +256,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // Pre-middlewares: our routes + api run before Vite's html fallback.
       // the marks start with the dev server, before any page asks (spec 26)
       initMarks(root, manifest.frames)
+      tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
       server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled }))
       server.middlewares.use(routesMiddleware(server, clientDir, {
         doc: (id) => docRev(root, manifest.frames, id),

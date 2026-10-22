@@ -92,14 +92,15 @@ export function logJam(root: string, raw: Record<string, unknown>): void {
 
 async function drain(root: string, w: Writer): Promise<void> {
   const file = jamLog(root)
-  try { mkdirSync(join(file, '..'), { recursive: true }) } catch { /* the append says */ }
+  // the directory 700 and the file 600 from their creation: the perf logs are the owner's alone (spec 28 A1.7)
+  try { mkdirSync(join(file, '..'), { recursive: true, mode: 0o700 }) } catch { /* the append says */ }
   while (w.queue.length || w.dropped) {
     const lines = w.queue.splice(0)
     const held = lines.reduce((n, l) => n + l.length, 0)
     w.inFlight = lines.length
     if (w.dropped) { lines.push(JSON.stringify({ v: 1, ts: Date.now(), kind: 'dropped', count: w.dropped }) + '\n'); w.dropped = 0 }
     try {
-      await (jamSeams.append ?? appendFile)(file, lines.join(''))
+      await (jamSeams.append ?? ((f: string, d: string) => appendFile(f, d, { mode: 0o600 })))(file, lines.join(''))
       // now and then: past its size, the oldest half goes
       if (++w.writes % 50 === 0 && (await stat(file)).size > MAX_FILE) {
         const all = (await readFile(file, 'utf8')).split('\n')

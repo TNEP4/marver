@@ -10,6 +10,7 @@ import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFil
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
+import { logPage, PAGE_BODY_MAX } from './perf.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -366,6 +367,16 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!b || (b.kind !== 'capture' && b.kind !== 'upload')) return json(res, 400, { error: 'kind must be capture or upload' })
         ;(await import('./perf-jam.ts')).logJam(root, b)
         return json(res, 200, { ok: true })
+      }
+      // the recorder's page half (spec 28 A1.7): a page's records about its board loads, gestures and errors - each
+      // rebuilt from its kind's allowlist, strings cut to 200 characters, 512 KB a request at most
+      if (path === 'perf/page' && req.method === 'POST') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req, PAGE_BODY_MAX)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!Array.isArray(b?.records)) return json(res, 400, { error: 'expected { records: [...] }' })
+        return json(res, 200, { ok: true, accepted: logPage(root, b.records) })
       }
       if (path === 'sizes' && req.method === 'GET') {
         const frames = readManifestFrames()
