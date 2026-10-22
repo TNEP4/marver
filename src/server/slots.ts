@@ -281,16 +281,16 @@ export function readPrefer(id: string): Prefer | null | undefined {
 }
 
 /** Record this run's address, after ready: a new entry only when url, bind or ws differ from the newest
- *  (so recovery never loses the one it needs), at most five. Says whether this is the project's first
- *  0.27 run, and the address it ran on last. */
+ *  (so recovery never loses the one it needs); an address it ran on before moves to the front, keeping its
+ *  first start - five distinct addresses at most. Says whether this is the project's first 0.27 run, and
+ *  the address it ran on last. */
 export function notePrefer(id: string, run: RunAddress, now: number = Date.now()): { first: boolean; previous: Address | null } {
   const file = preferFileOf(id)
   if (!file) throw new Error(`not a workspace id: ${id}`)
   const cur = readPrefer(id)
-  const history = cur?.history ?? []
-  const previous = history[0] ? { ...history[0] } : null
-  if (previous && sameAddress(previous, run)) history[0].until = now
-  else history.unshift({ url: run.url, bind: run.bind, ws: run.ws, from: now, until: now })
+  const previous = cur?.history[0] ? { ...cur.history[0] } : null
+  const before = cur?.history.find((a) => sameAddress(a, run))
+  const history = [{ url: run.url, bind: run.bind, ws: run.ws, from: before?.from ?? now, until: now }, ...(cur?.history ?? []).filter((a) => !sameAddress(a, run))]
   made(preferDir())
   writeWhole(file, JSON.stringify({ v: 1, slot: run.slot ?? cur?.slot ?? null, history: history.slice(0, HISTORY) } satisfies Prefer, null, 2) + '\n')
   return { first: cur === undefined, previous }

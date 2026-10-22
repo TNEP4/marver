@@ -261,6 +261,17 @@ describe('the preference file (A1.3)', () => {
     expect(mode(join(home, 'prefer'))).toBe(0o700)
   })
 
+  it('five distinct addresses: one it ran on before moves to the front, keeping its first start', () => {
+    notePrefer(id, at(BASE + 1), 100)   // A
+    notePrefer(id, at(BASE + 2), 200)   // B: A's slot was taken
+    expect(notePrefer(id, at(BASE + 1), 300).previous).toMatchObject({ url: `http://localhost:${BASE + 2}/` })   // A again
+    expect(readPrefer(id)!.history.map((a) => [a.url, a.from, a.until])).toEqual([[`http://localhost:${BASE + 1}/`, 100, 300], [`http://localhost:${BASE + 2}/`, 200, 200]])
+    // alternating between two slots never pushes out an older, different address
+    notePrefer(id, at(BASE + 3), 400)
+    for (let k = 0; k < 6; k++) notePrefer(id, at(BASE + 1 + (k % 2)), 500 + k)
+    expect(readPrefer(id)!.history.map((a) => a.url)).toEqual([2, 1, 3].map((n) => `http://localhost:${BASE + n}/`))
+  })
+
   it('a run on a port of its own keeps the slot it preferred', () => {
     notePrefer(id, at(BASE + 5), 1)
     notePrefer(id, { slot: null, url: 'http://localhost:47123/', bind: 'http://[::1]:47123', ws: id }, 2)
