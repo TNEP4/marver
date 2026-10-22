@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -251,5 +252,15 @@ describe('marver perf, printed', () => {
     writeFileSync(pageLog(root), '')
     perfCommand(root, { loads: true })
     expect(out.join('\n')).toContain('nothing yet')
+  })
+})
+
+describe('marver perf --help', () => {
+  it('--loads says what it counts: how many moves and their causes - it lists no frames that moved', () => {
+    const help = execFileSync(process.execPath, [join(import.meta.dirname, '..', 'dist', 'cli.mjs'), 'perf', '--help'], { encoding: 'utf8' })
+    const loads = help.split('\n').find((l) => l.includes('--loads'))
+    expect(loads).toContain('how many moves and their causes')
+    expect(loads).toContain('the last move')
+    expect(loads).not.toContain('frames that moved')
   })
 })
