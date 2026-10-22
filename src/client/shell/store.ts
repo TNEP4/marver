@@ -200,7 +200,8 @@ export interface BoardMeta {
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
   if (DATA) return { tree: DATA.tree ?? DATA.names.map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
   const [boards, reg] = await Promise.all([
-    api('boards').then((r) => { if (!r.ok) throw new Error(`boards ${r.status}`); return r.json() }) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[]; error?: string }[]>,
+    // a refusal says why in the server's own words (a symlinked design/boards: BoardList says it out loud)
+    api('boards').then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `boards ${r.status}`); return r.json() }) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[]; error?: string }[]>,
     api('folders').then(async (r) => {
       const j = await r.json() as { folders?: { name: string; order?: number; parent?: string; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
