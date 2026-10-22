@@ -112,7 +112,8 @@ export function startRecorder(opts: { capturesPending: () => boolean; sealCaptur
   recorderHooks.reflowIdle = settleSoon
   onAdmissionIdle(settleSoon)
   useStore.subscribe(guard(onNodes))
-  addEventListener('error', (e) => { if (e instanceof ErrorEvent) recorder.error({ source: 'shell', message: e.message || String(e.error), stack: (e.error as Error | undefined)?.stack }) })
+  // the error's own message (not the event's "Uncaught …"), so a render error the boundary also reports is one error
+  addEventListener('error', (e) => { if (e instanceof ErrorEvent) recorder.error({ source: 'shell', message: (e.error instanceof Error && e.error.message) || e.message || String(e.error), stack: (e.error as Error | undefined)?.stack }) })
   addEventListener('unhandledrejection', (e) => recorder.error({ source: 'shell', message: `unhandled rejection: ${(e.reason as Error | undefined)?.message ?? String(e.reason)}`, stack: (e.reason as Error | undefined)?.stack }))
   document.addEventListener('visibilitychange', guard(() => {
     if (document.visibilityState !== 'hidden') return
@@ -163,8 +164,8 @@ function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   const keys = new Set(nodes.map((n) => n.key))
   for (const k of [...tracks.keys()]) if (!keys.has(k)) tracks.delete(k)
   rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest) })
-  L.quietTimer = setTimeout(() => quiet(L), QUIET_MS)
-  L.timeout = setTimeout(() => cut(L, 'timeout'), Math.max(0, LOAD_MAX_MS - (L.committedAt - L.t0)))
+  L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
+  L.timeout = setTimeout(guard(() => cut(L, 'timeout')), Math.max(0, LOAD_MAX_MS - (L.committedAt - L.t0)))
   if (document.visibilityState === 'hidden') cut(L, 'hidden')
 }
 
@@ -214,7 +215,7 @@ function move(L: Load, key: string, dx: number, dy: number, dw: number, dh: numb
     L.causes[cause] = (L.causes[cause] ?? 0) + 1
     L.lastMoveAt = performance.now()
     clearTimeout(L.quietTimer)
-    L.quietTimer = setTimeout(() => quiet(L), QUIET_MS)
+    L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
   }
   // a drag is one store change per pointermove: while its record waits to be sent, the next one adds to it
   const merges = cause === 'drag' || cause === 'resize'
@@ -284,7 +285,7 @@ function trySettle(): void {
   if (!L || L.done || L.committedAt === undefined) return
   if (performance.now() - L.lastMoveAt < QUIET_MS) return
   if (!reflowIdle() || !admissionIdle()) return
-  if (cameraMoving()) { L.retry ??= setTimeout(() => { L.retry = undefined; trySettle() }, 150); return }
+  if (cameraMoving()) { L.retry ??= setTimeout(guard(() => { L.retry = undefined; trySettle() }), 150); return }
   const s = useStore.getState()
   const outs = s.nodes.map((n) => outcomeNow(n, s.manifest))
   if (outs.some((o) => !o)) return
@@ -396,13 +397,14 @@ const droppedNow = (more = 0): PerfRecord[] => {
 async function send(): Promise<void> {
   clearTimeout(sendTimer)
   sendTimer = undefined
-  if (sending || !outbox.size) return
+  if (!on || sending || !outbox.size) return
   sending = true
-  const batch = [...droppedNow(), ...outbox.takeAll()]
-  open.clear()
-  inFlight = batch
+  let batch: PerfRecord[] = []
   let ok = false
   try {
+    batch = [...droppedNow(), ...outbox.takeAll()]
+    open.clear()
+    inFlight = batch
     for (let attempt = 0; attempt < 3 && !ok; attempt++) {
       if (attempt) await wait(SEND_MS)
       try {
@@ -412,12 +414,11 @@ async function send(): Promise<void> {
         else if (r.status < 500) break   // refused (not this workspace's, a bad batch): trying again cannot help
       } catch { /* the network: again */ }
     }
-  } finally {
-    if (!ok) outbox.dropped += batch.filter((r) => r.kind !== 'dropped').length + batch.filter((r) => r.kind === 'dropped').reduce((n, r) => n + (r.n as number), 0)
-    inFlight = []
-    sending = false
-    armSend()
-  }
+  } catch { /* never in the way: what it held is counted below */ }
+  if (!ok) outbox.dropped += batch.filter((r) => r.kind !== 'dropped').length + batch.filter((r) => r.kind === 'dropped').reduce((n, r) => n + (r.n as number), 0)
+  inFlight = []
+  sending = false
+  armSend()
 }
 
 /** The page is going. The load in flight is cut; captures go first - a capture still open is sealed here (whichever
