@@ -31,7 +31,7 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   const reloaded = by('job')
   if (opts.json) {
     console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { afterEdit: reloaded, byHand: by('manual'), retried: by('retry'), self: by('self'), first: by('first') }, reloads, boots, slow,
-      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length })) }, null, 2))
+      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })) }, null, 2))
     return
   }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
@@ -55,7 +55,7 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
       const bits = [
         endOf(l),
         ...(l.moves.count || l.moves.late.count ? [`${l.moves.count} move${l.moves.count === 1 ? '' : 's'}${l.moves.late.count ? ` (${l.moves.late.count} late)` : ''}`] : []),
-        ...(l.errors.length ? [`${l.errors.length} error${l.errors.length === 1 ? '' : 's'}`] : []),
+        ...(l.errors.length ? [`${l.errors.length} error${l.errors.length === 1 ? '' : 's'}${lateErrors(l) ? ` (${lateErrors(l)} late)` : ''}`] : []),
       ]
       console.log(`  ${t(l.at)}  ${(l.board ?? '?').padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
     }
@@ -80,7 +80,10 @@ export interface LoadSummary {
   moves: { count: number; distance: number; causes: Ranked; late: { count: number; causes: Ranked } }
   /** the five slowest frames: settled, else ready, in ms from the load's request (a document kept from before it has none) */
   slowest: { node: string; frame?: string; ms: number; outcome: string }[]
-  errors: { source: string; frame?: string; component?: string; message: string }[]
+  /** each error once (one after the load ended is `late`: the load owns the board for as long as it stays open) */
+  errors: { source: string; frame?: string; component?: string; message: string; late?: true }[]
+  /** errors past the load's 50: counted, not recorded */
+  errorsNotRecorded: number
   neverReady: string[]; missing: string[]
   /** frames still pending when the load was cut */
   unfinished: number
@@ -128,10 +131,10 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       .sort((a, b) => b.ms - a.ms).slice(0, 5)
     const seenErr = new Set<string>()
     const errors = of('error').flatMap((e) => {
-      const k = `${e.source}|${e.frame ?? ''}|${e.message}`
+      const k = `${e.source}|${e.frame ?? ''}|${e.message}|${e.late ? 'late' : ''}`
       if (seenErr.has(k)) return []
       seenErr.add(k)
-      return [{ source: e.source, ...(e.frame ? { frame: e.frame } : {}), ...(e.component ? { component: e.component } : {}), message: String(e.message ?? '') }]
+      return [{ source: e.source, ...(e.frame ? { frame: e.frame } : {}), ...(e.component ? { component: e.component } : {}), message: String(e.message ?? ''), ...(e.late ? { late: true as const } : {}) }]
     }).slice(0, 10)
     const gs = of('gesture')
     out.push({
@@ -145,7 +148,7 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       ...(settled ? { visibleReadyMs: settled.visibleReadyMs, allReadyMs: settled.allReadyMs, settledMs: settled.ms, weight: settled.weight } : {}),
       ...(quiet ? { quietMs: quiet.ms } : {}),
       moves: { count: moves.count, distance: Math.round(moves.distance), causes: ranked(moves.causes), late: { count: late.count, causes: ranked(late.causes) } },
-      slowest, errors,
+      slowest, errors, errorsNotRecorded: notRecorded(g),
       neverReady: frames.filter((f) => f.outcome === 'never-ready').map(name),
       missing: frames.filter((f) => f.outcome === 'missing').map(name),
       unfinished: frames.filter((f) => f.outcome === 'cut').length,
@@ -155,15 +158,25 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
   return out.sort((a, b) => a.at - b.at)
 }
 
-/** What a page recorded before its first board committed: its errors, and how many gestures. */
+/** Errors past a load's 50 (`dropped` records with reason `errors`): counted by the page, never recorded. */
+const notRecorded = (g: Record<string, any>[]) => g.filter((r) => r.kind === 'dropped' && r.reason === 'errors').reduce((n, r) => n + (Number(r.n) || 0), 0)
+
+/** What a page recorded before its first board committed: its errors (those past 50 counted), and how many gestures. */
 export function unownedOf(records: Record<string, any>[]) {
   const mine = unique(records).filter((r) => r.load === '-')
   return {
     errors: mine.filter((r) => r.kind === 'error').map((e) => ({ at: e.ts, source: e.source, ...(e.frame ? { frame: e.frame } : {}), message: e.message })),
+    errorsNotRecorded: notRecorded(mine),
     gestures: mine.filter((r) => r.kind === 'gesture').length,
   }
 }
 
+/** Records the pages lost before they reached the log - past a page's queue, or in a send that failed three times
+ *  (`dropped` records without a reason; errors past a load's 50 are that load's). */
+export const droppedOf = (records: Record<string, any>[]): number =>
+  unique(records).filter((r) => r.kind === 'dropped' && r.reason === undefined).reduce((n, r) => n + (Number(r.n) || 0), 0)
+
+const lateErrors = (l: LoadSummary) => l.errors.filter((e) => e.late).length
 const secs = (ms?: number) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '-')
 const boardName = (b?: string) => (b === '~unplaced' ? 'Not on a board' : b ? humanize(b) : 'a board (its request is older)')
 /** How a load ended, in a few words. */
@@ -179,7 +192,8 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const records = readPage(root, Date.now() - minutes * 60_000)
   const loads = loadsSummary(records)
-  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records) }, null, 2)); return }
+  const dropped = droppedOf(records)
+  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped }, null, 2)); return }
   console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
   if (!loads.length) { console.log('\nnothing yet - open a board in the canvas'); return }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
@@ -203,9 +217,11 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (l.slowest.length) console.log(`    slowest: ${l.slowest.map((f) => `${f.frame ?? f.node} ${secs(f.ms)}`).join(', ')}`)
     const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} not done when it ended`] : [])]
     if (gone.length) console.log(`    ${gone.join(' · ')}`)
-    for (const e of l.errors) console.log(`    error (${e.source}${e.frame ? ` ${e.frame}` : ''}${e.component ? `, in ${e.component}` : ''}): ${e.message}`)
+    for (const e of l.errors) console.log(`    ${e.late ? 'late error' : 'error'} (${e.source}${e.frame ? ` ${e.frame}` : ''}${e.component ? `, in ${e.component}` : ''}): ${e.message}`)
+    if (l.errorsNotRecorded) console.log(`    ${plural(l.errorsNotRecorded, 'more error')} past the first 50, not recorded`)
     if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
+  if (dropped) console.log(`\n  ${plural(dropped, 'record')} never reached this log: a page's queue was full, or its sends failed`)
 }
 
 /** Count, median, p90 and max of a list of ms. */

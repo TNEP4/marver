@@ -412,6 +412,21 @@ describe('the page recorder: gestures, errors, the log', () => {
     expect(e.stack.length).toBeLessThanOrEqual(3)
   }, 60_000)
 
+  it('past a load\'s 50 errors the rest are counted, not recorded; an error after the load ended is late', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/send')
+    const l = await ended(page, 'send')
+    await drained(s)
+    await browser.eval(s, `(() => { for (let i = 0; i < 55; i++) setTimeout(() => { throw new Error('again ' + i) }); return 1 })()`)
+    const mine = () => lines().filter((r) => r.page === page && r.load === l.load.request)
+    const errs = () => mine().filter((r) => r.kind === 'error' && /^again \d+$/.test(r.message))
+    await until(() => errs().length >= 50 && mine().some((r) => r.kind === 'dropped' && r.reason === 'errors'), 20_000, 'the errors and the count past 50')
+    await drained(s)
+    expect(errs()).toHaveLength(50)
+    expect(errs().every((e) => e.late === true)).toBe(true)
+    expect(mine().filter((r) => r.kind === 'dropped' && r.reason === 'errors').reduce((n, r) => n + r.n, 0)).toBe(5)
+  }, 60_000)
+
   it.skipIf(process.platform === 'win32')('the log is the owner\'s alone: page.jsonl 600, perf/ 700', () => {
     if (!browser) return
     expect(statSync(pageLog()).mode & 0o777).toBe(0o600)

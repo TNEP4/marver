@@ -69,7 +69,8 @@ export class Outbox {
       const it = this.items.shift()!
       this.waiting.delete(it.rec)
       this.bytes -= it.bytes
-      this.dropped++
+      // a `dropped` record that goes takes what it counted with it
+      this.dropped += it.rec.kind === 'dropped' && typeof it.rec.n === 'number' ? it.rec.n : 1
     }
   }
 }

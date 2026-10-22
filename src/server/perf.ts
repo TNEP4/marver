@@ -65,6 +65,8 @@ export const CUT_REASONS = ['switch', 'reload', 'hidden', 'timeout', 'superseded
 export const OUTCOMES = ['settled', 'ready', 'missing', 'error', 'never-ready', 'cut'] as const
 export const GESTURES = ['pan', 'zoom', 'layout'] as const
 export const SOURCES = ['shell', 'frame', 'stage'] as const
+/** why records were dropped, when it is not the queue's bound or a failed send: errors past a load's 50 */
+export const DROP_REASONS = ['errors'] as const
 
 // each id in its own generated format - free text never passes as one
 const ID = /^[0-9a-f]{12}$/, WS = /^[0-9a-f]{16}$/
@@ -120,9 +122,9 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
   error: (r) => {
     const source = oneOf(r.source, SOURCES), message = str(r.message)
     const stack = Array.isArray(r.stack) ? r.stack.slice(0, 3).map((l) => str(l)).filter((l): l is string => !!l) : []
-    return source && message ? { source, frame: str(r.frame), component: str(r.component), message, stack: stack.length ? stack : undefined } : null
+    return source && message ? { source, frame: str(r.frame), component: str(r.component), message, stack: stack.length ? stack : undefined, late: flag(r.late) } : null
   },
-  dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n) }),
+  dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n), reason: oneOf(r.reason, DROP_REASONS) }),
 }
 
 /** A page record rebuilt from the envelope and its kind's allowlist, or null. Strings are cut to 200 characters. */

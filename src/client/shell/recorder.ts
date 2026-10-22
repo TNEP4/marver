@@ -359,7 +359,11 @@ function ensureVisible(L: Load): void {
 // ---- errors -----------------------------------------------------------------------------------------------------
 
 let inError = false
-/** ≤ 50 per load, the same one at most once a second; messages and stack lines cut to 200 characters. */
+/** the errors past a load's 50, counted in one `dropped` record while it waits to be sent (the next one adds to it) */
+let over: PerfRecord | null = null
+/** ≤ 50 per load (those past it counted), the same one at most once a second; messages and stack lines cut to 200
+ *  characters. An error after the load settled or was cut is `late` - the load owns the geometry for as long as its
+ *  board stays open. */
 function logError(e: { source: 'shell' | 'frame' | 'stage'; frame?: string; component?: string; message: unknown; stack?: unknown }): void {
   if (inError) return
   inError = true
@@ -368,11 +372,16 @@ function logError(e: { source: 'shell' | 'frame' | 'stage'; frame?: string; comp
     if (!message) return
     const L = owner, mine = L ?? unowned
     const key = `${e.source}|${e.frame ?? ''}|${message}`, now = performance.now()
-    if (mine.errors >= 50 || now - (mine.errAt.get(key) ?? -Infinity) < 1000) return
+    if (now - (mine.errAt.get(key) ?? -Infinity) < 1000) return
+    if (mine.errors >= 50) {
+      if (over && over.load === ownerId() && outbox.has(over)) { over.n = (over.n as number) + 1; outbox.touch(over) }
+      else over = rec('dropped', ownerId(), { n: 1, reason: 'errors' })
+      return
+    }
     mine.errors++
     mine.errAt.set(key, now)
     const stack = Array.isArray(e.stack) ? e.stack.slice(0, 3).map((l) => bound(l)).filter((l): l is string => !!l) : stackLines(e.stack)
-    rec('error', ownerId(), { source: e.source, frame: bound(e.frame), component: bound(e.component), message, ...(stack?.length ? { stack } : {}) })
+    rec('error', ownerId(), { source: e.source, frame: bound(e.frame), component: bound(e.component), message, ...(stack?.length ? { stack } : {}), ...(L?.done ? { late: true } : {}) })
   } finally { inError = false }
 }
 

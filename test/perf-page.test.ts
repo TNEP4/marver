@@ -30,8 +30,8 @@ const VALID: Record<string, Record<string, unknown>> = {
   settled: { ms: 3200, moves: 7, distance: 1840, causes: { 'reflow:measured': 4, 'measure-height': 3 }, visibleReadyMs: 900, allReadyMs: 1800, missing: 1, neverReady: 1, errors: 1, weight: { domNodes: 4000, iframes: 12, awake: 4, asleep: 8, heapMB: 81.27 } },
   cut: { reason: 'superseded', request: LOAD, ms: 140 },
   gesture: { type: 'layout', ms: 500, frames: 15, p50: 33, p95: 33.04, max: 33, over17ms: 15, over33ms: 0, longFrames: 0 },
-  error: { source: 'frame', frame: 'kit/boom', message: 'boom', stack: ['at Boom (x.tsx:1:2)', 'at y', 'at z', 'at w'] },
-  dropped: { n: 4 },
+  error: { source: 'frame', frame: 'kit/boom', message: 'boom', stack: ['at Boom (x.tsx:1:2)', 'at y', 'at z', 'at w'], late: true },
+  dropped: { n: 4, reason: 'errors' },
 }
 
 describe('a page record', () => {
@@ -45,6 +45,8 @@ describe('a page record', () => {
     expect(cleanPageRecord(env('load', VALID.load))).toMatchObject({ sinceNav: 413 })
     expect(cleanPageRecord(env('settled', VALID.settled))).toMatchObject({ weight: { heapMB: 81.3 }, causes: { 'reflow:measured': 4 } })
     expect(cleanPageRecord(env('error', VALID.error))!.stack).toHaveLength(3)
+    expect(cleanPageRecord(env('error', VALID.error))).toMatchObject({ late: true })
+    expect(cleanPageRecord(env('dropped', VALID.dropped))).toMatchObject({ n: 4, reason: 'errors' })
     expect(cleanPageRecord(env('commit', VALID.commit))!.byKind).toEqual({ hifi: 3, content: 8, html: 1, image: 0 })
   })
 
@@ -67,6 +69,9 @@ describe('a page record', () => {
     expect(cleanPageRecord(env('move', { ...VALID.move, cause: 'Not A Cause!' }))).toBeNull()
     expect(cleanPageRecord(env('error', { source: 'shell' }))).toBeNull()
     expect(cleanPageRecord(env('cut', { reason: 'bored' }))).toBeNull()
+    // a reason that is not one is left out: the count stays
+    expect(cleanPageRecord(env('dropped', { n: 3, reason: SENTINEL }))).toMatchObject({ n: 3 })
+    expect(cleanPageRecord(env('dropped', { n: 3, reason: SENTINEL }))).not.toHaveProperty('reason')
     expect(cleanPageRecord(env('load', { ...VALID.load, board: '~unplaced' }))).toMatchObject({ board: '~unplaced' })
     const f = cleanPageRecord(env('frame', { node: 'k', outcome: 'ready', ready: -5, admitted: Number.NaN }))!
     expect('ready' in f || 'admitted' in f).toBe(false)

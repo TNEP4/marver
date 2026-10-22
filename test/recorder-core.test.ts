@@ -29,6 +29,16 @@ describe('the outbox', () => {
     expect(o.bytes).toBeLessThanOrEqual(4_000)
   })
 
+  it('a dropped record that goes past the bound takes what it counted with it', () => {
+    const o = new Outbox(2)
+    o.push(rec('dropped', { n: 7, reason: 'errors' }))
+    o.push(rec('quiet', { ms: 1 }))
+    o.push(rec('quiet', { ms: 2 }))
+    expect(o.dropped).toBe(7)
+    o.push(rec('quiet', { ms: 3 }))
+    expect(o.dropped).toBe(8)
+  })
+
   it('takeAll empties it; a record changed in place is sized again', () => {
     const o = new Outbox(100, 1_000)
     const m = rec('move', { node: 'k', dx: 1 })
