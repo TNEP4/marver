@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, inject, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:net'
@@ -14,12 +14,12 @@ import { legacyWorkspace, workspaceId } from '../src/server/workspace.ts'
 /**
  * The slots (spec 28 A1.3): twenty fixed ports, one file each in the registry, claimed by real
  * processes racing one another. Every case has a registry of its own (MARVER_HOME) and the slots on
- * 48905-48924 (MARVER_SLOT_BASE), so nothing here touches ~/.marver or a real canvas's port; the claim
- * races inject the port check, so the machine's own listeners never decide them - one case binds a
- * real server on a slot's port instead.
+ * the suite's own twenty in the run's block (MARVER_SLOT_BASE, test/global-setup.ts), so nothing here
+ * touches ~/.marver or a real canvas's port; the claim races inject the port check, so the machine's own
+ * listeners never decide them - one case binds a real server on a slot's port instead.
  */
 
-const BASE = 48904
+const BASE = inject('marverSlotBases').slots
 const MODULE = resolve('src/server/slots.ts')
 let home = ''
 const saved = { home: process.env.MARVER_HOME, base: process.env.MARVER_SLOT_BASE }

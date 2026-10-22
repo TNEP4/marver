@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestProject } from 'vitest/node'
+import { portInUse, takeExclusive } from '../src/server/exclusive.ts'
 
 /**
  * Build the CLI once, before any suite runs.
@@ -23,15 +25,46 @@ import type { TestProject } from 'vitest/node'
  * ~/.marver/prefer/, and listens on the slot ports 4805-4824 - on the machine
  * the suite runs on, beside the owner's real canvases. No test may touch them:
  * every server a test starts, in a worker or as its child, reads MARVER_HOME (a
- * temporary folder) and MARVER_SLOT_BASE (the twenty slots moved to
- * 48805-48824, below macOS's ephemeral range). Set here in the main process
- * before any worker exists - each worker starts with a copy of this env, and a
- * test's children inherit the worker's - and provided as well, so
- * test/setup-home.ts can check that they arrived instead of trusting it.
+ * temporary folder) and MARVER_SLOT_BASE (the twenty slots moved into this
+ * run's own block of ports, below). Set here in the main process before any
+ * worker exists - each worker starts with a copy of this env, and a test's
+ * children inherit the worker's - and provided as well, so test/setup-home.ts
+ * can check that they arrived instead of trusting it.
+ *
+ * A block of ports of its own, because a registry of its own isolates the files
+ * and not the machine's ports: two worktrees running the suite at once would
+ * each see the other's canvases as "another program" on its slots, and every
+ * suite that asserts an exact port would fail. Each run takes one hundred ports
+ * in 40000-46999 - clear of the ports the browser suites and the free-port
+ * probes use (4400-8300, 47000-49000) and below macOS's ephemeral range
+ * (49152+) - checked free when taken and held, while the run lasts, by a lock
+ * in the temp folder (the exclusive-file rules: a block whose run was killed is
+ * taken back). The suite's slots are its first twenty; the suites that assert
+ * exact ports each have twenty more (SUITES).
  */
-const SUITE_SLOT_BASE = '48804'
+const BLOCKS = { from: 40_000, to: 47_000, size: 100 }
+/** Each suite that asserts exact ports: its twenty, after the suite's own. */
+const SUITES = ['startup', 'slots', 'slotsDev', 'recover'] as const
 
-export default function setup(project: TestProject) {
+async function takeBlock(): Promise<{ base: number; release: () => void }> {
+  const dir = join(tmpdir(), 'marver-test-ports')
+  mkdirSync(dir, { recursive: true })
+  const count = (BLOCKS.to - BLOCKS.from) / BLOCKS.size
+  const first = Math.floor(Math.random() * count)
+  for (let k = 0; k < count; k++) {
+    const base = BLOCKS.from + ((first + k) % count) * BLOCKS.size
+    const me = { pid: process.pid, instance: randomUUID(), at: Date.now() }
+    const lock = await takeExclusive(join(dir, `${base}.lock`), me, JSON.stringify(me), { reclaimWaitMs: 100 })
+    if (!lock.ok) continue   // another run's
+    let busy = false
+    for (let p = base + 1; p <= base + BLOCKS.size && !busy; p++) busy = await portInUse(p)
+    if (!busy) return { base, release: lock.release }
+    lock.release()   // something else on this machine listens in it
+  }
+  throw new Error(`no free block of ${BLOCKS.size} ports in ${BLOCKS.from}-${BLOCKS.to - 1} for the suite's slots`)
+}
+
+export default async function setup(project: TestProject) {
   const root = join(import.meta.dirname, '..')
   execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'ignore', timeout: 180_000 })
   if (!existsSync(join(root, 'dist', 'cli.mjs'))) {
@@ -39,14 +72,24 @@ export default function setup(project: TestProject) {
   }
   // after the build, so a failed build leaves nothing behind; realpath, so paths read back from the
   // registry compare equal
+  const block = await takeBlock()
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'mv-home-')))
   process.env.MARVER_HOME = home
-  process.env.MARVER_SLOT_BASE = SUITE_SLOT_BASE
+  process.env.MARVER_SLOT_BASE = String(block.base)
   project.provide('marverHome', home)
-  project.provide('marverSlotBase', SUITE_SLOT_BASE)
-  return () => rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  project.provide('marverSlotBase', String(block.base))
+  project.provide('marverSlotBases', Object.fromEntries(SUITES.map((s, i) => [s, block.base + 20 * (i + 1)])) as Record<typeof SUITES[number], number>)
+  return () => {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    block.release()
+  }
 }
 
 declare module 'vitest' {
-  export interface ProvidedContext { marverHome: string; marverSlotBase: string }
+  export interface ProvidedContext {
+    marverHome: string
+    marverSlotBase: string
+    /** the slot base of each suite that asserts exact ports - twenty ports each, in this run's block */
+    marverSlotBases: Record<typeof SUITES[number], number>
+  }
 }

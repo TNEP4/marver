@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,12 +17,13 @@ import { portInUse } from '../src/server/exclusive.ts'
  * keeps all of that, and replaces only the server and the watchers that belong to it.
  *
  * Each start runs in a child of its own (they hold process-wide hooks and get signals), on a registry of
- * its own and the slots moved to 48705-48724; the child preloads a recorder of the handles Marver's code
- * opens (fixtures/marver-handles.mjs) and is stepped through the `at` seam.
+ * its own and the suite's own twenty slots in the run's block (test/global-setup.ts); the child preloads a
+ * recorder of the handles Marver's code opens (fixtures/marver-handles.mjs) and is stepped through the
+ * `at` seam.
  */
 
 const repo = join(import.meta.dirname, '..')
-const BASE = '48704'
+const BASE = String(inject('marverSlotBases').startup)
 const STEPS = ['locked', 'claimed', 'env', 'configure', 'created', 'listening', 'published'] as const
 let root = ''
 const homes: string[] = []

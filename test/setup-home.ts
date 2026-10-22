@@ -18,5 +18,7 @@ if (process.env.MARVER_HOME !== home || process.env.MARVER_SLOT_BASE !== base) {
   throw new Error(`MARVER_HOME / MARVER_SLOT_BASE did not reach this worker (${process.env.MARVER_HOME || 'unset'}, ${process.env.MARVER_SLOT_BASE || 'unset'}) - see test/global-setup.ts`)
 }
 if (within(home, real) || within(real, home)) throw new Error(`MARVER_HOME is ~/.marver (${home}) - the suite must never touch the real registry`)
-const n = Number(base)
-if (!Number.isInteger(n) || (n + 20 >= 4805 && n + 1 <= 4824)) throw new Error(`MARVER_SLOT_BASE ${base} puts the suite's slots on the real ones (4805-4824)`)
+// the suite's slots, and those of each suite that moves them again (inject('marverSlotBases'))
+for (const n of [Number(base), ...Object.values(inject('marverSlotBases') ?? {})]) {
+  if (!Number.isInteger(n) || (n + 20 >= 4805 && n + 1 <= 4824)) throw new Error(`a slot base of ${n} puts the suite's slots on the real ones (4805-4824)`)
+}
