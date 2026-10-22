@@ -365,10 +365,11 @@ describe('what a start says about where it ran before (A1.6)', () => {
     try {
       expect(ranDevBefore(r)).toBe(false)
       mkdirSync(join(r, 'design', '.local', 'perf'), { recursive: true })
-      // dev.lock and dev.json go with every stop, and shots/ comes from `marver shot` too: no trace
-      for (const f of ['dev.lock', 'dev.json', 'shots']) writeFileSync(join(r, 'design', '.local', f), '{}')
+      // dev.lock and dev.json go with every stop, and shots/ comes from `marver shot` too: no trace - nor the update
+      // check, which a start sets off and never waits for, so it can land after a failed start took back its traces
+      for (const f of ['dev.lock', 'dev.json', 'shots', 'update-check.json']) writeFileSync(join(r, 'design', '.local', f), '{}')
       expect(ranDevBefore(r)).toBe(false)
-      for (const f of ['changes.json', 'seen.json', 'update-check.json', 'jam-jobs.json', 'perf/reloads.jsonl']) {
+      for (const f of ['changes.json', 'seen.json', 'jam-jobs.json', 'perf/reloads.jsonl']) {
         writeFileSync(join(r, 'design', '.local', f), '{}')
         expect(ranDevBefore(r), f).toBe(true)
         forgetDevTraces(r)

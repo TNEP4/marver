@@ -258,14 +258,17 @@ export const legacyPort = (root: string): number => {
 }
 
 /** What every `marver dev` since 0.24 writes in design/.local as it starts and keeps once it stops: the sidebar
- *  marks (changes.json, seen.json - the dev server their only writer, at every start), the daily update check,
- *  the Jam queue, the reload log. No other command writes them, and dev.lock and dev.json go when a canvas stops. */
-const DEV_TRACES = ['changes.json', 'seen.json', 'update-check.json', 'jam-jobs.json', join('perf', 'reloads.jsonl')]
-/** Did a `marver dev` run in this folder before? Read before this start writes any of them: with none, a project
- *  with no preference file is new, not one 0.26 served - and its first start has nothing to say about 0.26. */
+ *  marks (changes.json, seen.json - the dev server their only writer, at every start), the Jam queue, the reload
+ *  log. No other command writes them, and dev.lock and dev.json go when a canvas stops. Not the daily update check
+ *  (update-check.json): a start sets it off and does not wait for it, so it lands when it lands - after a failed
+ *  start has taken back its traces, or while another start reads them - and says nothing of a canvas that ran. */
+const DEV_TRACES = ['changes.json', 'seen.json', 'jam-jobs.json', join('perf', 'reloads.jsonl')]
+/** Did a `marver dev` run in this folder before? Read once a start holds the folder's lock, before it writes any of
+ *  them: with none, a project with no preference file is new, not one 0.26 served - and its first start has nothing
+ *  to say about 0.26. */
 export const ranDevBefore = (root: string): boolean => DEV_TRACES.some((f) => existsSync(join(root, 'design', '.local', f)))
-/** A start that found none of them and failed (a sandbox, a port just taken) takes back those it wrote - the marks
- *  (with their deps.json) and the rest - so the folder still reads as one no canvas ran in. */
+/** A start that found none of them and never served (a sandbox, a port just taken) takes back those it wrote - the
+ *  marks (with their deps.json) and the rest - so the folder still reads as one no canvas ran in. */
 export const forgetDevTraces = (root: string): void => {
   for (const f of [...DEV_TRACES, 'deps.json']) { try { rmSync(join(root, 'design', '.local', f), { force: true }) } catch { /* not ours to fight */ } }
 }

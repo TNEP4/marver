@@ -28,26 +28,31 @@ const BASE = String(inject('marverSlotBases').startup)
 const STEPS = ['locked', 'claimed', 'env', 'configure', 'created', 'listening', 'published'] as const
 let root = ''
 const homes: string[] = []
+const roots: string[] = []
 const children: ChildProcess[] = []
 
-beforeAll(() => {
+/** A project no canvas ran in yet: the repo's node_modules linked in, `marver init`'s demo, no Live Jam. */
+function project(): string {
   vi.spyOn(console, 'log').mockImplementation(() => {})
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'mv-startup-')))
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'startup-fixture', private: true, type: 'module' }))
-  const nm = join(root, 'node_modules')
+  const r = realpathSync(mkdtempSync(join(tmpdir(), 'mv-startup-')))
+  roots.push(r)
+  writeFileSync(join(r, 'package.json'), JSON.stringify({ name: 'startup-fixture', private: true, type: 'module' }))
+  const nm = join(r, 'node_modules')
   mkdirSync(nm)
   for (const e of readdirSync(join(repo, 'node_modules'))) if (e !== '.bin' && e !== '.vite' && e !== '.vite-marver') symlinkSync(join(repo, 'node_modules', e), join(nm, e))
-  init(root, { mode: 'studio', demo: true })
+  init(r, { mode: 'studio', demo: true })
   // no Live Jam: its daemon is not what is under test, and an agent CLI on this Mac's PATH would arm it
-  writeFileSync(join(root, 'design', 'config.ts'), 'export default { jam: false }\n')
+  writeFileSync(join(r, 'design', 'config.ts'), 'export default { jam: false }\n')
   vi.restoreAllMocks()
-}, 60_000)
+  return r
+}
+beforeAll(() => { root = project() }, 60_000)
 afterEach(() => {
   for (const c of children.splice(0)) { try { c.kill('SIGKILL') } catch { /* gone */ } }
 })
 afterAll(() => {
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true })
-  rmSync(root, { recursive: true, force: true })
+  for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true })
 })
 
 const freshHome = () => { const h = realpathSync(mkdtempSync(join(tmpdir(), 'mv-startup-home-'))); homes.push(h); return h }
@@ -55,13 +60,19 @@ const local = (f: string) => join(root, 'design', '.local', f)
 const runningIn = (home: string) => existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : []
 
 interface State { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[]; signals: number }
-interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; restarted?: boolean; before?: State; now?: State; during?: State; waits?: boolean; waited?: boolean; took?: number | null; outcome?: string; bound?: boolean; replaced?: boolean; order?: string[] }
+interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; late?: boolean; traces?: string[]; again?: { ok: boolean; message?: string; lines: string[] }; restarted?: boolean; before?: State; now?: State; during?: State; waits?: boolean; waited?: boolean; took?: number | null; outcome?: string; bound?: boolean; replaced?: boolean; order?: string[] }
 
 const CHILD = `import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 const o = JSON.parse(process.env.MV_START)
+if (o.updateCheck) {
+  // the daily update check runs, and the registry answers late: it lands after the start that set it off is over
+  delete process.env.MARVER_NO_UPDATE_CHECK
+  const real = globalThis.fetch
+  globalThis.fetch = (url, init) => String(url).startsWith('https://registry.npmjs.org/') ? new Promise((r) => setTimeout(() => r(new Response('{}', { status: 404 })), 1500)) : real(url, init)
+}
 const { dev, DevStartError } = await import(o.devModule)
 const { portInUse } = await import(o.exclusiveModule)
 // the signal listeners a package installs as it loads (signal-exit) are there before any start: counted from here
@@ -211,18 +222,33 @@ try {
   }
 } catch (err) {
   for (const s of blockers) await new Promise((r) => s.close(r))
-  say({ ok: false, typed: err instanceof DevStartError, message: err.message, port, steps, after: await state() })
+  const failed = { ok: false, typed: err instanceof DevStartError, message: err.message, port, steps, after: await state() }
+  if (o.again) {
+    // what the failed start set off and never waited for lands now, after it gave everything back - then a second
+    // start in this same process, and what it says
+    const late = join(o.root, 'design', '.local', 'update-check.json')
+    for (let i = 0; i < 100 && !existsSync(late); i++) await new Promise((r) => setTimeout(r, 50))
+    failed.late = existsSync(late)
+    failed.traces = ['changes.json', 'seen.json', 'deps.json'].filter((f) => existsSync(join(o.root, 'design', '.local', f)))
+    const lines = [], log = console.log
+    console.log = (...a) => { lines.push(a.join(' ')); log(...a) }
+    try { const again = await dev(o.root, {}); await again.close(); failed.again = { ok: true, lines } }
+    catch (e) { failed.again = { ok: false, message: e.message, lines } }
+    finally { console.log = log }
+  }
+  say(failed)
 }
 // Nothing forces the end: this process ends once nothing runs in it. Whatever a start left open - Vite's watcher, its
 // socket, a timer, any package's handle - keeps it alive, and after 10 s it says what and exits 3.
 setTimeout(() => { process.stdout.write('@!' + JSON.stringify(process.getActiveResourcesInfo()) + '\\n'); process.exit(3) }, 10_000).unref()`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
-function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure'; closeInRestart?: { at: 'env' | 'configure' | 'replace' | 'listen'; then?: 'fail' | 'made'; from?: 'timer' | 'io' }; closeInDispose?: boolean; slowDispose?: number }, home = freshHome()) {
+function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure'; closeInRestart?: { at: 'env' | 'configure' | 'replace' | 'listen'; then?: 'fail' | 'made'; from?: 'timer' | 'io' }; closeInDispose?: boolean; slowDispose?: number; root?: string; updateCheck?: boolean; again?: boolean }, home = freshHome()) {
+  const at = o.root ?? root
   const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
-    cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: at, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
-      MV_START: JSON.stringify({ ...o, root, devModule: join(repo, 'src', 'server', 'dev.ts'), exclusiveModule: join(repo, 'src', 'server', 'exclusive.ts') }) },
+      MV_START: JSON.stringify({ ...o, root: at, devModule: join(repo, 'src', 'server', 'dev.ts'), exclusiveModule: join(repo, 'src', 'server', 'exclusive.ts') }) },
   })
   children.push(c)
   let out = '', err = ''
@@ -288,6 +314,23 @@ describe('a start that fails leaves nothing behind (A1.1)', () => {
     expect(r.message).toBe(`port ${r.port} was just taken by another program - start again`)
     expect(r.steps).toEqual(['locked', 'claimed', 'env', 'configure', 'created'])
     expect(r.after).toEqual({ ...clean, inUse: false })
+    await endsAlone(s)
+  }, 60_000)
+
+  it('a first start that fails, then another in the same process: nothing about 0.26 - not even once the update check the failed one set off lands after it', async () => {
+    const fresh = project()
+    const s = start({ root: fresh, fail: 'created', updateCheck: true, again: true })
+    const r = await s.report
+    expect(r.ok).toBe(false)
+    expect(r.message).toMatch(/injected at created/)
+    // the failed start took back the marks it wrote; its update check, answered late, wrote its file after that
+    expect(r.late, 'the update check landed after the failed start').toBe(true)
+    expect(r.traces).toEqual([])
+    // the second start is this project's first that served: on a slot, and nothing about where 0.26 had it
+    expect(r.again?.ok, r.again?.message).toBe(true)
+    const said = r.again!.lines.join('\n')
+    expect(said).toMatch(/→ http:\/\/localhost:\d+\//)
+    expect(said).not.toMatch(/ports are now fixed slots|0\.26 served/)
     await endsAlone(s)
   }, 60_000)
 

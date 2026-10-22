@@ -269,16 +269,19 @@ export async function dev(root: string, opts: DevOptions = {}) {
   const t = new Startup()
   // every way out gives back what is held by then - a failed start, a close, an exit, Ctrl-C or a kill
   t.hookProcess()
-  // did a canvas run in this folder before? - read before this start writes anything there
-  const ranBefore = ranDevBefore(root)
   const watch = watchGuard(opts.onFail)
-  let locked = false
+  let served = false
   try {
     // 1. one canvas per folder (#19): the lock comes first, so a second `marver dev` never starts a server
     const { takeDevLock } = await import('./dev-lock.ts')
     const lock = await takeDevLock(root, { onTaken: (release) => t.claim(release) })
     if (!lock.ok) throw new DevLockError(lock.message)
-    locked = true
+    // did a canvas run in this folder before? - read once the folder is this start's alone, so no other start's traces
+    // are in it, and before this start writes any
+    const ranBefore = ranDevBefore(root)
+    // a start that never served, in a folder no canvas had run in, takes back the traces it wrote - once everything of
+    // it has closed and before the lock goes, so the next start there finds the folder as this one did (its first)
+    t.claim(() => { if (!served && !ranBefore) forgetDevTraces(root) })
     await opts.at?.('locked')
     const server = await boot(root, opts, lock.instance, t, { ranBefore, watch })
     // a watcher that failed during the start's last steps fails the start; one that fails from now on ends the canvas
@@ -286,12 +289,11 @@ export async function dev(root: string, opts: DevOptions = {}) {
     watch.serving(() => server.close())
     // a stop by a signal says so, at once - before the claims go back and the signal ends the process
     t.onSignal(() => { try { writeSync(1, `\n  ${STOPPED}\n\n`) } catch { /* no terminal to say it to */ } })
+    served = true
     return server
   } catch (err) {
-    // newest first: the server if there is one, Marver's watchers, then the files
+    // newest first: the server if there is one, Marver's watchers, then the files (the traces, then the lock)
     await t.close()
-    // the folder was this start's alone, and no canvas had run in it: it still reads so (its next start is its first)
-    if (locked && !ranBefore) forgetDevTraces(root)
     if (err instanceof DevStartError) throw err
     throw new DevStartError(`the canvas could not start: ${(err as Error)?.message ?? err}`, { cause: err })
   }
