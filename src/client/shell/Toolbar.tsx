@@ -8,7 +8,8 @@
  */
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useStore, CONFIG, SOURCE_REVEALED, cap } from './store.ts'
+import { useStore, CONFIG, SOURCE_REVEALED, cap, stoppedFor } from './store.ts'
+import { STOPPED_TIP, useStopped } from './api.ts'
 import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { Tip } from './Tip.tsx'
@@ -115,7 +116,16 @@ export function CommentButton() {
   const myBoards = useComments((s) => s.myBoards)
   const board = useStore((s) => s.board)
   const asked = useRef(0)
+  const stopped = useStopped()
   const lockedOut = !!me && !!myBoards && myBoards[board] === 'view'
+  // the canvas stopped (spec 28 A1.11): off, saying why - a comment could not be sent
+  if (stopped && !commentMode) {
+    return (
+      <Tip side="bottom" label={<div className="sh-tip-lines"><b>Comments need the canvas running</b><small>{STOPPED_TIP}</small></div>}>
+        <button className="sh-pill-btn off" aria-disabled="true" data-stopped="" onClick={() => stoppedFor('Comments need the canvas running')}><CommentIcon size={16} /></button>
+      </Tip>
+    )
+  }
   if (lockedOut) {
     return (
       <Tip side="bottom" label={<><b>Commenting is not available for you yet</b><span>click to ask the owner</span></>}>
@@ -134,6 +144,7 @@ export function CommentButton() {
       <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
         const c = commentsStore()
         if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE)
+        if (!c.commentMode && stoppedFor('Comments need the canvas running')) return
         if (!c.commentMode) useStore.getState().setLaser(false)
         c.setMode(!c.commentMode)
         useStore.getState().toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')

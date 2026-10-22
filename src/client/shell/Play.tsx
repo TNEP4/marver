@@ -16,13 +16,13 @@ import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
 import { JamButton } from './jam-session.tsx'
 import { useEffect, useRef, useState } from 'react'
-import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, type Node } from './store.ts'
+import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, stoppedFor, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
 import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { isNoteAnchor } from './notes.ts'
 import { ROUTE, slideSize } from '../const.ts'
-import { withWs } from './api.ts'
+import { stranded, withWs } from './api.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { recorder } from './recorder.ts'
@@ -313,6 +313,7 @@ function PlayInner() {
   const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
   const [pillOpen, setPillOpen] = useState(true)          // collapse (pill -> re-open fab), like the canvas
   const [stageReady, setStageReady] = useState(0)         // bumps on each sh:stage-ready (reload) - re-drives the highlight
+  const [away, setAway] = useState(false)                 // the stage shows another project's "another canvas" page (A1.11)
   const fill = play?.device === 'fill'
   // the mode's shape: focus is single-frame; the doc preset (reading width,
   // page ground) applies when the board's declared type is doc; lock and deep
@@ -547,7 +548,7 @@ function PlayInner() {
     if (key === 'h') { toggleHideUI(); return }
     // L: the pointer laser; ⌥L: inspect
     if (key === 'l' && SOURCE_REVEALED) { commentsStore().setMode(false); useStore.getState().toggleLaser(alt); return }
-    if (key === 'c') { const c = commentsStore(); if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE); if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
+    if (key === 'c') { const c = commentsStore(); if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE); if (!c.commentMode && stoppedFor('Comments need the canvas running')) return; if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
     if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
     if (key === 'L') { const c = commentsStore(); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus
 
@@ -637,10 +638,12 @@ function PlayInner() {
           <iframe
             ref={iframeRef}
             src={src.current}
-            onLoad={() => frameLoaded('stage', iframeRef.current)}
+            onLoad={() => { setAway(stranded(iframeRef.current)); frameLoaded('stage', iframeRef.current) }}
             title="play"
             style={{ width: vp.width, height: vp.height, transform: `scale(${dw / vp.width}, ${dh / vp.height})` }}
           />
+          {/* its canvas is away from this address: one calm line, the banner says the rest */}
+          {away && <div className="sh-stranded"><span>Waiting for this canvas</span></div>}
         </div>
         <PlayComments iframe={iframeRef} frameId={play.at} vp={vp} dw={dw} dh={dh} ready={stageReady} />
       </div>

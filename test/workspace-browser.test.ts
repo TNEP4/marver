@@ -13,12 +13,19 @@ import { makeProject, startDev, stopDev, workspaceOf, type Dev } from './project
  * run B's code. When A answers again the same document saves the move, then reloads. Along the way,
  * every request the shell sends names its workspace. A page that cannot reload when A answers (a capture
  * recording, words not sent) works as live meanwhile, still sees the next stop, and reloads once nothing
- * holds it. Skips without Chrome.
+ * holds it. While stopped the banner says what happened and the way back - the kept edits only when there are
+ * some - and stays through Hide UI; comment mode and Jam captures wait; stranded frames show one quiet line.
+ * Back, the reloaded page opens on the camera it had and says its edits were saved. Skips without Chrome.
  */
 
 const PORT = 8700 + Math.floor(Math.random() * 300)
 const ORIGIN = `http://localhost:${PORT}`
-const BANNER = 'This canvas stopped - your unsaved edits are kept in this tab'
+// what the stopped banner says: what happened and the way back, and the kept edits only when there are some
+const DOWN = 'This canvas stopped - run npx marver dev to bring it back'
+const ELSEWHERE = 'Another canvas is running on this address - stop it and run npx marver dev to bring this one back'
+const KEPT = ' · your unsaved edits are kept in this tab'
+const STRANDED = "This frame's canvas stopped"   // B's "another canvas" page
+const bannerText = `document.querySelector('.sh-stopped')?.textContent`
 
 const board = JSON.stringify({ version: 1, name: 'main', auto: false, nodes: [
   { key: 'n-home', frame: 'app/home', x: 0, y: 0, w: 390, h: 844 },
@@ -127,11 +134,39 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     // ---- A stops: the banner, an edit kept, nothing sent ------------------------------------------
     await browser.eval(s, `window.__mark = 1`)
     await browser.eval(p, `window.__mark = 1`)
+    // the person's own camera - nothing a fit would choose - and comment mode on
+    await browser.eval(s, `__mvJamCanvas.zoomTo(1.37)`)
+    await wait(600)
+    const camera = await browser.eval(s, `(() => { const v = __mvJamCanvas.view(); return [Math.round(v.x), Math.round(v.y), Math.round(v.w)] })()`)
+    await browser.eval(s, `__mvComments.getState().setMode(true)`)
     await stopDev(a, PORT); a = null
-    await browser.until(s, `__mvLink.getState().link === 'down' && document.querySelector('.sh-stopped')?.textContent === ${JSON.stringify(BANNER)}`, 5_000)
+    // nothing unsaved yet: what happened and the way back, no claim of edits
+    await browser.until(s, `__mvLink.getState().link === 'down' && ${bannerText} === ${JSON.stringify(DOWN)}`, 5_000)
+    // the tools that need the server: comment mode went off, and neither it nor a Jam capture starts - each says why
+    expect(await browser.eval(s, `__mvComments.getState().commentMode`)).toBe(false)
+    expect(await browser.eval(s, `!!document.querySelector('.sh-app > nav.sh-pill .sh-pill-btn[data-stopped][aria-disabled="true"]')`)).toBe(true)
+    await browser.press(s, 'c')
+    await browser.eval(s, `__mvJamCapture.getState().start()`)
+    expect(await browser.eval(s, `({ mode: __mvComments.getState().commentMode, cap: __mvJamCapture.getState().current, toasts: __mvStore.getState().toasts.map((t) => t.text) })`)).toEqual({
+      mode: false, cap: null,
+      toasts: expect.arrayContaining(['Comments need the canvas running - npx marver dev brings it back', 'Jam needs the canvas running - npx marver dev brings it back']),
+    })
+    // Hide UI (H) leaves it up: the page holds what only it has
+    await browser.press(s, 'h')
+    expect(await browser.eval(s, `document.body.classList.contains('sh-hide-ui') && getComputedStyle(document.querySelector('.sh-stopped')).display !== 'none' && getComputedStyle(document.querySelector('.sh-app > nav.sh-pill')).display === 'none'`)).toBe(true)
+    await browser.press(s, 'h')
+    // it never covers the toolbar or the sidebar: on the toolbar's centre line, in the gap between them
+    await wait(100)
+    const placed = await browser.eval(s, `(() => { const r = (q) => document.querySelector(q).getBoundingClientRect(); const b = r('.sh-stopped'), t = r('.sh-app > nav.sh-pill'), l = r('.sh-app > .sh-panel'); return { at: document.querySelector('.sh-stopped').dataset.at, clear: b.left >= l.right && b.right <= t.left, mid: Math.abs((b.top + b.bottom) / 2 - (t.top + t.bottom) / 2) } })()`)
+    expect(placed).toEqual({ at: 'row', clear: true, mid: expect.any(Number) })
+    expect(placed.mid).toBeLessThanOrEqual(1)
+    // an edit: now there is something only this tab holds, and the banner says it is kept
     const x1 = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
     await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x1} + 120, 0)`)
     expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
+    await browser.until(s, `${bannerText} === ${JSON.stringify(DOWN + KEPT)}`, 3_000)
+    // the play tab holds nothing: no claim of edits
+    expect(await browser.eval(p, bannerText)).toBe(DOWN)
     await wait(1200)   // past the save's debounce: it holds, the edit stays dirty here
     expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
     // and leaving it by hand (a reload, a close) asks first: the edits are only here
@@ -146,7 +181,8 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await wait(3000)
     expect(await browser.eval(s, `window.__mark`)).toBe(1)   // the same document: Vite never reloaded it into B
     expect(await browser.eval(p, `window.__mark`)).toBe(1)
-    expect(await browser.eval(s, `document.querySelector('.sh-stopped')?.textContent`)).toBe(BANNER)
+    expect(await browser.eval(s, bannerText)).toBe(ELSEWHERE + KEPT)
+    expect(await browser.eval(p, bannerText)).toBe(ELSEWHERE)
     expect(await browser.eval(s, `__mvStore.getState().save()`)).toBe(false)
     expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
     // the same request, sent raw by the page, is refused by B's guard before any write
@@ -159,9 +195,12 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(readFileSync(join(rootB, 'design', 'boards', 'main.json'), 'utf8')).toBe(boardB)
 
     // ---- the frames and the stage: their own Vite client reloads them into B's "another canvas" page ----
-    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? ''; return t('n-home').includes('belongs to another canvas') && t('n-page').includes('belongs to another canvas') })()`, 10_000)
-    await browser.until(p, `(document.querySelector('.sh-play iframe')?.contentDocument?.body?.innerText ?? '').includes('belongs to another canvas')`, 10_000)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? ''; return t('n-home').includes(${JSON.stringify(STRANDED)}) && t('n-page').includes(${JSON.stringify(STRANDED)}) })()`, 10_000)
+    await browser.until(p, `(document.querySelector('.sh-play iframe')?.contentDocument?.body?.innerText ?? '').includes(${JSON.stringify(STRANDED)})`, 10_000)
     for (const key of ['n-home', 'n-page']) expect(await iframeWho(s, key), key).toBeNull()
+    // the shell says it once, in the banner: over each stranded frame and the stage, one quiet line
+    await browser.until(s, `['n-home', 'n-page'].every((k) => document.querySelector('[data-node="' + k + '"] .sh-stranded')?.textContent === 'Waiting for this canvas')`, 5_000)
+    await browser.until(p, `document.querySelector('.sh-play .sh-stranded')?.textContent === 'Waiting for this canvas'`, 5_000)
     await shot(s, 'stopped'); await shot(p, 'stopped-play')
     // reloaded by the shell, and by hand: still the page, never B's frame
     await browser.eval(s, `__mvStore.getState().reloadFrame('n-page')`)
@@ -169,10 +208,10 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.eval(s, `document.querySelector('[data-node="n-home"] iframe').contentWindow.location.reload()`)
     await wait(1500)
     for (const key of ['n-home', 'n-page']) {
-      expect(await iframeText(s, key), key).toContain('belongs to another canvas')
+      expect(await iframeText(s, key), key).toContain(STRANDED)
       expect(await iframeWho(s, key), key).toBeNull()
     }
-    expect(await stageText(p)).toContain('belongs to another canvas')
+    expect(await stageText(p)).toContain(STRANDED)
     expect(await browser.eval(p, `document.querySelector('.sh-play iframe')?.contentWindow?.__who ?? null`)).toBeNull()
     away.stop()
     // the shell itself sent B one question only: "is my canvas back?" (the raw PUT above was the test's)
@@ -196,7 +235,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(raced.sent.some((r) => r.frame === main && r.method === 'PUT' && r.path === '/__mv/api/boards/main' && r.headers['x-mv-ws'] === WS_A), 'the save reached B').toBe(true)
     expect(race).toEqual({ ok: false, dirty: true, kept: true, x: expect.any(Number), disk: false, link: 'elsewhere', shown: true })
     expect(race.x).toBeCloseTo(x1 + 150, 0)
-    expect(await browser.eval(s, `document.querySelector('.sh-stopped')?.textContent`)).toBe(BANNER)
+    expect(await browser.eval(s, bannerText)).toBe(ELSEWHERE + KEPT)
     expect(readFileSync(join(rootB, 'design', 'boards', 'main.json'), 'utf8')).toBe(boardB)
 
     // ---- A is back: the same document saves the move, then reloads ---------------------------------
@@ -215,8 +254,20 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.until(s, `!document.querySelector('.sh-stopped') && __mvLink.getState().link === 'live'`, 5_000)
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(moved))
     expect(await browser.eval(s, asks)).toBe(false)
+    // the reloaded page opens where the person was looking, and says what it did
+    await browser.until(s, `__mvStore.getState().toasts.some((t) => t.text === 'Back - your edits were saved')`, 5_000)
+    await wait(500)
+    expect(await browser.eval(s, `(() => { const v = __mvJamCanvas.view(); return [Math.round(v.x), Math.round(v.y), Math.round(v.w)] })()`)).toEqual(camera)
     await browser.until(s, `document.querySelector('[data-node="n-page"] iframe')?.contentDocument?.getElementById('who')?.textContent === 'A'`, 30_000)
     await browser.until(p, `window.__mark === undefined && document.querySelector('.sh-play iframe')?.contentDocument?.getElementById('who')?.textContent === 'A'`, 30_000)
+    // the play tab saved nothing, so it says nothing
+    expect(await browser.eval(p, `__mvStore.getState().toasts.some((t) => t.text.startsWith('Back'))`)).toBe(false)
+    // and a reload by hand later boots as any other page: no toast
+    await browser.eval(s, `window.__mark = 4`)
+    await browser.send('Page.reload', {}, s)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 20_000)
+    await wait(800)
+    expect(await browser.eval(s, `__mvStore.getState().toasts.some((t) => t.text.startsWith('Back'))`)).toBe(false)
 
     // ---- and no service worker ever registers on a canvas -------------------------------------------
     const sw = await browser.eval(s, `navigator.serviceWorker.register('/sw.js').then(() => 'registered', (e) => 'refused: ' + e.message)`)
@@ -252,13 +303,14 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
 
     // a second stop is seen though Vite's socket never came back: the banner, and saves held
     await stopDev(a, PORT); a = null
-    await browser.until(s, `__mvLink.getState().link === 'down' && document.querySelector('.sh-stopped')?.textContent === ${JSON.stringify(BANNER)}`, 8_000)
+    // a capture still recording is what only this tab holds
+    await browser.until(s, `__mvLink.getState().link === 'down' && ${bannerText} === ${JSON.stringify(DOWN + KEPT)}`, 8_000)
     expect(await browser.eval(s, `__mvStore.getState().save()`)).toBe(false)
     // another project takes the port meanwhile: the frames' own Vite client reloads them into its "another
     // canvas" page, which runs no script - nothing brings them back by itself
     b = await startDev(rootB, PORT)
     await browser.until(s, `__mvLink.getState().link === 'elsewhere'`, 5_000)
-    const stranded = `['n-home', 'n-page'].every((k) => (document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? '').includes('belongs to another canvas'))`
+    const stranded = `['n-home', 'n-page'].every((k) => (document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? '').includes(${JSON.stringify(STRANDED)}))`
     await browser.until(s, stranded, 10_000)
     await stopDev(b, PORT); b = null
     // something takes the port and never answers (a server half up, hung): the question it gets is a miss
@@ -276,8 +328,9 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
       await browser.until(s, `__mvLink.getState().link === 'live' && !document.querySelector('.sh-stopped')`, 15_000)
     } finally { for (const c of held) c.destroy(); hung.close() }
     expect(await browser.eval(s, `window.__mark`)).toBe(2)
-    // the page stays, so it brings its stranded frames back itself: reloaded in place, on A
+    // the page stays, so it brings its stranded frames back itself: reloaded in place, on A, the placeholder gone
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 15_000)
+    await browser.until(s, `!document.querySelector('.sh-stranded')`, 5_000)
 
     // words typed and not sent (a comment, a Jam edit - here a field of the page's own) hold the reload too
     await browser.eval(s, `(() => { const t = document.createElement('textarea'); t.id = 'typed'; document.body.appendChild(t); t.value = 'not sent yet'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)

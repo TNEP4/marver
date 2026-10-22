@@ -11,7 +11,7 @@ import { playPing } from './sound.ts'
 import { ROUTE } from '../const.ts'
 import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
-import { api as request, scoped } from './api.ts'
+import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
 
 /** What the Not on a board view says when asked for a comment: a note needs a board to live on. */
 export const NO_COMMENTS_HERE = 'pin it on a board to comment'
@@ -361,7 +361,8 @@ export const useComments = create<CommentsState>((set, get) => {
     },
 
     // the Not on a board view shows threads but takes no new ones (spec 26): a note needs a board
-    setMode(on) { if (on && get().board === UNPLACED) return; set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
+    // never on while the canvas is stopped (spec 28 A1.11): a comment picked could not be sent
+    setMode(on) { if (on && (get().board === UNPLACED || canvasStopped())) return; set({ commentMode: on, ...(on ? { show: true } : { draft: null }) }) },
     setShow(show) { set({ show }) },
     setShowAnchor(showAnchor) { set({ showAnchor }) },
     setActive(active) {
@@ -402,6 +403,12 @@ export const useComments = create<CommentsState>((set, get) => {
       return res.ok
     },
   }
+})
+
+// the canvas stopped (spec 28 A1.11): comment mode goes off - a pick could open only a comment that cannot be
+// sent. A comment being written stays, words and all.
+useLink.subscribe((l, p) => {
+  if (stoppedLink(l.link) && !stoppedLink(p.link) && useComments.getState().commentMode && !useComments.getState().draft) useComments.getState().setMode(false)
 })
 
 // dev-only debug handle - the canvas store exposes the same

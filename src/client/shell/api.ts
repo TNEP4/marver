@@ -24,10 +24,17 @@ export const withWs = (url: string) => (WS ? `${url}${url.includes('?') ? '&' : 
 /** live; checking (the live socket dropped, the first answer not in); down (nothing, or not this canvas,
  *  answers); elsewhere (another canvas answers here); resuming (this canvas answered: saving, then reload). */
 export type Link = 'live' | 'checking' | 'down' | 'elsewhere' | 'resuming'
-/** `shown`: the "This canvas stopped" banner is up. */
-export const useLink = create<{ link: Link; shown: boolean }>(() => ({ link: 'live', shown: false }))
+/** `shown`: the "This canvas stopped" banner is up. `unsaved`: this tab holds something only it has (an edit not
+ *  saved, a capture, words not sent) - the banner says so only then. */
+export const useLink = create<{ link: Link; shown: boolean; unsaved: boolean }>(() => ({ link: 'live', shown: false, unsaved: false }))
+export const stoppedLink = (l: Link) => l === 'checking' || l === 'down' || l === 'elsewhere'
 /** Nothing leaves the page: its canvas is gone from here, or not known to be back yet. */
-export const canvasStopped = () => { const l = useLink.getState().link; return l === 'checking' || l === 'down' || l === 'elsewhere' }
+export const canvasStopped = () => stoppedLink(useLink.getState().link)
+/** canvasStopped(), for a component: the tools that need the server (comments, Jam) go quiet while it holds. */
+export const useStopped = () => useLink((s) => stoppedLink(s.link))
+/** The way back, said by each tool that needs the server while the canvas is stopped: its toast, its tooltip. */
+export const STOPPED_WAY = 'npx marver dev brings it back'
+export const STOPPED_TIP = 'The canvas stopped - run npx marver dev to bring it back'
 /** The answer a stopped page gives itself (or gets from the server, translated): never a 409 a caller reads. */
 export const isStopped = (r: Response) => r.headers.get('x-mv-stopped') === '1'
 const stoppedAnswer = () => new Response('{"error":"this canvas stopped"}', { status: 503, headers: { 'content-type': 'application/json', 'x-mv-stopped': '1' } })
@@ -66,6 +73,13 @@ export const beforeResume = (fn: () => Promise<boolean>) => { flushers.add(fn); 
 const holds = new Set<() => boolean>()
 export const holdsReload = (fn: () => boolean) => { holds.add(fn); return () => { holds.delete(fn) } }
 const held = () => [...holds].some((h) => { try { return h() } catch { return true } })
+/** Asks again whether this tab holds anything only it has (the banner's "unsaved edits"): at a stop, once a
+ *  second while stopped, and whenever an edit or a word changes it. */
+export function noteUnsaved() {
+  if (!WS) return
+  const u = held()
+  if (u !== useLink.getState().unsaved) useLink.setState({ unsaved: u })
+}
 /** Told when a resumed page stays (a flusher said no): the store's toast, registered by store.ts. */
 let say: (text: string) => void = () => {}
 export const onLinkNotice = (fn: (text: string) => void) => { say = fn }
@@ -74,6 +88,7 @@ let hmrLost = false
 let probeTimer: ReturnType<typeof setTimeout> | null = null
 
 function lost(why: 'down' | 'elsewhere') {
+  noteUnsaved()
   if (why === 'elsewhere') useLink.setState({ link: 'elsewhere', shown: true })
   else if (!canvasStopped()) useLink.setState({ link: 'checking' })
   probeTimer ??= setTimeout(probe, 0)
@@ -89,12 +104,14 @@ async function probe() {
   if (ours) return void resume()
   // another canvas answers, or nothing does, or something that is not a canvas of this one (an older
   // marver says 404): the banner - and keep asking
+  noteUnsaved()
   useLink.setState({ link: r?.status === 409 && r.headers.get('x-mv-elsewhere') === '1' ? 'elsewhere' : 'down', shown: true })
   probeTimer = setTimeout(probe, 1000)
 }
 
 async function resume() {
   const back = useLink.getState().link !== 'live'      // from a stop; 'live' is a page that owes a reload
+  const had = held()                                   // what only this page held: saved below, or the page stays
   if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
   for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
@@ -104,7 +121,7 @@ async function resume() {
   // flusher waited on the server hold it too
   if (ok && held()) ok = false
   // a fresh document on the canvas that answered: live updates again
-  if (hmrLost && ok) return void location.reload()
+  if (hmrLost && ok) { keepOverReload(back && had); return void location.reload() }
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
   if (!hmrLost) return
   // Vite's socket never comes back (its client waits on the listener below), so this page owes a reload:
@@ -117,16 +134,44 @@ async function resume() {
 /** Frames another project answered while this canvas was away show its "another canvas" page, which runs no
  *  script - no Vite client to bring them back. A page that stays reloads them in place, on its own canvas. */
 function unstrand() {
-  for (const f of document.querySelectorAll('iframe')) {
-    try { if (f.contentDocument?.querySelector('meta[name="mv-elsewhere"]')) f.contentWindow?.location.reload() } catch { /* not ours to read */ }
-  }
+  for (const f of document.querySelectorAll('iframe')) if (stranded(f)) f.contentWindow?.location.reload()
 }
+/** Does this frame show another project's "another canvas" page (server/guard.ts)? The shell draws its own quiet
+ *  placeholder over it: the banner says what happened, once. */
+export function stranded(f: HTMLIFrameElement | null): boolean {
+  try { return !!f?.contentDocument?.querySelector('meta[name="mv-elsewhere"]') } catch { return false /* not ours to read */ }
+}
+
+// ---- over the resume's own reload: where the person was looking, and whether it saved ------------------------
+
+const RESUMED = 'mv-resumed'
+const keepers = new Set<() => Record<string, unknown>>()
+/** What a resumed page carries over its own reload, read back by the next page (the canvas keeps its camera). */
+export const keepOverResume = (fn: () => Record<string, unknown>) => { keepers.add(fn); return () => { keepers.delete(fn) } }
+function keepOverReload(saved: boolean) {
+  const rec: Record<string, unknown> = { at: Date.now(), saved }
+  for (const fn of keepers) { try { Object.assign(rec, fn()) } catch { /* the rest still goes */ } }
+  try { sessionStorage.setItem(scoped(RESUMED), JSON.stringify(rec)) } catch { /* storage off: the page boots as any other */ }
+}
+/** What the page before this one left when it reloaded itself on its canvas's return - this tab only, read once
+ *  at load, and only a fresh one (a reload by hand later on boots as any other). `saved`: it saved edits only it
+ *  held; the page says so. */
+export const resumed: { saved: boolean; board?: string; camera?: { x: number; y: number; scale: number } } | null = (() => {
+  if (!WS) return null
+  try {
+    const raw = sessionStorage.getItem(scoped(RESUMED))
+    if (raw === null) return null
+    sessionStorage.removeItem(scoped(RESUMED))
+    const r = JSON.parse(raw)
+    return r && typeof r.at === 'number' && Date.now() - r.at < 30_000 ? r : null
+  } catch { return null }
+})()
 
 // words a person typed into the page and has not sent (a comment, a Jam edit, a name): a reload would drop them
 const typed = new WeakSet<EventTarget>()
 const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=password]'
 if (WS) {
-  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target) }, true)
+  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved() }, true)
   holdsReload(() => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== ''))
 }
 

@@ -15,6 +15,7 @@ import { recorder } from '../recorder.ts'
 import { noteId, sceneNoteHost } from '../notes.ts'
 import { slideSize, stageFit } from '../../const.ts'
 import { FrameSlot, toneOf, useFrameMark } from '../marks-ui.tsx'
+import { stranded } from '../api.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -95,6 +96,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // survives a theme flip; file changes and reloads navigate imperatively below, only once
   // admitted - a queued frame takes the fresh revision when its turn comes.
   const [src, setSrc] = useState<string>()
+  // the document is another project's "another canvas" page (spec 28 A1.11): a quiet placeholder over it instead
+  const [away, setAway] = useState(false)
   const admitted = src !== undefined
   const admittedRef = useRef(false)
   const fileRef = useRef(frame ? `${frame.kind}:${frame.file}` : null)
@@ -437,7 +440,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         ) : null}
         {/* a frame still silent after its one auto-retry: a slow dev server, never a failure. A quiet
             non-covering pill (not the red card) keeps it honest and offers a manual reload. */}
-        {node.status === 'loading' && node.readyRetried ? (
+        {node.status === 'loading' && node.readyRetried && !away ? (
           <div className="sh-loading sh-no-pan">
             <span>still loading</span>
             <button className="sh-no-pan" onClick={() => reload(false)}>
@@ -450,9 +453,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           className="sh-live"
           src={src}
           title={frame.id}
-          onLoad={() => { registerWin(); frameLoaded(node.key, iframeRef.current); recorder.loaded(node.key) }}
+          onLoad={() => { setAway(stranded(iframeRef.current)); registerWin(); frameLoaded(node.key, iframeRef.current); recorder.loaded(node.key) }}
           style={{ ...iframeBox(stage, node), display: node.missing || node.status === 'error' ? 'none' : 'block' }}
         />
+        {/* its canvas is away from this address: one calm line, the banner says the rest */}
+        {away && <div className="sh-stranded"><span>Waiting for this canvas</span></div>}
         {/* the overlay eats mouse events for drag-by-body; laser and comment mode both
             need the mouse INSIDE the frame for hover highlights, so it steps aside
             (drag still works via the header) */}

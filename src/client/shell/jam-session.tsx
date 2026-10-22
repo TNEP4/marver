@@ -21,8 +21,8 @@ import { HARNESS } from './Comments.tsx'
 import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlashIcon, WarningIcon, WaveformIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { useSessionClock } from './jam-lane.tsx'
-import { CONFIG, useStore } from './store.ts'
-import { api } from './api.ts'
+import { CONFIG, stoppedFor, useStore } from './store.ts'
+import { api, STOPPED_TIP, useStopped } from './api.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -43,6 +43,7 @@ async function post(body: Record<string, unknown>, onAnswer?: (ok: boolean) => v
 
 /** Start a session: the dev server holds it (it survives a reload); the microphone hears its talk. */
 export async function startSession(): Promise<boolean> {
+  if (stoppedFor('Jam needs the canvas running')) return false   // spec 28 A1.11
   const id = `ses-${Date.now()}-${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`
   // this tab holds the session's microphone (a reload of it takes it back; other tabs never take it) - from
   // the moment the server has it: the push of it may come before the refresh
@@ -112,6 +113,8 @@ let endingOp = 0
  *  capture recording ends first, and the wrap-up waits for its read-back to close. */
 export function pressJ() {
   const ui = useJamUi.getState()
+  // the canvas stopped (spec 28 A1.11): a sheet open still closes; nothing new starts or wraps up
+  if (!ui.sheet && stoppedFor('Jam needs the canvas running')) return
   if (!useJamQueue.getState().session) { ui.setSheet(ui.sheet === 'start' ? null : 'start'); return }
   if (ui.sheet === 'wrap' || ui.sheet === 'wrap-pending') { ui.setSheet(null); return }
   if (useJamCapture.getState().current) { useJamCapture.getState().end(); ui.setSheet('wrap-pending'); return }
@@ -132,11 +135,14 @@ export function JamButton({ inPlay }: { inPlay?: boolean }) {
   // off: no, blocked, no engine - or stopped (another tab has it, the connection went) while you said yes
   const micOff = voice.choice === 'no' || voice.denied || voice.server === 'unavailable' || (!!session && voice.choice === 'yes' && !voice.live && !recording)
   const state = recording ? 'rec' : session ? 'live' : 'idle'
-  const label = session ? <><b>End the session</b><span>J</span></> : <><b>Jam session</b><span>J</span></>
+  // the canvas stopped (spec 28 A1.11): quiet, saying why - a capture already recording goes on
+  const stopped = useStopped()
+  const label = stopped ? <div className="sh-tip-lines"><b>Jam needs the canvas running</b><small>{STOPPED_TIP}</small></div>
+    : session ? <><b>End the session</b><span>J</span></> : <><b>Jam session</b><span>J</span></>
   return (
     <Tip side="bottom" inv={inPlay} label={label}>
-      <button className={`sh-pill-btn jm-jam${state !== 'idle' ? ` ${state}` : ''}${sheet === 'start' || sheet === 'wrap' ? ' press' : ''}`}
-        data-jam-button={state} aria-label={session ? 'End the Jam session' : 'Jam session'} onClick={pressJ}>
+      <button className={`sh-pill-btn jm-jam${state !== 'idle' ? ` ${state}` : ''}${sheet === 'start' || sheet === 'wrap' ? ' press' : ''}${stopped ? ' off' : ''}`}
+        data-jam-button={state} data-stopped={stopped ? '' : undefined} aria-disabled={stopped || undefined} aria-label={session ? 'End the Jam session' : 'Jam session'} onClick={pressJ}>
         {/* the whole session reads as on: the dot pulses from start to end, between captures too */}
         {session || recording ? <i className="jm-live-dot" /> : <WaveformIcon size={16} />}
         {session && <span className="jm-clock">{minutes}</span>}

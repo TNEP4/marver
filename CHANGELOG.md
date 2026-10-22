@@ -71,16 +71,22 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **A tab left open can no longer write into another project.** A tab whose canvas had stopped kept talking to
   whatever started next on its port, and could save its board into another project whose board file matched. Every
   request the canvas page makes to Marver now names its project, and so do its frame, play-stage and Jam-picture
-  addresses; another project refuses them before reading or writing anything, and a frame of another canvas shows a
-  page saying so. The tab says "This canvas stopped - your unsaved edits are kept in this tab" - when nothing
-  answers, too. Its own requests stop (its frames, play stage and pictures may still ask for pages and images, and
-  another project refuses those), and it is never reloaded into another project. When its own canvas answers again,
-  it saves, then reloads. If the board's file changed on disk meanwhile (your agent edited it, for one), the file
-  wins, as it always has, and the tab's unsaved board edits are lost; a board renamed or removed meanwhile is not
-  created again. If something holds the reload - a capture recording, finishing or still on its way to the canvas,
-  words typed and not sent, an unsaved Jam edit or note, a frame mid-drag - it works as live, says "marver dev is
-  back - this page reloads once nothing is in progress", and reloads once nothing does. Leaving a stopped tab with
-  unsaved board edits asks first.
+  addresses; another project refuses them before reading or writing anything. The tab says what happened and the
+  way back: "This canvas stopped - run npx marver dev to bring it back", or, when another project answers there,
+  "Another canvas is running on this address - stop it and run npx marver dev to bring this one back" - and, only
+  when it holds something it could not save (an edit, a capture, words not sent), "your unsaved edits are kept in
+  this tab". The notice sits beside the toolbar, or under it in a narrow window, never over the toolbar or the
+  sidebar, and stays when you hide the UI (H). Comments and Jam captures wait for the canvas, and say so. A frame or
+  play stage another project answered shows "Waiting for this canvas"; its address opened in a tab of its own shows
+  a page saying what happened and how to bring it back, in the frame's theme. Its own requests stop (its frames,
+  play stage and pictures may still ask for pages and images, and another project refuses those), and it is never
+  reloaded into another project. When its own canvas answers again, it saves, then reloads on the view you had, and
+  says "Back - your edits were saved" when it saved some. If the board's file changed on disk meanwhile (your agent
+  edited it, for one), the file wins, as it always has, and the tab's unsaved board edits are lost; a board renamed
+  or removed meanwhile is not created again. If something holds the reload - a capture recording, finishing or still
+  on its way to the canvas, words typed and not sent, an unsaved Jam edit or note, a frame mid-drag - it works as
+  live, says "marver dev is back - this page reloads once nothing is in progress", and reloads once nothing does.
+  Leaving a stopped tab with unsaved board edits asks first.
 - **Editing `.env` no longer stops Live Jam.** Vite restarts the canvas's server in place when an `.env` file
   changes, and 0.26 took that for a stop: Live Jam stopped, the working glow and comments written from the terminal
   no longer reached the page at once, and `marver shot`, `work` and `link` lost the canvas. Now only the server

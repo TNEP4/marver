@@ -5,13 +5,13 @@ import { JamSurface, useLaneLift } from './JamSurface.tsx'
 import { JamButton } from './jam-session.tsx'
 import { useJamCapture } from './jam-capture.ts'
 import { useJamQueue } from './jam-queue.ts'
-import { Component, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
+import { Component, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useStore, CONFIG, CANVAS_NAME, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
-import { api, scoped, useLink } from './api.ts'
+import { api, resumed, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
@@ -405,6 +405,8 @@ export function App() {
       }
       const ok = await boot()
       if (notice) toast(notice)
+      // the page before this one reloaded itself when its canvas came back, after saving what only it held (A1.11)
+      if (ok && resumed?.saved) toast('Back - your edits were saved')
       urlReady.current = true
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here
@@ -789,6 +791,7 @@ export function App() {
       if (e.key === 'c' && !e.shiftKey) {
         const c = commentsStore()
         if (!c.commentMode && s.board === UNPLACED) return void toast(NO_COMMENTS_HERE)
+        if (!c.commentMode && stoppedFor('Comments need the canvas running')) return
         if (!c.commentMode) s.setLaser(false)
         c.setMode(!c.commentMode)
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
@@ -1095,7 +1098,7 @@ export function App() {
       {CONFIG.setup
         ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
-      {stopped && <div className="sh-banner sh-stopped" role="status">This canvas stopped - your unsaved edits are kept in this tab</div>}
+      {stopped && <StoppedBanner />}
       <UpdatePill />
 
       {/* Jam V2 (spec 27): the lane, the focus panel, the notes card, the recording ring */}
@@ -1103,6 +1106,124 @@ export function App() {
       <JamToasts toasts={toasts} />
     </div>
   )
+}
+
+/** The canvas stopped (spec 28 A1.11): what happened and the way back - and, only when this tab holds some, that
+ *  its unsaved edits are kept. It sits on the toolbar's centre line in the free gap between the sidebar and the
+ *  toolbar, or just below the toolbar row when that gap is too narrow; it never covers either, and Hide UI (H)
+ *  leaves it up. In play it wears the play chrome's dark skin. */
+function StoppedBanner() {
+  const link = useLink((s) => s.link)
+  const unsaved = useLink((s) => s.unsaved)
+  const play = useStore((s) => !!s.play)
+  const ref = useRef<HTMLDivElement>(null)
+  const cmd = <code>npx marver dev</code>
+  const what = link === 'resuming' ? <>This canvas is back{unsaved ? ' - saving your edits' : ''}</>
+    : link === 'elsewhere' ? <>Another canvas is running on this address - stop it and run {cmd} to bring this one back</>
+    : <>This canvas stopped - run {cmd} to bring it back</>
+  const kept = unsaved && link !== 'resuming'
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let raf = 0
+    const place = () => { cancelAnimationFrame(raf); raf = 0; placeBanner(el) }
+    const soon = () => { raf ||= requestAnimationFrame(place) }
+    place()
+    // what moves the gap: the window, the chrome around it opening, closing or changing size, play, Hide UI
+    const seen = new Set<Element>()
+    const ro = new ResizeObserver(soon)
+    const watch = () => { for (const n of el.parentElement?.querySelectorAll(OBSTACLES) ?? []) if (!seen.has(n)) { seen.add(n); ro.observe(n) } }
+    watch()
+    const mo = new MutationObserver(() => { watch(); soon() })
+    if (el.parentElement) mo.observe(el.parentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+    mo.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+    window.addEventListener('resize', soon)
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); mo.disconnect(); window.removeEventListener('resize', soon) }
+  }, [link, unsaved, play])
+  return (
+    <div ref={ref} className={`sh-banner sh-stopped${play ? ' dark' : ''}`} role="status" data-link={link}>
+      {what}{kept && <><span className="dot"> · </span><span className="kept">your unsaved edits are kept in this tab</span></>}
+    </div>
+  )
+}
+
+/** The chrome the stopped banner keeps clear of: the sidebar (or its button) on the left, the toolbar (or its
+ *  button) on the right - the canvas's own, or play's brand and toolbar pills over it. */
+const OBSTACLES = ':scope > .sh-panel, :scope > .sh-fab, :scope > nav.sh-pill, :scope > .sh-pill-fab, :scope > .sh-play > .sh-pill, :scope > .sh-play > .sh-pill-fab'
+const BANNER_GAP = 12
+function placeBanner(el: HTMLElement) {
+  const app = el.parentElement
+  if (!app) return
+  const edge = parseFloat(getComputedStyle(app).getPropertyValue('--edge')) || 10
+  // a box in the app's own coordinates, from layout - never the rect mid-morph (a closing panel scales down)
+  const box = (n: HTMLElement) => {
+    let x = 0, y = 0
+    for (let e: HTMLElement | null = n; e && e !== app; e = e.offsetParent as HTMLElement | null) { x += e.offsetLeft; y += e.offsetTop }
+    return { left: x, top: y, right: x + n.offsetWidth, bottom: y + n.offsetHeight }
+  }
+  const pick = (root: Element, sel: string) => {
+    const n = root.querySelector<HTMLElement>(sel)
+    return n && !n.matches('.closed, .hidden') && n.offsetWidth ? box(n) : null
+  }
+  let left: ReturnType<typeof box> | null = null, right: ReturnType<typeof box> | null = null
+  if (!document.body.classList.contains('sh-hide-ui')) {
+    const stage = app.querySelector(':scope > .sh-play')
+    if (stage) {
+      left = pick(stage, ':scope > .sh-play-brand')
+      right = pick(stage, ':scope > .sh-play-pill:not(.sh-play-brand)') ?? pick(stage, ':scope > .sh-pill-fab')
+    } else {
+      left = pick(app, ':scope > .sh-panel') ?? pick(app, ':scope > .sh-fab')
+      right = pick(app, ':scope > nav.sh-pill') ?? pick(app, ':scope > .sh-pill-fab')
+    }
+  }
+  // the toolbar row: its centre line, and its foot - the sidebar runs down the page, so it is no part of the row
+  const tall = !!left && left.bottom - left.top > 64
+  const row = [right, tall ? null : left].filter((b): b is NonNullable<typeof b> => !!b)
+  const mid = row.length ? Math.max(...row.map((b) => (b.top + b.bottom) / 2)) : edge + 23
+  const foot = Math.max(edge + 46, ...row.map((b) => b.bottom))
+  const W = app.clientWidth
+  const from = left ? left.right + BANNER_GAP : edge, to = right ? right.left - BANNER_GAP : W - edge
+  const at = (where: 'row' | 'stack' | 'below', x0: number, x1: number, top?: number) => {
+    el.dataset.at = where
+    el.style.left = `${Math.round(x0 + Math.max(0, (x1 - x0 - el.offsetWidth) / 2))}px`
+    el.style.top = `${Math.round(top ?? mid - el.offsetHeight / 2)}px`
+  }
+  el.style.transform = 'none'
+  el.dataset.at = 'row'
+  // one line in the gap
+  el.style.whiteSpace = 'nowrap'
+  el.style.maxWidth = 'none'
+  const line = el.offsetHeight
+  if (el.offsetWidth <= to - from) return at('row', from, to)
+  // two lines in the gap: what happened, then the kept edits under it
+  if (el.querySelector('.kept')) {
+    el.dataset.at = 'stack'
+    if (el.offsetWidth <= to - from) return at('stack', from, to)
+    el.dataset.at = 'row'
+  }
+  // or wrapped in two, the box no wider than its longest line
+  el.style.whiteSpace = 'normal'
+  el.style.maxWidth = `${to - from}px`
+  if (to - from >= 220 && el.offsetHeight <= line + 18) { hug(el); return at('row', from, to) }
+  // too narrow: under the toolbar row, centred in what the sidebar leaves, the kept edits on a line of their own
+  el.dataset.at = 'below'
+  const lo = tall && left ? left.right + BANNER_GAP : edge, hi = W - edge
+  el.style.maxWidth = `${Math.max(160, Math.min(680, hi - lo))}px`
+  hug(el)
+  at('below', lo, hi, row.length ? foot + 8 : edge)   // no row with the chrome hidden: the top edge
+}
+/** A wrapped banner's box shrinks to its longest line (a max-width box stays as wide as it may be). */
+function hug(el: HTMLElement) {
+  const r = document.createRange()
+  r.selectNodeContents(el)
+  const lines = [...r.getClientRects()]
+  if (!lines.length) return
+  const cs = getComputedStyle(el)
+  const chrome = el.offsetWidth - el.clientWidth + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+  const need = Math.ceil(Math.max(...lines.map((l) => l.right)) - Math.min(...lines.map((l) => l.left)) + chrome) + 1
+  const was = el.style.maxWidth, h = el.offsetHeight
+  el.style.maxWidth = `${Math.min(need, el.offsetWidth)}px`
+  if (el.offsetHeight > h) el.style.maxWidth = was   // never a line more than it had (a balanced wrap re-flows)
 }
 
 /** The bottom-right notification corner. Plain toasts render as before.

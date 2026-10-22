@@ -122,7 +122,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver folders add <module ...>` | Add a typed folder: `start`, `features`, `surfaces`, `projects`, `feedback`, `context`, `decks`, `archive` |
 | `npx marver context init \| check \| index` | Set up `context/`; check it (exit 0 / 1 / 2; `--base`, `--body-file` for a pull request); regenerate the index's capability table |
 
-**Where the canvas runs.** Each canvas on your Mac takes one of twenty fixed ports, localhost:4805 to localhost:4824 - usually the same one each time - and prints its link; `npx marver ls` lists them all. `--port <n>`, or a `port` in `design/config.ts` (other than the old 5199), gives a canvas a port of its own instead. Because an address is reused by whichever canvas starts there next, a tab left open after its canvas stopped says so and keeps your unsaved edits until its own canvas is back, and a local canvas runs no service workers.
+**Where the canvas runs.** Each canvas on your Mac takes one of twenty fixed ports, localhost:4805 to localhost:4824 - usually the same one each time - and prints its link; `npx marver ls` lists them all. `--port <n>`, or a `port` in `design/config.ts` (other than the old 5199), gives a canvas a port of its own instead. Because an address is reused by whichever canvas starts there next, a tab left open after its canvas stopped says so, and how to bring it back, and keeps your unsaved edits until its own canvas is back, and a local canvas runs no service workers.
 
 ## Shortcuts
 

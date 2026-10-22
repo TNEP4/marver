@@ -4,7 +4,7 @@ import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
 import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
-import { api, beforeResume, canvasStopped, holdsReload, mvFetch, onLinkNotice, scoped, withWs } from './api.ts'
+import { api, beforeResume, canvasStopped, holdsReload, mvFetch, noteUnsaved, onLinkNotice, scoped, STOPPED_WAY, withWs } from './api.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -2155,7 +2155,16 @@ beforeResume(async () => {
 })
 // and an edit made, or a drag begun, while that save was on its way holds the reload as well
 holdsReload(() => { const s = useStore.getState(); return s.dirty || !!s.gesture })
+// while stopped, the banner says "your unsaved edits are kept" from the edit that makes some
+useStore.subscribe((s, p) => { if ((s.dirty !== p.dirty || s.gesture !== p.gesture) && canvasStopped()) noteUnsaved() })
 onLinkNotice((text) => useStore.getState().toast(text))
+/** A tool that needs the server, asked for while the canvas is stopped (A1.11): it says why and the way back, and
+ *  does nothing. `what`: "Comments need the canvas running". */
+export function stoppedFor(what: string): boolean {
+  if (!canvasStopped()) return false
+  useStore.getState().toast(`${what} - ${STOPPED_WAY}`)
+  return true
+}
 // a stopped page holds edits only it has: leaving it (a reload by hand, a close) asks first
 if (typeof window !== 'undefined') window.addEventListener('beforeunload', (e) => {
   if (!canvasStopped() || !useStore.getState().dirty) return
