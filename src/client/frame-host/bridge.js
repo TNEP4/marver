@@ -15,6 +15,23 @@ const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, location.origin) }
 const id = new URLSearchParams(location.search).get('id') ?? location.pathname
 
+// One id per document (spec 28 A1.7), set before this document posts anything: its ready, measure and error carry
+// it, and the shell reads the live one off this window - a message from a document since replaced never counts. The
+// shell hears of a new document at once (sh:boot), so a reload of the same URL sends its node back to pending.
+const BOOT = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('')
+window.__mvBoot = BOOT
+// the URL revision the shell gave this document (its generation guard)
+const GEN = new URLSearchParams(location.search).get('r') ?? ''
+post({ type: 'sh:boot', id, gen: GEN, boot: BOOT })
+/** An error's first three stack lines (Chrome's "at …", else "fn@url:line:col"), when it has them. */
+const stackOf = (err) => {
+  if (typeof err?.stack !== 'string') return undefined
+  const lines = err.stack.split('\n')
+  const chrome = lines.filter((l) => /^\s*at /.test(l))
+  const out = (chrome.length ? chrome : lines.filter((l) => /@.*:\d+(:\d+)?$/.test(l.trim()))).slice(0, 3).map((l) => l.trim().slice(0, 200))
+  return out.length ? out : undefined
+}
+
 // theme lands as BOTH signals: [data-theme] plus the `dark` class Tailwind/shadcn key on
 const setTheme = (theme) => {
   document.documentElement.dataset.theme = theme
@@ -70,8 +87,8 @@ document.addEventListener('click', (e) => {
 // consumed and forwarded it already, so this never sees it
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') post({ type: 'sh:exit-interact' }) })
 
-window.addEventListener('error', (e) => post({ type: 'sh:error', id, message: String(e.message || e.error) }))
-window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:error', id, message: `unhandled rejection: ${e.reason}` }))
+window.addEventListener('error', (e) => post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: String(e.message || e.error), stack: stackOf(e.error) }))
+window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: `unhandled rejection: ${e.reason}`, stack: stackOf(e.reason) }))
 
 window.addEventListener('message', (e) => {
   // commands come from the SHELL (parent) only - embedded app content must not flip the theme
@@ -91,10 +108,9 @@ window.addEventListener('message', (e) => {
 })
 
 if (isHtmlFrame) {
-  // stamp the URL revision (see main.tsx) so the shell can drop a ready from a superseded document
-  const gen = new URLSearchParams(location.search).get('r') ?? ''
-  // and echo the revision the server stamped this document with (spec 26): what it shows
-  const ready = () => post({ type: 'sh:ready', id, gen, doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '' })
+  // stamp the URL revision (see main.tsx) so the shell can drop a ready from a superseded document, this document's
+  // id, and echo the revision the server stamped this document with (spec 26): what it shows
+  const ready = () => post({ type: 'sh:ready', id, gen: GEN, boot: BOOT, doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '' })
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', ready) : ready()
 }
 
