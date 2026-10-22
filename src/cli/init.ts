@@ -2,7 +2,6 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { basename, dirname, join, relative } from 'node:path'
 import { NAME } from './name.ts'
 import { detectHost, readJson, type HostInfo } from '../server/detect.ts'
-import { DEFAULTS } from '../server/config.ts'
 import { detectAgent } from '../server/jam/agent.ts'
 import { scanFrames, writeManifest } from '../server/manifest.ts'
 import { MANAGED_PREFIX, LEGACY_PREFIX, hashBody, managedFile, pkgDir, enumerateInstructionTemplates } from '../server/managed.ts'
@@ -362,7 +361,7 @@ export function init(root: string, opts: InitOpts) {
   // prints the truth at boot in every case. The no-CLI note is machine truth, so it always holds.
   if (!jamAgent) console.log(`\n  note: Live Jam found no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and it arms itself on the next \`${NAME} dev\`.`)
   else if (created.includes('design/config.ts')) console.log(`\n  Live Jam is on (${jamAgent}): tag @${NAME} in a canvas comment and your agent does the work, then replies in the thread.`)
-  console.log(`\n  next: npx ${NAME} dev   (or: npx ${NAME} canvas - same thing; canvas on http://localhost:${DEFAULTS.port} by default)\n`)
+  console.log(`\n  next: npx ${NAME} dev   (or: npx ${NAME} canvas - same thing; it prints its link: a free slot, localhost:4805-4824, usually the same one next time)\n`)
   // the first-session hand-off belongs to a canvas this run created - an upgrade is not a first session
   if (!noApp(host) && created.includes('design/config.ts')) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)
 }
@@ -677,7 +676,9 @@ export default {
     // tv: { width: 3840, height: 2160 },
   },
   themes: ["light", "dark"],
-  port: ${DEFAULTS.port},
+  // A port of its own. Without one, \`${NAME} dev\` takes a free slot (localhost:4805-4824),
+  // usually the same one next time - \`npx ${NAME} ls\` lists the canvases running and their links.
+  // port: 5300,
   // Canvas zoom feel: 1 = default, 1.2 = 20% faster, 0.8 = 20% slower.
   // zoomSpeed: 1,
 ${jamBlock(jamAgent)}
