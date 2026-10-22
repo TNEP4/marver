@@ -248,6 +248,33 @@ describe('marver perf, printed', () => {
     expect(out.join('\n')).toContain('1 move, 300 px: measure-height 1 · late, after it was cut: 2 (measure-height 1, reflow:measured 1)')
   })
 
+  it('a request cut while the page was hidden whose board mounts after all: its cut kept, its mount said, its moves late', () => {
+    const now = Date.now()
+    const H = 'f00000000002', P5 = 'aaaaaaaaaaa5'
+    let seq = 0
+    const rec = (kind: string, body: Record<string, unknown> = {}) => ({ v: 1, ws: WS, page: P5, load: H, seq: seq++, ts: now - 300_000 + seq * 1000, kind, ...body })
+    const records = [
+      rec('load', { board: 'archive', cause: 'switch', request: H }),
+      rec('cut', { reason: 'hidden', request: H, ms: 400 }),
+      rec('commit', { request: H, ms: 3200, frames: 2, byKind: { hifi: 2, content: 0, html: 0 }, measuring: 0, savedHeights: 0, late: true }),
+      rec('move', { node: 'k-1', dx: 120, dy: 80, dw: 0, dh: 0, cause: 'drag', late: true }),
+    ]
+    const [l] = loadsSummary(records)
+    expect(l).toMatchObject({ state: 'cut', cut: { reason: 'hidden', ms: 400, request: true }, committed: true, mountedAfterCut: true, commitMs: 3200, frames: 2, moves: { count: 0, late: { count: 1, causes: [['drag', 1]] } } })
+    // nothing was ready by a cut that came before the board mounted
+    expect(l.readyByCut).toBeUndefined()
+    writeFileSync(pageLog(root), records.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    perfCommand(root, { loads: true })
+    const text = out.join('\n')
+    expect(text).toMatch(/Archive \(switch\)\s+cut \(hidden\) at 0\.4 s before it mounted · mounted 3\.2 s\n/)
+    expect(text).toContain('mounted after its cut 3.2 s · 2 frames (2 hi-fi)')
+    expect(text).toContain('0 moves · late, after it was cut: 1 (drag 1)')
+    expect(text).not.toContain('not committed')
+    out = []
+    perfCommand(root, {})
+    expect(out.join('\n')).toMatch(/archive\s+switch\s+cut \(hidden\) at 0\.4 s before it mounted · mounted 3\.2 s · 0 moves \(1 late\)/)
+  })
+
   it('nothing in the window says so', () => {
     writeFileSync(pageLog(root), '')
     perfCommand(root, { loads: true })

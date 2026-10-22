@@ -31,7 +31,7 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   const reloaded = by('job')
   if (opts.json) {
     console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { afterEdit: reloaded, byHand: by('manual'), retried: by('retry'), self: by('self'), first: by('first') }, reloads, boots, slow,
-      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })) }, null, 2))
+      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, ...(l.mountedAfterCut ? { mountedAfterCut: true } : {}), moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })) }, null, 2))
     return
   }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
@@ -68,10 +68,13 @@ type Ranked = [string, number][]
 export interface LoadSummary {
   ws: string; page: string; load: string; at: number
   board?: string; cause?: string
-  /** settled; cut (a request that never committed too: `cut.request`); or open - still going, or its end past the window */
+  /** settled; cut (a request cut before it mounted too: `cut.request`); or open - still going, or its end past the window */
   state: 'settled' | 'cut' | 'open'
   cut?: { reason: string; ms?: number; request?: true }
   committed: boolean
+  /** a request cut before it mounted (its deadline passed, the page hid) whose board arrived after all: it mounted,
+   *  and what its board did from then is late */
+  mountedAfterCut?: true
   commitMs?: number; frames?: number; byKind?: Record<string, number>; measuring?: number; savedHeights?: number
   visible?: number; visibleAssumed?: true; visibleMs?: number
   visibleReadyMs?: number; allReadyMs?: number; quietMs?: number; settledMs?: number
@@ -144,19 +147,22 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       return [{ source: e.source, ...(e.frame ? { frame: e.frame } : {}), ...(e.component ? { component: e.component } : {}), message: String(e.message ?? ''), ...(e.late ? { late: true as const } : {}) }]
     })
     const gs = of('gesture')
+    // the cut of the request, before it mounted - its board may have arrived after all, and mounted late
+    const cutFirst = !!cut && (typeof cut.request === 'string' || !commit)
     out.push({
       ws: g[0].ws, page: g[0].page, load: g[0].load, at: load?.ts ?? Math.min(...g.map((r) => r.ts)),
       ...(load ? { board: load.board, cause: load.cause } : {}),
       state: settled ? 'settled' : cut ? 'cut' : 'open',
-      ...(cut && !settled ? { cut: { reason: cut.reason, ...(typeof cut.ms === 'number' ? { ms: cut.ms } : {}), ...(!commit ? { request: true as const } : {}) } } : {}),
+      ...(cut && !settled ? { cut: { reason: cut.reason, ...(typeof cut.ms === 'number' ? { ms: cut.ms } : {}), ...(cutFirst ? { request: true as const } : {}) } } : {}),
       committed: !!commit,
+      ...(commit && cutFirst ? { mountedAfterCut: true as const } : {}),
       ...(commit ? { commitMs: commit.ms, frames: commit.frames, byKind: commit.byKind, measuring: commit.measuring, savedHeights: commit.savedHeights } : {}),
       ...(visible ? { visible: visible.nodes, visibleMs: visible.ms, ...(visible.assumed ? { visibleAssumed: true as const } : {}) } : {}),
       ...(settled ? { visibleReadyMs: settled.visibleReadyMs, allReadyMs: settled.allReadyMs, settledMs: settled.ms, weight: settled.weight } : {}),
       ...(quiet ? { quietMs: quiet.ms } : {}),
       ...(typeof (settled ?? cut)?.lastMove === 'number' ? { lastMoveMs: (settled ?? cut)!.lastMove } : {}),
       moves: { count: moves.count, distance: Math.round(moves.distance), causes: ranked(moves.causes), late: { count: late.count, causes: ranked(late.causes) } },
-      slowest, ...(cut && !settled && commit ? { readyByCut: frames.filter((f) => f.outcome === 'settled' || f.outcome === 'ready').length } : {}),
+      slowest, ...(cut && !settled && commit && !cutFirst ? { readyByCut: frames.filter((f) => f.outcome === 'settled' || f.outcome === 'ready').length } : {}),
       errors, errorsNotRecorded: notRecorded(g),
       neverReady: frames.filter((f) => f.outcome === 'never-ready').map(name),
       missing: frames.filter((f) => f.outcome === 'missing').map(name),
@@ -193,6 +199,7 @@ const boardName = (b?: string) => (b === '~unplaced' ? 'Not on a board' : b ? hu
 /** How a load ended, in a few words. */
 function endOf(l: LoadSummary): string {
   if (l.state === 'settled') return `settled ${secs(l.settledMs)}`
+  if (l.cut?.request && l.mountedAfterCut) return `cut (${l.cut.reason})${l.cut.ms !== undefined ? ` at ${secs(l.cut.ms)}` : ''} before it mounted · mounted ${secs(l.commitMs)}`
   if (l.cut?.request) return `not committed (${l.cut.reason})`
   if (l.cut) return `cut (${l.cut.reason})${l.cut.ms !== undefined ? ` at ${secs(l.cut.ms)}` : ''}`
   return 'not settled yet'
@@ -215,7 +222,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     console.log(`\n  ${t(l.at)}  ${head.padEnd(40)} ${endOf(l)}`)
     if (!l.committed) continue
     const kinds = Object.entries(l.byKind ?? {}).filter(([, n]) => n).map(([k, n]) => `${n} ${k === 'hifi' ? 'hi-fi' : k}`)
-    console.log(`    committed ${secs(l.commitMs)} · ${plural(l.frames ?? 0, 'frame')}${kinds.length ? ` (${kinds.join(', ')})` : ''}${l.measuring ? ` · ${l.measuring} measure, ${l.savedHeights ?? 0} opened at a known height` : ''}`)
+    console.log(`    ${l.mountedAfterCut ? 'mounted after its cut' : 'committed'} ${secs(l.commitMs)} · ${plural(l.frames ?? 0, 'frame')}${kinds.length ? ` (${kinds.join(', ')})` : ''}${l.measuring ? ` · ${l.measuring} measure, ${l.savedHeights ?? 0} opened at a known height` : ''}`)
     const times = [
       ...(l.readyByCut !== undefined ? [`${l.readyByCut} of ${l.frames ?? '?'} ready`] : []),
       ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),

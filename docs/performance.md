@@ -44,7 +44,9 @@ read again because its file changed on disk (`disk-reload`) - the page follows i
 Or **cut**: another board (`switch`), the same board loaded again (`reload`), the page hidden (`hidden`),
 or 120 s without settling (`timeout`). A request that never mounted is cut too: a newer load
 (`superseded`), a board that could not be read (`error`), your edits while it was read from disk
-(`edited`), or a switch away from a board that could not be saved (`unsaved`).
+(`edited`), or a switch away from a board that could not be saved (`unsaved`). A request cut at 120 s or
+while the page was hidden may still mount when its board arrives: its commit then says it came after the
+cut (`late`), the cut stays, and what the board does from then is late.
 
 ## Reading `perf --loads`
 
@@ -173,13 +175,13 @@ owns the board then; `-` before the first), `seq` (its place in the page's order
 | `kind` | When | Fields |
 |---|---|---|
 | `load` | a board load starts, before the board is read | `board`, `cause` (`boot` / `switch` / `disk-reload`), `request`; on a page's first load `sinceNav`, the ms since the page started loading |
-| `commit` | the board mounts | `request`, `ms`, `frames`, `byKind` (`hifi`, `content`, `html`), `measuring`, `savedHeights` |
+| `commit` | the board mounts | `request`, `ms`, `frames`, `byKind` (`hifi`, `content`, `html`), `measuring`, `savedHeights`; `late` when its request was cut first (120 s, the page hidden) and its board arrived after all |
 | `visible` | the first camera fit after it | `nodes`, `ms`; `assumed` when no fit came before the load ended (the frames the camera showed then) |
 | `frame` | a frame reaches its outcome, or the load ends | `node`, `frame`, `gen` (the URL revision), `boot` (the document's id), `admitted` (its turn to boot), `ready`, `firstMeasure`, `settled`, `outcome`, `kept` |
 | `move` | a frame's place or size changes | `node`, `dx`, `dy`, `dw`, `dh` (px), `cause`, `late` (after the load ended, settled or cut) |
 | `quiet` | the first second after the commit with no move | `ms`: when the move before that second came (the commit, when none had) |
 | `settled` | the load settled | `ms`, `moves`, `distance` (px), `causes`, `lastMove` (when the last move came; absent when nothing moved), `visibleReadyMs`, `allReadyMs`, `missing`, `neverReady`, `errors`, `weight` (`domNodes`, `iframes`, `awake`, `asleep`, `heapMB`) |
-| `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); `request` for one that never mounted |
+| `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); `request` for a request cut before it mounted |
 | `gesture` | a pan, zoom or layout animation ends | `type` (`pan` / `zoom` / `layout`), `ms`, `frames`, `p50`, `p95`, `max`, `over17ms`, `over33ms`, `longFrames` |
 | `error` | an error the page sees | `source` (`shell` / `frame` / `stage`), `frame`, `component`, `message`, `stack`, `late` |
 | `dropped` | records were lost | `n`; `reason: "errors"` for errors past a load's 50 - with no reason, a full queue or a failed send |
@@ -193,8 +195,10 @@ counts every change to the board; `perf --loads` counts move records, where a dr
 `cause` and `state` - `settled`, `cut`, or `open` (still going, or its end past the window) - and, as it
 got there:
 
-- `cut`: `reason`, `ms`, and `request: true` when it never mounted;
-- the commit: `commitMs`, `frames`, `byKind`, `measuring`, `savedHeights`;
+- `cut`: `reason`, `ms`, and `request: true` when the cut came before it mounted;
+- the commit: `commitMs`, `frames`, `byKind`, `measuring`, `savedHeights` - and `mountedAfterCut: true` for a
+  request cut first whose board arrived after all (`perf --loads` says `cut (hidden) at 0.4 s before it
+  mounted · mounted 3.2 s`, and counts its moves as late);
 - `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs`, `quietMs`, `lastMoveMs` (settled or cut),
   `settledMs`;
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
@@ -204,7 +208,7 @@ got there:
 - `errors` (each once, every one, `late` marked), `errorsNotRecorded`, `neverReady`, `missing`,
   `unfinished` (frames still on their way when it was cut: they never finished);
 - on a load cut after it mounted, `readyByCut`: how many of its `frames` were ready (settled, or ready) by
-  the cut;
+  the cut (absent on one cut before it mounted);
 - `gestures` (`n`, `worstP95`, `over33ms`) and `weight`.
 
 `unowned` holds what a page recorded before its first board mounted (its errors, how many gestures);

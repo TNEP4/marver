@@ -96,7 +96,7 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
   },
   commit: (r) => {
     const k = obj(r.byKind)
-    return { request: id(r.request), ms: ms(r.ms), frames: count(r.frames), byKind: prune({ hifi: count(k.hifi), content: count(k.content), html: count(k.html), image: count(k.image) }), measuring: count(r.measuring), savedHeights: count(r.savedHeights) }
+    return { request: id(r.request), ms: ms(r.ms), frames: count(r.frames), byKind: prune({ hifi: count(k.hifi), content: count(k.content), html: count(k.html), image: count(k.image) }), measuring: count(r.measuring), savedHeights: count(r.savedHeights), late: flag(r.late) }
   },
   visible: (r) => ({ nodes: count(r.nodes), ms: ms(r.ms), assumed: flag(r.assumed) }),
   frame: (r) => {

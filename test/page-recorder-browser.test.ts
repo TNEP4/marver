@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, sy
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser } from './browser.ts'
+import { loadsSummary } from '../src/cli/perf.ts'
 
 /**
  * The recorder's page half (spec 28 A1.7), proven where it happens: a REAL dev server, a REAL browser, and the
@@ -404,7 +405,7 @@ describe('the page recorder: board loads', () => {
     }, 90_000)
   }
 
-  it('a board fetch that never answers is cut at the deadline, counted from the request; if it answers after all, the board owns its geometry with no commit', async () => {
+  it('a board fetch that never answers is cut at the deadline, counted from the request; if it answers after all, the board mounts - said, its cut kept - and owns its geometry', async () => {
     if (!browser) return
     const { s, page, held } = await open('#/b/hifi', ['*/api/boards/hifi*'], [FAST_DEADLINE])
     const req = await until(() => lines().find((r) => r.page === page && r.kind === 'load' && r.board === 'hifi'), 20_000, 'the request')
@@ -412,14 +413,15 @@ describe('the page recorder: board loads', () => {
     expect(cut).toMatchObject({ reason: 'timeout', load: req.request })
     expect(cut.ms).toBeGreaterThanOrEqual(1400)
     expect((await R(s)).pending).toEqual([])
-    // the fetch answers at last: the board mounts, owned by that request - late, with no commit
+    // the fetch answers at last: the board mounts, owned by that request - its commit late, its cut kept
     await held.release('*/api/boards/hifi*')
     await browser.until(s, `(() => { const o = window.__mvRecorder.state().owner; return o && o.board === 'hifi' && o.done === 'cut' })()`, 20_000)
     expect((await R(s)).owner.id).toBe(req.request)
     // the board it mounts stays open: a move now is the cut load's, late - after the load ended
     await browser.eval(s, `window.__mvStore.getState().moveNode('k-h', 120, 80), 1`)
     await drained(s)
-    expect(lines().filter((r) => r.page === page && r.kind === 'commit')).toEqual([])
+    expect(lines().filter((r) => r.page === page && r.kind === 'commit')).toMatchObject([{ load: req.request, request: req.request, frames: 1, late: true }])
+    expect(lines().filter((r) => r.page === page && r.kind === 'cut')).toHaveLength(1)
     expect(lines().filter((r) => r.page === page && r.kind === 'move')).toMatchObject([{ load: req.request, node: 'k-h', cause: 'drag', late: true }])
     held.stop()
   }, 60_000)
@@ -443,14 +445,19 @@ describe('the page recorder: board loads', () => {
     expect(a.held.paused('*/api/boards/switch-b*')).toBe(1)
     await ended(a.page, 'hifi')
     a.held.stop()
-    // hidden: the request is cut; its board arriving later mounts with no commit
+    // hidden: the request is cut; its board arriving later mounts - said, its cut kept - and what it does from then is
+    // late, in perf --loads too
     const b = await waiting()
     await browser.eval(b.s, `Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), 1`)
     expect(await until(b.cutOf, 10_000, 'the hidden cut')).toMatchObject({ reason: 'hidden' })
     await b.held.release('*/api/boards/switch-b*')
     await browser.until(b.s, `window.__mvStore.getState().board === 'switch-b' && window.__mvRecorder.state().owner?.id === ${JSON.stringify(b.req.request)}`, 20_000)
+    await browser.eval(b.s, `window.__mvStore.getState().moveNode('k-sw', 60, 40), 1`)
     await drained(b.s)
-    expect(lines().filter((r) => r.page === b.page && r.kind === 'commit' && r.request === b.req.request)).toEqual([])
+    expect(lines().filter((r) => r.page === b.page && r.kind === 'commit' && r.request === b.req.request)).toMatchObject([{ load: b.req.request, frames: 1, late: true }])
+    expect(lines().filter((r) => r.page === b.page && r.kind === 'move' && r.load === b.req.request)).toMatchObject([{ node: 'k-sw', cause: 'drag', late: true }])
+    const hid = loadsSummary(lines().filter((r) => r.page === b.page)).find((l) => l.load === b.req.request)!
+    expect(hid).toMatchObject({ board: 'switch-b', state: 'cut', cut: { reason: 'hidden', request: true }, committed: true, mountedAfterCut: true, moves: { count: 0, late: { count: 1 } } })
     b.held.stop()
     // the page goes: its last send carries the cut
     const c = await waiting()

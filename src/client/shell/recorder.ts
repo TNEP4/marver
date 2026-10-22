@@ -51,7 +51,8 @@ let sealCaptures = (): void => {}
 /** requested, not committed (or cut) yet */
 const pending = new Map<string, Load>()
 /** requests cut before they committed that may mount all the same (their deadline passed, the page hid or went): a
- *  few, newest last - one that mounts owns the geometry from then, its moves late, with no commit of its own */
+ *  few, newest last - one that mounts says so (a `commit`, `late`, its cut kept) and owns the geometry from then, its
+ *  moves late */
 const lapsed = new Map<string, Load>()
 /** the load that owns the geometry: the last one committed */
 let owner: Load | null = null
@@ -196,9 +197,10 @@ function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   baseline = new Map(nodes.map((n) => [n.key, { x: n.x, y: n.y, w: n.w, h: n.h }]))
   const keys = new Set(nodes.map((n) => n.key))
   for (const k of [...tracks.keys()]) if (!keys.has(k)) tracks.delete(k)
-  // a request already cut mounts all the same: its board's geometry is its own from here, every move late
+  // a request already cut (its deadline passed, the page hid) mounts all the same: said, its cut kept - its board's
+  // geometry is its own from here, every move late
+  rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest), ...(late ? { late: true } : {}) })
   if (late) return
-  rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest) })
   L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
   // a page hidden already: cut once the set that mounts this load has run - its nodes, not the board it replaces
   if (document.visibilityState === 'hidden') queueMicrotask(guard(() => { if (L === owner) cut(L, 'hidden') }))

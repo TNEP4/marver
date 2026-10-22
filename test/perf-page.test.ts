@@ -49,6 +49,9 @@ describe('a page record', () => {
     expect(cleanPageRecord(env('error', VALID.error))).toMatchObject({ late: true })
     expect(cleanPageRecord(env('dropped', VALID.dropped))).toMatchObject({ n: 4, reason: 'errors' })
     expect(cleanPageRecord(env('commit', VALID.commit))!.byKind).toEqual({ hifi: 3, content: 8, html: 1, image: 0 })
+    // a request cut before it mounted whose board arrived after all: its commit says it came late
+    expect(cleanPageRecord(env('commit', { ...VALID.commit, late: true }))).toMatchObject({ late: true })
+    expect(cleanPageRecord(env('commit', { ...VALID.commit, late: 'yes' }))).not.toHaveProperty('late')
   })
 
   it('the envelope must hold: a version, a kind, a workspace, a page, a load and a seq in their own formats', () => {
