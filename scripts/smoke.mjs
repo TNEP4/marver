@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 /**
  * Packed-package smoke: proves packaging completeness, optimizeDeps.exclude,
- * route middleware, and glob-from-node_modules - on the tarball, not the working tree.
+ * route middleware, and glob-from-node_modules - on the tarball, not the working tree -
+ * and the slots: a canvas started without a port takes one, `marver ls` lists it, and a
+ * stop gives it back. The canvases run on a registry of their own (MARVER_HOME), never
+ * this Mac's ~/.marver; MARVER_SLOT_BASE, when set, moves the slot range as it does for
+ * the tests.
  * Usage: node scripts/smoke.mjs   (from the package root)
  */
 import { execSync, spawn } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 const pkgRoot = process.cwd()
 const tmp = join(pkgRoot, 'tmp-smoke')
 const app = join(tmp, 'app')
 const PORT = 5533
+const home = join(tmp, 'home')
+const env = { ...process.env, MARVER_HOME: home, BROWSER: 'none' }
 let server = null
 const fail = (msg) => { console.error(`SMOKE FAIL: ${msg}`); cleanup(); process.exit(1) }
 const ok = (msg) => console.log(`  ✓ ${msg}`)
@@ -48,7 +54,7 @@ if (!existsSync(join(app, 'design/scenes/demo/welcome.tsx'))) fail('init did not
 ok('init scaffolded design/')
 
 // 4. dev server
-server = spawn('npx', ['marver', 'dev', '--port', String(PORT)], { cwd: app, stdio: 'pipe' })
+server = spawn('npx', ['marver', 'dev', '--port', String(PORT)], { cwd: app, stdio: 'pipe', env })
 const get = async (path) => {
   const res = await fetch(`http://localhost:${PORT}${path}`)
   return { status: res.status, text: await res.text() }
@@ -94,6 +100,34 @@ for (let i = 0; i < 10; i++) {
 }
 if (!seen) fail('live-added frame never reached the manifest')
 ok('live add reached manifest < 3s')
+
+// 6. the slots, from the tarball: no port given - a free slot, listed by `marver ls`, given back on a stop
+const stopped = new Promise((r) => server.once('exit', r))
+cleanup()
+await stopped
+const base = Number(process.env.MARVER_SLOT_BASE) || 4804
+server = spawn('npx', ['marver', 'dev'], { cwd: app, stdio: 'pipe', env })
+let out = ''
+server.stdout.on('data', (d) => { out += d })
+server.stderr.on('data', (d) => { out += d })
+let slotPort = 0
+for (let i = 0; i < 60 && !slotPort; i++) {
+  await new Promise((r) => setTimeout(r, 500))
+  slotPort = Number(out.match(/→ http:\/\/localhost:(\d+)\//)?.[1] ?? 0)
+}
+if (!slotPort) fail(`dev without a port never printed its link:\n${out}`)
+if (slotPort <= base || slotPort > base + 20) fail(`dev without a port is on ${slotPort}, not a slot (${base + 1}-${base + 20})`)
+ok(`dev without a port took a slot (${slotPort})`)
+const listed = JSON.parse(execSync('npx marver ls --json', { cwd: app, env }).toString()).canvases
+const mine = listed.find((c) => c.port === slotPort)
+if (listed.length !== 1 || !mine || mine.state !== 'ready' || mine.folder !== realpathSync(app)) fail(`marver ls: ${JSON.stringify(listed)}`)
+ok('marver ls lists it, ready')
+const gone = new Promise((r) => server.once('exit', r))
+server.kill('SIGTERM')
+await gone
+const left = existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : []
+if (left.length) fail(`a stop left ${left.join(', ')} in the registry`)
+ok('a stop gave the slot back')
 
 cleanup()
 rmSync(tmp, { recursive: true, force: true })

@@ -70,7 +70,8 @@ const cfgPath = join(root, 'design', 'config.ts')
 writeFileSync(cfgPath, readFileSync(cfgPath, 'utf8').replace(/jam:\s*(\{[^}]*\}|false|true|"[^"]*"),/, `jam: { agent: ${JSON.stringify(agent)}, concurrency: 3 },`))
 
 // 4. boot the real dev server; capture the jam line to confirm it armed the right agent
-const dev = spawn(process.execPath, [CLI, 'dev'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })
+// a registry of its own (inside the throwaway root): a verify run never records itself in this Mac's ~/.marver
+const dev = spawn(process.execPath, [CLI, 'dev'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MARVER_HOME: join(root, '.marver-home') } })
 let devOut = ''
 const ready = new Promise<boolean>((res) => {
   const to = setTimeout(() => res(false), 40_000)
