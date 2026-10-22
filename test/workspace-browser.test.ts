@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
 import { makeProject, startDev, stopDev, workspaceOf, type Dev } from './project.ts'
@@ -68,6 +68,12 @@ function record(br: Browser, s: string): { sent: Sent[]; stop: () => void } {
 }
 const iframeText = (s: string, key: string) => browser!.eval(s, `document.querySelector('[data-node="${key}"] iframe')?.contentDocument?.body?.innerText ?? ''`)
 const iframeWho = (s: string, key: string) => browser!.eval(s, `document.querySelector('[data-node="${key}"] iframe')?.contentWindow?.__who ?? null`)
+/** with MARVER_SHOT_DIR set, a picture of the tab as it stands */
+async function shot(s: string, name: string) {
+  if (!process.env.MARVER_SHOT_DIR) return
+  const out = await browser!.send('Page.captureScreenshot', { format: 'png' }, s)
+  writeFileSync(join(process.env.MARVER_SHOT_DIR, `workspace-${name}.png`), Buffer.from(out.data, 'base64'))
+}
 const stageText = (s: string) => browser!.eval(s, `document.querySelector('.sh-play iframe')?.contentDocument?.body?.innerText ?? ''`)
 
 describe('a canvas that stops, another project on its port, the canvas back', () => {
@@ -141,7 +147,6 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     const raw = await browser.eval(s, `(async () => { const st = __mvStore.getState(); const r = await fetch('/__mv/api/boards/main', { method: 'PUT', headers: { 'x-mv-ws': ${JSON.stringify(WS_A)}, 'content-type': 'application/json', 'x-test-raw': '1' }, body: JSON.stringify({ board: JSON.parse(${JSON.stringify(board)}), baseHash: st.boardHash, mustExist: true }) }); return { status: r.status, body: await r.json() } })()`)
     expect(raw).toEqual({ status: 409, body: { error: 'another workspace' } })
     // B broadcasts a new frame: the page's live socket stays closed, so it never hears of it
-    const { writeFileSync } = await import('node:fs')
     writeFileSync(join(rootB, 'design', 'scenes', 'app', 'extra.tsx'), `export const meta = { title: 'Extra' }\nexport default () => <h1>B extra</h1>\n`)
     await wait(1500)
     expect(await browser.eval(s, `__mvStore.getState().manifest.frames.map((f) => f.id).includes('app/extra')`)).toBe(false)
@@ -151,6 +156,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? ''; return t('n-home').includes('belongs to another canvas') && t('n-page').includes('belongs to another canvas') })()`, 10_000)
     await browser.until(p, `(document.querySelector('.sh-play iframe')?.contentDocument?.body?.innerText ?? '').includes('belongs to another canvas')`, 10_000)
     for (const key of ['n-home', 'n-page']) expect(await iframeWho(s, key), key).toBeNull()
+    await shot(s, 'stopped'); await shot(p, 'stopped-play')
     // reloaded by the shell, and by hand: still the page, never B's frame
     await browser.eval(s, `__mvStore.getState().reloadFrame('n-page')`)
     await wait(800)
