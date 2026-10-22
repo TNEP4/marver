@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -209,7 +209,17 @@ describe('the registry is never served (A1.13 #5)', () => {
     const d = await startDev(r, { env: { MARVER_HOME: inner, MARVER_SLOT_BASE: String(BASE) } })
     devs.push(d)
     const key = JSON.parse(readFileSync(join(inner, 'running', 'slot-1.json'), 'utf8')).key
-    for (const path of ['/.mv-home/running/slot-1.json', `/@fs${inner}/running/slot-1.json`, '/.mv-home/running/../running/slot-1.json']) {
+    // every way Vite finds a file: the name as asked, its extension and index resolution (an extensionless
+    // `?import` resolves to slot-1.json), the asset queries, /@fs/, and a link elsewhere in the project
+    symlinkSync(join(inner, 'running', 'slot-1.json'), join(r, 'linked.json'))
+    const paths = [
+      '/.mv-home/running/slot-1.json', `/@fs${inner}/running/slot-1.json`, '/.mv-home/running/../running/slot-1.json',
+      '/.mv-home/running/slot-1?import', '/.mv-home/running/slot-1', `/@fs${inner}/running/slot-1?import`, `/@fs${inner}/running/slot-1`,
+      ...['?import', '?raw', '?url', '?inline', '?raw&import', '?url&import', '?inline&import'].flatMap((q) => [`/.mv-home/running/slot-1.json${q}`, `/@fs${inner}/running/slot-1.json${q}`]),
+      '/linked?import', '/linked.json?import', '/linked.json?raw',
+      `/@id/${inner}/running/slot-1?import`, '/@id/.mv-home/running/slot-1?import', '/.mv-home/running?import', '/.mv-home?import',
+    ]
+    for (const path of paths) {
       const res = await fetch(`${d.origin}${path}`)
       const body = await res.text()
       expect(body, path).not.toContain(key)

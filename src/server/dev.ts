@@ -1,6 +1,6 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
-import { existsSync, mkdirSync, realpathSync, watch as fsWatch } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, statSync, watch as fsWatch } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -81,16 +81,29 @@ export const FS_DENY = [
  * canvas's proof key and canvases/ the collaboration credentials, and a host whose workspace root is the
  * home folder - or a MARVER_HOME inside the repository - would otherwise put them in reach of `/@fs/`.
  * Both are guarded when MARVER_HOME moves this run's: the one it writes, and the one in the home folder.
+ * Guarded at every way Vite finds a file, not only at the request's own path: Vite resolves an
+ * extensionless `?import` (`/.mv-home/running/slot-1?import` is slot-1.json) and a directory's index, so the
+ * guard looks where a missing path would land; and the homes are in `fs.deny` (registryDeny) and refused by
+ * this plugin's own `load`, so no query (`?import`, `?raw`, `?url`, `?inline`) and no spelling of the id that
+ * reaches Vite's module pipeline (`/@fs/`, `/@id/`) loads one of their files.
  */
 function denyLocalSecrets(root: string): any {
   const guardedAt = join(root, 'design', '.local')
-  const homes = [...new Set([marverHome(), join(homedir(), '.marver')])]
+  const homes = registryHomes()
   // Vite's default publicDir. dev.ts never overrides it, so this is the one extra
   // place a request path can come from.
   const publicAt = join(root, 'public')
-  const inside = (real: string, dir: string) => {
-    const rel = relative(dir, real)
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  // A missing design/.local (or registry) means there is nothing there to protect.
+  const real = (d: string) => { try { return realpathSync(d) } catch { return null } }
+  /** what a resolved path is inside: design/.local, a registry home, or nothing */
+  const refusal = (reals: string[]): string | null => {
+    const local = real(guardedAt)
+    if (local && reals.some((r) => inside(r, local))) return 'design/.local holds this canvas\'s credentials and is never served'
+    for (const h of homes) {
+      const home = real(h)
+      if (home && reals.some((r) => inside(r, home))) return 'the canvas registry (~/.marver) is never served'
+    }
+    return null
   }
   return {
     name: 'marver:deny-local-secrets',
@@ -99,31 +112,93 @@ function denyLocalSecrets(root: string): any {
         let pathname: string
         try { pathname = decodeURIComponent((req.url ?? '/').split('?')[0].split('#')[0]) } catch { return next() }
         const rel = '.' + (pathname.startsWith('/') ? pathname : `/${pathname}`)
-        // `/@fs/<abs>` is Vite's escape hatch for files outside the root; root and
-        // public are the two places an ordinary path can land.
-        // Vite derives more paths than it is asked for: `/leak` can resolve to
-        // `leak.html`, `leak/index`, `leak/index.html`. Enumerating a bundler's
-        // resolution rules is not a game anyone wins, which is why the credential
-        // itself now lives outside the repository - this list is depth, not the
-        // defence. It covers the derivations Vite actually applies.
-        const derived = (base: string) => [base, `${base}.html`, join(base, 'index'), join(base, 'index.html')]
-        const candidates = pathname.startsWith('/@fs/')
-          ? derived(pathname.slice('/@fs'.length))
-          : [...derived(resolvePath(root, rel)), ...derived(resolvePath(publicAt, rel))]
-        // A missing design/.local (or registry) means there is nothing there to protect.
-        const real = (d: string) => { try { return realpathSync(d) } catch { return null } }
-        // A candidate that does not resolve is a 404 Vite will produce on its own.
-        const leak = (dir: string | null) => dir !== null && candidates.some((c) => {
-          try { return inside(realpathSync(c), dir) } catch { return false }
-        })
-        const local = leak(real(guardedAt))
-        if (!local && !homes.some((h) => leak(real(h)))) return next()
+        // `/@fs/<abs>` is Vite's escape hatch for files outside the root, and `/@id/<id>` hands an id to
+        // its resolver as it is (an absolute path, or one in the root); root and public are the two
+        // places an ordinary path can land. Queries do not change which file: they are cut off above.
+        const id = pathname.startsWith('/@id/') ? pathname.slice('/@id/'.length) : null
+        const bases = pathname.startsWith('/@fs/') ? [pathname.slice('/@fs'.length)]
+          : id !== null ? [...(id.startsWith('/') ? [resolvePath(id)] : []), resolvePath(root, '.' + (id.startsWith('/') ? id : `/${id}`))]
+          : [resolvePath(root, rel), resolvePath(publicAt, rel)]
+        const why = refusal(bases.flatMap(resolvedAs))
+        if (!why) return next()
         res.statusCode = 403
         res.setHeader('content-type', 'text/plain; charset=utf-8')
-        res.end(local ? 'design/.local holds this canvas\'s credentials and is never served' : 'the canvas registry (~/.marver) is never served')
+        res.end(why)
       })
     },
+    // Vite's module pipeline, whatever the request looked like: every id it loads passes here first
+    // (`order: 'pre'`, ahead of the asset plugin's `?raw` / `?inline` reads)
+    load: {
+      order: 'pre',
+      handler(id: string) {
+        const file = id.split('?')[0].split('#')[0]
+        if (!isAbsolute(file)) return null   // a virtual module (`\0...`, `virtual:...`): no file
+        const at = landing(file)
+        const why = at === null ? null : refusal([at])
+        if (why) throw new Error(why)
+        return null
+      },
+    },
   }
+}
+
+/** Vite's default `resolve.extensions`: an extensionless import is tried with each, in this order. */
+const VITE_EXTENSIONS = ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json']
+
+const inside = (real: string, dir: string) => {
+  const rel = relative(dir, real)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/**
+ * Where a path lands once links are followed, whether or not it exists: the real path of its nearest
+ * existing folder with the rest of the path after it. Vite's resolution only ever adds to the last name
+ * (an extension, `/index`), so a path whose folder is inside a guarded one lands inside it, whatever
+ * Vite then tries.
+ */
+function landing(p: string): string | null {
+  let dir = p
+  let rest = ''
+  for (;;) {
+    try { return rest ? join(realpathSync(dir), rest) : realpathSync(dir) } catch { /* not there */ }
+    const up = dirname(dir)
+    if (up === dir) return null
+    rest = rest ? join(basename(dir), rest) : basename(dir)
+    dir = up
+  }
+}
+
+/**
+ * The real files a request path can be served as. Vite derives more paths than it is asked for: a
+ * missing `/leak` can resolve to `leak.html` or, as an import, `leak.json` (every one of Vite's
+ * extensions); a folder to its `index` (`index.html`, `index.json`, ...). Enumerating a bundler's
+ * resolution rules is not a game anyone wins, which is why the credential itself lives outside the
+ * repository and the registry is also in `fs.deny` and refused at `load` - this list is depth, not the
+ * defence. It covers the derivations Vite actually applies, and where a missing path would land.
+ */
+function resolvedAs(base: string): string[] {
+  const at = (p: string) => { try { return realpathSync(p) } catch { return null } }
+  const isDir = (p: string) => { try { return statSync(p).isDirectory() } catch { return false } }
+  const found = at(base)
+  if (found !== null) {
+    if (!isDir(found)) return [found]
+    return [found, ...['', '.html', ...VITE_EXTENSIONS].map((e) => at(join(base, `index${e}`))).filter((r): r is string => r !== null)]
+  }
+  const lands = landing(base)
+  return [...(lands ? [lands] : []), ...['.html', ...VITE_EXTENSIONS].map((e) => at(`${base}${e}`)).filter((r): r is string => r !== null)]
+}
+
+/** The registry's homes (A1.13 #5): this run's MARVER_HOME and the ~/.marver in the home folder, each as
+ *  given and as its real path (a request names the one, Vite resolves ids to the other). */
+export function registryHomes(): string[] {
+  return [...new Set([marverHome(), join(homedir(), '.marver')].flatMap((h) => [resolvePath(h), safeReal(resolvePath(h))]))]
+}
+
+/** The homes as `fs.deny` globs - each folder and everything in it, its name matched literally - so Vite's
+ *  own file serving and module loading refuse them too, by the resolved path it checks. */
+export function registryDeny(homes = registryHomes()): string[] {
+  const literal = (p: string) => p.replace(/[\\*?[\]{}()!+@|]/g, '\\$&')
+  return homes.flatMap((h) => [literal(h), `${literal(h)}/**`])
 }
 
 /** The canvas did not start: what failed, said - everything the start held is given back first. */
@@ -256,7 +331,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       // (/tmp -> /private/tmp, a linked Dropbox folder) must be allowed by its realpath too.
       fs: {
         allow: [...new Set([root, safeReal(root), pkgDir, safeReal(pkgDir), searchForWorkspaceRoot(root)])],
-        deny: FS_DENY,
+        deny: [...FS_DENY, ...registryDeny()],
       },
       // Spec §5.6: our own writes must never bounce off the watcher - an out-of-graph
       // .json change makes Vite full-reload every client, shell included (measured).

@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { init } from '../src/cli/init.ts'
 import { agentEnv } from '../src/server/jam/daemon.ts'
-import { dev, FS_DENY } from '../src/server/dev.ts'
+import { isFileLoadingAllowed } from 'vite'
+import { dev, FS_DENY, registryDeny } from '../src/server/dev.ts'
 import { collabFileFor } from '../src/server/sync.ts'
 
 /**
@@ -156,6 +157,51 @@ describe('the dev server never serves design/.local', () => {
     expect((await get('/design/config.ts')).status).toBe(200)
     // publicDir is guarded, not disabled.
     expect((await get('/ok.txt')).body).toContain('must still serve')
+  })
+})
+
+describe('the registry is refused below the request guard too (A1.13 #5)', () => {
+  // The request guard answers 403 before Vite sees a request (slots-dev.test.ts asks by every path). These
+  // are the layers under it, asked directly: Vite's own fs.deny and Marver's `load`, which every module
+  // id passes, however it was spelled - a MARVER_HOME inside the project is in the served root.
+  let made = ''
+  let inner = ''
+  let key = ''
+  let vite: Awaited<ReturnType<typeof dev>> | null = null
+  const suiteHome = process.env.MARVER_HOME
+  beforeAll(async () => {
+    const r = made = realpathSync(mkdtempSync(join(tmpdir(), 'mv-devsec-home-')))
+    writeFileSync(join(r, 'package.json'), JSON.stringify({ name: 'host', type: 'module', devDependencies: {} }))
+    init(r, { mode: 'studio', demo: true })
+    inner = join(r, '.mv-home')
+    process.env.MARVER_HOME = inner
+    vite = await dev(r)
+    const slot = readdirSync(join(inner, 'running')).find((f) => /^slot-\d+\.json$/.test(f))!
+    key = JSON.parse(readFileSync(join(inner, 'running', slot), 'utf8')).key
+    inner = join(inner, 'running', slot.replace(/\.json$/, ''))   // the slot file, without its extension
+  }, 120_000)
+  afterAll(async () => {
+    await vite?.close().catch(() => {})
+    if (suiteHome === undefined) delete process.env.MARVER_HOME; else process.env.MARVER_HOME = suiteHome
+    rmSync(made, { recursive: true, force: true })
+  })
+
+  it("is in Vite's fs.deny, by the path Vite checks", () => {
+    expect(vite!.config.server.fs.deny).toEqual(expect.arrayContaining([...FS_DENY, ...registryDeny([join(inner, '..', '..')])]))
+    expect(isFileLoadingAllowed(vite!.config, `${inner}.json`)).toBe(false)
+  })
+
+  it('no module id inside it loads, with any query', async () => {
+    const rel = `/.mv-home/running/${inner.split('/').pop()}`
+    for (const url of [`${rel}?import`, rel, `${rel}.json`, `${rel}.json?raw`, `${rel}.json?inline`, `${rel}.json?url`, `/@fs${inner}.json`, `/@fs${inner}?import`, `${inner}.json?raw`]) {
+      const out = await vite!.transformRequest(url).then((t) => t?.code ?? '', (e: Error) => `refused: ${e.message}`)
+      expect(out, url).not.toContain(key)
+      expect(out, url).toMatch(/^refused: /)
+    }
+  })
+
+  it("Marver's own load refuses it first", async () => {
+    await expect(vite!.transformRequest(`/.mv-home/running/${inner.split('/').pop()}?import`)).rejects.toThrow('the canvas registry (~/.marver) is never served')
   })
 })
 
