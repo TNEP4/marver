@@ -490,7 +490,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     console.log(`  jam: no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and tag @${NAME} in a comment\n`)
   }
   // 6. from here every way out is a close: Marver's things newest first, Vite's server, then the files.
-  // Vite's own SIGTERM path calls this same `close` (it reads the property when it runs).
+  // Vite's own SIGTERM and stdin-end paths call this same `close` (they read the property when they run); on
+  // a signal the start's hook has given the claims back first, synchronously, and the signal it raises again
+  // ends the process before that close is done (Vite listens `once`).
   // A restart is no way out. Vite restarts in place when an .env file changes: it makes the new server (Marver's
   // configureServer runs for it), closes the old one through this same `close`, copies the new one's methods -
   // `close` and `restart` among them - over this object, and listens on the same port. So `restart` is wrapped
@@ -512,7 +514,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       armed = true
       try { await vite.restart(forceOptimize) } catch (err) { failed = err ?? new Error('restart failed') } finally { armed = false; restarting = null }
       // Vite could not make the new server (it says why): the old one serves on, as it was
-      if (server.close === close) return
+      if (server.close === close) { if (failed !== undefined) throw failed; return }
       wrap()
       if (failed === undefined) { for (const f of onRestart) f(); return }
       // the old server is closed and the new one could not listen: the canvas is down, so the start ends here

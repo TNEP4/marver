@@ -54,7 +54,7 @@ const local = (f: string) => join(root, 'design', '.local', f)
 const runningIn = (home: string) => existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : []
 
 interface State { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[] }
-interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; restarted?: boolean; before?: State }
+interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; restarted?: boolean; before?: State; now?: State }
 
 const CHILD = `import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -84,12 +84,23 @@ try {
   if (o.restart) {
     // an .env edit: Vite restarts in place - a new HTTP server on this same object, listening on the same port
     const before = await state(), http = server.httpServer
+    if (o.restartFails) {
+      // the new server's listen fails: another program took the port as the old server let it go
+      const { Server } = await import('node:net')
+      const listen = Server.prototype.listen
+      Server.prototype.listen = function () {
+        Server.prototype.listen = listen
+        process.nextTick(() => this.emit('error', Object.assign(new Error('listen EADDRINUSE: address already in use'), { code: 'EADDRINUSE' })))
+        return this
+      }
+    }
     writeFileSync(join(o.root, '.env'), 'MV_RESTART=' + Date.now() + '\\n')
-    for (let i = 0; i < 600 && !(server.httpServer !== http && server.httpServer.listening); i++) await new Promise((r) => setTimeout(r, 50))
+    const lock = join(o.root, 'design', '.local', 'dev.lock')
+    for (let i = 0; i < 600 && !(server.httpServer !== http && (server.httpServer.listening || !existsSync(lock))); i++) await new Promise((r) => setTimeout(r, 50))
     await new Promise((r) => setTimeout(r, 500))   // the old server's watchers closed, the wraps back on
-    restart = { restarted: server.httpServer !== http, before }
+    restart = { restarted: server.httpServer !== http, before, now: await state() }
   }
-  if (o.hold) { say({ ok: true, port, steps, ...restart, ...(o.restart ? { after: await state() } : {}) }); await new Promise(() => {}) }
+  if (o.hold) { say({ ok: true, port, steps, ...restart }); await new Promise(() => {}) }
   await server.close()
   say({ ok: true, port, steps, ...restart, after: await state() })
 } catch (err) {
@@ -99,7 +110,7 @@ try {
 process.exit(0)`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
-function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean }, home = freshHome()) {
+function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean }, home = freshHome()) {
   const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
@@ -207,12 +218,12 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(r.ok).toBe(true)
     expect(r.restarted).toBe(true)
     const slot = `slot-${r.port! - Number(BASE)}.json`
-    for (const st of [r.before!, r.after!]) expect({ ...st, live: [] }).toEqual({ lock: true, devJson: true, running: [slot], inUse: true, live: [] })
+    for (const st of [r.before!, r.now!]) expect({ ...st, live: [] }).toEqual({ lock: true, devJson: true, running: [slot], inUse: true, live: [] })
     expect(JSON.parse(readFileSync(join(s.home, 'running', slot), 'utf8')).state).toBe('ready')
     // the new server's watchers in place of the old one's, the start's own untouched: board sync, the shot inbox,
     // the comment watcher, and the sweeps
-    expect(kept(r.after!)).toEqual(kept(r.before!))
-    for (const w of [['design', 'boards'], ['design', '.local', 'shots'], ['design', 'comments']]) expect(kept(r.after!).some((l) => l.startsWith(`fs.watch ${join(root, ...w)} `)), w.join('/')).toBe(true)
+    expect(kept(r.now!)).toEqual(kept(r.before!))
+    for (const w of [['design', 'boards'], ['design', '.local', 'shots'], ['design', 'comments']]) expect(kept(r.now!).some((l) => l.startsWith(`fs.watch ${join(root, ...w)} `)), w.join('/')).toBe(true)
     // calm updates still flow: the change that restarted Vite never lands, and never holds the next one for good
     const token = (await (await fetch(`http://localhost:${r.port}/@vite/client`)).text()).match(/const wsToken = "([^"]+)"/)?.[1]
     expect(token).toBeTruthy()
@@ -239,7 +250,17 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(r.ok).toBe(true)
     expect(r.restarted).toBe(true)
     expect(kept(r.before!).length).toBeGreaterThan(0)
+    expect(kept(r.now!)).toEqual(kept(r.before!))
     expect(r.after).toEqual({ ...clean, inUse: false })
+  }, 60_000)
+
+  it('a restart that cannot listen ends the start: said, and everything given back', async () => {
+    const s = start({ restart: true, restartFails: true })
+    const r = await s.report
+    expect(r.ok).toBe(true)
+    expect(r.restarted).toBe(true)
+    expect(r.now).toEqual({ ...clean, inUse: false })
+    expect(s.out()).toContain(`the canvas stopped: it could not restart on port ${r.port}`)
   }, 60_000)
 })
 
