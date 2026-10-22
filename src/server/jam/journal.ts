@@ -15,7 +15,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { deviceId } from './device.ts'
-import { createExclusive, pidRuns } from '../dev-lock.ts'
+import { createExclusive, pidRuns } from '../exclusive.ts'
 import type { Journal, JournalV1 } from './types.ts'
 
 const localDir = (root: string) => join(root, 'design', '.local')

@@ -14,7 +14,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createActivity, type Activity } from './jam/activity.ts'
-import { pidRuns } from './dev-lock.ts'
+import { pidRuns } from './exclusive.ts'
 import { listBoardFiles } from './boards.ts'
 
 /** One per process - the dev server, the jam daemon, and the API all share it. */
