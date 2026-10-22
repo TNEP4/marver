@@ -1,15 +1,20 @@
 /**
  * `marver perf` (spec 26 Part 1): the reload log read back - per edited file, the frames it reached
  * and how; every page-wide reload (sent or dropped) and every time the canvas page itself booted,
- * with what came just before; the slowest frames to settle. Reads design/.local/perf/reloads.jsonl.
+ * with what came just before; the slowest frames to settle; one line per board load. Reads
+ * design/.local/perf/reloads.jsonl, and page.jsonl for the loads (`--loads`: each load in full, spec 28 A1.8).
  */
-import { readReloads } from '../server/perf.ts'
+import { readPage, readReloads } from '../server/perf.ts'
 import { readJam } from '../server/perf-jam.ts'
+import { humanize } from '../shared/board-tree.ts'
 
-export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean }): void {
+export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean; loads?: boolean }): void {
   if (opts.jam) return jamPerf(root, opts)
+  if (opts.loads) return loadsPerf(root, opts)
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
-  const log = readReloads(root, Date.now() - minutes * 60_000)
+  const since = Date.now() - minutes * 60_000
+  const log = readReloads(root, since)
+  const loads = loadsSummary(readPage(root, since))
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   for (const e of log) if (e.kind === 'update') {
     const f = files.get(e.file ?? '(no file)') ?? { edits: 0, reload: new Set(), inPlace: new Set() }
@@ -25,7 +30,8 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   const by = (c: string) => booted.filter((e) => e.cause === c).length
   const reloaded = by('job')
   if (opts.json) {
-    console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { afterEdit: reloaded, byHand: by('manual'), retried: by('retry'), self: by('self'), first: by('first') }, reloads, boots, slow }, null, 2))
+    console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { afterEdit: reloaded, byHand: by('manual'), retried: by('retry'), self: by('self'), first: by('first') }, reloads, boots, slow,
+      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length })) }, null, 2))
     return
   }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
@@ -41,6 +47,164 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   if (slow.length) {
     console.log('\nslowest to settle')
     for (const s of slow) console.log(`  ${s.frame}  ${s.ms} ms`)
+  }
+  if (loads.length) {
+    console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
+    const w = Math.max(...loads.map((l) => (l.board ?? '?').length))
+    for (const l of loads) {
+      const bits = [
+        endOf(l),
+        ...(l.moves.count || l.moves.late.count ? [`${l.moves.count} move${l.moves.count === 1 ? '' : 's'}${l.moves.late.count ? ` (${l.moves.late.count} late)` : ''}`] : []),
+        ...(l.errors.length ? [`${l.errors.length} error${l.errors.length === 1 ? '' : 's'}`] : []),
+      ]
+      console.log(`  ${t(l.at)}  ${(l.board ?? '?').padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
+    }
+  }
+}
+
+// ---- board loads, from the page (spec 28 A1.7, A1.8) ----------------------------------------------------------------
+
+type Ranked = [string, number][]
+export interface LoadSummary {
+  ws: string; page: string; load: string; at: number
+  board?: string; cause?: string
+  /** settled; cut (a request that never committed too: `cut.request`); or open - still going, or its end past the window */
+  state: 'settled' | 'cut' | 'open'
+  cut?: { reason: string; ms?: number; request?: true }
+  committed: boolean
+  commitMs?: number; frames?: number; byKind?: Record<string, number>; measuring?: number; savedHeights?: number
+  visible?: number; visibleAssumed?: true; visibleMs?: number
+  visibleReadyMs?: number; allReadyMs?: number; quietMs?: number; settledMs?: number
+  /** the move records (a drag or a resize merged per node while unsent), their distance in px, the top causes;
+   *  `late` = after settled */
+  moves: { count: number; distance: number; causes: Ranked; late: { count: number; causes: Ranked } }
+  /** the five slowest frames: settled, else ready, in ms from the load's request (a document kept from before it has none) */
+  slowest: { node: string; frame?: string; ms: number; outcome: string }[]
+  errors: { source: string; frame?: string; component?: string; message: string }[]
+  neverReady: string[]; missing: string[]
+  /** frames still pending when the load was cut */
+  unfinished: number
+  gestures?: { n: number; worstP95: number; over33ms: number }
+  weight?: Record<string, number>
+}
+
+/** Each record once: a send retried after its first attempt landed repeats its records - same ws, page and seq. */
+function unique(records: Record<string, any>[]): Record<string, any>[] {
+  const seen = new Set<string>()
+  return records.filter((r) => { const k = `${r.ws}/${r.page}/${r.seq}`; if (seen.has(k)) return false; seen.add(k); return true })
+}
+const ranked = (counts: Map<string, number>, n = 5): Ranked => [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n)
+const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1)
+
+/** Board loads (spec 28 A1.8): page.jsonl's records grouped by ws/page/load, each group in seq order; a node's last
+ *  `frame` record is its outcome. A load whose `load` record fell before the window still shows what is in it.
+ *  Records of no load (`load: '-'`, before the page's first board committed) are `unownedOf`'s. */
+export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
+  const groups = new Map<string, Record<string, any>[]>()
+  for (const r of unique(records)) {
+    if (typeof r.load !== 'string' || r.load === '-' || typeof r.kind !== 'string') continue
+    const k = `${r.ws}/${r.page}/${r.load}`
+    groups.set(k, [...(groups.get(k) ?? []), r])
+  }
+  const out: LoadSummary[] = []
+  for (const g of groups.values()) {
+    g.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+    const of = (kind: string) => g.filter((r) => r.kind === kind)
+    const one = (kind: string) => g.find((r) => r.kind === kind)
+    const load = one('load'), commit = one('commit'), settled = one('settled'), cut = one('cut'), quiet = one('quiet'), visible = one('visible')
+    const moves = { count: 0, distance: 0, causes: new Map<string, number>() }, late = { count: 0, causes: new Map<string, number>() }
+    for (const m of of('move')) {
+      const cause = typeof m.cause === 'string' ? m.cause : 'unknown'
+      if (m.late) { late.count++; bump(late.causes, cause); continue }
+      moves.count++
+      bump(moves.causes, cause)
+      moves.distance += Math.hypot(m.dx ?? 0, m.dy ?? 0) + Math.abs(m.dw ?? 0) + Math.abs(m.dh ?? 0)
+    }
+    const last = new Map<string, Record<string, any>>()
+    for (const f of of('frame')) if (typeof f.node === 'string') last.set(f.node, f)
+    const frames = [...last.values()]
+    const name = (f: Record<string, any>) => String(f.frame ?? f.node)
+    const slowest = frames.flatMap((f) => { const ms = f.settled ?? f.ready; return typeof ms === 'number' ? [{ node: f.node, ...(f.frame ? { frame: f.frame } : {}), ms, outcome: f.outcome }] : [] })
+      .sort((a, b) => b.ms - a.ms).slice(0, 5)
+    const seenErr = new Set<string>()
+    const errors = of('error').flatMap((e) => {
+      const k = `${e.source}|${e.frame ?? ''}|${e.message}`
+      if (seenErr.has(k)) return []
+      seenErr.add(k)
+      return [{ source: e.source, ...(e.frame ? { frame: e.frame } : {}), ...(e.component ? { component: e.component } : {}), message: String(e.message ?? '') }]
+    }).slice(0, 10)
+    const gs = of('gesture')
+    out.push({
+      ws: g[0].ws, page: g[0].page, load: g[0].load, at: load?.ts ?? Math.min(...g.map((r) => r.ts)),
+      ...(load ? { board: load.board, cause: load.cause } : {}),
+      state: settled ? 'settled' : cut ? 'cut' : 'open',
+      ...(cut && !settled ? { cut: { reason: cut.reason, ...(typeof cut.ms === 'number' ? { ms: cut.ms } : {}), ...(!commit ? { request: true as const } : {}) } } : {}),
+      committed: !!commit,
+      ...(commit ? { commitMs: commit.ms, frames: commit.frames, byKind: commit.byKind, measuring: commit.measuring, savedHeights: commit.savedHeights } : {}),
+      ...(visible ? { visible: visible.nodes, visibleMs: visible.ms, ...(visible.assumed ? { visibleAssumed: true as const } : {}) } : {}),
+      ...(settled ? { visibleReadyMs: settled.visibleReadyMs, allReadyMs: settled.allReadyMs, settledMs: settled.ms, weight: settled.weight } : {}),
+      ...(quiet ? { quietMs: quiet.ms } : {}),
+      moves: { count: moves.count, distance: Math.round(moves.distance), causes: ranked(moves.causes), late: { count: late.count, causes: ranked(late.causes) } },
+      slowest, errors,
+      neverReady: frames.filter((f) => f.outcome === 'never-ready').map(name),
+      missing: frames.filter((f) => f.outcome === 'missing').map(name),
+      unfinished: frames.filter((f) => f.outcome === 'cut').length,
+      ...(gs.length ? { gestures: { n: gs.length, worstP95: Math.max(...gs.map((x) => x.p95 ?? 0)), over33ms: gs.reduce((n, x) => n + (x.over33ms ?? 0), 0) } } : {}),
+    })
+  }
+  return out.sort((a, b) => a.at - b.at)
+}
+
+/** What a page recorded before its first board committed: its errors, and how many gestures. */
+export function unownedOf(records: Record<string, any>[]) {
+  const mine = unique(records).filter((r) => r.load === '-')
+  return {
+    errors: mine.filter((r) => r.kind === 'error').map((e) => ({ at: e.ts, source: e.source, ...(e.frame ? { frame: e.frame } : {}), message: e.message })),
+    gestures: mine.filter((r) => r.kind === 'gesture').length,
+  }
+}
+
+const secs = (ms?: number) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '-')
+const boardName = (b?: string) => (b === '~unplaced' ? 'Not on a board' : b ? humanize(b) : 'a board (its request is older)')
+/** How a load ended, in a few words. */
+function endOf(l: LoadSummary): string {
+  if (l.state === 'settled') return `settled ${secs(l.settledMs)}`
+  if (l.cut?.request) return `not committed (${l.cut.reason})`
+  if (l.cut) return `cut (${l.cut.reason})${l.cut.ms !== undefined ? ` at ${secs(l.cut.ms)}` : ''}`
+  return 'not settled yet'
+}
+
+/** `marver perf --loads` (spec 28 A1.8): each board load in full, from design/.local/perf/page.jsonl. */
+function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
+  const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
+  const records = readPage(root, Date.now() - minutes * 60_000)
+  const loads = loadsSummary(records)
+  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records) }, null, 2)); return }
+  console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
+  if (!loads.length) { console.log('\nnothing yet - open a board in the canvas'); return }
+  const t = (ts: number) => new Date(ts).toLocaleTimeString()
+  const list = (r: Ranked) => r.map(([k, n]) => `${k} ${n}`).join(', ')
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+  for (const l of loads) {
+    const head = `${boardName(l.board)}${l.cause ? ` (${l.cause})` : ''}`
+    console.log(`\n  ${t(l.at)}  ${head.padEnd(40)} ${endOf(l)}`)
+    if (!l.committed) continue
+    const kinds = Object.entries(l.byKind ?? {}).filter(([, n]) => n).map(([k, n]) => `${n} ${k === 'hifi' ? 'hi-fi' : k}`)
+    console.log(`    committed ${secs(l.commitMs)} · ${plural(l.frames ?? 0, 'frame')}${kinds.length ? ` (${kinds.join(', ')})` : ''}${l.measuring ? ` · ${l.measuring} measure, ${l.savedHeights ?? 0} opened at a known height` : ''}`)
+    const times = [
+      ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),
+      ...(l.allReadyMs !== undefined ? [`all ready ${secs(l.allReadyMs)}`] : []),
+      ...(l.quietMs !== undefined ? [`quiet ${secs(l.quietMs)}`] : []),
+      ...(l.settledMs !== undefined ? [`settled ${secs(l.settledMs)}`] : []),
+    ]
+    if (times.length) console.log(`    ${times.join(' · ')}`)
+    const m = l.moves
+    console.log(`    ${plural(m.count, 'move')}${m.count ? `, ${m.distance} px: ${list(m.causes)}` : ''}${m.late.count ? ` · late: ${m.late.count} (${list(m.late.causes)})` : ''}`)
+    if (l.slowest.length) console.log(`    slowest: ${l.slowest.map((f) => `${f.frame ?? f.node} ${secs(f.ms)}`).join(', ')}`)
+    const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} not done when it ended`] : [])]
+    if (gone.length) console.log(`    ${gone.join(' · ')}`)
+    for (const e of l.errors) console.log(`    error (${e.source}${e.frame ? ` ${e.frame}` : ''}${e.component ? `, in ${e.component}` : ''}): ${e.message}`)
+    if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
 }
 
