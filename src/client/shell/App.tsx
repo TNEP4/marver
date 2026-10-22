@@ -11,6 +11,7 @@ import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
+import { api, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow } from './canvas/frame-registry.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
@@ -254,10 +255,10 @@ function UpdatePill() {
   const play = useStore((s) => s.play)
   useEffect(() => {
     if (PUBLISHED) return                     // a shared canvas never nags its viewers
-    fetch(`${ROUTE}/api/update`)
+    api('update')
       .then((r) => (r.ok ? r.json() : null))
       .then((u) => {
-        if (u?.latest && localStorage.getItem('mv-update-seen') !== u.latest) setLatest(u.latest)
+        if (u?.latest && localStorage.getItem(scoped('mv-update-seen')) !== u.latest) setLatest(u.latest)
       })
       .catch(() => { /* dev server gone or endpoint absent - stay quiet */ })
   }, [])
@@ -265,7 +266,7 @@ function UpdatePill() {
   // init rides along so managed files (AGENTS.md, instructions/) refresh with the code
   const cmd = `npm i -D ${PKG}@latest && npx marver init`
   const dismiss = () => {
-    try { localStorage.setItem('mv-update-seen', latest) } catch { /* storage unavailable */ }
+    try { localStorage.setItem(scoped('mv-update-seen'), latest) } catch { /* storage unavailable */ }
     setLatest(null)
   }
   return (
@@ -344,6 +345,7 @@ export function App() {
   // re-rendered the entire shell on every setScale tick during a pan/zoom).
   useSeenOnScreen()
   const manifest = useStore((s) => s.manifest)
+  const stopped = useLink((s) => s.shown)   // the canvas stopped (spec 28 A1.11): nothing leaves this page
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
   const laneLift = useLaneLift()
@@ -376,7 +378,7 @@ export function App() {
         // dev: hydrate board policy (slides/type/open) from the repo so P and
         // deep links preview exactly what viewers get
         try {
-          const r = await fetch(`${ROUTE}/api/policy`)
+          const r = await api('policy')
           if (r.ok) hydrateBoardPolicy(((await r.json()) as { boards?: Record<string, never> }).boards ?? {})
         } catch { /* dev server without the route - fine */ }
       }
@@ -1067,6 +1069,7 @@ export function App() {
       {CONFIG.setup
         ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
+      {stopped && <div className="sh-banner sh-stopped" role="status">This canvas stopped - your unsaved edits are kept in this tab</div>}
       <UpdatePill />
 
       {/* Jam V2 (spec 27): the lane, the focus panel, the notes card, the recording ring */}

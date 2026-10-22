@@ -144,19 +144,19 @@ describe('sticky notes on the canvas', () => {
     expect(state.paths).toBeGreaterThan(3)   // rough.js strokes: the hand-drawn look is many paths, not one rect
   })
 
-  it('the dog-ear folds the column to its tab and unfolds it; the choice is the viewer’s (localStorage)', async () => {
+  it('the dog-ear folds the column to its tab and unfolds it; the choice is the viewer’s (localStorage, per canvas)', async () => {
     if (!browser) return
     const s = await open(browser)
     await click(browser, s, await centre(browser, s, '[data-node="n-home"] .sh-notes-fold'))
     await browser.until(s, `document.querySelector('[data-node="n-home"] .sh-notes').classList.contains('off')`)
     await wait(300)
-    const folded = await browser.eval(s, `(() => { const st = document.querySelector('[data-node="n-home"] .sh-sticky'); const cs = getComputedStyle(st); return { visibility: cs.visibility, opacity: cs.opacity, stored: localStorage.getItem('mv-notes') } })()`)
+    const folded = await browser.eval(s, `(() => { const st = document.querySelector('[data-node="n-home"] .sh-sticky'); const cs = getComputedStyle(st); return { visibility: cs.visibility, opacity: cs.opacity, stored: localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('mv-notes:'))) } })()`)
     expect(folded.visibility).toBe('hidden')
     expect(Number(folded.opacity)).toBe(0)
     expect(JSON.parse(folded.stored).hidden).toEqual(['scene:app', 'frame:app/home'])
     await click(browser, s, await centre(browser, s, '[data-node="n-home"] .sh-notes-fold'))
     await browser.until(s, `!document.querySelector('[data-node="n-home"] .sh-notes').classList.contains('off')`)
-    expect(JSON.parse(await browser.eval(s, `localStorage.getItem('mv-notes')`)).hidden).toEqual([])
+    expect(JSON.parse(await browser.eval(s, `localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('mv-notes:')))`)).hidden).toEqual([])
   })
 
   it('N hides every note and brings them back', async () => {
@@ -164,7 +164,7 @@ describe('sticky notes on the canvas', () => {
     const s = await open(browser)
     await browser.press(s, 'n')
     await browser.until(s, `document.querySelector('[data-node="n-home"] .sh-notes').classList.contains('off')`)
-    expect(JSON.parse(await browser.eval(s, `localStorage.getItem('mv-notes')`)).all).toBe(false)
+    expect(JSON.parse(await browser.eval(s, `localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('mv-notes:')))`)).all).toBe(false)
     await browser.press(s, 'n')
     await browser.until(s, `!document.querySelector('[data-node="n-home"] .sh-notes').classList.contains('off')`)
   })

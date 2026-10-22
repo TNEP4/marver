@@ -11,6 +11,7 @@ import { playPing } from './sound.ts'
 import { ROUTE } from '../const.ts'
 import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
+import { api as request, scoped } from './api.ts'
 
 /** What the Not on a board view says when asked for a comment: a note needs a board to live on. */
 export const NO_COMMENTS_HERE = 'pin it on a board to comment'
@@ -81,11 +82,11 @@ interface CommentsState {
 
 const uuid = () => crypto.randomUUID()
 const loadMentionSeen = (): Record<string, number> => {
-  try { return JSON.parse(localStorage.getItem('mv-mention-seen') ?? '{}') } catch { return {} }
+  try { return JSON.parse(localStorage.getItem(scoped('mv-mention-seen')) ?? '{}') } catch { return {} }
 }
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const api = async (path: string, body?: unknown) => {
-  const res = await fetch(`${ROUTE}/api/${path}`, body === undefined ? undefined : {
+  const res = await request(path, body === undefined ? undefined : {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
     body: JSON.stringify(body),
   })
@@ -367,7 +368,7 @@ export const useComments = create<CommentsState>((set, get) => {
       // opening a thread is SEEING it - the mention pulse for it stops here
       if (active) {
         const mentionSeen = { ...get().mentionSeen, [active]: Date.now() }
-        try { localStorage.setItem('mv-mention-seen', JSON.stringify(mentionSeen)) } catch { /* private mode */ }
+        try { localStorage.setItem(scoped('mv-mention-seen'), JSON.stringify(mentionSeen)) } catch { /* private mode */ }
         set({ active, mentionSeen })
       } else set({ active })
     },

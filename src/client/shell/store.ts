@@ -1,13 +1,16 @@
 import { create } from 'zustand'
 import { ROUTE, slideSize } from '../const.ts'
 import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
-import { clearNoteHeights, noteHeight, noteReserve, notesCramped, setNoteHeight } from './notes.ts'
+import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
+import { api, beforeResume, canvasStopped, mvFetch, onLinkNotice, scoped, withWs } from './api.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
 import shData from 'virtual:sh-data'
+
+scopeNotes(scoped('mv-notes'))   // a per-viewer preference, kept per canvas (spec 28 A1.6)
 
 /** Published-build data. Non-null = static site: no API, no saves, no live events.
  *  `names` is the switcher list; `default` is where `/` opens - never a synthesized
@@ -197,8 +200,8 @@ export interface BoardMeta {
 export async function fetchBoardTree(): Promise<TreeSnapshot> {
   if (DATA) return { tree: DATA.tree ?? DATA.names.map((n) => ({ kind: 'board', name: n })), base: { boards: {}, folders: null }, titles: DATA.titles ?? {}, meta: DATA.meta ?? {} }
   const [boards, reg] = await Promise.all([
-    fetch(`${ROUTE}/api/boards`).then((r) => r.json()) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[]; error?: string }[]>,
-    fetch(`${ROUTE}/api/folders`).then(async (r) => {
+    api('boards').then((r) => { if (!r.ok) throw new Error(`boards ${r.status}`); return r.json() }) as Promise<{ name: string; sha256: string; order?: number; folder?: string; title?: string; type?: BoardType; status?: BoardMeta['status'] | null; settable?: StatusWord[]; error?: string }[]>,
+    api('folders').then(async (r) => {
       const j = await r.json() as { folders?: { name: string; order?: number; parent?: string; title?: string }[]; sha256?: string | null; error?: string }
       if (!r.ok) throw new Error(j?.error ?? `folders ${r.status}`)
       return j
@@ -239,7 +242,7 @@ export const landingBoard = async (): Promise<string> => (await fetchBoardNames(
  *  off a published bundle (whose frames are all on a published board). Throws on transport failure. */
 export async function fetchMembership(): Promise<{ boards: { name: string; frames: string[] }[]; unplaced: string[] }> {
   if (!DATA) {
-    const r = await fetch(`${ROUTE}/api/membership`)
+    const r = await api('membership')
     if (!r.ok) throw new Error(`membership ${r.status}`)
     return r.json()
   }
@@ -271,10 +274,10 @@ export const logReload = (entry: Record<string, unknown>) => {
   if (PUBLISHED) return
   const body = { tab: TAB, ...entry }
   // a page's very first request may go before its request cookie exists: a GET primes it, then once more
-  void postOwner('perf/reload', body).then((r) => (r.status === 403 ? fetch(`${ROUTE}/api/work`).then(() => postOwner('perf/reload', body)) : r)).catch(() => {})
+  void postOwner('perf/reload', body).then((r) => (r.status === 403 ? api('work').then(() => postOwner('perf/reload', body)) : r)).catch(() => {})
 }
 const postOwner = (path: string, body: unknown) =>
-  fetch(`${ROUTE}/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
+  api(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
 
 /** Add to board (the Not on a board view): these frames appended to a board's file, as
  *  `marver boards pin` does. The answer is said; the file change re-reads the sidebar and the view. */
@@ -313,17 +316,19 @@ const nodeKey = () => 'n_' + Math.random().toString(36).slice(2, 8)
 let manifestRev = 0
 export const bumpManifestRev = () => { manifestRev++ }
 
+/** ws= binds the document to this canvas (spec 28 A1.11): another project on this port later answers a
+ *  frame's own reload with the "another canvas" page (server/guard.ts), never with its frame. */
 export function frameUrl(frame: FrameEntry, theme: string): string {
-  return frame.kind === 'html'
+  return withWs(frame.kind === 'html'
     ? `/${frame.file}?theme=${theme}&r=${manifestRev}`   // r= carries the generation for the sh:ready guard (static serving ignores it)
-    : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}&r=${manifestRev}`
+    : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}&r=${manifestRev}`)
 }
 
 /** The global view theme: the user's sticky preference, applied across boards and
  *  reloads. Frames resolve to it unless they declare meta.theme or carry a user pin. */
 const initialViewTheme = () => {
   try {
-    const t = localStorage.getItem('mv-view-theme')
+    const t = localStorage.getItem(scoped('mv-view-theme'))
     if (t && CONFIG.themes.includes(t)) return t
   } catch { /* storage unavailable */ }
   return CONFIG.themes[0] ?? 'light'
@@ -357,7 +362,7 @@ async function loadSavedHeights(): Promise<void> {
     return
   }
   try {
-    const r = await fetch(`${ROUTE}/api/sizes`)
+    const r = await api('sizes')
     if (!r.ok) return
     const body = (await r.json()) as { heights?: Record<string, unknown>; measuring?: unknown }
     savedHeights.clear()
@@ -383,6 +388,7 @@ const persistHeight = (key: string, h: number) => {
 async function flushHeights() {
   heightsTimer = undefined
   if (flushing || !pendingHeights.size) return
+  if (canvasStopped()) return   // held until the canvas answers again (A1.11): the resume flushes them
   flushing = true
   const batch = Object.fromEntries([...pendingHeights].slice(0, 500))
   for (const [k, v] of Object.entries(batch)) { pendingHeights.delete(k); inflightHeights.set(k, v) }
@@ -845,7 +851,7 @@ export const useStore = create<State>((set, get) => {
       const saved = loadSavedHeights()       // in parallel with the manifest; every size below reads it
       if (DATA) raw = DATA.manifest
       else {
-        const mRes = await fetch('/design/manifest.json')
+        const mRes = await mvFetch('/design/manifest.json')
         if (!mRes.ok) return null
         raw = await mRes.json().catch(() => undefined)
       }
@@ -878,7 +884,7 @@ export const useStore = create<State>((set, get) => {
         const scenes = [...new Set(manifest.frames.filter((f) => m?.unplaced.includes(f.id)).map((f) => f.scene))]
         loaded = m ? { board: { nodes: m.unplaced.map((frame) => ({ frame })), ...(scenes.length ? { layout: { rows: [scenes] } } : {}) }, sha256: '' } : null
       } else {
-        const res = await fetch(`${ROUTE}/api/boards/${boardName}`)
+        const res = await api(`boards/${boardName}`)
         if (res.ok) {
           const body = await res.json()
           loaded = body?.board == null ? 'fresh' : body   // board:null = not materialized yet
@@ -1686,7 +1692,7 @@ export const useStore = create<State>((set, get) => {
       const ctl = new AbortController()
       const timer = setTimeout(() => ctl.abort(), 60_000)
       let meta: { scale?: number; note?: string } = {}
-      const png = fetch(`${ROUTE}/api/shot?${qs}`, { headers: { 'x-mv-c': csrf() }, signal: ctl.signal }).then(async (r) => {
+      const png = api(`shot?${qs}`, { headers: { 'x-mv-c': csrf() }, signal: ctl.signal }).then(async (r) => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `shot failed (${r.status})`)
         try { meta = JSON.parse(atob((r.headers.get('x-mv-shot') ?? '').replace(/-/g, '+').replace(/_/g, '/'))) } catch { /* summary is advisory */ }
         return r.blob()
@@ -1715,7 +1721,7 @@ export const useStore = create<State>((set, get) => {
     // global theme = the VIEW preference: persists across boards + reloads, clears
     // per-frame pins. Frames declaring meta.theme keep their mode (they only work there).
     setTheme(theme) {
-      try { localStorage.setItem('mv-view-theme', theme) } catch { /* storage unavailable */ }
+      try { localStorage.setItem(scoped('mv-view-theme'), theme) } catch { /* storage unavailable */ }
       set((s) => ({
         viewTheme: theme,
         nodes: s.nodes.map((n) => {
@@ -1806,7 +1812,7 @@ export const useStore = create<State>((set, get) => {
       const seq = ++marksSeq
       try {
         for (let i = 0; i < 2; i++) {   // the first ask may prime the CSRF cookie (as syncWorking)
-          const r = await fetch(`${ROUTE}/api/marks`, { headers: { 'x-mv-c': csrf() } })
+          const r = await api('marks', { headers: { 'x-mv-c': csrf() } })
           if (seq !== marksSeq) return
           if (r.ok) {
             const m = await r.json() as Marks | null
@@ -1873,7 +1879,7 @@ export const useStore = create<State>((set, get) => {
         // a fresh page may ask before its double-submit cookie exists: the refusal primes it (api.ts),
         // so one more try carries it
         for (let i = 0; i < 2; i++) {
-          const r = await fetch(`${ROUTE}/api/work`, { headers: { 'x-mv-c': csrf() } })
+          const r = await api('work', { headers: { 'x-mv-c': csrf() } })
           if (r.ok) return get().setWorkingFrom(await r.json())
           if (r.status !== 403) return
         }
@@ -1929,6 +1935,8 @@ export const useStore = create<State>((set, get) => {
       // a rename is moving this board's file - defer every save so nothing writes to the OLD
       // name mid-move (renameBoard reschedules once the move commits under the new name)
       if (saveHolds > 0) return Promise.resolve(false)
+      // the canvas stopped (A1.11): the edits stay here, dirty, until it answers on this address again
+      if (canvasStopped()) return Promise.resolve(false)
       // a resize gesture in flight = torn state (new sizes, pre-recipe positions):
       // even a PREVIOUSLY scheduled timer must defer to the gesture-end save
       if (get().gesture && resizedInGesture) { scheduleSave(); return Promise.resolve(false) }
@@ -1981,7 +1989,9 @@ export const useStore = create<State>((set, get) => {
           })),
         }
         try {
-          const res = await fetch(`${ROUTE}/api/boards/${boardName}`, {
+          // a refusal by another canvas comes back as the helper's 503 and takes the `return false` below,
+          // never the 409 branch (disk wins)
+          const res = await api(`boards/${boardName}`, {
             method: 'PUT', headers: { 'content-type': 'application/json' },
             // A9: a board loaded from disk (boardHash set) autosaves with mustExist so a
             // rename/delete out from under us returns 409 instead of resurrecting a ghost.
@@ -2022,6 +2032,15 @@ useStore.subscribe((s, prev) => {
   // the canvas is in view again; an Update the closed stage held goes with it (the next one is served fresh)
   if (!s.play && prev.play) { useStore.setState({ stageShown: null, playUpdateRevision: null }); pumpUpdates() }
 })
+
+// spec 28 A1.11: the canvas answered again on this address - what this page holds is saved before it reloads
+beforeResume(async () => {
+  const s = () => useStore.getState()
+  for (let i = 0; i < 5 && s().dirty; i++) if (!(await s().save())) break
+  await flushHeights()
+  return !s().dirty
+})
+onLinkNotice((text) => useStore.getState().toast(text))
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)
 if (import.meta.env.DEV) (window as unknown as { __mvStore: unknown }).__mvStore = useStore

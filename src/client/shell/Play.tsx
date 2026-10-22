@@ -22,6 +22,7 @@ import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { isNoteAnchor } from './notes.ts'
 import { ROUTE, slideSize } from '../const.ts'
+import { withWs } from './api.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { revealFrame } from './goto.ts'
@@ -305,7 +306,8 @@ function PlayInner() {
   const slParams = (p: { slides?: boolean }) => p.slides
     ? `&slides=1${BOARD_POLICY[useStore.getState().board]?.transition === 'none' ? '&tr=none' : ''}`
     : ''
-  const src = useRef(play ? `${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}${slParams(play)}` : '')
+  // the stage runs the project's frames: its URL names the workspace like a frame's (A1.11)
+  const src = useRef(play ? withWs(`${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}${slParams(play)}`) : '')
   const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
   const [pillOpen, setPillOpen] = useState(true)          // collapse (pill -> re-open fab), like the canvas
   const [stageReady, setStageReady] = useState(0)         // bumps on each sh:stage-ready (reload) - re-drives the highlight
@@ -334,7 +336,7 @@ function PlayInner() {
     if (!playNav || !iframeRef.current) return
     const p = useStore.getState().play
     if (!p) return
-    iframeRef.current.src = `${ROUTE}/stage/?at=${encodeURIComponent(p.at)}&theme=${encodeURIComponent(p.theme)}${slParams(p)}&r=${playNav}`
+    iframeRef.current.src = withWs(`${ROUTE}/stage/?at=${encodeURIComponent(p.at)}&theme=${encodeURIComponent(p.theme)}${slParams(p)}&r=${playNav}`)
   }, [playNav])
   const applyUpdate = () => useStore.getState().applyPlayUpdate()
 

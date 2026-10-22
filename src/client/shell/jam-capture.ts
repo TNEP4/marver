@@ -14,13 +14,14 @@
  * id it carries.
  */
 import { create } from 'zustand'
-import { ROUTE, slideSize } from '../const.ts'
+import { slideSize } from '../const.ts'
 import { CONFIG, SLIDE_INTRINSIC, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
 import { touchedFrames } from '../../shared/capture-frames.ts'
 import { onStageSize, stageSize } from './stage-size.ts'
+import { api, beforeResume } from './api.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -550,7 +551,7 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   // settled exactly once - a picture, or a missing one - whatever fails: the request, its body, the abort
   let settled = false
   const finish = (pid: string | null) => { if (settled) return; settled = true; clearTimeout(timer); done(pid, ctl.signal.aborted) }
-  fetch(`${ROUTE}/api/jam/picture`, {
+  api('jam/picture', {
     method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
     body: JSON.stringify({ capture: id, frame, theme, ...(size ? { w: Math.round(size.width), h: Math.round(size.height) } : {}) }),
   }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id ?? null : null))
@@ -570,7 +571,7 @@ export const setSessionEnding = (on: boolean) => { sessionEnding = on }
  *  that every 20 s until it lands or is dropped: the session's record waits for it, whatever tab ends it. */
 const openOnServer = new Map<string, { session: string; timer: ReturnType<typeof setInterval> }>()
 const tellOpen = (capture: string, session: string, on: boolean) => {
-  void fetch(`${ROUTE}/api/jam/capture-open`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ capture, session, on }) })
+  void api('jam/capture-open', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ capture, session, on }) })
     .then(async (r) => { if (on && r.status === 409 && (await r.json().catch(() => null))?.ended) leftOutOfSession(capture) }, () => {})
 }
 /** The server had already written the session's record (in another tab) when it heard of this capture: it is
@@ -761,7 +762,7 @@ function sealedSizes(c: Cap): Record<string, { w: number; h: number; play?: true
 
 /** Jam timings (spec 27a Part D): numbers only, to the dev server's local log - best effort, never in the way. */
 const perf = (body: Record<string, unknown>, keepalive = false) => {
-  try { void fetch(`${ROUTE}/api/perf/jam`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body), ...(keepalive ? { keepalive: true } : {}) }).catch(() => {}) } catch { /* never in the way */ }
+  try { void api('perf/jam', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body), ...(keepalive ? { keepalive: true } : {}) }).catch(() => {}) } catch { /* never in the way */ }
 }
 /** A capture's timing as it seals: E to sealed (none when the page sealed it), the wait for its words, its pictures. */
 function timeCapture(c: Cap, interrupted: boolean) {
@@ -821,7 +822,7 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     const tUp = performance.now()
     const payload = JSON.stringify({ record, workspace: CONFIG.workspace })
     // a page that is going sends with keepalive (64 kB at most) so the request outlives it; a bigger one, the next page
-    const res = await fetch(`${ROUTE}/api/jam/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && payload.length < 60_000 ? { keepalive: true } : {}) })
+    const res = await api('jam/capture', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && payload.length < 60_000 ? { keepalive: true } : {}) })
     const body = (await res.json().catch(() => null)) as Verdict | null
     // only an explicit verdict on THIS record is final: taken (200, naming its card) or refused as a
     // record (400, saying why). Anything else - jam not running yet, another workspace, an unreadable
@@ -906,11 +907,15 @@ export function resendSealed() {
   } catch { /* none */ }
 }
 
+// the canvas answered again after it stopped (spec 28 A1.11): the page reloads only when no capture is
+// recording or finishing - a sealed one waits in localStorage and goes out from the next page
+beforeResume(async () => !Object.keys(useJamCapture.getState().caps).length)
+
 /** Resume's work, while the caller holds `settling`: load the record, let the caller settle, start. */
 async function resumeNow(draft: string, ready?: () => Promise<boolean>): Promise<boolean> {
   let rec: CaptureRecord | null = null
   try {
-    const r = await fetch(`${ROUTE}/api/jam/capture?id=${encodeURIComponent(draft)}`, { headers: { 'x-mv-c': csrf() } })
+    const r = await api(`jam/capture?id=${encodeURIComponent(draft)}`, { headers: { 'x-mv-c': csrf() } })
     const body = r.ok ? ((await r.json()) as { record?: CaptureRecord; sealed?: boolean }) : null
     if (body?.record && body.sealed !== true) { useStore.getState().toast('the capture changed after it was sealed - it cannot be resumed'); return false }
     rec = body?.record ?? null

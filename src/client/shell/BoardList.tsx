@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useStore, PUBLISHED, STATUS_AS_OF, addToBoard, boardLabel, fetchBoardNames, fetchBoardTree, fetchMembership, rememberMeta, rememberTitles, type BoardMeta, type TreeBase } from './store.ts'
 import { UNPLACED } from './hash.ts'
+import { scoped } from './api.ts'
 import { LiveIcon, StatusIcon, TypeIcon } from './board-icons.tsx'
 import { StatusPicker } from './StatusPicker.tsx'
 import type { StatusWord } from '../../shared/board-types.ts'
@@ -28,7 +29,7 @@ import {
  * Active board = accent icon + wash, same language as scenes.
  */
 
-const CLOSED_KEY = 'mv-folders-closed'   // collapsed folders are a viewer preference, never data
+const CLOSED_KEY = scoped('mv-folders-closed')   // collapsed folders are a viewer preference, per canvas, never data
 const readClosed = (): Record<string, true> => { try { return JSON.parse(localStorage.getItem(CLOSED_KEY) ?? '{}') } catch { return {} } }
 
 /** The inline input: renaming a board or a folder, or naming a NEW folder that does not exist

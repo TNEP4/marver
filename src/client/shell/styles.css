@@ -1888,6 +1888,8 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .sh-app.jm-lane-on .sh-update { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-toasts { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-banner { bottom: calc(var(--edge) + 56px) }
+/* the canvas stopped (spec 28 A1.11): top centre, above play and focus - the page is holding unsaved work */
+.sh-app .sh-banner.sh-stopped { top: var(--edge); bottom: auto; left: 50%; right: auto; transform: translateX(-50%); z-index: 40; width: max-content }
 
 
 /* ---- words on this Mac (spec 27 Part 4): the live caption over the capture tile, the one question ---- */

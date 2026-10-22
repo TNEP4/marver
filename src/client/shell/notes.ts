@@ -106,7 +106,9 @@ export function notesCramped(
 
 // ---- per-viewer visibility -------------------------------------------------------------
 
-const STORAGE = 'mv-notes'
+/** The viewer's choice is kept per canvas (spec 28 A1.6): the shell names the key at boot (store.ts),
+ *  so this module stays importable without the plugin's virtual modules (test/notes.test.ts). */
+let STORAGE = 'mv-notes'
 interface NotesState {
   /** the N toggle: false hides every note on the canvas */
   all: boolean
@@ -143,6 +145,11 @@ export const useNotes = create<NotesState>((set, get) => ({
     set(next); save(next)
   },
 }))
+/** Keep the notes' visibility under this canvas's key (`mv-notes:<workspace>`), read from it now. */
+export function scopeNotes(key: string) {
+  STORAGE = key
+  useNotes.setState(load())
+}
 /** Every note id currently on the canvas - read from the DOM, the one place that knows. */
 const allIds = (): string[] => (typeof document === 'undefined' ? [] : [...document.querySelectorAll('[data-note]')].map((el) => el.getAttribute('data-note')!))
 
