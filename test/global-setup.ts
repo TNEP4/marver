@@ -34,15 +34,15 @@ import { portInUse, takeExclusive } from '../src/server/exclusive.ts'
  * A block of ports of its own, because a registry of its own isolates the files
  * and not the machine's ports: two worktrees running the suite at once would
  * each see the other's canvases as "another program" on its slots, and every
- * suite that asserts an exact port would fail. Each run takes one hundred ports
+ * suite that asserts an exact port would fail. Each run takes two hundred ports
  * in 40000-46999 - clear of the ports the browser suites and the free-port
  * probes use (4400-8300, 47000-49000) and below macOS's ephemeral range
  * (49152+) - checked free when taken and held, while the run lasts, by a lock
  * in the temp folder (the exclusive-file rules: a block whose run was killed is
  * taken back). The suite's slots are its first twenty; the suites that assert
- * exact ports each have twenty more (SUITES).
+ * exact ports each have twenty more (SUITES; room for nine).
  */
-const BLOCKS = { from: 40_000, to: 47_000, size: 100 }
+const BLOCKS = { from: 40_000, to: 47_000, size: 200 }
 /** Each suite that asserts exact ports: its twenty, after the suite's own. */
 const SUITES = ['startup', 'slots', 'slotsDev', 'recover'] as const
 
