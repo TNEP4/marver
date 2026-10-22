@@ -17,6 +17,7 @@ import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
+import { originOf } from './slots.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
 const VIRTUAL_CONFIG = 'virtual:sh-config'
@@ -30,6 +31,9 @@ export interface PluginCtx {
   /** spec 28 A1.6: this run's workspace - a `--recover` run serves under an earlier address's key.
    *  Default: the project's own (workspace.ts). */
   workspace?: string
+  /** spec 28 A1.1, dev only: the start this server belongs to - what configureServer makes (watchers,
+   *  sweeps, timers) is closed with it when the start fails before Vite ever listens */
+  startup?: { defer(close: () => unknown): void }
 }
 
 export function marverPlugin(ctx: PluginCtx): Plugin[] {
@@ -209,6 +213,14 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     },
 
     configureServer(server: ViteDevServer) {
+      // A1.1: what is made here closes with the server - or, when the start fails before Vite listens
+      // (Vite then skips its HTTP server's close, so 'close' never comes), with the start that made it
+      const closers: (() => void)[] = []
+      const onClose = (fn: () => void) => { closers.push(fn) }
+      const closeAll = () => { for (const fn of closers.splice(0).reverse()) { try { fn() } catch { /* already closed */ } } }
+      server.httpServer?.once('close', closeAll)
+      ctx.startup?.defer(closeAll)
+      onClose(() => { flushInv.cancel(); for (const f of inFlight.values()) clearTimeout(f.timer) })
       let bakeGen = Date.now()   // the source generation (see bumpGen): unique per server start
       // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
       // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static
@@ -249,14 +261,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // Build the origin from the ACTUAL bound address, bracketing IPv6 and mapping wildcards to
       // loopback. Shared by /api/shot (so a spoofed Host can't redirect the render) and the
       // file-drop shot inbox below.
-      const listeningOrigin = (): string | null => {
-        const a = server.httpServer?.address()
-        if (!a || typeof a === 'string') return null
-        const host = a.family === 'IPv6'
-          ? (a.address === '::' ? '[::1]' : `[${a.address}]`)
-          : (a.address === '0.0.0.0' ? '127.0.0.1' : a.address)
-        return `http://${host}:${a.port}`
-      }
+      const listeningOrigin = (): string | null => originOf(server.httpServer?.address())
 
       // Pre-middlewares: our routes + api run before Vite's html fallback.
       // the marks start with the dev server, before any page asks (spec 26)
@@ -296,6 +301,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         else if (changed && sKey !== scenesKey) server.ws.send('sh:scenes', { scenes: manifest.scenes } as any)
         framesKey = key; scenesKey = sKey
       }, 150)
+      onClose(regen.cancel)
 
       const watched = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]
       const inScope = (file: string) => watched.some((w) => file.startsWith(w))
@@ -324,6 +330,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const pushTheme = debounce(() => {
         for (const mod of themeModules()) server.reloadModule(mod).catch(() => { /* gone mid-reload */ })
       }, 150)
+      onClose(pushTheme.cancel)
       const rescanTheme = () => {
         for (const mod of themeModules()) server.moduleGraph.invalidateModule(mod)
         pushTheme()
@@ -339,7 +346,12 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         prune()
       }
       // pruned against the generation current when the timer fires: an older timer must never delete a newer one
-      const prune = () => setTimeout(async () => { try { (await import('./bake.ts')).pruneBakes(root, bakeGen) } catch { /* best-effort */ } }, 500)
+      const pruning = new Set<ReturnType<typeof setTimeout>>()
+      const prune = () => {
+        const t = setTimeout(async () => { pruning.delete(t); try { (await import('./bake.ts')).pruneBakes(root, bakeGen) } catch { /* best-effort */ } }, 500)
+        pruning.add(t)
+      }
+      onClose(() => { for (const t of pruning) clearTimeout(t) })
       prune()   // a previous server's generation is dead on arrival
       server.watcher.on('add', bumpGen); server.watcher.on('unlink', bumpGen); server.watcher.on('change', bumpGen)
       server.watcher.on('add', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
@@ -350,6 +362,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // watch ignores it: an out-of-graph .json change full-reloads every client).
       const contextDir = join(root, 'context') + sep
       let statusTimer: ReturnType<typeof setTimeout> | undefined
+      onClose(() => clearTimeout(statusTimer))
       const restatus = (f: string) => {
         if (!f.startsWith(contextDir) && !(inScope(f) && f.endsWith('_brief.md'))) return
         clearTimeout(statusTimer)
@@ -363,6 +376,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // carried (a sticky note, a file no page has loaded), an agent, a git pull. The fingerprints
       // say which frames; a hot update has already recorded its own, so nothing counts twice.
       const marksChanged = debounce(observeLater, 300)
+      onClose(marksChanged.cancel)
       for (const ev of ['add', 'change', 'unlink'] as const) server.watcher.on(ev, (f) => { if (!f.startsWith(localDir) && !f.startsWith(boardsDirGen)) marksChanged() })
       const configFile = join(root, 'design', 'config.ts')
       server.watcher.on('change', (f) => {
@@ -416,7 +430,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
             server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
           }, 120))
         })
-        server.httpServer?.once('close', () => watcher.close())
+        onClose(() => { watcher.close(); clearTimeout(listTimer); for (const t of timers.values()) clearTimeout(t) })
       } catch { /* watch unsupported here - sync degrades to the 409 path */ }
 
       // The shot inbox: the file-drop transport for the Live Jam verify loop. A no-shell
@@ -493,7 +507,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
           try { for (const f of readdirSync(inbox)) processRequest(f) } catch { /* dir vanished */ }
         }, 1000)
         sweep.unref?.()
-        server.httpServer?.once('close', () => { inboxWatcher.close(); clearInterval(sweep) })
+        onClose(() => { inboxWatcher.close(); clearInterval(sweep) })
       } catch { /* no inbox watcher - the HTTP/CLI transport still serves shell-ful agents */ }
     },
   }
@@ -503,9 +517,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
 /** The marks look at the frames on disk; true when they recorded something. */
 function observed(r: { doc: string[]; note: string[] }) { return r.doc.length + r.note.length > 0 }
 
-function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): T {
+function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): T & { cancel(): void } {
   let t: ReturnType<typeof setTimeout>
-  return ((...a: any[]) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) }) as T
+  return Object.assign(((...a: any[]) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) }) as T, { cancel: () => clearTimeout(t) })
 }
 
 /** Extra vite plugin when the host runs Tailwind v4. The host's own @tailwindcss/vite

@@ -61,18 +61,21 @@ for (const [name, desc] of [
   cli
     .command(name, desc)
     .option('--root <dir>', 'Host repo root', { default: '.' })
-    .option('--port <port>', 'Port (default 5199)')
+    .option('--port <port>', 'A port of its own (default: a free slot, localhost:4805-4824 - usually the same one next time; a port in that range takes exactly that slot)')
     .action(async (opts) => {
-      const { dev, DevLockError } = await import('../server/dev.ts')
+      const { dev, DevStartError, DevLockError } = await import('../server/dev.ts')
       let port: number | undefined
       if (opts.port !== undefined) {
         const n = Number(opts.port)
         if (Number.isInteger(n) && n > 0 && n < 65536) port = n
         else console.warn(`[${NAME}] ignoring invalid --port "${opts.port}"`)
       }
-      try { await dev(resolve(opts.root), port) } catch (err) {
-        if (!(err instanceof DevLockError)) throw err
+      // a start that fails has already given back everything it held (spec 28 A1.1); the process ends here
+      try { await dev(resolve(opts.root), { port }) } catch (err) {
+        if (!(err instanceof DevStartError)) throw err
         console.error(`\n  ${err.message}\n`)
+        // an unforeseen failure keeps its stack; the named ones (a held lock, all slots taken, a port just taken) say enough
+        if (!(err instanceof DevLockError) && /^the canvas could not start/.test(err.message) && err.cause instanceof Error && err.cause.stack) console.error(err.cause.stack)
         process.exit(1)
       }
     })
