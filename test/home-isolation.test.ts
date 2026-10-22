@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { CLI, fixtureRoot, startDev } from './dev-server.ts'
+import { collabFileFor } from '../src/server/sync.ts'
 
 /**
  * The suite's own registry (spec 28 A1.10, A1.13 #7): every canvas a test starts registers in the
@@ -17,10 +18,11 @@ const real = join(homedir(), '.marver', 'running')
 const pidsIn = (dir: string) => existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => { try { return JSON.parse(readFileSync(join(dir, f), 'utf8')).pid } catch { return null } }) : []
 
 describe('the suite never touches the real registry', () => {
-  it('MARVER_HOME is the suite\'s own, and the slots are moved off 4805-4824', () => {
+  it('MARVER_HOME is the suite\'s own - the collaboration credentials there too - and the slots are moved off 4805-4824', () => {
     const home = process.env.MARVER_HOME!
     expect(home && isAbsolute(home)).toBe(true)
     expect(home.startsWith(join(homedir(), '.marver'))).toBe(false)
+    expect(collabFileFor('/tmp/any-project').startsWith(join(home, 'canvases') + '/')).toBe(true)
     const base = Number(process.env.MARVER_SLOT_BASE)
     expect(base + 1 > 4824 || base + 20 < 4805).toBe(true)
   })

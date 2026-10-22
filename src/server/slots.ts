@@ -15,9 +15,11 @@
  * - An explicit port inside the range claims exactly that slot and never falls back; one outside it is
  *   tried first and, when busy, falls back to a slot (0.26 fell back to the hash range).
  *
- * MARVER_HOME scopes running/ and prefer/ only (the tests' own registry); models/ and canvases/ stay in
- * ~/.marver. MARVER_SLOT_BASE moves the twenty ports, for the test suite alone. Both are read on every
- * call, so a test can point a call elsewhere.
+ * MARVER_HOME moves running/, prefer/ and canvases/ (the collaboration credentials, sync.ts) - the test
+ * suite's own, so no test writes the owner's; models/ stays in ~/.marver (MARVER_MODELS moves it), read
+ * and never written by the tests, so the voice suites keep the real model. MARVER_SLOT_BASE moves the
+ * twenty ports, for the test suite alone. Both are read on every call, so a test can point a call
+ * elsewhere.
  */
 import { chmodSync, mkdirSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'

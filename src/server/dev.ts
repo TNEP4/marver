@@ -1,6 +1,7 @@
 import { createLogger, createServer, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import { existsSync, mkdirSync, realpathSync, watch as fsWatch } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
@@ -77,12 +78,13 @@ export const FS_DENY = [
  * cannot create a file to ask for.
  *
  * The registry is guarded the same way (spec 28 A1.13 #5): ~/.marver/running/ holds each running
- * canvas's proof key, and a host whose workspace root is the home folder - or a MARVER_HOME inside the
- * repository - would otherwise put it in reach of `/@fs/`.
+ * canvas's proof key and canvases/ the collaboration credentials, and a host whose workspace root is the
+ * home folder - or a MARVER_HOME inside the repository - would otherwise put them in reach of `/@fs/`.
+ * Both are guarded when MARVER_HOME moves this run's: the one it writes, and the one in the home folder.
  */
 function denyLocalSecrets(root: string): any {
   const guardedAt = join(root, 'design', '.local')
-  const homeAt = marverHome()
+  const homes = [...new Set([marverHome(), join(homedir(), '.marver')])]
   // Vite's default publicDir. dev.ts never overrides it, so this is the one extra
   // place a request path can come from.
   const publicAt = join(root, 'public')
@@ -109,13 +111,13 @@ function denyLocalSecrets(root: string): any {
           ? derived(pathname.slice('/@fs'.length))
           : [...derived(resolvePath(root, rel)), ...derived(resolvePath(publicAt, rel))]
         // A missing design/.local (or registry) means there is nothing there to protect.
-        const guarded = [guardedAt, homeAt].map((d) => { try { return realpathSync(d) } catch { return null } })
+        const real = (d: string) => { try { return realpathSync(d) } catch { return null } }
         // A candidate that does not resolve is a 404 Vite will produce on its own.
         const leak = (dir: string | null) => dir !== null && candidates.some((c) => {
           try { return inside(realpathSync(c), dir) } catch { return false }
         })
-        const local = leak(guarded[0])
-        if (!local && !leak(guarded[1])) return next()
+        const local = leak(real(guardedAt))
+        if (!local && !homes.some((h) => leak(real(h)))) return next()
         res.statusCode = 403
         res.setHeader('content-type', 'text/plain; charset=utf-8')
         res.end(local ? 'design/.local holds this canvas\'s credentials and is never served' : 'the canvas registry (~/.marver) is never served')

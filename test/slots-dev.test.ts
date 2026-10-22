@@ -3,7 +3,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:net'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { CLI, fixtureRoot, runDev, startDev, type Dev } from './dev-server.ts'
@@ -217,6 +217,18 @@ describe('the registry is never served (A1.13 #5)', () => {
     }
     await stop(d)
   }, 120_000)
+
+  it('with MARVER_HOME moved, the ~/.marver in the home folder is refused too', async () => {
+    const r = project('mv-slots-realhome-')
+    const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'mv-slots-fakehome-')))
+    roots.push(fakeHome)
+    mkdirSync(join(fakeHome, '.marver', 'canvases'), { recursive: true })
+    writeFileSync(join(fakeHome, '.marver', 'canvases', 'x.json'), '{"token":"a-secret"}')
+    const d = await start(r, [], { HOME: fakeHome })
+    const res = await fetch(`${d.origin}/@fs${fakeHome}/.marver/canvases/x.json`)
+    expect([res.status, await res.text()]).toEqual([403, 'the canvas registry (~/.marver) is never served'])
+    await stop(d)
+  }, 120_000)
 })
 
 describe('Live Jam on a slot (A1.10)', () => {
@@ -256,8 +268,8 @@ describe('Live Jam on a slot (A1.10)', () => {
     await stop(d)
   }, 120_000)
 
-  it('collaboration sync is unaffected: its credential is keyed by the project\'s real path, never by a port', () => {
+  it('collaboration sync is unaffected: its credential is keyed by the project\'s real path, never by a port (and lives in the suite\'s home)', () => {
     const r = roots.find((x) => x.includes('mv-slots-a-'))!
-    expect(collabFileFor(r)).toBe(join(homedir(), '.marver', 'canvases', `${createHash('sha256').update(realpathSync(r)).digest('hex').slice(0, 32)}.json`))
+    expect(collabFileFor(r)).toBe(join(process.env.MARVER_HOME!, 'canvases', `${createHash('sha256').update(realpathSync(r)).digest('hex').slice(0, 32)}.json`))
   })
 })

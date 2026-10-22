@@ -428,9 +428,10 @@ describe('comments connect --token', () => {
     mkdirSync(join(dir, 'design', '.local'), { recursive: true })
     writeFileSync(legacy, JSON.stringify({ url: 'https://old.test', token: 'the-only-copy' }))
 
+    // Marver's home (MARVER_HOME, where the credentials live), made for this case alone
     const home = mkdtempSync(join(tmpdir(), 'mv-home-'))
-    const realHome = process.env.HOME
-    process.env.HOME = home
+    const suiteHome = process.env.MARVER_HOME
+    process.env.MARVER_HOME = join(home, '.marver')
     try {
       // The PARENT is locked, so creating the canvases directory fails - a
       // failure saveCollab cannot undo by chmodding its own directory back open.
@@ -442,7 +443,7 @@ describe('comments connect --token', () => {
     } finally {
       chmodSync(join(home, '.marver'), 0o700)
       rmSync(home, { recursive: true, force: true })
-      if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome
+      if (suiteHome === undefined) delete process.env.MARVER_HOME; else process.env.MARVER_HOME = suiteHome
     }
   })
 

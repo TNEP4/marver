@@ -15,10 +15,10 @@
  */
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { appendEvents, diffEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { CLI_TOKEN_CHARS, MIN_CLI_TOKEN } from './auth.ts'
+import { marverHome } from './slots.ts'
 
 export interface Collab { url: string; token: string; email?: string; name?: string; avatar?: string }
 
@@ -34,14 +34,15 @@ export interface Collab { url: string; token: string; email?: string; name?: str
  *
  * So the file moved out of reach instead. Under the user's home, keyed by the
  * absolute path of the project it belongs to, one file per canvas per machine.
- * Nothing serves that directory, so there is no path to guard.
+ * Nothing serves that directory, so there is no path to guard. (MARVER_HOME moves
+ * it with the registry: the test suite's, so no test writes the owner's.)
  *
  * The old location is still read once, moved, and removed - a credential left
  * behind in a repo is exactly the thing being fixed.
  */
 const legacyCollabFile = (root: string) => join(root, 'design', '.local', 'collab.json')
 
-const collabDir = () => join(homedir(), '.marver', 'canvases')
+const collabDir = () => join(marverHome(), 'canvases')
 
 export const collabFileFor = (root: string) => collabFile(root)
 
