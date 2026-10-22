@@ -52,11 +52,12 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   ([A capture left on an old address](docs/jam-session.md#a-capture-left-on-an-old-address)).
 - **`npx marver perf --loads`** says what each board load did, from the page: how long until the frames in view were
   ready, until all were, until the board first held still, when it last moved and when it settled - or why it was
-  cut; how many moves, how far and why (a height that came late, a re-flow, a drag); the five slowest frames;
-  errors, and frames that never answered or are missing. `--json` for agents; plain `marver perf` adds one line per
-  load. The page records it in `design/.local/perf/page.jsonl`: frame names, node keys and numbers, and error
-  messages that can hold file paths - so it stays on your machine. It costs nothing at rest: no timer or frame
-  callback of its own while nothing loads and nothing waits to be sent ([Performance](docs/performance.md)).
+  cut, and how many frames were ready by then; how many moves, how far and why (a height that came late, a re-flow,
+  a drag); the five slowest frames; errors, and frames that never answered or are missing. `--json` for agents;
+  plain `marver perf` adds one line per load. The page records it in `design/.local/perf/page.jsonl`: frame names,
+  node keys and numbers, and error messages that can hold file paths - so it stays on your machine. It costs nothing
+  at rest: no timer or frame callback of its own while nothing loads and nothing waits to be sent
+  ([Performance](docs/performance.md)).
 - **The document proof.** A request for the canvas page that carries `x-mv-nonce` is answered with `x-mv-instance`
   and `x-mv-proof`, signed with the key in that canvas's registry file (`~/.marver/running/`, never served), so an
   app that opens the page knows it comes from that canvas. Without the header nothing changes.

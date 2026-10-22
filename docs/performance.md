@@ -75,7 +75,9 @@ one-second floor.
 and then moved again as late frames reported their heights says `quiet 1.8 s · last move 15.0 s`. `quiet`
 is the first still second; `last move` is when it stopped moving.
 
-A load can also say `never ready: ...`, `missing: ...`, how many frames were not done when it was cut, its
+A load that was cut has no ready times to give; it says how many of its frames were ready by the cut
+instead - `69 of 121 ready` - and, after its slowest, how many never finished (`52 never finished`):
+`slowest` lists only frames that finished. A load can also say `never ready: ...`, `missing: ...`, its
 errors (`late error` for one after it settled), how many errors past the first 50 went unrecorded, and its
 gestures (how many, the worst p95, the frames over 33 ms). The last line says how many records never reached
 the log, when any did.
@@ -90,8 +92,9 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   ([Sizes](boards-and-folders.md#sizes)), and the next load opens at those heights (`savedHeights`
   counts them) and the moves go, as above. Commit it with the rest of `design/`, and every clone and the
   published canvas open at them too.
-- **`slowest`** names the frames that held the load longest. Look at those first: what they load, how much
-  they render.
+- **`slowest`** names the frames that held the load longest, of those that finished. Look at those first:
+  what they load, how much they render. A load cut before its frames finished counts the rest apart; cut
+  at 120 s (`timeout`), the board is too heavy to finish - split it, or lighten what its frames load.
 - **Never ready, missing, errors** are broken frames, not slow ones: fix them first. A missing frame's
   file was deleted or renamed.
 - **The weight** (`settled.weight`) says how heavy the settled board is: elements in the page and its
@@ -190,10 +193,12 @@ got there:
   `settledMs`;
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
   causes);
-- `slowest`: the five slowest frames (`node`, `frame`, `ms` - when it settled, or was ready - and
-  `outcome`);
-- `errors` (each once, the first ten, `late` marked), `errorsNotRecorded`, `neverReady`, `missing`,
-  `unfinished` (frames not done when it was cut);
+- `slowest`: the five slowest frames that finished (`node`, `frame`, `ms` - when it settled, or was ready -
+  and `outcome`);
+- `errors` (each once, every one, `late` marked), `errorsNotRecorded`, `neverReady`, `missing`,
+  `unfinished` (frames still on their way when it was cut: they never finished);
+- on a load cut after it mounted, `readyByCut`: how many of its `frames` were ready (settled, or ready) by
+  the cut;
 - `gestures` (`n`, `worstP95`, `over33ms`) and `weight`.
 
 `unowned` holds what a page recorded before its first board mounted (its errors, how many gestures);

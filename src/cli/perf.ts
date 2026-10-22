@@ -81,15 +81,18 @@ export interface LoadSummary {
   /** the move records (a drag or a resize merged per node while unsent), their distance in px, the top causes;
    *  `late` = after settled */
   moves: { count: number; distance: number; causes: Ranked; late: { count: number; causes: Ranked } }
-  /** the five slowest frames: settled, else ready, in ms from the load's request (a document kept from before it has none) */
+  /** the five slowest frames that reached an outcome: settled, else ready, in ms from the load's request (a document
+   *  kept from before it has none) - a frame still on its way when the load was cut is `unfinished`, never here */
   slowest: { node: string; frame?: string; ms: number; outcome: string }[]
+  /** a load cut after it mounted: how many of its frames were ready (settled, or ready) by the cut - of `frames` */
+  readyByCut?: number
   /** each error once, every one (one after the load ended is `late`: the load owns the board for as long as it stays
    *  open) - the printed report shows the first ERRORS_SHOWN and says how many more */
   errors: { source: string; frame?: string; component?: string; message: string; late?: true }[]
   /** errors past the load's 50: counted, not recorded */
   errorsNotRecorded: number
   neverReady: string[]; missing: string[]
-  /** frames still pending when the load was cut */
+  /** frames still on their way when the load was cut: they never finished */
   unfinished: number
   gestures?: { n: number; worstP95: number; over33ms: number }
   weight?: Record<string, number>
@@ -131,7 +134,7 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
     for (const f of of('frame')) if (typeof f.node === 'string') last.set(f.node, f)
     const frames = [...last.values()]
     const name = (f: Record<string, any>) => String(f.frame ?? f.node)
-    const slowest = frames.flatMap((f) => { const ms = f.settled ?? f.ready; return typeof ms === 'number' ? [{ node: f.node, ...(f.frame ? { frame: f.frame } : {}), ms, outcome: f.outcome }] : [] })
+    const slowest = frames.filter((f) => f.outcome !== 'cut').flatMap((f) => { const ms = f.settled ?? f.ready; return typeof ms === 'number' ? [{ node: f.node, ...(f.frame ? { frame: f.frame } : {}), ms, outcome: f.outcome }] : [] })
       .sort((a, b) => b.ms - a.ms).slice(0, 5)
     const seenErr = new Set<string>()
     const errors = of('error').flatMap((e) => {
@@ -153,7 +156,8 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       ...(quiet ? { quietMs: quiet.ms } : {}),
       ...(typeof (settled ?? cut)?.lastMove === 'number' ? { lastMoveMs: (settled ?? cut)!.lastMove } : {}),
       moves: { count: moves.count, distance: Math.round(moves.distance), causes: ranked(moves.causes), late: { count: late.count, causes: ranked(late.causes) } },
-      slowest, errors, errorsNotRecorded: notRecorded(g),
+      slowest, ...(cut && !settled && commit ? { readyByCut: frames.filter((f) => f.outcome === 'settled' || f.outcome === 'ready').length } : {}),
+      errors, errorsNotRecorded: notRecorded(g),
       neverReady: frames.filter((f) => f.outcome === 'never-ready').map(name),
       missing: frames.filter((f) => f.outcome === 'missing').map(name),
       unfinished: frames.filter((f) => f.outcome === 'cut').length,
@@ -213,6 +217,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     const kinds = Object.entries(l.byKind ?? {}).filter(([, n]) => n).map(([k, n]) => `${n} ${k === 'hifi' ? 'hi-fi' : k}`)
     console.log(`    committed ${secs(l.commitMs)} · ${plural(l.frames ?? 0, 'frame')}${kinds.length ? ` (${kinds.join(', ')})` : ''}${l.measuring ? ` · ${l.measuring} measure, ${l.savedHeights ?? 0} opened at a known height` : ''}`)
     const times = [
+      ...(l.readyByCut !== undefined ? [`${l.readyByCut} of ${l.frames ?? '?'} ready`] : []),
       ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),
       ...(l.allReadyMs !== undefined ? [`all ready ${secs(l.allReadyMs)}`] : []),
       ...(l.quietMs !== undefined ? [`quiet ${secs(l.quietMs)}`] : []),
@@ -222,8 +227,10 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (times.length) console.log(`    ${times.join(' · ')}`)
     const m = l.moves
     console.log(`    ${plural(m.count, 'move')}${m.count ? `, ${m.distance} px: ${list(m.causes)}` : ''}${m.late.count ? ` · late: ${m.late.count} (${list(m.late.causes)})` : ''}`)
-    if (l.slowest.length) console.log(`    slowest: ${l.slowest.map((f) => `${f.frame ?? f.node} ${secs(f.ms)}`).join(', ')}`)
-    const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} not done when it ended`] : [])]
+    // the slowest of the frames that finished; those a cut left on their way, counted apart
+    const slow = [...(l.slowest.length ? [`slowest: ${l.slowest.map((f) => `${f.frame ?? f.node} ${secs(f.ms)}`).join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} never finished`] : [])]
+    if (slow.length) console.log(`    ${slow.join(' · ')}`)
+    const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : [])]
     if (gone.length) console.log(`    ${gone.join(' · ')}`)
     for (const e of l.errors.slice(0, ERRORS_SHOWN)) console.log(`    ${e.late ? 'late error' : 'error'} (${e.source}${e.frame ? ` ${e.frame}` : ''}${e.component ? `, in ${e.component}` : ''}): ${e.message}`)
     if (l.errors.length > ERRORS_SHOWN) console.log(`    ${plural(l.errors.length - ERRORS_SHOWN, 'more error')} not shown (--json lists every one)`)

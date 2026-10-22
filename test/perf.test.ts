@@ -52,7 +52,9 @@ function fixture(now = Date.now()) {
     rec(P1, B, 'move', 20 * min - 700, { node: 'k-b1', dx: 0, dy: 0, dw: 0, dh: 120, cause: 'measure-height' }),
     rec(P1, C, 'load', 20 * min - 1000, { board: 'notes', cause: 'switch', request: C }),
     rec(P1, C, 'cut', 20 * min - 1100, { reason: 'superseded', request: C, ms: 100 }),
-    rec(P1, B, 'frame', 20 * min - 1400, { node: 'k-b1', frame: 'docs/x', ready: 800, outcome: 'cut' }),
+    // a frame ready but not yet settled when the cut came - unfinished, never among the slowest - and one that settled
+    rec(P1, B, 'frame', 20 * min - 900, { node: 'k-b2', frame: 'docs/y', ready: 500, settled: 900, outcome: 'settled' }),
+    rec(P1, B, 'frame', 20 * min - 1400, { node: 'k-b1', frame: 'docs/x', ready: 1350, outcome: 'cut' }),
     rec(P1, B, 'cut', 20 * min - 1400, { reason: 'switch', ms: 1400, lastMove: 700 }),
     // the Not on a board view on another page of the same canvas: both are `boot`, and never mix
     rec(P2, D, 'load', 10 * min, { board: '~unplaced', cause: 'boot', request: D }),
@@ -106,6 +108,11 @@ describe('board loads (marver perf --loads)', () => {
     const b = loads.find((l) => l.load === B)!, c = loads.find((l) => l.load === C)!
     expect(b).toMatchObject({ state: 'cut', cut: { reason: 'switch', ms: 1400 }, committed: true, unfinished: 1, lastMoveMs: 700 })
     expect(b.moves.count).toBe(1)
+    // a cut load: how many frames were ready by the cut; the slowest only of those that finished
+    expect(b.readyByCut).toBe(1)
+    expect(b.slowest).toEqual([{ node: 'k-b2', frame: 'docs/y', ms: 900, outcome: 'settled' }])
+    expect(loads.find((l) => l.load === A)!.readyByCut).toBeUndefined()
+    expect(c.readyByCut).toBeUndefined()
     expect(c).toMatchObject({ state: 'cut', cut: { reason: 'superseded', request: true }, committed: false })
     expect(c.lastMoveMs).toBeUndefined()
   })
@@ -147,6 +154,7 @@ describe('marver perf, printed', () => {
     expect(j.minutes).toBe(60)
     expect(j.loads.map((l: any) => l.board)).toEqual(['start-here', 'docs', 'notes', '~unplaced'])
     expect(j.loads.map((l: any) => l.lastMoveMs)).toEqual([1300, 700, undefined, undefined])
+    expect(j.loads.map((l: any) => [l.readyByCut, l.unfinished])).toEqual([[undefined, 0], [1, 1], [undefined, 0], [undefined, 0]])
     expect(j.unowned.gestures).toBe(1)
     expect(j.dropped).toBe(5)
     out = []
@@ -160,7 +168,8 @@ describe('marver perf, printed', () => {
     expect(text).toMatch(/Start Here \(boot\)\s+settled 3\.2 s/)
     expect(text).toContain('committed 0.4 s · 7 frames (3 hi-fi, 3 content, 1 html) · 3 measure, 2 opened at a known height')
     expect(text).toContain('visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · last move 1.3 s · settled 3.2 s')
-    expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n\s+last move 0\.7 s\n/)
+    expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n {4}1 of 2 ready · last move 0\.7 s\n.*\n {4}slowest: docs\/y 0\.9 s · 1 never finished\n/)
+    expect(text).not.toContain('docs/x')
     expect(text).toContain('3 moves, 1000 px: reflow:measured 2, measure-height 1 · late: 2 (drag 1, measure-height 1)')
     expect(text).toContain('slowest: kit/f2 1.9 s, docs/a 1.6 s, docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s')
     expect(text).toContain('never ready: kit/f3 · missing: kit/old')
