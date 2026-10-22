@@ -108,6 +108,7 @@ export function startRecorder(opts: { capturesPending: () => boolean; sealCaptur
   capturesPending = opts.capturesPending
   sealCaptures = opts.sealCaptures
   recorderHooks.request = (board, cause) => { try { return request(board, cause) } catch { return '' } }
+  recorderHooks.handover = guard(handover)
   recorderHooks.commit = guard(commit)
   recorderHooks.cut = guard(cutRequest)
   recorderHooks.reflowIdle = settleSoon
@@ -174,14 +175,21 @@ function cutRequest(id: string, reason: RequestCut | 'timeout' | 'hidden'): void
 /** Every request still waiting, cut: the page hid or went. */
 const cutPending = (reason: 'hidden') => { for (const id of [...pending.keys()]) cutRequest(id, reason) }
 
+/** A request is about to commit: the load that was up ends here, its board's nodes still in the store - and before the
+ *  incoming load's sizes are installed, so by its own: a Doc it waits on to settle stays one that measures, even when
+ *  the incoming load read that it no longer does. */
+function handover(id: string): void {
+  const L = pending.get(id) ?? lapsed.get(id)
+  if (L && owner && owner !== L && !owner.done) cut(owner, owner.board === L.board ? 'reload' : 'switch')
+}
+
 function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   const L = pending.get(id) ?? lapsed.get(id)
   if (!L) return
   const late = !pending.has(id)
+  handover(id)   // ended already, at the handover (store.ts) - the incoming sizes are installed by now
   pending.delete(id)
   lapsed.delete(id)
-  // the load that was up ends here, its board's nodes still in the store
-  if (owner && !owner.done) cut(owner, owner.board === L.board ? 'reload' : 'switch')
   owner = L
   L.committedAt = L.lastMoveAt = performance.now()
   // mounting is never a move: the baseline is the nodes about to mount

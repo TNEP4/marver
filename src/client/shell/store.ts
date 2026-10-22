@@ -495,6 +495,9 @@ export type RequestCut = 'superseded' | 'error' | 'edited' | 'unsaved'
  *  mounts the load: mounting it is never a move. */
 export const recorderHooks = {
   request: (_board: string, _cause: LoadCause): string => '',
+  /** a request is about to commit: the load that was up ends - before the incoming sizes are installed, so it ends by
+   *  the sizes it read (which frames measure), its board's nodes still in the store */
+  handover: (_request: string): void => {},
   commit: (_request: string, _nodes: readonly Node[], _manifest: Manifest): void => {},
   cut: (_request: string, _reason: RequestCut): void => {},
   /** nothing of the reflow story is left: no reflow pending, no height held, none owed */
@@ -1150,6 +1153,7 @@ export const useStore = create<State>((set, get) => {
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) { recorderHooks.cut(request, 'edited'); return false }
       const next = loaded.state
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
+      recorderHooks.handover(request)         // the load that was up ends by its own sizes
       installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
       set(next)
@@ -1196,6 +1200,7 @@ export const useStore = create<State>((set, get) => {
       ++loadSeq                                // invalidate any in-flight boot of the old board
       recorderHooks.cut(bootRequest, 'superseded')
       const live = get().manifest              // a WS manifest update may have landed mid-load
+      recorderHooks.handover(request)          // the load that was up ends by its own sizes
       installSizes(loaded.sizes)               // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
       set({ board: name, interact: null, ...next })

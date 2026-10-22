@@ -372,6 +372,38 @@ describe('the page recorder: board loads', () => {
     off(); held.stop()
   }, 90_000)
 
+  /** This tab's reads of the sizes answer that no frame measures (each Doc's source stopped rendering one). */
+  const noneMeasure = async (s: string) => {
+    const off = browser!.on((m) => {
+      if (m.method !== 'Fetch.requestPaused' || m.sessionId !== s || !/\/api\/sizes/.test(m.params.request.url)) return
+      void browser!.send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from(JSON.stringify({ heights: {}, measuring: [] })).toString('base64') }, s).catch(() => {})
+    })
+    await browser!.send('Fetch.enable', { patterns: ['*slow.png*', '*/api/sizes*'].map((urlPattern) => ({ urlPattern, requestStage: 'Request' })) }, s)
+    return off
+  }
+  for (const how of ['switch', 'reload'] as const) {
+    it(`a ${how} that commits ends the load that was up by its own sizes: its Doc ready but not settled is cut, not ready by the incoming load's`, async () => {
+      if (!browser) return
+      const { s, page, held } = await open('#/b/slow', ['*slow.png*'])
+      await until(() => held.paused('*slow.png*') > 0, 20_000, 'the image to be asked for')
+      await browser.until(s, `__mvStore.getState().nodes.find((n) => n.key === 'k-slow')?.status === 'ready'`, 20_000)
+      const A = (await R(s)).owner.id
+      // the incoming load reads that no frame measures - the slow Doc included - and commits
+      const off = await noneMeasure(s)
+      await browser.eval(s, how === 'switch' ? `window.__mvStore.getState().switchBoard('still').then(() => 1)` : `window.__mvStore.getState().boot().then(() => 1)`)
+      await browser.until(s, `(() => { const o = window.__mvRecorder.state().owner; return o && o.id !== ${JSON.stringify(A)} && o.board === ${JSON.stringify(how === 'switch' ? 'still' : 'slow')} })()`, 20_000)
+      await drained(s)
+      const a = lines().filter((r) => r.page === page && r.load === A)
+      expect(a.find((r) => r.kind === 'cut'), JSON.stringify(a)).toMatchObject({ reason: how })
+      // by the sizes the slow board read, its Doc settles by its measure: never measured, it is cut
+      expect(a.filter((r) => r.kind === 'frame' && r.node === 'k-slow').at(-1)).toMatchObject({ outcome: 'cut' })
+      // the incoming load is told by its own: nothing of it measures
+      const B = (await R(s)).owner.id
+      expect(lines().find((r) => r.page === page && r.kind === 'commit' && r.load === B)).toMatchObject({ measuring: 0 })
+      off(); held.stop()
+    }, 90_000)
+  }
+
   it('a board fetch that never answers is cut at the deadline, counted from the request; if it answers after all, the board owns its geometry with no commit', async () => {
     if (!browser) return
     const { s, page, held } = await open('#/b/hifi', ['*/api/boards/hifi*'], [FAST_DEADLINE])
