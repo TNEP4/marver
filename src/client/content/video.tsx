@@ -38,6 +38,10 @@ const posterNameFor = (src: string) => `${src}.poster.png`
 // has no such API (build already generated the file); a failed request just keeps the card.
 const requested = new Map<string, Promise<boolean>>()
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+// the canvas names its workspace in the frame's URL (spec 28 A1.11); a request from this frame names
+// it too, so a frame left open after its canvas stopped never asks another project for anything
+const WS = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('ws') : null
+const named = (h: Record<string, string> = {}) => (WS ? { ...h, 'x-mv-ws': WS } : h)
 // in-flight probes + generations, for the shot renderer's settle (like __mvLodBusy): a
 // screenshot taken while a poster is still being rendered would show the empty box
 let busy = 0
@@ -48,8 +52,8 @@ const requestPoster = (src: string): Promise<boolean> => {
     p = (async () => {
       // the owner gate wants the double-submit cookie echoed; a frame host opened cold has not
       // made an API GET yet, so prime it with the cheapest one first
-      if (!csrf()) await fetch(`${ROUTE}/api/policy`).catch(() => null)
-      const r = await fetch(`${ROUTE}/api/poster?src=${encodeURIComponent(src)}`, { headers: { 'x-mv-c': csrf() } }).catch(() => null)
+      if (!csrf()) await fetch(`${ROUTE}/api/policy`, { headers: named() }).catch(() => null)
+      const r = await fetch(`${ROUTE}/api/poster`, { method: 'POST', headers: named({ 'content-type': 'application/json', 'x-mv-c': csrf() }), body: JSON.stringify({ src }) }).catch(() => null)
       return !!r?.ok
     })()
     requested.set(src, p)

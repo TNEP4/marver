@@ -16,6 +16,7 @@ import { logReload } from './perf.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
+import { guardMiddleware } from './guard.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
@@ -31,6 +32,8 @@ export interface PluginCtx {
 
 export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const { root, clientDir, config } = ctx
+  // this run's workspace key: what the shell reads as CONFIG.workspace and names on every request (A1.11)
+  const workspace = createHash('sha256').update(root).digest('hex').slice(0, 16)
 
   // the project's line in the manifest; re-read from design/config.ts when that file changes
   // (the rest of the config still needs a restart - only the two orientation fields are live)
@@ -172,7 +175,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         })()
         // wordmark: a declared share.name wins over the repo dir - deploy hosts build
         // from anonymous paths (/app), and the gate already wears the declared name
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture, names: config.jam.names && config.jam.agent === 'claude' } : null, workspace: createHash('sha256').update(root).digest('hex').slice(0, 16) })}`
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture, names: config.jam.names && config.jam.agent === 'claude' } : null, workspace })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'
@@ -204,6 +207,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     },
 
     configureServer(server: ViteDevServer) {
+      // spec 28 A1.11: the first middleware - a request naming another workspace, or a service worker's
+      // script, is answered before anything of this project is read, written or served (guard.ts).
+      // Must stay first: ahead of /api/update, the API, the frame-host route and Vite's own.
+      server.middlewares.use(guardMiddleware(workspace))
       let bakeGen = Date.now()   // the source generation (see bumpGen): unique per server start
       // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
       // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static
