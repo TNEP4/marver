@@ -113,6 +113,33 @@ describe('the workspace guard', () => {
     expect((await at('/sw.js')).status).toBe(200)   // the file itself is still served as a file
   })
 
+  it('the page reaches its server only through the one helper: every other transport is accounted for', () => {
+    // a new request site that bypasses src/client/shell/api.ts would send no workspace - and a page left
+    // open could write into whatever project took its port. Each exception says why it may.
+    const allowed: Record<string, RegExp[]> = {
+      'shell/api.ts': [/\bfetch\(url, /, /\bfetch\(`\$\{ROUTE\}\/api\/hello`/],                  // the helper itself, and its probe
+      'shell/canvas/sleep.ts': [/\bfetch\(`\$\{ROUTE\}\/bakes\/\$\{BAKES\}\/index\.json`\)/],    // a published canvas's static textures
+      'shell/comments-store.ts': [/new EventSource\(`\$\{ROUTE\}\/api\/events`\)/],              // published only: never opened in dev
+      'shell/jam-voice.ts': [/new WebSocket\(/],                                                  // bound by its single-use ticket, asked through api()
+      'content/video.tsx': [/\bfetch\(`\$\{ROUTE\}\/api\/policy`, \{ headers: named\(\) \}\)/, /\bfetch\(`\$\{ROUTE\}\/api\/poster`, \{ method: 'POST', headers: named\(/],   // a frame: names the workspace from its URL
+      'content/img-lod.ts': [/\bfetch\(it\.src\)/],                                               // a frame's own image, never the API
+    }
+    const dir = join(import.meta.dirname, '..', 'src', 'client')
+    const found: string[] = []
+    for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
+      if (!/\.(ts|tsx|js)$/.test(rel)) continue
+      const file = rel.split('\\').join('/')
+      readFileSync(join(dir, rel), 'utf8').split('\n').forEach((line, i) => {
+        for (const m of line.matchAll(/\b(?:fetch\(|navigator\.sendBeacon|XMLHttpRequest|new EventSource\(|new WebSocket\()/g)) {
+          if (line.slice(0, m.index).endsWith('mv')) continue                                     // mvFetch(
+          const at = line.slice(m.index)
+          if (!(allowed[file] ?? []).some((re) => re.test(at))) found.push(`${file}:${i + 1}: ${line.trim().slice(0, 120)}`)
+        }
+      })
+    }
+    expect(found).toEqual([])
+  })
+
   it('/api/poster is a POST: the GET is gone, the POST is owner-gated and checks its clip', async () => {
     const get = await at('/__mv/api/poster?src=clip.mp4')
     expect(get.status).toBe(404)
