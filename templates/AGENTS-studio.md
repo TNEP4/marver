@@ -227,7 +227,7 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   the frames new since they last looked. When it bears on the work, say so in your first message
   ("you have not looked at the checkout frames since I changed them").
 - **Performance.** `npx marver perf --loads --json` says what each board load did - time to
-  settled, frames that moved and why, the slowest frames, errors. To make a board faster, name
+  settled, how many moves and why, the slowest frames, errors. To make a board faster, name
   the lever, change it, compare the next load.
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and

@@ -79,8 +79,9 @@ Read the load, name the lever, change it, compare the next load - you, or your a
 
 - **Moves named `measure-height`, then `reflow:...`** - the board opened before it knew its heights.
   `marver dev` writes each content frame's settled height to `design/boards/_sizes.json`
-  ([Sizes](boards-and-folders.md#sizes)); committed with the rest of `design/`, the next load opens at
-  those heights (`savedHeights` counts them) and the moves go, as above.
+  ([Sizes](boards-and-folders.md#sizes)), and the next load opens at those heights (`savedHeights`
+  counts them) and the moves go, as above. Commit it with the rest of `design/`, and every clone and the
+  published canvas open at them too.
 - **`slowest`** names the frames that held the load longest. Look at those first: what they load, how much
   they render.
 - **Never ready, missing, errors** are broken frames, not slow ones: fix them first. A missing frame's
@@ -118,7 +119,7 @@ Every change to a frame's place or size is a `move`, with its cause:
 | `measure-height` | a content frame reported its height |
 | `measure-width` | a content frame took its `Doc`'s own width |
 | `reflow:<reasons>` | the board re-flowed its rows - `measured` (a height came in), `cramped` (a sticky note needed room), `stale` (heights changed since the board was laid out), `gesture-end` (a re-flow that waited for a drag); several join with `+` |
-| `manifest` | the frames on disk changed: a guessed size corrected, a deleted frame removed |
+| `manifest` | the frames on disk changed: a frame that arrived had its guessed size corrected |
 | `drag` | you moved it (a drag's steps add up in one record while it waits to be sent) |
 | `resize` | you resized it, or the board re-tidied after a resize |
 | `device` | a device view (`0`-`5`), or a device size for the selection |
@@ -149,8 +150,8 @@ board stays open. Errors from before the first board mounted are kept apart (`un
 ## The records
 
 Every line of `page.jsonl` carries `v`, `ws` (the project's key), `page` (one id per page load), `load`
-(the load that owns the board then; `-` before the first), `seq` (its place in the page's order), `ts` and
-`kind`:
+(for `load`, `commit` and a request's `cut`, the request's own id; for every other record, the load that
+owns the board then; `-` before the first), `seq` (its place in the page's order), `ts` and `kind`:
 
 | `kind` | When | Fields |
 |---|---|---|
@@ -193,10 +194,12 @@ got there:
 
 Nothing at rest. While no load is in flight and nothing waits to be sent, the recorder has no timer and no
 frame callback of its own; it hears each change to the canvas's state with one check. Records wait 2 s for
-company, then go in one request, one at a time. A failed send is tried twice more, 2 s apart; what never
-lands is counted in a `dropped` record. The queue holds 2,000 records or 256 KB, and past that the oldest
-go, counted the same way. When the page closes, Jam captures go first: while a capture is open or waiting
-to be sent, the recorder sends nothing; otherwise its last records go with `keepalive`, 16 KB at most.
+company, then go in one request, one at a time. A send that fails on the network or the server is tried
+twice more, 2 s apart; a refusal, or a canvas that stopped, is not tried again (a 403 goes once more,
+after the page has asked for its request cookie). What never lands is counted in a `dropped` record. The
+queue holds 2,000 records or 256 KB, and past that the oldest go, counted the same way. When the page
+closes, Jam captures go first: while a capture is open or waiting to be sent, the recorder sends nothing;
+otherwise its last records go with `keepalive`, 16 KB at most.
 
 The dev server takes them only from the canvas's own page, rebuilds each from the fields its kind allows -
 strings cut to 200 characters, 512 KB a request - and appends them to `page.jsonl`.

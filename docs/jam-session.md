@@ -198,16 +198,17 @@ Published canvases carry none of Jam: no captures, no queue, no microphone.
 
 ## A capture left on an old address
 
-A capture the page could not send as it closed waits in that browser's storage, under that page's address -
-`http://localhost:<port>` - and goes out the next time the canvas opens **at that address** with Live Jam on. When the
-canvas moves, the capture stays behind: 0.27 moved canvases to slots, and a later start lands on another slot when
-its own is taken. `marver dev` says so as it starts:
+A capture the page could not send - the canvas was away, or the page closed before its send landed - waits in that
+browser's storage, under that page's address (`http://localhost:<port>`), and goes out the next time the canvas opens
+**at that address** with Live Jam on. When the canvas moves, the capture stays behind: 0.27 moved canvases to slots,
+and a later start lands on another slot when its own is taken. `marver dev` says so as it starts:
 
 ```
   last run was at http://localhost:4806/ (bound http://[::1]:4806) - a Jam capture left unsent there: npx marver dev --recover
 ```
 
-`--recover` starts the canvas there again:
+`--recover` starts the canvas there again. Stop the canvas first if it runs (`Ctrl-C`): one canvas runs per folder, so
+a recovery started beside it stops with "a canvas already runs here". The list works either way:
 
 ```bash
 npx marver dev --recover      # the addresses this canvas ran on, newest first
@@ -227,12 +228,13 @@ Open the link it prints in the browser that made the capture; the captures waiti
 (`Ctrl-C`) and start the canvas as usual. If the port or the address cannot be had - another canvas or another program
 holds it - it stops and says why; it never moves elsewhere. A recovery leaves the canvas's list of addresses as it was.
 
-**Coming from 0.26**, the list ends with one more entry: the address 0.26 gave this folder. The first 0.27 start names
-it too ("0.26 served it at http://localhost:5329/ - a Jam capture left unsent there"). If 0.26 had moved to another port
-when you made the capture (it said "port ... is in use - serving ... instead" as it started), name that port:
+**The list always holds the address 0.26 gave this folder** (or would have given it), last unless this canvas has run
+there since. It only matters coming from 0.26. The first 0.27 start names it too ("0.26 served it at
+http://localhost:5329/ - a Jam capture left unsent there"). If 0.26 had moved to another port when you made the capture
+(it said "port ... is in use - serving ... instead" as it started), name that port:
 `npx marver dev --recover --port <that port>`.
 
 **When it cannot come back** - an address that can no longer be had, or a browser profile that is gone - Marver cannot
 send the capture. It is still readable by hand: in the browser's developer tools, under Local storage for that address,
 the key `mv-jam-sealed:<project key>` holds it as JSON; copy what you said into a new capture's notes. A capture only
-waits like this when the page's own send as it closed failed, so it is rare.
+waits like this when it could not reach its canvas before the page closed.
