@@ -450,6 +450,51 @@ let resizedInGesture = false
 // set inside the store (they need it): a reload's height hold, and the marks-vs-documents check
 let holdHeight: (key: string) => void = () => {}
 let reconcile: () => void = () => {}
+
+// ---- the recorder's view of the store (spec 28 A1.7) -------------------------------------------------------------
+/** A change that moves or resizes nodes runs under a cause. The recorder's subscriber reads it while that change
+ *  notifies it (zustand notifies inside set) and calls a move outside any cause `unknown`. The inner cause wins -
+ *  except that runTidy keeps an outer one (a device preset, a resize, a reflow tidies through it). Synchronous code
+ *  only: a cause never spans an await. */
+let geoCause: string | null = null
+export const geometryCause = (): string | null => geoCause
+export function withCause<T>(cause: string, fn: () => T): T {
+  const was = geoCause
+  geoCause = cause
+  try { return fn() } finally { geoCause = was }
+}
+/** How a board load started: the page's first, a switch, or the open board read from disk again. */
+export type LoadCause = 'boot' | 'switch' | 'disk-reload'
+/** Why a requested load never committed: a newer load, a failed read, an edit or a board change meanwhile, unsaved edits. */
+export type RequestCut = 'superseded' | 'error' | 'edited' | 'unsaved'
+/** Board loads as the recorder sees them: recorder.ts installs these on a dev canvas - no-ops until then, and for good
+ *  on a published one. A request owns the geometry from its commit, and `commit` runs right BEFORE the set that
+ *  mounts the load: mounting it is never a move. */
+export const recorderHooks = {
+  request: (_board: string, _cause: LoadCause): string => '',
+  commit: (_request: string, _nodes: readonly Node[], _manifest: Manifest): void => {},
+  cut: (_request: string, _reason: RequestCut): void => {},
+  /** nothing of the reflow story is left: no reflow pending, no height held, none owed */
+  reflowIdle: (): void => {},
+}
+let reflowIdleNow: () => boolean = () => true   // set inside the store
+/** No reflow pending, no height held, none owed. */
+export const reflowIdle = (): boolean => reflowIdleNow()
+/** What a node waits for before its load settles (recorder.ts): a content frame that measures (renders a Doc) - a
+ *  settled height at its width now; any other frame (hi-fi, html, a device-sized one, content without a Doc) - its
+ *  ready; a frame not in the manifest - nothing: it is missing. */
+export function settleRule(n: Node, manifest: Manifest | null): 'measure' | 'ready' | 'missing' {
+  const f = n.missing ? undefined : manifest?.frames.find((x) => x.id === n.frame)
+  if (!f) return 'missing'
+  return f.contentWidth && n.sizeMode !== 'device' && measures(f.id) ? 'measure' : 'ready'
+}
+/** Did a measuring node open at a height already known (committed in _sizes.json, or measured earlier in this page)? */
+export const knownHeight = (frameId: string, w: number): boolean => hasKnownHeight(frameId, Math.round(w))
+/** What measureNode took: `fit` - the report was taken at the node's width `w` (applied, or its height already) - the
+ *  only one a settled report settles a node with; `width` - it adopted the Doc's own width `w`, and the next report is
+ *  the one; `held` - kept for when the node's reload lets go; `ignored` - not taken. */
+export interface MeasureResult { took: 'ignored' | 'held' | 'width' | 'fit'; w?: number }
+const IGNORED: MeasureResult = { took: 'ignored' }
 // sidebar marks: the fetch in flight, and acknowledgements the server has not confirmed yet
 let marksSeq = 0
 let marksTimer: ReturnType<typeof setTimeout> | undefined
@@ -543,7 +588,7 @@ interface State {
   resizeNode(key: string, w: number, h: number): void
   /** `settled`: the Doc's fonts, images and diagrams are done (content/index.tsx). false = provisional
    *  (an image still loading) - it may grow a frame, never shrink it under a known height. */
-  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number, settled?: boolean): void
+  measureNode(key: string, frameId: string, ownWidth: number, measuredWidth: number, height: number, settled?: boolean): MeasureResult
   /** A node's sticky column was drawn (or grew, or went): its extent from the node's top, world px. */
   noteMeasured(key: string, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
@@ -650,6 +695,7 @@ export const useStore = create<State>((set, get) => {
   let editRev = 0                                    // bumps per edit; a stale save response may never clear dirty over a newer edit
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
+  let firstLoad = true                               // the page's first boot() is its boot; every later one reads the board from disk again
   // While a board file is being renamed or rewritten by a structural write (rename, the
   // sidebar's tree arrange), autosave must not fire against it (a mustExist PUT would
   // 409-gone and clear dirty, losing the in-flight edit; a stale baseHash would 409 and
@@ -671,12 +717,17 @@ export const useStore = create<State>((set, get) => {
   // two conditions pending are EITHER one (a later ask never drops an earlier one).
   let reflowTimer: ReturnType<typeof setTimeout> | undefined
   let reflowCheck: (() => boolean) | null = null
+  /** Why the pending reflow runs (spec 28 A1.7) - merged across the calls it coalesces, kept through a drag, a camera
+   *  in flight and held heights: the recorder names its moves `reflow:<reasons>`. */
+  type ReflowReason = 'measured' | 'cramped' | 'stale' | 'gesture-end'
+  let reflowReasons = new Set<ReflowReason>()
   /** A board load (boot, switch) starts its own reflow story: whatever was pending - an
    *  unconditional reflow from the board that was up - must never carry over and tidy this one. */
-  const cancelReflow = () => { clearTimeout(reflowTimer); reflowTimer = undefined; reflowCheck = null }
+  const cancelReflow = () => { clearTimeout(reflowTimer); reflowTimer = undefined; reflowCheck = null; reflowReasons = new Set() }
   /** How long a content reflow waits for a camera in flight - past it, the rows move anyway. */
   const REFLOW_CAMERA_WAIT = 1500
-  const scheduleReflow = (onlyIf?: () => boolean, delay = 400, cameraSince?: number) => {
+  const scheduleReflow = (reason: ReflowReason | null, onlyIf?: () => boolean, delay = 400, cameraSince?: number) => {
+    if (reason) reflowReasons.add(reason)
     const boardAt = get().board
     const prev = reflowTimer !== undefined ? reflowCheck : undefined   // undefined: nothing pending
     reflowCheck = prev === null || !onlyIf ? null : prev ? () => prev() || onlyIf() : onlyIf
@@ -686,20 +737,23 @@ export const useStore = create<State>((set, get) => {
       const check = reflowCheck
       reflowCheck = null
       const s = get()
-      if (s.board !== boardAt) return
+      if (s.board !== boardAt) { reflowReasons = new Set(); reflowSettled(); return }
       // defer, never drop - retries after the drag
-      if (s.gesture) { scheduleReflow(check ?? undefined); return }
+      if (s.gesture) { scheduleReflow('gesture-end', check ?? undefined); return }
       // and after a camera flight: a link's fit lands first, then the rows move around the frames it
       // showed (holdView keeps them where the fit put them). Looked at often, so the reflow follows the
       // landing closely - and never waited on past REFLOW_CAMERA_WAIT: a camera that keeps moving (fit
       // after fit) does not hold the rows apart forever
       const since = cameraSince ?? Date.now()
-      if (canvasCtl.cameraBusy() && Date.now() - since < REFLOW_CAMERA_WAIT) { scheduleReflow(check ?? undefined, 60, since); return }
-      if (check && !check()) return
+      if (canvasCtl.cameraBusy() && Date.now() - since < REFLOW_CAMERA_WAIT) { scheduleReflow(null, check ?? undefined, 60, since); return }
+      if (check && !check()) { reflowReasons = new Set(); reflowSettled(); return }
       for (const k of [...holds.keys()]) if (!s.nodes.some((n) => n.key === k && !n.missing)) letGo(k, false)   // gone: no longer in the batch
-      if (holds.size) { reflowOwed = true; return }   // a batch is reloading: the rows move once, when it lets go
+      if (holds.size) { reflowOwed = true; return }   // a batch is reloading: the rows move once, when it lets go (its reasons kept)
+      const why = `reflow:${[...reflowReasons].sort().join('+') || 'measured'}`
+      reflowReasons = new Set()
       // content moved the rows, not the human: hold what they are looking at still (Canvas.tsx)
-      if (composed(s)) { canvasCtl.holdView(); s.runTidy() }
+      if (composed(s)) withCause(why, () => { canvasCtl.holdView(); s.runTidy() })
+      reflowSettled()
     }, delay)
   }
   /** Boards whose layout the shell owns: a recipe, scene rows, or the auto board. Room for a
@@ -723,11 +777,15 @@ export const useStore = create<State>((set, get) => {
     clearTimeout(h.timer)
     holds.delete(key)
     if (apply && h.last) get().measureNode(...h.last)
-    if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow() }
+    if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow(null) }
+    else reflowSettled()
   }
   const dropHolds = () => { for (const h of holds.values()) clearTimeout(h.timer); holds.clear(); reflowOwed = false }
   /** A content measure moved the rows: once, after the last held node lets go. */
-  const reflowAfterHolds = () => { if (holds.size) reflowOwed = true; else scheduleReflow() }
+  const reflowAfterHolds = () => { reflowReasons.add('measured'); if (holds.size) reflowOwed = true; else scheduleReflow('measured') }
+  /** The recorder hears when nothing of the reflow story is left (spec 28 A1.7): no timer, no held height, none owed. */
+  reflowIdleNow = () => reflowTimer === undefined && !holds.size && !reflowOwed
+  const reflowSettled = () => { if (reflowIdleNow()) recorderHooks.reflowIdle() }
 
   // Marks (spec 26): a node that shows an older revision than its frame's `doc` has missed an update
   // (an event lost while disconnected, an edit that landed while it loaded): it goes stale. The
@@ -765,7 +823,7 @@ export const useStore = create<State>((set, get) => {
 
   /** A note may have landed with no room (a frame note via the manifest, a scene note via
    *  sh:scenes, either merged late by boot/switch): a composed board re-applies its layout. */
-  const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow(cramped) }
+  const roomForNotes = () => { if (composed(get()) && cramped()) scheduleReflow('cramped', cramped) }
   /** A composed board's saved positions were laid out around the heights of the session that saved
    *  them. A committed height that changed since (the doc grew or shrank while another board was
    *  open) opens at its new size over - or far above - the row below, and no measurement will re-flow
@@ -790,7 +848,7 @@ export const useStore = create<State>((set, get) => {
   }
   const recheckLayout = () => {
     const s = get()
-    if (composed(s) && s.nodes.some((n) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)))) scheduleReflow(layoutStale)
+    if (composed(s) && s.nodes.some((n) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w)))) scheduleReflow('stale', layoutStale)
   }
 
   /** Theme resolution ladder: user pin > the frame's declared meta.theme > viewTheme. */
@@ -1046,13 +1104,17 @@ export const useStore = create<State>((set, get) => {
     async boot(mayCommit) {
       const seq = ++loadSeq
       const boardName = get().board
+      // the recorder's request (spec 28 A1.7): the page's first load, else the open board read from disk again
+      const request = recorderHooks.request(boardName, firstLoad ? 'boot' : 'disk-reload')
+      firstLoad = false
       const revAtStart = editRev, scenesAtStart = scenesRev
       const next = await loadBoardState(boardName)
-      if (seq !== loadSeq) return false        // a newer load superseded this one
-      if (!next) { get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
+      if (seq !== loadSeq) { recorderHooks.cut(request, 'superseded'); return false }   // a newer load superseded this one
+      if (!next) { recorderHooks.cut(request, 'error'); get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
-      if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) return false
+      if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) { recorderHooks.cut(request, 'edited'); return false }
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
+      recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds(); reloadCause.clear()
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
@@ -1067,29 +1129,33 @@ export const useStore = create<State>((set, get) => {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
       const scenesAtStart = scenesRev
       if (name === get().board) return
+      // the recorder's request (spec 28 A1.7): the wait starts here, the flush included; the board still mounted
+      // owns the geometry until this one commits
+      const request = recorderHooks.request(name, 'switch')
       // a resize held across a switch: settle THIS board (retidy if it has a recipe)
       // before the flush, so the torn mid-gesture state is never what reaches disk
       if (resizedInGesture) {
         resizedInGesture = false
-        if (get().layout || get().sceneRows?.length) get().runTidy()
+        if (get().layout || get().sceneRows?.length) withCause('resize', () => get().runTidy())
       }
       // flush loop: an edit landing mid-save keeps dirty set and gets its own pass
       let ok = true
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
-      if (mySwitch !== switchSeq) return
-      if (get().dirty) { get().toast('current board could not be saved - staying here'); return }
+      if (mySwitch !== switchSeq) return recorderHooks.cut(request, 'superseded')
+      if (get().dirty) { recorderHooks.cut(request, 'unsaved'); get().toast('current board could not be saved - staying here'); return }
       // load the target while the current board stays mounted; commit atomically on success -
       // there is never an empty intermediate state and nothing to roll back
       const next = await loadBoardState(name)
-      if (mySwitch !== switchSeq) return
-      if (!next) { get().toast(`could not load "${name}"${whyNot(name)} - staying on ${get().board}`); return }
+      if (mySwitch !== switchSeq) return recorderHooks.cut(request, 'superseded')
+      if (!next) { recorderHooks.cut(request, 'error'); get().toast(`could not load "${name}"${whyNot(name)} - staying on ${get().board}`); return }
       // edits may have landed on the still-mounted old board during the target load
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
-      if (mySwitch !== switchSeq) return
-      if (get().dirty) { get().toast('current board could not be saved - staying here'); return }
+      if (mySwitch !== switchSeq) return recorderHooks.cut(request, 'superseded')
+      if (get().dirty) { recorderHooks.cut(request, 'unsaved'); get().toast('current board could not be saved - staying here'); return }
       clearTimeout(saveTimer)                  // a scheduled-but-clean timer must not fire against the new board
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
+      recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
       set({ board: name, interact: null, ...next })
       cancelReflow(); dropHolds(); reloadCause.clear()
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
@@ -1318,13 +1384,14 @@ export const useStore = create<State>((set, get) => {
           toast(dropped === 1 ? 'removed 1 deleted frame' : `removed ${dropped} deleted frames`)
         }
       }
-      set((s) => ({
+      // a guessed size corrected above (in place) is a move, seen when this set notifies the recorder
+      withCause('manifest', () => set((s) => ({
         manifest: m,
         nodes: changed || retinted ? [...final] : final,
         selection: s.selection.filter((k) => final.some((n) => n.key === k)),
         interact: s.interact && final.some((n) => n.key === s.interact) ? s.interact : null,
         ...(changed ? { dirty: true, baseLayout: nextBase } : {}),
-      }))
+      })))
       if (changed) scheduleSave()
       roomForNotes()                         // a frame note file arrived: room in front of its frame
     },
@@ -1343,15 +1410,15 @@ export const useStore = create<State>((set, get) => {
     frameFor(node) { return get().manifest?.frames.find((f) => f.id === node.frame) },
 
     moveNode(key, x, y) {
-      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, x, y } : n)), dirty: true }))
+      withCause('drag', () => set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, x, y } : n)), dirty: true })))
       scheduleSave()
     },
     // group drag: every selected node moves by the same delta from its gesture-start position
     moveSelectedBy(dx, dy, starts) {
-      set((s) => ({
+      withCause('drag', () => set((s) => ({
         nodes: s.nodes.map((n) => (starts[n.key] ? { ...n, x: starts[n.key].x + dx, y: starts[n.key].y + dy } : n)),
         dirty: true,
-      }))
+      })))
       scheduleSave()
     },
     // scoped theme = an explicit per-frame PIN; it survives board reloads and yields
@@ -1368,7 +1435,7 @@ export const useStore = create<State>((set, get) => {
       const inGesture = get().gesture
       // a manual resize means the board no longer uniformly shows one device; the resized
       // frame's snapshot entry follows the user's new size so Default will not undo it
-      set((s) => {
+      withCause('resize', () => set((s) => {
         const W = Math.max(120, w), H = Math.max(80, h)
         const cur = s.nodes.find((n) => n.key === key)
         // a human-resized CONTENT frame goes 'manual': measurements never overwrite it
@@ -1382,7 +1449,7 @@ export const useStore = create<State>((set, get) => {
             ? { ...s.baseLayout, [key]: { ...(s.baseLayout[key] ?? { x: cur.x, y: cur.y }), w: W, h: H } }
             : s.baseLayout,
         }
-      })
+      }))
       // mid-gesture saves would persist torn state (new sizes, pre-recipe positions);
       // the gesture-end hook saves once, after any retidy
       if (!inGesture) scheduleSave()
@@ -1399,22 +1466,23 @@ export const useStore = create<State>((set, get) => {
       // auto-fit height: a content frame must always grow/shrink to show ALL its content, even after
       // the human drags its WIDTH. 'manual' just means the human owns the WIDTH; the
       // HEIGHT is still measured, so resizing width reflows and refits height (no clipped/empty frame).
-      if (!node || node.sizeMode === 'device') return
-      if (node.frame !== frameId) return                  // generation guard: a reused node key
+      if (!node || node.sizeMode === 'device') return IGNORED
+      if (node.frame !== frameId) return IGNORED          // generation guard: a reused node key
                                                           // across a board switch never mis-attributes
       const f = s.manifest?.frames.find((x) => x.id === node.frame)
-      if (!f?.contentWidth) return                        // not a content frame - spoof-proofing
-      if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return
+      if (!f?.contentWidth) return IGNORED                // not a content frame - spoof-proofing
+      if (![ownWidth, measuredWidth, height].every((v) => Number.isFinite(v) && v > 0)) return IGNORED
       // a Doc that reports IS one, whatever the last load's scan said (it arrived since): its heights
       // count until the next load re-reads the sources
       measuring?.add(f.id)
       // held while it reloads (spec 26): only a settled measure lands now; the last other one waits
       const held = holds.get(key)
       if (held) {
-        if (settled !== true) { held.last = [key, frameId, ownWidth, measuredWidth, height, settled]; return }
+        if (settled !== true) { held.last = [key, frameId, ownWidth, measuredWidth, height, settled]; return { took: 'held' } }
         holds.delete(key); clearTimeout(held.timer)
         logReload({ kind: 'settled', node: key, frame: frameId, ms: performance.now() - held.at })
-        if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow() }
+        if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow(null) }
+        else reflowSettled()
       }
       // Generous cap: a reference doc with many screenshots is legitimately very tall and must fit in
       // FULL (this was 2.5x a viewport ~= 2700px, which clipped image-heavy docs). Still bounded so a
@@ -1427,7 +1495,7 @@ export const useStore = create<State>((set, get) => {
       // shrink it under a height already known for this width: that one is what the finished doc
       // measures, and shrinking now would only grow back when the image lands - the swim again
       const known = measuredHeights.get(mKey) ?? savedHeights.get(mKey)
-      if (settled === false && known !== undefined && H < known) return
+      if (settled === false && known !== undefined && H < known) return IGNORED
       measuredHeights.set(mKey, H)
       // AUTO owns the width too - adopt the Doc's declared/own width. MANUAL keeps the human's width
       // and only fits the height.
@@ -1438,25 +1506,26 @@ export const useStore = create<State>((set, get) => {
         if (W !== curW) {
           // Doc layout changed (document<->wide): adopt the new own width first; the
           // iframe resizes, remeasures, and the height commits on the next message
-          set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, w: W } : n)) }))
+          withCause('measure-width', () => set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, w: W } : n)) })))
           reflowAfterHolds()
-          return
+          return { took: 'width', w: W }
         }
       }
-      if (Math.round(measuredWidth) !== curW) return      // height only true at the width it was measured at
+      if (Math.round(measuredWidth) !== curW) return IGNORED   // height only true at the width it was measured at
       // a settled height at the frame's OWN width is the one the next load should open at (sizes.ts);
       // a human-owned width is the board file's business (manual sizes save there)
       if (settled === true && node.sizeMode !== 'manual') persistHeight(mKey, H)
-      if (Math.round(node.h) === H) return
-      set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) }))
+      if (Math.round(node.h) === H) return { took: 'fit', w: curW }
+      withCause('measure-height', () => set((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, h: H } : n)) })))
       reflowAfterHolds()
+      return { took: 'fit', w: curW }
     },
     noteMeasured(key, height) {
       // the column's height is its content's - the layout learns it here, and a composed board
       // whose next row now stands under a long note re-applies its recipe (0.19.2)
       if (setNoteHeight(key, height)) roomForNotes()
     },
-    setDeviceView(name) {
+    setDeviceView(name) { withCause('device', () => {
       const vp = name ? CONFIG.viewports[name] : null
       if (name && !vp) return
       set((s) => {
@@ -1492,7 +1561,7 @@ export const useStore = create<State>((set, get) => {
       })
       if (name) get().runTidy()                      // restore must NOT tidy - it would destroy positions
       else { scheduleSave(); roomForNotes(); recheckLayout() }   // ...unless a note grew meanwhile, or a Doc changed size, under the restored rows
-    },
+    }) },
     bumpRev(key) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, rev: (n.rev ?? 0) + 1 } : n)) })) },
     setThemeOn(key, theme) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, themeOn: theme } : n)) })) },
     setStatus(key, status, error) {
@@ -1532,7 +1601,7 @@ export const useStore = create<State>((set, get) => {
     },
     // scoped device sizing: only the selected frames change; null restores their defaults.
     // Always followed by a tidy - a preset change must never scramble the layout.
-    resizeSelected(name) {
+    resizeSelected(name) { withCause('device', () => {
       const vp = name ? CONFIG.viewports[name] : null
       if (name && !vp) return
       set((s) => {
@@ -1555,7 +1624,7 @@ export const useStore = create<State>((set, get) => {
         return { nodes, dirty: true, deviceView: null, baseLayout }
       })
       get().runTidy()
-    },
+    }) },
     selectAll() {
       set((s) => ({ selection: s.nodes.map((n) => n.key) }))
     },
@@ -1599,7 +1668,7 @@ export const useStore = create<State>((set, get) => {
       // gesture ends - sizes changed, so lanes and gaps must recompute
       if (!gesture && resizedInGesture) {
         resizedInGesture = false
-        if (get().layout || get().sceneRows?.length) get().runTidy()   // schedules the save
+        if (get().layout || get().sceneRows?.length) withCause('resize', () => get().runTidy())   // schedules the save
         else scheduleSave()
       }
       if (!gesture) get().flushFrameUpdates()   // A6: gesture end is a safe point for deferred updates
@@ -1729,14 +1798,15 @@ export const useStore = create<State>((set, get) => {
     runTidy() {
       const { nodes, manifest, sceneRows, layout } = get()
       const placed = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn, knownScenes(manifest))
-      set((s) => ({
+      // a tidy asked for by hand; one a preset, a resize, a reflow or the unplaced view runs keeps its cause
+      withCause(geoCause ?? 'tidy', () => set((s) => ({
         nodes: s.nodes.map((n) => {
           const p = placed.find((x) => x.key === n.key)
           return p ? { ...n, x: p.x, y: p.y } : n
         }),
         laidOut: sizeRecord(nodes),
         dirty: true,
-      }))
+      })))
       scheduleSave()
     },
     toast(text) {
@@ -1895,17 +1965,17 @@ export const useStore = create<State>((set, get) => {
       const vp = deviceView ? CONFIG.viewports[deviceView] : null
       const maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
       const node: Node = { key: nodeKey(), frame: f.id, x: maxX + 96, y: 0, w: vp?.width ?? d.w, h: vp?.height ?? d.h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }
-      set((s) => ({
+      withCause('spawn', () => set((s) => ({
         nodes: [...s.nodes, node],
         dirty: true,
         ...(vp && baseLayout ? { baseLayout: { ...baseLayout, [node.key]: { x: node.x, y: node.y, w: d.w, h: d.h } } } : {}),
-      }))
+      })))
       scheduleSave()
       get().toast(`added ${f.id}`)
       return node
     },
 
-    syncUnplaced(ids) {
+    syncUnplaced(ids) { withCause('unplaced', () => {
       const s = get()
       if (s.board !== UNPLACED || !s.manifest) return
       const want = new Set(ids)
@@ -1923,7 +1993,7 @@ export const useStore = create<State>((set, get) => {
       const scenes = [...new Set(nodes.map((n) => s.manifest!.frames.find((f) => f.id === n.frame)?.scene).filter((x): x is string => !!x))]
       set({ nodes, selection: s.selection.filter((k) => nodes.some((n) => n.key === k)), layout: scenes.length ? { rows: [scenes] } : null })
       get().runTidy()   // one band of its scenes again; the view is never saved
-    },
+    }) },
 
     save() {
       // a rename is moving this board's file - defer every save so nothing writes to the OLD
