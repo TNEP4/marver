@@ -183,6 +183,35 @@ describe('marver perf, printed', () => {
     expect(j.loads[0]).toMatchObject({ board: 'start-here', cause: 'boot', state: 'settled', settledMs: 3200, moves: 3, late: 2, errors: 2, lateErrors: 1 })
   })
 
+  it('a load with twenty errors: every one counted and in the JSON; --loads prints ten and says how many more', () => {
+    const now = Date.now()
+    const E = 'e00000000001', P3 = 'aaaaaaaaaaa3'
+    let seq = 0
+    const rec = (kind: string, body: Record<string, unknown> = {}) => ({ v: 1, ws: WS, page: P3, load: E, seq: seq++, ts: now - 60_000 + seq, kind, ...body })
+    const records = [
+      rec('load', { board: 'errors', cause: 'boot', request: E }),
+      rec('commit', { request: E, ms: 100, frames: 1, byKind: { hifi: 1, content: 0, html: 0 }, measuring: 0, savedHeights: 0 }),
+      ...Array.from({ length: 20 }, (_, i) => rec('error', { source: 'frame', frame: 'kit/boom', message: `error number ${i + 1}` })),
+      rec('settled', { ms: 900, moves: 0, distance: 0, causes: {}, missing: 0, neverReady: 0, errors: 1 }),
+    ]
+    writeFileSync(pageLog(root), records.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    expect(loadsSummary(records)[0].errors).toHaveLength(20)
+    perfCommand(root, { loads: true, json: true })
+    expect(JSON.parse(out.join('\n')).loads[0].errors.map((e: any) => e.message)).toEqual(Array.from({ length: 20 }, (_, i) => `error number ${i + 1}`))
+    out = []
+    perfCommand(root, { loads: true })
+    const text = out.join('\n')
+    expect(text).toContain('error (frame kit/boom): error number 10')
+    expect(text).not.toContain('error number 11')
+    expect(text).toContain('10 more errors not shown (--json lists every one)')
+    out = []
+    perfCommand(root, {})
+    expect(out.join('\n')).toMatch(/errors\s+boot\s+settled 0\.9 s · 20 errors/)
+    out = []
+    perfCommand(root, { json: true })
+    expect(JSON.parse(out.join('\n')).loads[0]).toMatchObject({ errors: 20 })
+  })
+
   it('nothing in the window says so', () => {
     writeFileSync(pageLog(root), '')
     perfCommand(root, { loads: true })

@@ -80,7 +80,8 @@ export interface LoadSummary {
   moves: { count: number; distance: number; causes: Ranked; late: { count: number; causes: Ranked } }
   /** the five slowest frames: settled, else ready, in ms from the load's request (a document kept from before it has none) */
   slowest: { node: string; frame?: string; ms: number; outcome: string }[]
-  /** each error once (one after the load ended is `late`: the load owns the board for as long as it stays open) */
+  /** each error once, every one (one after the load ended is `late`: the load owns the board for as long as it stays
+   *  open) - the printed report shows the first ERRORS_SHOWN and says how many more */
   errors: { source: string; frame?: string; component?: string; message: string; late?: true }[]
   /** errors past the load's 50: counted, not recorded */
   errorsNotRecorded: number
@@ -135,7 +136,7 @@ export function loadsSummary(records: Record<string, any>[]): LoadSummary[] {
       if (seenErr.has(k)) return []
       seenErr.add(k)
       return [{ source: e.source, ...(e.frame ? { frame: e.frame } : {}), ...(e.component ? { component: e.component } : {}), message: String(e.message ?? ''), ...(e.late ? { late: true as const } : {}) }]
-    }).slice(0, 10)
+    })
     const gs = of('gesture')
     out.push({
       ws: g[0].ws, page: g[0].page, load: g[0].load, at: load?.ts ?? Math.min(...g.map((r) => r.ts)),
@@ -177,6 +178,8 @@ export const droppedOf = (records: Record<string, any>[]): number =>
   unique(records).filter((r) => r.kind === 'dropped' && r.reason === undefined).reduce((n, r) => n + (Number(r.n) || 0), 0)
 
 const lateErrors = (l: LoadSummary) => l.errors.filter((e) => e.late).length
+/** The errors `--loads` prints for a load, as examples: the rest are counted on a line of their own (--json has all). */
+const ERRORS_SHOWN = 10
 const secs = (ms?: number) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '-')
 const boardName = (b?: string) => (b === '~unplaced' ? 'Not on a board' : b ? humanize(b) : 'a board (its request is older)')
 /** How a load ended, in a few words. */
@@ -217,7 +220,8 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (l.slowest.length) console.log(`    slowest: ${l.slowest.map((f) => `${f.frame ?? f.node} ${secs(f.ms)}`).join(', ')}`)
     const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} not done when it ended`] : [])]
     if (gone.length) console.log(`    ${gone.join(' · ')}`)
-    for (const e of l.errors) console.log(`    ${e.late ? 'late error' : 'error'} (${e.source}${e.frame ? ` ${e.frame}` : ''}${e.component ? `, in ${e.component}` : ''}): ${e.message}`)
+    for (const e of l.errors.slice(0, ERRORS_SHOWN)) console.log(`    ${e.late ? 'late error' : 'error'} (${e.source}${e.frame ? ` ${e.frame}` : ''}${e.component ? `, in ${e.component}` : ''}): ${e.message}`)
+    if (l.errors.length > ERRORS_SHOWN) console.log(`    ${plural(l.errors.length - ERRORS_SHOWN, 'more error')} not shown (--json lists every one)`)
     if (l.errorsNotRecorded) console.log(`    ${plural(l.errorsNotRecorded, 'more error')} past the first 50, not recorded`)
     if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
