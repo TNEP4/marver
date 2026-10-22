@@ -92,14 +92,21 @@ try {
   const server = await dev(o.root, { at })
   let restart = {}
   if (o.closeInRestart) {
-    // a close while a restart is on its way - the restart's new server being made (held at a step), or Vite closing the
-    // old one to put the new one in place (its HTTP server's close held) - awaited whole, the restart then let go
+    // a close while a restart is on its way - the restart's new server being made (held at a step), Vite closing the
+    // old one to put the new one in place (its HTTP server's close held), or the new one put in place and not bound yet
+    // (Vite's listen of it held) - awaited whole, the restart then let go
     const c = o.closeInRestart
     await new Promise((r) => setTimeout(r, 200))
     let reached, go
     const there = new Promise((r) => { reached = r }), gate = new Promise((r) => { go = r })
     const old = server.httpServer
     if (c.at === 'replace') { const shut = old.close.bind(old); old.close = (cb) => { reached(); void gate.then(() => shut(cb)); return old } }
+    else if (c.at === 'listen') {
+      // what Vite copies over this object to put the new server in place, its listen among them: that listen held
+      let listenNow = server.listen
+      Object.defineProperty(server, 'listen', { configurable: true, enumerable: true, get: () => listenNow,
+        set: (fn) => { listenNow = (...args) => { reached(); return gate.then(() => fn.apply(server, args)) } } })
+    }
     else held = { step: c.at, fails: c.then === 'fail', reached, gate }
     // whether an HTTP server other than the start's ever binds - for a moment is enough
     let bound = false
@@ -167,7 +174,7 @@ try {
 setTimeout(() => { process.stdout.write('@!' + JSON.stringify(process.getActiveResourcesInfo()) + '\\n'); process.exit(3) }, 10_000).unref()`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
-function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure'; closeInRestart?: { at: 'env' | 'configure' | 'replace'; then?: 'fail' | 'made' } }, home = freshHome()) {
+function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure'; closeInRestart?: { at: 'env' | 'configure' | 'replace' | 'listen'; then?: 'fail' | 'made' } }, home = freshHome()) {
   const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
@@ -377,26 +384,31 @@ describe('a restart whose new server cannot be made leaves nothing of it (A1.1)'
 
 describe('a close while a restart is on its way is the start\'s end (A1.1)', () => {
   // held while its new server is made - in its environments' initialisation, or after every configureServer hook but the
-  // probe's - and then made or thrown there; or while Vite closes the old server to put the new one in place
+  // probe's - and then made or thrown there; while Vite closes the old server to put the new one in place; or once Vite
+  // has put the new one in place on the start's server object (its methods, close and restart among them, copied over
+  // it), before that one binds
   const cases = [
     { at: 'env', then: 'fail' }, { at: 'env', then: 'made' },
     { at: 'configure', then: 'fail' }, { at: 'configure', then: 'made' },
-    { at: 'replace' },
+    { at: 'replace' }, { at: 'listen' },
   ] as const
+  const when = (c: (typeof cases)[number]) => c.at === 'replace' ? 'Vite puts the new server in place'
+    : c.at === 'listen' ? 'the new server is in place, before it binds'
+    : `the new server is made (held at "${c.at}", then ${c.then === 'fail' ? 'thrown' : 'made'})`
   for (const c of cases) {
-    it(`closed while ${c.at === 'replace' ? 'Vite puts the new server in place' : `the new server is made (held at "${c.at}", then ${c.then === 'fail' ? 'thrown' : 'made'})`}: the claims, the lock, the slot file and dev.json given back, no server listening, nothing of Marver's or Vite's left - the new server's included`, async () => {
+    it(`closed while ${when(c)}: the claims, the lock, the slot file and dev.json given back, no server listening, nothing of Marver's or Vite's left - the new server's included`, async () => {
       const s = start({ closeInRestart: c })
       const r = await s.report
       expect(r.ok, s.out()).toBe(true)
       if (c.at !== 'replace') {
-        expect(r.steps.filter((x) => x === c.at), 'the restart reached the step').toHaveLength(2)
-        // given back while the new server was still being made: nothing of that waits on it - the close itself does, and
-        // returns once that server is closed too
+        if (c.at !== 'listen') expect(r.steps.filter((x) => x === c.at), 'the restart reached the step').toHaveLength(2)
+        // given back while the new server was still being made, or not bound yet: nothing of that waits on it - the close
+        // itself does, and returns once that server is closed too
         const { live: _live, signals: _signals, ...during } = r.during!
         expect(during).toEqual({ lock: false, devJson: false, running: [], inUse: false })
         expect(r.waits).toBe(true)
-        // and once made, it is never put in place: Vite's close of the old server is refused
-        expect(r.replaced).toBe(false)
+        // made, it is never put in place: Vite's close of the old server is refused; put in place already, it never binds
+        expect(r.replaced).toBe(c.at === 'listen')
       }
       // the restart ends with the start, quietly - the close is what was asked for - and its server never bound, not for a moment
       expect(r.outcome).toBe('resolved')
