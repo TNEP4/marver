@@ -348,30 +348,46 @@ const measuredHeights = new Map<string, number>()
  *  agent may have edited frames since), once from the bundle on a published canvas. A stale entry
  *  is still the best first guess - the live measurement corrects it, and the dev shell writes the
  *  correction back. */
-const savedHeights = new Map<string, number>()
-/** The frames that measure (render a Doc), as the dev server read their sources at the last load -
- *  only theirs is a height to trust: a Doc turned bare Md keeps the size its board gives it, even
- *  in a page that measured it as a Doc earlier. null = no such list (a published bundle ships only
- *  measuring frames' heights). */
+let savedHeights = new Map<string, number>()
+/** The frames that measure (render a Doc), as the dev server read their sources at the load that
+ *  committed - only theirs is a height to trust: a Doc turned bare Md keeps the size its board gives
+ *  it, even in a page that measured it as a Doc earlier. null = no such list (a published bundle
+ *  ships only measuring frames' heights). */
 let measuring: Set<string> | null = null
+/** What one board load read of the sizes. Read by its request, installed by its commit (spec 28 A1.7): a
+ *  request that never commits - another board chosen, a failed read - changes nothing the mounted board
+ *  reads, its settle rule (settleRule) and its known heights included. */
+interface SizeRead { saved: Map<string, number>; measuring: Set<string> | null }
+/** Set only while a load prepares its nodes (the synchronous end of loadBoardState): the sizes it read. */
+let preparing: SizeRead | null = null
+const savedNow = () => preparing?.saved ?? savedHeights
 let publishedLoaded = false
-async function loadSavedHeights(): Promise<void> {
+/** The sizes as the server has them now, for one load; null = nothing new to read (a published canvas reads its
+ *  bundle once, here; no answer keeps what is installed). */
+async function readSizes(): Promise<SizeRead | null> {
   if (DATA) {
-    if (publishedLoaded) return
-    publishedLoaded = true
-    for (const [k, v] of Object.entries(DATA.sizes ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
-    return
+    if (!publishedLoaded) {
+      publishedLoaded = true
+      for (const [k, v] of Object.entries(DATA.sizes ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
+    }
+    return null
   }
   try {
     const r = await api('sizes')
-    if (!r.ok) return
+    if (!r.ok) return null
     const body = (await r.json()) as { heights?: Record<string, unknown>; measuring?: unknown }
-    savedHeights.clear()
-    for (const [k, v] of Object.entries(body.heights ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) savedHeights.set(k, Math.round(v))
-    measuring = Array.isArray(body.measuring) ? new Set(body.measuring.filter((x): x is string => typeof x === 'string')) : null
-  } catch { /* no cache: placeholders, as before */ }
+    const saved = new Map<string, number>()
+    for (const [k, v] of Object.entries(body.heights ?? {})) if (typeof v === 'number' && Number.isFinite(v) && v > 0) saved.set(k, Math.round(v))
+    return { saved, measuring: Array.isArray(body.measuring) ? new Set(body.measuring.filter((x): x is string => typeof x === 'string')) : null }
+  } catch { return null }   // no cache: placeholders, as before
 }
-const measures = (frameId: string) => !measuring || measuring.has(frameId)
+/** The committed load's sizes become the page's. */
+function installSizes(read: SizeRead | null): void {
+  if (!read) return
+  savedHeights = read.saved
+  measuring = read.measuring
+}
+const measures = (frameId: string) => { const m = preparing ? preparing.measuring : measuring; return !m || m.has(frameId) }
 
 // settled heights that differ from the committed ones, written back in batches (dev only). One
 // write in flight at a time; a height that changes while its write is in flight queues behind it,
@@ -412,7 +428,7 @@ async function flushHeights() {
   if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
 }
 
-const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedHeights.has(`${frameId}@${w}`))
+const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedNow().has(`${frameId}@${w}`))
 
 /** The Doc sizes a layout was computed around: each auto content node whose height is known, by key,
  *  as "WxH" (one line per node in the board file). A composed board saves it with its positions
@@ -446,7 +462,7 @@ function defaultSize(frame: FrameEntry) {
     const vp = CONFIG.viewports[frame.viewport ?? '']
     const w = vp?.width ?? frame.contentWidth
     const key = `${frame.id}@${w}`
-    const known = measures(frame.id) ? measuredHeights.get(key) ?? savedHeights.get(key) : undefined
+    const known = measures(frame.id) ? measuredHeights.get(key) ?? savedNow().get(key) : undefined
     return { w, h: known ?? vp?.height ?? Math.round(w * 0.75) }
   }
   const vp = CONFIG.viewports[frame.viewport ?? ''] ?? CONFIG.viewports.mobile ?? { width: 390, height: 844 }
@@ -899,22 +915,23 @@ export const useStore = create<State>((set, get) => {
     },
   }
 
-  /** Fetch + normalize a board into ready-to-commit state, WITHOUT touching the store.
+  /** Fetch + normalize a board into ready-to-commit state, WITHOUT touching the store - nor the sizes the
+   *  mounted board reads: those it read come back with it, for the commit to install (installSizes).
    *  null = failure (transport, malformed manifest, non-404 board error) - the caller
    *  keeps whatever board is currently mounted. */
-  const loadBoardState = async (boardName: string): Promise<Partial<State> | null> => {
+  const loadBoardState = async (boardName: string): Promise<{ state: Partial<State>; sizes: SizeRead | null } | null> => {
     clearNoteHeights()                     // heights are per column drawn; a key shared by two board files carries none across
     loadErrors.delete(boardName)
     try {
       let raw: any
-      const saved = loadSavedHeights()       // in parallel with the manifest; every size below reads it
+      const saved = readSizes()              // in parallel with the manifest; every size below reads it
       if (DATA) raw = DATA.manifest
       else {
         const mRes = await mvFetch('/design/manifest.json')
         if (!mRes.ok) return null
         raw = await mRes.json().catch(() => undefined)
       }
-      await saved
+      const sizes = await saved
       if (raw === undefined || raw === null || typeof raw !== 'object') return null
       bumpManifestRev()                        // fresh manifest → fresh iframe URLs
       const manifest: Manifest = {
@@ -952,6 +969,9 @@ export const useStore = create<State>((set, get) => {
         else { loadErrors.set(boardName, (await res.json().catch(() => null))?.error ?? ''); loaded = null }   // anything else must not commit an empty canvas - and says why (#6)
       }
       if (loaded === null) return null
+      // from here to the return nothing is awaited: the sizes this load read are the ones its nodes are made from,
+      // and no other code runs meanwhile to read them in place of the mounted board's
+      preparing = sizes
       if (loaded !== 'fresh') {
         const { board, sha256 } = loaded
         boardHash = sha256
@@ -1098,8 +1118,8 @@ export const useStore = create<State>((set, get) => {
       if (layout && boardHash && !needTidy && !cramped && nodes.length) {
         tidy(tidyInput(nodes, manifest), layout, layoutWarn, knownScenes(manifest))
       }
-      return { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }
-    } catch { return null }
+      return { state: { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }, sizes }
+    } catch { return null } finally { preparing = null }
   }
 
   return {
@@ -1115,12 +1135,14 @@ export const useStore = create<State>((set, get) => {
       const request = recorderHooks.request(boardName, firstLoad ? 'boot' : 'disk-reload')
       firstLoad = false
       const revAtStart = editRev, scenesAtStart = scenesRev
-      const next = await loadBoardState(boardName)
+      const loaded = await loadBoardState(boardName)
       if (seq !== loadSeq) { recorderHooks.cut(request, 'superseded'); return false }   // a newer load superseded this one
-      if (!next) { recorderHooks.cut(request, 'error'); get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
+      if (!loaded) { recorderHooks.cut(request, 'error'); get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) { recorderHooks.cut(request, 'edited'); return false }
+      const next = loaded.state
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
+      installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds(); reloadCause.clear()
@@ -1152,9 +1174,10 @@ export const useStore = create<State>((set, get) => {
       if (get().dirty) { recorderHooks.cut(request, 'unsaved'); get().toast('current board could not be saved - staying here'); return }
       // load the target while the current board stays mounted; commit atomically on success -
       // there is never an empty intermediate state and nothing to roll back
-      const next = await loadBoardState(name)
+      const loaded = await loadBoardState(name)
       if (mySwitch !== switchSeq) return recorderHooks.cut(request, 'superseded')
-      if (!next) { recorderHooks.cut(request, 'error'); get().toast(`could not load "${name}"${whyNot(name)} - staying on ${get().board}`); return }
+      if (!loaded) { recorderHooks.cut(request, 'error'); get().toast(`could not load "${name}"${whyNot(name)} - staying on ${get().board}`); return }
+      const next = loaded.state
       // edits may have landed on the still-mounted old board during the target load
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
       if (mySwitch !== switchSeq) return recorderHooks.cut(request, 'superseded')
@@ -1162,6 +1185,7 @@ export const useStore = create<State>((set, get) => {
       clearTimeout(saveTimer)                  // a scheduled-but-clean timer must not fire against the new board
       ++loadSeq                                // invalidate any in-flight boot of the old board
       const live = get().manifest              // a WS manifest update may have landed mid-load
+      installSizes(loaded.sizes)               // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
       set({ board: name, interact: null, ...next })
       cancelReflow(); dropHolds(); reloadCause.clear()

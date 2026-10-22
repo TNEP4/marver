@@ -328,6 +328,37 @@ describe('the page recorder: board loads', () => {
     held.stop()
   }, 90_000)
 
+  it('a switch that never commits leaves the mounted load as it read the sizes: its Doc settles by its measure, never at ready', async () => {
+    if (!browser) return
+    const { s, page, held } = await open('#/b/slow', ['*slow.png*'])
+    await until(() => held.paused('*slow.png*') > 0, 20_000, 'the image to be asked for')
+    await browser.until(s, `__mvStore.getState().nodes.find((n) => n.key === 'k-slow')?.status === 'ready'`, 20_000)
+    expect((await R(s)).nodes['k-slow']).toBeNull()
+    // the switch's own read of the sizes says the frame measures no more (its source stopped rendering a Doc), and its
+    // board never arrives: the request is cut, the slow board stays mounted
+    const off = browser.on((m) => {
+      if (m.method !== 'Fetch.requestPaused' || m.sessionId !== s) return
+      const { requestId, request } = m.params
+      const sizes = /\/api\/sizes/.test(request.url)
+      if (!sizes && !/\/api\/boards\/still/.test(request.url)) return
+      const body = sizes ? { heights: {}, measuring: [] } : { error: 'not today' }
+      void browser!.send('Fetch.fulfillRequest', { requestId, responseCode: sizes ? 200 : 500, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from(JSON.stringify(body)).toString('base64') }, s).catch(() => {})
+    })
+    await browser.send('Fetch.enable', { patterns: ['*slow.png*', '*/api/sizes*', '*/api/boards/still*'].map((urlPattern) => ({ urlPattern, requestStage: 'Request' })) }, s)
+    await browser.eval(s, `window.__mvStore.getState().switchBoard('still').then(() => 1)`)
+    expect(await browser.eval(s, `window.__mvStore.getState().board`)).toBe('slow')
+    await wait(2500)
+    expect((await R(s)).nodes['k-slow']).toBeNull()
+    expect((await R(s)).owner).toMatchObject({ board: 'slow', done: null })
+    // its image lands: it settles, by its measure
+    await held.release('*slow.png*')
+    const l = await ended(page, 'slow')
+    expect(l.of('settled')).toHaveLength(1)
+    expect(l.frame('k-slow')).toMatchObject({ outcome: 'settled' })
+    expect(lines().find((r) => r.page === page && r.kind === 'cut' && r.reason === 'error')).toBeTruthy()
+    off(); held.stop()
+  }, 90_000)
+
   it('a frame reloaded mid-load reports the new document\'s generation', async () => {
     if (!browser) return
     const { s, page, held } = await open('#/b/slow', ['*slow.png*'])
