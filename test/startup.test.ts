@@ -103,6 +103,9 @@ const state = async () => ({
 const say = (v) => process.stdout.write('@@' + JSON.stringify(v) + '\\n')
 try {
   const server = await dev(o.root, { at })
+  // a Vite whose restart no longer clears its CLI shortcuts state on the server object before it closes the old server:
+  // the property a plain one again, so step 6 never hears that Vite is about to close it
+  if (o.unarmed) { let s = server._shortcutsState; Object.defineProperty(server, '_shortcutsState', { configurable: true, enumerable: true, get: () => s, set: (v) => { s = v } }) }
   let restart = {}
   if (o.closeInRestart) {
     // a close while a restart is on its way - the restart's new server being made (held at a step), Vite closing the
@@ -209,8 +212,8 @@ try {
 setTimeout(() => { process.stdout.write('@!' + JSON.stringify(process.getActiveResourcesInfo()) + '\\n'); process.exit(3) }, 10_000).unref()`
 
 /** A start in a child of its own. Resolves with its first report; `exited` with how it ended. */
-function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure'; closeInRestart?: { at: 'env' | 'configure' | 'replace' | 'listen'; then?: 'fail' | 'made'; from?: 'timer' }; closeInDispose?: boolean }, home = freshHome()) {
-  const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
+function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolean; restart?: boolean; restartFails?: boolean; restartThrows?: 'env' | 'configure'; closeInRestart?: { at: 'env' | 'configure' | 'replace' | 'listen'; then?: 'fail' | 'made'; from?: 'timer' }; closeInDispose?: boolean; unarmed?: boolean; node?: string[] }, home = freshHome()) {
+  const c = spawn(process.execPath, [...o.node ?? [], '--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
       MV_START: JSON.stringify({ ...o, root, devModule: join(repo, 'src', 'server', 'dev.ts'), exclusiveModule: join(repo, 'src', 'server', 'exclusive.ts') }) },
@@ -366,6 +369,8 @@ describe('a Vite restart is no way out (A1.1)', () => {
     expect(kept(r.before!).length).toBeGreaterThan(0)
     expect(kept(r.now!)).toEqual(kept(r.before!))
     expect(r.after).toEqual({ ...clean, inUse: false })
+    // this Vite restarts as step 6 reads it: no fallback taken
+    expect(s.out()).not.toContain('restarts differently')
     await endsAlone(s)
   }, 60_000)
 
@@ -496,6 +501,41 @@ describe('Vite restarts as step 6 reads it (A1.1)', () => {
     expect(body.match(/\.close\(/g), 'the one close').toHaveLength(1)
     expect(body.indexOf('Object.assign(server, newServer)'), 'then put in place').toBeGreaterThan(cleared)
   })
+})
+
+describe('a Vite that restarts otherwise never hangs a canvas (A1.1)', () => {
+  // the guard above protects this suite, not a canvas: package.json takes any vite 8, so a person can run one whose
+  // restart no longer clears the shortcuts state before it closes the old server. Simulated here - the property a plain
+  // one again in the child - Vite's close of the old server comes un-said, and step 6's fallbacks must take it
+  const kept = (s: State) => s.live.filter((l) => /^(fs\.watch|setInterval)/.test(l)).sort()
+  const WARNING = 'marver: this Vite version restarts differently - restart marver dev if the canvas stops answering'
+  const said = (out: string) => out.split(WARNING).length - 1
+  afterEach(() => rmSync(join(root, '.env'), { force: true }))
+
+  it('an .env edit: the restart\'s own close is told by who awaits it - the restart completes, the claims and Marver\'s watchers stay, said once, and a close leaves nothing', async () => {
+    const s = start({ restart: true, unarmed: true })
+    const r = await s.report
+    expect(r.ok, s.out()).toBe(true)
+    expect(r.restarted).toBe(true)
+    const slot = `slot-${r.port! - Number(BASE)}.json`
+    for (const { live: _live, signals: _signals, ...st } of [r.before!, r.now!]) expect(st).toEqual({ lock: true, devJson: true, running: [slot], inUse: true })
+    expect(kept(r.now!)).toEqual(kept(r.before!))
+    expect(said(s.out()), s.out()).toBe(1)
+    expect(r.after).toEqual({ ...clean, inUse: false })
+    await endsAlone(s)
+  }, 60_000)
+
+  it('and with no async stack to tell it by: the canvas ends within a bounded time instead of hanging - the claims, the lock, the slot file and dev.json given back, said once, nothing left', async () => {
+    const s = start({ restart: true, unarmed: true, node: ['--no-async-stack-traces'] })
+    const t0 = Date.now()
+    const r = await s.report
+    expect(r.ok, s.out()).toBe(true)
+    expect(Date.now() - t0).toBeLessThan(40_000)
+    expect(r.now).toEqual({ ...clean, inUse: false })
+    expect(said(s.out()), s.out()).toBe(1)
+    expect(r.after).toEqual({ ...clean, inUse: false })
+    await endsAlone(s)
+  }, 90_000)
 })
 
 describe('the CLI ends the process (A1.1, A1.3)', () => {
