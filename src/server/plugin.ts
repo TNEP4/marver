@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
@@ -17,6 +16,7 @@ import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
 import { checkUpdate, installedVersion } from './update.ts'
+import { workspaceId } from './workspace.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
 const VIRTUAL_CONFIG = 'virtual:sh-config'
@@ -27,10 +27,15 @@ export interface PluginCtx {
   clientDir: string
   config: ShConfig
   detectedThemeCss: string | null
+  /** spec 28 A1.6: this run's workspace - a `--recover` run serves under an earlier address's key.
+   *  Default: the project's own (workspace.ts). */
+  workspace?: string
 }
 
 export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const { root, clientDir, config } = ctx
+  // the run's workspace (A1.6): CONFIG.workspace, the capture check and every request's check read this one value
+  const ws = ctx.workspace ?? workspaceId(root)
 
   // the project's line in the manifest; re-read from design/config.ts when that file changes
   // (the rest of the config still needs a restart - only the two orientation fields are live)
@@ -172,7 +177,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         })()
         // wordmark: a declared share.name wins over the repo dir - deploy hosts build
         // from anonymous paths (/app), and the gate already wears the declared name
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture, names: config.jam.names && config.jam.agent === 'claude' } : null, workspace: createHash('sha256').update(root).digest('hex').slice(0, 16) })}`
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture, names: config.jam.names && config.jam.agent === 'claude' } : null, workspace: ws })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'
@@ -256,7 +261,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // Pre-middlewares: our routes + api run before Vite's html fallback.
       // the marks start with the dev server, before any page asks (spec 26)
       initMarks(root, manifest.frames)
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled }))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled, workspace: ws }))
       server.middlewares.use(routesMiddleware(server, clientDir, {
         doc: (id) => docRev(root, manifest.frames, id),
         docs: () => docRevs(root, manifest.frames),

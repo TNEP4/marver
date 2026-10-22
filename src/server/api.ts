@@ -10,6 +10,7 @@ import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFil
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
+import { workspaceId } from './workspace.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -109,7 +110,9 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string } = {}): Connect.NextHandleFunction {
+  // the run's workspace (spec 28 A1.6): a --recover run serves under an earlier address's key
+  const ws = opts.workspace ?? workspaceId(root)
   // the frames as the dev server knows them now (its cached manifest), else as the disk says
   const devManifest = (): Manifest => {
     if (opts.manifest) return opts.manifest()
@@ -1083,8 +1086,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (raw == null) return json(res, 400, { error: 'body too large' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         // a capture made in another workspace (a tab left open across a port reuse) is not this one's
-        const { createHash } = await import('node:crypto')
-        if (b?.workspace !== undefined && b.workspace !== createHash('sha256').update(root).digest('hex').slice(0, 16)) return json(res, 409, { error: 'this capture was made in another workspace' })
+        if (b?.workspace !== undefined && b.workspace !== ws) return json(res, 409, { error: 'this capture was made in another workspace' })
         const { jamLive } = await import('./jam/live.ts')
         if (!jamLive.capture) return json(res, 409, { error: 'jam is not running here' })
         const r = await jamLive.capture(b?.record)
