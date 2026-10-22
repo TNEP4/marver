@@ -137,9 +137,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   on several) with them selected and in view -
   the human finds the work at once on a board of fifty frames. Never a full-screen focus link
   (`#/f/...`) unless they ask for full screen. `npx marver ls` lists the canvases running on
-  this Mac and their links; none for this folder? End by asking the person to run `npx marver
-  dev` in their own terminal (or start it detached: "Keeping the canvas up") - the link carries
-  its port.
+  this Mac and their links; none for this folder? End by asking the person to run
+  `npx marver dev` in their own terminal (or start it detached: "Keeping the canvas up") - the
+  link carries its port.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame. A reply that asks them
