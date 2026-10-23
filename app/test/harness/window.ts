@@ -75,6 +75,7 @@ export async function launchWindow(kind: 'pw' | 'prod', o: { extraEnv?: Record<s
       await run.call('fake:report', { tab: id, ...(busy ? { busy: { busy: why!.length > 0, unsaved: busy.unsaved, why } } : {}), ...extra })
     },
     async close() {
+      try { await run.call('sheet', { mode: 'confirm' }) } catch { /* gone already */ }
       const code = await run.close()
       for (const f of fakes) await f.close().catch(() => {})
       env.cleanup()

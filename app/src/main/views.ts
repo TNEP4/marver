@@ -48,7 +48,7 @@ import {
   appPrefs, APP_ORIGIN, attachContent, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
   pageOf, pageView, sendPill, showWindow, stripContents, viewsNow, windowVisible,
 } from './window.ts'
-import { note, provide } from './testing/index.ts'
+import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
@@ -287,14 +287,17 @@ const sheetsShown: unknown[] = []
 async function testSheet(sheet: unknown): Promise<boolean> {
   sheetsShown.push(sheet)
   j('sheet', sheet)
-  if (sheetMode === 'confirm') return true
+  if (sheetMode === 'confirm' || sheetMode === null) return true
   if (sheetMode === 'cancel') return false
   return new Promise<boolean>((answer) => heldSheets.push({ sheet, answer }))
 }
 
+/** A test build never puts a native sheet on the screen: its sheets are answered by the seam ('confirm' unless a case says). */
+const seamed = (): boolean => __MV_TEST__ && (sheetMode !== null || testMode())
+
 async function ask(s: Sheet): Promise<boolean> {
   const words = sheetText(s)
-  if (__MV_TEST__ && sheetMode) return testSheet({ kind: 'guard', action: s.action.kind, tabs: s.tabs.map((x) => x.id), ...words })
+  if (__MV_TEST__ && seamed()) return testSheet({ kind: 'guard', action: s.action.kind, tabs: s.tabs.map((x) => x.id), ...words })
   const win = mainWindow()
   if (!win) return false
   const r = await dialog.showMessageBox(win, { type: 'warning', message: words.message, detail: words.detail, buttons: words.buttons, defaultId: 0, cancelId: 0, noLink: true })
@@ -368,7 +371,7 @@ async function notResponding(t: Tab): Promise<void> {
   h.abort = ac
   let reload = false
   try {
-    if (__MV_TEST__ && sheetMode) reload = await testSheet({ kind: 'hang', tab: t.id, others: snap.tabs.map((x) => x.id), ...words })
+    if (__MV_TEST__ && seamed()) reload = await testSheet({ kind: 'hang', tab: t.id, others: snap.tabs.map((x) => x.id), ...words })
     else {
       const win = mainWindow()
       if (!win) return
@@ -819,6 +822,15 @@ function testHooks(): void {
     wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers: modifiers ?? [] })
     return true
   })
+  provide('click', (a) => {
+    const { target, x, y } = arg<{ target: string; x?: number; y?: number }>(a)
+    const wc = wcOf(target)
+    if (!wc) return false
+    const at = { x: x ?? 40, y: y ?? 40 }
+    wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 })
+    wc.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 })
+    return true
+  })
   provide('pageReady', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; onAppReady(wc); return true })
   provide('pill:raise', (a) => { const { kind, ...c } = arg<{ kind: 'files' | 'test'; text: string; short: string; lead?: string; dismissible?: boolean }>(a); setCondition(kind, c.text ? c : null); return currentPill() })
   provide('pill:action', (a) => { const { rev, act } = arg<{ rev: number; act: 'button' | 'dismiss' }>(a); return onPillAction(rev, act) })
@@ -831,6 +843,9 @@ function testHooks(): void {
   provide('page', (a) => { const wc = pageView(arg<{ tab: string }>(a).tab)?.webContents; return wc ? pageOf(wc) : null })
   provide('show', (a) => { showWindow({ focus: arg<{ focus?: boolean }>(a).focus }); return true })
   provide('hide', () => { hideWindow(); return true })
+  // kept above other windows without taking the keyboard: Chromium tells an occluded page nothing (its hang
+  // monitor's 'unresponsive' needs the contents visible)
+  provide('onTop', (a) => { const win = mainWindow(); if (!win) return false; const on = !!arg<{ on: boolean }>(a).on; win.setAlwaysOnTop(on, 'floating'); if (on) win.showInactive(); return true })
   provide('resize', (a) => { const { width, height } = arg<{ width: number; height: number }>(a); mainWindow()?.setContentSize(width, height); return true })
   provide('fullscreen', (a) => { mainWindow()?.setFullScreen(!!arg<{ on: boolean }>(a).on); return true })
   provide('menu', () => menuModel())
