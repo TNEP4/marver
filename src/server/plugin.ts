@@ -15,6 +15,7 @@ import { logReload, tidyPerfDir } from './perf.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
+import { logoRoute } from './logo.ts'
 import { guardMiddleware } from './guard.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
@@ -293,6 +294,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       initMarks(root, manifest.frames)
       tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
       server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled, workspace: ws }))
+      // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
+      server.middlewares.use(logoRoute(root, () => config.share.logo, ctx.proof))
       server.middlewares.use(routesMiddleware(server, clientDir, {
         doc: (id) => docRev(root, manifest.frames, id),
         docs: () => docRevs(root, manifest.frames),

@@ -7,7 +7,9 @@
  *
  * Pinned exactly, so the app (A2.3 `proof.ts`) computes the same: the key is the slot file's 32 bytes
  * (base64url there), HMAC-SHA256 over UTF-8 `doc|<nonce>|<port>` (port in decimal), base64url without
- * padding. Requests from the app itself carry `app|<port>` the same way.
+ * padding. Requests from the app itself carry `app|<port>` the same way, and the logo the app fetches
+ * (`GET /__mv/logo`, spec 28 A2.4) `logo|<nonce>|<port>`: a listener that took the port after the tab was
+ * verified can never hand it a logo.
  */
 import { createHmac } from 'node:crypto'
 
@@ -19,9 +21,11 @@ export const NONCE = /^[A-Za-z0-9_-]{16,64}$/
 const sign = (key: Buffer, msg: string): string => createHmac('sha256', key).update(msg, 'utf8').digest('base64url')
 export const docProof = (key: Buffer, nonce: string, port: number): string => sign(key, `doc|${nonce}|${port}`)
 export const appProof = (key: Buffer, port: number): string => sign(key, `app|${port}`)
+export const logoProof = (key: Buffer, nonce: string, port: number): string => sign(key, `logo|${nonce}|${port}`)
 
-/** The two headers for a request carrying a well-formed `x-mv-nonce`, else null. */
-export function proofHeaders(p: DocProof | undefined, nonce: unknown): Record<string, string> | null {
+/** The two headers for a request carrying a well-formed `x-mv-nonce`, else null: over the shell's document
+ *  (`doc`), or over the logo (`logo`). */
+export function proofHeaders(p: DocProof | undefined, nonce: unknown, kind: 'doc' | 'logo' = 'doc'): Record<string, string> | null {
   if (!p || typeof nonce !== 'string' || !NONCE.test(nonce)) return null
-  return { 'x-mv-instance': p.instance, 'x-mv-proof': docProof(p.key, nonce, p.port) }
+  return { 'x-mv-instance': p.instance, 'x-mv-proof': (kind === 'logo' ? logoProof : docProof)(p.key, nonce, p.port) }
 }
