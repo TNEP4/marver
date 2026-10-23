@@ -96,7 +96,10 @@ describe('a record not fresh asks one sheet first, Cancel the default (r1 #2, r2
     expect(await w.run.call('close', { id })).toBe('closed')
   })
 
-  it('a page that reports unsaved and hangs before its admission: its close and its reload ask first, and Cancel keeps it', async () => {
+  // main's own record alone (the fake trust): a page busy in a loop before main heard anything stays unknown, and
+  // asks. The race the spec names - the page's report held in the preload while the admission waits - needs the
+  // real bridge and preload: test/prod/guard-bridge.test.ts
+  it('a page busy before main heard from it: its close and its reload ask first, and Cancel keeps it', async () => {
     const { id } = await shown({ slot: 6 })
     // the page holds work it never got to report: a busy loop before any report reaches main
     await w.run.call('exec', { target: id, js: 'setTimeout(function () { var e = Date.now() + 6000; while (Date.now() < e) {} }, 20); 1' })
@@ -139,8 +142,13 @@ describe('the quit (A2.2: guardAll, one operation per canvas tab)', () => {
     await w.report(b.id, { unsaved: true, why: ['capture-recording'] })
     await w.run.call('activate', { id: a.id })
     const wcs = (await w.state()).tabs.filter((t) => t.hasView).map((t) => t.wcId)
+    // the red button or ⇧⌘W hid the window; then a quit from the Dock (or a logout)
+    await w.run.call('hide')
+    expect((await w.run.call<{ visible: boolean }>('window')).visible).toBe(false)
     await w.run.call('quit')
     await sleep(800)
+    // refused, and seen: the window shown with that tab in front, never a quit that silently did nothing
+    expect((await w.run.call<{ visible: boolean }>('window')).visible).toBe(true)
     const s = await w.state()
     expect(s.quitting).toBe(false)
     expect(s.active).toBe(b.id)
@@ -170,6 +178,56 @@ describe('the quit (A2.2: guardAll, one operation per canvas tab)', () => {
     expect(closedBefore.length).toBeGreaterThan(0)
     await w.run.call('activate', { id: closedBefore[0]!.id })
     await w.until((x) => x.tabs.find((t) => t.id === closedBefore[0]!.id)!.hasView, 5000, 'a tab closed by the quit to load again when shown')
+  })
+
+  it('trust lost during another tab\'s close: two fresh, clean tabs, the second\'s canvas stopped while the first\'s close waits - the second is not closed, the quit cancelled, it comes forward (r3 #1)', async () => {
+    for (const t of (await w.state()).tabs.filter((x) => x.kind === 'local' && x.hasView)) await w.run.call('exec', { target: t.id, js: MAY_LEAVE })
+    // the first's close waits on its own beforeunload a while (Chromium cuts a renderer that does not answer at
+    // about 1 s): the second loses its trust in that wait
+    const slow = `addEventListener('beforeunload', function () { var e = Date.now() + 800; while (Date.now() < e) {} }); say('script');`
+    const a = await shown({ slot: 11, script: slow })
+    await w.report(a.id, { unsaved: false })
+    const b = await shown({ slot: 12 })
+    await w.report(b.id, { unsaved: false })
+    for (const t of (await w.state()).tabs) if (t.kind === 'local' && t.hasView && t.retained && t.reports.safety === 'fresh') await w.report(t.id, { unsaved: false })
+    await w.run.call('sheet', { mode: 'confirm' })
+    await w.run.call('activate', { id: 'home' })
+    const since = (await w.log()).length
+    const quit = w.run.call('guardAll', { action: { kind: 'quit' } })
+    // the moment the first's close is under way, the second's canvas stops
+    for (let i = 0; i < 200 && !(await w.log('act', since)).some((l) => l.data.tab === a.id && l.data.action === 'quit' && !l.data.answer); i++) await sleep(10)
+    await w.run.call('fake:gone', { instance: (await w.tab(b.id)).reg!.instance })
+    expect(await quit).toBe('refused')
+    const s = await w.state()
+    expect(s.tabs.find((t) => t.id === a.id)!.hasView).toBe(false)   // closed before it, loads again when shown
+    expect(s.tabs.find((t) => t.id === b.id)).toMatchObject({ hasView: true, retained: true })
+    expect(s.tabs.find((t) => t.id === b.id)!.reports.safety).toBe('stale')
+    expect(s.active).toBe(b.id)
+    expect((await w.log('act', since)).filter((l) => l.data.tab === b.id)).toEqual([])
+  })
+
+  it('trust lost during the shared sheet: a sheet naming a stale tab, and a fresh, clean tab it does not name losing trust before the person confirms - nothing is closed (r3 #1)', async () => {
+    const stale = await shown({ slot: 13 })
+    await w.report(stale.id, { unsaved: false })
+    await w.run.call('fake:gone', { instance: (await w.tab(stale.id)).reg!.instance })
+    const clean = await shown({ slot: 14 })
+    await w.report(clean.id, { unsaved: false })
+    const views = (await w.state()).tabs.filter((t) => t.hasView).map((t) => t.wcId)
+    await w.run.call('sheet', { mode: 'hold' })
+    const n = (await w.run.call<{ shown: unknown[] }>('sheets')).shown.length
+    const since = (await w.log()).length
+    const quit = w.run.call('guardAll', { action: { kind: 'quit' } })
+    for (let i = 0; i < 100 && (await w.run.call<{ held: number }>('sheets')).held < 1; i++) await sleep(20)
+    const sheet = (await w.run.call<{ shown: { tabs: string[] }[] }>('sheets')).shown[n]!
+    expect(sheet.tabs).toContain(stale.id)
+    expect(sheet.tabs).not.toContain(clean.id)
+    await w.run.call('fake:gone', { instance: (await w.tab(clean.id)).reg!.instance })
+    expect(await w.run.call('sheet:answer', { ok: true })).toBe(true)
+    expect(await quit).toBe('refused')
+    expect((await w.state()).tabs.filter((t) => t.hasView).map((t) => t.wcId)).toEqual(views)
+    expect(await w.log('act', since)).toEqual([])
+    expect((await w.state()).active).toBe(clean.id)
+    await w.run.call('sheet', { mode: 'confirm' })
   })
 
   it('the next quit goes through: every guarded page closed, and the app exits 0', async () => {

@@ -6,8 +6,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { allTabs, onCommit, onDocumentGone, onRegistry, onFail, wantsLoad, type Tab } from '../../src/main/tabs.ts'
 import {
-  copyDetails, hangSheetText, nextDelay, onLifted, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons, scheduleRetry,
-  snapshotKey, stopRetries,
+  copyDetails, hangDecision, hangSheetText, nextDelay, onLifted, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons,
+  scheduleRetry, snapshotKey, stopRetries, type HangCheck, type ProcessSnapshot,
 } from '../../src/main/tabpage.ts'
 import { entry, liveTab, show, world, type World } from './window-fakes.ts'
 
@@ -297,6 +297,30 @@ describe('coming back from a failure (A2.3, A2.11, v1.13 r2 #3)', () => {
     expect(k.probe?.state).toBe('proved')
     expect(w.loads).toEqual([])
     stopRetries(k)
+  })
+})
+
+describe('Reload Page, checked again before it ends anything (A2.11, A2.14 #22, v1.12 r1 #4)', () => {
+  const snap = (tabs: [string, number, boolean][]): ProcessSnapshot => ({ pid: 77, tabs: tabs.map(([id, commit, main]) => ({ id, commit, main })) })
+  const base: HangCheck = { hung: true, current: true, samePid: true, answered: false, commit: 4, named: 4, now: snap([['t1', 4, true], ['t2', 9, false]]), before: snap([['t1', 4, true], ['t2', 9, false]]) }
+
+  it('the frame, process and documents the sheet named, still silent: the process is ended', () => {
+    expect(hangDecision(base)).toBe('end')
+  })
+
+  it('a tab that navigated, or one that joined the process, while the sheet was open: the sheet again with the new list', () => {
+    expect(hangDecision({ ...base, commit: 5 })).toBe('again')                                                        // the hung tab itself
+    expect(hangDecision({ ...base, now: snap([['t1', 4, true], ['t2', 10, false]]) })).toBe('again')                 // another tab's document
+    expect(hangDecision({ ...base, now: snap([['t1', 4, true], ['t2', 9, false], ['t3', 1, false]]) })).toBe('again') // a tab joined
+    expect(hangDecision({ ...base, now: snap([['t1', 4, true]]) })).toBe('again')                                    // one left
+  })
+
+  it('an answer at any time before Reload Page, a process gone from under the frame, a hang record replaced: nothing is ended', () => {
+    expect(hangDecision({ ...base, answered: true })).toBe('nothing')
+    expect(hangDecision({ ...base, hung: false })).toBe('nothing')
+    expect(hangDecision({ ...base, samePid: false })).toBe('nothing')
+    expect(hangDecision({ ...base, current: false })).toBe('nothing')
+    expect(hangDecision({ ...base, answered: true, commit: 5 })).toBe('nothing')
   })
 })
 

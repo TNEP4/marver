@@ -44,13 +44,28 @@ async function ready(extraEnv: Record<string, string> = {}) {
 }
 
 const settingsCount = async () => (await w!.log('command')).filter((l) => l.data.cmd === 'settings').length
+/**
+ * Every way ⌘2 can switch to the second canvas: the key's command (`tab-2`, keys.ts) and the Window menu's item for
+ * that tab, whose Cmd+2 key equivalent runs its click (views.ts tabAct, journaled `tab-act`) - so a double fire
+ * through the menu is counted too, not only one through the command table.
+ */
+const switchesTo = async (id: string) => {
+  const viaKey = (await w!.log('command')).filter((l) => l.data.cmd === 'tab-2').length
+  const viaMenu = (await w!.log('tab-act')).filter((l) => l.data.what === 'activate' && l.data.tab === id && !l.data.stale).length
+  return viaKey + viaMenu
+}
 
 describe.skipIf(!access)('real key events (CGEvent) over a page that swallows every key', () => {
-  it('control: without preventDefault the menu\'s key equivalent fires too - the command runs twice', async () => {
-    await ready({ MARVER_APP_KEYS_NO_PREVENT: '1' })
+  it('control: without preventDefault the menu\'s key equivalent fires too - ⌘, and ⌘2 each run twice', async () => {
+    const { c, d } = await ready({ MARVER_APP_KEYS_NO_PREVENT: '1' })
     post(w!.run.pid, VK.comma, 'cmd')
     await sleep(600)
     expect(await settingsCount(), 'the harness is blind: every key case below is inconclusive').toBe(2)
+    await w!.run.call('activate', { id: c.id })
+    await sleep(300)
+    post(w!.run.pid, VK.two, 'cmd')
+    await sleep(600)
+    expect(await switchesTo(d.id), 'the harness cannot see the Window menu\'s Cmd+2: the ⌘2 case below is inconclusive').toBe(2)
   })
 
   it('⌘, opens Settings once; ⌘2 switches once; J reaches the page once and runs nothing of the menu', async () => {
@@ -62,7 +77,7 @@ describe.skipIf(!access)('real key events (CGEvent) over a page that swallows ev
     await sleep(300)
     post(w!.run.pid, VK.two, 'cmd')
     await sleep(600)
-    expect((await w!.log('command')).filter((l) => l.data.cmd === 'tab-2').length).toBe(1)
+    expect(await switchesTo(d.id)).toBe(1)
     expect((await w!.state()).active).toBe(d.id)
     await w!.run.call('activate', { id: c.id })
     await sleep(300)

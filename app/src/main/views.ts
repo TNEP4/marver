@@ -44,8 +44,8 @@ import {
   type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
-  copyDetails, forgetTab, hangSheetText, onAttemptFailed, onLifted, onShown, onViewClosed, personReload, recover, reloadIsPersons,
-  scheduleRetry, setTabpagePorts,
+  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onShown, onViewClosed, personReload, recover,
+  reloadIsPersons, scheduleRetry, setTabpagePorts, type ProcessSnapshot,
 } from './tabpage.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
@@ -413,7 +413,7 @@ async function ask(s: Sheet): Promise<boolean> {
 // ---------------------------------------------------------------------------------------------------------------
 // Not responding (A2.11, A2.14 #22, v1.12 r1 #4)
 
-interface Hang { commit: number; pid: number; since: number; answered: boolean; abort?: AbortController }
+interface Hang { pid: number; since: number; answered: boolean; abort?: AbortController }
 const hangs = new Map<string, Hang>()
 let hangSheetOpen = false
 
@@ -426,7 +426,7 @@ function onUnresponsive(t: Tab, wc: WebContents): void {
   if (wc.isDestroyed()) return
   t.hung = true
   const frame = wc.mainFrame
-  const h: Hang = { commit: t.doc?.commits ?? 0, pid: frame.osProcessId, since: Date.now(), answered: false }
+  const h: Hang = { pid: frame.osProcessId, since: Date.now(), answered: false }
   hangs.set(t.id, h)
   j('hang', { tab: t.id, unresponsive: true, pid: h.pid })
   // the frame's own executeJavaScript does not wait for a load; it has no deadline of its own - main keeps one, 1 s
@@ -437,8 +437,6 @@ function onUnresponsive(t: Tab, wc: WebContents): void {
   }, () => {})
   compose()
 }
-
-interface ProcessSnapshot { pid: number; tabs: { id: string; commit: number; main: boolean }[] }
 
 /** Every tab with any frame in the process (A2.11: another tab's iframe counts as much as its page). */
 function processOf(pid: number): ProcessSnapshot {
@@ -455,9 +453,13 @@ function processOf(pid: number): ProcessSnapshot {
   }
   return { pid, tabs }
 }
-const sameProcess = (a: ProcessSnapshot, b: ProcessSnapshot) => a.pid === b.pid && JSON.stringify(a.tabs) === JSON.stringify(b.tabs)
 
-/** The pill's Reload on a page not responding: asks first, since it ends the page (frame 11). */
+/**
+ * The pill's Reload on a page not responding: asks first, since it ends the page (frame 11). Each sheet names the
+ * tabs of the process and their documents as they are when it opens; Reload Page is checked against what that
+ * sheet named (tabpage.ts hangDecision) - a tab that navigated or joined meanwhile opens the sheet again with the
+ * new list, which is then what counts.
+ */
 async function notResponding(t: Tab): Promise<void> {
   const h = hangs.get(t.id)
   if (!h || !t.hung) return
@@ -465,43 +467,46 @@ async function notResponding(t: Tab): Promise<void> {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait))
   if (h.answered || hangs.get(t.id) !== h) {
     // the main frame answered: the hang is in a frame of another process - nothing is ended; the guarded reload
+    j('hang', { tab: t.id, answeredBeforeSheet: true })
     void guard(t, { kind: 'reload' })
     return
   }
-  if (hangSheetOpen) return
-  const snap = processOf(h.pid)
-  const others = snap.tabs.filter((x) => x.id !== t.id).map((x) => tabName(getTab(x.id)!))
-  const words = hangSheetText(t, others)
-  hangSheetOpen = true
-  const ac = new AbortController()
-  h.abort = ac
-  let reload = false
-  try {
-    if (__MV_TEST__ && seamed()) reload = (await testSheet({ kind: 'hang', tab: t.id, others: snap.tabs.map((x) => x.id), ...words }, ac.signal)) && !ac.signal.aborted
-    else {
-      const win = mainWindow()
-      if (!win) return
-      const r = await dialog.showMessageBox(win, { type: 'warning', message: words.message, detail: words.detail, buttons: words.buttons, defaultId: 0, cancelId: 0, noLink: true, signal: ac.signal })
-      reload = r.response === 1 && !ac.signal.aborted
+  for (;;) {
+    if (hangSheetOpen) return
+    const snap = processOf(h.pid)
+    const named = t.doc?.commits ?? 0
+    const others = snap.tabs.filter((x) => x.id !== t.id).map((x) => tabName(getTab(x.id)!))
+    const words = hangSheetText(t, others)
+    hangSheetOpen = true
+    const ac = new AbortController()
+    h.abort = ac
+    let reload = false
+    try {
+      if (__MV_TEST__ && seamed()) reload = (await testSheet({ kind: 'hang', tab: t.id, others: snap.tabs.map((x) => x.id), ...words }, ac.signal)) && !ac.signal.aborted
+      else {
+        const win = mainWindow()
+        if (!win) return
+        const r = await dialog.showMessageBox(win, { type: 'warning', message: words.message, detail: words.detail, buttons: words.buttons, defaultId: 0, cancelId: 0, noLink: true, signal: ac.signal })
+        reload = r.response === 1 && !ac.signal.aborted
+      }
+    } finally { hangSheetOpen = false; h.abort = undefined }
+    if (!reload) return
+    // checked again before ending anything: the same frame, process and documents, still silent
+    const now = processOf(h.pid)
+    const c = canvases.get(t.id)
+    const samePid = !!c && !c.view.webContents.isDestroyed() && c.view.webContents.mainFrame.osProcessId === h.pid
+    const d = hangDecision({ hung: !!t.hung, current: hangs.get(t.id) === h, samePid, answered: h.answered, commit: t.doc?.commits ?? 0, named, now, before: snap })
+    if (d === 'nothing') { j('hang', { tab: t.id, recheck: 'nothing' }); return }
+    if (d === 'again') { j('hang', { tab: t.id, recheck: 'again', tabs: now.tabs }); continue }   // the sheet again, with the new list
+    for (const x of now.tabs) {
+      const tab = getTab(x.id)!
+      if (x.main) { tab.appEnding = true; tab.crash.inFlight = 'force' }
     }
-  } finally { hangSheetOpen = false; h.abort = undefined }
-  if (!reload) return
-  // checked again before ending anything: the same frame, process and documents, still silent
-  const now = processOf(h.pid)
-  const c = canvases.get(t.id)
-  const still = c && !c.view.webContents.isDestroyed() && c.view.webContents.mainFrame.osProcessId === h.pid
-  if (!t.hung || h.answered || hangs.get(t.id) !== h || !still || t.doc?.commits !== h.commit || !sameProcess(now, snap)) {
-    j('hang', { tab: t.id, recheck: 'changed' })
-    if (t.hung && !h.answered && hangs.get(t.id) === h && still) return notResponding(t)   // the sheet again, with the new list
+    j('hang', { tab: t.id, ended: h.pid, tabs: now.tabs })
+    c!.view.webContents.forcefullyCrashRenderer()   // once, through the tab whose main frame lives there
+    for (const x of now.tabs) if (!x.main) canvases.get(x.id)?.view.webContents.reload()   // only a frame of it lived there
     return
   }
-  for (const x of now.tabs) {
-    const tab = getTab(x.id)!
-    if (x.main) { tab.appEnding = true; tab.crash.inFlight = 'force' }
-  }
-  j('hang', { tab: t.id, ended: h.pid, tabs: now.tabs })
-  c!.view.webContents.forcefullyCrashRenderer()   // once, through the tab whose main frame lives there
-  for (const x of now.tabs) if (!x.main) canvases.get(x.id)?.view.webContents.reload()   // only a frame of it lived there
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1118,6 +1123,17 @@ function testHooks(): void {
   provide('reloadPage', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.reload(); return true })
   provide('crash', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.forcefullyCrashRenderer(); return true })
   provide('exec', async (a) => { const { target, js, gesture } = arg<{ target: string; js: string; gesture?: boolean }>(a); const wc = wcOf(target); return wc ? wc.executeJavaScript(js, !!gesture) : null })
+  // whether the main frame stays silent for `ms` (its own executeJavaScript, which does not wait for a load): a
+  // case that hangs a page knows its busy loop runs before it acts
+  provide('silent', async (a) => {
+    const { target, ms } = arg<{ target: string; ms?: number }>(a)
+    const wc = wcOf(target)
+    if (!wc || wc.isDestroyed()) return null
+    return Promise.race([
+      wc.mainFrame.executeJavaScript('0').then(() => false, () => false),
+      new Promise<boolean>((r) => setTimeout(() => r(true), ms ?? 300)),
+    ])
+  })
   provide('focused', () => {
     const out: string[] = []
     const s = stripContents()
@@ -1144,6 +1160,29 @@ function testHooks(): void {
     wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 })
     wc.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 })
     return true
+  })
+  // a click routed as a real one is - hit-tested by the browser, so it reaches a cross-process iframe, which
+  // sendInputEvent (straight to the main frame's widget) never does: CDP's Input.dispatchMouseEvent on the view's
+  // own debugger (no port). Not awaited: a hung frame acknowledges nothing
+  provide('cdpClick', (a) => {
+    const { target, x, y } = arg<{ target: string; x?: number; y?: number }>(a)
+    const wc = wcOf(target)
+    if (!wc || wc.isDestroyed()) return false
+    try { if (!wc.debugger.isAttached()) wc.debugger.attach('1.3') } catch { return false }
+    const at = { x: x ?? 40, y: y ?? 40, button: 'left', clickCount: 1 }
+    void wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...at }).catch(() => {})
+    void wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at }).catch(() => {})
+    return true
+  })
+  // Chromium's hang monitor's report for a view, made by hand: Electron 45 raises none for a cross-process iframe
+  // that never answers its input (hang.test.ts), so the app's own half of that case - the main frame asked, its
+  // answer, the guarded reload - is driven so, against a frame that really is hung
+  provide('hang:report', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc || wc.isDestroyed()) return false; wc.emit('unresponsive'); return true })
+  // the view's frames and the renderer process of each
+  provide('frames', (a) => {
+    const wc = wcOf(arg<{ target: string }>(a).target)
+    if (!wc || wc.isDestroyed()) return null
+    return wc.mainFrame.framesInSubtree.map((f) => ({ url: f.url, pid: f.osProcessId, main: f === wc.mainFrame }))
   })
   provide('pageReady', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; onAppReady(wc); return true })
   provide('pill:raise', (a) => { const { kind, ...c } = arg<{ kind: 'files' | 'test'; text: string; short: string; lead?: string; dismissible?: boolean }>(a); setCondition(kind, c.text ? c : null); return currentPill() })

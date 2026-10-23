@@ -316,6 +316,46 @@ async function look(t: Tab): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Reload Page, checked again before it ends anything (A2.11, A2.14 #22, v1.12 r1 #4)
+
+/** Every tab with any frame in a renderer process, each with its document's commit count; `main` its main frame is there. */
+export interface ProcessSnapshot { pid: number; tabs: { id: string; commit: number; main: boolean }[] }
+
+export const sameProcess = (a: ProcessSnapshot, b: ProcessSnapshot): boolean =>
+  a.pid === b.pid && a.tabs.length === b.tabs.length && a.tabs.every((x, i) => {
+    const y = b.tabs[i]!
+    return x.id === y.id && x.commit === y.commit && x.main === y.main
+  })
+
+/** What main reads when Reload Page is pressed, against what the sheet named. */
+export interface HangCheck {
+  /** the tab is still unresponsive, its hang record the one the sheet was opened for, its main frame still in that process */
+  hung: boolean
+  current: boolean
+  samePid: boolean
+  /** the main frame answered at any time since the hang began (its `executeJavaScript('0')`) */
+  answered: boolean
+  /** the tab's document now, and the one the sheet named */
+  commit: number
+  named: number
+  /** the process's tabs now, and the ones the sheet named */
+  now: ProcessSnapshot
+  before: ProcessSnapshot
+}
+
+/**
+ * Reload Page ends the process only if the frame, process and documents the sheet named are still there and the
+ * frame has still not answered (`end`). A tab that navigated, or a tab that joined the process, while the sheet
+ * was open: the sheet again with the new list (`again`), never an end. Anything else - an answer, a process gone or
+ * changed under the frame, a hang record replaced - ends nothing (`nothing`).
+ */
+export function hangDecision(c: HangCheck): 'end' | 'again' | 'nothing' {
+  if (!c.hung || c.answered || !c.current || !c.samePid) return 'nothing'
+  if (c.commit !== c.named || !sameProcess(c.now, c.before)) return 'again'
+  return 'end'
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The hang sheet's words (A2.11, frame mac-app/11-moments; main's words only, A2.14 #18)
 
 export function hangSheetText(t: Tab, others: string[]): { message: string; detail: string; buttons: [string, string] } {
