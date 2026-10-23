@@ -18,6 +18,11 @@
  * the tick notices it. `reread()` is one fresh read now, for the proof's "instance differs" path (A2.14 #11): its
  * events are told before it resolves. Every read is async: main carries every local script request.
  *
+ * Only a file gone (`lstat` ENOENT) or a file read and judged changes what is listed. A read that cannot decide -
+ * the file renamed over between `lstat` and `open` (the package rewrites its slot file so at ready and at closing),
+ * or an `open` or a read that fails - keeps the entry listed for that file while its pid runs, and the read runs
+ * again at once, a few times at most: a live canvas never flaps to gone and back.
+ *
  * The key never leaves main: no event, log line or test hook carries it (`publicEntry` strips it).
  */
 import { constants, watch, type FSWatcher } from 'node:fs'
@@ -61,6 +66,8 @@ export interface RegistryOptions {
   alive?: (pid: number) => boolean
   /** a line about a file skipped or the folder refused - once per file, change and reason */
   log?: (line: string) => void
+  /** tests: runs between a file's `lstat` and its `open`, where a rename can land */
+  betweenLooks?: (file: string) => void | Promise<void>
 }
 
 export const SLOTS = 20
@@ -160,7 +167,9 @@ export function publicEntry(e: RegistryEntry): Omit<RegistryEntry, 'key'> {
 const order = (a: RegistryEntry, b: RegistryEntry) => (a.slot ?? 1000) - (b.slot ?? 1000) || a.port - b.port
 const facts = (e: RegistryEntry) => JSON.stringify([e.instance, e.state, e.origin, e.pid, e.name, e.version, e.root, e.features, e.ws, e.slot, e.port])
 
-type Read = { entry: RegistryEntry; alive: boolean } | { skip: string; mtime: number }
+type Read = { entry: RegistryEntry; alive: boolean } | { skip: string; mtime: number } | { undecided: string }
+/** A scan re-reads a file it could not decide this many times at most before it keeps what it had. */
+const RETRIES = 3
 
 let current: Registry | null = null
 /** The app's registry - the last one created and not stopped - for the proof and the bridge. */
@@ -189,17 +198,23 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
   }
   const once = (key: string, line: string) => { if (said.get(key) !== line) { said.set(key, line); log(line) } }
 
+  /** One file: read and judged, gone (null: lstat said ENOENT), or undecided. */
   async function readOne(name: string): Promise<Read | null> {
     const path = join(dir, name)
     let st
-    try { st = await lstat(path) } catch { return null }
+    try { st = await lstat(path) } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'ENOENT' ? null : { undecided: `lstat: ${(err as Error).message}` }
+    }
     const mtime = st.mtimeMs
     if (!st.isFile() || st.isSymbolicLink()) return { skip: 'not a regular file', mtime }
+    if (opts.betweenLooks) await opts.betweenLooks(name)
     let fh
-    try { fh = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) } catch { return null }
+    try { fh = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) } catch (err) {
+      return { undecided: `open: ${(err as Error).message}` }
+    }
     try {
       const fst = await fh.stat()
-      if (fst.ino !== st.ino || fst.dev !== st.dev) return null   // replaced between the two looks: the next read decides
+      if (fst.ino !== st.ino || fst.dev !== st.dev) return { undecided: 'replaced between two looks' }
       const f: FileFacts = { uid: fst.uid, mode: fst.mode, isFile: fst.isFile(), isSymlink: false, size: fst.size }
       let raw = ''
       if (f.size <= MAX_FILE) {
@@ -211,10 +226,11 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
       const p = parseEntry(name, f, raw, { uid, slotBase: slotBase() })
       if (!p.ok) return { skip: p.why, mtime }
       return { entry: p.entry, alive: alive(p.entry.pid) }
-    } catch { return null } finally { await fh.close().catch(() => {}) }
+    } catch (err) { return { undecided: `read: ${(err as Error).message}` } } finally { await fh.close().catch(() => {}) }
   }
 
-  async function scanOnce(): Promise<void> {
+  /** One read of the folder; true when a file could not be decided (the caller reads again). */
+  async function scanOnce(): Promise<boolean> {
     const found = new Map<string, Read>()
     try {
       const d = await lstat(dir)
@@ -229,23 +245,31 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
       const code = (err as NodeJS.ErrnoException).code
       if (code !== 'ENOENT') once(dir, `registry: ${dir} is not read: ${(err as Error).message}`)
     }
-    if (stopped) return
+    if (stopped) return false
+    let undecided = false
     for (const [n, r] of found) {
       if ('skip' in r) once(n, `registry: ${n} skipped: ${r.skip}`)
-      else said.delete(n)
+      else if ('entry' in r) said.delete(n)
     }
     const next = new Map<string, RegistryEntry>()
     const gone: RegistryEvent[] = []
     for (const [n, r] of found) {
+      if ('undecided' in r) {
+        // what was listed for this file stays while its pid runs; nothing new is listed from it
+        undecided = true
+        const was = live.get(n)
+        if (was && alive(was.pid)) next.set(n, was)
+        continue
+      }
       if (!('entry' in r) || !r.alive) continue
       if (r.entry.state === 'closing') continue
       next.set(n, r.entry)
     }
     for (const [file, was] of live) {
+      if (next.get(file)?.instance === was.instance) continue
       const now = found.get(file)
       const same = now && 'entry' in now && now.entry.instance === was.instance ? now : null
-      if (same && next.get(file)?.instance === was.instance) continue
-      const why = same && !same.alive ? 'pid' : same && same.entry.state === 'closing' ? 'closing' : 'removed'
+      const why = (same && !same.alive) || (now && 'undecided' in now) ? 'pid' : same && same.entry.state === 'closing' ? 'closing' : 'removed'
       gone.push({ kind: 'gone', file, instance: was.instance, why })
     }
     const told: RegistryEvent[] = []
@@ -256,14 +280,22 @@ export function createRegistry(opts: RegistryOptions = {}): Registry {
     live = next
     for (const e of gone) tell(e)
     for (const e of told) tell(e)
+    return undecided
   }
 
-  /** One scan at a time; asked during one, it runs once more after it, and every caller waits for that. */
+  /**
+   * One scan at a time; asked during one, it runs once more after it, and every caller waits for that. A read that
+   * left a file undecided runs again at once, RETRIES times at most; then the watch or the tick decides it.
+   */
   function scan(): Promise<void> {
     if (running) { again = true; return running }
     running = (async () => {
+      let retries = 0
       try {
-        do { again = false; await scanOnce() } while (again && !stopped)
+        do {
+          again = false
+          if (await scanOnce() && retries < RETRIES) { retries++; again = true }
+        } while (again && !stopped)
       } finally { running = null }
     })()
     return running

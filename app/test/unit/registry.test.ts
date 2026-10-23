@@ -134,14 +134,14 @@ describe('the reader on a folder', () => {
     for (const r of regs.splice(0)) r.stop()
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
   })
-  function setup(o: { alive?: (pid: number) => boolean } = {}) {
+  function setup(o: { alive?: (pid: number) => boolean; betweenLooks?: (file: string) => void } = {}) {
     const home = mkdtempSync(join(tmpdir(), 'mvreg-'))
     dirs.push(home)
     const dir = join(home, 'running')
     const events: RegistryEvent[] = []
     const lines: string[] = []
     process.env.MARVER_SLOT_BASE = String(BASE)
-    const reg = createRegistry({ dir, alive: o.alive, log: (l) => lines.push(l) })
+    const reg = createRegistry({ dir, alive: o.alive, log: (l) => lines.push(l), betweenLooks: o.betweenLooks })
     regs.push(reg)
     reg.on((e) => events.push(e))
     const put = (name: string, r: unknown, mode = 0o600) => {
@@ -278,6 +278,52 @@ describe('the reader on a folder', () => {
     put('port-5299.json', rec({ slot: null, port: 5299 }))
     await Promise.all([reg.reread(), reg.reread(), reg.reread()])
     expect(reg.entries().map((e) => e.file)).toEqual(['slot-2.json', 'slot-9.json', 'port-5299.json', 'port-5300.json'])
+  })
+
+  it('a file renamed over between its two looks, or one that will not open, keeps its live entry: read again at once, never gone and back', async () => {
+    let race: ((file: string) => void) | null = null
+    let dead = false
+    const looks: string[] = []
+    const { dir, reg, events, put } = setup({ alive: () => !dead, betweenLooks: (f) => { looks.push(f); race?.(f) } })
+    await reg.start()
+    const a = rec()
+    put('slot-3.json', a)
+    await reg.reread()
+    expect(events.map((e) => e.kind)).toEqual(['entry'])
+    // the package rewrites its slot file through a rename (at ready, at closing): once, while it is read
+    let left = 1
+    race = (f) => { if (f === 'slot-3.json' && left-- > 0) put('slot-3.json', a) }
+    looks.length = 0
+    await reg.reread()
+    expect(looks.filter((f) => f === 'slot-3.json')).toHaveLength(2)   // undecided, then read again at once
+    expect(events.map((e) => e.kind)).toEqual(['entry'])
+    expect(reg.byInstance(a.instance)?.state).toBe('ready')
+    // renamed over at every look: a few reads at most, the entry kept while its pid runs, nothing told
+    race = (f) => { if (f === 'slot-3.json') put('slot-3.json', a) }
+    looks.length = 0
+    await reg.reread()
+    expect(looks.filter((f) => f === 'slot-3.json')).toHaveLength(4)
+    expect(events.map((e) => e.kind)).toEqual(['entry'])
+    expect(reg.byInstance(a.instance)).toBeDefined()
+    // a new file that cannot be decided is not listed yet
+    race = (f) => { if (f === 'slot-4.json') put('slot-4.json', rec({ slot: 4 })) }
+    put('slot-4.json', rec({ slot: 4 }))
+    await reg.reread()
+    expect(reg.entries().map((e) => e.file)).toEqual(['slot-3.json'])
+    race = null
+    await reg.reread()
+    expect(reg.entries().map((e) => e.file)).toEqual(['slot-3.json', 'slot-4.json'])
+    // one that will not open (mode 000: lstat answers, open is refused) stays listed while its pid runs
+    const n = events.length
+    chmodSync(join(dir, 'slot-3.json'), 0o000)
+    await reg.reread()
+    expect(reg.byInstance(a.instance)).toBeDefined()
+    expect(events.length).toBe(n)
+    // and is gone once its pid is
+    dead = true
+    await reg.reread()
+    expect(events.slice(n)).toContainEqual({ kind: 'gone', file: 'slot-3.json', instance: a.instance, why: 'pid' })
+    chmodSync(join(dir, 'slot-3.json'), 0o600)
   })
 
   it('stop() ends the watch: no event after it', async () => {
