@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
@@ -17,6 +17,8 @@ import { makeProject, startDev, stopDev, workspaceOf, type Dev } from './project
  * some - and stays through Hide UI; comment mode and Jam captures wait; stranded frames show one quiet line.
  * Back, the reloaded page opens on the camera it had and says its edits were saved - or, when the board's file changed
  * on disk meanwhile or the board was removed, that the file won or the board is gone. Skips without Chrome.
+ * Each case closes the tabs it opened: a frame's Vite client polls for its server only while its page is visible,
+ * and a window a case left open can cover the next case's, which Chrome then calls hidden.
  */
 
 const PORT = 8700 + Math.floor(Math.random() * 300)
@@ -55,6 +57,17 @@ beforeAll(async () => {
   browser = await Browser.launch()
 }, 60_000)
 
+/** A tab of this case, closed when the case ends (afterEach) - the next one starts with no window but its own. */
+const opened: string[] = []
+async function tab(viewport: { width: number; height: number }): Promise<string> {
+  const s = await browser!.tab(viewport)
+  opened.push(s)
+  return s
+}
+afterEach(async () => {
+  for (const s of opened.splice(0)) await browser?.closeTab(s).catch(() => {})
+})
+
 afterAll(async () => {
   browser?.close()
   await stopDev(a, PORT).catch(() => {})
@@ -86,6 +99,10 @@ async function shot(s: string, name: string) {
   writeFileSync(join(process.env.MARVER_SHOT_DIR, `workspace-${name}.png`), Buffer.from(out.data, 'base64'))
 }
 const stageText = (s: string) => browser!.eval(s, `document.querySelector('.sh-play iframe')?.contentDocument?.body?.innerText ?? ''`)
+/** A frame's Vite client polls for its server only while the page is visible: what reloads a frame into the other
+ *  project's page needs the tab shown, as a person looking at it has it. */
+const SHOWN = `the tab is visible - a frame's Vite client polls for its server only then`
+const visibility = (s: string) => browser!.eval(s, `document.visibilityState`)
 
 describe('a canvas that stops, another project on its port, the canvas back', () => {
   it('keeps the old tab, its edits and its frames away from the other project, then saves into its own', async (ctx) => {
@@ -93,7 +110,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     a = await startDev(rootA, PORT)
 
     // ---- A is live: every request the shell sends names A -----------------------------------------
-    const s = await browser.tab({ width: 1400, height: 900 })
+    const s = await tab({ width: 1400, height: 900 })
     await browser.send('Network.enable', {}, s)
     const live = record(browser, s)
     await browser.go(s, `${ORIGIN}/#/b/main`)
@@ -112,7 +129,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await browser.until(s, `__mvStore.getState().board === 'main' && document.querySelectorAll('.sh-node').length === 2`, 20_000)
     await browser.until(s, `document.querySelector('[data-node="n-page"] iframe')?.contentDocument?.getElementById('who')?.textContent === 'A'`, 30_000)
     // the play stage, in a second tab: its document runs the project's frames too
-    const p = await browser.tab({ width: 1200, height: 800 })
+    const p = await tab({ width: 1200, height: 800 })
     await browser.send('Network.enable', {}, p)
     const played = record(browser, p)
     await browser.go(p, `${ORIGIN}/#/p/main?at=app/home`)
@@ -196,6 +213,8 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(readFileSync(join(rootB, 'design', 'boards', 'main.json'), 'utf8')).toBe(boardB)
 
     // ---- the frames and the stage: their own Vite client reloads them into B's "another canvas" page ----
+    expect(await visibility(s), SHOWN).toBe('visible')
+    expect(await visibility(p), SHOWN).toBe('visible')
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? ''; return t('n-home').includes(${JSON.stringify(STRANDED)}) && t('n-page').includes(${JSON.stringify(STRANDED)}) })()`, 10_000)
     await browser.until(p, `(document.querySelector('.sh-play iframe')?.contentDocument?.body?.innerText ?? '').includes(${JSON.stringify(STRANDED)})`, 10_000)
     for (const key of ['n-home', 'n-page']) expect(await iframeWho(s, key), key).toBeNull()
@@ -279,7 +298,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     if (!browser) return ctx.skip()
     await stopDev(b, PORT); b = null
     a ??= await startDev(rootA, PORT)
-    const s = await browser.tab({ width: 1400, height: 900 })
+    const s = await tab({ width: 1400, height: 900 })
     await browser.go(s, `${ORIGIN}/#/b/main`)
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
     await browser.eval(s, `__mvJamCapture.getState().start()`)
@@ -312,6 +331,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     b = await startDev(rootB, PORT)
     await browser.until(s, `__mvLink.getState().link === 'elsewhere'`, 5_000)
     const stranded = `['n-home', 'n-page'].every((k) => (document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.body?.innerText ?? '').includes(${JSON.stringify(STRANDED)}))`
+    expect(await visibility(s), SHOWN).toBe('visible')
     await browser.until(s, stranded, 10_000)
     await stopDev(b, PORT); b = null
     // something takes the port and never answers (a server half up, hung): the question it gets is a miss
@@ -351,7 +371,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     if (!browser) return ctx.skip()
     await stopDev(b, PORT); b = null
     a ??= await startDev(rootA, PORT)
-    const s = await browser.tab({ width: 1400, height: 900 })
+    const s = await tab({ width: 1400, height: 900 })
     await browser.go(s, `${ORIGIN}/#/b/main`)
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
     await browser.eval(s, `window.__mark = 3`)
@@ -396,7 +416,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     if (!browser) return ctx.skip()
     await stopDev(b, PORT); b = null
     a ??= await startDev(rootA, PORT)
-    const s = await browser.tab({ width: 1400, height: 900 })
+    const s = await tab({ width: 1400, height: 900 })
     await browser.go(s, `${ORIGIN}/#/b/main`)
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
     const said = (text: string) => `__mvStore.getState().toasts.some((t) => t.text === ${JSON.stringify(text)})`
@@ -446,7 +466,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     if (!browser) return ctx.skip()
     await stopDev(b, PORT); b = null
     a ??= await startDev(rootA, PORT)
-    const s = await browser.tab({ width: 1400, height: 900 })
+    const s = await tab({ width: 1400, height: 900 })
     await browser.go(s, `${ORIGIN}/#/b/main`)
     await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
     const DISK_WON = 'board changed on disk - canvas layout reloaded'

@@ -56,6 +56,14 @@ export class Browser {
     return sessionId
   }
 
+  /** Close a tab made by `tab()`: its browser context goes, and the window with it. A window left open
+   *  can cover the next tab's, and Chrome then calls that page hidden (`document.visibilityState`). */
+  async closeTab(session: string): Promise<void> {
+    const browserContextId = this.contexts.get(session)
+    this.contexts.delete(session)
+    if (browserContextId) await this.send('Target.disposeBrowserContext', { browserContextId })
+  }
+
   async go(session: string, url: string): Promise<void> {
     await this.send('Page.navigate', { url }, session)
     for (let i = 0; i < 80; i++) {
