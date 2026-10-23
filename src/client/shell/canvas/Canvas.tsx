@@ -252,6 +252,11 @@ export function Canvas() {
       fly(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250)
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
+    // the camera as the world is drawn now, mid-flight included: the white-out probes' bracket (spec 28 A3.8 #16)
+    canvasCtl.transform = () => {
+      const t = ref.current?.instance.transformState
+      return t ? { x: t.positionX, y: t.positionY, s: t.scale } : null
+    }
     // a rect on screen now, where it will be when the flight lands: the same world point under the landing transform
     canvasCtl.landing = (r: DOMRect) => {
       const el = wrap(), inst = ref.current
