@@ -21,9 +21,12 @@ beforeAll(async () => {
 })
 afterAll(async () => { await w?.close().catch(() => {}) })
 
+// the dev build is Marver Dev: its lines go to app-dev.jsonl through the recorder's writer (A3.8 #12), with the
+// envelope and among the recorder's own; the release's app.jsonl is never written
 const records = (home: string) => {
-  const f = join(home, 'perf', 'app.jsonl')
-  return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { kind: string; what: string; message: string }) : []
+  const f = join(home, 'perf', 'app-dev.jsonl')
+  expect(existsSync(join(home, 'perf', 'app.jsonl'))).toBe(false)
+  return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l) as { kind: string; what: string; message: string; flavour: string }).filter((r) => r.kind === 'main-error') : []
 }
 
 /** main answers within `ms`: not held by a modal box */
@@ -42,7 +45,9 @@ describe('an error nothing caught in main (A2.1)', () => {
     await w.run.call('throw', { what: 'rejection' })
     await sleep(200)
     expect(await answers(w.run)).toBe(true)
+    await w.run.call('recorder:flush')   // the writer flushes every 2 s; now
     const got = records(w.env.home)
+    expect(got.every((r) => r.flavour === 'dev')).toBe(true)
     expect(got.map((r) => [r.kind, r.what, r.message])).toEqual([
       ['main-error', 'exception', 'mv-test: an exception nothing caught'],
       ['main-error', 'rejection', 'mv-test: a rejection nothing caught'],

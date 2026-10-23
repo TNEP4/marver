@@ -143,7 +143,11 @@ export interface SampleBody {
   pressure: { last: PressureLevel | null; max: PressureLevel | null }
   thermal: ThermalState
   /** every unique process seen in the minute (the CPU budget joins by pid and a start time within 1 s of `born`, A3.8 #49) */
-  procs: { pid: number; born: number; type: ProcType; role: Role; name?: string; tabs: string[]; cpu: Agg; rssMB: Agg; footprintMB: Agg }[]
+  procs: {
+    pid: number; born: number; type: ProcType; role: Role; name?: string; tabs: string[]; cpu: Agg; rssMB: Agg; footprintMB: Agg
+    /** the core-seconds the process used in the minute (Δ cumulative) and the monotonic ms they cover: `cpu.mean` is s / (ms / 1000); absent with no CPU interval (added by the recorder stream, optional) */
+    cpuTime?: { s: number; ms: number }
+  }[]
   gpu: { pid: number; born: number; cpu: Agg; gpuProcessRssMB: Agg } | null
   /** canvas memory (A3.8 #41): Σ over unique canvas processes of footprintMB, else rssMB */
   canvases: { memMB: Agg; byTab: Record<string, { memMB: Agg; cpu: Agg }> }
