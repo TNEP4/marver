@@ -53,7 +53,11 @@ describe('a planted service worker', () => {
     await until('the worker to register', async () => (await evalIn<string>(run!, id, 'window.__sw')) === 'registered')
     await until('the worker to control the page', async () => evalIn<boolean>(run!, id, '!!navigator.serviceWorker.controller'))
     const docs = f.requests.filter((r) => r.path === '/').length
+    const gen = (await tabState(run, id)).committed!.gen
     await run.call('trust:reload', { id })
+    // the reload's commit first: an executeJavaScript sent while the frame navigates can wait forever (Electron), and
+    // with the whole app's pages loading beside it (the merged build) that race is no longer rare
+    await until('the reload to commit', async () => ((await tabState(run!, id)).committed?.gen ?? 0) > gen)
     await until('the synthesized document', async () => (await evalIn<boolean | null>(run!, id, 'window.__fromSW === true')) === true)
     const s = await tabState(run, id)
     expect(s.trusted).toBe(false)

@@ -89,7 +89,10 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     expect(await call('files.set', { file: 'config', key: 'restoreTabs', value: false })).toEqual({ ok: false, why: 'unwritable' })
     chmodSync(env.home, 0o700)
     await relaunch()
-    expect(readdirSync(env.home).sort()).toEqual(['README.md', 'perf', 'schemas', 'state-dev'])
+    // running/ is the registry's (700): it makes the folder it watches at ready, so the first canvas is heard at once
+    // rather than at the next 5 s reconcile; ensureHome() itself never touches it (A2.12)
+    expect(readdirSync(env.home).sort()).toEqual(['README.md', 'perf', 'running', 'schemas', 'state-dev'])
+    expect(statSync(join(env.home, 'running')).mode & 0o777).toBe(0o700)
     expect(await call('files.pill')).toBeNull()
   })
 

@@ -288,31 +288,36 @@ describe('app pages', () => {
 
   it('get nothing before they say app:ready, everything once they do, and must say it again after a reload', async () => {
     await run.call('trust:on-ready')
+    const settingsReady = async () => (await run.call<string[]>('trust:readied')).slice(r0).filter((k) => k === 'settings')
     const r0 = (await run.call<string[]>('trust:readied')).length
-    const { id } = await run.call<{ id: string }>('trust:open-app', { page: 'settings' })
+    // the real Settings page says app:ready as soon as its script runs (a2-pages): the case tries a snapshot in the
+    // very turn the view is made, and again at the reload's commit, where no page can have said it yet
+    const opened = await run.call<{ id: string; sentAtOpen: boolean }>('trust:open-app', { page: 'settings', send: { channel: 'status', payload: { rev: 1 } } })
+    expect(opened.sentAtOpen).toBe(false)
+    const { id } = opened
     await until('Settings loaded', async () => (await run.call<string | null>('trust:app-url', { id })) === 'marver-app://settings/')
-    expect(await run.call('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 1 } })).toBe(false)
-    await run.call('trust:ipc', { id, channel: 'app:ready', msg: null })
-    expect((await run.call<string[]>('trust:readied')).slice(r0)).toEqual(['settings'])
-    expect(await run.call('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 2 } })).toBe(true)
-    await run.call('trust:app-reload', { id })
-    await until('the reload', async () => (await run.call<boolean>('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 3 } })) === false)
-    await run.call('trust:ipc', { id, channel: 'app:ready', msg: null })
-    expect((await run.call<string[]>('trust:readied')).slice(r0)).toEqual(['settings', 'settings'])
-    expect(await run.call('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 4 } })).toBe(true)
+    await until('Settings said ready', async () => (await settingsReady()).length === 1)
+    expect(await run.call('trust:send', { id, channel: 'status', payload: { rev: 2 } })).toBe(true)
+    expect(await run.call('trust:app-reload', { id, send: { channel: 'status', payload: { rev: 3 } } })).toBe(false)
+    await until('Settings said ready again', async () => (await settingsReady()).length === 2)
+    expect(await settingsReady()).toEqual(['settings', 'settings'])
+    expect(await run.call('trust:send', { id, channel: 'status', payload: { rev: 4 } })).toBe(true)
   })
 
   it('invokes answer with the handler\'s value, only to the pages that may send them; a refused payload gets the channel\'s own no', async () => {
     for (const [channel, answer] of [['link:open', { ok: true }], ['settings:get', { keys: [] }], ['settings:set', { ok: true }], ['home:action', { ok: true }]] as const) {
       await run.call('trust:handle-answer', { channel, answer })
     }
-    const h0 = (await run.call<unknown[]>('trust:handled')).length
     const home = (await run.call<{ id: string }>('trust:open-app', { page: 'home' })).id
     const settings = (await run.call<{ id: string }>('trust:open-app', { page: 'settings' })).id
     await until('the pages loaded', async () => (await run.call<string | null>('trust:app-url', { id: home })) === 'marver-app://home/' && (await run.call<string | null>('trust:app-url', { id: settings })) === 'marver-app://settings/')
+    // the real pages ask main on their own once loaded (Settings its settings:get, again after each status): the
+    // case counts its own invokes from when they have gone quiet
+    await until('the pages quiet', async () => { const n = (await run.call<unknown[]>('trust:handled')).length; await sleep(400); return (await run.call<unknown[]>('trust:handled')).length === n })
     const f = await fake({ slot: 12 })
     const canvas = await open(run, f.port)
     await trusted(run, canvas)
+    const h0 = (await run.call<unknown[]>('trust:handled')).length
     const inv = (id: string, channel: string, payload?: unknown, frame?: string) => run.call('trust:invoke', { id, channel, payload, frame })
     expect(await inv(home, 'link:open', { url: 'http://localhost:4806/' })).toEqual({ answer: { ok: true } })
     expect(await inv(home, 'link:open', { url: 42 })).toEqual({ answer: { ok: false, why: 'bad' } })

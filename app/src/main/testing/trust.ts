@@ -169,7 +169,10 @@ export function provideTrustHooks(): void {
     void view.webContents.loadURL(url).catch(() => {})
     const id = `a${(++n).toString(36)}`
     apps.set(id, view)
-    return { id, wc: view.webContents.id }
+    // `send`: a snapshot tried in this same turn, before the page can have said app:ready (the real pages say it as
+    // soon as their script runs, so a case cannot wait for "loaded but not ready")
+    const probe = arg<{ channel: string; payload: unknown } | undefined>(a, 'send')
+    return { id, wc: view.webContents.id, ...(probe ? { sentAtOpen: bridge.send(view.webContents, probe.channel, probe.payload) } : {}) }
   })
   provide('trust:app-eval', async (a) => {
     const v = apps.get(arg<string>(a, 'id'))
@@ -224,7 +227,19 @@ export function provideBridgeHooks(): void {
     const frame = arg<string | undefined>(a, 'frame') === 'child' ? wc.mainFrame.frames[0] ?? null : wc.mainFrame
     try { return { answer: (await fn({ sender: wc, senderFrame: frame, processId: frame?.processId, frameId: frame?.routingId }, arg<unknown>(a, 'payload'))) ?? null } } catch (err) { return { error: (err as Error).message } }
   })
-  provide('trust:app-reload', (a) => { const v = apps.get(arg<string>(a, 'id')); if (v && !v.webContents.isDestroyed()) v.webContents.reload(); return true })
+  provide('trust:app-reload', (a) => {
+    const v = apps.get(arg<string>(a, 'id'))
+    if (!v || v.webContents.isDestroyed()) return false
+    // `send`: a snapshot tried at the new document's commit (after the bridge's own did-navigate listener), before
+    // its script can say app:ready again - answers whether it was sent
+    const probe = arg<{ channel: string; payload: unknown } | undefined>(a, 'send')
+    if (!probe) { v.webContents.reload(); return true }
+    const wc = v.webContents
+    return new Promise<boolean>((resolve) => {
+      wc.once('did-navigate', () => resolve(bridge.send(wc, probe.channel, probe.payload)))
+      wc.reload()
+    })
+  })
   provide('trust:ipc', (a) => {
     const id = arg<string>(a, 'id')
     const wc = tabs.get(id)?.wc ?? apps.get(id)?.webContents
