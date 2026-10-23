@@ -6,7 +6,7 @@
  * only drag region, always on top), the cover (main's plain view, always shown in app 0.1), every other view
  * below the strip at `{ x: 0, y: 44, width, height: h - 44 }`, `compose()` as the one writer of bounds and
  * visibility, layout on resize (and again after a setTimeout(0)) and full screen, focus dimming, window place
- * (`name: 'main'`), close hides the window, quit through `guardAll('quit')`.
+ * (`name: 'main'`), close hides the window, quit through `guardAll({ kind: 'quit' })`.
  *
  * The skeleton shows its window without taking focus (`showInactive`), so the packaged smoke's launches never
  * steal the keyboard from whoever is at the Mac. How the real window shows and focuses is the window stream's.

@@ -1,10 +1,11 @@
 /**
- * The tab model (spec 28 A2.4, A2.14 #20, #23, v1.12 r1 #3, #5, v1.13 r2 #1-#3). Owner: the window stream.
+ * The tab model (spec 28 A2.4, A2.14 #20, #23, v1.12 r1 #3, #5, v1.13 r2 #1-#3, v1.14 r3 #1-#3). Owner: the
+ * window stream.
  *
- * SKELETON (ship stream): the frozen contracts - the `Tab` record, the guard's signatures, `tabs.json`'s
- * shape - and stubs. One field group per concern, one writer each; `displayState` and the tab page are pure
- * functions of the record. The guard's semantics are being finalised in spec v1.13 (r2 #1-#4): what is here
- * is its shape only.
+ * SKELETON (ship stream): the frozen contracts - the `Tab` record, the guard's action and signatures,
+ * `tabs.json`'s shape - and stubs. One field group per concern, one writer each; `displayState` and the tab page
+ * are pure functions of the record. The guard's semantics are spec v1.14's (r2 #1-#4, r3 #1): what is here is
+ * its shape only.
  */
 import type { DisplayState } from '../shared/channels.ts'
 import type { Busy, MenuItem, Theme } from '../../../src/shared/app-api.ts'
@@ -60,8 +61,8 @@ export interface Tab {
   crash: TabCrash
   /** a failed load may have left the shown page alive beneath its tab page (v1.13 r2 #3) */
   retained: boolean
-  /** the replacement in flight, one per tab (v1.13 r2 #2) */
-  replacing?: GuardHow
+  /** the replacement in flight, one per tab, with its action and any consent (v1.13 r2 #2, v1.14 r3 #1, #2) */
+  replacing?: GuardOperation
   /** false: closed by the person for this canvas's run (Home still lists it) */
   open: boolean
   /** the shell's own document only: `/` or `/index.html`, its query and hash (v1.12 r1 #5) */
@@ -76,20 +77,53 @@ export function displayState(_tab: Tab, _active: boolean): DisplayState {
   throw new Error('tabs.ts: displayState is the window stream\'s (spec 28 A2.14 #20)')
 }
 
-/** Every way the app replaces a canvas's live document (v1.12 r1 #3). */
-export type GuardHow = 'close' | 'quit' | 'update' | 'reload' | 'force-reload' | 'load'
+/**
+ * Every way the app replaces a canvas's live document (v1.12 r1 #3), as a value the caller builds once and the
+ * operation copies at its start (v1.14 r3 #2): nothing read later changes what it does. A3 adds `{ kind: 'unload' }`.
+ */
+export type GuardAction =
+  /** ⌘W, the strip's close, Close Tab: `close({ waitForBeforeUnload: true })` */
+  | { kind: 'close' }
+  /** ⌘Q, each tab under `guardAll`: a close */
+  | { kind: 'quit' }
+  /** A5's Restart to update, each tab under `guardAll`: a close */
+  | { kind: 'update' }
+  /** ⌘R, the menu: `reload()` */
+  | { kind: 'reload' }
+  /** ⇧⌘R: `reloadIgnoringCache()` */
+  | { kind: 'forceReload' }
+  /** a tab page's Try Again or Try Now: `loadURL` of the tab's path on its bound origin (a reload while it has not moved) */
+  | { kind: 'tryAgain' }
+  /** ⌘L or a same-origin `window.open`: `loadURL(url)`, the link already rebuilt on the bound origin and checked (A2.7) */
+  | { kind: 'load'; url: string }
 
-/** One serialized operation per tab: the guard and its act (v1.13 r2 #2). */
-export async function guard(_tab: Tab, _how: GuardHow): Promise<'done' | 'refused'> {
-  throw new Error('tabs.ts: guard is the window stream\'s (spec 28 A2.2, A2.14 #16, v1.13 r2 #2)')
+/** The two actions `guardAll` takes. */
+export type GuardAllAction = Extract<GuardAction, { kind: 'quit' | 'update' }>
+
+/**
+ * The person's answer on a sheet: exactly this tab, this document and this action (v1.14 r3 #1). Held by the one
+ * operation that asked; never another action, tab or document. A shared quit sheet makes one per tab it names.
+ */
+export interface GuardConsent { tab: string; commit: number; doc?: string; action: GuardAction }
+
+/** One replacement in flight: what it bound at its start (v1.13 r2 #2, v1.14 r3 #1, #2). */
+export interface GuardOperation { commit: number; doc?: string; action: GuardAction; consent?: GuardConsent }
+
+/**
+ * One serialized operation per tab: the guard and its act (v1.13 r2 #2). After every wait, in the turn of its act,
+ * it goes on only when the tab's document is the one it bound and either the tab is fresh and clean now or a
+ * consent covers exactly that tab, document and action; else 'refused' (v1.14 r3 #1).
+ */
+export async function guard(_tab: Tab, _action: GuardAction): Promise<'done' | 'refused'> {
+  throw new Error('tabs.ts: guard is the window stream\'s (spec 28 A2.2, A2.14 #16, v1.13 r2 #2, v1.14 r3 #1)')
 }
 
-/** Every canvas tab, for a quit or an update: each record checked before any is closed. */
-export async function guardAll(_how: 'quit' | 'update'): Promise<'done' | 'refused'> {
+/** Every canvas tab, for a quit or an update: one operation each, one shared sheet, one refusal stops the whole. */
+export async function guardAll(_action: GuardAllAction): Promise<'done' | 'refused'> {
   return 'done'   // the skeleton holds no canvas tab
 }
 
-/** The guard's close: the view removed only after the page actually closed. */
+/** The guard's close, `guard(tab, { kind: 'close' })`: the view removed only after the page actually closed. */
 export async function closeView(_tab: Tab): Promise<'closed' | 'refused'> {
   throw new Error('tabs.ts: closeView is the window stream\'s (spec 28 A2.2)')
 }

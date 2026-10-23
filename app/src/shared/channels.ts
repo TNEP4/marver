@@ -1,6 +1,6 @@
 /**
- * The app pages' channels (spec 28 "Channels and who may use them", amended for app 0.1 by A2.14 #19 and
- * v1.13): one typed list, read by `bridge.ts` (who may send what), the app preload and the pages. The canvas
+ * The app pages' channels (spec 28 "Channels and who may use them", amended for app 0.1 by A2.14 #19,
+ * v1.13 and v1.14): one typed list, read by `bridge.ts` (who may send what), the app preload and the pages. The canvas
  * channels live in the package's `src/shared/app-api.ts`, shared with the shell.
  *
  * DRAFT contract, frozen before the streams split (A2.14 #32). Owners: trust (bridge.ts checks every field in
@@ -61,13 +61,31 @@ export interface PillView {
 }
 export interface PillAction { rev: number; act: 'button' | 'dismiss' }
 
+/**
+ * What main's probe of a failed tab's address last found (A2.11, v1.14 r3 #3, #4): A2.3's retries, A2.11's 5 s
+ * check and the registry, whichever ran last; `none` again at each failure. Only `proved` names the canvas.
+ * Main sends a new snapshot when `state` changes; `lastAt` rides along with the next one (never a `rev` bump).
+ */
+export interface TabPageProbe {
+  /** no probe yet, no answer, an answer with no proof, the tab's own canvas proved */
+  state: 'none' | 'silent' | 'answers' | 'proved'
+  /** the last probe's time; null before the first */
+  lastAt: number | null
+}
+/** On `stopped`, `unverified` and `unreachable` alike (v1.13 r2 #3, v1.14 r3 #3). */
+interface TabPageFailure {
+  /** a failed load may have left the shown page alive beneath (the tab record's `retained`) */
+  retained: boolean
+  probe: TabPageProbe
+}
+
 /** `tabpage` (main to a tab page): the state as a union; timestamps only, never a countdown (A2.14 #19). */
 interface TabPageBase { rev: number; name: string; logo?: string; dark?: boolean; folder?: string; since: number }
 export type TabPageView =
   | TabPageBase & { page: 'starting'; phase: 'starting' | 'opening' }
-  | TabPageBase & { page: 'stopped'; command: string; origin?: string; retained?: boolean }
-  | TabPageBase & { page: 'unverified'; origin: string; host?: string }
-  | TabPageBase & { page: 'unreachable'; origin: string; reason?: string }
+  | TabPageBase & TabPageFailure & { page: 'stopped'; command: string; origin?: string }
+  | TabPageBase & TabPageFailure & { page: 'unverified'; origin: string; host?: string }
+  | TabPageBase & TabPageFailure & { page: 'unreachable'; origin: string; reason?: string }
   | TabPageBase & { page: 'crashed'; latched: boolean; reason?: string; crashes?: number }
 export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' | 'reveal' | 'open-browser' | 'close'
 
