@@ -6,17 +6,21 @@
  */
 import { join } from 'node:path'
 import { boardFields, checkBoardsDir, listBoardFiles } from '../server/boards.ts'
-import { readPage, readReloads } from '../server/perf.ts'
+import { readPage, readReloads, readRuns } from '../server/perf.ts'
 import { readJam } from '../server/perf-jam.ts'
+import { readDevInfo } from '../server/work.ts'
 import { isBoardName, labelOf } from '../shared/board-tree.ts'
+import type { RunLine, RunStreamLine } from '../shared/perf-run.ts'
+import { runsSummary } from './perf-app.ts'
 
-export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean; loads?: boolean }): void {
+export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean; loads?: boolean; runs?: boolean; days?: number | string; against?: string }): void {
   if (opts.jam) return jamPerf(root, opts)
   if (opts.loads) return loadsPerf(root, opts)
+  if (opts.runs) return runsPerf(root, opts)
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const since = Date.now() - minutes * 60_000
   const log = readReloads(root, since)
-  const loads = loadsSummary(readPage(root, since))
+  const loads = loadsSummary(ownLoads(readPage(root, since)).records)
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   for (const e of log) if (e.kind === 'update') {
     const f = files.get(e.file ?? '(no file)') ?? { edits: 0, reload: new Set(), inPlace: new Set() }
@@ -229,15 +233,24 @@ function endOf(l: LoadSummary): string {
   return 'not settled yet'
 }
 
+/** A page's records without a headless run's (spec 28 A3.8 #17: the server stamps them `run`; `--runs` is theirs),
+ *  and how many run loads that hid. */
+export function ownLoads(records: Record<string, any>[]): { records: Record<string, any>[]; runLoads: number } {
+  const loads = new Set<string>()
+  const own = records.filter((r) => { if (typeof r.run !== 'string') return true; if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`); return false })
+  return { records: own, runLoads: loads.size }
+}
+
 /** `marver perf --loads` (spec 28 A1.8): each board load in full, from design/.local/perf/page.jsonl. */
 function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
-  const records = readPage(root, Date.now() - minutes * 60_000)
+  const { records, runLoads } = ownLoads(readPage(root, Date.now() - minutes * 60_000))
   const loads = loadsSummary(records)
   const dropped = droppedOf(records)
-  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped }, null, 2)); return }
+  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped, runLoads }, null, 2)); return }
   console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
-  if (!loads.length) { console.log('\nnothing yet - open a board in the canvas'); return }
+  const hidden = runLoads ? `${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: npx marver perf --runs` : ''
+  if (!loads.length) { console.log(`\nnothing yet - open a board in the canvas${hidden ? `\n  ${hidden}` : ''}`); return }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
   const list = (r: Ranked) => r.map(([k, n]) => `${k} ${n}`).join(', ')
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
@@ -275,6 +288,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
   if (dropped) console.log(`\n  ${plural(dropped, 'record')} never reached this log: a page's queue was full, or its sends failed`)
+  if (hidden) console.log(`\n  ${hidden}`)
 }
 
 /** Count, median, p90 and max of a list of ms. */
@@ -341,5 +355,96 @@ function jamPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   if (sum.problems.length) {
     console.log('\nlately')
     for (const p of sum.problems) console.log(`  ${new Date(p.ts).toLocaleTimeString()}  ${p.what}`)
+  }
+}
+
+// ---- headless perf runs (spec 28 A3.4, A3.8 #20-#22) ---------------------------------------------------------------
+
+const ms2 = (v: number | null | undefined) => (typeof v === 'number' ? (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`) : '-')
+const mms = (v: number | null | undefined) => (typeof v === 'number' ? `${v} ms` : '-')
+const why = (l: RunLine) => `invalid: ${l.invalidReason}${l.cut ? ` (${l.cut})` : ''}`
+/** One run, as `perf run` and `perf --runs` print it: three lines. */
+export function runBlock(l: RunLine, name: (b?: string) => string): string[] {
+  return [
+    `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.overlapped ? ' · overlapped' : ''}`,
+    `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${l.over33ms} frame${l.over33ms === 1 ? '' : 's'} over 33 ms · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
+    `${l.valid ? 'valid' : why(l)} · inputs ${l.inputs ? `${l.inputs.hash.slice(0, 8)}… (${l.inputs.files.toLocaleString('en-US')} files)` : 'unknown'}${l.forbidden ? ` · ${l.forbidden} write${l.forbidden === 1 ? '' : 's'} refused` : ''}`,
+  ]
+}
+
+/**
+ * `marver perf run <board> [--slow] [--repeat n] [--json]`: the board's script in the canvas's own headless Chrome
+ * (`marver dev` must be running), read-only - one line per run in design/.local/perf/runs.jsonl. Ctrl-C closes the
+ * request, which cancels the run (its line says `cancelled`).
+ */
+export async function perfRunCommand(root: string, board: string | undefined, opts: { slow?: boolean; repeat?: string | number; json?: boolean }): Promise<number> {
+  if (!board) throw new Error('name the board: marver perf run <board> [--slow] [--repeat 1-5] [--json]')
+  const info = readDevInfo(root)
+  if (!info) throw new Error('`marver dev` is not running in this repo (design/.local/dev.json not found) - start it first.')
+  const repeat = opts.repeat === undefined ? 1 : Number(opts.repeat)
+  if (!(Number.isInteger(repeat) && repeat >= 1 && repeat <= 5)) throw new Error('--repeat must be 1-5')
+  const ac = new AbortController()
+  const stop = () => ac.abort()
+  process.once('SIGINT', stop)
+  const name = namer(root)
+  const lines: RunLine[] = []
+  try {
+    const res = await fetch(`http://localhost:${info.port}/__mv/api/perf/run`, {
+      method: 'POST', signal: ac.signal,
+      headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ board, slow: !!opts.slow, repeat }),
+    })
+    if (!res.ok || !res.body) {
+      const b = await res.json().catch(() => ({})) as { error?: string }
+      throw new Error(b.error ?? `the run could not start (${res.status})`)
+    }
+    let buf = ''
+    const dec = new TextDecoder()
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buf += dec.decode(chunk, { stream: true })
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const text = buf.slice(0, nl); buf = buf.slice(nl + 1)
+        let m: RunStreamLine
+        try { m = JSON.parse(text) } catch { continue }
+        if ('error' in m) throw new Error(m.error)
+        if ('phase' in m && !opts.json) console.log(m.phase === 'warm' ? `run ${m.run}: warming up` : m.phase === 'measured' ? '  measuring' : '  closing')
+        if ('line' in m) { lines.push(m.line); if (!opts.json) for (const l of runBlock(m.line, name)) console.log(`  ${l}`) }
+      }
+    }
+  } catch (err) {
+    if (ac.signal.aborted) { if (!opts.json) console.log('  cancelled - the run\'s line says so'); return 130 }
+    throw err
+  } finally { process.off('SIGINT', stop) }
+  if (opts.json) console.log(JSON.stringify({ runs: lines }, null, 2))
+  else console.log(`\n  design/.local/perf/runs.jsonl · compare: npx marver perf --runs`)
+  return lines.length && lines.every((l) => l.valid) ? 0 : 1
+}
+
+/** `marver perf --runs [--against <run>] [--days n]`: the headless runs, compared inside their cohorts. */
+function runsPerf(root: string, opts: { days?: number | string; json?: boolean; against?: string }) {
+  const days = Number(opts.days) > 0 ? Number(opts.days) : 14
+  const lines = readRuns(root, Date.now() - days * 86_400_000) as RunLine[]
+  const sum = runsSummary(lines, { against: opts.against })
+  if (opts.json) { console.log(JSON.stringify({ days, runs: lines, ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`headless runs, last ${days} days - design/.local/perf/runs.jsonl`)
+  if (!lines.length) { console.log('\nnone yet - npx marver perf run <board>'); return }
+  const pct = (a: number | null, b: number | null) => (a && b !== null ? `${b >= a ? '+' : ''}${Math.round(((b - a) / a) * 100)} %` : '-')
+  for (const b of sum.boards) {
+    console.log(`\n  ${name(b.board)} · Chrome ${String(b.cohort.chrome).split('.')[0]} · bakes ${b.cohort.bakes}${b.cohort.slow ? ' · --slow' : ''} · ${b.runs} valid run${b.runs === 1 ? '' : 's'}`)
+    console.log(`    latest ${b.latest.run}: load to settled ${ms2(b.latest.loadToSettledMs)} · p95 ${mms(b.latest.p95)} · ${b.latest.over33ms} over 33 ms · inputs ${b.latest.inputs?.slice(0, 8) ?? 'unknown'}…`)
+    if (b.sameInputs) console.log(`    against ${b.sameInputs.from.run} (same inputs): ${b.sameInputs.within10 ? 'within 10 %' : 'NOT within 10 %'} - load ${pct(b.sameInputs.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.sameInputs.from.p95, b.latest.p95)}`)
+    if (b.afterChange) console.log(`    after a change, against ${b.afterChange.from.run}: load ${pct(b.afterChange.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.afterChange.from.p95, b.latest.p95)}, over 33 ms ${b.afterChange.deltas.over33ms >= 0 ? '+' : ''}${b.afterChange.deltas.over33ms}`)
+  }
+  if (sum.against) {
+    const a = sum.against
+    if ('error' in a) console.log(`\n  --against ${a.run}: ${a.error}`)
+    else console.log(`\n  --against ${a.run}: ${a.to.run} ${a.within10 ? 'within 10 %' : 'differs'} - load ${pct(a.from.loadToSettledMs, a.to.loadToSettledMs)}, p95 ${pct(a.from.p95, a.to.p95)}`)
+  }
+  if (sum.overlapped.length) console.log(`\n  ${sum.overlapped.length} overlapped (another run at the same time): never compared - ${sum.overlapped.map((r) => r.run).join(', ')}`)
+  if (sum.invalid.length) {
+    console.log(`\n  invalid (${sum.invalid.length})`)
+    for (const r of sum.invalid.slice(-10)) console.log(`    ${new Date(r.ts).toLocaleString()}  ${r.run}  ${name(r.board)}  ${why(r)}`)
   }
 }

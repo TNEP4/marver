@@ -302,15 +302,29 @@ cli
   })
 
 cli
-  .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings')
+  .command('perf [action] [board]', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings; `perf run <board>`: a headless run of the board, read-only (needs `dev` running); --runs: those runs compared')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--minutes <n>', 'How far back to read (default 60; 24 h with --jam)')
   .option('--loads', 'Board loads, from the page, each board by its title: time to the visible frames ready and all ready (each frame\'s first render), still from the last move and settled (a second still after it) - or why it was cut, and how many frames were ready by then - how many moves and their causes, when the first frame started, the slowest frames to settle (their last height) and how long each waited for its turn to start, errors (design/.local/perf/page.jsonl)')
   .option('--jam', 'Jam\'s timings: captures, pictures, words, naming, runs, shots - numbers only (design/.local/perf/jam.jsonl)')
+  .option('--runs', 'The headless runs (`perf run`), compared only inside a cohort (script, board, Chrome, flags, machine, power, --slow, bakes): the latest against the one before with the same inputs, and against the last with other inputs; overlapped and invalid runs listed apart (design/.local/perf/runs.jsonl)')
+  .option('--against <run>', 'With --runs: the latest run of that run\'s cohort against it, whatever their inputs (you changed something on purpose)')
+  .option('--days <n>', 'How far back --runs reads (default 14)')
+  .option('--slow', 'With `run`: the CPU throttled 4x (a stand-in for a slower Mac\'s CPU, not its GPU or memory)')
+  .option('--repeat <n>', 'With `run`: how many runs, one after another (1-5, default 1)')
   .option('--json', 'Machine-readable output')
-  .action(async (opts) => {
-    const { perfCommand } = await import('./perf.ts')
-    perfCommand(resolve(opts.root), opts)
+  .action(async (action: string | undefined, board: string | undefined, opts) => {
+    if (action !== undefined && action !== 'run') {
+      console.error(`[${NAME}] unknown action "${action}" - the one action is run: ${NAME} perf run <board>`)
+      process.exit(1)
+    }
+    const { perfCommand, perfRunCommand } = await import('./perf.ts')
+    if (action !== 'run') return perfCommand(resolve(opts.root), opts)
+    try { process.exit(await perfRunCommand(resolve(opts.root), board, opts)) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
   })
 
 cli

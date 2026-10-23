@@ -11,6 +11,7 @@ agent. A published canvas records nothing.
 | `design/.local/perf/reloads.jsonl` | each edit and the frames it reached; page-wide reloads, sent or dropped; each frame document that booted, and how long it took | `npx marver perf` |
 | `design/.local/perf/page.jsonl` | each board load, as the page saw it: every frame's outcome, every move and why, when the board settled; gestures; errors | `npx marver perf --loads` |
 | `design/.local/perf/jam.jsonl` | Jam's timings: numbers and fixed codes only, never your words | `npx marver perf --jam` |
+| `design/.local/perf/runs.jsonl` | each headless run of a board (`npx marver perf run <board>`): one line, its numbers and whether it is valid | `npx marver perf --runs` |
 
 `design/.local/` is gitignored, and `marver dev` never serves it. The perf folder is yours alone: mode 700,
 each file 600 from the moment it is made - and files an earlier version made are tightened when `marver dev`
@@ -283,12 +284,65 @@ otherwise its last records go with `keepalive`, 16 KB at most.
 The dev server takes them only from the canvas's own page, rebuilds each from the fields its kind allows -
 strings cut to 200 characters, 512 KB a request - and appends them to `page.jsonl`.
 
+## Headless runs
+
+`npx marver perf run <board>` measures a board the same way every time, in the canvas's own headless Chrome
+(`marver dev` must be running; no app, no window): your agent's way to tell whether a change made a board
+faster or slower. One line per run goes to `design/.local/perf/runs.jsonl`.
+
+```
+$ npx marver perf run main
+run 3f1c9a20b7d4e815: warming up
+  measuring
+  closing
+  run 3f1c9a20b7d4e815 · Main · Chrome 156 · bakes warm
+  load to settled 1.57 s · 4 moves · p50 16.7 ms p95 16.8 ms · 0 frames over 33 ms · heap peak 26.1 MB
+  valid · inputs 68cff66a… (24 files)
+```
+
+**The script** (version 1). One warm-up load, not measured: Vite's transforms and the dependency cache warm up,
+and the frames' sleep bakes compile. It waits until the board settled and nothing is still compiling, 60 s at
+most; past that the run goes on and its line says `bakes: 'cold'`. Then a fresh browser context, the cache off,
+1440 x 900 at scale 2: the board loads, settles (120 s at most), waits again until nothing is compiling (30 s),
+fits, and runs three gestures with the pointer at the canvas's centre - 40 ctrl-wheel steps in, 40 out, then a
+pan of 60 steps right and 60 back - each ended by the canvas itself. `--slow` throttles the CPU 4x before the
+load: a stand-in for a slower Mac's CPU, not for its GPU or its memory. `--repeat <n>` runs it up to 5 times,
+one after another. Ctrl-C cancels: the line says `cancelled`.
+
+**Read-only.** The run's page refuses every write before it is sent - board saves, heights, the seen marks,
+comments, captures, Jam, work - and the dev server refuses and counts any that gets through, from the page or
+from a frame. Only two kinds go out: the page's own load records (stamped with the run by the server, so
+`perf --loads` leaves them out and says how many) and the sleep bakes, which only fill a cache. A video whose
+generated poster is missing runs without it, and the line counts it (`postersMissing`); its frame's bake is the
+run's alone, never the shared cache. A frame's own code can still write: runs are for boards whose frames do
+not.
+
+**Valid or not.** A run is valid when none of these held, and its line names the first that did:
+`cancelled`, `crash`, `inputs` (a watched file changed during the run, even if it was put back), `writes` (a
+write was refused), `cut` (the load never settled), `frames` (a frame missing or never ready), `errors`, `bakes`
+(still compiling 30 s after the load), `gesture` (a gesture the canvas never ended, 5 s), `records` (the page's
+records did not all land). Headless numbers are intervals in headless Chrome - not what a display shows.
+
+**The inputs.** `inputs` fingerprints every file the dev server watches (git status plays no part, so an
+ignored file a frame imports counts) plus the board files and `_sizes.json`. `GET /__mv/api/perf/inputs` reads
+it alone. A frame importing from a folder the dev server ignores (a sibling package's `dist/`) is not in it.
+
+**Comparing.** `npx marver perf --runs` compares runs only inside a cohort - the same script, board, Chrome,
+flags, Mac (`machine`, a profile of its own in `~/.marver/perf/machine/`), power source, `--slow` and warm or
+cold bakes - and inside it by inputs: the latest run against the one before with the same inputs ("within
+10 %" of its load to settled and p95, or not), and against the last one with other inputs (the deltas).
+`--against <run>` compares the latest run of a cohort with that one whatever their inputs, when you changed
+something on purpose. Runs that overlapped another are listed, never compared; invalid runs are listed with
+their reason. `--days <n>` (14 by default) and `--json` as elsewhere.
+
 ## Options
 
 | Option | |
 |---|---|
 | `--loads` | each board load in full |
 | `--jam` | Jam's timings |
+| `run <board>` | a headless run of the board ([Headless runs](#headless-runs)); with `--slow` and `--repeat <n>` (1-5) |
+| `--runs` | the headless runs, compared inside their cohorts; with `--against <run>` and `--days <n>` (14) |
 | `--json` | machine-readable |
 | `--minutes <n>` | how far back to read: 60 by default (24 h with `--jam`) |
 | `--root <dir>` | the project (default: here) |

@@ -20,6 +20,8 @@ import { guardMiddleware } from './guard.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
+import { perfRunBarrier, runs, runT } from './perf-run.ts'
+import type { InputsWatch } from './perf-inputs.ts'
 import type { DocProof } from './proof.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
@@ -242,11 +244,29 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       server.httpServer?.once('close', () => { withdraw?.(); closeAll() })
       // a restart: Vite runs this for the new server, then closes the old one, cancelling its pending rescan and
       // its look at the marks - both are taken up here
-      if (served++) { manifest = scanFrames(root, projectInfo()); observeLater() }
+      // a restart is an input changed (an .env edit): a headless run under way says so (spec 28 A3.8 #22) - the registry
+      // is module state, kept across it
+      if (served++) { manifest = scanFrames(root, projectInfo()); observeLater(); runs.changed('(the dev server restarted)') }
       // spec 28 A1.11: the first middleware - a request naming another workspace, or a service worker's
       // script, is answered before anything of this project is read, written or served (guard.ts).
       // Must stay first: ahead of /api/update, the API, the frame-host route and Vite's own.
       server.middlewares.use(guardMiddleware(ws))
+      // spec 28 A3.8 #17: right after it, a headless run's writes - any it may not make - refused and counted per run
+      server.middlewares.use(perfRunBarrier())
+      // a run's inputs (A3.8 #21): the files this watcher watches - its 'ready' waited for, 30 s at most - and every
+      // event it fires marks the runs under way, even an edit undone before they end
+      let watcherReady = (server.watcher as unknown as { _readyEmitted?: boolean })._readyEmitted === true
+      const readyWaiters = new Set<() => void>()
+      server.watcher.once('ready', () => { watcherReady = true; for (const w of readyWaiters) w(); readyWaiters.clear() })
+      server.watcher.on('all', (_event, file) => runs.changed(file))
+      const inputs: InputsWatch = {
+        ready: () => (watcherReady ? Promise.resolve(true) : new Promise((resolve) => {
+          const done = () => { clearTimeout(t); resolve(true) }
+          const t = setTimeout(() => { readyWaiters.delete(done); resolve(watcherReady) }, runT().watcherReadyMs)
+          readyWaiters.add(done)
+        })),
+        watched: () => server.watcher.getWatched(),
+      }
       let bakeGen = Date.now()   // the source generation (see bumpGen): unique per server start
       // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
       // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static
@@ -293,7 +313,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // the marks start with the dev server, before any page asks (spec 26)
       initMarks(root, manifest.frames)
       tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled, workspace: ws }))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled, workspace: ws, inputs }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
       server.middlewares.use(logoRoute(root, () => config.share.logo, ctx.proof))
       server.middlewares.use(routesMiddleware(server, clientDir, {
@@ -444,6 +464,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         // which the content broadcast below cannot carry (nothing left to hash)
         let listTimer: ReturnType<typeof setTimeout> | undefined
         const watcher = guarded(watch(boardsDir, (_event, file) => {
+          // a board file or the size cache changed: inputs of a headless run under way (spec 28 A3.8 #21) - the main
+          // watcher ignores this folder
+          if (file?.endsWith('.json')) runs.changed(join(boardsDir, file))
           // the size cache (sizes.ts) is no board and no folder: the shell that wrote it already
           // holds every height in it - a sidebar re-read per settled Doc would be pure churn
           if (!file || !file.endsWith('.json') || file === SIZES_FILE || file === `${ALL_SCENES}.json`) return
