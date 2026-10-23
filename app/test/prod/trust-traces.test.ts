@@ -91,7 +91,9 @@ describe('the adapter\'s traces', () => {
     const r0 = f.requests.length
     const url = `${f.origin}/?slow=300`
     await run.call('trust:load', { id, url })
-    await sleep(80)
+    // the second load once the first request is at the server (held there 300 ms): a fixed 80 ms was not always
+    // enough for the first to leave under the merged app's launch load, and then only one request was ever sent
+    await until('the first request at the server', () => f.requests.slice(r0).some((r) => r.path === '/'), 3000)
     await run.call('trust:load', { id, url })
     const s = await trusted(run, id)
     await sleep(500)   // the first request's answer has come and gone

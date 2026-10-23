@@ -62,12 +62,10 @@ describe('a page that stops responding (A2.11)', () => {
     expect((await w.log('guard', k)).find((l) => l.data.tab === id)!.data).toMatchObject({ action: 'reload', answer: 'refused', unsaved: true })
     expect((await w.log('hang', k)).filter((l) => l.data.ended)).toEqual([])
     expect(await w.tab(id)).toMatchObject({ hung: true, wcId: before.wcId })
-    // its "Unsaved work here" lasts while the tab is active (A2.14 #33): away and back, Not responding again
-    expect((await w.state()).pill).toMatchObject({ kind: 'unsaved', tab: id })
-    await w.run.call('activate', { id: 'home' })
-    await sleep(200)
-    await w.run.call('activate', { id })
-    await w.until((x) => x.pill?.kind === 'not-responding', 5000, 'Not responding again')
+    // the hung page outranks its own unsaved hold (the lead's pill order at integration): the refused ⌘R leaves
+    // "Not responding" and its Reload where they were - no tab switch needed to get the way out back
+    expect((await w.state()).pill).toMatchObject({ kind: 'not-responding', tab: id })
+    expect((await w.tab(id)).held).toBeTruthy()
 
     // Reload Page: the process ended once, the page reloaded through recover, no crash counted
     await w.run.call('sheet', { mode: 'confirm' })
