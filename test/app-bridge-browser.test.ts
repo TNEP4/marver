@@ -439,6 +439,40 @@ describe('the camera over a reload (A2.9)', () => {
     expect(await ev(s, `__mvStore.getState().selection`)).toEqual(['n-two'])
     expect(await scale(s)).toBeCloseTo(1.37, 2)
   }, 90_000)
+
+  // the page hidden as Chrome hides it for a tab switch, or as the Mac app hides a tab it may then unload
+  const HIDE = `(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); delete document.visibilityState; return 1 })()`
+
+  it('written as the page hides or leaves, inside the second of quiet; mid-flight, where the flight was going; nothing pending, nothing (A3.8 #43)', async (ctx) => {
+    skip(ctx)
+    const key = `mv-camera:${ws}:main`
+    const s = await open({ on: false })
+    const stored = () => ev(s, `JSON.parse(localStorage.getItem('${key}') ?? 'null')`)
+    // a move, then hidden 150 ms later: written at visibilitychange, a second early
+    await ev(s, `__mvJamCanvas.zoomTo(0.61), 1`)
+    await wait(1600)
+    await ev(s, `localStorage.removeItem('${key}'), 1`)
+    await ev(s, `__mvJamCanvas.zoomTo(1.37), 1`)
+    await wait(400)   // landed (250 ms), the write still a second away
+    expect(await stored()).toBe(null)
+    await ev(s, HIDE)
+    expect((await stored())?.scale).toBeCloseTo(1.37, 3)
+    // hidden mid-flight: the landing, not where the animation was
+    await ev(s, `localStorage.removeItem('${key}'), 1`)
+    expect(await ev(s, `new Promise((r) => { __mvJamCanvas.zoomTo(0.5); setTimeout(() => { ${HIDE}; r(JSON.parse(localStorage.getItem('${key}') ?? 'null')) }, 60) })`)).toMatchObject({ scale: 0.5 })
+    // nothing pending: a hide writes nothing
+    await wait(1600)
+    await ev(s, `localStorage.removeItem('${key}'), 1`)
+    await ev(s, HIDE)
+    expect(await stored()).toBe(null)
+    // pagehide: a move, then the page leaves 150 ms later - the next load opens there
+    await ev(s, `__mvJamCanvas.zoomTo(1.21), 1`)
+    await wait(400)
+    await browser!.go(s, 'about:blank')
+    await load(s, '#/b/main')
+    await wait(300)
+    expect(await scale(s)).toBeCloseTo(1.21, 2)
+  }, 90_000)
 })
 
 describe('the one beforeunload, in every browser (A2.9)', () => {

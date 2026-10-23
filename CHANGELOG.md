@@ -2,6 +2,17 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.27.2 - unreleased
+
+The canvas's side of the Mac app 0.2.
+
+### Changed
+
+- **The view you left is written the moment the page hides or leaves.** A canvas kept its camera a second after the
+  view settled; a tab switched away from, closed or ended within that second lost the last move. Now the waiting
+  camera is written at once when the page is hidden or unloads, and a page hidden while the view is still flying (a
+  fit, a zoom) keeps where it was going. In Chrome too.
+
 ## 0.27.1 - unreleased
 
 The canvas's side of the Mac app (app 0.1), and what it brings to every browser.

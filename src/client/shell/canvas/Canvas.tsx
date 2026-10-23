@@ -51,16 +51,37 @@ function savedCamera(board: string): Camera | null {
   } catch { return null }
 }
 let keepTimer: ReturnType<typeof setTimeout> | undefined
+/** the camera write waiting for its second of quiet, if any */
+let keepPending: (() => void) | undefined
 /** Where the camera's flight lands (a fit, a zoom), for canvasCtl.landing: read only while rzpp animates. */
 let flight: Camera | null = null
 function keepCamera(x: number, y: number, scale: number) {
   if (!WS) return
   const board = useStore.getState().board
   clearTimeout(keepTimer)
-  keepTimer = setTimeout(() => {
+  const write = () => {
+    keepPending = undefined
     if (useStore.getState().board !== board) return   // switched meanwhile: this camera was the other board's
     try { localStorage.setItem(cameraKey(board), JSON.stringify({ x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100, scale })) } catch { /* storage off: the next load fits */ }
-  }, 1000)
+  }
+  keepPending = write
+  keepTimer = setTimeout(write, 1000)
+}
+/**
+ * The pending camera, written now (spec 28 A3.8 #43): the page is hidden or leaving, and the Mac app may unload a
+ * hidden tab, which ends its page with the second of quiet not yet over. A hide mid-flight writes where the flight
+ * was going: a hidden page's animation frames stop, so it would not land before the page went. Nothing pending,
+ * nothing written. In Chrome too - a tab switch, a closed tab.
+ */
+export function flushCamera(): void {
+  if (flight && canvasCtl.cameraBusy()) keepCamera(flight.x, flight.y, flight.scale)
+  if (!keepPending) return
+  clearTimeout(keepTimer)
+  keepPending()
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushCamera() })
+  addEventListener('pagehide', flushCamera)
 }
 function insets(el: HTMLElement) {
   const c = el.getBoundingClientRect()
