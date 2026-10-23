@@ -1078,6 +1078,8 @@ export function startViews(i: StartInput): void {
     now: () => Date.now(), home, visible: windowVisible, send: sendPill, log: j,
     copyStart: (t) => { if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })) },
     notResponding: (t) => { void notResponding(t) },
+    // A3: "Flash marked"'s Show selects that mark's picture in Finder (a file inside the dot folder, which Finder shows)
+    showFlash: (ref) => { if (/^flashes\/[0-9a-z-]+\.png$/.test(ref)) effects.showItem(join(homeDir.dir, 'perf', ref)) },
   })
 
   openWindow({

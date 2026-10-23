@@ -9,7 +9,8 @@
  *      work here" (the guard refused), "Stopped" (its start command the button that copies it). A hung page
  *      outranks its own unsaved hold (the lead's decision at integration): it cannot save anyway, and the hold's
  *      pill would hide the one Reload that can end the hang until a tab switch;
- *   2. a confirmation, 4 s on screen - "Reloaded after a crash" in A2 (Flash marked A3, a missed notice A4);
+ *   2. a confirmation, 4 s on screen - "Reloaded after a crash" in A2, "Flash marked" in A3 (its Show reveals the
+ *      mark's picture, `flashMarked`), a missed notice A4;
  *   3. the files: "Settings not applied", "Files not saved" (A2.12, A2.14 #24);
  *   4. a dismissible offer (A4's notices; a test-only kind in A2); 5. the update (A5).
  * Lifetimes: a confirmation's 4 s count only while it is on screen and the window shown; one pushed off keeps
@@ -39,6 +40,8 @@ interface Rec {
   button?: PillView['button']
   tooltip?: string
   dismissible?: boolean
+  /** a confirmation's button acts on this (a flash's picture, `flashes/<id>.png` under perf/) */
+  ref?: string
 }
 
 export interface PillPorts {
@@ -51,6 +54,8 @@ export interface PillPorts {
   copyStart(t: Tab): void
   /** the "Not responding" pill's Reload: asks first (A2.11) */
   notResponding(t: Tab): void
+  /** A3: "Flash marked"'s Show - that mark's picture selected in Finder (`flashes/<id>.png` under perf/, A3.8 #13) */
+  showFlash?(ref: string): void
   log?(topic: string, data: unknown): void
 }
 
@@ -157,8 +162,8 @@ function arm(now: number): void {
   if (Number.isFinite(soonest)) { timer = setTimeout(() => { timer = undefined; recompute() }, Math.max(0, soonest) + 5); (timer as { unref?: () => void }).unref?.() }
 }
 
-/** A confirmation (tier 2): "Reloaded after a crash" in A2. One of each kind waits; a newer replaces it. */
-export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed', o: { tab?: string; lead?: string; text: string; short: string }): void {
+/** A confirmation (tier 2): "Reloaded after a crash" in A2, "Flash marked" in A3. One of each kind waits; a newer replaces it. */
+export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed', o: { tab?: string; lead?: string; text: string; short: string; button?: PillView['button']; ref?: string }): void {
   const now = ports?.now() ?? Date.now()
   const rec: Rec = { kind: 'confirmation', about: `confirm:${sub}:${now}`, sub, icon: 'check', ...o }
   confirms.set(sub, { rec, left: T.pillConfirmMs, created: now })
@@ -167,6 +172,26 @@ export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed', o: { 
 
 /** The crash's confirmation (A2.11). */
 export const crashReloaded = (t: Tab): void => confirm('crash-reloaded', { tab: t.id, text: 'Reloaded after a crash', short: 'Reloaded' })
+
+/** A mark's time as the pill says it, on the Mac's clock: `20:51:03`. */
+export function clockOf(at: number): string {
+  const d = new Date(at)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/**
+ * Mark a Flash's confirmation (A3.3, A3.8 #13; frame mac-app/11-moments), sent only once the mark's picture was
+ * taken and written: "Flash marked" with the mark's time, 4 s on screen. Its Show reveals that mark's picture; no
+ * picture, no button. With the recorder off it says so: the mark carries no samples before it.
+ */
+export function flashMarked(c: { at: number; recorder: boolean; picture: string | null }): void {
+  const time = clockOf(c.at)
+  confirm('flash', {
+    lead: 'Flash marked', text: c.recorder ? time : `${time} · no samples before it: the recorder is off`, short: 'Flash marked',
+    ...(c.picture ? { button: { label: 'Show', style: 'plain' as const }, ref: c.picture } : {}),
+  })
+}
 
 /**
  * Tier 3, the files (A2.12, A2.14 #24): "Settings not applied" or "Files not saved", or null when the cause is
@@ -204,6 +229,8 @@ export function onPillAction(r: number, act: 'button' | 'dismiss'): boolean {
   switch (rec.kind) {
     case 'stopped': if (t) p.copyStart(t); return true
     case 'not-responding': if (t?.hung) p.notResponding(t); return true
+    // a flash's Show: its own picture, whichever tab is active by then
+    case 'confirmation': if (rec.sub === 'flash' && rec.ref && p.showFlash) { p.showFlash(rec.ref); return true } return false
     default: return false
   }
 }

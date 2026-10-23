@@ -16,7 +16,7 @@
  *
  * Pure (no Electron import): `menuTemplate(model, acts)` is unit-tested; `views.ts` builds and applies it,
  * rebuilt (debounced 100 ms) when the active tab, its items or a tab's state change. A2's items: all of A2.7 but
- * Mark a Flash (A3), the performance report and Check for Updates (A5).
+ * the performance report and Check for Updates (A5); A3 adds Mark a Flash (⌃⌥F) to Help.
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuItem } from '../../../src/shared/app-api.ts'
@@ -124,6 +124,7 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
     ] },
     { role: 'help', submenu: [
       { label: 'Marver Help', click: () => acts.help() }, sep,
+      cmd('mark-flash', 'Mark a Flash'),
       { label: 'Show Performance Files', click: () => acts.perfFiles() },
     ] },
   ]

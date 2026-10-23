@@ -45,6 +45,7 @@ import { activeTab, getTab, startTabs, type Tab } from './tabs.ts'
 import { docInset } from './layout.ts'
 import { identity, recorder, sampler } from './recorder.ts'
 import { provideRecorderHooks } from './testing/recorder.ts'
+import { provideFlashHooks } from './testing/flash.ts'
 import { startMemory } from './memory.ts'
 import { startWhiteout } from './whiteout.ts'
 import { readAgx } from './machine.ts'
@@ -129,7 +130,7 @@ function start(): void {
     startTabs()
     // the recorder: after the bridge, before the views (A3.8 #53)
     recorder.start({ bridge, home, flavour: __MARVER_RELEASE__ ? 'release' : 'dev', config: () => values().config })
-    if (__MV_TEST__ && testMode()) provideRecorderHooks()
+    if (__MV_TEST__ && testMode()) { provideRecorderHooks(); provideFlashHooks(home) }
     app.on('will-quit', () => recorder.flushSync())
 
     // what the window stream needs of the trust stream (views.ts TrustPort), from their interfaces as built
