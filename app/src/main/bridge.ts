@@ -23,9 +23,11 @@
  *
  * **App pages** (A2.5, A2.14 #19): a channel is accepted only from the kinds `SENDERS` lists (src/shared/
  * channels.ts), from that webContents' main frame, while its frame shows the page's own pinned document
- * (`marver-app://<kind>/`), with every field checked here; `send` reaches a page only once it said `app:ready`.
+ * (`marver-app://<kind>/`), with every field checked here; `send` reaches a page only once it said `app:ready`,
+ * and again only after a new document commits there (a refused navigation keeps the page and its readiness).
  * The wire format is the channel name and its payload exactly as channels.ts types it (`ipcRenderer.send` /
- * `invoke`). The IPC listeners of a channel are installed when its first handler is (`handle`, `onReady`).
+ * `invoke`; `INVOKES` below are the invokes, as the app preload calls them). The IPC listeners of a channel are
+ * installed when its first handler is (`handle`, `onReady`).
  */
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
@@ -35,7 +37,7 @@ import { adapterFor, attachNav, type NavEvent } from './nav.ts'
 import { isTrusted, targetOf, unsafePrefs } from './proof.ts'
 import { appRegistry, type Registry } from './registry.ts'
 import type { Safety } from './tabs.ts'
-import { note } from './testing/index.ts'
+import { note, testMode } from './testing/index.ts'
 
 /** What the bridge hands the tabs: a canvas document's safety and its accepted reports, the latest of each. */
 export interface CanvasReports {
@@ -173,6 +175,18 @@ export function mayUsePageChannel(channel: string, kind: PageKind | undefined, m
   return !!allowed && allowed.includes(kind) && isPinnedUrl(frameUrl, kind)
 }
 
+/**
+ * The page-to-main channels that are invokes, answered with the handler's value: the same list as the app
+ * preload's (`INVOKES` in channels.ts, from the pages stream). Every other channel is a send.
+ */
+export const INVOKES: ReadonlySet<string> = new Set([CH.linkOpen, CH.homeAction, CH.settingsGet, CH.settingsSet])
+/** What an invoke whose payload is refused answers (the channel's own "no"). */
+const REFUSED_ANSWER: Record<string, unknown> = {
+  [CH.linkOpen]: { ok: false, why: 'bad' },
+  [CH.homeAction]: { ok: false },
+  [CH.settingsSet]: { ok: false, why: 'bad-value' },
+}
+
 // ---- the map ---------------------------------------------------------------------------------------------
 
 interface Reg { wc: WebContents; kind: PageKind; tabId?: string; ready: boolean }
@@ -189,9 +203,15 @@ interface DocRecord extends CanvasReports {
   /** the adapter's commit count when admitted: one doc per commit */
   commit: number
   frame?: { processId: number; routingId: number }
+  /** `mv:admit` has gone to the frame at least once */
+  sent?: boolean
   /** a message stamped with this doc has arrived */
   heard: boolean
 }
+
+/** Test builds: each `mv:admit` held this long, so a case can make the page speak well before it lands. */
+let admitDelayMs = 0
+export function delayAdmits(ms: number): void { if (__MV_TEST__ && testMode()) admitDelayMs = Math.max(0, ms) }
 const docs = new Map<number, DocRecord>()
 const reopen = new Set<string>()
 
@@ -273,11 +293,17 @@ export function installBridge(): Bridge {
     if (!r || r.kind !== 'canvas' || !a || !isTrusted(wcId)) return null
     const rec = current(wcId, a.commits())
     if (rec.doc) return rec.doc   // this commit's doc, minted once whoever asks first
-    rec.doc = randomBytes(18).toString('base64url')
+    const doc = rec.doc = randomBytes(18).toString('base64url')
     rec.frame = a.frame()
     watchRegistry()
-    const sent = sendCanvas(wcId, CANVAS_CHANNELS.admit, { doc: rec.doc })
-    trace('admit', { wc: wcId, tab: r.tabId, sent })
+    const send = () => {
+      if (docs.get(wcId) !== rec || !isTrusted(wcId)) return
+      rec.sent = true
+      const sent = sendCanvas(wcId, CANVAS_CHANNELS.admit, { doc })
+      trace('admit', { wc: wcId, tab: r.tabId, sent, at: Date.now() })
+    }
+    if (__MV_TEST__ && admitDelayMs > 0) setTimeout(send, admitDelayMs)
+    else send()
     tell(wcId)
     return rec.doc
   }
@@ -334,7 +360,6 @@ export function installBridge(): Bridge {
     if (!ok || !r) { trace('page-refused', { wc: e.sender.id, channel, kind: r?.kind }); return null }
     return { wc: r.wc, kind: r.kind, ...(r.tabId ? { tabId: r.tabId } : {}) }
   }
-  const INVOKES = new Set<string>([CH.linkOpen, CH.settingsGet])
   const listen = (channel: string) => {
     if (listening.has(channel) || !SENDERS[channel]) return
     listening.add(channel)
@@ -343,7 +368,7 @@ export function installBridge(): Bridge {
         const ctx = pageCtx(e, channel)
         if (!ctx) throw new Error('refused')
         const p = checkPagePayload(channel, payload)
-        if (!p.ok) return channel === CH.linkOpen ? { ok: false, why: 'bad' } : null
+        if (!p.ok) { trace('page-refused', { wc: e.sender.id, channel, why: 'payload' }); return REFUSED_ANSWER[channel] ?? null }
         return await handlers.get(channel)?.(ctx, p.value)
       })
       return
@@ -389,8 +414,14 @@ export function installBridge(): Bridge {
         if (r?.tabId && tabWc.get(r.tabId) === id) tabWc.delete(r.tabId)
       })
       if (kind !== 'canvas') {
-        // a page that reloads says ready again; until then it gets nothing
-        wc.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { const r = regs.get(id); if (r) r.ready = false } })
+        // a new document says ready again; until then it gets nothing. Only a commit makes one - a document
+        // (did-navigate), an error page (did-fail-provisional-load: Electron sends it for a committed error page
+        // alone) - or a renderer gone. Never did-start-navigation: it fires before the policy refuses a
+        // navigation, and the page that stays has said ready already
+        const unready = () => { const r = regs.get(id); if (r) r.ready = false }
+        wc.on('did-navigate', unready)
+        wc.on('did-fail-provisional-load', (_e, _code, _d, _url, isMain) => { if (isMain) unready() })
+        wc.on('render-process-gone', unready)
         return
       }
       docs.set(id, { safety: 'unknown', commit: -1, heard: false })
@@ -399,7 +430,7 @@ export function installBridge(): Bridge {
       wc.on('dom-ready', () => {
         // the admit may have reached the frame before its document element: Electron drops such a message
         const rec = docs.get(id)
-        if (rec?.doc && !rec.heard && isTrusted(id)) {
+        if (rec?.doc && rec.sent && !rec.heard && isTrusted(id)) {
           const sent = sendCanvas(id, CANVAS_CHANNELS.admit, { doc: rec.doc })
           trace('admit-again', { wc: id, sent })
         }

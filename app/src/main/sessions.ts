@@ -15,17 +15,28 @@
  *   `window.open` of that document goes to the window stream's handler (`onSameCanvasOpen`: that canvas's tab focused
  *   and taken there through the guard - one tab per canvas, A2.14 #4); a same-origin path the policy refuses opens
  *   the canvas's people link outside; anything else is refused and goes to `openOutside` (https, http, mailto; no
- *   credentials; under 2 KB; one a second). Subframes navigate freely; `devtools://` is exempt. App pages are pinned:
- *   every navigation, redirect and window refused. No `<webview>` attaches.
+ *   credentials; under 2 KB; one a second). Only a canvas whose committed document is trusted sends anything on: a
+ *   refused navigation or a window from any other document - a page that lost its trust, one committed unattributed
+ *   beneath its tab page - opens nothing and asks for nothing. A canvas's own shell document never leaves the app,
+ *   on whatever loopback host it is written; another running canvas leaves as its people link. Subframes navigate
+ *   freely; `devtools://` is exempt. App pages are pinned: every navigation, redirect and window refused. No
+ *   `<webview>` attaches.
  * - Every view is made with `disableDialogs: true` (A2.14 #14): `canvasWebPreferences` and `appWebPreferences` are
- *   the one place their preferences are written.
+ *   the one place their preferences are written. `disableDialogs` covers `alert`, `confirm` and `prompt` (which
+ *   Electron 45 does not implement: it throws). A download is the other sheet a page can raise: a local session
+ *   cancels every download but one from a canvas whose committed document is trusted, whose view has focus (the
+ *   shown tab the person is using: a hidden view, or one beneath its tab page, never has it) and whose URL is not
+ *   the canvas's own document - only a listener on its port could answer the app's document request so;
+ *   `persist:app` cancels every download. `print()` is not covered: Electron 45 has no hook for it, Marver's shell
+ *   never calls it, and a frame's own `print()` shows the print panel as it would in a browser (a narrowing of
+ *   A2.14 #14, for the spec).
  */
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { app, session, shell, type MediaAccessPermissionRequest, type PermissionCheckHandlerHandlerDetails, type PermissionRequest, type Session, type WebContents, type WebPreferences } from 'electron'
 import { kindOf } from './bridge.ts'
-import { installDispatcher, isTrusted, SHELL_DOC, shellDocUrl, targetOf } from './proof.ts'
+import { canvasAddress, installDispatcher, isTrusted, SHELL_DOC, shellDocUrl, targetOf } from './proof.ts'
 import type { RegistryEntry } from './registry.ts'
 import { note, provide, testMode } from './testing/index.ts'
 
@@ -143,12 +154,27 @@ async function serveApp(req: Request): Promise<Response> {
 export function setupAppSession(): Session {
   const ses = session.fromPartition(APP_PARTITION)
   harden(ses, 'app')
+  ses.on('will-download', (e) => e.preventDefault())   // an app page downloads nothing: no save sheet
   if (!ses.protocol.isProtocolHandled(APP_SCHEME)) ses.protocol.handle(APP_SCHEME, serveApp)
   if (__MV_TEST__) provideTrustHooks()
   return ses
 }
 
 // ---- local sessions -----------------------------------------------------------------------------------------
+
+/**
+ * Why a download from this webContents is cancelled, or null when Electron may ask where to save it: only a trusted
+ * canvas whose view has focus - the tab shown and in use, never a hidden one or a page beneath its tab page - and
+ * never the canvas's own document (only a listener on its port could answer the app's document request so).
+ */
+export function refuseDownload(wc: WebContents | null | undefined, url: string): string | null {
+  if (!wc || wc.isDestroyed() || kindOf(wc.id) !== 'canvas') return 'not a canvas'
+  const t = targetOf(wc.id)
+  if (t && shellDocUrl(url, t.entry)) return 'the canvas\'s own document'
+  if (!isTrusted(wc.id)) return 'untrusted'
+  if (!wc.isFocused()) return 'not in use'
+  return null
+}
 
 const locals = new Map<string, Promise<Session>>()
 
@@ -163,12 +189,12 @@ export function localSession(ws: string): Promise<Session> {
       const plant = __MV_TEST__ && testMode() && process.env.MARVER_APP_TEST_ALLOW_SW === ws
       harden(ses, 'local')
       installDispatcher(ses, { allowServiceWorkers: plant })
-      // a download of the canvas's own document is what only a listener on its port could answer: never saved
       ses.on('will-download', (e, item, wc) => {
-        const t = wc && !wc.isDestroyed() ? targetOf(wc.id) : undefined
-        if (t && shellDocUrl(item.getURL(), t.entry)) e.preventDefault()
+        const why = refuseDownload(wc, item.getURL())
+        if (__MV_TEST__ && testMode()) note('download', { url: item.getURL(), wc: wc?.id, saved: why === null, why })
+        // a test build records the decision and never shows the save sheet
+        if (why !== null || (__MV_TEST__ && testMode())) e.preventDefault()
       })
-      if (__MV_TEST__ && testMode()) ses.on('will-download', (e, item) => { e.preventDefault(); note('download', { url: item.getURL() }) })   // no save sheet in tests
       if (!plant) {
         await ses.clearStorageData({ storages: ['serviceworkers'] }).catch((err: Error) => {
           process.stderr.write(`marver-app: the service-worker sweep of a canvas's storage failed: ${err.message}\n`)
@@ -222,40 +248,46 @@ export function allowNav(wc: WebContents, url: string, isMainFrame: boolean): bo
   return !!t && shellDocUrl(url, t.entry) !== null
 }
 
-function afterDeny(wc: WebContents, url: string): void {
+/**
+ * Where a refused navigation or a window of a canvas goes: nowhere unless its committed document is trusted; its
+ * own shell document on its bound origin to the canvas's tab (a window only), and nowhere on another loopback host;
+ * a running canvas's address - a loopback host on a port the registry or the tab names - as that canvas's people
+ * link; anything else through openOutside's checks.
+ */
+function sendOn(wc: WebContents, url: string, how: 'navigation' | 'window'): void {
+  const quiet = (why: string) => { if (__MV_TEST__) note('policy', { wc: wc.id, event: 'not-sent', how, why, url }) }
+  if (kindOf(wc.id) !== 'canvas') return quiet('not a canvas')
+  if (!isTrusted(wc.id)) return quiet('untrusted')
   const t = targetOf(wc.id)
-  let u: URL | null = null
-  try { u = new URL(url) } catch { /* not a URL: nothing opens */ }
-  if (!u) return
-  if (t?.entry.origin && u.origin === t.entry.origin) { openOutside(peopleLink(t.entry, u)); return }
-  openOutside(url)
-}
-
-function onWindowOpen(wc: WebContents, url: string): void {
-  if (kindOf(wc.id) !== 'canvas') { if (__MV_TEST__) note('policy', { wc: wc.id, event: 'window-refused', url }); return }
-  const t = targetOf(wc.id)
-  let u: URL | null = null
-  try { u = new URL(url) } catch { return }
-  if (t?.entry.origin && u.origin === t.entry.origin && !u.username && !u.password) {
-    if (SHELL_DOC.test(u.pathname)) {
-      const target = t.entry.origin + u.pathname + u.search + u.hash
-      if (__MV_TEST__) note('policy', { wc: wc.id, event: 'same-canvas-open', url: target })
-      if (target.length <= 2048) sameCanvas?.(wc.id, target)
-      return
-    }
-    openOutside(peopleLink(t.entry, u))
+  let u: URL
+  try { u = new URL(url) } catch { return quiet('not a URL') }
+  if (u.username || u.password) return quiet('credentials')
+  if (how === 'window' && t?.entry.origin && u.origin === t.entry.origin && SHELL_DOC.test(u.pathname)) {
+    const target = t.entry.origin + u.pathname + u.search + u.hash
+    if (__MV_TEST__) note('policy', { wc: wc.id, event: 'same-canvas-open', url: target })
+    if (target.length <= 2048) sameCanvas?.(wc.id, target)
     return
   }
-  openOutside(url)
+  const canvas = canvasAddress(u, t)
+  if (canvas) {
+    if (canvas.port === t?.entry.port && SHELL_DOC.test(u.pathname)) return quiet('the canvas\'s own document')
+    openOutside(peopleLink(canvas, u))
+    return
+  }
+  openOutside(u.href)
 }
 
 function policy(wc: WebContents): void {
-  wc.setWindowOpenHandler(({ url }) => { onWindowOpen(wc, url); return { action: 'deny' } })
+  wc.setWindowOpenHandler(({ url }) => {
+    if (kindOf(wc.id) === 'canvas') sendOn(wc, url, 'window')
+    else if (__MV_TEST__) note('policy', { wc: wc.id, event: 'window-refused', url })
+    return { action: 'deny' }
+  })
   wc.on('will-frame-navigate', (e) => {
     if (allowNav(wc, e.url, e.isMainFrame)) return
     e.preventDefault()
     if (__MV_TEST__) note('policy', { wc: wc.id, event: 'navigation-refused', url: e.url, main: e.isMainFrame })
-    if (e.isMainFrame && kindOf(wc.id) === 'canvas') afterDeny(wc, e.url)
+    if (e.isMainFrame && kindOf(wc.id) === 'canvas') sendOn(wc, e.url, 'navigation')
   })
   wc.on('will-navigate', (e) => { if (!allowNav(wc, e.url, true)) e.preventDefault() })
   wc.on('will-redirect', (e) => {

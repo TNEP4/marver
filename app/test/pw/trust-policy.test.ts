@@ -4,9 +4,11 @@
  * stream without asking the app's handler). A trusted canvas's main frame gets the microphone, never the camera, and
  * nothing once its trust goes; a frame, notifications and geolocation get nothing; app pages get nothing. A canvas's
  * main frame stays on its shell document: a refused path opens the people link outside, a same-origin window.open of
- * the shell goes to the canvas's own tab, everything else leaves through openOutside's checks; subframes navigate
- * freely. App pages are pinned, serve only their manifest's files with A2.5's CSP, and a page showing another document
- * loses its channels.
+ * the shell goes to the canvas's own tab, everything else leaves through openOutside's checks - only from a trusted
+ * document, never the canvas's own document on another loopback host, another running canvas as its people link;
+ * subframes navigate freely. No download raises a save sheet but a trusted canvas's in use. App pages are pinned and
+ * keep their snapshots through every refused attempt, serve only their manifest's files with A2.5's CSP, and a page
+ * showing another document loses its channels; invokes answer only the pages that may send them.
  */
 import { randomBytes } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -144,6 +146,49 @@ describe('the navigation policy', () => {
     expect((await tabState(run, id)).trusted).toBe(true)
   })
 
+  it('a document that lost its trust sends nothing on: no link, no window, no people link, no same-canvas open', async () => {
+    const ws = randomBytes(8).toString('hex')
+    const a = await startFakeCanvas({ home: env.home, slotBase, slot: 8, ws })
+    await a.ready
+    await inRegistry(run, a.port, 'ready')
+    const id = await open(run, a.port)
+    const s = await trusted(run, id)
+    await a.close()
+    await fake({ slot: 8, ws })
+    await until('untrusted', async () => !(await tabState(run, id)).trusted)
+    const n = (await opened()).length
+    const same = (await run.call<unknown[]>('trust:same-canvas')).length
+    for (const js of [`location.href = 'https://example.com/lost'`, `window.open('https://example.com/lost'); 1`, `window.open('/elsewhere'); 1`, `location.href = '/__mv/frame/?id=x'`, `window.open('/index.html#/b/x'); 1`]) {
+      await spaced()
+      await evalIn(run, id, js)
+    }
+    await sleep(200)
+    expect((await opened()).slice(n)).toEqual([])
+    expect((await run.call<unknown[]>('trust:same-canvas')).length).toBe(same)
+    const quiet = (await journal(run, 'policy')).map((l) => l.data).filter((d) => d.wc === s.wc && d.event === 'not-sent')
+    expect(quiet.map((d) => d.why)).toEqual(['untrusted', 'untrusted', 'untrusted', 'untrusted', 'untrusted'])
+  })
+
+  it('a canvas\'s own document never leaves the app on another loopback host; another running canvas leaves as its people link', async () => {
+    const f = await fake({ slot: 9 })   // bound on [::1]
+    const g = await fake({ slot: 10, bind: '127.0.0.1' })
+    const id = await open(run, f.port)
+    const s = await trusted(run, id)
+    await spaced()
+    const n = (await opened()).length
+    await evalIn(run, id, `window.open('http://localhost:${f.port}/#/b/x'); 1`)
+    await spaced()
+    await evalIn(run, id, `location.href = 'http://127.0.0.1:${f.port}/index.html'`)
+    await sleep(300)
+    expect((await opened()).slice(n)).toEqual([])
+    const quiet = (await journal(run, 'policy')).map((l) => l.data).filter((d) => d.wc === s.wc && d.event === 'not-sent')
+    expect(quiet.map((d) => d.why)).toEqual(['the canvas\'s own document', 'the canvas\'s own document'])
+    await spaced()
+    await evalIn(run, id, `window.open('http://[::1]:${g.port}/index.html?x=1#/b/y'); 1`)
+    await until('the other canvas\'s people link', async () => (await opened()).includes(`http://localhost:${g.port}/index.html?x=1#/b/y`))
+    expect((await tabState(run, id)).trusted).toBe(true)
+  })
+
   it('a subframe navigates freely, to another origin too', async () => {
     const other = await plainServer(0, (_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<title>elsewhere</title>') })
     closers.push(() => other.close())
@@ -157,10 +202,44 @@ describe('the navigation policy', () => {
   })
 })
 
+describe('downloads', () => {
+  const DOWNLOAD = `(function () { var a = document.createElement('a'); a.href = '/file.txt'; a.download = 'file.txt'; document.body.appendChild(a); a.click(); return 1 })()`
+  const decided = async (wc: number, n: number) => until('the download decided', async () => {
+    const d = (await journal(run, 'download')).map((l) => l.data).filter((x) => x.wc === wc)
+    return d.length > n ? d[n] : null
+  })
+  it('a save sheet only for a trusted canvas in use: a view without focus never gets one, nor a page that lost its trust', async () => {
+    const ws = randomBytes(8).toString('hex')
+    const file = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => {
+      if (!(req.url ?? '').startsWith('/file.txt')) return false
+      res.writeHead(200, { 'content-type': 'text/plain', 'content-disposition': 'attachment; filename="file.txt"' })
+      res.end('a file')
+      return true
+    }
+    const a = await startFakeCanvas({ home: env.home, slotBase, slot: 11, ws, onRequest: file })
+    await a.ready
+    await inRegistry(run, a.port, 'ready')
+    const id = await open(run, a.port)
+    const s = await trusted(run, id)
+    await evalIn(run, id, DOWNLOAD, true)
+    // the test window is never shown, so no view of it has focus: the person is not using it
+    expect(await decided(s.wc, 0)).toMatchObject({ url: `${a.origin}/file.txt`, saved: false, why: 'not in use' })
+    await a.close()
+    await fake({ slot: 11, ws, onRequest: file })
+    await until('untrusted', async () => !(await tabState(run, id)).trusted)
+    await evalIn(run, id, DOWNLOAD, true)
+    expect(await decided(s.wc, 1)).toMatchObject({ saved: false, why: 'untrusted' })
+  })
+})
+
 describe('app pages', () => {
-  it('are pinned: location, a link and window.open change nothing and open nothing', async () => {
+  it('are pinned: location, a link and window.open change nothing and open nothing - and the page keeps getting its snapshots', async () => {
+    await run.call('trust:on-ready')
     const { id } = await run.call<{ id: string }>('trust:open-app', { page: 'home' })
     await until('Home loaded', async () => (await run.call<string | null>('trust:app-url', { id })) === 'marver-app://home/')
+    await run.call('trust:ipc', { id, channel: 'app:ready', msg: null })
+    let rev = 1
+    expect(await run.call('trust:send', { id, channel: 'tabs', payload: { rev: rev++ } })).toBe(true)
     await spaced()
     const n = (await opened()).length
     for (const js of [
@@ -171,6 +250,8 @@ describe('app pages', () => {
       await run.call('trust:app-eval', { id, js })
       await sleep(250)
       expect(await run.call('trust:app-url', { id }), js).toBe('marver-app://home/')
+      // a refused attempt leaves the document - and its readiness - as they were
+      expect(await run.call('trust:send', { id, channel: 'tabs', payload: { rev: rev++ } }), js).toBe(true)
     }
     expect((await opened()).length).toBe(n)
   })
@@ -190,12 +271,12 @@ describe('app pages', () => {
     await run.call('trust:handle', { channel: 'home:action' })
     const { id } = await run.call<{ id: string }>('trust:open-app', { page: 'home' })
     await until('Home loaded', async () => (await run.call<string | null>('trust:app-url', { id })) === 'marver-app://home/')
-    await run.call('trust:ipc', { id, channel: 'home:action', msg: { action: 'show-files' } })
-    await run.call('trust:ipc', { id, channel: 'home:action', msg: { action: 'copy', id: 'rm -rf' } })
+    expect(await run.call('trust:invoke', { id, channel: 'home:action', payload: { action: 'show-files' } })).toEqual({ answer: null })
+    expect(await run.call('trust:invoke', { id, channel: 'home:action', payload: { action: 'copy', id: 'rm -rf' } })).toEqual({ answer: { ok: false } })
     expect(await run.call('trust:handled')).toEqual([{ channel: 'home:action', kind: 'home', payload: { action: 'show-files' } }])
     await run.call('trust:app-load', { id, url: 'data:text/html,<p>not Home</p>' })
     await until('the other document', async () => String(await run.call('trust:app-url', { id })).startsWith('data:'))
-    await run.call('trust:ipc', { id, channel: 'home:action', msg: { action: 'show-files' } })
+    expect(await run.call('trust:invoke', { id, channel: 'home:action', payload: { action: 'show-files' } })).toEqual({ error: 'refused' })
     expect(await run.call<unknown[]>('trust:handled')).toHaveLength(1)
     // a channel Home may not send
     await run.call('trust:handle', { channel: 'pill:action' })
@@ -207,16 +288,46 @@ describe('app pages', () => {
 
   it('get nothing before they say app:ready, everything once they do, and must say it again after a reload', async () => {
     await run.call('trust:on-ready')
+    const r0 = (await run.call<string[]>('trust:readied')).length
     const { id } = await run.call<{ id: string }>('trust:open-app', { page: 'settings' })
     await until('Settings loaded', async () => (await run.call<string | null>('trust:app-url', { id })) === 'marver-app://settings/')
     expect(await run.call('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 1 } })).toBe(false)
     await run.call('trust:ipc', { id, channel: 'app:ready', msg: null })
-    expect(await run.call('trust:readied')).toEqual(['settings'])
+    expect((await run.call<string[]>('trust:readied')).slice(r0)).toEqual(['settings'])
     expect(await run.call('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 2 } })).toBe(true)
     await run.call('trust:app-reload', { id })
     await until('the reload', async () => (await run.call<boolean>('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 3 } })) === false)
     await run.call('trust:ipc', { id, channel: 'app:ready', msg: null })
-    expect(await run.call('trust:readied')).toEqual(['settings', 'settings'])
+    expect((await run.call<string[]>('trust:readied')).slice(r0)).toEqual(['settings', 'settings'])
     expect(await run.call('trust:send', { kind: 'settings', channel: 'status', payload: { rev: 4 } })).toBe(true)
+  })
+
+  it('invokes answer with the handler\'s value, only to the pages that may send them; a refused payload gets the channel\'s own no', async () => {
+    for (const [channel, answer] of [['link:open', { ok: true }], ['settings:get', { keys: [] }], ['settings:set', { ok: true }], ['home:action', { ok: true }]] as const) {
+      await run.call('trust:handle-answer', { channel, answer })
+    }
+    const h0 = (await run.call<unknown[]>('trust:handled')).length
+    const home = (await run.call<{ id: string }>('trust:open-app', { page: 'home' })).id
+    const settings = (await run.call<{ id: string }>('trust:open-app', { page: 'settings' })).id
+    await until('the pages loaded', async () => (await run.call<string | null>('trust:app-url', { id: home })) === 'marver-app://home/' && (await run.call<string | null>('trust:app-url', { id: settings })) === 'marver-app://settings/')
+    const f = await fake({ slot: 12 })
+    const canvas = await open(run, f.port)
+    await trusted(run, canvas)
+    const inv = (id: string, channel: string, payload?: unknown, frame?: string) => run.call('trust:invoke', { id, channel, payload, frame })
+    expect(await inv(home, 'link:open', { url: 'http://localhost:4806/' })).toEqual({ answer: { ok: true } })
+    expect(await inv(home, 'link:open', { url: 42 })).toEqual({ answer: { ok: false, why: 'bad' } })
+    expect(await inv(home, 'home:action', { action: 'show-files' })).toEqual({ answer: { ok: true } })
+    expect(await inv(home, 'settings:get')).toEqual({ error: 'refused' })
+    expect(await inv(settings, 'settings:get')).toEqual({ answer: { keys: [] } })
+    expect(await inv(settings, 'settings:set', { file: 'config', key: 'mode', value: 'dark', extra: 1 })).toEqual({ answer: { ok: true } })
+    expect(await inv(settings, 'settings:set', { file: 'passwd', key: 'mode', value: 'dark' })).toEqual({ answer: { ok: false, why: 'bad-value' } })
+    expect(await inv(settings, 'link:open', { url: 'http://localhost:4806/' })).toEqual({ error: 'refused' })
+    expect(await inv(canvas, 'link:open', { url: 'http://localhost:4806/' })).toEqual({ error: 'refused' })
+    expect((await run.call<{ channel: string; kind: string; payload: unknown }[]>('trust:handled')).slice(h0)).toEqual([
+      { channel: 'link:open', kind: 'home', payload: { url: 'http://localhost:4806/' } },
+      { channel: 'home:action', kind: 'home', payload: { action: 'show-files' } },
+      { channel: 'settings:get', kind: 'settings', payload: null },
+      { channel: 'settings:set', kind: 'settings', payload: { file: 'config', key: 'mode', value: 'dark' } },
+    ])
   })
 })

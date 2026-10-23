@@ -5,14 +5,19 @@
  * bridge admits a trusted document and replays what the page said before, hello first; messages carrying another
  * document's doc, none, or sent from anywhere but the canvas's main frame are refused; trust lost while a document
  * lives makes it stale and tells it untrusted, and nothing reloads it; the page's own reload that beats the new slot
- * file is read again and trusted, never unverified; no service worker registers, in a partition opened at launch or
- * later, and the server never sees the script.
+ * file is read again and trusted, never unverified - also while the tab's target gives nothing, as the window
+ * stream's does between the old instance leaving the registry and the new slot file being read; a page that speaks
+ * well before its admit lands has what it said replayed under it; no service worker registers, in a partition
+ * opened at launch or later, and the server never sees the script.
+ *
+ * The registry's watch waits 2 s here (and the reconcile a minute): every case reads the registry when it means to,
+ * so "the page's own reload beats the new slot file" is not left to a 100 ms race.
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { proofHeaders } from '../../../src/server/proof.ts'
+import { proofHeaders, type DocProof } from '../../../src/server/proof.ts'
 import { launchPW, type AppRun } from '../harness/app.ts'
 import { runSlotBase, testEnv, type TestEnv } from '../harness/env.ts'
 import { startFakeCanvas, type FakeCanvas, type FakeOptions } from '../harness/fake-canvas.ts'
@@ -26,7 +31,7 @@ const closers: (() => Promise<void> | void)[] = []
 
 beforeAll(async () => {
   env = testEnv(slotBase)
-  run = await launchPW(env)
+  run = await launchPW(env, { extraEnv: { MARVER_APP_TIMINGS: JSON.stringify({ watchDebounceMs: 2000, reconcileMs: 60_000 }) } })
 })
 afterEach(async () => {
   for (const f of fakes.splice(0)) await f.close()
@@ -221,6 +226,46 @@ describe('the bridge', () => {
     expect(await evalIn(run, id, 'window.marverApp.reopen')).toBe(false)
   })
 
+  it('the page speaks well before its admit lands: what it said is held, then replayed under the admit, hello first, the latest of each, nothing refused', async () => {
+    let me: DocProof | null = null
+    const HEAD = `<!doctype html><html><head><meta charset="utf-8"><script>
+      var A = window.marverApp;
+      A.hello({ version: '0.27.1', board: 'main', page: 'PAGE_0123456789' });
+      A.theme({ dark: true });
+      A.busy({ busy: true, unsaved: true, why: ['typing'] });
+      A.menu([{ id: 'fit-all', group: 'view', label: 'Fit All' }]);
+      A.theme({ dark: false });
+      fetch('/__mv/test/said', { method: 'POST', keepalive: true });
+    </script></head>`
+    const g = await fake({ slot: 16, onRequest: (req, res) => {
+      if ((req.url ?? '/') !== '/' || !me) return false
+      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store', ...proofHeaders(me, req.headers['x-mv-nonce'])! })
+      res.write(HEAD)   // the head and its script now, the body half a second later
+      setTimeout(() => { if (!res.destroyed) res.end('<body><p>the body</p></body></html>') }, 500)
+      return true
+    } })
+    me = { instance: g.instance, key: g.key, port: g.port }
+    await run.call('trust:admit-delay', { ms: 700 })
+    try {
+      const gid = await open(run, g.port)
+      const x = await until('the held reports', async () => { const t = await tabState(run, gid); return t.current?.menu ? t : null })
+      expect(x.current).toEqual({
+        safety: 'fresh', hello: { version: '0.27.1', board: 'main', page: 'PAGE_0123456789' }, theme: { dark: false },
+        busy: { busy: true, unsaved: true, why: ['typing'] }, menu: [{ id: 'fit-all', group: 'view', label: 'Fit All' }],
+      })
+      const b = (await journal(run, 'bridge')).map((l) => l.data).filter((d) => d.wc === x.wc)
+      const admit = b.find((d) => d.event === 'admit')!
+      expect(admit.sent).toBe(true)
+      // the page spoke at least half a second before its admit went (one clock: the same machine's)
+      const said = g.requests.find((r) => r.path === '/__mv/test/said')!
+      expect(Number(admit.at) - said.t).toBeGreaterThan(400)
+      expect(b.filter((d) => d.event === 'refused')).toEqual([])
+      expect(b.filter((d) => d.event === 'admit-again')).toEqual([])   // dom-ready came before the admit: no early one
+      expect(b.filter((d) => d.event === 'accepted').map((d) => d.ch)).toEqual(['hello', 'theme', 'busy', 'menu'])
+      expect(b.findIndex((d) => d.event === 'admit')).toBeLessThan(b.findIndex((d) => d.event === 'accepted'))
+    } finally { await run.call('trust:admit-delay', { ms: 0 }) }
+  })
+
   it('a reload is a new document: admitted again with a new doc, its reports replayed under it, the old doc refused', async () => {
     const was = (await tabState(run, id)).reports.at(-1)!.doc
     await run.call('trust:reload', { id })
@@ -299,7 +344,35 @@ describe('trust lost, and won back', () => {
     expect(proof.some((d) => d.event === 'reread' && d.instance === b.instance)).toBe(true)
   })
 
-  it('a canvas that stops: untrusted at once, and no load or webContents comes from the registry for a tab never opened', async () => {
+  it('the page\'s own reload while its tab\'s target gives nothing: the dispatcher keeps the last one, reads the registry again, trusted - nothing opened outside', async () => {
+    const ws = randomBytes(8).toString('hex')
+    const a = await startFakeCanvas({ home: env.home, slotBase, slot: 15, ws })
+    await a.ready
+    await inRegistry(run, a.port, 'ready')
+    // the window stream's shape: the target is found by the tab's instance in the registry, else nothing
+    const { id } = await run.call<{ id: string }>('trust:open', { port: a.port, target: 'registry' })
+    await trusted(run, id)
+    const before = (await tabState(run, id)).events.length
+    const out = (await run.call<string[]>('trust:opened')).length
+    await a.close()
+    await run.call('trust:reread')   // the old instance leaves the registry: the target gives nothing from here
+    expect((await tabState(run, id)).trusted).toBe(false)
+    const b = await startFakeCanvas({ home: env.home, slotBase, slot: 15, ws })
+    fakes.push(b)
+    await b.ready
+    await evalIn(run, id, 'location.reload()')   // A1.13 #1's resume reload, long before the watch reads the new file
+    const y = await until('trusted under the new instance', async () => { const t = await tabState(run, id); return t.trusted && t.committed?.instance === b.instance ? t : null })
+    const after = y.events.slice(before)
+    expect(after.some((e) => e.e.kind === 'fail')).toBe(false)
+    expect(after.filter((e) => e.e.kind === 'commit').map((e) => e.e.attributed)).toEqual([true])
+    expect(b.requests.filter((r) => r.path === '/')).toHaveLength(1)
+    const proof = (await journal(run, 'proof')).map((l) => l.data).filter((d) => d.wc === y.wc)
+    expect(proof.some((d) => d.event === 'reread' && d.instance === b.instance)).toBe(true)
+    expect((await journal(run, 'policy')).some((l) => l.data.wc === y.wc && l.data.event === 'navigation-refused')).toBe(false)
+    expect((await run.call<string[]>('trust:opened')).length).toBe(out)
+  })
+
+  it('a canvas that stops: untrusted at once; the trust modules make no view and load nothing on a registry change', async () => {
     const a = await fake({ slot: 13 })
     const c = await fake({ slot: 14 })   // never opened
     const id = await open(run, a.port)

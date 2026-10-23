@@ -4,8 +4,9 @@
  * app pages' payloads; who may use which app channel, from where. And the preferences every view is made with.
  */
 import { describe, expect, it } from 'vitest'
-import { checkBusy, checkHello, checkMenu, checkPagePayload, checkTheme, isPinnedUrl, mayUsePageChannel } from '../../src/main/bridge.ts'
-import { appWebPreferences, canvasWebPreferences, peopleLink } from '../../src/main/sessions.ts'
+import { checkBusy, checkHello, checkMenu, checkPagePayload, checkTheme, INVOKES, isPinnedUrl, mayUsePageChannel } from '../../src/main/bridge.ts'
+import { appWebPreferences, canvasWebPreferences, peopleLink, refuseDownload } from '../../src/main/sessions.ts'
+import { SENDERS } from '../../src/shared/channels.ts'
 
 describe('canvas reports', () => {
   it('hello: version, board, page within bounds; unknown fields stripped', () => {
@@ -75,6 +76,14 @@ describe('app pages', () => {
     expect(isPinnedUrl('marver-app://home/other.html', 'home')).toBe(false)
     expect(isPinnedUrl('data:text/html,x', 'home')).toBe(false)
     expect(isPinnedUrl('marver-app://canvas/', 'canvas')).toBe(false)
+  })
+  it('the invokes are the app preload\'s - link:open, home:action, settings:get, settings:set - each a page channel', () => {
+    expect([...INVOKES].sort()).toEqual(['home:action', 'link:open', 'settings:get', 'settings:set'])
+    expect([...INVOKES].every((c) => !!SENDERS[c])).toBe(true)
+  })
+  it('a download from anything but a canvas main made is cancelled', () => {
+    expect(refuseDownload(null, 'http://x/')).toBe('not a canvas')
+    expect(refuseDownload({ id: 424242, isDestroyed: () => false } as unknown as Parameters<typeof refuseDownload>[0], 'http://x/')).toBe('not a canvas')
   })
   it('who may send what, from where: the kinds SENDERS lists, the main frame, the pinned page', () => {
     expect(mayUsePageChannel('tab:activate', 'strip', true, 'marver-app://strip/')).toBe(true)

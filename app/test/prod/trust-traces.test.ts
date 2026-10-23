@@ -2,8 +2,10 @@
  * The navigation adapter's event traces (spec 28 A2.14 #8, #31: proved in the first build, before any page work),
  * with the production switches - Playwright's loader turns the beforeunload check off. Each trace runs against a
  * fake canvas and checks its attribution: overlapping loads of one URL, a redirect, a late failure, a denied link,
- * a refused reload, a stop, a 204 and a download; and `disableDialogs` against the guard (#14): `alert`, `confirm`
- * and `prompt` answer at once and show nothing, while a page holding work still refuses its close.
+ * a refused reload, a stop, a 204 and a download; the answers Chromium renders though they look like no document -
+ * a 3xx with no Location or an empty one, a Content-Disposition it cannot parse - refused unless proved, so an
+ * impostor's script never runs in the canvas's partition; and `disableDialogs` against the guard (#14): `alert`,
+ * `confirm` and `prompt` answer at once and show nothing, while a page holding work still refuses its close.
  * Each trace's raw Electron events are printed, for the record.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -38,6 +40,13 @@ function route(req: IncomingMessage, res: ServerResponse): boolean {
   if (q.has('204')) { res.writeHead(204); res.end(); return true }
   if (q.has('304')) { res.writeHead(304, { etag: '"x"' }); res.end(); return true }
   if (q.has('download')) { res.writeHead(200, { ...signed, 'content-disposition': 'attachment; filename="x.html"' }); res.end(PAGE); return true }
+  // an impostor's answers, unsigned, whose body Chromium renders: a 3xx with no Location or an empty one, and a
+  // Content-Disposition whose type is not a token (Chromium reads it as inline)
+  const IMPOSTOR = '<!doctype html><title>impostor</title><script>fetch("/pwned?" + encodeURIComponent(String(localStorage.getItem("k"))))</script>'
+  if (q.has('noloc')) { res.writeHead(302, { 'content-type': 'text/html', 'cache-control': 'no-store' }); res.end(IMPOSTOR); return true }
+  if (q.has('emptyloc')) { res.writeHead(302, { 'content-type': 'text/html', 'cache-control': 'no-store', location: '' }); res.end(IMPOSTOR); return true }
+  if (q.has('attx')) { res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store', 'content-disposition': 'attachment x' }); res.end(IMPOSTOR); return true }
+  if (q.has('att1')) { res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store', 'content-disposition': 'attachment=1' }); res.end(IMPOSTOR); return true }
   if (q.has('late')) {
     res.writeHead(200, signed)
     res.write('<!doctype html><html><body><p>half a page')
@@ -76,19 +85,25 @@ async function fresh(path = '/'): Promise<TabState> {
 const adapterSince = (s: TabState, n: number) => s.events.slice(n).map((e) => e.e)
 
 describe('the adapter\'s traces', () => {
-  it('overlapping loads of one URL: the later load commits, attributed, once', async () => {
+  it('overlapping loads of one URL: two requests, each with its own nonce; the later load commits, attributed, once', async () => {
     const { id } = await run.call<{ id: string }>('trust:open', { port: f.port, load: false })
     const m = await mark()
-    await run.call('trust:load', { id, url: `${f.origin}/?slow=500` })
+    const r0 = f.requests.length
+    const url = `${f.origin}/?slow=300`
+    await run.call('trust:load', { id, url })
     await sleep(80)
-    await run.call('trust:load', { id, url: `${f.origin}/` })
+    await run.call('trust:load', { id, url })
     const s = await trusted(run, id)
-    await sleep(700)
+    await sleep(500)   // the first request's answer has come and gone
     const t = await tabState(run, id)
-    console.log('overlapping loads:', (await raw(s.wc, m)).join(' | '))
-    const commits = t.events.filter((e) => e.e.kind === 'commit')
-    expect(commits.map((e) => e.e.attributed)).toEqual([true])
-    expect(t.committed?.url).toBe(`${f.origin}/`)
+    console.log('overlapping loads of one URL:', (await raw(s.wc, m)).join(' | '))
+    const asked = f.requests.slice(r0).filter((r) => r.path === '/')
+    expect(asked).toHaveLength(2)
+    expect(asked[0].headers['x-mv-nonce']).not.toBe(asked[1].headers['x-mv-nonce'])
+    const starts = t.events.filter((e) => e.e.kind === 'start')
+    expect(starts).toHaveLength(2)
+    expect(t.events.filter((e) => e.e.kind === 'commit').map((e) => e.e.attributed)).toEqual([true])
+    expect(t.committed).toMatchObject({ url, attributed: true, gen: starts[1].e.gen })
     expect(t.events.some((e) => e.e.kind === 'fail')).toBe(false)
     expect(t.trusted).toBe(true)
   })
@@ -101,19 +116,18 @@ describe('the adapter\'s traces', () => {
     expect(s.events.map((e) => e.e.kind)).toEqual(expect.arrayContaining(['start', 'redirect', 'response', 'commit']))
   })
 
-  it('a late failure (the body cut after the commit): trust follows what Electron says - a failure takes it', async () => {
+  it('a late failure (the body cut after the commit): did-navigate, then did-fail-load -355, which takes the trust', async () => {
     const s = await fresh()
     const m = await mark()
     const n = s.events.length
     await run.call('trust:load', { id: s.id, url: `${f.origin}/?late` })
-    await sleep(1200)
-    const t = await tabState(run, s.id)
-    const r = await raw(s.wc, m)
-    console.log('late failure:', r.join(' | '), '| trusted after:', t.trusted)
+    const t = await until('the late failure', async () => { const x = await tabState(run, s.id); return adapterSince(x, n).some((e) => e.kind === 'fail') ? x : null })
+    console.log('late failure:', (await raw(s.wc, m)).join(' | '), '| trusted after:', t.trusted)
     const after = adapterSince(t, n)
     expect(after.filter((e) => e.kind === 'commit').map((e) => e.attributed)).toEqual([true])
-    const failed = after.some((e) => e.kind === 'fail')
-    expect(t.trusted).toBe(!failed)
+    expect(after.find((e) => e.kind === 'fail')).toMatchObject({ code: -355, url: `${f.origin}/?late` })
+    expect(t.committed?.lost).toBe(true)
+    expect(t.trusted).toBe(false)
   })
 
   it('a denied link: refused before anything commits; the shown document keeps its trust and its bridge', async () => {
@@ -186,7 +200,7 @@ describe('the adapter\'s traces', () => {
     expect(t.trusted).toBe(false)
   })
 
-  it('a download: no commit, the shown document keeps its trust, and no save sheet', async () => {
+  it('a download, signed: proved like a page, then no commit; the shown document keeps its trust; the shell\'s document is never saved', async () => {
     const s = await fresh()
     const n = s.events.length
     const m = await mark()
@@ -194,10 +208,30 @@ describe('the adapter\'s traces', () => {
     await sleep(600)
     const t = await tabState(run, s.id)
     console.log('download:', (await raw(s.wc, m)).join(' | '))
-    expect(adapterSince(t, n).map((e) => e.kind)).toEqual(['start', 'abort'])
+    expect(adapterSince(t, n).map((e) => e.kind)).toEqual(['start', 'response', 'abort'])
     expect(t.trusted).toBe(true)
-    expect((await journal(run, 'download')).length).toBe(1)
+    // what the production handler decided, as the test build records it before it keeps the save sheet away
+    expect((await journal(run, 'download')).map((l) => l.data)).toEqual([{ url: `${f.origin}/?download`, wc: s.wc, saved: false, why: 'the canvas\'s own document' }])
   })
+
+  for (const [q, what] of [['noloc', 'a 302 with no Location'], ['emptyloc', 'a 302 with an empty Location'], ['attx', 'Content-Disposition: attachment x'], ['att1', 'Content-Disposition: attachment=1']] as const) {
+    it(`${what}, unsigned: Chromium would render it - refused like any unproved answer, and its script never runs`, async () => {
+      const s = await fresh()
+      await evalIn(run, s.id, `localStorage.setItem('k', 'the canvas own'); 1`)
+      const n = s.events.length
+      const m = await mark()
+      const r0 = f.requests.length
+      await run.call('trust:load', { id: s.id, url: `${f.origin}/?${q}` })
+      const t = await until(`${what} refused`, async () => { const x = await tabState(run, s.id); return adapterSince(x, n).some((e) => e.kind === 'fail') ? x : null })
+      await sleep(300)
+      const u = await tabState(run, s.id)
+      console.log(`${what}:`, (await raw(s.wc, m)).join(' | '))
+      expect(adapterSince(t, n).find((e) => e.kind === 'fail')).toMatchObject({ why: 'unverified', code: -20 })
+      expect(adapterSince(u, n).some((e) => e.kind === 'commit')).toBe(false)
+      expect(u.trusted).toBe(false)
+      expect(f.requests.slice(r0).filter((r) => r.path === '/pwned')).toEqual([])
+    })
+  }
 })
 
 describe('dialogs (A2.14 #14)', () => {

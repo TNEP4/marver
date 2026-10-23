@@ -7,9 +7,9 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { docProof, logoProof } from '../../../src/server/proof.ts'
-import { checkProof, commitsNothing, fetchLogo, oneHeaders, probeProof, REDIRECTS, shellDocUrl, unsafePrefs } from '../../src/main/proof.ts'
+import { canvasAddress, checkProof, commitsNothing, fetchLogo, installDispatcher, isRedirect, oneHeaders, probeProof, REDIRECTS, shellDocUrl, targetOf, unsafePrefs, type ProofTarget } from '../../src/main/proof.ts'
 import type { RegistryEntry } from '../../src/main/registry.ts'
 
 const key = randomBytes(32)
@@ -96,13 +96,58 @@ describe('what a view must be, and what commits nothing', () => {
     expect([301, 302, 303, 307, 308].every((c) => REDIRECTS.has(c))).toBe(true)
     expect([300, 304, 305, 306].some((c) => REDIRECTS.has(c))).toBe(false)
   })
-  it('commitsNothing: a 204, a 205 or a download', () => {
-    expect(commitsNothing(204, {})).toBe(true)
-    expect(commitsNothing(205, {})).toBe(true)
-    expect(commitsNothing(200, { 'content-disposition': 'attachment; filename="x"' })).toBe(true)
-    expect(commitsNothing(200, { 'content-disposition': 'inline' })).toBe(false)
-    expect(commitsNothing(200, {})).toBe(false)
-    expect(commitsNothing(500, {})).toBe(false)
+  it('isRedirect: what Chromium follows - a redirect status with one Location that is not empty', () => {
+    expect(isRedirect(302, oneHeaders({ location: ['/index.html'] }))).toBe(true)
+    expect(isRedirect(308, oneHeaders({ Location: ['http://[::1]:30003/'] }))).toBe(true)
+    // Chromium renders the body of these: they go through the proof check
+    expect(isRedirect(302, oneHeaders({}))).toBe(false)
+    expect(isRedirect(302, oneHeaders({ location: [''] }))).toBe(false)
+    expect(isRedirect(301, oneHeaders({ location: ['   '] }))).toBe(false)
+    // a Location sent twice counts as none: refused unless proved, never followed unchecked
+    expect(isRedirect(302, oneHeaders({ location: ['', '/x'] }))).toBe(false)
+    expect(isRedirect(304, oneHeaders({ location: ['/x'] }))).toBe(false)
+    expect(isRedirect(200, oneHeaders({ location: ['/x'] }))).toBe(false)
+  })
+  it('commitsNothing: a 204 or a 205 alone - a download is proved like a page (Chromium renders a disposition it cannot parse)', () => {
+    expect(commitsNothing(204)).toBe(true)
+    expect(commitsNothing(205)).toBe(true)
+    expect(commitsNothing(200)).toBe(false)
+    expect(commitsNothing(500)).toBe(false)
+    expect(commitsNothing(302)).toBe(false)
+  })
+})
+
+describe('the dispatcher\'s targets', () => {
+  const ses = { webRequest: { onBeforeSendHeaders() {}, onHeadersReceived() {} } } as unknown as Parameters<typeof installDispatcher>[0]
+  const target = (port: number): ProofTarget => ({ entry: { ...entry(), port, origin: `http://127.0.0.1:${port}` }, gen: () => 1 })
+  it('a callback that gives nothing for a while keeps the last target it gave, until detached; a throw counts as nothing', () => {
+    vi.stubGlobal('__MV_TEST__', false)   // the release flavour's constant: no test hook runs
+    const d = installDispatcher(ses)
+    vi.unstubAllGlobals()
+    let now: ProofTarget | undefined
+    let throws = false
+    d.attach(90001, () => { if (throws) throw new Error('x'); return now })
+    expect(targetOf(90001)).toBe(undefined)   // never gave one
+    now = target(30001)
+    expect(targetOf(90001)?.entry.port).toBe(30001)
+    now = undefined   // the tab's instance left the registry
+    expect(targetOf(90001)?.entry.port).toBe(30001)
+    throws = true
+    expect(targetOf(90001)?.entry.port).toBe(30001)
+    throws = false
+    now = target(30002)   // the new instance
+    expect(targetOf(90001)?.entry.port).toBe(30002)
+    d.detach(90001)
+    expect(targetOf(90001)).toBe(undefined)
+  })
+  it('canvasAddress: a loopback host on the target\'s port, whatever host the link wrote; nothing else', () => {
+    const t = target(30003)
+    expect(canvasAddress(new URL('http://localhost:30003/x'), t)?.port).toBe(30003)
+    expect(canvasAddress(new URL('http://[::1]:30003/'), t)?.port).toBe(30003)
+    expect(canvasAddress(new URL('http://127.0.0.1:30004/'), t)).toBe(undefined)   // no registry in this test
+    expect(canvasAddress(new URL('https://localhost:30003/'), t)).toBe(undefined)
+    expect(canvasAddress(new URL('http://example.com:30003/'), t)).toBe(undefined)
+    expect(canvasAddress(new URL('http://localhost:30003/'), undefined)).toBe(undefined)
   })
 })
 

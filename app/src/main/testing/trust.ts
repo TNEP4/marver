@@ -2,13 +2,15 @@
  * The trust stream's test hooks (dev builds, MARVER_APP_TEST=1; spec 28 A2.10, A2.14 #27). They stand in for the
  * window stream's tabs as the frozen interfaces wire a canvas view - `localSession(ws)`, `canvasWebPreferences`,
  * `attachNav`, the dispatcher's `attach(wcId, target)`, `bridge.register(wc, 'canvas', tabId)` - so the trust cases
- * run on the real modules before tabs.ts exists: a test tab binds to a registry entry by port, follows a new
- * instance of its workspace on that port or origin (a rebind), and keeps its last entry while gone (proof.ts's
- * ProofTarget contract). Nothing here reloads or loads a tab on a registry change: loads happen only when a case
- * asks. Every hook answers with plain data - never a key.
+ * run on the real modules before tabs.ts exists: a test tab binds to a registry entry by port and follows a new
+ * instance of its workspace on that port or origin (a rebind). Its target gives that entry while the tab is gone
+ * (`target: 'kept'`, the default) or, as the window stream's does, only while the registry holds its instance
+ * (`target: 'registry'`: nothing between the old instance leaving and the new slot file being read - the
+ * dispatcher keeps the last target itself). Nothing here reloads or loads a tab on a registry change: loads happen
+ * only when a case asks. Every hook answers with plain data - never a key.
  */
 import { BaseWindow, ipcMain, session, WebContentsView, webContents, type WebContents } from 'electron'
-import { installBridge, kindOf, type CanvasReports } from '../bridge.ts'
+import { delayAdmits, installBridge, kindOf, type CanvasReports } from '../bridge.ts'
 import type { PageKind } from '../../shared/channels.ts'
 import { attachNav, type NavAdapter, type NavEvent } from '../nav.ts'
 import { fetchLogo, installDispatcher, isTrusted, probeProof } from '../proof.ts'
@@ -82,7 +84,12 @@ export function provideTrustHooks(): void {
     tabs.set(id, t)
     t.nav.on((e) => { t.events.push({ t: Date.now(), e, trusted: isTrusted(wc.id) }) })
     const ses = await localSession(entry.ws)
-    installDispatcher(ses).attach(wc.id, () => ({ entry: t.entry, gen: () => t.nav.stamp() }))
+    const fromRegistry = arg<string | undefined>(a, 'target') === 'registry'
+    installDispatcher(ses).attach(wc.id, () => {
+      if (!fromRegistry) return { entry: t.entry, gen: () => t.nav.stamp() }
+      const e = appRegistry()?.byInstance(t.entry.instance)
+      return e ? { entry: e, gen: () => t.nav.stamp() } : undefined
+    })
     bridge.register(wc, 'canvas', id)
     const w = host()
     const [width, height] = w.getContentSize()
@@ -134,6 +141,7 @@ export function provideTrustHooks(): void {
   provide('trust:app-state', (a) => bridge.appState(arg<string>(a, 'id'), arg<'shown' | 'hidden'>(a, 's')))
   provide('trust:menu-click', (a) => bridge.menuClick(arg<string>(a, 'id'), arg<string>(a, 'item')))
   provide('trust:reopen-next', (a) => { bridge.reopenNext(arg<string>(a, 'id')); return true })
+  provide('trust:admit-delay', (a) => { delayAdmits(arg<number>(a, 'ms') ?? 0); return true })
   provide('trust:same-canvas', () => [...sameCanvas])
   provide('trust:web-contents', () => webContents.getAllWebContents().filter((w) => !w.isDestroyed()).map((w) => {
     const p = (w as unknown as { getLastWebPreferences?: () => Record<string, unknown> | null }).getLastWebPreferences?.() ?? null
@@ -191,9 +199,31 @@ export function provideBridgeHooks(): void {
   })
   provide('trust:handled', () => [...handled])
   const readied: string[] = []
-  provide('trust:on-ready', () => { bridge.onReady((ctx) => { readied.push(ctx.kind) }); return true })
+  let readyHooked = false
+  provide('trust:on-ready', () => { if (!readyHooked) { readyHooked = true; bridge.onReady((ctx) => { readied.push(ctx.kind) }) } return true })
   provide('trust:readied', () => [...readied])
-  provide('trust:send', (a) => bridge.send(arg<PageKind>(a, 'kind'), arg<string>(a, 'channel'), arg<unknown>(a, 'payload')))
+  provide('trust:send', (a) => {
+    const id = arg<string | undefined>(a, 'id')
+    const v = id === undefined ? undefined : apps.get(id)
+    if (id !== undefined && (!v || v.webContents.isDestroyed())) throw new Error('no such app page')
+    return bridge.send(v ? v.webContents : arg<PageKind>(a, 'kind'), arg<string>(a, 'channel'), arg<unknown>(a, 'payload'))
+  })
+  provide('trust:handle-answer', (a) => {
+    const channel = arg<string>(a, 'channel')
+    const answer = arg<unknown>(a, 'answer')
+    bridge.handle(channel, (ctx, payload) => { handled.push({ channel, kind: ctx.kind, payload }); return answer })
+    return true
+  })
+  /** an invoke as Electron delivers one - the handler ipcMain.handle registered, a real sender and frame - answered or refused */
+  provide('trust:invoke', async (a) => {
+    const id = arg<string>(a, 'id')
+    const wc = tabs.get(id)?.wc ?? apps.get(id)?.webContents
+    if (!wc || wc.isDestroyed()) throw new Error('no such view')
+    const fn = (ipcMain as unknown as { _invokeHandlers?: Map<string, (e: unknown, ...args: unknown[]) => unknown> })._invokeHandlers?.get(arg<string>(a, 'channel'))
+    if (!fn) return { error: 'no handler' }
+    const frame = arg<string | undefined>(a, 'frame') === 'child' ? wc.mainFrame.frames[0] ?? null : wc.mainFrame
+    try { return { answer: (await fn({ sender: wc, senderFrame: frame, processId: frame?.processId, frameId: frame?.routingId }, arg<unknown>(a, 'payload'))) ?? null } } catch (err) { return { error: (err as Error).message } }
+  })
   provide('trust:app-reload', (a) => { const v = apps.get(arg<string>(a, 'id')); if (v && !v.webContents.isDestroyed()) v.webContents.reload(); return true })
   provide('trust:ipc', (a) => {
     const id = arg<string>(a, 'id')

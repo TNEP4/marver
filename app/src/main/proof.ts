@@ -7,13 +7,16 @@
  * - a main-frame request is cancelled unless it is for the tab's canvas - http, a loopback host, the entry's port and,
  *   once ready, its bound origin - and the shell's own document (`/` or `/index.html`, the only paths A1.4 signs);
  *   else it carries a fresh `x-mv-nonce` (24 random bytes) and `x-mv-ws`, and the adapter's generation is stamped;
- * - a redirect authorizes nothing: the next hop is stamped again. A final response must carry `x-mv-instance` and an
- *   `x-mv-proof` equal (timingSafeEqual) to A1's own formula, `docProof(key, nonce, port)`, with the key of a ready
- *   registry entry of that instance, the tab's workspace and port, on the request's origin. An instance the
- *   registry does not hold yet is read again once before failing (A2.14 #11): the page's own reload after a restart
- *   often beats the new slot file. `x-mv-elsewhere: 1` fails as `elsewhere` (another workspace holds the port).
- *   Anything else is cancelled (`ERR_BLOCKED_BY_CLIENT`) and the adapter told why: no document commits on a local
- *   partition without a proof.
+ * - a redirect authorizes nothing: the next hop is stamped again. A redirect is what Chromium follows as one - a 301,
+ *   302, 303, 307 or 308 with one non-empty `Location` - and nothing else: Chromium renders the body of a 3xx with no
+ *   Location. A 204 or a 205 commits nothing (Chromium ends the navigation). Every other final response must carry
+ *   `x-mv-instance` and an `x-mv-proof` equal (timingSafeEqual) to A1's own formula, `docProof(key, nonce, port)`,
+ *   with the key of a ready registry entry of that instance, the tab's workspace and port, on the request's origin -
+ *   a download too: Chromium renders a `Content-Disposition` it cannot parse inline, and a real canvas never serves
+ *   its document as an attachment. An instance the registry does not hold yet is read again once before failing
+ *   (A2.14 #11): the page's own reload after a restart often beats the new slot file. `x-mv-elsewhere: 1` fails as
+ *   `elsewhere` (another workspace holds the port). Anything else is cancelled (`ERR_BLOCKED_BY_CLIENT`) and the
+ *   adapter told why: no document commits on a local partition without a proof (A2.14 #8).
  * The proof only makes a result pending: trust is decided at the commit by the adapter (nav.ts), and `isTrusted` is
  * "attributed at its commit, nothing lost since, and its instance still the tab's current, live registry instance".
  *
@@ -32,14 +35,19 @@ export { docProof, NONCE }
 
 /** What the dispatcher needs of the tab a webContents belongs to. */
 export interface ProofTarget {
-  /** the tab's bound entry - kept while the tab is gone, so the page's own reload can find its new instance */
+  /** the tab's bound entry */
   entry: RegistryEntry
   /** the adapter's current generation, stamped on each main-frame request */
   gen(): number | null
 }
 
 export interface Dispatcher {
-  /** a webContents of this session, mapped to its tab's target */
+  /**
+   * A webContents of this session, mapped to its tab's target. The callback may give nothing for a while - a tab
+   * whose instance left the registry before the new slot file is read: the dispatcher then keeps the last target it
+   * gave, until `detach`, so the page's own reload still reaches its canvas's port and gets the fresh read of
+   * A2.14 #11. Trust never follows a kept target: `isTrusted` asks the registry for its instance.
+   */
   attach(webContentsId: number, target: () => ProofTarget | undefined): void
   detach(webContentsId: number): void
 }
@@ -48,11 +56,28 @@ export interface Dispatcher {
 export const SHELL_DOC = /^\/(index\.html)?$/
 const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
 
-const targets = new Map<number, () => ProofTarget | undefined>()
+const targets = new Map<number, { now: () => ProofTarget | undefined; last?: ProofTarget }>()
 
-/** The target of a webContents now, or undefined (a throwing lookup counts as none). */
+/**
+ * The target of a webContents: what its callback gives now, else the last one it gave (a gone tab keeps its
+ * canvas's address, `Dispatcher.attach`), else undefined - a webContents never attached. A throwing callback
+ * counts as giving nothing.
+ */
 export function targetOf(webContentsId: number): ProofTarget | undefined {
-  try { return targets.get(webContentsId)?.() } catch { return undefined }
+  const t = targets.get(webContentsId)
+  if (!t) return undefined
+  let now: ProofTarget | undefined
+  try { now = t.now() } catch { now = undefined }
+  if (now) t.last = now
+  return t.last
+}
+
+/** Is this URL the address of a running canvas - a loopback host on a port the registry or the target names? */
+export function canvasAddress(u: URL, target: ProofTarget | undefined): RegistryEntry | undefined {
+  if (u.protocol !== 'http:' || !LOOPBACK.has(u.hostname)) return undefined
+  const port = Number(u.port)
+  if (target && target.entry.port === port) return target.entry
+  return appRegistry()?.entries().find((e) => e.port === port)
 }
 
 /**
@@ -102,9 +127,16 @@ export function checkProof(input: { headers: Record<string, string>; nonce: stri
 /** The statuses Chromium follows as redirects. A 304 is not one: passing it would commit a cached copy unproved. */
 export const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308])
 
-/** A final response Chromium never commits as a document: no content, or a download (pure). */
-export const commitsNothing = (status: number, h: Record<string, string>): boolean =>
-  status === 204 || status === 205 || /^\s*attachment\b/i.test(h['content-disposition'] ?? '')
+/**
+ * A response Chromium follows as a redirect (pure): a redirect status with one `Location` that is not empty.
+ * Chromium renders the body of a 3xx with no Location or an empty one; a Location sent twice counts as none here
+ * (`oneHeaders`), so such a response goes through the proof check and fails - never the other way round.
+ */
+export const isRedirect = (status: number, h: Record<string, string>): boolean =>
+  REDIRECTS.has(status) && (h.location ?? '').trim() !== ''
+
+/** A final response Chromium never commits as a document: a 204 or a 205 (pure). A download is proved like a page. */
+export const commitsNothing = (status: number): boolean => status === 204 || status === 205
 
 /**
  * Why a webContents' preferences break the rules every view keeps (the app's shape, A2.14 #14): sandboxed, isolated,
@@ -167,7 +199,7 @@ function beforeSend(d: OnBeforeSendHeadersListenerDetails, cb: (r: { cancel?: bo
   const id = d.webContentsId
   const t = id === undefined ? undefined : targetOf(id)
   let gen: number | null = null
-  if (t && id !== undefined) { try { gen = t.gen() } catch { gen = adapterFor(id)?.stamp() ?? null } }
+  if (id !== undefined) { try { gen = t ? t.gen() : null } catch { gen = null } gen ??= adapterFor(id)?.stamp() ?? null }
   const fail = (why: FailWhy) => {
     if (__MV_TEST__) note('proof', { wc: id, event: 'request-refused', why, url: d.url, gen })
     if (id !== undefined && gen !== null) adapterFor(id)?.response(gen, { kind: 'failed', why })
@@ -187,17 +219,17 @@ function beforeSend(d: OnBeforeSendHeadersListenerDetails, cb: (r: { cancel?: bo
 async function headersReceived(d: OnHeadersReceivedListenerDetails): Promise<{ cancel?: boolean }> {
   const req = pending.get(d.id)
   if (!req) return { cancel: true }   // a main-frame response to a request we never stamped
-  if (REDIRECTS.has(d.statusCode)) return {}   // a redirect authorizes nothing; the next hop is stamped again
+  const h = oneHeaders(d.responseHeaders)
+  if (isRedirect(d.statusCode, h)) return {}   // a redirect authorizes nothing; the next hop is stamped again
   pending.delete(d.id)
   const report = (o: Outcome) => {
     if (__MV_TEST__) note('proof', { wc: req.wcId, event: 'outcome', gen: req.gen, outcome: o, status: d.statusCode })
     if (req.gen !== null) adapterFor(req.wcId)?.response(req.gen, o)
   }
   const fail = (why: FailWhy) => { report({ kind: 'failed', why }); return { cancel: true } }
-  const h = oneHeaders(d.responseHeaders)
-  if (commitsNothing(d.statusCode, h)) {
-    // a 204, a 205 or a download commits no document: the navigation ends with no commit (an abort, A2.14 #8),
-    // and the document shown keeps its trust. Cancelling it would put an error page in its place
+  if (commitsNothing(d.statusCode)) {
+    // a 204 or a 205 commits no document: Chromium ends the navigation with no commit (an abort, A2.14 #8), and the
+    // document shown keeps its trust. Cancelling it would put an error page in its place
     if (__MV_TEST__) note('proof', { wc: req.wcId, event: 'commits-nothing', gen: req.gen, status: d.statusCode })
     return {}
   }
@@ -235,7 +267,7 @@ export function installDispatcher(ses: Session, opts: { allowServiceWorkers?: bo
     headersReceived(d).then(cb, () => cb({ cancel: true }))
   })
   const dispatcher: Dispatcher = {
-    attach: (id, target) => { targets.set(id, target) },
+    attach: (id, target) => { targets.set(id, { now: target }) },
     detach: (id) => { targets.delete(id) },
   }
   dispatchers.set(ses, dispatcher)
