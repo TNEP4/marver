@@ -8,9 +8,10 @@
  * at all on any other document. Main-to-page channels are subscribed here, before the page's script runs: each
  * keeps its latest value, a subscriber gets it at once, and a snapshot carrying a `rev` no newer than the last
  * one is dropped. Subscribers get the payload alone, never Electron's event. `ready()` says `app:ready` once.
+ * Whether a channel is an invoke or a send is `INVOKES`'s (src/shared/channels.ts), never this file's own choice.
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import { CH, RECEIVES, type HomeAction, type HomeApi, type PageApi, type PageKind, type PillAction, type SettingsApi, type SettingsSet, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
+import { CH, isInvoke, RECEIVES, type HomeAction, type HomeActionAnswer, type HomeApi, type InvokeChannel, type LinkOpenAnswer, type PageApi, type PageKind, type PillAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
 
 type AppKind = Exclude<PageKind, 'canvas'>
 const KINDS: readonly AppKind[] = ['strip', 'home', 'settings', 'tabpage']
@@ -48,17 +49,24 @@ function on(ch: string, fn: Fn): () => void {
   return () => { set!.delete(fn) }
 }
 
+type SendChannel = Exclude<(typeof CH)[keyof typeof CH], InvokeChannel>
+/** A page-to-main send; an invoke channel never goes this way (`INVOKES`). */
+const send = (ch: SendChannel, ...payload: [unknown?]): void => { if (!isInvoke(ch)) ipcRenderer.send(ch, ...payload) }
+/** A page-to-main invoke, answered by main's handler (`INVOKES`). */
+const invoke = <T>(ch: InvokeChannel, ...payload: [unknown?]): Promise<T> =>
+  isInvoke(ch) ? ipcRenderer.invoke(ch, ...payload) as Promise<T> : Promise.reject(new Error(`${ch} is not an invoke`))
+
 let readied = false
-const ready = () => { if (!readied) { readied = true; ipcRenderer.send(CH.ready) } }
+const ready = () => { if (!readied) { readied = true; send(CH.ready) } }
 
 const str = (v: unknown, max = 80) => String(v ?? '').slice(0, max)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0)
 
 const tabActions = {
-  activate: (id: string) => ipcRenderer.send(CH.tabActivate, { id: str(id) }),
-  close: (id: string) => ipcRenderer.send(CH.tabClose, { id: str(id) }),
-  tabMenu: (id: string, x: number, y: number) => ipcRenderer.send(CH.tabMenu, { id: str(id), x: num(x), y: num(y) }),
-  openLink: (url: string) => ipcRenderer.invoke(CH.linkOpen, { url: str(url, 4096) }),
+  activate: (id: string) => send(CH.tabActivate, { id: str(id) }),
+  close: (id: string) => send(CH.tabClose, { id: str(id) }),
+  tabMenu: (id: string, x: number, y: number) => send(CH.tabMenu, { id: str(id), x: num(x), y: num(y) }),
+  openLink: (url: string) => invoke<LinkOpenAnswer>(CH.linkOpen, { url: str(url, 4096) }),
 }
 
 function build(k: AppKind): PageApi {
@@ -71,10 +79,10 @@ function build(k: AppKind): PageApi {
         onTabs: (fn) => on(CH.tabs, fn as Fn),
         onPill: (fn) => on(CH.pill, fn as Fn),
         onPageFocus: (fn) => on(CH.pageFocus, fn as Fn),
-        more: (m: TabsMore) => ipcRenderer.send(CH.tabsMore, {
+        more: (m: TabsMore) => send(CH.tabsMore, {
           ids: Array.isArray(m?.ids) ? m.ids.slice(0, 64).map((i) => str(i)) : [], x: num(m?.x), y: num(m?.y),
         }),
-        pillAction: (a: PillAction) => ipcRenderer.send(CH.pillAction, { rev: num(a?.rev), act: a?.act === 'dismiss' ? 'dismiss' : 'button' }),
+        pillAction: (a: PillAction) => send(CH.pillAction, { rev: num(a?.rev), act: a?.act === 'dismiss' ? 'dismiss' : 'button' }),
       }
       return api
     }
@@ -85,7 +93,7 @@ function build(k: AppKind): PageApi {
         onRecent: (fn) => on(CH.recent, fn as Fn),
         onHomeInfo: (fn) => on(CH.homeInfo, fn as Fn),
         onHomeFocus: (fn) => on(CH.homeFocus, fn as Fn),
-        action: (a: HomeAction) => ipcRenderer.invoke(CH.homeAction, a && typeof a === 'object'
+        action: (a: HomeAction) => invoke<HomeActionAnswer>(CH.homeAction, a && typeof a === 'object'
           ? { action: str((a as { action?: unknown }).action, 16), ...('id' in a ? { id: str((a as { id?: unknown }).id) } : {}) }
           : {}),
       }
@@ -95,12 +103,12 @@ function build(k: AppKind): PageApi {
       const api: SettingsApi = {
         ...base, kind: 'settings',
         onStatus: (fn) => on(CH.status, fn as Fn),
-        get: () => ipcRenderer.invoke(CH.settingsGet),
-        set: (s: SettingsSet) => ipcRenderer.invoke(CH.settingsSet, {
+        get: () => invoke<SettingsView>(CH.settingsGet),
+        set: (s: SettingsSet) => invoke<SettingsSetResult>(CH.settingsSet, {
           file: s?.file === 'theme' ? 'theme' : 'config', key: str(s?.key, 32),
           value: typeof s?.value === 'boolean' || typeof s?.value === 'number' ? s.value : str(s?.value, 16),
         }),
-        reveal: () => ipcRenderer.send(CH.settingsReveal),
+        reveal: () => send(CH.settingsReveal),
       }
       return api
     }
@@ -109,7 +117,7 @@ function build(k: AppKind): PageApi {
         ...base, kind: 'tabpage',
         onTabpage: (fn) => on(CH.tabpage, fn as Fn),
         onPageFocus: (fn) => on(CH.pageFocus, fn as Fn),
-        action: (rev: number, action: TabPageAction) => ipcRenderer.send(CH.tabpageAction, { rev: num(rev), action: str(action, 16) }),
+        action: (rev: number, action: TabPageAction) => send(CH.tabpageAction, { rev: num(rev), action: str(action, 16) }),
       }
       return api
     }

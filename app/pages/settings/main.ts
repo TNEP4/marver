@@ -42,8 +42,9 @@ async function change(file: FileName, key: string, value: boolean | number | str
   pending.set(id, value)
   errors.delete(id)
   render()
-  const r = await api.set({ file, key, value })
-  pending.delete(id)
+  let r: SettingsSetResult
+  // an answer that never came (main refused the call, or went away) is a failed write: the control goes back
+  try { r = await api.set({ file, key, value }) } catch { r = { ok: false, why: 'write-failed' } } finally { pending.delete(id) }
   if (!r.ok) { errors.set(id, why(r, file)); say(live, errors.get(id)!) }
   await load()
 }
@@ -122,7 +123,7 @@ function render(): void {
   const sides = [sideFor('config'), sideFor('theme')].filter(Boolean) as HTMLElement[]
   sideEl.hidden = !sides.length   // no empty landmark
   fill(sideEl, ...sides, sides.length
-    ? h('p', { class: 'hint' }, 'The app kept the last good file and wrote the problem to ', h('code', {}, `${view.dir}/state/status.json`), ', where an agent checks its edit.')
+    ? h('p', { class: 'hint' }, 'The app kept the last good file and wrote the problem to ', h('code', {}, view.statusFile), ', where an agent checks its edit.')
     : null)
   const st = view.status
   const note = !st.writable ? `${view.dir} can't be written · nothing is kept`

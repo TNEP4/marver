@@ -48,6 +48,8 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     expect(existsSync(join(env.home, 'state'))).toBe(false)
     expect(await call('home.info')).toEqual({ welcome: true, writable: true })
     await wait(1500)
+    // RE-RUN once the window and trust streams merge: on this branch the window, the tabs and the bridge are the
+    // skeleton's, so this proves the files side alone touches none of these, not the integrated app
     const spies = await call<{ counts: Record<string, number>; installed: string[] }>('spies')
     expect(spies.installed.length).toBeGreaterThan(0)
     expect(spies.counts).toEqual({})
@@ -57,6 +59,8 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     env = testEnv(runSlotBase())
     await launch()
     expect(existsSync(state('launched'))).toBe(false)
+    // the writer, driven by its hook: the trigger (Home's first did-finish-load while active, ports.ts) is the window
+    // stream's, and gets its own end-to-end case once it merges
     await call('home.shown')
     await until(async () => existsSync(state('launched')), (x) => x)
     expect(JSON.parse(readFileSync(state('launched'), 'utf8'))).toMatchObject({ v: 1, app: '0.1.0' })
@@ -206,7 +210,8 @@ describe('Settings through main (A2.7)', () => {
     env = testEnv(runSlotBase())
     writeFileSync(join(env.home, 'config.json'), '{ "restoreTabs": true }')
     await launch()
-    await call('files.inject', { match: 'config\\.json$', code: 'ENOSPC' })
+    // at 'write': the temp file exists when the disk fills, so "no temp file" proves the cleanup
+    await call('files.inject', { match: 'config\\.json$', code: 'ENOSPC', at: 'write' })
     expect(await call('files.set', { file: 'config', key: 'restoreTabs', value: false })).toEqual({ ok: false, why: 'write-failed', code: 'ENOSPC' })
     expect(readFileSync(join(env.home, 'config.json'), 'utf8')).toBe('{ "restoreTabs": true }')
     expect(readdirSync(env.home).filter((n) => n.endsWith('.tmp'))).toEqual([])
@@ -235,12 +240,12 @@ describe('Recently here and Home\'s commands (A2.12, A2.14 #5, #24)', () => {
     await launch()
     await call('home.verified', { ws: WS, root, name: 'Fixture A', origin: `http://[::1]:${env.slotBase + 1}`, slot: 1, port: env.slotBase + 1 })
     await call('home.verified', { ws: 'fedcba9876543210', root, name: 'Fixture B', origin: 'http://127.0.0.1:5298', slot: null, port: 5298 })
-    expect(await call('home.views', { running: [WS] })).toEqual([expect.objectContaining({ id: 'r:fedcba9876543210', name: 'Fixture B' })])
+    expect(await call('home.views', { running: [WS] })).toEqual([expect.objectContaining({ id: 'r_fedcba9876543210', name: 'Fixture B' })])
     await call('home.gone', { ws: WS })
     const views = await call<{ id: string; name: string; folder: string }[]>('home.views')
     expect(views.map((v) => v.name).sort()).toEqual(['Fixture A', 'Fixture B'])
-    expect(await call('home.action', { action: 'copy-start', id: `r:${WS}` })).toEqual({ ok: true })
-    expect(await call('home.action', { action: 'copy-start', id: 'r:fedcba9876543210' })).toEqual({ ok: true })
+    expect(await call('home.action', { action: 'copy-start', id: `r_${WS}` })).toEqual({ ok: true })
+    expect(await call('home.action', { action: 'copy-start', id: 'r_fedcba9876543210' })).toEqual({ ok: true })
     for (const id of ['dev', 'init', 'update']) expect(await call('home.action', { action: 'copy', id })).toEqual({ ok: true })
     expect(await call('home.action', { action: 'show-files' })).toEqual({ ok: true })
     const q = root.replace(/'/g, `'\\''`)
@@ -275,7 +280,7 @@ describe('Recently here and Home\'s commands (A2.12, A2.14 #5, #24)', () => {
     const root = join(env.dir, 'r')
     mkdirSync(root)
     await launch()
-    await call('files.inject', { match: 'recent\\.json$', code: 'ENOSPC' })
+    await call('files.inject', { match: 'recent\\.json$', code: 'ENOSPC', at: 'write' })
     await call('home.verified', { ws: WS, root, name: 'R', origin: 'http://[::1]:4903', slot: 3, port: 4903 })
     const pill = await until(() => call<{ lead?: string } | null>('files.pill'), (p) => !!p, 3000)
     expect(pill).toMatchObject({ lead: 'Couldn\'t save recent.json', short: 'Files not saved' })

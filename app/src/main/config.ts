@@ -13,26 +13,31 @@
  * - `state/status.json` is written whole after every judgement and every failed or recovered write: what an agent
  *   reads after an edit (README rule 4).
  * - `settings:set` writes one key: read, set, write whole; onto a file that does not apply, the last good values
- *   plus the change, the broken bytes kept as `<name>.bad`.
+ *   plus the change, the person's bytes first kept as `<name>.bad` - copied when they could be read, else the file
+ *   renamed (too big, unreadable). When they cannot be kept aside, nothing is written over them (`write-failed`).
  * - The strip's quiet files pill (A2.2's third tier): a file that did not apply, a write that failed, a home that
  *   cannot be written.
+ * - `tabs.json` is written here and nowhere else: `readTabsFile()` and `tabsWriter()` are its one reader and its
+ *   one writer, so its failures reach the same pill and status.json. tabs.ts owns what goes in it.
  *
- * main.ts calls `ensureHome()`, `readFiles()` and `applyTheme()` in its pinned order (A2.14 #30) and `startFiles()`
- * at ready. The bridge mounts `settingsGet`, `settingsSet` and `settingsReveal`; the window's pill feed subscribes
- * with `onPill`, Settings' `status` push with `onStatus`; tabs.ts reads `values()` and keeps `tabs.json` through
- * `readTabsFile()` and `tabsWriter()`.
+ * Who calls what is the frozen contract in ports.ts (`FilesPorts`): main.ts calls `ensureHome()`, `readFiles()` and
+ * `applyTheme()` in its pinned order (A2.14 #30) and `startFiles()` at ready; the bridge mounts `settingsView`
+ * (`settings:get`), `settingsSet` and `settingsReveal`; the window's pill feed takes `onPill`, Settings' `status`
+ * push `onStatus`; tabs.ts reads `values()` and keeps `tabs.json` through `readTabsFile()` and `tabsWriter()`.
  */
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, statSync, watch, type FSWatcher } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, renameSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { app, nativeTheme } from 'electron'
 import type { FileProblem, FilesStatus, FileState, PillView, SettingsSetResult, SettingsView } from '../shared/channels.ts'
 import { check, defaults, FILE_MAX, judgeObject, keySpec, shownIn, shownKeys, STAGE, type FileName } from '../shared/settings-keys.ts'
 import { tilde } from '../shared/command.ts'
+import type { FilesPorts } from './ports.ts'
 import type { TabsFile } from './tabs.ts'
 import { effects, provideEffectHooks } from './effects.ts'
-import { faults, readCapped, readCappedSync, readState, setAside, stateWriter, sweepTemps, writeWhole, writeWholeSync, type Capped, type StateWriter, type WriteHooks } from './fsx.ts'
+import { faults, readCapped, readCappedSync, readState, stateWriter, sweepTemps, writeWhole, writeWholeSync, type Capped, type StateWriter, type WriteHooks } from './fsx.ts'
+import { shellPath } from '../shared/links.ts'
 import { renderOwned, wholeVersion } from './readme.ts'
 import { T } from './timings.ts'
 import { note, provide } from './testing/index.ts'
@@ -190,7 +195,12 @@ export function onStatus(fn: (s: FilesStatus) => void): () => void { statusFns.a
 
 /** The files pill, as the window's pill feed takes it (it adds the `rev`). */
 export type FilesPill = Omit<PillView, 'rev'> & { kind: 'files' }
-export function onPill(fn: (p: FilesPill | null) => void): () => void { pillFns.add(fn); return () => pillFns.delete(fn) }
+/** The files pill now, at once - so a pill found at launch, before any feed listened, is not lost - then on each change. */
+export function onPill(fn: (p: FilesPill | null) => void): () => void {
+  pillFns.add(fn)
+  fn(filesPill())
+  return () => pillFns.delete(fn)
+}
 
 const WORDS: Record<string, string> = {
   ENOSPC: 'the disk is full', EDQUOT: 'the disk quota is full', EACCES: 'no permission', EPERM: 'no permission',
@@ -401,7 +411,7 @@ export function settingsView(): SettingsView {
     values: { ...(f === 'config' ? v.config : v.theme) } as Record<string, unknown>,
     ...(recs[f].text !== undefined ? { text: recs[f].text } : {}),
   })
-  return { dir: tildeOf(home.dir), config: file('config'), theme: file('theme'), status: filesStatus(), shown: shownKeys() }
+  return { dir: tildeOf(home.dir), statusFile: tildeOf(statusPath()), config: file('config'), theme: file('theme'), status: filesStatus(), shown: shownKeys() }
 }
 
 /** `settings:set`'s payload, checked again in main (the bridge checks it first). */
@@ -428,15 +438,26 @@ export function settingsSet(raw: unknown): Promise<SettingsSetResult> {
     const raw = await readCapped(p, FILE_MAX)
     const j = judge(s.file, raw)
     let base: Record<string, unknown>
+    let renamed = false
     if (raw === undefined) base = {}
     else if (j.ok) base = JSON.parse((raw as Buffer).toString('utf8').replace(/^﻿/, '')) as Record<string, unknown>
     else {
-      if (Buffer.isBuffer(raw)) setAside(p, raw)
+      // the person's bytes go aside before anything is written over them (A2.12, A2.14 #24): copied when read, else
+      // (too big, unreadable) the file itself renamed, unread. Not aside: nothing is written.
+      try {
+        if (Buffer.isBuffer(raw)) writeWholeSync(`${p}.bad`, raw)
+        else { renameSync(p, `${p}.bad`); renamed = true }
+      } catch (e) {
+        noteWrite(p, e as NodeJS.ErrnoException)
+        return { ok: false, why: 'write-failed', code: errCode(e) }
+      }
       base = { ...recs[s.file].state.applied.values }
     }
     const obj = { $schema: `./schemas/${s.file}.schema.json`, ...base, [s.key]: s.value }
     const text = JSON.stringify(obj, null, 2) + '\n'
     try { await writeWhole(p, text) } catch (e) {
+      // a file renamed aside goes back where it was: the change failed, the person's file did not move
+      if (renamed && !existsSync(p)) try { renameSync(`${p}.bad`, p) } catch { /* kept as .bad */ }
       noteWrite(p, e as NodeJS.ErrnoException)
       return { ok: false, why: 'write-failed', code: errCode(e) }
     }
@@ -455,9 +476,8 @@ export function settingsReveal(): void {
 
 const WS = /^[0-9a-f]{16}$/
 const ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d{1,5}$/
-/** The shell's own document only - `/` or `/index.html`, its query and hash - under 2 KB; anything else is `/`. */
-export const shellPath = (p: unknown): string =>
-  typeof p === 'string' && p.length < 2048 && /^\/(index\.html)?([?#][^\0]*)?$/.test(p) ? p : '/'
+/** The shell's own document only (src/shared/links.ts, where `link:open` reads it too). */
+export { shellPath }
 
 export function checkTabsFile(v: unknown): v is TabsFile {
   const f = v as TabsFile
@@ -480,10 +500,19 @@ export function readTabsFile(): TabsFile | undefined {
 }
 
 let tabsW: StateWriter<TabsFile> | undefined
-/** The one writer of `tabs.json` (debounced 1 s; `flushSync` at quit). */
+/**
+ * The one writer of `tabs.json` (debounced 1 s; `flushSync` in the quit path): tabs.ts writes through it and never
+ * through a writer of its own - two writers of one file would each overwrite the other's newer state.
+ */
 export function tabsWriter(): StateWriter<TabsFile> {
   return tabsW ??= stateFileWriter<TabsFile>('tabs.json')
 }
+
+/** The contract the other streams call (ports.ts). */
+export const filesPorts = {
+  ensureHome, readFiles, applyTheme, startFiles, values, onChange, readTabsFile, tabsWriter,
+  settingsView, settingsSet, settingsReveal, filesStatus, onStatus, onPill,
+} satisfies FilesPorts
 
 // ---- at ready ---------------------------------------------------------------------------------------------------
 

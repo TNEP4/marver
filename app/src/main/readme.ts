@@ -32,9 +32,9 @@ README at every launch: edits here are lost.** \`MARVER_HOME\` moves the whole f
 2. Strict JSON: one object, no comments, no trailing commas. Every key is optional: an absent file, or an absent
    key, is the default. Keep the \`"$schema"\` line the app writes; it is the only key that is not a setting.
 3. Write the whole file: write a temp file in this folder, then rename it over the old one.
-4. After an edit, read \`state/status.json\`: the edit applied when \`files["config.json"].sha256\` (or
-   \`files["theme.json"]\`) is the sha256 of the bytes you wrote and its \`ok\` is \`true\`. Otherwise \`problems\` says
-   why, and \`applied\` holds the values still in force.
+4. After an edit, read \`state/status.json\` (\`state-dev/status.json\` for the development build): the edit applied
+   when \`files["config.json"].sha256\` (or \`files["theme.json"]\`) is the sha256 of the bytes you wrote and its \`ok\`
+   is \`true\`. Otherwise \`problems\` says why, and \`applied\` holds the values still in force.
 5. A file with a wrong value or an unknown key does not apply at all: the app keeps the last good file, whole, and
    says so in its window. Fix the file; it applies the moment it is right.
 6. Never write \`state/\`, \`state-dev/\`, \`running/\` or \`prefer/\`. Never read, print or copy \`canvases/\` (collaboration

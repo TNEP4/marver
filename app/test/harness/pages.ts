@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
 import { assertOneTeam } from '../../scripts/team-id.mjs'
+import { INVOKES, isInvoke, SENDERS } from '../../src/shared/channels.ts'
 import { APP_DIR, ELECTRON_BIN } from './app.ts'
 
 export type PageKind = 'strip' | 'home' | 'settings' | 'tabpage'
@@ -30,8 +31,12 @@ export interface PageRun {
   calls(): Promise<Call[]>
   calls(ch: string): Promise<unknown[]>
   clear(): Promise<void>
-  /** a static answer for an invoke (`link:open`, `home:action`, `settings:get`, `settings:set`) */
+  /** a static answer for an invoke (channels.ts `INVOKES`) */
   answer(ch: string, value: unknown): Promise<void>
+  /** the invoke rejects from now on (main has no handler for it, or its handler threw) */
+  reject(ch: string): Promise<void>
+  /** the invoke answers `value` after `ms` from now on */
+  answerLater(ch: string, value: unknown, ms: number): Promise<void>
   /** emulated media features (CDP), all at once: { 'prefers-reduced-motion': 'reduce', ... } */
   media(features: Record<string, string>): Promise<void>
   resize(w: number, h: number): Promise<void>
@@ -49,6 +54,7 @@ export async function openPage(kind: PageKind, o: { width?: number; height?: num
       ...process.env as Record<string, string>,
       MVPAGES_DIST: join(APP_DIR, 'dist'), MVPAGES_PAGE: kind,
       MVPAGES_W: String(o.width ?? 1100), MVPAGES_H: String(o.height ?? 720),
+      MVPAGES_INVOKES: JSON.stringify(INVOKES), MVPAGES_SENDS: JSON.stringify(Object.keys(SENDERS).filter((c) => !isInvoke(c))),
       MARVER_APP_USER_DATA: join(dir, 'ud'),
     },
     timeout: 30_000,
@@ -56,7 +62,7 @@ export async function openPage(kind: PageKind, o: { width?: number; height?: num
   const page = await app.firstWindow()
   await page.waitForFunction(() => document.documentElement.classList.contains('mv-ready') || document.readyState === 'complete')
   const cdp = await page.context().newCDPSession(page)
-  const ev = <T>(fn: (g: { calls: Call[]; answers: Record<string, unknown>; csp: string[]; send(ch: string, p: unknown): void; resize(w: number, h: number): void }, a: unknown) => T, a?: unknown) =>
+  const ev = <T>(fn: (g: { calls: Call[]; answers: Record<string, unknown>; csp: string[]; send(ch: string, p: unknown): void; reject(ch: string): void; later(ch: string, v: unknown, ms: number): void; resize(w: number, h: number): void }, a: unknown) => T, a?: unknown) =>
     app.evaluate((_e, [src, arg]) => {
       const g = (globalThis as unknown as { __pages: unknown }).__pages
       // eslint-disable-next-line no-new-func
@@ -71,6 +77,8 @@ export async function openPage(kind: PageKind, o: { width?: number; height?: num
     }) as PageRun['calls'],
     clear: async () => { await ev((g) => { g.calls.length = 0 }) },
     answer: async (ch, value) => { await ev((g, a) => { const [c, v] = a as [string, unknown]; g.answers[c] = v }, [ch, value]) },
+    reject: async (ch) => { await ev((g, a) => { g.reject(a as string) }, ch) },
+    answerLater: async (ch, value, ms) => { await ev((g, a) => { const [c, v, m] = a as [string, unknown, number]; g.later(c, v, m) }, [ch, value, ms]) },
     media: async (features) => { await cdp.send('Emulation.setEmulatedMedia', { features: Object.entries(features).map(([name, value]) => ({ name, value })) }) },
     resize: async (w, h) => { await ev((g, a) => { const [x, y] = a as [number, number]; g.resize(x, y) }, [w, h]); await page.waitForFunction(([x]) => window.innerWidth === x, [w]) },
     csp: () => ev((g) => g.csp),

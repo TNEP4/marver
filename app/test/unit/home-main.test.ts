@@ -46,18 +46,22 @@ afterEach(() => { rmSync(base, { recursive: true, force: true }); delete process
 const boot = () => { cfg.ensureHome({ version: '0.1.0', dev: true }); cfg.loadFiles(); h.startHome() }
 const recentFile = () => join(home, 'state-dev', 'recent.json')
 
-describe('checkRecent', () => {
-  it('takes a good file and refuses a bad workspace, a relative root, an origin with a path or credentials', () => {
-    mkdirSync(join(repos, 'repo1'))
-    expect(h.checkRecent({ v: 1, canvases: [entry(1)] })).toBe(true)
-    expect(h.checkRecent({ v: 1, canvases: [entry(1, { port: 5298 })] })).toBe(true)
+describe('checkEntry and checkRecent', () => {
+  it('an entry: refuses a bad workspace, a relative root, an origin with a path or credentials, a bad port or time', () => {
+    expect(h.checkEntry(entry(1))).toBe(true)
+    expect(h.checkEntry(entry(1, { port: 5298 }))).toBe(true)
     for (const bad of [
       entry(1, { workspace: '../../etc' }), entry(1, { workspace: 'ABCDEF0123456789' }), entry(1, { root: 'repos/x' }),
-      entry(1, { root: '/a\0b' }), entry(1, { origin: 'http://[::1]:4901/x' }), entry(1, { origin: 'http://u:p@[::1]:4901' }),
-      entry(1, { name: '' }), entry(1, { port: 0 }), entry(1, { lastSeen: Number.NaN }),
-    ]) expect(h.checkRecent({ v: 1, canvases: [bad] }), JSON.stringify(bad)).toBe(false)
-    expect(h.checkRecent({ v: 2, canvases: [] })).toBe(false)
-    expect(h.checkRecent({ v: 1, canvases: Array.from({ length: 21 }, (_, i) => entry(i + 1)) })).toBe(false)
+      entry(1, { root: '/a\0b' }), entry(1, { root: `/${'a'.repeat(4096)}` }), entry(1, { origin: 'http://[::1]:4901/x' }),
+      entry(1, { origin: 'http://u:p@[::1]:4901' }), entry(1, { name: '' }), entry(1, { port: 0 }), entry(1, { port: Number.NaN }),
+      entry(1, { port: 70000 }), entry(1, { port: 4.5 }), entry(1, { lastSeen: Number.NaN }), entry(1, { lastSeen: '1' as never }),
+    ]) expect(h.checkEntry(bad), JSON.stringify(bad)).toBe(false)
+  })
+
+  it('the file: only its envelope - entries are judged one by one, so one bad entry costs only itself', () => {
+    expect(h.checkRecent({ v: 1, canvases: [entry(1), { workspace: 'bad' }] })).toBe(true)
+    expect(h.checkRecent({ v: 1, canvases: Array.from({ length: 21 }, (_, i) => entry(i + 1)) })).toBe(true)
+    for (const bad of [{ v: 2, canvases: [] }, { v: 1 }, { v: 1, canvases: {} }, [], null]) expect(h.checkRecent(bad), JSON.stringify(bad)).toBe(false)
   })
 })
 
@@ -73,7 +77,8 @@ describe('Recently here', () => {
 
   it('a running canvas is never listed; the folder with ~, the id main\'s, a hue by workspace', () => {
     const v = h.recentViewsOf([entry(1, { root: '/Users/nic/tms broker' }), entry(2)], [WS(2)], '/Users/nic')
-    expect(v).toEqual([{ id: `r:${WS(1)}`, name: 'Canvas 1', folder: '~/tms broker', lastSeen: 1001, hue: expect.any(Number) }])
+    expect(v).toEqual([{ id: `r_${WS(1)}`, name: 'Canvas 1', folder: '~/tms broker', lastSeen: 1001, hue: expect.any(Number) }])
+    expect(v[0].id).toMatch(/^[A-Za-z0-9_-]{1,32}$/)   // the bridge's id pattern
   })
 
   it('at launch: a cut-short recent.json goes aside and Recently here is empty; the next verify writes a fresh one', async () => {
@@ -87,6 +92,36 @@ describe('Recently here', () => {
     h.noteVerified({ ws: WS(1), root: join(repos, 'repo1'), name: 'One', origin: 'http://[::1]:4901', slot: 1, port: 4901 })
     await new Promise((r) => setTimeout(r, 1100))
     expect(JSON.parse(readFileSync(recentFile(), 'utf8')).canvases).toEqual([expect.objectContaining({ workspace: WS(1), name: 'One' })])
+  })
+
+  it('at launch: a bad entry is dropped alone - the others stay, and the file is written again without it', async () => {
+    cfg.ensureHome({ version: '0.1.0', dev: true })
+    mkdirSync(join(repos, 'repo1'))
+    mkdirSync(join(repos, 'repo2'))
+    writeFileSync(recentFile(), JSON.stringify({ v: 1, canvases: [entry(1), { ...entry(2), port: null }, entry(3, { root: 'relative' }), entry(2)] }))
+    cfg.loadFiles()
+    h.startHome()
+    expect(h.recentViews([]).map((v) => v.name)).toEqual(['Canvas 2', 'Canvas 1'])
+    expect(existsSync(`${recentFile()}.bad`)).toBe(false)
+    await new Promise((r) => setTimeout(r, 1100))
+    expect(JSON.parse(readFileSync(recentFile(), 'utf8')).canvases.map((e: RecentEntry) => e.workspace)).toEqual([WS(2), WS(1)])
+  })
+
+  it('a verified canvas launch would refuse is never recorded: a NaN port cannot empty Recently here after a restart', async () => {
+    boot()
+    mkdirSync(join(repos, 'a'))
+    h.noteVerified({ ws: WS(1), root: join(repos, 'a'), name: 'Good', origin: 'http://[::1]:4901', slot: 1, port: 4901 })
+    h.noteVerified({ ws: WS(2), root: join(repos, 'a'), name: 'NaN port', origin: 'http://127.0.0.1:5298', slot: null, port: Number.NaN })
+    h.noteVerified({ ws: WS(3), root: `/${'a'.repeat(5000)}`, name: 'Long root', origin: 'http://[::1]:4903', slot: 3, port: 4903 })
+    h.noteVerified({ ws: WS(4), root: '/a\0b', name: 'NUL', origin: 'http://[::1]:4904', slot: 4, port: 4904 })
+    h.noteVerified(null as never)
+    expect(h.recentEntries().map((e) => e.name)).toEqual(['Good'])
+    h.flushRecent([])
+    vi.resetModules()
+    cfg = await import('../../src/main/config.ts')
+    h = await import('../../src/main/home.ts')
+    boot()
+    expect(h.recentViews([]).map((v) => v.name)).toEqual(['Good'])
   })
 
   it('at launch: an entry whose folder is gone is dropped', () => {
@@ -175,8 +210,8 @@ describe('home:action', () => {
     mkdirSync(join(repos, "it's here"))
     h.noteVerified({ ws: WS(1), root: join(repos, "it's here"), name: 'A', origin: 'http://[::1]:4901', slot: 1, port: 4901 })
     h.noteVerified({ ws: WS(2), root: join(repos, "it's here"), name: 'B', origin: 'http://127.0.0.1:5298', slot: null, port: 5298 })
-    expect(await h.homeAction({ action: 'copy-start', id: `r:${WS(1)}` })).toEqual({ ok: true })
-    expect(await h.homeAction({ action: 'copy-start', id: `r:${WS(2)}` })).toEqual({ ok: true })
+    expect(await h.homeAction({ action: 'copy-start', id: `r_${WS(1)}` })).toEqual({ ok: true })
+    expect(await h.homeAction({ action: 'copy-start', id: `r_${WS(2)}` })).toEqual({ ok: true })
     const q = join(repos, "it'\\''s here")
     expect(fx.copied).toEqual([`cd '${q}' && npx marver dev`, `cd '${q}' && npx marver dev --port 5298`])
   })
@@ -184,7 +219,7 @@ describe('home:action', () => {
   it('refuses what it does not hold: a recent id it has not, a command text, another action', async () => {
     boot()
     for (const a of [
-      { action: 'copy-start', id: `r:${WS(9)}` }, { action: 'copy', id: 'rm -rf ~' }, { action: 'copy', id: 'toString' },
+      { action: 'copy-start', id: `r_${WS(9)}` }, { action: 'copy-start', id: `r:${WS(1)}` }, { action: 'copy', id: 'rm -rf ~' }, { action: 'copy', id: 'toString' },
       { action: 'run', id: 'dev' }, null, 'copy',
     ]) expect(await h.homeAction(a), JSON.stringify(a)).toEqual({ ok: false })
     expect(fx.copied).toEqual([])
@@ -228,7 +263,89 @@ describe('link:open', () => {
     }
   })
 
+  it('only the canvas\'s own page: another document on its port is bad, never handed to the tabs (A2.14 #11)', async () => {
+    for (const u of ['http://localhost:4806/design/frames/x.html', 'http://localhost:4806/api/x', 'http://localhost:4806//evil.com/']) {
+      expect(await run(u, [ready]), u).toEqual({ a: { ok: false, why: 'bad' }, opened: [] })
+    }
+    expect(await run('http://localhost:4806/design/x.html', [{ ...ready, state: 'starting', origin: null }])).toEqual({ a: { ok: false, why: 'bad' }, opened: [] })
+    expect((await run('http://localhost:4806/index.html?n=1#/b/x', [ready])).opened).toEqual([{ url: 'http://[::1]:4806/index.html?n=1#/b/x', rest: '/index.html?n=1#/b/x' }])
+  })
+
   it('passes the guard\'s refusal through', async () => {
     expect((await run('http://localhost:4806/?n=1', [ready], { ok: false, why: 'refused' })).a).toEqual({ ok: false, why: 'refused' })
+  })
+})
+
+describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', () => {
+  interface Sent { target: string; ch: string; p: unknown }
+  function fakeBridge() {
+    const handlers = new Map<string, (ctx: { kind: string }, p: unknown) => unknown>()
+    const ready = new Set<(ctx: { kind: string }) => void>()
+    const sent: Sent[] = []
+    return {
+      handlers, sent,
+      bridge: {
+        handle(ch: string, fn: (ctx: { kind: string }, p: unknown) => unknown) { handlers.set(ch, fn) },
+        onReady(fn: (ctx: { kind: string }) => void) { ready.add(fn); return () => ready.delete(fn) },
+        send(target: string, ch: string, p: unknown) { sent.push({ target, ch, p }); return true },
+      },
+      ready(kind: string) { for (const fn of ready) fn({ kind }) },
+      /** an invoke as the real bridge answers it: the handler's return value, awaited */
+      invoke: async (ch: string, p?: unknown) => await handlers.get(ch)!({ kind: 'home' }, p),
+    }
+  }
+
+  it('mounts home:action, link:open, settings:get, settings:set (the invokes) and settings:reveal; answers each', async () => {
+    boot()
+    mkdirSync(join(repos, 'a'))
+    h.noteVerified({ ws: WS(1), root: join(repos, 'a'), name: 'A', origin: 'http://[::1]:4901', slot: 1, port: 4901 })
+    const f = fakeBridge()
+    const pills: unknown[] = []
+    const { INVOKES, CH } = await import('../../src/shared/channels.ts')
+    h.mountPages(f.bridge as never, {
+      running: () => [], onRunningChange: () => () => {}, setFilesPill: (p) => pills.push(p),
+      linkPorts: { byPort: (port) => (port === 4901 ? { state: 'ready', origin: 'http://[::1]:4901', port, ws: WS(1), name: 'A' } : undefined), open: async () => ({ ok: true }) },
+    })
+    expect([...f.handlers.keys()].sort()).toEqual([...INVOKES, CH.settingsReveal].sort())
+    expect(await f.invoke(CH.homeAction, { action: 'copy-start', id: `r_${WS(1)}` })).toEqual({ ok: true })
+    expect(await f.invoke(CH.linkOpen, { url: 'http://localhost:4901/#/b/x' })).toEqual({ ok: true })
+    expect(await f.invoke(CH.linkOpen, { url: 'http://localhost:4902/' })).toEqual({ ok: false, why: 'nothing' })
+    expect(await f.invoke(CH.settingsGet)).toMatchObject({ dir: home, shown: ['config.restoreTabs', 'theme.mode'] })
+    expect(await f.invoke(CH.settingsSet, { file: 'config', key: 'restoreTabs', value: false })).toEqual({ ok: true })
+    await f.invoke(CH.settingsReveal)
+    expect(fx.opened).toEqual([home])
+    expect(pills).toEqual([null])   // the files pill at once
+  })
+
+  it('pushes home:info and recent at Home\'s app:ready and on each change; status to Settings', async () => {
+    boot()
+    let running: string[] = []
+    let runningChanged = () => {}
+    const f = fakeBridge()
+    const off = h.mountPages(f.bridge as never, {
+      running: () => running, onRunningChange: (fn) => { runningChanged = fn; return () => {} }, setFilesPill: () => {},
+      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }) },
+    })
+    f.ready('home')
+    expect(f.sent.map((s) => s.ch)).toEqual(['home:info', 'recent'])
+    expect(f.sent[0].p).toEqual({ welcome: true, writable: true })
+    mkdirSync(join(repos, 'a'))
+    h.noteVerified({ ws: WS(1), root: join(repos, 'a'), name: 'A', origin: 'http://[::1]:4901', slot: 1, port: 4901 })
+    expect(f.sent.at(-1)).toMatchObject({ target: 'home', ch: 'recent', p: [expect.objectContaining({ name: 'A' })] })
+    running = [WS(1)]
+    runningChanged()
+    expect(f.sent.at(-1)).toEqual({ target: 'home', ch: 'recent', p: [] })   // running now: not recent
+    f.sent.length = 0
+    f.ready('settings')
+    expect(f.sent).toEqual([{ target: 'settings', ch: 'status', p: expect.objectContaining({ v: 1 }) }])
+    writeFileSync(join(home, 'config.json'), '[]')
+    await cfg.reread()
+    expect(f.sent.at(-1)).toMatchObject({ target: 'settings', ch: 'status' })
+    off()
+  })
+
+  it('home.ts and config.ts export the contract objects (held by the typecheck: satisfies HomePorts, FilesPorts)', () => {
+    expect(Object.keys(h.homePorts).sort()).toContain('mountPages')
+    expect(Object.keys(cfg.filesPorts).sort()).toEqual(expect.arrayContaining(['readTabsFile', 'tabsWriter', 'onPill', 'onStatus']))
   })
 })

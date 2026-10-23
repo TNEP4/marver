@@ -53,6 +53,55 @@ describe('writeWhole', () => {
     expect(tmps()).toEqual([])
   })
 
+  it('a sync write is never overrun: one in flight stands down, the one waiting is dropped and settles ok', async () => {
+    const f = join(dir, 'tabs.json')
+    const v1 = writeWhole(f, 'v1')   // in flight
+    const v2 = writeWhole(f, 'v2')   // waiting behind it
+    writeWholeSync(f, 'v3')
+    await Promise.all([v1, v2])
+    await settled()
+    expect(readFileSync(f, 'utf8')).toBe('v3')
+    expect(tmps()).toEqual([])
+    await writeWhole(f, 'v4')        // a write queued after the sync one is newer, and lands
+    expect(readFileSync(f, 'utf8')).toBe('v4')
+  })
+
+  it('an async write past its temp file when the sync one lands still stands down at its rename', async () => {
+    const f = join(dir, 'recent.json')
+    const late = writeWhole(f, 'older')
+    // let it open and write its temp file, so it is truly in flight
+    for (let i = 0; i < 50 && !tmps().length; i++) await new Promise((r) => setImmediate(r))
+    writeWholeSync(f, 'newer')
+    await late
+    expect(readFileSync(f, 'utf8')).toBe('newer')
+    expect(tmps()).toEqual([])
+  })
+
+  it('a sync write that fails leaves the queued async data to land (it is newer than the file)', async () => {
+    const f = join(dir, 'tabs.json')
+    writeFileSync(f, 'old')
+    const v1 = writeWhole(f, 'v1')   // past its 'open' check already (it runs in writeWhole's own turn)
+    faults.inject({ match: 'tabs\\.json$', code: 'ENOSPC', at: 'open' })
+    expect(() => writeWholeSync(f, 'v3')).toThrow(/ENOSPC/)
+    await v1
+    expect(readFileSync(f, 'utf8')).toBe('v1')
+    expect(tmps()).toEqual([])
+  })
+
+  it('the quit flush over a debounced write already queued: the newest state is what stays', async () => {
+    const f = join(dir, 'recent.json')
+    const w = stateWriter<{ n: number }>(f, 5, { writable: () => true, noted: () => {} })
+    w.set({ n: 1 })
+    await new Promise((r) => setTimeout(r, 8))   // its debounced write has started
+    const queued = writeWhole(f, JSON.stringify({ n: 2 }))
+    w.set({ n: 3 })
+    w.flushSync()
+    await queued
+    await settled()
+    expect(JSON.parse(readFileSync(f, 'utf8'))).toEqual({ n: 3 })
+    expect(w.pending()).toBe(false)
+  })
+
   it('writeWholeSync: whole, mode as asked, a fault leaves nothing', () => {
     const f = join(dir, 'README.md')
     writeWholeSync(f, 'hello', 0o644)

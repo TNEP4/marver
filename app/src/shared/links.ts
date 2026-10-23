@@ -4,20 +4,28 @@
  *
  * A local link is `http:` to `localhost`, `127.0.0.1` or `[::1]` with a port and no credentials - main never loads
  * the host it wrote: it takes the registry entry on that port and builds the address from the entry's bound origin
- * plus the link's path, query and hash (`rest`). An https link is a shared canvas (A4.4). Anything else is not a
- * canvas link. A bare `localhost:4806/#/b/x`, as agents sometimes print it, reads as http.
+ * plus the link's path, query and hash (`rest`). Only the canvas's own page opens in its tab: `rest` must be the shell's
+ * document, `/` or `/index.html` with its query and hash - the only documents the proof admits (A2.14 #11) - so a
+ * link to a frame's file or an API on a canvas's port is not a canvas link (`why: 'page'`), and both sides say so
+ * before anything loads. An https link is a shared canvas (A4.4). Anything else is not a canvas link. A bare
+ * `localhost:4806/#/b/x`, as agents sometimes print it, reads as http.
  */
 
 /** The longest link either side takes (the channels table: under 2 KB). */
 export const LINK_MAX = 2048
 
 export type ParsedLink =
-  /** `rest` is the path, query and hash; `host` as written, for the words */
+   /** `rest` is the path, query and hash (always the shell's own document); `host` as written, for the words */
   | { kind: 'local'; port: number; rest: string; host: string; board: string | null }
   | { kind: 'https'; url: string; host: string }
-  | { kind: 'bad' }
+  /** `page`: a loopback link with a port whose path is not the canvas's own page */
+  | { kind: 'bad'; why?: 'page'; port?: number }
 
 const BAD = { kind: 'bad' } as const
+
+/** The shell's own document only - `/` or `/index.html`, its query and hash - under 2 KB; anything else is `/`. */
+export const shellPath = (p: unknown): string =>
+  typeof p === 'string' && p.length < LINK_MAX && /^\/(index\.html)?([?#][^\0]*)?$/.test(p) ? p : '/'
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /** The board a Marver hash route names (`#/b/<board>`, shell/hash.ts), or null. */
@@ -41,5 +49,8 @@ export function parseLink(raw: unknown): ParsedLink {
   if (u.protocol !== 'http:' || !LOOPBACK.has(u.hostname) || !u.port) return BAD
   const port = Number(u.port)
   if (!Number.isInteger(port) || port < 1 || port > 65535) return BAD
-  return { kind: 'local', port, rest: `${u.pathname}${u.search}${u.hash}`, host: u.host, board: boardOf(u.hash) }
+  const rest = `${u.pathname}${u.search}${u.hash}`
+  if (rest.length >= LINK_MAX) return BAD
+  if (shellPath(rest) !== rest) return { kind: 'bad', why: 'page', port }
+  return { kind: 'local', port, rest, host: u.host, board: boardOf(u.hash) }
 }

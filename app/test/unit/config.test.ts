@@ -280,6 +280,54 @@ describe('settings:set', () => {
     expect(cfg.filesPill()).toBeNull()
   })
 
+  it('onto a file too big to read: the file itself renamed to .bad, unread, then the change written', async () => {
+    start()
+    const big = `{ "restoreTabs": true, "pad": "${'x'.repeat(70 * 1024)}" }`
+    writeFileSync(join(home, 'config.json'), big)
+    await cfg.reread()
+    expect(cfg.filesStatus().files['config.json'].ok).toBe(false)
+    expect(await cfg.settingsSet({ file: 'config', key: 'restoreTabs', value: false })).toEqual({ ok: true })
+    expect(read(join(home, 'config.json.bad'))).toBe(big)
+    expect(JSON.parse(read(join(home, 'config.json')))).toEqual({ $schema: './schemas/config.schema.json', restoreTabs: false })
+  })
+
+  it('onto a file that cannot be read (mode 000): renamed to .bad with its bytes and mode, then the change written', async () => {
+    start()
+    writeFileSync(join(home, 'theme.json'), '{ "mode": "light" }')
+    chmodSync(join(home, 'theme.json'), 0o000)
+    await cfg.reread()
+    expect(cfg.filesStatus().files['theme.json'].ok).toBe(false)
+    expect(await cfg.settingsSet({ file: 'theme', key: 'mode', value: 'dark' })).toEqual({ ok: true })
+    expect(mode(join(home, 'theme.json.bad'))).toBe(0o000)
+    chmodSync(join(home, 'theme.json.bad'), 0o600)
+    expect(read(join(home, 'theme.json.bad'))).toBe('{ "mode": "light" }')
+    expect(JSON.parse(read(join(home, 'theme.json'))).mode).toBe('dark')
+  })
+
+  it('when the broken bytes cannot be kept aside, nothing is written over them: write-failed, the file untouched', async () => {
+    start()
+    writeFileSync(join(home, 'theme.json'), '{ "mode": "midnight" }')
+    await cfg.reread()
+    fsx.faults.inject({ match: 'theme\\.json\\.bad$', code: 'ENOSPC', at: 'write' })
+    expect(await cfg.settingsSet({ file: 'theme', key: 'mode', value: 'dark' })).toEqual({ ok: false, why: 'write-failed', code: 'ENOSPC' })
+    expect(read(join(home, 'theme.json'))).toBe('{ "mode": "midnight" }')
+    expect(existsSync(join(home, 'theme.json.bad'))).toBe(false)
+    expect(readdirSync(home).filter((n) => n.endsWith('.tmp'))).toEqual([])
+    expect(cfg.filesPill()).toMatchObject({ lead: 'theme.json' })   // the problem still outranks the failed write
+    expect(cfg.filesStatus().write).toMatchObject({ code: 'ENOSPC', file: expect.stringMatching(/theme\.json$/) })
+  })
+
+  it('a file renamed aside whose change then fails to write goes back where it was', async () => {
+    start()
+    const big = `{ "pad": "${'x'.repeat(70 * 1024)}" }`
+    writeFileSync(join(home, 'config.json'), big)
+    await cfg.reread()
+    fsx.faults.inject({ match: 'config\\.json$', code: 'ENOSPC', at: 'write' })
+    expect(await cfg.settingsSet({ file: 'config', key: 'restoreTabs', value: false })).toEqual({ ok: false, why: 'write-failed', code: 'ENOSPC' })
+    expect(read(join(home, 'config.json'))).toBe(big)
+    expect(readdirSync(home).filter((n) => n.endsWith('.tmp'))).toEqual([])
+  })
+
   it('a full disk: write-failed with its code, the file unchanged, the pill; the next write clears it', async () => {
     start()
     writeFileSync(join(home, 'config.json'), '{ "restoreTabs": true }')
@@ -308,6 +356,7 @@ describe('settings:set', () => {
     await cfg.reread()
     const v = cfg.settingsView()
     expect(v.shown).toEqual(['config.restoreTabs', 'theme.mode'])
+    expect(v.statusFile).toBe(join(home, 'state-dev', 'status.json'))   // under the temp home: no ~ to shorten
     expect(v.config).toMatchObject({ ok: true, present: false, values: { restoreTabs: true } })
     expect(v.config).not.toHaveProperty('text')
     expect(v.theme).toMatchObject({ ok: false, text: '{ "mode": "midnight" }', values: { mode: 'system' }, problems: [{ key: 'mode' }] })
@@ -322,21 +371,32 @@ describe('settings:set', () => {
 })
 
 describe('the pill and status pushes', () => {
-  it('tells the pill feed only when the pill changes, and Settings on every judgement', async () => {
+  it('tells the pill feed the pill at once, then only when it changes; Settings on every judgement', async () => {
     start()
     const pills: unknown[] = []
     const statuses: unknown[] = []
     cfg.onPill((p) => pills.push(p))
     cfg.onStatus((s) => statuses.push(s))
+    expect(pills).toEqual([null])
     writeFileSync(join(home, 'config.json'), '[]')
     await cfg.reread()
     writeFileSync(join(home, 'config.json'), 'null')
     await cfg.reread()
     writeFileSync(join(home, 'config.json'), '{}')
     await cfg.reread()
-    expect(pills).toHaveLength(2)
-    expect(pills[1]).toBeNull()
+    expect(pills).toHaveLength(3)
+    expect(pills[1]).toMatchObject({ kind: 'files', lead: 'config.json' })
+    expect(pills[2]).toBeNull()
     expect(statuses).toHaveLength(3)
+  })
+
+  it('a pill found at launch, before any feed listened, reaches the feed when it subscribes', () => {
+    cfg.ensureHome({ version: '0.1.0', dev: true })
+    writeFileSync(join(home, 'config.json'), '{ "restoreTabs": "yes" }')
+    cfg.loadFiles()
+    const pills: unknown[] = []
+    cfg.onPill((p) => pills.push(p))
+    expect(pills).toEqual([expect.objectContaining({ kind: 'files', lead: 'config.json', short: 'Settings not applied' })])
   })
 
   it('a problem outranks a failed write, which outranks an unwritable home', async () => {

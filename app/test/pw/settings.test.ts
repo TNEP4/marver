@@ -12,7 +12,7 @@ const fs = (ok = true, values: Record<string, unknown> = {}): FileState => ({ pr
 function view(o: { restoreTabs?: boolean; mode?: string; theme?: Partial<SettingsView['theme']>; writable?: boolean; write?: SettingsView['status']['write'] } = {}): SettingsView {
   const theme = { ...fs(), values: { mode: o.mode ?? 'system' }, ...o.theme }
   return {
-    dir: '~/.marver', shown: ['config.restoreTabs', 'theme.mode'],
+    dir: '~/.marver', statusFile: '~/.marver/state-dev/status.json', shown: ['config.restoreTabs', 'theme.mode'],
     config: { ...fs(), values: { restoreTabs: o.restoreTabs ?? true, unloadUnderPressure: true, recorder: true, keepPerfDays: 14, dockBadge: true } },
     theme,
     status: { v: 1, app: '0.1.0', at: 1, writable: o.writable ?? true, files: { 'config.json': fs(), 'theme.json': theme }, ...(o.write ? { write: o.write } : {}) },
@@ -89,6 +89,17 @@ describe('refused, the control goes back and the row says why', () => {
     })
   }
 
+  it('a set main never answers (no handler, or it threw): the control goes back, the row says why', async () => {
+    await p.reject('settings:set')
+    await sw().click()
+    await p.page.waitForFunction(() => document.querySelector('.row-err')!.textContent!.startsWith('Couldn\'t save config.json'))
+    expect(await sw().getAttribute('aria-checked')).toBe('true')
+    expect(await rowErr('config.restoreTabs')).toBe('Couldn\'t save config.json: the write failed')
+    await p.answer('settings:set', { ok: true })
+    await sw().click()
+    await p.page.waitForFunction(() => document.querySelector('.row-err')!.textContent === '')
+  })
+
   it('the reason stays through a status push, and goes with the next good change', async () => {
     await p.answer('settings:set', { ok: false, why: 'write-failed', code: 'EACCES' })
     await sw().click()
@@ -112,7 +123,8 @@ describe('the files (A2.7, A2.12)', () => {
       .toBe('theme.json did not apply · using the last good one mode must be "system", "light" or "dark"')
     expect(await p.page.$eval('.side pre', (e) => e.textContent)).toBe('{ "mode": "<script>alert(1)</script>" }')
     expect(await p.page.$$eval('script', (els) => els.length)).toBe(1)
-    expect(await p.page.$eval('.side', (e) => e.textContent)).toContain('~/.marver/state/status.json')
+    // the status file main names: state-dev/ in the development build, where an agent must look
+    expect(await p.page.$eval('.side code', (e) => e.textContent)).toBe('~/.marver/state-dev/status.json')
   })
 
   it('a home that cannot be written, and a write that failed, are said at the top', async () => {

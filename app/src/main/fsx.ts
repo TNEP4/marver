@@ -5,8 +5,11 @@
  *
  * - `writeWhole` is async with one queue per file: a write waits for the one in flight, and a newer write while one
  *   waits replaces the waiting data (its caller's promise settles with the write that carried the newer data).
- * - `writeWholeSync` is for launch (ensureHome) and the quit flush; an async write of the same file that started
- *   before it never lands over it.
+ * - `writeWholeSync` is for launch (ensureHome), setting a file aside and the quit flush, and always carries the
+ *   newest data of its file: once it lands, the write waiting in that file's queue is dropped (its callers settle
+ *   ok) and the one in flight never renames over it. Each async write checks for a newer sync write and renames in
+ *   one synchronous turn (`renameSync`), so no sync write can land between the check and the rename, and no rename
+ *   handed to the thread pool can finish after a sync one.
  * - Temp names are `<file>.<12 hex>.tmp`; `sweepTemps` removes only those, and only when older than a minute.
  * - `readState` reads a `state/*.json` with a check of its shape; one that fails is set aside as `<name>.bad` (the
  *   last one only) and the caller goes on as if it were empty.
@@ -15,7 +18,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { closeSync, fsyncSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
-import { open, rename, unlink } from 'node:fs/promises'
+import { open, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 /** A temp file of ours: `<name>.<12 hex>.tmp`. */
@@ -51,11 +54,11 @@ export const faults = {
 
 const tmpName = (file: string) => `${file}.${randomBytes(6).toString('hex')}.tmp`
 
-/** Bumped by every sync write of a file: an async write that started before it does not rename over it. */
+/** Bumped by every sync write of a file that landed: an async write queued before it does not rename over it. */
 const syncGen = new Map<string, number>()
+const genOf = (file: string) => syncGen.get(file) ?? 0
 
 export function writeWholeSync(file: string, data: string | Buffer, mode = 0o600): void {
-  syncGen.set(file, (syncGen.get(file) ?? 0) + 1)
   if (__MV_TEST__) faults.check(file, 'open')
   const tmp = tmpName(file)
   let fd: number | undefined
@@ -75,10 +78,19 @@ export function writeWholeSync(file: string, data: string | Buffer, mode = 0o600
     try { unlinkSync(tmp) } catch { /* never made */ }
     throw err
   }
+  // landed, and newer than anything queued for this file: the one in flight stands down at its rename, the waiting
+  // one is dropped - its callers' data is older than this
+  syncGen.set(file, genOf(file) + 1)
+  const q = queues.get(file)
+  if (q?.waiting) {
+    const dropped = q.waiting
+    q.waiting = null
+    for (const w of dropped.waiters) w.ok()
+  }
 }
 
-async function writeOnce(file: string, data: string | Buffer, mode: number): Promise<void> {
-  const gen = syncGen.get(file) ?? 0
+/** One async write; `gen` is the file's sync generation when it was queued. */
+async function writeOnce(file: string, data: string | Buffer, mode: number, gen: number): Promise<void> {
   if (__MV_TEST__) faults.check(file, 'open')
   const tmp = tmpName(file)
   let fh: Awaited<ReturnType<typeof open>> | undefined
@@ -90,8 +102,9 @@ async function writeOnce(file: string, data: string | Buffer, mode: number): Pro
     await fh.close()
     fh = undefined
     if (__MV_TEST__) faults.check(file, 'rename')
-    if ((syncGen.get(file) ?? 0) !== gen) { await unlink(tmp); return }   // a sync write landed meanwhile: it is newer
-    await rename(tmp, file)
+    // the check and the rename in one synchronous turn: a sync write that landed meanwhile is newer and stays
+    if (genOf(file) !== gen) { await unlink(tmp).catch(() => {}); return }
+    renameSync(tmp, file)
   } catch (err) {
     if (fh) await fh.close().catch(() => {})
     await unlink(tmp).catch(() => {})
@@ -99,7 +112,7 @@ async function writeOnce(file: string, data: string | Buffer, mode: number): Pro
   }
 }
 
-interface Job { data: string | Buffer; mode: number; waiters: { ok: () => void; fail: (e: unknown) => void }[] }
+interface Job { data: string | Buffer; mode: number; gen: number; waiters: { ok: () => void; fail: (e: unknown) => void }[] }
 interface Queue { running: boolean; waiting: Job | null }
 const queues = new Map<string, Queue>()
 
@@ -107,8 +120,8 @@ export function writeWhole(file: string, data: string | Buffer, mode = 0o600): P
   return new Promise((ok, fail) => {
     let q = queues.get(file)
     if (!q) queues.set(file, q = { running: false, waiting: null })
-    if (q.waiting) { q.waiting.data = data; q.waiting.mode = mode; q.waiting.waiters.push({ ok, fail }) }
-    else q.waiting = { data, mode, waiters: [{ ok, fail }] }
+    if (q.waiting) Object.assign(q.waiting, { data, mode, gen: genOf(file) }).waiters.push({ ok, fail })
+    else q.waiting = { data, mode, gen: genOf(file), waiters: [{ ok, fail }] }
     if (!q.running) void pump(file, q)
   })
 }
@@ -119,7 +132,7 @@ async function pump(file: string, q: Queue): Promise<void> {
     const job = q.waiting
     q.waiting = null
     try {
-      await writeOnce(file, job.data, job.mode)
+      await writeOnce(file, job.data, job.mode, job.gen)
       for (const w of job.waiters) w.ok()
     } catch (err) {
       for (const w of job.waiters) w.fail(err)

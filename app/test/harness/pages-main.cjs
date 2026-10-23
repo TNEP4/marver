@@ -43,12 +43,22 @@ globalThis.__pages = {
   answers,
   csp,
   send(ch, payload) { win.webContents.send(ch, payload) },
+  /** the invoke rejects, as it does when main has no handler for it or its handler throws */
+  reject(ch) { answers[ch] = () => { throw new Error(`refused: ${ch}`) } },
+  /** the invoke answers `value` after `ms` */
+  later(ch, value, ms) { answers[ch] = () => new Promise((r) => setTimeout(() => r(value), ms)) },
   resize(w, h) { win.setContentSize(w, h) },
   wc: () => win.webContents,
 }
 
-const SENDS = ['app:ready', 'tab:activate', 'tab:close', 'tab:menu', 'tabs:more', 'pill:action', 'tabpage:action', 'settings:reveal']
-const INVOKES = ['link:open', 'home:action', 'settings:get', 'settings:set']
+// which channels are invokes and which sends is channels.ts's (INVOKES, SENDERS), handed over by pages.ts: the fake
+// main mounts each the way the real bridge must, so a page calling a send as an invoke (or the reverse) fails here
+const INVOKES = JSON.parse(process.env.MVPAGES_INVOKES || '[]')
+const SENDS = JSON.parse(process.env.MVPAGES_SENDS || '[]')
+if (!INVOKES.length || !SENDS.length) {
+  process.stderr.write('pages-main: MVPAGES_INVOKES and MVPAGES_SENDS are required (test/harness/pages.ts)\n')
+  app.exit(2)
+}
 
 app.whenReady().then(() => {
   const manifest = JSON.parse(readFileSync(join(DIST, 'pages', 'manifest.json'), 'utf8'))

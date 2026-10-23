@@ -17,6 +17,11 @@ export type DisplayState = 'none' | 'live' | 'hidden' | 'gone' | 'starting' | 'u
 export interface TabView {
   id: string
   kind: 'local' | 'home' | 'settings'
+  /**
+   * The canvas's name as its shell shows it (the slot file's `name`). For an `unverified` tab the pages never show
+   * it: they name the tab by its link's host ("localhost:4808, not a Marver canvas", A2.13; frame mac-app/05), so
+   * main may send either and no page wears a name a canvas has not proved.
+   */
   name: string
   state: DisplayState
   verified: boolean
@@ -98,14 +103,17 @@ export type TabPageView =
   | TabPageBase & { page: 'crashed'; latched: boolean; reason?: string; crashes?: number }
 export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' | 'reveal' | 'open-browser' | 'close'
 
-/** `recent` (main to home): Recently here (A2.12). `id` is main's; `folder` with `~`. `hue` as `TabView.hue`. */
+/**
+ * `recent` (main to home): Recently here (A2.12). `id` is main's (`r_` and the workspace, within the bridge's id
+ * pattern `[A-Za-z0-9_-]{1,32}`); `folder` with `~`. `hue` as `TabView.hue`.
+ */
 export interface RecentView { id: string; name: string; folder: string; lastSeen: number; logo?: string; hue?: number }
 
 /** `home:info` (main to home). */
 export interface HomeInfo { welcome: boolean; writable: boolean }
 /** `home:focus` (main to home). */
 export interface HomeFocus { field: 'link'; back?: string }
-/** `home:action` (home to main). */
+/** `home:action` (home to main; an invoke, `INVOKES`, answering `HomeActionAnswer`). */
 export type HomeAction =
   | { action: 'copy'; id: 'dev' | 'init' | 'update' }
   | { action: 'copy-start'; id: string }
@@ -154,6 +162,8 @@ export interface SettingsFileView extends FileState {
 export interface SettingsView {
   /** the folder, with `~` */
   dir: string
+  /** where an agent checks its edit, with `~`: `state/status.json`, `state-dev/status.json` in Marver Dev */
+  statusFile: string
   config: SettingsFileView
   theme: SettingsFileView
   status: FilesStatus
@@ -190,6 +200,19 @@ export const CH = {
   settingsReveal: 'settings:reveal',
   status: 'status',
 } as const
+
+/**
+ * The page-to-main channels that are invokes (`ipcRenderer.invoke` / `ipcMain.handle`, the handler's return value
+ * the answer); every other channel in `SENDERS` is a send (`ipcRenderer.send` / `ipcMain.on`). The preload, the
+ * bridge and the pages harness all read this list (added by the pages stream: the draft named `link:open` alone).
+ *   link:open    -> LinkOpenAnswer
+ *   home:action  -> HomeActionAnswer
+ *   settings:get -> SettingsView
+ *   settings:set -> SettingsSetResult
+ */
+export const INVOKES = [CH.linkOpen, CH.homeAction, CH.settingsGet, CH.settingsSet] as const
+export type InvokeChannel = (typeof INVOKES)[number]
+export const isInvoke = (ch: string): ch is InvokeChannel => (INVOKES as readonly string[]).includes(ch)
 
 /** Who may SEND each page-to-main channel (bridge.ts refuses anyone else, A2.5). */
 export const SENDERS: Record<string, readonly PageKind[]> = {
