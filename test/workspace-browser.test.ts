@@ -412,6 +412,46 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 70))
   }, 240_000)
 
+  it('an edit made while stopped that the ordinary autosave saves before any resume flusher does: the reloaded page still says its edits were saved', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const s = await tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/main`)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
+    await browser.eval(s, `window.__mark = 8`)
+    const onDisk = () => JSON.parse(readFileSync(join(rootA, 'design', 'boards', 'main.json'), 'utf8')).nodes.find((n: any) => n.key === 'n-home').x
+
+    // the canvas stops; a frame is picked up and moved - the move only this tab holds, its autosave refused
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    const x = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
+    await browser.eval(s, `(() => { const st = __mvStore.getState(); st.setGesture(true); st.moveNode('n-home', ${x} + 110, 0); return 1 })()`)
+    await wait(800)   // past the autosave's 500 ms: refused, the move stays dirty here
+    expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
+    expect(onDisk()).toBe(Math.round(x))
+
+    // back, the frame still in the hand: the resume's flusher saves nothing while a frame is held, and the page stays
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `__mvLink.getState().link === 'live' && __mvStore.getState().toasts.some((t) => t.text.includes('reloads once nothing is in progress'))`, 15_000)
+    expect(await browser.eval(s, `window.__mark`)).toBe(8)
+    expect(onDisk()).toBe(Math.round(x))
+    // the pointer rests where it is (a move to the same place): the ordinary autosave goes now, while the frame is still
+    // held - so it, not a flusher, puts the move on disk, and leaves the resume nothing to save
+    await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x} + 110, 0)`)
+    const t0 = Date.now()
+    while (Date.now() - t0 < 10_000 && onDisk() !== Math.round(x + 110)) await wait(100)
+    expect(onDisk()).toBe(Math.round(x + 110))
+    await browser.until(s, `!__mvStore.getState().dirty`, 5_000)
+    expect(await browser.eval(s, `window.__mark`)).toBe(8)
+
+    // the drop: nothing holds the page, the next resume finds nothing to save, it reloads - and says the edits were saved
+    await browser.eval(s, `__mvStore.getState().setGesture(false)`)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    await browser.until(s, `__mvStore.getState().toasts.some((t) => t.text === 'Back - your edits were saved')`, 5_000)
+    expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 110))
+  }, 240_000)
+
   it('back after the board changed on disk meanwhile: the file wins, and the reloaded page says so - never that its edits were saved; a board removed meanwhile, the same', async (ctx) => {
     if (!browser) return ctx.skip()
     await stopDev(b, PORT); b = null

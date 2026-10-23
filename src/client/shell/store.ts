@@ -2123,7 +2123,7 @@ export const useStore = create<State>((set, get) => {
               // renamed/deleted externally - drop the write, don't recreate it or loop
               set({ dirty: false })
               get().toast(BOARD_GONE)
-              lostInResume('gone')   // a resume's save: the page after its reload says this, not "saved"
+              lostInResume('gone')   // a save while a resume is owed: the page after its reload says this, not "saved"
               return true
             }
             const reloaded = await get().boot()   // hash advances only when the authoritative reload commits
@@ -2134,7 +2134,7 @@ export const useStore = create<State>((set, get) => {
             const { sha256 } = await res.json()
             // an edit that landed after this save started keeps dirty set for the next save
             set({ boardHash: sha256, ...(editRev === rev ? { dirty: false } : {}) })
-            savedInResume()   // a resume's save: the page after its reload says the edits were saved
+            savedInResume()   // a save while a resume is owed (the resume's, or this autosave): the page after its reload says the edits were saved
             return true
           }
           return false

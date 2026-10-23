@@ -42,6 +42,14 @@ The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
   `ETag`. A request carrying `x-mv-nonce` gets `x-mv-instance` and `x-mv-proof` over that logo (`logo|<nonce>|<port>`),
   so the Mac app shows a logo only from the canvas it verified.
 
+### Fixed
+
+- **"Back - your edits were saved" every time.** A tab that held an edit when its canvas stopped saved it when the
+  canvas came back and reloaded, but said so only when the save it made on the way back carried the edit. Often the
+  ordinary autosave had already saved it - a frame still in your hand when the canvas answered, then dropped - and
+  the reloaded page said nothing, though the edit was on disk. Now every board save between the stop and the tab's
+  reload counts, and a lost one too: the reloaded page then says the file won, or that the board is gone.
+
 ## 0.27.0 - 2026-10-23
 
 ### Highlights

@@ -89,6 +89,7 @@ let hmrLost = false
 let probeTimer: ReturnType<typeof setTimeout> | null = null
 
 function lost(why: 'down' | 'elsewhere') {
+  owed = true
   noteUnsaved()
   if (why === 'elsewhere') useLink.setState({ link: 'elsewhere', shown: true })
   else if (!canvasStopped()) useLink.setState({ link: 'checking' })
@@ -114,8 +115,7 @@ async function resume() {
   const back = useLink.getState().link !== 'live'      // from a stop; 'live' is a page that owes a reload
   if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
-  flushing = true
-  try { for (const fn of flushers) ok = (await fn().catch(() => false)) && ok } finally { flushing = false }
+  for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
   const now = useLink.getState().link
   if (now !== 'resuming' && now !== 'live') return     // lost again while saving: the probe goes on
   // asked here, with nothing awaited between the answer and the reload: words typed or an edit made while a
@@ -127,7 +127,7 @@ async function resume() {
   if (hmrLost && ok) { keepOverReload(lostOnResume ?? (savedOnResume ? 'saved' : null)); return void leaveNow(() => location.reload()) }
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
   // no reload owed (Vite's socket held): the page goes on as it is, and what this resume came to was said on it
-  if (!hmrLost) { lostOnResume = null; savedOnResume = false; return }
+  if (!hmrLost) { owed = false; lostOnResume = null; savedOnResume = false; return }
   // Vite's socket never comes back (its client waits on the listener below), so this page owes a reload:
   // until nothing holds it (a capture recording, words not sent) it works as live, keeps asking - a stop
   // is seen again - and reloads the moment it may
@@ -152,18 +152,22 @@ export function stranded(f: HTMLIFrameElement | null): boolean {
  *  reached the disk; 'disk' - the board's file changed on disk meanwhile and won, the tab's board edits dropped; 'gone' - the board
  *  was renamed or removed meanwhile and is not created again; null - there was nothing to save. */
 export type ResumeOutcome = 'saved' | 'disk' | 'gone' | null
-let flushing = false
+/** A resume is owed from the stop until the page's own reload - or, Vite's socket held, until the resume that needs
+ *  none. Every board save that answers meanwhile is what the resumes came to: the resume's own, and as often the
+ *  ordinary autosave (store.ts, 500 ms after an edit), which can land before any flusher runs - a pass held by a
+ *  frame in the hand, then the drop's save - and leave the flushers nothing to save. */
+let owed = false
 /** What the resumes came to - the board save's own word, lost or saved - kept until the reload that carries it: a
  *  resume whose reload is held (a draft, a capture) is not the last one, and the one that reloads at last may have
- *  nothing left to save. Each later resume only adds to it - the first loss stays, and a loss outranks a save. A resume
+ *  nothing left to save. Each later save only adds to it - the first loss stays, and a loss outranks a save. A resume
  *  that owes no reload (Vite's socket held) ends it. */
 let lostOnResume: 'disk' | 'gone' | null = null
 let savedOnResume = false
-/** The board save, while the resume's flushers run: what this tab held did not reach the disk (store.ts) - the page
- *  after the reload says what happened instead, never that the edits were saved. */
-export function lostInResume(why: 'disk' | 'gone') { if (flushing) lostOnResume ??= why }
-/** The board save, while the resume's flushers run: what this tab held reached the disk (store.ts). */
-export function savedInResume() { if (flushing) savedOnResume = true }
+/** A board save, while a resume is owed: what this tab held did not reach the disk (store.ts) - the page after the
+ *  reload says what happened instead, never that the edits were saved. */
+export function lostInResume(why: 'disk' | 'gone') { if (owed) lostOnResume ??= why }
+/** A board save, while a resume is owed - the resume's or the autosave's: what this tab held reached the disk (store.ts). */
+export function savedInResume() { if (owed) savedOnResume = true }
 
 const RESUMED = 'mv-resumed'
 const keepers = new Set<() => Record<string, unknown>>()
