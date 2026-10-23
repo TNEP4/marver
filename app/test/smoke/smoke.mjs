@@ -21,9 +21,19 @@
  * Only the guard's exit code 3 passes a debugging-switch case, so a launch that met any lock can never pass as a
  * refusal. The smoke ends only processes it started (each launch is its own process group).
  *
- * WARN marks a check the app 0.1 skeleton cannot yet satisfy (no canvas loads before the trust and window
- * streams land): the cookie encryption read from a real cookie, and the launch budget's frame callback. They turn
- * into PASS or FAIL by themselves once a canvas tab loads.
+ * A2's budgets (A2.14 #28, v1.12 r1 #8, #9; the Budgets section), measured from outside the signed build:
+ * - launch-warm: the clean launch's profile launched a second time, spawn to the request the fake canvas's page
+ *   sends from its first animation-frame callback, under 1 s; the first launch's time is reported, not gated.
+ * - memory-no-canvas: three fake canvases registered, Home active, none ever shown; the app's own memory as macOS
+ *   counts it - each process's physical footprint (Activity Monitor's Memory), read with /usr/bin/footprint, never by
+ *   the app about itself (Nic, 23 Oct; A3.8 #2, #48) - the browser, the GPU process, every utility process, the strip
+ *   and Home (and crashpad's handler), under 200 MB as the mean of three reads 10 s apart.
+ * - memory-canvas-open: the second launch's canvas loaded and shown; the same without the GPU process, whose
+ *   footprint is reported beside it, never counted (no Electron API splits GPU memory by canvas), nor the canvas's
+ *   renderer - told apart from the app pages' from outside: it is the one renderer that spent the 2.5 s of CPU its
+ *   page burns when the smoke asks it to.
+ * A footprint that cannot be read makes a memory gate inconclusive, a FAIL, never a pass on RSS. A gate that fails
+ * says its numbers; the limits are not loosened here - the numbers go to Nic.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -262,6 +272,94 @@ function poll(port, everyMs = 10) {
   return { st, stop: () => { on = false; clearInterval(iv) } }
 }
 
+// ---- the budgets, read from outside the app (A2.14 #28; Budgets; A3.8 #2, #48) ------------------------------------
+const BUDGET_LAUNCH_MS = 1000
+const BUDGET_MEMORY_MB = 200
+const MB = (bytes) => bytes / 1048576
+const mb = (bytes) => MB(bytes).toFixed(1)
+/** the GPU process's footprint with a canvas open (memory-canvas-open), for the no-canvas run's line */
+let gpuWithCanvas = null
+
+/** Every process of a launch, from outside: main (its group's leader), the helpers in its group, and anything whose
+ *  command names the launch's folder (crashpad's handler: its database is in the launch's MARVER_HOME). */
+function processesOf(L) {
+  const ids = new Set([String(L.pid)])
+  for (const args of [['-g', String(L.pid)], ['-f', L.dir]]) for (const p of sh('pgrep', args).stdout.split('\n')) if (p.trim()) ids.add(p.trim())
+  return sh('ps', ['-o', 'pid=,rss=,time=,command=', '-p', [...ids].join(',')]).stdout.split('\n').flatMap((row) => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(row)
+    if (!m) return []
+    const [, pid, rss, time, cmd] = m
+    const role = Number(pid) === L.pid ? 'browser' : /--type=gpu-process/.test(cmd) ? 'gpu' : /--type=utility/.test(cmd) ? 'utility'
+      : /--type=renderer/.test(cmd) ? 'renderer' : /crashpad/.test(cmd) ? 'crashpad' : 'other'
+    const sub = /--utility-sub-type=(\S+)/.exec(cmd)?.[1]
+    return [{ pid: Number(pid), rssKB: Number(rss), cpu: time.split(':').reduce((a, x) => a * 60 + Number(x), 0), role, sub }]
+  })
+}
+/** pid -> CPU seconds */
+const cpuOf = (procs) => new Map(procs.map((p) => [p.pid, p.cpu]))
+/** pid -> physical footprint in bytes (Activity Monitor's Memory column), by /usr/bin/footprint; missing when unread */
+function footprints(pids) {
+  const file = join(RUN, `footprint-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`)
+  sh('/usr/bin/footprint', ['--noCategories', '-f', 'bytes', '-j', file, ...pids.flatMap((p) => ['-p', String(p)])])
+  const out = new Map()
+  try {
+    for (const p of JSON.parse(readFileSync(file, 'utf8')).processes ?? []) {
+      const b = p?.auxiliary?.phys_footprint ?? p?.footprint
+      if (Number.isFinite(b)) out.set(p.pid, b)
+    }
+  } catch { /* nothing read */ }
+  return out
+}
+/** One read of a launch's memory: every process with its footprint; null when any footprint could not be read (twice). */
+function readMemory(L) {
+  for (let i = 0; i < 2; i++) {
+    const procs = processesOf(L)
+    const fp = footprints(procs.map((p) => p.pid))
+    if (procs.length && procs.every((p) => fp.has(p.pid))) return procs.map((p) => ({ ...p, fp: fp.get(p.pid) }))
+  }
+  return null
+}
+/**
+ * A memory gate (A3.8 #48, at A2's scale): after 10 s, three reads 10 s apart; the mean of the counted footprints
+ * under BUDGET_MEMORY_MB. Counted: the browser, every utility process, the app pages' renderers (every renderer but the
+ * canvas's), crashpad's handler and anything else of the launch's - and the GPU process only with `countGpu` (a run
+ * with no canvas open). Reported beside: the GPU process when not counted, the canvas's renderer, the RSS sums.
+ * Inconclusive - a FAIL - when a footprint cannot be read, the renderers change between reads, or `check` says so.
+ * Returns the GPU process's mean footprint in bytes, or null.
+ */
+async function memoryGate(name, L, { canvas, countGpu, check }) {
+  await sleep(10_000)
+  const samples = []
+  for (let i = 0; i < 3; i++) { if (i) await sleep(10_000); samples.push(alive(L) ? readMemory(L) : null) }
+  const why = !alive(L) ? `the app went (code=${L.code} signal=${L.signal})`
+    : samples.some((x) => !x) ? 'a footprint could not be read (/usr/bin/footprint)'
+      : new Set(samples.map((x) => x.filter((p) => p.role === 'renderer').map((p) => p.pid).sort().join(','))).size > 1 ? 'the renderers changed between reads'
+        : check?.() ?? null
+  if (why) { fail(name, `inconclusive: ${why}`); return null }
+  const mean = (f) => samples.reduce((a, x) => a + x.filter(f).reduce((b, p) => b + p.fp, 0), 0) / samples.length
+  const meanRss = (f) => samples.reduce((a, x) => a + x.filter(f).reduce((b, p) => b + p.rssKB * 1024, 0), 0) / samples.length
+  const isCanvas = (p) => canvas.has(p.pid)
+  const counted = (p) => !isCanvas(p) && (countGpu || p.role !== 'gpu')
+  const last = samples.at(-1)
+  const n = (f) => last.filter(f).length
+  const total = mean(counted)
+  const gpu = mean((p) => p.role === 'gpu')
+  const parts = [
+    `browser ${mb(mean((p) => p.role === 'browser'))}`,
+    `utility ${mb(mean((p) => p.role === 'utility'))} (${last.filter((p) => p.role === 'utility').map((p) => p.sub?.replace(/\.mojom\./, ' ').split(' ').pop() ?? '?').join(', ')})`,
+    `app pages ${mb(mean((p) => p.role === 'renderer' && !isCanvas(p)))} (${n((p) => p.role === 'renderer' && !isCanvas(p))} renderers)`,
+    `crashpad ${mb(mean((p) => p.role === 'crashpad'))}`,
+    ...(n((p) => p.role === 'other') ? [`other ${mb(mean((p) => p.role === 'other'))} (${n((p) => p.role === 'other')})`] : []),
+    countGpu ? `GPU ${mb(gpu)} counted${gpuWithCanvas !== null ? ` (${mb(gpuWithCanvas)} with a canvas open: ${gpuWithCanvas >= gpu ? '+' : ''}${mb(gpuWithCanvas - gpu)})` : ''}` : `GPU ${mb(gpu)} reported, not counted`,
+  ]
+  if (canvas.size) parts.push(`the canvas's renderer ${mb(mean(isCanvas))} not counted`)
+  const detail = `${mb(total)} MB footprint, mean of 3 reads 10 s apart: ${parts.join(', ')}; RSS beside it ${mb(meanRss(counted))} MB counted, ${mb(meanRss(() => true))} MB all ${last.length} processes`
+  MB(total) < BUDGET_MEMORY_MB ? pass(name, `${detail}; under ${BUDGET_MEMORY_MB} MB`)
+    : fail(name, `${detail}; over the ${BUDGET_MEMORY_MB} MB budget - the limit stays (Nic, 23 Oct): the numbers go to Nic`)
+  results.at(-1).memory = { totalMB: +MB(total).toFixed(1), gpuMB: +MB(gpu).toFixed(1), countGpu, samples: samples.map((x) => x.map(({ pid, role, sub, fp, rssKB }) => ({ pid, role, sub, fpMB: +MB(fp).toFixed(1), rssMB: +(rssKB / 1024).toFixed(1), canvas: isCanvas({ pid }) }))) }
+  return gpu
+}
+
 // 8-11. a clean launch, with a fake canvas registered and named the active tab (the launch budget's setup, A2.14 #28)
 {
   const { startFakeCanvas } = await import(join(APP_DIR, 'test', 'harness', 'fake-canvas.ts'))
@@ -272,8 +370,21 @@ function poll(port, everyMs = 10) {
   // the SIGTERM's quit goes through the guard without asking: a page that never reported asks first with a native
   // sheet (A2.2, v1.13 r2 #1), which on the release build is real and on the screen, and would hold the quit until
   // the smoke's SIGKILL (and a killed Chromium never writes its Local State)
+  // and, once its first frame is reported, it asks whether to burn 2.5 s of CPU: only the second launch says yes, and
+  // only once the smoke has read every renderer's CPU time - the memory gate's way to tell the canvas's renderer
+  // from the app pages' from outside (spin below)
+  const spin = { wanted: false, res: null, asked: null }
+  spin.askedP = new Promise((r) => { spin.asked = r })
   const fake = await startFakeCanvas({ home, slotBase: SLOT_BASE, slot: 1, cookie: true, name: 'Smoke canvas', root: join(RUN, 'clean', 'repo'),
-    script: "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'smoke-page-01' }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }" })
+    script: "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'smoke-page-01' }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }\n"
+      + "requestAnimationFrame(function () { setTimeout(function () { fetch('/__mv/test/spin-please', { method: 'POST' }).then(function (r) { if (r.status !== 200) return; var end = performance.now() + 2500; while (performance.now() < end) {} fetch('/__mv/test/spun', { method: 'POST', keepalive: true }) }).catch(function () {}) }, 100) })",
+    onRequest: (req, res) => {
+      if ((req.url ?? '').split('?')[0] !== '/__mv/test/spin-please') return false
+      if (!spin.wanted || spin.res) { res.writeHead(204); res.end(); return true }
+      spin.res = res
+      spin.asked()
+      return true
+    } })
   await fake.ready
   writeFileSync(join(home, 'state', 'launched'), '')
   writeFileSync(join(home, 'state', 'tabs.json'), JSON.stringify({ v: 1, active: { kind: 'canvas', ws: fake.ws, origin: fake.origin },
@@ -286,8 +397,9 @@ function poll(port, everyMs = 10) {
   else fail('launch-ready', `mainRan=${mainRan(C)} ready=${reachedReady(C)} alive=${alive(C)} code=${C.code}; stderr: ${C.err.trim().split('\n').slice(-3).join(' | ')}`)
   const raf = fake.requests.find((r) => r.path === '/__mv/test/raf')
   const doc = fake.requests.find((r) => r.path === '/' && r.headers['x-mv-nonce'])
-  if (raf) pass('launch-frame-callback', `${raf.t - C.t0} ms from spawn to the canvas page's first animation-frame callback (first launch; the budget gates the second)`)
-  else warn('launch-frame-callback', doc ? 'the canvas document was requested, no frame callback seen' : 'pending: the app loads no canvas yet (trust and window streams)')
+  // the first launch on a fresh profile is reported, not gated (A2.14 #28: S9's one-off keychain stall); launch-warm gates the second
+  if (raf) pass('launch-frame-callback', `${raf.t - C.t0} ms from spawn to the canvas page's first animation-frame callback (first launch, reported; launch-warm gates the second)`)
+  else fail('launch-frame-callback', doc ? 'the canvas document was requested, no frame callback seen' : 'the canvas named the active tab was never loaded')
 
   // SIGTERM to main alone: its quit runs through guardAll while the helpers live, and the network service, which holds
   // the cookie store, writes it as it shuts down - a group SIGTERM ends that process at once, so the cookie check
@@ -318,7 +430,62 @@ function poll(port, everyMs = 10) {
   if (!rows.length && !doc) warn('cookie-encrypted', `pending: no canvas cookie written yet (${dbs.length} cookie store(s), no canvas loaded); EnableCookieEncryption read on above`)
   else if (!rows.length) fail('cookie-encrypted', `the canvas page set mvfake and no cookie store holds it (${dbs.length} store(s)) after a graceful quit`)
   else rows.every((r) => r === 'mvfake|0|763130') ? pass('cookie-encrypted', `${rows.length} cookie(s): value empty, encrypted_value 'v10...'`) : fail('cookie-encrypted', rows.join(' '))
+
+  // 11c. the launch budget (A2.14 #28): the same profile, `state/launched` present and tabs.json naming the running
+  // fake canvas (the first launch wrote it back at its quit), launched again - warm - and timed from spawn to the
+  // request the page sends from its first animation-frame callback once its view shows
+  spin.wanted = true
+  const W = launch('clean')
+  await waitFor(() => fake.requests.some((r) => r.path === '/__mv/test/raf' && r.t >= W.t0) || !alive(W), 20_000)
+  const rafW = fake.requests.find((r) => r.path === '/__mv/test/raf' && r.t >= W.t0)
+  const firstMs = raf ? `${raf.t - C.t0} ms` : 'no frame callback'
+  if (!rafW) fail('launch-warm', `no frame callback within 20 s of the second launch (alive=${alive(W)} code=${W.code}; first launch: ${firstMs}); stderr: ${W.err.trim().split('\n').slice(-2).join(' | ')}`)
+  else {
+    const ms = rafW.t - W.t0
+    ms < BUDGET_LAUNCH_MS ? pass('launch-warm', `second launch: ${ms} ms from spawn to the canvas page's first animation-frame callback, under ${BUDGET_LAUNCH_MS} ms (first launch: ${firstMs}, not gated)`)
+      : fail('launch-warm', `second launch: ${ms} ms from spawn to the canvas page's first animation-frame callback, over the ${BUDGET_LAUNCH_MS} ms budget (first launch: ${firstMs}) - the limit stays (A2.14 #28): the numbers go to Nic`)
+  }
+
+  // 11d. the app's own memory with a canvas open: the canvas's renderer found by its spin, then three reads
+  let canvasPids = null
+  if (rafW && alive(W) && await Promise.race([spin.askedP.then(() => true), sleep(10_000).then(() => false)])) {
+    const before = cpuOf(processesOf(W).filter((p) => p.role === 'renderer'))
+    spin.res.writeHead(200); spin.res.end()
+    const spun = await waitFor(() => fake.requests.some((r) => r.path === '/__mv/test/spun' && r.t >= W.t0), 15_000)
+    const after = cpuOf(processesOf(W).filter((p) => p.role === 'renderer'))
+    const burned = [...after].filter(([pid, s]) => before.has(pid) && s - before.get(pid) >= 1.5).map(([pid]) => pid)
+    if (spun && burned.length === 1) canvasPids = new Set(burned)
+    else fail('memory-canvas-open', `inconclusive: the canvas's renderer not told apart (spun=${spun}; ${burned.length} renderer(s) burned 1.5 s or more; CPU s before ${JSON.stringify([...before])} after ${JSON.stringify([...after])})`)
+  } else fail('memory-canvas-open', `inconclusive: the canvas page never asked to spin (frame callback ${!!rafW}, alive=${alive(W)})`)
+  if (canvasPids) gpuWithCanvas = await memoryGate('memory-canvas-open', W, { canvas: canvasPids, countGpu: false })
+
+  const termW = Date.now()
+  const quitW = await stop(W, 'SIGTERM', 10_000, { group: false })
+  const errsW = mainErrors(W)
+  quitW && W.code === 0 && !errsW.length ? pass('quit-warm-exit-code', `SIGTERM to main: exit 0 ${W.t0 + W.exitAt - termW} ms later; nothing uncaught in main`)
+    : fail('quit-warm-exit-code', `code=${W.code} signal=${W.signal} graceful=${quitW}; main errors: ${errsW.join(' | ') || 'none'}`)
   await fake.close()
+}
+
+// 11e. the app's own memory with no canvas open (A3.8 #48's first gate, the GPU process counted): three fake canvases
+// registered, no tabs.json - Home active - and none ever shown, so no canvas has a view or a renderer
+{
+  const { startFakeCanvas } = await import(join(APP_DIR, 'test', 'harness', 'fake-canvas.ts'))
+  const home = join(RUN, 'idle', 'home')
+  mkdirSync(join(home, 'state'), { recursive: true, mode: 0o700 })
+  const fakes = await Promise.all([3, 4, 5].map((slot) => startFakeCanvas({ home, slotBase: SLOT_BASE, slot, name: `Smoke idle ${slot}`, root: join(RUN, 'idle', `repo-${slot}`) })))
+  await Promise.all(fakes.map((f) => f.ready))
+  writeFileSync(join(home, 'state', 'launched'), '')
+  const I = launch('idle')
+  const up = await waitFor(() => (mainRan(I) && reachedReady(I)) || !alive(I), 20_000)
+  // a document request (a view's navigation) or a frame: a canvas was shown
+  const shown = () => fakes.filter((f) => f.requests.some((r) => r.headers['sec-fetch-dest'] === 'document' || r.path === '/__mv/test/raf')).length
+  if (!up || !alive(I)) fail('memory-no-canvas', `the app never reached ready (alive=${alive(I)} code=${I.code}); stderr: ${I.err.trim().split('\n').slice(-2).join(' | ')}`)
+  else await memoryGate('memory-no-canvas', I, { canvas: new Set(), countGpu: true, check: () => shown() ? `${shown()} canvas(es) shown` : null })
+  const termI = Date.now()
+  const quitI = await stop(I, 'SIGTERM', 10_000, { group: false })
+  quitI && I.code === 0 ? pass('quit-idle-exit-code', `SIGTERM to main: exit 0 ${I.t0 + I.exitAt - termI} ms later`) : fail('quit-idle-exit-code', `code=${I.code} signal=${I.signal} graceful=${quitI}`)
+  await Promise.all(fakes.map((f) => f.close()))
 }
 
 // 11b. the process group's SIGTERM with a canvas loaded (A2.14 #33): main and every helper at once - the strip's,

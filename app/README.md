@@ -67,7 +67,7 @@ the error policy (`errors.ts`): from there an uncaught exception or rejection in
 - **pw** (`test/harness/app.ts` `launchPW`): Playwright's own Electron launch. Its loader turns on Chromium's test
   switches (the hang monitor off, paint holding off, no backgrounding, no back-forward cache, a mock keychain).
 - **prod** (`launchProd`): the real binary with the app folder and nothing else, driven over the control socket
-  (`MARVER_APP_CONTROL`, mode 600). The hang, one copy of each guard case, hidden tabs and the memory budget, and a
+  (`MARVER_APP_CONTROL`, mode 600). The hang, one copy of each guard case, hidden tabs, and a
   quit whose helpers end with it (`test/prod/quit.test.ts`: `test/harness/catch-uncaught.cjs`, loaded with
   `NODE_OPTIONS=--require`, records an uncaught exception in main instead of Electron's modal error box), and the
   error policy (`test/prod/errors.test.ts`: the `throw` hook raises one in a later turn; the catcher is its safety net).
@@ -111,6 +111,16 @@ the error policy (`errors.ts`): from there an uncaught exception or rejection in
   profile. A second launch with a canvas loaded quits on a SIGTERM to its whole process group (`quit-group-exit-code`):
   exit 0, and no `main-error` in its `perf/app.jsonl` - the release build loads no catcher, so the error policy's
   record is the witness. The one WARN left is `build/Marver.icon` (Icon Composer, by hand).
+- **A2's budgets, in the smoke, from outside the signed build** (A2.14 #28; the spec's Budgets): `launch-warm` launches
+  the clean launch's profile a second time and gates spawn to the canvas page's first animation-frame callback under
+  1 s (the first launch is reported, not gated). The app's own memory is macOS's footprint - Activity Monitor's Memory,
+  read with `/usr/bin/footprint`, never by the app about itself - under 200 MB as the mean of three reads 10 s apart:
+  `memory-no-canvas` (three fake canvases registered, Home active, none shown) counts the browser, the GPU process,
+  every utility process, the strip and Home, and crashpad's handler; `memory-canvas-open` (the second launch's canvas
+  loaded) counts the same without the GPU process, which is reported beside it, and without the canvas's renderer -
+  the one renderer that burned the 2.5 s of CPU its page spends when the smoke asks. RSS is reported, never gated; a
+  footprint that cannot be read is a FAIL (inconclusive). A gate that fails says its numbers; its limit is not
+  loosened - the numbers go to Nic. Each memory line's numbers are in the JSON report too.
 
 ## The icon
 

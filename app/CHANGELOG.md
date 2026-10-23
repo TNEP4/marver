@@ -6,7 +6,9 @@
   fuses, signed with a Developer ID and the hardened runtime, the microphone line, macOS 13 and later.
 - The debugging guard: a release build started with a remote-debugging switch ends at once (exit code 3).
 - The icon for macOS 13-15 (`Marver.icns`); macOS 26's `Marver.icon` is still to make in Icon Composer.
-- The packaged smoke and the test harnesses.
+- The packaged smoke and the test harnesses. The smoke gates A2's budgets from outside the signed build: a second
+  launch reaches the canvas's first frame callback within 1 s, and the app's own memory - macOS's footprint, with no
+  canvas open (the GPU process counted) and with one open (the GPU process reported beside it) - stays under 200 MB.
 - Trust: the app reads `~/.marver/running/` itself and proves each canvas document before it commits (a fresh nonce,
   A1's proof, the registry read again once when a restarted canvas's own reload beats its slot file); trust belongs
   to the committed document. No service worker on a local canvas, swept before its partition's first load. The
