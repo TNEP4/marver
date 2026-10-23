@@ -4,147 +4,107 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## 0.27.0 - 2026-10-22
 
+### Highlights
+
+- **Each canvas takes a slot: localhost:4805 to 4824.** `marver dev` no longer works its port out from the folder's
+  path (5200-5399). It takes one of twenty fixed ports - this project's last one when it is free, else the first free
+  one - so a project usually gets its address back. A port another program holds is skipped, and said; with all twenty
+  taken it stops before starting, lists them and says how to free one. A canvas that ran before says where it moved on
+  its first start: "ports are now fixed slots: this canvas is at http://localhost:4806/".
+- **`npx marver ls`** lists the canvases running on this Mac - slot, link, name, version, state, uptime, folder - with
+  `--json` for agents (never a canvas's key). It needs no repo and leaves out a canvas that died without stopping; one
+  that has begun to stop shows `closing` and holds its slot until it has gone.
+- **A tab left open can no longer write into another project.** A tab whose canvas had stopped kept talking to
+  whatever started next on its port, and could save its board into another project whose board file matched. Now every
+  request it makes, and every frame, play-stage and Jam-picture address, names its project, and another project
+  refuses them before reading or writing anything. The tab says what happened and the way back ("This canvas stopped -
+  run npx marver dev to bring it back"), and that your unsaved edits are kept in it when it holds some; comments and
+  Jam captures wait for the canvas. When its canvas answers again, the tab saves, then reloads on the view you had
+  once nothing is in progress (a capture, words not sent, a drag): "Back - your edits were saved". If the board's file
+  changed on disk meanwhile, the file wins, as it always has, and the tab's unsaved board edits are lost ("board
+  changed on disk - canvas layout reloaded"); a board renamed or removed meanwhile is not created again. Leaving a
+  stopped tab with unsaved board edits asks first.
+- **`npx marver perf --loads`** says what each board load did, from the page: the time until the frames in view were
+  ready, until all were and until the board settled, or why the load was cut; how often the board moved and why; the
+  five slowest frames, each with its wait in the queue and its own time; errors, and frames that never answered or are
+  missing. `--json` for agents; plain `marver perf` adds a line per load. Its record (`design/.local/perf/page.jsonl`)
+  can hold file paths, so it stays on your machine; it costs nothing at rest ([Performance](docs/performance.md)).
+- **Pictures work with Chrome 156.0.8078.47 and later.** That update made a headless page read as hidden when another
+  window covers it, and each picture has a window of its own, so a picture could wait on a paint that never came.
+  Marver's Chrome now runs every page as if seen (`marver shot`, agent pictures, copy as image, video posters, Jam).
+- **Your agent keeps the canvas up.** A canvas an agent starts dies with its job (Claude Code stops a background job
+  after 10 minutes), and the link it gave you with it. The agent instructions now say: `npx marver ls` first; none
+  running, ask you to run `npx marver dev` in your own terminal; if it starts one, detached so it outlives it (output
+  in `design/.local/dev.log`), its link read from `npx marver ls`. Where a sandbox keeps the canvas from starting or
+  being reached, the agent asks you to run it; `marver shot`, `marks`, `ls` and `perf --loads` still work there.
+
 ### Changed
 
-- **Each canvas takes a slot: localhost:4805 to 4824.** `marver dev` no longer starts on a port worked out from the
-  folder's path (5200-5399). It takes one of twenty fixed ports - the one this project had last time when it is free,
-  else the first free one - and prints its link, so a project usually gets the same address back. A port another
-  program holds is skipped, and said. All twenty taken? It stops before starting, lists them, and says how to free
-  one. The first start of a canvas that ran before says where it moved: "ports are now fixed slots: this canvas is at
-  http://localhost:4806/" - a new project, which never had another address, hears nothing of it. `npx marver ls` lists
-  the canvases running on your Mac.
-- **A port you chose stays yours.** `--port <n>`, or a `port` in `design/config.ts` other than the 5199 every canvas
-  was scaffolded with, is tried first, as before; when it is taken, the canvas takes a slot and says so (0.26 moved
-  within its own 5200-5399). A port inside 4805-4824 claims exactly that slot: when another canvas or program holds
-  it, `marver dev` stops and says what holds it, instead of starting somewhere you did not ask for. A port from
-  `design/config.ts` is said as the canvas starts on it: "this canvas keeps its own port (5298 in design/config.ts);
-  remove it to use the slots". A new `design/config.ts` no longer gets `port: 5199` - the line is a commented example.
-- **A start that fails leaves nothing behind.** The folder's lock, the slot, a half-made server and Marver's watchers
-  are all given back, it says what failed, and `marver dev` exits with 1. A program that takes the port between the
-  check and the start is said: "port 4806 was just taken by another program - start again".
-- **Your agent keeps the canvas up.** A canvas an agent starts dies with its job - Claude Code stops a background job
-  after 10 minutes, and the link the agent handed you goes dead with it. The agent instructions now say: `npx marver
-  ls` first; none running, ask you to run `npx marver dev` in your own terminal; started by the agent, detached so it
-  outlives it (`nohup npx marver dev > design/.local/dev.log 2>&1 &`), its link read from `npx marver ls`. In a
-  sandbox where the canvas cannot start or be reached, the agent asks you to run it - `marver shot`, `marks`, `ls`
-  and `perf --loads` still work from there.
-- **`marver dev` says when it stops.** Ctrl-C (or a kill) prints "canvas stopped - open tabs keep their edits and save
-  when it is back".
-- **One identity per project.** The page, the capture check, the registry and the slot preference all read one key,
-  made from the folder's real path. For a canvas started with `npx marver dev` it is the key 0.26 used, so a capture
-  waiting in a page keeps it; only the address moved.
-- **Five viewer preferences are kept per canvas.** Your view theme, the update notice you closed, the mentions you
-  opened, which sticky notes show and which folders are folded were kept per address, so two projects that ran on the
-  same address one after the other shared them. On a local canvas they are now kept per project at each address the
-  browser opens it on, and nothing carries them from one address to another: they start fresh after the upgrade, and
-  again whenever a canvas runs on a slot it has not used before. A published canvas keeps them as before.
-- **No service workers on a local canvas.** It refuses a worker's script, so a frame cannot register one in
-  `marver dev`: an address is reused by whichever canvas starts there next, and a worker would outlive its canvas. A
-  PWA prototype shows its screens, not its offline behaviour. A published canvas is unchanged.
-- **`/api/poster` is a POST**, with the clip in a JSON body (`{ "src": "..." }`), still for the owner only. The `Video`
-  primitive is its one caller. A GET that wrote a file was how a page left open could reach another project.
-- **`__mvPerf.report()` has new names.** It reports the intervals as they are: `dropped` and `droppedFrac` (intervals
-  over 32 ms) become `over33ms`, a count, with `over17ms` beside it; `longTasks`, `longTaskP95` and `longTaskMax`
-  become `longFrames`, `longFrameP95` and `longFrameMax` - long animation frames, or long tasks where the browser has
-  none. `gestureFrames`, `frameP50`, `frameP95`, `frameMax` and `counters` keep theirs.
-- **The frame-time sampler rests with the canvas.** It asked the browser for every frame, moving or not; it now runs
-  only during a pan, a zoom or a layout animation.
+- **A port you chose stays yours.** `--port <n>`, or a `port` in `design/config.ts` other than the scaffolded 5199, is
+  tried first, as before; when it is taken, the canvas takes a slot and says so. A port in 4805-4824 claims exactly
+  that slot: when something else holds it, `marver dev` stops and says what. A port from `design/config.ts` is named
+  as the canvas starts ("remove it to use the slots"); a new `design/config.ts` has it only as a commented example.
+- **A start that fails leaves nothing behind.** Its lock, its slot, a half-made server and the watchers are given
+  back; it says what failed ("port 4806 was just taken by another program - start again", for one) and exits with 1.
+- **`marver dev` says when it stops**: "canvas stopped - open tabs keep their edits and save when it is back".
+- **One project key, the one 0.26 used.** Marver names a project by one key, made from the folder's real path - 0.26's
+  key for a canvas started with `npx marver dev` - so a capture waiting in a page keeps it; only the address moved.
+- **Five viewer preferences are kept per project.** Your view theme, the update notice you closed, the mentions you
+  opened, which sticky notes show and which folders are folded were kept per address, shared by projects that ran
+  there in turn. A local canvas now keeps them per project at each address and carries them nowhere else: they start
+  fresh after the upgrade, and on a slot the canvas has not used before. A published canvas is unchanged.
+- **No service workers on a local canvas**: an address is reused by whichever canvas starts there next, and a worker
+  would outlive its canvas. A PWA prototype shows its screens, not its offline behaviour.
+- **`__mvPerf.report()` has new names:** `over33ms` (a count) and `over17ms` replace `dropped` and `droppedFrac`;
+  `longTask*` become `longFrame*`.
+- **The frame-time sampler rests with the canvas:** it runs only during a pan, a zoom or a layout animation.
 
 ### Added
 
-- **`npx marver ls`** lists the canvases running on this Mac - slot, link, name, version, state, uptime, folder - with
-  `--json` for agents (never a canvas's key). It needs no repo; a canvas that died without stopping is left out. The
-  state is `starting`, `ready`, or `closing` once a canvas has begun to stop: it holds its slot until it has gone.
 - **`npx marver dev --recover`** starts a canvas on an address it ran on before - exactly its port, the address it
   bound and the project key that run used, never another - so a Jam capture left unsent in that browser sends itself.
-  Alone it lists them, newest first, then the one 0.26 gave the folder; `--recover <n>` starts on one;
-  `--recover --port <p>` on the port 0.26 moved to. When a canvas starts on another address than last time - its slot
-  taken - `marver dev` says where it was, which canvas runs there now, and that a tab still open there keeps its
-  unsaved edits (and a capture left unsent there waits) until this canvas runs there again: "stop "atlas" and this
-  canvas, then `npx marver dev --recover 2`"
-  ([A capture left on an old address](docs/jam-session.md#a-capture-left-on-an-old-address)).
-- **`npx marver perf --loads`** says what each board load did, from the page: how long until the frames in view were
-  ready, until all were, until the board first held still, when it last moved and when it settled - or why it was
-  cut, and how many frames were ready by then; how many moves, how far and why (a height that came late, a re-flow,
-  a drag); the five slowest frames, each with how long it waited for its turn to start and then took (a long wait is
-  the queue, not the frame), and when the first frame started; errors, and frames that never answered or are
-  missing. `--json` for agents;
-  plain `marver perf` adds one line per load. The page records it in `design/.local/perf/page.jsonl`: frame names,
-  node keys and numbers, and error messages that can hold file paths - so it stays on your machine. It costs nothing
-  at rest: no timer or frame callback of its own while nothing loads and nothing waits to be sent
-  ([Performance](docs/performance.md)).
-- **The document proof.** A request for the canvas page that carries `x-mv-nonce` is answered with `x-mv-instance`
-  and `x-mv-proof`, signed with the key in that canvas's registry file (`~/.marver/running/`, never served), so an
-  app that opens the page knows it comes from that canvas. Without the header nothing changes.
-- **`MARVER_HOME`** moves Marver's folder in your home (`~/.marver`): the canvases running (`running/`), each
-  project's slot preference (`prefer/`) and the collaboration credentials (`canvases/`). The speech model stays in
-  `~/.marver/models` (`MARVER_MODELS` moves it). `marver ls` reads the same variable. The test suite runs on one of
-  its own, so no test writes to yours.
+  Alone it lists the last five addresses, newest first, then the one 0.26 gave the folder; `--recover <n>` starts on
+  one; `--recover --port <p>` on the port 0.26 moved to. A canvas whose slot was taken says where it ran last time,
+  which canvas runs there now, and that a tab still open there keeps its unsaved edits (and an unsent capture waits)
+  until this canvas runs there again: "stop "atlas" and this canvas, then `npx marver dev --recover 2`" ([A capture
+  left on an old address](docs/jam-session.md#a-capture-left-on-an-old-address)).
+- **The document proof.** An app that opens the canvas page can check the page comes from that canvas: send
+  `x-mv-nonce`, get `x-mv-instance` and a signed `x-mv-proof` back. Without the header nothing changes.
+- **`MARVER_HOME`** moves `~/.marver` - running canvases, slot preferences, collaboration credentials - and
+  `marver ls` reads it too. The speech model stays in `~/.marver/models` (`MARVER_MODELS` moves it).
 
 ### Fixed
 
-- **Pictures with Chrome 156.0.8078.47 and later.** That update made a headless page whose window another one
-  covers read as hidden - and since 0.26.1 each picture has a window of its own - so a picture could wait on a paint
-  that never came. Marver's Chrome now runs every page as if seen (the flags Puppeteer launches with). This covers
-  `marver shot`, your agent's pictures, copy as image, video posters and Jam's pictures.
-- **A tab left open can no longer write into another project.** A tab whose canvas had stopped kept talking to
-  whatever started next on its port, and could save its board into another project whose board file matched. Every
-  request the canvas page makes to Marver now names its project, and so do its frame, play-stage and Jam-picture
-  addresses; another project refuses them before reading or writing anything. The tab says what happened and the
-  way back: "This canvas stopped - run npx marver dev to bring it back", or, when another project answers there,
-  "Another canvas is running on this address - stop it and run npx marver dev to bring this one back" - and, only
-  when it holds something it could not save (an edit, a capture, words not sent), "your unsaved edits are kept in
-  this tab". The notice sits beside the toolbar, or under it in a narrow window, never over the toolbar or the
-  sidebar, and stays when you hide the UI (H). Comments and Jam captures wait for the canvas, and say so. A frame or
-  play stage another project answered shows "Waiting for this canvas"; its address opened in a tab of its own shows
-  a page saying what happened and how to bring it back, in the frame's theme. Its own requests stop (its frames,
-  play stage and pictures may still ask for pages and images, and another project refuses those), and it is never
-  reloaded into another project. When its own canvas answers again, it saves, then reloads on the view you had, and
-  says "Back - your edits were saved" when it saved some. If the board's file changed on disk meanwhile (your agent
-  edited it, for one), the file wins, as it always has, the tab's unsaved board edits are lost, and the reloaded tab
-  says "board changed on disk - canvas layout reloaded" instead; a board renamed or removed meanwhile is not created
-  again, and that is what it says. If something holds the reload - a capture recording, finishing or still
-  on its way to the canvas, words typed and not sent, an unsaved Jam edit or note, a frame mid-drag - it works as
-  live, says "marver dev is back - this page reloads once nothing is in progress", and reloads once nothing does -
-  still saying what its save came to. Leaving a stopped tab with unsaved board edits asks first.
-- **Editing `.env` no longer stops Live Jam.** Vite restarts the canvas's server in place when an `.env` file
-  changes, and 0.26 took that for a stop: Live Jam stopped, the working glow and comments written from the terminal
-  no longer reached the page at once, and `marver shot`, `work` and `link` lost the canvas. Now only the server
-  restarts: the canvas keeps its slot and its line in `marver ls`, and Live Jam its microphone.
-- **A link, back or forward reads its board once.** Each fires two browser events (popstate and hashchange), and the
-  second started the switch to the board over: the board was read twice.
-- **The demo frames show their bottom button whole.** In a new canvas, `welcome` and `dark` ran past the frame's
-  height (a full-height page with padding around it), so their button was cut off at the bottom.
-- **A frame's error card comes from the document it shows.** An error sent late by a document the frame has since
-  replaced is ignored, as its ready already was.
-- **The dev server never serves `~/.marver`.** It holds the running canvases' keys and the collaboration credentials;
-  a request whose real path lands there is refused, even when your project's workspace root is your home folder.
-- **In a sandbox, `marver dev` says why it cannot start.** Where every file watcher fails (Codex's sandbox: `EMFILE:
-  too many open files, watch`), it ended with Node's own unhandled error. It now says "marver dev cannot watch this
-  folder (EMFILE: too many open files, watch) - in a sandbox? ask the person to run npx marver dev in their own
-  terminal" and exits with 1, leaving nothing behind; a watcher that fails once the canvas runs ends it the same way.
+- **Editing `.env` no longer stops Live Jam.** Vite restarts the canvas's server in place when an `.env` file changes,
+  and 0.26 took that for a stop: Live Jam stopped, comments written from the terminal no longer reached the page at
+  once, and `marver shot`, `work` and `link` lost the canvas. Now only the server restarts.
+- **A link, back or forward reads its board once**, not twice (each fires two browser events).
+- **The demo frames show their bottom button whole**: `welcome` and `dark` ran past the frame and cut it off.
+- **A frame's error card comes from the document it shows**: a late error from a document it replaced is ignored.
+- **The dev server never serves `~/.marver`**, which holds the running canvases' keys and the collaboration
+  credentials - not even when your project's workspace root is your home folder.
+- **In a sandbox, `marver dev` says why it cannot start.** Where every file watcher fails (`EMFILE` in Codex's
+  sandbox), it ended with Node's own error; it now says to ask the person to run `npx marver dev` in their own
+  terminal and exits with 1, leaving nothing behind - as when a watcher fails later.
 - **A canvas out of reach is not "not running".** In a sandbox that keeps an agent off localhost, `marver link` said
-  the canvas was not running, and `work` could not reach it - an invitation to start a second one. When
-  `design/.local/dev.json` names a process that runs, `link` prints the link from it (it needs only the port) and
-  says "`marver dev` runs (pid 123) but cannot be reached from here - a sandbox?"; `work start` and `work done` say the
-  same, and that `link` still gives the link.
-- **The perf logs are yours alone.** `design/.local/perf/` is made mode 700 and its files 600 - those an earlier
-  version made are tightened at start - and at start every log there, `jam.jsonl` included, loses its lines older
-  than 14 days, and past 2 MB its oldest half. `page.jsonl`, new, keeps 8 MB: one load of a 120-frame board writes
-  about 140 KB to it, and 2 MB held only hours of those.
+  the canvas was not running, an invitation to start a second one. When `design/.local/dev.json` names a process that
+  runs, `link` prints the link and says the canvas runs but cannot be reached from here; so do `work start` and
+  `work done`.
+- **The perf logs are yours alone**: `design/.local/perf/` is mode 700 and its files 600, older ones included; at
+  start each log loses lines older than 14 days, and past 2 MB its oldest half (`page.jsonl` keeps 8 MB).
 
 ### Upgrading
 
 `npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (they find the
 canvas with `npx marver ls`, ask you to start it in your own terminal or start it so it outlives them - never with a
-port - and read `npx marver perf --loads`). **Before you upgrade**,
-open each canvas once in the browser you make captures in, with its old version still running and Live Jam on: a
-capture left unsent there sends itself. One left behind comes back with `npx marver dev --recover`. On its first
-start each canvas moves to a slot and says where; a bookmark to its old address no longer reaches it (`marver ls`
-lists the new one). A `port` you set in `design/config.ts` stays until you remove the line. The five viewer
-preferences start fresh. **Then close every tab a 0.26 canvas opened** (send or save what they hold first) and open
-the canvas again from its new link: a page 0.26 served names no project in its requests, so the protection above -
-a stopped tab that never writes into another project - covers pages loaded from 0.27 on, not those older tabs.
+port - and read `npx marver perf --loads`). **Before you upgrade**, open each canvas once in the browser you make
+captures in, with its old version still running and Live Jam on: a capture left unsent there sends itself. One left
+behind comes back with `npx marver dev --recover`. On its first start each canvas moves to a slot and says where; a
+bookmark to its old address no longer reaches it (`marver ls` lists the new one). A `port` you set in
+`design/config.ts` stays until you remove the line. The five viewer preferences start fresh. **Then close every tab a
+0.26 canvas opened** (send or save what they hold first) and open the canvas again from its new link: a page 0.26
+served names no project in its requests, so the protection above - a stopped tab that never writes into another
+project - covers pages loaded from 0.27 on, not those older tabs.
 
 ## 0.26.1 - 2026-10-20
 
