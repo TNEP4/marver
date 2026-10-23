@@ -5,6 +5,7 @@ import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, se
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, savedInResume, scoped, STOPPED_WAY, withWs } from './api.ts'
+import { unsavedWhen, workChanged } from './unsaved.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -398,7 +399,8 @@ let heightsTimer: ReturnType<typeof setTimeout> | undefined
 let flushing = false
 const persistHeight = (key: string, h: number) => {
   if (DATA) return
-  if (!inflightHeights.has(key) && savedHeights.get(key) === h) { pendingHeights.delete(key); return }
+  if (!inflightHeights.has(key) && savedHeights.get(key) === h) { if (pendingHeights.delete(key)) workChanged(); return }
+  if (!pendingHeights.size) workChanged()   // heights not written yet: unsaved (unsaved.ts)
   pendingHeights.set(key, h)
   if (!flushing) heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
 }
@@ -425,6 +427,7 @@ async function flushHeights() {
   // a height that settled while the write was in flight: still owed only if it differs from what landed
   for (const [k, v] of pendingHeights) if (savedHeights.get(k) === v) pendingHeights.delete(k)
   flushing = false
+  workChanged()
   if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
 }
 
@@ -2172,12 +2175,14 @@ export function stoppedFor(what: string): boolean {
   useStore.getState().toast(`${what} - ${STOPPED_WAY}`)
   return true
 }
-// a stopped page holds edits only it has: leaving it (a reload by hand, a close) asks first
-if (typeof window !== 'undefined') window.addEventListener('beforeunload', (e) => {
-  if (!canvasStopped() || !useStore.getState().dirty) return
-  e.preventDefault()
-  e.returnValue = ''
-})
+// spec 28 A2.9: leaving a page that holds a board edit not on disk yet - dirty, a save in flight or one that failed -
+// or heights not written yet asks first (unsaved.ts's one beforeunload), live or stopped; the Mac app hears it too.
+// A drag is not work until it drops. A published canvas keeps its pins and sizes in the session: nothing to lose
+if (!PUBLISHED) {
+  unsavedWhen('board-unsaved', () => useStore.getState().dirty)
+  unsavedWhen('heights', () => pendingHeights.size > 0 || inflightHeights.size > 0)
+  useStore.subscribe((s, p) => { if (s.dirty !== p.dirty) workChanged() })
+}
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)
 if (import.meta.env.DEV) (window as unknown as { __mvStore: unknown }).__mvStore = useStore

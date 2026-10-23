@@ -8,6 +8,7 @@
  */
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
+import { guardLeaving, leaveNow, unsavedWhen, workChanged } from './unsaved.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -122,7 +123,8 @@ async function resume() {
   if (ok && held()) ok = false
   // a fresh document on the canvas that answered: live updates again - and the next page says what the resumes came to,
   // this one's and those this reload waited after (a draft, a capture), whose toasts go with this page
-  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (savedOnResume ? 'saved' : null)); return void location.reload() }
+  // its own guard lets this reload through: what it held is saved, and nothing holds it (A2.14 #17)
+  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (savedOnResume ? 'saved' : null)); return void leaveNow(() => location.reload()) }
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
   // no reload owed (Vite's socket held): the page goes on as it is, and what this resume came to was said on it
   if (!hmrLost) { lostOnResume = null; savedOnResume = false; return }
@@ -191,9 +193,16 @@ export const resumed: { outcome: ResumeOutcome; board?: string; camera?: { x: nu
 const typed = new WeakSet<EventTarget>()
 const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=password]'
 if (WS) {
-  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved() }, true)
-  holdsReload(() => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== ''))
+  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved(); workChanged() }, true)
+  const typedWords = () => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== '')
+  holdsReload(typedWords)
+  // and leaving the page asks first (spec 28 A2.9): the words are only here
+  unsavedWhen('typing', typedWords)
 }
+
+// one question before this page goes, whatever it holds that the server does not have (unsaved.ts): a capture, a
+// board edit, heights, words - in every browser, and the Mac app reads the same reasons
+if (typeof window !== 'undefined') guardLeaving(window)
 
 // Vite's client awaits every `vite:ws:disconnect` listener before it pings the server and reloads the
 // page (vite/dist/client/client.mjs, Vite 8). This one never settles: the canvas page is never reloaded by
