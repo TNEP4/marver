@@ -51,7 +51,7 @@ README at every launch: edits here are lost.** \`MARVER_HOME\` moves the whole f
 | \`theme.json\` | yours | The app's appearance (below). |
 | \`schemas/\` | the app | JSON Schemas of \`config.json\` and \`theme.json\`, for editors. |
 | \`state/\` | the app | \`status.json\` (what applied, what failed), \`tabs.json\`, \`window.json\`, \`recent.json\`, \`launched\`; a file that failed its check is kept as \`<name>.bad\`. |
-| \`state-dev/\` | the app | The same, for the Marver Dev build. |
+| \`state-dev/\` | the app | The same, for the app's development build. |
 | \`perf/\` | the app | Crash reports (\`perf/crashpad/\`), and from app 0.2 performance files. |
 | \`running/\`, \`prefer/\` | \`marver dev\` | The canvases running now, and the address each prefers. |
 | \`canvases/\`, \`models/\` | \`marver\` | Collaboration credentials and local models. Never read, print or copy them. |
