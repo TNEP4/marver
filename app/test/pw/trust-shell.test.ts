@@ -114,10 +114,26 @@ describe('a real marver dev', () => {
   it('a menu click does what the key does, and the next menu says so', async () => {
     const was = state.current!.menu!.find((m) => m.id === 'hide-ui') as { checked?: boolean }
     expect(was.checked).toBe(false)
-    expect(await run.call('trust:menu-click', { id, item: 'hide-ui' })).toBe(true)
-    await until('Hide UI checked', async () => ((await tabState(run, id)).current?.menu?.find((m) => m.id === 'hide-ui') as { checked?: boolean } | undefined)?.checked === true)
-    expect(await run.call('trust:menu-click', { id, item: 'hide-ui' })).toBe(true)
-    await until('Hide UI unchecked', async () => ((await tabState(run, id)).current?.menu?.find((m) => m.id === 'hide-ui') as { checked?: boolean } | undefined)?.checked === false)
+    // a click goes to the document committed when it is sent. A fresh project's first load can still be replaced by
+    // Vite's own full reload (its dependencies optimized on that load), and a click sent while it reloads reaches no
+    // page: the case clicks again only for a document committed since its last click, never twice into one
+    const click = async (want: boolean) => {
+      let sentTo = -1
+      const clicks: number[] = []
+      await until(`Hide UI ${want ? 'checked' : 'unchecked'} (clicks into commits ${clicks.join(', ')})`, async () => {
+        const s = await tabState(run, id)
+        if ((s.current?.menu?.find((m) => m.id === 'hide-ui') as { checked?: boolean } | undefined)?.checked === want) return true
+        if (s.trusted && s.commits !== sentTo) {
+          sentTo = s.commits
+          clicks.push(s.commits)
+          expect(await run.call('trust:menu-click', { id, item: 'hide-ui' })).toBe(true)
+        }
+        return false
+      })
+      if (clicks.length > 1) process.stdout.write(`trust-shell: Hide UI took ${clicks.length} clicks - the page reloaded under the first (commits ${clicks.join(', ')})\n`)
+    }
+    await click(true)
+    await click(false)
   })
 
   it('kill -9: gone within one reconcile tick, untrusted at once, stale, and told untrusted', async () => {
